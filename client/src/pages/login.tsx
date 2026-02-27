@@ -1,15 +1,15 @@
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { z } from "zod";
-import { GraduationCap, Loader2, LogIn } from "lucide-react";
+import { GraduationCap, Loader2, LogIn, AlertCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 const loginSchema = z.object({
   email: z.string().email("Enter a valid email address"),
@@ -19,8 +19,8 @@ const loginSchema = z.object({
 type LoginForm = z.infer<typeof loginSchema>;
 
 export default function Login() {
-  const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const [errorMessage, setErrorMessage] = useState("");
 
   const form = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
@@ -35,14 +35,17 @@ export default function Login() {
       await apiRequest("POST", "/api/login", data);
     },
     onSuccess: () => {
+      setErrorMessage("");
+      queryClient.invalidateQueries({ queryKey: ["/api/me"] });
       setLocation("/admin-dashboard");
     },
     onError: (error: Error) => {
-      toast({ title: "Login failed", description: error.message, variant: "destructive" });
+      setErrorMessage("Invalid Email or Password");
     },
   });
 
   function onSubmit(data: LoginForm) {
+    setErrorMessage("");
     loginMutation.mutate(data);
   }
 
@@ -72,6 +75,12 @@ export default function Login() {
           <CardContent>
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                {errorMessage && (
+                  <div className="flex items-center gap-2 p-3 rounded-md bg-destructive/10 text-destructive text-sm" data-testid="text-login-error">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    {errorMessage}
+                  </div>
+                )}
                 <FormField
                   control={form.control}
                   name="email"

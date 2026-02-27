@@ -11,6 +11,8 @@ import * as XLSX from "xlsx";
 declare module "express-session" {
   interface SessionData {
     userId: number;
+    schoolId: number;
+    userRole: string;
   }
 }
 
@@ -183,7 +185,12 @@ export async function registerRoutes(
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
+    const userData = await storage.getUserWithSchool(user.id);
     req.session.userId = user.id;
+    if (userData) {
+      req.session.schoolId = userData.school.id;
+      req.session.userRole = userData.user.role;
+    }
     res.json({ message: "Login successful" });
   });
 

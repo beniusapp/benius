@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { GraduationCap, Loader2, LogOut, Users, Upload, AlertTriangle } from "lucide-react";
@@ -36,6 +36,12 @@ export default function AdminDashboard() {
     queryKey: ["/api/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
+
+  useEffect(() => {
+    if (!isLoading && (isError || !me)) {
+      setLocation("/login");
+    }
+  }, [isLoading, isError, me, setLocation]);
 
   const { data: students = [], isLoading: studentsLoading } = useQuery<Student[]>({
     queryKey: ["/api/schools", me?.schoolId, "students"],
@@ -108,9 +114,12 @@ export default function AdminDashboard() {
     );
   }
 
-  if (isError || !me) {
-    setLocation("/login");
-    return null;
+  if (!me) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
   }
 
   return (
