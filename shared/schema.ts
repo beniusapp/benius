@@ -1,4 +1,4 @@
-import { sql, relations } from "drizzle-orm";
+import { relations } from "drizzle-orm";
 import { pgTable, text, varchar, serial, integer, boolean, date } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -9,9 +9,17 @@ export const schools = pgTable("schools", {
   code: varchar("code", { length: 20 }).notNull().unique(),
 });
 
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  role: text("role").notNull().default("admin"),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+});
+
 export const students = pgTable("students", {
   id: serial("id").primaryKey(),
-  schoolId: integer("school_id").notNull().references(() => schools.id),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
   digitalStudentId: varchar("digital_student_id", { length: 50 }).notNull().unique(),
   name: text("name").notNull(),
   class: varchar("class", { length: 20 }).notNull(),
@@ -24,6 +32,14 @@ export const students = pgTable("students", {
 
 export const schoolsRelations = relations(schools, ({ many }) => ({
   students: many(students),
+  users: many(users),
+}));
+
+export const usersRelations = relations(users, ({ one }) => ({
+  school: one(schools, {
+    fields: [users.schoolId],
+    references: [schools.id],
+  }),
 }));
 
 export const studentsRelations = relations(students, ({ one }) => ({
@@ -36,6 +52,10 @@ export const studentsRelations = relations(students, ({ one }) => ({
 export const insertSchoolSchema = createInsertSchema(schools).omit({ id: true });
 export type InsertSchool = z.infer<typeof insertSchoolSchema>;
 export type School = typeof schools.$inferSelect;
+
+export const insertUserSchema = createInsertSchema(users).omit({ id: true });
+export type InsertUser = z.infer<typeof insertUserSchema>;
+export type User = typeof users.$inferSelect;
 
 export const insertStudentSchema = createInsertSchema(students).omit({ id: true });
 export type InsertStudent = z.infer<typeof insertStudentSchema>;

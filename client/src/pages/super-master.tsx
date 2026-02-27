@@ -1,12 +1,23 @@
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { z } from "zod";
-import { GraduationCap, Plus, School, Loader2 } from "lucide-react";
+import { GraduationCap, Plus, School, Loader2, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
@@ -15,12 +26,15 @@ import type { School as SchoolType } from "@shared/schema";
 const addSchoolSchema = z.object({
   name: z.string().min(2, "School name must be at least 2 characters"),
   code: z.string().min(2, "School code must be at least 2 characters").max(20, "School code must be at most 20 characters").regex(/^[A-Z0-9]+$/, "Code must be uppercase letters and numbers only"),
+  principalEmail: z.string().email("Enter a valid email address"),
+  principalPassword: z.string().min(6, "Password must be at least 6 characters"),
 });
 
 type AddSchoolForm = z.infer<typeof addSchoolSchema>;
 
 export default function SuperMaster() {
   const { toast } = useToast();
+  const [deleteTarget, setDeleteTarget] = useState<SchoolType | null>(null);
 
   const { data: schools = [], isLoading } = useQuery<SchoolType[]>({
     queryKey: ["/api/schools"],
@@ -31,6 +45,8 @@ export default function SuperMaster() {
     defaultValues: {
       name: "",
       code: "",
+      principalEmail: "",
+      principalPassword: "",
     },
   });
 
@@ -40,12 +56,27 @@ export default function SuperMaster() {
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "School added", description: "The school has been created successfully." });
+      toast({ title: "School added", description: "The school and principal account have been created." });
       form.reset();
       queryClient.invalidateQueries({ queryKey: ["/api/schools"] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const deleteSchoolMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/schools/${id}`);
+    },
+    onSuccess: () => {
+      toast({ title: "School deleted", description: "The school, principal account, and all student records have been removed." });
+      setDeleteTarget(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/schools"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+      setDeleteTarget(null);
     },
   });
 
@@ -77,52 +108,89 @@ export default function SuperMaster() {
           </CardHeader>
           <CardContent>
             <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col sm:flex-row gap-4 items-end">
-                <FormField
-                  control={form.control}
-                  name="name"
-                  render={({ field }) => (
-                    <FormItem className="flex-1 w-full">
-                      <FormLabel>School Name</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="e.g. Maple Leaf School"
-                          data-testid="input-school-name"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="code"
-                  render={({ field }) => (
-                    <FormItem className="sm:w-40 w-full">
-                      <FormLabel>School Code</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="e.g. MLS"
-                          data-testid="input-school-code"
-                          {...field}
-                          onChange={(e) => field.onChange(e.target.value.toUpperCase())}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>School Name</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="e.g. Maple Leaf School"
+                            data-testid="input-school-name"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="code"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>School Code</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="e.g. MLS"
+                            data-testid="input-school-code"
+                            {...field}
+                            onChange={(e) => field.onChange(e.target.value.toUpperCase())}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="principalEmail"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Principal Email</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="email"
+                            placeholder="e.g. principal@school.com"
+                            data-testid="input-principal-email"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="principalPassword"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Principal Password</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="password"
+                            placeholder="Min. 6 characters"
+                            data-testid="input-principal-password"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
                 <Button
                   type="submit"
                   disabled={createSchoolMutation.isPending}
                   data-testid="button-add-school"
                 >
                   {createSchoolMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    "Add School"
-                  )}
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : null}
+                  Add School
                 </Button>
               </form>
             </Form>
@@ -162,9 +230,20 @@ export default function SuperMaster() {
                         <p className="text-xs text-muted-foreground">ID: {school.id}</p>
                       </div>
                     </div>
-                    <span className="text-xs font-mono bg-secondary px-2 py-1 rounded-md" data-testid={`text-school-code-${school.id}`}>
-                      {school.code}
-                    </span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-mono bg-secondary px-2 py-1 rounded-md" data-testid={`text-school-code-${school.id}`}>
+                        {school.code}
+                      </span>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => setDeleteTarget(school)}
+                        data-testid={`button-delete-school-${school.id}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5 mr-1" />
+                        Delete
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -172,6 +251,31 @@ export default function SuperMaster() {
           </CardContent>
         </Card>
       </main>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete School</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <strong>{deleteTarget?.name}</strong> ({deleteTarget?.code})?
+              This will permanently remove the school, the principal's account, and all associated student records. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteTarget && deleteSchoolMutation.mutate(deleteTarget.id)}
+              className="bg-destructive text-destructive-foreground"
+              data-testid="button-confirm-delete"
+            >
+              {deleteSchoolMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              ) : null}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
