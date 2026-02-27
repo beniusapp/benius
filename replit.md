@@ -1,11 +1,11 @@
 # BENIUS - School Management System
 
 ## Overview
-A school management platform with Super Admin functionality to manage schools and students, with principal login and admin dashboard.
+A school management platform with Super Admin functionality to manage schools and students, with principal login, admin dashboard, and CSV/Excel bulk student upload with auto-generated Digital Student IDs.
 
 ## Tech Stack
 - **Frontend**: React + Vite, Tailwind CSS, Shadcn UI, Wouter (routing), TanStack React Query
-- **Backend**: Express.js, PostgreSQL, Drizzle ORM, bcryptjs (password hashing), express-session + connect-pg-simple (sessions)
+- **Backend**: Express.js, PostgreSQL, Drizzle ORM, bcryptjs (password hashing), express-session + connect-pg-simple (sessions), multer (file uploads), csv-parse + xlsx (file parsing)
 - **Language**: TypeScript
 
 ## Project Structure
@@ -17,12 +17,12 @@ A school management platform with Super Admin functionality to manage schools an
 - `client/src/pages/home.tsx` - Public landing page
 - `client/src/pages/super-master.tsx` - Hidden Super Admin page (not linked from UI)
 - `client/src/pages/login.tsx` - Principal login page
-- `client/src/pages/admin-dashboard.tsx` - Admin dashboard (post-login)
+- `client/src/pages/admin-dashboard.tsx` - Admin dashboard with student table and upload
 
 ## Database Tables
 - **schools**: id (serial PK), name, code (unique)
 - **users**: id (serial PK), email (unique), password_hash, role (default 'admin'), school_id (FK to schools, cascade delete)
-- **students**: id (serial PK), school_id (FK to schools, cascade delete), digital_student_id (unique), name, class, section, phone, dob, password_hash, is_activated
+- **students**: id (serial PK), school_id (FK to schools, cascade delete), digital_student_id (unique, format: CODE-NNNN), name, class, section, phone, dob, password_hash, is_activated
 
 ## Key Routes
 - `/` - Public home page
@@ -35,8 +35,16 @@ A school management platform with Super Admin functionality to manage schools an
 - `POST /api/schools` - Create a school + principal account (name, code, principalEmail, principalPassword)
 - `DELETE /api/schools/:id` - Delete school (cascades to users + students)
 - `POST /api/login` - Authenticate principal (email, password)
-- `GET /api/me` - Get current authenticated user info
+- `GET /api/me` - Get current authenticated user info (includes studentCount, schoolCode)
 - `POST /api/logout` - End session
+- `GET /api/schools/:schoolId/students` - List students for a school (authenticated)
+- `POST /api/schools/:schoolId/students/upload` - Bulk upload students via CSV/Excel (multipart file)
+
+## DSID Generation
+- Format: `{SCHOOL_CODE}-{SERIAL}` padded to 4 digits (e.g., MLS-0001)
+- Serial is determined by finding the max existing serial for the school code
+- Default password for new students is the hashed DSID
+- All new students are created with is_activated = false
 
 ## Running
 - `npm run dev` starts both Express backend and Vite frontend dev server

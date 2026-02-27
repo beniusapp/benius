@@ -1,7 +1,7 @@
 import { schools, students, users, type School, type InsertSchool, type Student, type InsertStudent, type User, type InsertUser } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
-import { eq } from "drizzle-orm";
+import { eq, sql, like, count } from "drizzle-orm";
 
 export interface IStorage {
   getSchools(): Promise<School[]>;
@@ -12,6 +12,9 @@ export interface IStorage {
   getUserByEmail(email: string): Promise<User | undefined>;
   getUserWithSchool(userId: number): Promise<{ user: User; school: School } | undefined>;
   getStudentsBySchool(schoolId: number): Promise<Student[]>;
+  getStudentCountBySchool(schoolId: number): Promise<number>;
+  getMaxDsidSerialForSchool(schoolCode: string): Promise<number>;
+  bulkCreateStudents(studentRecords: InsertStudent[]): Promise<Student[]>;
   createStudent(student: InsertStudent): Promise<Student>;
 }
 
@@ -65,6 +68,40 @@ export class DatabaseStorage implements IStorage {
 
   async getStudentsBySchool(schoolId: number): Promise<Student[]> {
     return await db.select().from(students).where(eq(students.schoolId, schoolId));
+  }
+
+  async getStudentCountBySchool(schoolId: number): Promise<number> {
+    const [result] = await db
+      .select({ value: count() })
+      .from(students)
+      .where(eq(students.schoolId, schoolId));
+    return result?.value ?? 0;
+  }
+
+  async getMaxDsidSerialForSchool(schoolCode: string): Promise<number> {
+    const prefix = `${schoolCode}-`;
+    const rows = await db
+      .select({ digitalStudentId: students.digitalStudentId })
+      .from(students)
+      .where(like(students.digitalStudentId, `${prefix}%`));
+
+    let max = 0;
+    for (const row of rows) {
+      const suffix = row.digitalStudentId.replace(prefix, "");
+      const num = parseInt(suffix, 10);
+      if (!isNaN(num) && num > max) {
+        max = num;
+      }
+    }
+    return max;
+  }
+
+  async bulkCreateStudents(studentRecords: InsertStudent[]): Promise<Student[]> {
+    if (studentRecords.length === 0) return [];
+    return await db.transaction(async (tx) => {
+      const created = await tx.insert(students).values(studentRecords).returning();
+      return created;
+    });
   }
 
   async createStudent(insertStudent: InsertStudent): Promise<Student> {
