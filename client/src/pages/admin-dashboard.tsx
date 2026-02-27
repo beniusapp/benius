@@ -1,10 +1,15 @@
 import { useRef, useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { GraduationCap, Loader2, LogOut, Users, Upload, AlertTriangle } from "lucide-react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { GraduationCap, Loader2, LogOut, Users, Upload, AlertTriangle, UserPlus, ChevronDown, ChevronUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import type { Student } from "@shared/schema";
@@ -26,11 +31,27 @@ interface UploadResponse {
   message: string;
 }
 
+const addStudentSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  class: z.string().min(1, "Class is required"),
+  section: z.string().min(1, "Section is required"),
+  phone: z.string().min(7, "Valid phone number is required"),
+  dob: z.string().min(1, "Date of birth is required"),
+});
+
+type AddStudentForm = z.infer<typeof addStudentSchema>;
+
 export default function AdminDashboard() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadWarnings, setUploadWarnings] = useState<string[]>([]);
+  const [showAddForm, setShowAddForm] = useState(false);
+
+  const form = useForm<AddStudentForm>({
+    resolver: zodResolver(addStudentSchema),
+    defaultValues: { name: "", class: "", section: "", phone: "", dob: "" },
+  });
 
   const { data: me, isLoading, isError } = useQuery<MeResponse | null>({
     queryKey: ["/api/me"],
@@ -95,6 +116,23 @@ export default function AdminDashboard() {
     },
   });
 
+  const addStudentMutation = useMutation({
+    mutationFn: async (data: AddStudentForm) => {
+      const res = await apiRequest("POST", `/api/schools/${me!.schoolId}/students`, data);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({ title: "Student Added", description: `DSID: ${data.digitalStudentId}` });
+      form.reset();
+      setShowAddForm(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/me"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/schools", me?.schoolId, "students"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to Add Student", description: error.message, variant: "destructive" });
+    },
+  });
+
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (file) {
@@ -104,6 +142,10 @@ export default function AdminDashboard() {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+  }
+
+  function onAddStudent(data: AddStudentForm) {
+    addStudentMutation.mutate(data);
   }
 
   if (isLoading) {
@@ -190,6 +232,114 @@ export default function AdminDashboard() {
           <CardHeader>
             <div className="flex items-center justify-between gap-4 flex-wrap">
               <CardTitle className="flex items-center gap-2 text-lg">
+                <UserPlus className="w-5 h-5" />
+                Add Student
+              </CardTitle>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAddForm(!showAddForm)}
+                data-testid="button-toggle-add-form"
+              >
+                {showAddForm ? <ChevronUp className="w-4 h-4 mr-1" /> : <ChevronDown className="w-4 h-4 mr-1" />}
+                {showAddForm ? "Hide Form" : "Manual Add"}
+              </Button>
+            </div>
+          </CardHeader>
+          {showAddForm && (
+            <CardContent>
+              <Form {...form}>
+                <form onSubmit={form.handleSubmit(onAddStudent)} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Name</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Student full name" data-testid="input-add-name" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="class"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Class</FormLabel>
+                        <FormControl>
+                          <Input placeholder="e.g. 10" data-testid="input-add-class" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="section"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Section</FormLabel>
+                        <FormControl>
+                          <Input placeholder="e.g. A" data-testid="input-add-section" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="phone"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Phone</FormLabel>
+                        <FormControl>
+                          <Input placeholder="e.g. 9876543210" data-testid="input-add-phone" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="dob"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Date of Birth</FormLabel>
+                        <FormControl>
+                          <Input type="date" data-testid="input-add-dob" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <div className="flex items-end">
+                    <Button
+                      type="submit"
+                      disabled={addStudentMutation.isPending}
+                      className="w-full"
+                      data-testid="button-add-student"
+                    >
+                      {addStudentMutation.isPending ? (
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      ) : (
+                        <UserPlus className="w-4 h-4 mr-2" />
+                      )}
+                      Add Student
+                    </Button>
+                  </div>
+                </form>
+              </Form>
+            </CardContent>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <CardTitle className="flex items-center gap-2 text-lg">
                 <Users className="w-5 h-5" />
                 Student List
               </CardTitle>
@@ -238,7 +388,7 @@ export default function AdminDashboard() {
               </div>
             ) : students.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground text-sm" data-testid="text-no-students">
-                No students registered yet. Upload a CSV or Excel file to add students.
+                No students registered yet. Upload a CSV or Excel file or use the manual form to add students.
               </div>
             ) : (
               <div className="rounded-md border">
@@ -250,6 +400,7 @@ export default function AdminDashboard() {
                       <TableHead>Class</TableHead>
                       <TableHead>Section</TableHead>
                       <TableHead>Phone</TableHead>
+                      <TableHead>Status</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -264,6 +415,11 @@ export default function AdminDashboard() {
                         <TableCell>{student.class}</TableCell>
                         <TableCell>{student.section}</TableCell>
                         <TableCell>{student.phone}</TableCell>
+                        <TableCell>
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${student.isActivated ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400" : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400"}`} data-testid={`text-status-${student.id}`}>
+                            {student.isActivated ? "Activated" : "Pending"}
+                          </span>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

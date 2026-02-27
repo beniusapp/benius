@@ -13,6 +13,7 @@ declare module "express-session" {
     userId: number;
     schoolId: number;
     userRole: string;
+    studentId: number;
   }
 }
 
@@ -348,6 +349,197 @@ export async function registerRoutes(
       console.error("Upload error:", error);
       res.status(500).json({ message: error.message || "Failed to process the uploaded file" });
     }
+  });
+
+  const manualStudentSchema = z.object({
+    name: z.string().min(1),
+    class: z.string().min(1),
+    section: z.string().min(1),
+    phone: z.string().min(7),
+    dob: z.string().min(1),
+  });
+
+  app.post("/api/schools/:schoolId/students", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+
+      const schoolId = parseInt(req.params.schoolId);
+      if (isNaN(schoolId)) {
+        return res.status(400).json({ message: "Invalid school ID" });
+      }
+
+      const userData = await storage.getUserWithSchool(req.session.userId);
+      if (!userData || userData.school.id !== schoolId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const parsed = manualStudentSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+      }
+
+      const { name, class: cls, section, phone, dob: dobRaw } = parsed.data;
+
+      if (!isValidPhone(phone)) {
+        return res.status(400).json({ message: "Invalid phone number" });
+      }
+
+      const dob = parseDate(dobRaw);
+      if (!dob) {
+        return res.status(400).json({ message: "Invalid date format" });
+      }
+
+      const schoolCode = userData.school.code;
+      const currentSerial = await storage.getMaxDsidSerialForSchool(schoolCode);
+      const dsid = `${schoolCode}-${String(currentSerial + 1).padStart(4, "0")}`;
+      const passwordHash = await bcrypt.hash(dsid, 10);
+
+      const student = await storage.createStudent({
+        schoolId,
+        digitalStudentId: dsid,
+        name,
+        class: cls,
+        section,
+        phone,
+        dob,
+        passwordHash,
+        isActivated: false,
+      });
+
+      res.status(201).json(student);
+    } catch (error: any) {
+      console.error("Manual student add error:", error);
+      res.status(500).json({ message: error.message || "Failed to add student" });
+    }
+  });
+
+  const verifyStudentSchema = z.object({
+    dsid: z.string().min(1),
+    phone: z.string().min(1),
+    dob: z.string().min(1),
+  });
+
+  app.post("/api/students/verify", async (req, res) => {
+    const parsed = verifyStudentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    const { dsid, phone, dob: dobRaw } = parsed.data;
+    const dob = parseDate(dobRaw);
+    if (!dob) {
+      return res.status(400).json({ message: "Invalid date format" });
+    }
+
+    const student = await storage.getStudentByDsidPhoneDob(dsid, phone, dob);
+    if (!student) {
+      return res.status(404).json({ message: "No matching student record found. Please check your DSID, phone number, and date of birth." });
+    }
+
+    if (student.isActivated) {
+      return res.status(409).json({ message: "This account has already been activated. Please log in instead." });
+    }
+
+    res.json({ message: "Student verified", studentName: student.name });
+  });
+
+  const activateStudentSchema = z.object({
+    dsid: z.string().min(1),
+    phone: z.string().min(1),
+    dob: z.string().min(1),
+    password: z.string().min(6, "Password must be at least 6 characters"),
+  });
+
+  app.post("/api/students/activate", async (req, res) => {
+    const parsed = activateStudentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    }
+
+    const { dsid, phone, dob: dobRaw, password } = parsed.data;
+    const dob = parseDate(dobRaw);
+    if (!dob) {
+      return res.status(400).json({ message: "Invalid date format" });
+    }
+
+    const student = await storage.getStudentByDsidPhoneDob(dsid, phone, dob);
+    if (!student) {
+      return res.status(404).json({ message: "No matching student record found" });
+    }
+
+    if (student.isActivated) {
+      return res.status(409).json({ message: "This account has already been activated" });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    await storage.activateStudent(student.id, passwordHash);
+
+    res.json({ message: "Account activated successfully. You can now log in." });
+  });
+
+  const studentLoginSchema = z.object({
+    dsid: z.string().min(1),
+    password: z.string().min(1),
+  });
+
+  app.post("/api/student-login", async (req, res) => {
+    const parsed = studentLoginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "DSID and password are required" });
+    }
+
+    const { dsid, password } = parsed.data;
+
+    const student = await storage.getStudentByDsid(dsid);
+    if (!student) {
+      return res.status(401).json({ message: "Invalid DSID or password" });
+    }
+
+    if (!student.isActivated) {
+      return res.status(403).json({ message: "Account not activated. Please register first at /register." });
+    }
+
+    const valid = await bcrypt.compare(password, student.passwordHash);
+    if (!valid) {
+      return res.status(401).json({ message: "Invalid DSID or password" });
+    }
+
+    req.session.studentId = student.id;
+    res.json({ message: "Login successful" });
+  });
+
+  app.get("/api/student-me", async (req, res) => {
+    if (!req.session.studentId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    const data = await storage.getStudentWithSchool(req.session.studentId);
+    if (!data) {
+      return res.status(401).json({ message: "Student not found" });
+    }
+
+    res.json({
+      id: data.student.id,
+      name: data.student.name,
+      digitalStudentId: data.student.digitalStudentId,
+      class: data.student.class,
+      section: data.student.section,
+      phone: data.student.phone,
+      dob: data.student.dob,
+      schoolName: data.school.name,
+      schoolCode: data.school.code,
+    });
+  });
+
+  app.post("/api/student-logout", (req, res) => {
+    req.session.destroy((err) => {
+      if (err) {
+        return res.status(500).json({ message: "Failed to logout" });
+      }
+      res.json({ message: "Logged out" });
+    });
   });
 
   return httpServer;

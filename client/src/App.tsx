@@ -8,6 +8,9 @@ import Home from "@/pages/home";
 import SuperMaster from "@/pages/super-master";
 import Login from "@/pages/login";
 import AdminDashboard from "@/pages/admin-dashboard";
+import Register from "@/pages/register";
+import StudentLogin from "@/pages/student-login";
+import StudentDashboard from "@/pages/student-dashboard";
 
 function Router() {
   return (
@@ -16,6 +19,9 @@ function Router() {
       <Route path="/super-master" component={SuperMaster} />
       <Route path="/login" component={Login} />
       <Route path="/admin-dashboard" component={AdminDashboard} />
+      <Route path="/register" component={Register} />
+      <Route path="/student-login" component={StudentLogin} />
+      <Route path="/student-dashboard" component={StudentDashboard} />
       <Route component={NotFound} />
     </Switch>
   );

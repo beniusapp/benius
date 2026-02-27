@@ -1,7 +1,7 @@
 import { schools, students, users, type School, type InsertSchool, type Student, type InsertStudent, type User, type InsertUser } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
-import { eq, sql, like, count } from "drizzle-orm";
+import { eq, sql, like, count, and } from "drizzle-orm";
 
 export interface IStorage {
   getSchools(): Promise<School[]>;
@@ -16,6 +16,10 @@ export interface IStorage {
   getMaxDsidSerialForSchool(schoolCode: string): Promise<number>;
   bulkCreateStudents(studentRecords: InsertStudent[]): Promise<Student[]>;
   createStudent(student: InsertStudent): Promise<Student>;
+  getStudentByDsid(dsid: string): Promise<Student | undefined>;
+  getStudentByDsidPhoneDob(dsid: string, phone: string, dob: string): Promise<Student | undefined>;
+  activateStudent(studentId: number, passwordHash: string): Promise<Student>;
+  getStudentWithSchool(studentId: number): Promise<{ student: Student; school: School } | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -107,6 +111,44 @@ export class DatabaseStorage implements IStorage {
   async createStudent(insertStudent: InsertStudent): Promise<Student> {
     const [student] = await db.insert(students).values(insertStudent).returning();
     return student;
+  }
+
+  async getStudentByDsid(dsid: string): Promise<Student | undefined> {
+    const [student] = await db.select().from(students).where(eq(students.digitalStudentId, dsid));
+    return student || undefined;
+  }
+
+  async getStudentByDsidPhoneDob(dsid: string, phone: string, dob: string): Promise<Student | undefined> {
+    const [student] = await db
+      .select()
+      .from(students)
+      .where(
+        and(
+          eq(students.digitalStudentId, dsid),
+          eq(students.phone, phone),
+          eq(students.dob, dob)
+        )
+      );
+    return student || undefined;
+  }
+
+  async activateStudent(studentId: number, passwordHash: string): Promise<Student> {
+    const [student] = await db
+      .update(students)
+      .set({ passwordHash, isActivated: true })
+      .where(eq(students.id, studentId))
+      .returning();
+    return student;
+  }
+
+  async getStudentWithSchool(studentId: number): Promise<{ student: Student; school: School } | undefined> {
+    const result = await db
+      .select()
+      .from(students)
+      .innerJoin(schools, eq(students.schoolId, schools.id))
+      .where(eq(students.id, studentId));
+    if (result.length === 0) return undefined;
+    return { student: result[0].students, school: result[0].schools };
   }
 }
 
