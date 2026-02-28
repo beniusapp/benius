@@ -1,28 +1,23 @@
-import { schools, students, users, type School, type InsertSchool, type Student, type InsertStudent, type User, type InsertUser } from "@shared/schema";
+import {
+  schools, students, users, teachers,
+  attendanceRecords, homework, classwork, notices,
+  complaints, examScores, galleryItems, calendarEvents,
+  libraryBooks, bookBorrows, leaveRequests, timetableEntries,
+  type School, type InsertSchool, type Student, type InsertStudent,
+  type User, type InsertUser, type Teacher, type InsertTeacher,
+  type AttendanceRecord, type InsertAttendance,
+  type Homework, type InsertHomework, type Classwork, type InsertClasswork,
+  type Notice, type InsertNotice, type Complaint, type InsertComplaint,
+  type ExamScore, type InsertExamScore, type GalleryItem, type InsertGalleryItem,
+  type CalendarEvent, type InsertCalendarEvent, type LibraryBook, type InsertLibraryBook,
+  type BookBorrow, type InsertBookBorrow, type LeaveRequest, type InsertLeaveRequest,
+  type TimetableEntry, type InsertTimetableEntry,
+} from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
-import { eq, sql, like, count, and } from "drizzle-orm";
+import { eq, sql, like, count, and, desc, gte, lte, or, ilike, isNull } from "drizzle-orm";
 
-export interface IStorage {
-  getSchools(): Promise<School[]>;
-  getSchool(id: number): Promise<School | undefined>;
-  getSchoolByCode(code: string): Promise<School | undefined>;
-  createSchoolWithPrincipal(school: InsertSchool, email: string, passwordHash: string): Promise<School>;
-  deleteSchool(id: number): Promise<boolean>;
-  getUserByEmail(email: string): Promise<User | undefined>;
-  getUserWithSchool(userId: number): Promise<{ user: User; school: School } | undefined>;
-  getStudentsBySchool(schoolId: number): Promise<Student[]>;
-  getStudentCountBySchool(schoolId: number): Promise<number>;
-  getMaxDsidSerialForSchool(schoolCode: string): Promise<number>;
-  bulkCreateStudents(studentRecords: InsertStudent[]): Promise<Student[]>;
-  createStudent(student: InsertStudent): Promise<Student>;
-  getStudentByDsid(dsid: string): Promise<Student | undefined>;
-  getStudentByDsidPhoneDob(dsid: string, phone: string, dob: string): Promise<Student | undefined>;
-  activateStudent(studentId: number, passwordHash: string): Promise<Student>;
-  getStudentWithSchool(studentId: number): Promise<{ student: Student; school: School } | undefined>;
-}
-
-export class DatabaseStorage implements IStorage {
+export class DatabaseStorage {
   async getSchools(): Promise<School[]> {
     return await db.select().from(schools);
   }
@@ -74,6 +69,12 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(students).where(eq(students.schoolId, schoolId));
   }
 
+  async getStudentsByClassSection(schoolId: number, cls: string, section: string): Promise<Student[]> {
+    return await db.select().from(students).where(
+      and(eq(students.schoolId, schoolId), eq(students.class, cls), eq(students.section, section))
+    );
+  }
+
   async getStudentCountBySchool(schoolId: number): Promise<number> {
     const [result] = await db
       .select({ value: count() })
@@ -88,14 +89,11 @@ export class DatabaseStorage implements IStorage {
       .select({ digitalStudentId: students.digitalStudentId })
       .from(students)
       .where(like(students.digitalStudentId, `${prefix}%`));
-
     let max = 0;
     for (const row of rows) {
       const suffix = row.digitalStudentId.replace(prefix, "");
       const num = parseInt(suffix, 10);
-      if (!isNaN(num) && num > max) {
-        max = num;
-      }
+      if (!isNaN(num) && num > max) max = num;
     }
     return max;
   }
@@ -103,8 +101,7 @@ export class DatabaseStorage implements IStorage {
   async bulkCreateStudents(studentRecords: InsertStudent[]): Promise<Student[]> {
     if (studentRecords.length === 0) return [];
     return await db.transaction(async (tx) => {
-      const created = await tx.insert(students).values(studentRecords).returning();
-      return created;
+      return await tx.insert(students).values(studentRecords).returning();
     });
   }
 
@@ -119,36 +116,387 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getStudentByDsidPhoneDob(dsid: string, phone: string, dob: string): Promise<Student | undefined> {
-    const [student] = await db
-      .select()
-      .from(students)
-      .where(
-        and(
-          eq(students.digitalStudentId, dsid),
-          eq(students.phone, phone),
-          eq(students.dob, dob)
-        )
-      );
+    const [student] = await db.select().from(students).where(
+      and(eq(students.digitalStudentId, dsid), eq(students.phone, phone), eq(students.dob, dob))
+    );
     return student || undefined;
   }
 
   async activateStudent(studentId: number, passwordHash: string): Promise<Student> {
-    const [student] = await db
-      .update(students)
-      .set({ passwordHash, isActivated: true })
-      .where(eq(students.id, studentId))
-      .returning();
+    const [student] = await db.update(students).set({ passwordHash, isActivated: true }).where(eq(students.id, studentId)).returning();
     return student;
   }
 
   async getStudentWithSchool(studentId: number): Promise<{ student: Student; school: School } | undefined> {
-    const result = await db
-      .select()
-      .from(students)
+    const result = await db.select().from(students)
       .innerJoin(schools, eq(students.schoolId, schools.id))
       .where(eq(students.id, studentId));
     if (result.length === 0) return undefined;
     return { student: result[0].students, school: result[0].schools };
+  }
+
+  // ===== TEACHER METHODS =====
+  async createTeacher(teacherData: Omit<InsertTeacher, 'userId'>, email: string, passwordHash: string): Promise<Teacher> {
+    return await db.transaction(async (tx) => {
+      const [user] = await tx.insert(users).values({
+        email,
+        passwordHash,
+        role: "teacher",
+        schoolId: teacherData.schoolId,
+      }).returning();
+      const [teacher] = await tx.insert(teachers).values({
+        ...teacherData,
+        userId: user.id,
+      }).returning();
+      return teacher;
+    });
+  }
+
+  async getTeachersBySchool(schoolId: number): Promise<(Teacher & { email: string })[]> {
+    const result = await db.select().from(teachers)
+      .innerJoin(users, eq(teachers.userId, users.id))
+      .where(eq(teachers.schoolId, schoolId));
+    return result.map(r => ({ ...r.teachers, email: r.users.email }));
+  }
+
+  async getTeacherByUserId(userId: number): Promise<Teacher | undefined> {
+    const [teacher] = await db.select().from(teachers).where(eq(teachers.userId, userId));
+    return teacher || undefined;
+  }
+
+  async getTeacherById(teacherId: number): Promise<Teacher | undefined> {
+    const [teacher] = await db.select().from(teachers).where(eq(teachers.id, teacherId));
+    return teacher || undefined;
+  }
+
+  async getTeacherWithSchool(teacherId: number): Promise<{ teacher: Teacher; school: School; user: User } | undefined> {
+    const result = await db.select().from(teachers)
+      .innerJoin(schools, eq(teachers.schoolId, schools.id))
+      .innerJoin(users, eq(teachers.userId, users.id))
+      .where(eq(teachers.id, teacherId));
+    if (result.length === 0) return undefined;
+    return { teacher: result[0].teachers, school: result[0].schools, user: result[0].users };
+  }
+
+  async updateTeacherPassword(userId: number, passwordHash: string, mustChangePassword: boolean = false): Promise<void> {
+    await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+    await db.update(teachers).set({ mustChangePassword }).where(eq(teachers.userId, userId));
+  }
+
+  async deleteTeacher(teacherId: number): Promise<boolean> {
+    const teacher = await this.getTeacherById(teacherId);
+    if (!teacher) return false;
+    await db.delete(teachers).where(eq(teachers.id, teacherId));
+    await db.delete(users).where(eq(users.id, teacher.userId));
+    return true;
+  }
+
+  // ===== ATTENDANCE METHODS =====
+  async getAttendanceByClassDate(schoolId: number, cls: string, section: string, date: string): Promise<AttendanceRecord[]> {
+    return await db.select().from(attendanceRecords).where(
+      and(eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.date, date))
+    ).then(records => {
+      return records;
+    });
+  }
+
+  async getAttendanceForStudentsOnDate(studentIds: number[], date: string): Promise<AttendanceRecord[]> {
+    if (studentIds.length === 0) return [];
+    const allRecords = await db.select().from(attendanceRecords)
+      .where(eq(attendanceRecords.date, date));
+    return allRecords.filter(r => studentIds.includes(r.studentId));
+  }
+
+  async upsertAttendance(records: { studentId: number; teacherId: number; schoolId: number; date: string; status: string; markedBy: string }[]): Promise<AttendanceRecord[]> {
+    const results: AttendanceRecord[] = [];
+    for (const rec of records) {
+      const existing = await db.select().from(attendanceRecords).where(
+        and(eq(attendanceRecords.studentId, rec.studentId), eq(attendanceRecords.date, rec.date))
+      );
+      if (existing.length > 0) {
+        const current = existing[0];
+        if (current.editCount >= 3) continue;
+        const [updated] = await db.update(attendanceRecords).set({
+          status: rec.status,
+          editCount: current.editCount + 1,
+          markedBy: rec.markedBy,
+          markedAt: new Date(),
+        }).where(eq(attendanceRecords.id, current.id)).returning();
+        results.push(updated);
+      } else {
+        const [created] = await db.insert(attendanceRecords).values({
+          studentId: rec.studentId,
+          teacherId: rec.teacherId,
+          schoolId: rec.schoolId,
+          date: rec.date,
+          status: rec.status,
+          editCount: 0,
+          markedBy: rec.markedBy,
+          markedAt: new Date(),
+        }).returning();
+        results.push(created);
+      }
+    }
+    return results;
+  }
+
+  async getAttendanceHistory(schoolId: number, cls: string, section: string, startDate: string, endDate: string): Promise<AttendanceRecord[]> {
+    const studentList = await this.getStudentsByClassSection(schoolId, cls, section);
+    const studentIds = studentList.map(s => s.id);
+    if (studentIds.length === 0) return [];
+    const allRecords = await db.select().from(attendanceRecords).where(
+      and(
+        eq(attendanceRecords.schoolId, schoolId),
+        gte(attendanceRecords.date, startDate),
+        lte(attendanceRecords.date, endDate)
+      )
+    );
+    return allRecords.filter(r => studentIds.includes(r.studentId));
+  }
+
+  async hasAttendanceToday(teacherId: number, cls: string, section: string, schoolId: number): Promise<boolean> {
+    const today = new Date().toISOString().split("T")[0];
+    const studentList = await this.getStudentsByClassSection(schoolId, cls, section);
+    if (studentList.length === 0) return false;
+    const studentIds = studentList.map(s => s.id);
+    const records = await db.select().from(attendanceRecords).where(
+      and(eq(attendanceRecords.date, today), eq(attendanceRecords.teacherId, teacherId))
+    );
+    return records.some(r => studentIds.includes(r.studentId));
+  }
+
+  // ===== HOMEWORK METHODS =====
+  async createHomework(data: InsertHomework): Promise<Homework> {
+    const [hw] = await db.insert(homework).values(data).returning();
+    return hw;
+  }
+
+  async getHomeworkByClass(schoolId: number, cls: string, section: string): Promise<Homework[]> {
+    return await db.select().from(homework).where(
+      and(eq(homework.schoolId, schoolId), eq(homework.class, cls), eq(homework.section, section))
+    ).orderBy(desc(homework.createdAt));
+  }
+
+  // ===== CLASSWORK METHODS =====
+  async createClasswork(data: InsertClasswork): Promise<Classwork> {
+    const [cw] = await db.insert(classwork).values(data).returning();
+    return cw;
+  }
+
+  async getClassworkByClass(schoolId: number, cls: string, section: string): Promise<Classwork[]> {
+    return await db.select().from(classwork).where(
+      and(eq(classwork.schoolId, schoolId), eq(classwork.class, cls), eq(classwork.section, section))
+    ).orderBy(desc(classwork.createdAt));
+  }
+
+  // ===== NOTICE METHODS =====
+  async createNotice(data: InsertNotice): Promise<Notice> {
+    const [n] = await db.insert(notices).values(data).returning();
+    return n;
+  }
+
+  async getNoticesByTarget(schoolId: number, targetType: string, cls?: string, section?: string): Promise<Notice[]> {
+    const conditions = [eq(notices.schoolId, schoolId), eq(notices.targetType, targetType)];
+    if (cls) conditions.push(or(eq(notices.targetClass, cls), isNull(notices.targetClass))!);
+    return await db.select().from(notices).where(and(...conditions)).orderBy(desc(notices.createdAt));
+  }
+
+  // ===== COMPLAINT METHODS =====
+  async createComplaint(data: InsertComplaint): Promise<Complaint> {
+    const [c] = await db.insert(complaints).values(data).returning();
+    return c;
+  }
+
+  async getComplaintsBySchool(schoolId: number): Promise<(Complaint & { studentName: string; teacherName: string })[]> {
+    const result = await db.select().from(complaints)
+      .innerJoin(students, eq(complaints.studentId, students.id))
+      .innerJoin(teachers, eq(complaints.teacherId, teachers.id))
+      .where(eq(complaints.schoolId, schoolId))
+      .orderBy(desc(complaints.createdAt));
+    return result.map(r => ({
+      ...r.complaints,
+      studentName: r.students.name,
+      teacherName: r.teachers.fullName,
+    }));
+  }
+
+  async getComplaintsByTeacher(teacherId: number): Promise<(Complaint & { studentName: string })[]> {
+    const result = await db.select().from(complaints)
+      .innerJoin(students, eq(complaints.studentId, students.id))
+      .where(eq(complaints.teacherId, teacherId))
+      .orderBy(desc(complaints.createdAt));
+    return result.map(r => ({
+      ...r.complaints,
+      studentName: r.students.name,
+    }));
+  }
+
+  // ===== EXAM SCORE METHODS =====
+  async upsertExamScores(scores: InsertExamScore[]): Promise<ExamScore[]> {
+    const results: ExamScore[] = [];
+    for (const score of scores) {
+      const existing = await db.select().from(examScores).where(
+        and(
+          eq(examScores.studentId, score.studentId),
+          eq(examScores.subject, score.subject),
+          eq(examScores.examType, score.examType)
+        )
+      );
+      if (existing.length > 0) {
+        const [updated] = await db.update(examScores).set({ marks: score.marks }).where(eq(examScores.id, existing[0].id)).returning();
+        results.push(updated);
+      } else {
+        const [created] = await db.insert(examScores).values(score).returning();
+        results.push(created);
+      }
+    }
+    return results;
+  }
+
+  async getExamScores(schoolId: number, subject: string, examType: string, cls: string, section: string): Promise<(ExamScore & { studentName: string; dsid: string })[]> {
+    const result = await db.select().from(examScores)
+      .innerJoin(students, eq(examScores.studentId, students.id))
+      .where(
+        and(
+          eq(examScores.schoolId, schoolId),
+          eq(examScores.subject, subject),
+          eq(examScores.examType, examType),
+          eq(students.class, cls),
+          eq(students.section, section)
+        )
+      );
+    return result.map(r => ({
+      ...r.exam_scores,
+      studentName: r.students.name,
+      dsid: r.students.digitalStudentId,
+    }));
+  }
+
+  // ===== GALLERY METHODS =====
+  async createGalleryItem(data: InsertGalleryItem): Promise<GalleryItem> {
+    const [item] = await db.insert(galleryItems).values(data).returning();
+    return item;
+  }
+
+  async getGalleryItems(schoolId: number, approvedOnly: boolean = true): Promise<GalleryItem[]> {
+    const conditions = [eq(galleryItems.schoolId, schoolId)];
+    if (approvedOnly) conditions.push(eq(galleryItems.approved, true));
+    return await db.select().from(galleryItems).where(and(...conditions)).orderBy(desc(galleryItems.createdAt));
+  }
+
+  async approveGalleryItem(id: number): Promise<GalleryItem> {
+    const [item] = await db.update(galleryItems).set({ approved: true }).where(eq(galleryItems.id, id)).returning();
+    return item;
+  }
+
+  // ===== CALENDAR METHODS =====
+  async createCalendarEvent(data: InsertCalendarEvent): Promise<CalendarEvent> {
+    const [event] = await db.insert(calendarEvents).values(data).returning();
+    return event;
+  }
+
+  async getCalendarEvents(schoolId: number): Promise<CalendarEvent[]> {
+    return await db.select().from(calendarEvents).where(eq(calendarEvents.schoolId, schoolId));
+  }
+
+  async deleteCalendarEvent(id: number): Promise<boolean> {
+    const result = await db.delete(calendarEvents).where(eq(calendarEvents.id, id)).returning();
+    return result.length > 0;
+  }
+
+  // ===== LIBRARY METHODS =====
+  async createLibraryBook(data: InsertLibraryBook): Promise<LibraryBook> {
+    const [book] = await db.insert(libraryBooks).values(data).returning();
+    return book;
+  }
+
+  async getLibraryBooks(schoolId: number): Promise<LibraryBook[]> {
+    return await db.select().from(libraryBooks).where(eq(libraryBooks.schoolId, schoolId));
+  }
+
+  async searchLibraryBooks(schoolId: number, query: string): Promise<LibraryBook[]> {
+    return await db.select().from(libraryBooks).where(
+      and(eq(libraryBooks.schoolId, schoolId), or(ilike(libraryBooks.title, `%${query}%`), ilike(libraryBooks.author, `%${query}%`)))
+    );
+  }
+
+  async borrowBook(bookId: number, borrowerId: number, borrowerType: string, schoolId: number): Promise<BookBorrow | null> {
+    const [book] = await db.select().from(libraryBooks).where(eq(libraryBooks.id, bookId));
+    if (!book || book.availableCopies <= 0) return null;
+    await db.update(libraryBooks).set({ availableCopies: book.availableCopies - 1 }).where(eq(libraryBooks.id, bookId));
+    const [borrow] = await db.insert(bookBorrows).values({ bookId, borrowerId, borrowerType, schoolId }).returning();
+    return borrow;
+  }
+
+  async returnBook(borrowId: number): Promise<void> {
+    const [borrow] = await db.select().from(bookBorrows).where(eq(bookBorrows.id, borrowId));
+    if (!borrow || borrow.returnedAt) return;
+    await db.update(bookBorrows).set({ returnedAt: new Date() }).where(eq(bookBorrows.id, borrowId));
+    const [book] = await db.select().from(libraryBooks).where(eq(libraryBooks.id, borrow.bookId));
+    if (book) {
+      await db.update(libraryBooks).set({ availableCopies: book.availableCopies + 1 }).where(eq(libraryBooks.id, book.id));
+    }
+  }
+
+  async getMyBorrowedBooks(borrowerId: number, borrowerType: string): Promise<(BookBorrow & { bookTitle: string; bookAuthor: string })[]> {
+    const result = await db.select().from(bookBorrows)
+      .innerJoin(libraryBooks, eq(bookBorrows.bookId, libraryBooks.id))
+      .where(and(eq(bookBorrows.borrowerId, borrowerId), eq(bookBorrows.borrowerType, borrowerType), isNull(bookBorrows.returnedAt)));
+    return result.map(r => ({
+      ...r.book_borrows,
+      bookTitle: r.library_books.title,
+      bookAuthor: r.library_books.author,
+    }));
+  }
+
+  // ===== LEAVE METHODS =====
+  async createLeaveRequest(data: InsertLeaveRequest): Promise<LeaveRequest> {
+    const [req] = await db.insert(leaveRequests).values(data).returning();
+    return req;
+  }
+
+  async getLeaveRequestsByTeacher(teacherId: number): Promise<LeaveRequest[]> {
+    return await db.select().from(leaveRequests).where(eq(leaveRequests.teacherId, teacherId)).orderBy(desc(leaveRequests.createdAt));
+  }
+
+  async getLeaveRequestsBySchool(schoolId: number): Promise<(LeaveRequest & { teacherName: string })[]> {
+    const result = await db.select().from(leaveRequests)
+      .innerJoin(teachers, eq(leaveRequests.teacherId, teachers.id))
+      .where(eq(leaveRequests.schoolId, schoolId))
+      .orderBy(desc(leaveRequests.createdAt));
+    return result.map(r => ({ ...r.leave_requests, teacherName: r.teachers.fullName }));
+  }
+
+  async updateLeaveStatus(id: number, status: string): Promise<LeaveRequest> {
+    const [req] = await db.update(leaveRequests).set({ status }).where(eq(leaveRequests.id, id)).returning();
+    return req;
+  }
+
+  // ===== TIMETABLE METHODS =====
+  async createTimetableEntry(data: InsertTimetableEntry): Promise<TimetableEntry> {
+    const [entry] = await db.insert(timetableEntries).values(data).returning();
+    return entry;
+  }
+
+  async getTimetableByTeacher(teacherId: number): Promise<TimetableEntry[]> {
+    return await db.select().from(timetableEntries).where(eq(timetableEntries.teacherId, teacherId));
+  }
+
+  async getTimetableBySchool(schoolId: number): Promise<(TimetableEntry & { teacherName: string })[]> {
+    const result = await db.select().from(timetableEntries)
+      .innerJoin(teachers, eq(timetableEntries.teacherId, teachers.id))
+      .where(eq(timetableEntries.schoolId, schoolId));
+    return result.map(r => ({ ...r.timetable_entries, teacherName: r.teachers.fullName }));
+  }
+
+  async deleteTimetableEntry(id: number): Promise<boolean> {
+    const result = await db.delete(timetableEntries).where(eq(timetableEntries.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async deleteLibraryBook(id: number): Promise<boolean> {
+    const result = await db.delete(libraryBooks).where(eq(libraryBooks.id, id)).returning();
+    return result.length > 0;
   }
 }
 

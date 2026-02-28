@@ -11,6 +11,8 @@ import AdminDashboard from "@/pages/admin-dashboard";
 import Register from "@/pages/register";
 import StudentLogin from "@/pages/student-login";
 import StudentDashboard from "@/pages/student-dashboard";
+import TeacherLogin from "@/pages/teacher-login";
+import TeacherDashboard from "@/pages/teacher-dashboard";
 
 function Router() {
   return (
@@ -22,6 +24,9 @@ function Router() {
       <Route path="/register" component={Register} />
       <Route path="/student-login" component={StudentLogin} />
       <Route path="/student-dashboard" component={StudentDashboard} />
+      <Route path="/teacher-login" component={TeacherLogin} />
+      <Route path="/teacher-dashboard" component={TeacherDashboard} />
+      <Route path="/teacher-dashboard/:module" component={TeacherDashboard} />
       <Route component={NotFound} />
     </Switch>
   );

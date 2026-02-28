@@ -7,6 +7,7 @@ import { z } from "zod";
 import multer from "multer";
 import { parse } from "csv-parse/sync";
 import * as XLSX from "xlsx";
+import { registerTeacherRoutes } from "./teacher-routes";
 
 declare module "express-session" {
   interface SessionData {
@@ -14,6 +15,7 @@ declare module "express-session" {
     schoolId: number;
     userRole: string;
     studentId: number;
+    teacherId: number;
   }
 }
 
@@ -541,6 +543,8 @@ export async function registerRoutes(
       res.json({ message: "Logged out" });
     });
   });
+
+  registerTeacherRoutes(app);
 
   return httpServer;
 }
