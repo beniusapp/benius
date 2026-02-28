@@ -1,0 +1,36 @@
+Build the complete Teacher Module and School Management System. Follow these detailed instructions:
+1. Admin Control & Teacher Setup
+Principal Dashboard: Add a 'Manage Teachers' section with a form to create teacher accounts.
+Fields: Full Name, Email (Username), Password, Subject/Specialty (e.g., Biology Teacher), Assigned Class, and Assigned Section.
+Teacher Login: Create a /teacher-login route. Upon first login, allow the teacher to change their password.
+2. Teacher Dashboard (Main Menu)
+Create a grid-based dashboard for teachers with these 13 interactive modules:
+TEACHER PROFILE: Displays personal info, photo placeholder, and specialty.
+ATTENDANCE: (Details in Section 3).
+HOMEWORK: Form to select Class/Section. Includes Text area + Image/File upload.
+CLASSWORK: Form to log daily activities. Includes Text area + Image/File upload.
+NOTICEBOARD:
+'Teacher Noticeboard' (Read-only view of notices from Principal).
+'Student Noticeboard' (Action area: Teacher creates notices for specific classes with text/file upload).
+COMPLAINT: Form to select a student (by search/dropdown) and write behavior or academic remarks.
+EXAMINATION: A gradebook table. Teacher selects Subject and Exam Type; shows student list with input boxes for Marks.
+GALLERY: A grid view of school event photos with an 'Upload for Approval' button.
+FACULTY INFO: A directory list showing all staff names, their subjects, and phone numbers.
+SCHOOL CALENDAR: A monthly calendar view marked with Holidays (Red) and Events (Blue).
+LIBRARY: Search tool for book availability and a 'My Borrowed Books' list.
+LEAVE: Form to apply for leave (Type, Dates, Reason) and a table showing status (Pending/Approved/Rejected).
+TIMETABLE: A 5-day grid display (Monday-Friday) showing periods and assigned classes.
+3. Attendance Module Logic (PDF Specification)
+Structure: Split into 'My Attendance' (Teacher’s personal calendar) and 'Class Attendance'.
+Class Attendance Sub-Menu: Buttons for 'Mark Today’s Attendance' and 'Class Attendance History'.
+Marking Interface:
+Search & Filter: Dropdowns for Class/Section (Auto-select assigned class by default) + Search bar for Name/DSID.
+Default State: All students are 'Present'.
+Conditional Logic: If 'Absent' is selected, disable 'Late' and 'Half-day'. 'Late'/'Half-day' are only allowed if 'Present'.
+Time & Edit Rules:
+No future dates. History editable for the past 7 days only.
+3-Edit Limit: Track 'edit_count' in the database. Lock saving after 3 attempts for a specific date.
+Audit Trail: Save 'Marked by [Teacher Name] at [Timestamp]' for every entry.
+4. UI/UX Features
+Status Badge: On the Main Menu, the Attendance icon must have a Red Dot if today's attendance is pending and turn Green once saved.
+Multimedia: Ensure all upload fields (Homework/Notice/Classwork) support both text and image files."
