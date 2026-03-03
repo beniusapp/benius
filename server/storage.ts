@@ -240,7 +240,7 @@ export class DatabaseStorage {
     return results;
   }
 
-  async getAttendanceHistory(schoolId: number, cls: string, section: string, startDate: string, endDate: string): Promise<AttendanceRecord[]> {
+  async getAttendanceHistory(schoolId: number, cls: string, section: string, startDate: string, endDate: string): Promise<(AttendanceRecord & { studentName: string; dsid: string })[]> {
     const studentList = await this.getStudentsByClassSection(schoolId, cls, section);
     const studentIds = studentList.map(s => s.id);
     if (studentIds.length === 0) return [];
@@ -251,7 +251,13 @@ export class DatabaseStorage {
         lte(attendanceRecords.date, endDate)
       )
     );
-    return allRecords.filter(r => studentIds.includes(r.studentId));
+    const filtered = allRecords.filter(r => studentIds.includes(r.studentId));
+    const studentMap = new Map(studentList.map(s => [s.id, s]));
+    return filtered.map(r => ({
+      ...r,
+      studentName: studentMap.get(r.studentId)?.name || "Unknown",
+      dsid: studentMap.get(r.studentId)?.digitalStudentId || "",
+    }));
   }
 
   async hasAttendanceToday(teacherId: number, cls: string, section: string, schoolId: number): Promise<boolean> {

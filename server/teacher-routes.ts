@@ -252,7 +252,7 @@ export function registerTeacherRoutes(app: Express) {
   app.post("/api/attendance", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
 
-    const { date, records } = req.body;
+    const { date, records, class: cls, section } = req.body;
     if (!date || !Array.isArray(records)) return res.status(400).json({ message: "Invalid data" });
 
     const today = new Date().toISOString().split("T")[0];
@@ -278,6 +278,18 @@ export function registerTeacherRoutes(app: Express) {
 
     const saved = await storage.upsertAttendance(formattedRecords);
     res.json({ message: `Attendance saved for ${saved.length} students`, count: saved.length });
+  });
+
+  app.get("/api/attendance/history/:schoolId/:class/:section/:startDate/:endDate", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const { schoolId, class: cls, section, startDate, endDate } = req.params;
+    const sid = parseInt(schoolId);
+    try {
+      const records = await storage.getAttendanceHistory(sid, cls, section, startDate, endDate);
+      res.json(records);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch attendance history" });
+    }
   });
 
   app.get("/api/attendance/status/:teacherId", async (req, res) => {

@@ -58,7 +58,13 @@ A school management platform with Super Admin functionality to manage schools, p
 
 ## Teacher Module Features
 1. **Profile** - View personal info
-2. **Attendance** - Mark/edit class attendance (3-edit limit, 7-day window, audit trail, no future dates)
+2. **Attendance** - Enhanced multi-level module with premium EdTech UI:
+   - Level 1: Landing with "My Attendance" (Coming Soon) and "Class Attendance" cards
+   - Level 2: Class Attendance menu → "Mark Attendance" or "Attendance History"
+   - Level 3a (Mark): Glassmorphism filter bar, universal class/section override (L.K.G-12, A-Z), card-based student gallery with avatar initials, pill status buttons (P/A/L/H) with conditional logic (Absent disables Late/Half-day), "Attempts Remaining" glowing badges (green/orange/red), floating save FAB, skeleton loading, audit trail per student
+   - Level 3b (History): Date range picker, date-grouped records with student info, status badges, audit trail (markedBy, editCount)
+   - Rules: 3-edit limit, 7-day window, no future dates, audit trail
+   - API: GET /api/attendance/history/:schoolId/:class/:section/:startDate/:endDate returns enriched records with studentName and dsid
 3. **Homework** - Post homework with file attachments
 4. **Classwork** - Post classwork with file attachments
 5. **Noticeboard** - Read admin notices, post notices to students
