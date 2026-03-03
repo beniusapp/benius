@@ -40,6 +40,10 @@ export const teachers = pgTable("teachers", {
   assignedClass: varchar("assigned_class", { length: 20 }).notNull(),
   assignedSection: varchar("assigned_section", { length: 10 }).notNull(),
   mustChangePassword: boolean("must_change_password").notNull().default(true),
+  otpCode: varchar("otp_code", { length: 6 }),
+  otpExpiresAt: timestamp("otp_expires_at"),
+  resetToken: text("reset_token"),
+  resetTokenExpiresAt: timestamp("reset_token_expires_at"),
 });
 
 export const attendanceRecords = pgTable("attendance_records", {

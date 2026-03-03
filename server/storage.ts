@@ -498,6 +498,51 @@ export class DatabaseStorage {
     const result = await db.delete(libraryBooks).where(eq(libraryBooks.id, id)).returning();
     return result.length > 0;
   }
+
+  async findTeacherByEmailAndPhone(email: string, phone: string): Promise<{ teacher: Teacher; user: User } | null> {
+    const result = await db.select().from(users)
+      .innerJoin(teachers, eq(users.id, teachers.userId))
+      .where(and(eq(users.email, email), eq(teachers.phone, phone), eq(users.role, "teacher")));
+    if (result.length === 0) return null;
+    return { teacher: result[0].teachers, user: result[0].users };
+  }
+
+  async setTeacherOtp(teacherId: number, otpCode: string, expiresAt: Date): Promise<void> {
+    await db.update(teachers).set({ otpCode, otpExpiresAt: expiresAt }).where(eq(teachers.id, teacherId));
+  }
+
+  async verifyTeacherOtp(teacherId: number, otpCode: string): Promise<{ teacher: Teacher; user: User } | null> {
+    const result = await db.select().from(teachers)
+      .innerJoin(users, eq(teachers.userId, users.id))
+      .where(and(eq(teachers.id, teacherId), eq(teachers.otpCode, otpCode)));
+    if (result.length === 0) return null;
+    const teacher = result[0].teachers;
+    if (!teacher.otpExpiresAt || new Date() > teacher.otpExpiresAt) return null;
+    return { teacher, user: result[0].users };
+  }
+
+  async clearTeacherOtp(teacherId: number): Promise<void> {
+    await db.update(teachers).set({ otpCode: null, otpExpiresAt: null }).where(eq(teachers.id, teacherId));
+  }
+
+  async setTeacherResetToken(teacherId: number, resetToken: string): Promise<void> {
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await db.update(teachers).set({ resetToken, resetTokenExpiresAt: expiresAt }).where(eq(teachers.id, teacherId));
+  }
+
+  async verifyTeacherResetToken(teacherId: number, resetToken: string): Promise<{ teacher: Teacher; user: User } | null> {
+    const result = await db.select().from(teachers)
+      .innerJoin(users, eq(teachers.userId, users.id))
+      .where(and(eq(teachers.id, teacherId), eq(teachers.resetToken, resetToken)));
+    if (result.length === 0) return null;
+    const teacher = result[0].teachers;
+    if (!teacher.resetTokenExpiresAt || new Date() > teacher.resetTokenExpiresAt) return null;
+    return { teacher, user: result[0].users };
+  }
+
+  async clearTeacherResetToken(teacherId: number): Promise<void> {
+    await db.update(teachers).set({ resetToken: null, resetTokenExpiresAt: null }).where(eq(teachers.id, teacherId));
+  }
 }
 
 export const storage = new DatabaseStorage();

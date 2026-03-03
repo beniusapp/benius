@@ -76,6 +76,18 @@ A school management platform with Super Admin functionality to manage schools, p
 2. Teacher logs in → mustChangePassword flag triggers password change dialog
 3. After changing password → redirected to teacher dashboard
 
+## Teacher Forgot Password (OTP Reset)
+1. Teacher clicks "Forgot Password?" on login page
+2. Enters registered email + phone → POST /api/teacher/forgot-password
+3. System validates both match a teacher record; generates 6-digit OTP (stored in DB, printed to console as [DEV OTP])
+4. Teacher enters OTP in 6-digit input screen → POST /api/teacher/verify-otp
+5. On valid OTP: OTP is cleared, a one-time resetToken is issued (stored in DB with 10-min expiry)
+6. Teacher sets new password → POST /api/teacher/reset-password (uses resetToken, not OTP)
+7. Reset token cleared, password updated, redirected to login
+- Schema: teachers table has otp_code, otp_expires_at, reset_token, reset_token_expires_at columns
+- OTP expires in 5 minutes; reset token expires in 10 minutes
+- OTP is invalidated immediately after verification (prevents reuse)
+
 ## Attendance Rules
 - No future dates
 - 7-day edit window only
