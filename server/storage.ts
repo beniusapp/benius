@@ -283,7 +283,7 @@ export class DatabaseStorage {
     ).orderBy(desc(homework.createdAt));
   }
 
-  async updateHomework(id: number, data: { content: string; subject: string; fileUrl: string | null }): Promise<Homework> {
+  async updateHomework(id: number, data: { content: string; subject: string; fileUrl: string | null; dueDate?: string | null }): Promise<Homework> {
     const [updated] = await db.update(homework).set(data).where(eq(homework.id, id)).returning();
     return updated;
   }

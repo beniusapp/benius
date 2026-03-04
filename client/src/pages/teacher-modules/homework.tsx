@@ -22,6 +22,7 @@ interface HomeworkEntry {
   subject: string;
   content: string;
   fileUrl: string | null;
+  dueDate: string | null;
   createdAt: string;
   class: string;
   section: string;
@@ -78,6 +79,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
   const [selectedSection, setSelectedSection] = useState(teacher.assignedSection || "");
   const [subject, setSubject] = useState("");
   const [content, setContent] = useState("");
+  const [dueDate, setDueDate] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -85,11 +87,18 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editSubject, setEditSubject] = useState("");
   const [editContent, setEditContent] = useState("");
+  const [editDueDate, setEditDueDate] = useState("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+
+  const tomorrow = useMemo(() => {
+    const d = new Date(); d.setDate(d.getDate() + 1);
+    return d.toISOString().split("T")[0];
+  }, []);
 
   const classSelected = selectedClass !== "";
   const sectionSelected = selectedSection !== "";
-  const canPost = classSelected && sectionSelected && content.trim().length > 0;
+  const isDueDateValid = dueDate >= tomorrow;
+  const canPost = classSelected && sectionSelected && content.trim().length > 0 && isDueDateValid;
 
   const { data: entries = [], isLoading } = useQuery<HomeworkEntry[]>({
     queryKey: ["/api/homework", teacher.schoolId, selectedClass, selectedSection],
@@ -128,6 +137,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
       fd.append("subject", subject || teacher.subject || "General");
       fd.append("class", selectedClass);
       fd.append("section", selectedSection);
+      fd.append("dueDate", dueDate);
       if (selectedFile) fd.append("file", selectedFile);
       const res = await fetch("/api/homework", { method: "POST", body: fd, credentials: "include" });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
@@ -137,6 +147,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
       toast({ title: "Homework Posted!", description: "Students can now view the assignment." });
       setContent("");
       setSubject("");
+      setDueDate("");
       clearFile();
       queryClient.invalidateQueries({ queryKey: ["/api/homework", teacher.schoolId, selectedClass, selectedSection] });
     },
@@ -150,6 +161,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
       const fd = new FormData();
       fd.append("content", editContent);
       fd.append("subject", editSubject);
+      if (editDueDate) fd.append("dueDate", editDueDate);
       fd.append("keepFile", "true");
       const res = await fetch(`/api/homework/${id}`, { method: "PATCH", body: fd, credentials: "include" });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
@@ -185,6 +197,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
     setEditingId(entry.id);
     setEditSubject(entry.subject);
     setEditContent(entry.content);
+    setEditDueDate(entry.dueDate || "");
   }
 
   return (
@@ -196,7 +209,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
             <h2 className="text-lg font-bold tracking-tight" data-testid="text-homework-title">Post Homework</h2>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Class *</label>
               <Select value={selectedClass} onValueChange={setSelectedClass}>
@@ -220,10 +233,6 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
               </Select>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Assigned Date</label>
-              <Input type="date" value={today} readOnly className="rounded-xl bg-muted/50 cursor-not-allowed" data-testid="input-date" />
-            </div>
-            <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Subject</label>
               <Input
                 value={subject}
@@ -231,6 +240,21 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
                 placeholder={teacher.subject || "Subject"}
                 className="rounded-xl"
                 data-testid="input-subject"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Assigned Date</label>
+              <Input type="date" value={today} readOnly className="rounded-xl bg-muted/50 cursor-not-allowed" data-testid="input-date" />
+            </div>
+            <div className="space-y-1 col-span-2 sm:col-span-1">
+              <label className="text-xs font-medium text-muted-foreground">Submission Deadline (Due Date) *</label>
+              <Input
+                type="date"
+                value={dueDate}
+                min={tomorrow}
+                onChange={(e) => setDueDate(e.target.value)}
+                className="rounded-xl"
+                data-testid="input-due-date"
               />
             </div>
           </div>
@@ -296,7 +320,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
             onClick={() => createMutation.mutate()}
             disabled={!canPost || createMutation.isPending}
             className={`w-full h-12 rounded-xl text-sm font-semibold transition-all ${
-              classSelected && sectionSelected
+              canPost
                 ? "bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md active:scale-[0.98]"
                 : "opacity-50 cursor-not-allowed bg-gradient-to-r from-blue-600 to-purple-600 text-white"
             }`}
@@ -307,7 +331,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
             ) : (
               <Plus className="w-4 h-4 mr-2" />
             )}
-            {classSelected && sectionSelected ? "Post Homework" : "Select Class & Section to Post"}
+            {!classSelected || !sectionSelected ? "Select Class & Section to Post" : !isDueDateValid ? "Set a Future Due Date to Post" : "Post Homework"}
           </Button>
         </CardContent>
       </Card>
@@ -350,6 +374,13 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
               const isDeleting = deleteConfirmId === entry.id;
               const isOwner = entry.teacherId === teacher.id;
 
+              const dueDateObj = entry.dueDate ? new Date(entry.dueDate + "T00:00:00") : null;
+              const todayDate = new Date(); todayDate.setHours(0,0,0,0);
+              const tomorrowDate = new Date(todayDate); tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+              const isDueTomorrow = dueDateObj && dueDateObj.getTime() === tomorrowDate.getTime();
+              const isOverdue = dueDateObj && dueDateObj < todayDate;
+              const isDueToday = dueDateObj && dueDateObj.getTime() === todayDate.getTime();
+
               return (
                 <div
                   key={entry.id}
@@ -367,6 +398,24 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
                           <Calendar className="w-3 h-3" />
                           {new Date(entry.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                         </span>
+                        {isDueTomorrow && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-100 text-orange-700 border border-orange-300 animate-pulse"
+                            data-testid={`badge-due-soon-${entry.id}`}>
+                            Due Soon
+                          </span>
+                        )}
+                        {isDueToday && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-300 animate-pulse"
+                            data-testid={`badge-due-today-${entry.id}`}>
+                            Due Today
+                          </span>
+                        )}
+                        {isOverdue && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-200 text-gray-600 border border-gray-300"
+                            data-testid={`badge-overdue-${entry.id}`}>
+                            Overdue
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold ${getAvatarColor(entry.teacherName)}`}
@@ -376,15 +425,34 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
                       </div>
                     </div>
 
+                    {dueDateObj && (
+                      <p className={`text-sm font-bold mb-2 ${isOverdue ? "text-gray-400 line-through" : "text-indigo-700 dark:text-indigo-400"}`}
+                        data-testid={`text-due-date-${entry.id}`}>
+                        Due: {dueDateObj.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+                      </p>
+                    )}
+
                     {isEditing ? (
                       <div className="space-y-3">
-                        <Input
-                          value={editSubject}
-                          onChange={(e) => setEditSubject(e.target.value)}
-                          placeholder="Subject"
-                          className="rounded-xl"
-                          data-testid={`input-edit-subject-${entry.id}`}
-                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <Input
+                            value={editSubject}
+                            onChange={(e) => setEditSubject(e.target.value)}
+                            placeholder="Subject"
+                            className="rounded-xl"
+                            data-testid={`input-edit-subject-${entry.id}`}
+                          />
+                          <div className="space-y-0.5">
+                            <Input
+                              type="date"
+                              value={editDueDate}
+                              min={tomorrow}
+                              onChange={(e) => setEditDueDate(e.target.value)}
+                              className="rounded-xl"
+                              data-testid={`input-edit-due-date-${entry.id}`}
+                            />
+                          </div>
+                        </div>
                         <Textarea
                           value={editContent}
                           onChange={(e) => setEditContent(e.target.value)}

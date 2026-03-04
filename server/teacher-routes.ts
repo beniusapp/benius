@@ -307,12 +307,12 @@ export function registerTeacherRoutes(app: Express) {
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
-    const { content, subject, class: cls, section } = req.body;
+    const { content, subject, class: cls, section, dueDate } = req.body;
     if (!content || !cls || !section) return res.status(400).json({ message: "Content, class, and section required" });
 
     const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
     const hw = await storage.createHomework({
-      teacherId: teacher.id, schoolId: teacher.schoolId, class: cls, section, subject: subject || "General", content, fileUrl,
+      teacherId: teacher.id, schoolId: teacher.schoolId, class: cls, section, subject: subject || "General", content, fileUrl, dueDate: dueDate || null,
     });
     res.status(201).json(hw);
   });
@@ -349,9 +349,9 @@ export function registerTeacherRoutes(app: Express) {
     if (!hw) return res.status(404).json({ message: "Homework not found" });
     if (hw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
 
-    const { content, subject } = req.body;
+    const { content, subject, dueDate } = req.body;
     const fileUrl = req.file ? `/uploads/${req.file.filename}` : (req.body.keepFile === "true" ? hw.fileUrl : null);
-    const updated = await storage.updateHomework(id, { content: content || hw.content, subject: subject || hw.subject, fileUrl });
+    const updated = await storage.updateHomework(id, { content: content || hw.content, subject: subject || hw.subject, fileUrl, dueDate: dueDate !== undefined ? (dueDate || null) : hw.dueDate });
     res.json(updated);
   });
 

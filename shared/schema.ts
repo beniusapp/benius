@@ -67,6 +67,7 @@ export const homework = pgTable("homework", {
   subject: varchar("subject", { length: 100 }).notNull().default("General"),
   content: text("content").notNull(),
   fileUrl: text("file_url"),
+  dueDate: date("due_date"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
