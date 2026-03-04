@@ -1,0 +1,24 @@
+Refactor and update the /teacher-dashboard/complaints and /teacher-dashboard/examination modules with a high-end 'EdTech' aesthetic and robust governance logic.
+​1. MODULE: DISCIPLINE & RESOLUTION HUB (/complaints)
+​Smart Flow: Support three complaint types: Student-to-Student, Teacher-to-Student, and Teacher-to-Admin (Private).
+​Ticketing System: Every complaint must generate a unique ID (e.g., #DISC-2026-001) and record the complaint_date in dd/mm/yyyy.
+​Status Governance: Use color-coded badges: Pending (Red), Investigating (Orange), Resolved (Green).
+​Edit/Delete Logic: Show 'Edit' and 'Delete' buttons ONLY while the status is 'Pending'. Once investigation begins, lock the record to prevent tampering. Use 'Soft Delete' for the Admin audit trail.
+​Resolution Thread: Add a message box inside each complaint for the Teacher and Principal to discuss and log resolution steps (e.g., 'Parent Meeting Held').
+​Evidence: Include a file upload with a 100px thumbnail preview for attaching photos or screenshots.
+​2. MODULE: EXAMINATION & PERFORMANCE ENGINE (/examination)
+​Smart Context Selection: On page load, auto-select the Class and Section based on the teacher's profile. Keep these dropdowns Unlocked so the teacher can switch to any other class/section in the school.
+​Add Marks (The Grid):
+​Create a spreadsheet-style table with Tab-key navigation.
+​Real-time Logic: Instantly calculate % and Grade (A+ to F) as marks are typed.
+​Guardrail: Turn the input border Red and disable 'Save' if marks exceed the 'Total Marks' limit.
+​Absent Toggle: Include an 'Ab' checkbox to exclude students from class averages.
+​View Marks (360° History):
+​Clicking a student name must reveal their Academic Timeline (Current Year + Previous Years from Class 1-12).
+​Performance Graph: Integrate a Line Chart (using Chart.js) showing the student's percentage trend (UT1 to Annual) vs. the Class Average line.
+​Report Generation: Add a 'Download Progress Report' button to generate a professional PDF.
+​3. GLOBAL UI & SECURITY
+​Aesthetic: Use a clean 'Glassmorphic' design, white cards with border-radius: 16px, soft shadows, and 'Inter' or 'Poppins' typography.
+​Date Formatting: All dates across both modules must strictly follow dd/mm/yyyy.
+​Audit Trail: Log every action: '[User] [Action] [ID/Subject] at [Time]'.
+​Responsiveness: Ensure tables and graphs scale perfectly for mobile and tablet views."
