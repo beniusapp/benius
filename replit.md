@@ -65,7 +65,12 @@ A school management platform with Super Admin functionality to manage schools, p
    - Level 3b (History): Date range picker, date-grouped records with student info, status badges, audit trail (markedBy, editCount)
    - Rules: 3-edit limit, 7-day window, no future dates, audit trail
    - API: GET /api/attendance/history/:schoolId/:class/:section/:startDate/:endDate returns enriched records with studentName and dsid
-3. **Homework** - Post homework with file attachments
+3. **Homework** - Enhanced EdTech module with:
+   - Creation form: Class/Section dropdowns (L.K.G-12, A-Z), subject input, description, auto-date (read-only today), multimedia dropzone with thumbnail preview and remove button
+   - Smart Post button: gradient styling, lock logic (disabled with "Select Class & Section to Post" until both selected)
+   - Social-feed history cards: subject pill badges (color-coded), teacher avatar with initials, view counter ("Viewed by X/Y students"), hover lift effect
+   - Inline edit/delete with ownership checks; delete confirmation prompt
+   - Backend: homework_views table for view tracking, PATCH/DELETE endpoints with teacher ownership enforcement, school authorization on GET, enriched API response with viewCount/totalStudents/teacherName
 4. **Classwork** - Post classwork with file attachments
 5. **Noticeboard** - Read admin notices, post notices to students
 6. **Complaint** - File complaints against students

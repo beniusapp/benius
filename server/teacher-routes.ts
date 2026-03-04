@@ -307,12 +307,12 @@ export function registerTeacherRoutes(app: Express) {
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
-    const { content, class: cls, section } = req.body;
+    const { content, subject, class: cls, section } = req.body;
     if (!content || !cls || !section) return res.status(400).json({ message: "Content, class, and section required" });
 
     const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
     const hw = await storage.createHomework({
-      teacherId: teacher.id, schoolId: teacher.schoolId, class: cls, section, content, fileUrl,
+      teacherId: teacher.id, schoolId: teacher.schoolId, class: cls, section, subject: subject || "General", content, fileUrl,
     });
     res.status(201).json(hw);
   });
@@ -320,8 +320,49 @@ export function registerTeacherRoutes(app: Express) {
   app.get("/api/homework/:schoolId/:class/:section", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const sid = parseInt(req.params.schoolId);
-    const list = await storage.getHomeworkByClass(sid, req.params.class, req.params.section);
-    res.json(list);
+    if (isNaN(sid)) return res.status(400).json({ message: "Invalid school ID" });
+
+    const sessionTeacher = await storage.getTeacherById(req.session.teacherId);
+    if (!sessionTeacher || sessionTeacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
+
+    const cls = req.params.class;
+    const section = req.params.section;
+    const list = await storage.getHomeworkByClass(sid, cls, section);
+    const totalStudents = await storage.getStudentCountByClassSection(sid, cls, section);
+
+    const teacherCache = new Map<number, string>();
+    const enriched = await Promise.all(list.map(async (hw) => {
+      const viewCount = await storage.getHomeworkViewCount(hw.id);
+      if (!teacherCache.has(hw.teacherId)) {
+        const t = await storage.getTeacherById(hw.teacherId);
+        teacherCache.set(hw.teacherId, t?.fullName || "Unknown");
+      }
+      return { ...hw, viewCount, totalStudents, teacherName: teacherCache.get(hw.teacherId)! };
+    }));
+    res.json(enriched);
+  });
+
+  app.patch("/api/homework/:id", diskUpload.single("file"), async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    const hw = await storage.getHomeworkById(id);
+    if (!hw) return res.status(404).json({ message: "Homework not found" });
+    if (hw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+
+    const { content, subject } = req.body;
+    const fileUrl = req.file ? `/uploads/${req.file.filename}` : (req.body.keepFile === "true" ? hw.fileUrl : null);
+    const updated = await storage.updateHomework(id, { content: content || hw.content, subject: subject || hw.subject, fileUrl });
+    res.json(updated);
+  });
+
+  app.delete("/api/homework/:id", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    const hw = await storage.getHomeworkById(id);
+    if (!hw) return res.status(404).json({ message: "Homework not found" });
+    if (hw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+    await storage.deleteHomework(id);
+    res.json({ message: "Homework deleted" });
   });
 
   // ===== CLASSWORK =====

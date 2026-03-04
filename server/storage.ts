@@ -1,12 +1,12 @@
 import {
   schools, students, users, teachers,
-  attendanceRecords, homework, classwork, notices,
+  attendanceRecords, homework, homeworkViews, classwork, notices,
   complaints, examScores, galleryItems, calendarEvents,
   libraryBooks, bookBorrows, leaveRequests, timetableEntries,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
-  type Homework, type InsertHomework, type Classwork, type InsertClasswork,
+  type Homework, type InsertHomework, type HomeworkView, type Classwork, type InsertClasswork,
   type Notice, type InsertNotice, type Complaint, type InsertComplaint,
   type ExamScore, type InsertExamScore, type GalleryItem, type InsertGalleryItem,
   type CalendarEvent, type InsertCalendarEvent, type LibraryBook, type InsertLibraryBook,
@@ -281,6 +281,41 @@ export class DatabaseStorage {
     return await db.select().from(homework).where(
       and(eq(homework.schoolId, schoolId), eq(homework.class, cls), eq(homework.section, section))
     ).orderBy(desc(homework.createdAt));
+  }
+
+  async updateHomework(id: number, data: { content: string; subject: string; fileUrl: string | null }): Promise<Homework> {
+    const [updated] = await db.update(homework).set(data).where(eq(homework.id, id)).returning();
+    return updated;
+  }
+
+  async deleteHomework(id: number): Promise<void> {
+    await db.delete(homework).where(eq(homework.id, id));
+  }
+
+  async getHomeworkById(id: number): Promise<Homework | undefined> {
+    const [hw] = await db.select().from(homework).where(eq(homework.id, id));
+    return hw;
+  }
+
+  async recordHomeworkView(homeworkId: number, studentId: number): Promise<void> {
+    const existing = await db.select().from(homeworkViews).where(
+      and(eq(homeworkViews.homeworkId, homeworkId), eq(homeworkViews.studentId, studentId))
+    );
+    if (existing.length === 0) {
+      await db.insert(homeworkViews).values({ homeworkId, studentId });
+    }
+  }
+
+  async getHomeworkViewCount(homeworkId: number): Promise<number> {
+    const result = await db.select({ count: count() }).from(homeworkViews).where(eq(homeworkViews.homeworkId, homeworkId));
+    return result[0]?.count || 0;
+  }
+
+  async getStudentCountByClassSection(schoolId: number, cls: string, section: string): Promise<number> {
+    const result = await db.select({ count: count() }).from(students).where(
+      and(eq(students.schoolId, schoolId), eq(students.class, cls), eq(students.section, section))
+    );
+    return result[0]?.count || 0;
   }
 
   // ===== CLASSWORK METHODS =====
