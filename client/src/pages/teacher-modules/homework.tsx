@@ -396,7 +396,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
                         </span>
                         <span className="text-xs text-muted-foreground flex items-center gap-1">
                           <Calendar className="w-3 h-3" />
-                          {new Date(entry.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                          {new Date(entry.createdAt).toLocaleDateString("en-GB")}
                         </span>
                         {isDueTomorrow && (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-100 text-orange-700 border border-orange-300 animate-pulse"
@@ -428,7 +428,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
                     {dueDateObj && (
                       <p className={`text-sm font-bold mb-2 ${isOverdue ? "text-gray-400 line-through" : "text-indigo-700 dark:text-indigo-400"}`}
                         data-testid={`text-due-date-${entry.id}`}>
-                        Due: {dueDateObj.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+                        Due: {dueDateObj.toLocaleDateString("en-GB")}
                       </p>
                     )}
 

@@ -330,6 +330,20 @@ export class DatabaseStorage {
     ).orderBy(desc(classwork.createdAt));
   }
 
+  async getClassworkById(id: number): Promise<Classwork | undefined> {
+    const [cw] = await db.select().from(classwork).where(eq(classwork.id, id));
+    return cw;
+  }
+
+  async updateClasswork(id: number, data: { content?: string; subject?: string; fileUrl?: string | null }): Promise<Classwork> {
+    const [cw] = await db.update(classwork).set(data).where(eq(classwork.id, id)).returning();
+    return cw;
+  }
+
+  async deleteClasswork(id: number): Promise<void> {
+    await db.delete(classwork).where(eq(classwork.id, id));
+  }
+
   // ===== NOTICE METHODS =====
   async createNotice(data: InsertNotice): Promise<Notice> {
     const [n] = await db.insert(notices).values(data).returning();

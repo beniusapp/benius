@@ -371,12 +371,13 @@ export function registerTeacherRoutes(app: Express) {
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
-    const { content, class: cls, section } = req.body;
+    const { content, class: cls, section, subject } = req.body;
     if (!content || !cls || !section) return res.status(400).json({ message: "Content, class, and section required" });
 
     const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
     const cw = await storage.createClasswork({
-      teacherId: teacher.id, schoolId: teacher.schoolId, class: cls, section, content, fileUrl,
+      teacherId: teacher.id, schoolId: teacher.schoolId, class: cls, section,
+      subject: subject || "General", content, fileUrl,
     });
     res.status(201).json(cw);
   });
@@ -384,15 +385,58 @@ export function registerTeacherRoutes(app: Express) {
   app.get("/api/classwork/:schoolId/:class/:section", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const sid = parseInt(req.params.schoolId);
-    const list = await storage.getClassworkByClass(sid, req.params.class, req.params.section);
-    res.json(list);
+
+    const sessionTeacher = await storage.getTeacherById(req.session.teacherId);
+    if (!sessionTeacher || sessionTeacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
+
+    const cls = req.params.class;
+    const section = req.params.section;
+    const list = await storage.getClassworkByClass(sid, cls, section);
+
+    const teacherCache = new Map<number, string>();
+    const enriched = await Promise.all(list.map(async (cw) => {
+      if (!teacherCache.has(cw.teacherId)) {
+        const t = await storage.getTeacherById(cw.teacherId);
+        teacherCache.set(cw.teacherId, t?.fullName || "Unknown");
+      }
+      return { ...cw, teacherName: teacherCache.get(cw.teacherId)! };
+    }));
+    res.json(enriched);
+  });
+
+  app.patch("/api/classwork/:id", diskUpload.single("file"), async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    const cw = await storage.getClassworkById(id);
+    if (!cw) return res.status(404).json({ message: "Classwork not found" });
+    if (cw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+
+    const { content, subject } = req.body;
+    const fileUrl = req.file ? `/uploads/${req.file.filename}` : (req.body.keepFile === "true" ? cw.fileUrl : null);
+    const updated = await storage.updateClasswork(id, { content: content || cw.content, subject: subject || cw.subject, fileUrl });
+    res.json(updated);
+  });
+
+  app.delete("/api/classwork/:id", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    const cw = await storage.getClassworkById(id);
+    if (!cw) return res.status(404).json({ message: "Classwork not found" });
+    if (cw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+    await storage.deleteClasswork(id);
+    res.json({ message: "Classwork deleted" });
   });
 
   // ===== NOTICES =====
   app.post("/api/notices", diskUpload.single("file"), async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
-    const { content, targetType, targetClass, targetSection, schoolId } = req.body;
+    const { content, targetType, targetClass, targetSection, schoolId, noticeType } = req.body;
     if (!content || !targetType || !schoolId) return res.status(400).json({ message: "Content, targetType, and schoolId required" });
+
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== parseInt(schoolId)) return res.status(403).json({ message: "Not authorized for this school" });
+    }
 
     const creatorRole = req.session.teacherId ? "teacher" : "admin";
     const createdById = req.session.teacherId || req.session.userId;
@@ -400,7 +444,8 @@ export function registerTeacherRoutes(app: Express) {
 
     const notice = await storage.createNotice({
       schoolId: parseInt(schoolId), createdById: createdById!, creatorRole, targetType,
-      targetClass: targetClass || null, targetSection: targetSection || null, content, fileUrl,
+      targetClass: targetClass || null, targetSection: targetSection || null,
+      noticeType: noticeType || "Routine", content, fileUrl,
     });
     res.status(201).json(notice);
   });
@@ -408,6 +453,12 @@ export function registerTeacherRoutes(app: Express) {
   app.get("/api/notices/:schoolId", async (req, res) => {
     if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const sid = parseInt(req.params.schoolId);
+
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
+    }
+
     const targetType = (req.query.target as string) || "teacher";
     const cls = req.query.class as string | undefined;
     const section = req.query.section as string | undefined;

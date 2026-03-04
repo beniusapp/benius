@@ -33,8 +33,8 @@ A school management platform with Super Admin functionality to manage schools, p
 - **teachers**: id, user_id, school_id, full_name, phone, subject, assigned_class, assigned_section, must_change_password
 - **attendance_records**: id, student_id, teacher_id, school_id, date, status, edit_count, marked_by, marked_at
 - **homework**: id, teacher_id, school_id, class, section, content, file_url, created_at
-- **classwork**: id, teacher_id, school_id, class, section, content, file_url, created_at
-- **notices**: id, school_id, created_by_id, creator_role, target_type, target_class, target_section, content, file_url, created_at
+- **classwork**: id, teacher_id, school_id, class, section, subject, content, file_url, created_at
+- **notices**: id, school_id, created_by_id, creator_role, target_type, target_class (varchar 50), target_section (varchar 100), notice_type, content, file_url, created_at
 - **complaints**: id, teacher_id, student_id, school_id, content, created_at
 - **exam_scores**: id, student_id, teacher_id, school_id, subject, exam_type, marks, created_at
 - **gallery_items**: id, school_id, uploaded_by_id, title, image_url, approved, created_at
@@ -73,8 +73,20 @@ A school management platform with Super Admin functionality to manage schools, p
    - Due Date field: required future date, button shows "Set a Future Due Date to Post" until valid date selected; editable in inline edit form
    - Inline edit/delete with ownership checks; delete confirmation prompt
    - Backend: homework table has `due_date` column, homework_views table for view tracking, PATCH/DELETE endpoints with teacher ownership enforcement, school authorization on GET, enriched API response with viewCount/totalStudents/teacherName
-4. **Classwork** - Post classwork with file attachments
-5. **Noticeboard** - Read admin notices, post notices to students
+4. **Classwork** - Enhanced "Class Activity / Lesson Log" module (mirrors Homework UI, no due date):
+   - Creation form: Class/Section dropdowns (L.K.G-12, A-Z), subject input, description, auto-date (read-only today), multimedia dropzone with thumbnail preview and remove button
+   - Smart Post button: emerald/teal gradient, lock logic ("Select Class & Section to Post")
+   - Social-feed history cards: subject pill badges (color-coded), teacher avatar with initials, dd/mm/yyyy dates, hover lift effect
+   - Inline edit/delete with ownership checks; delete confirmation prompt
+   - Backend: classwork table has `subject` column, PATCH/DELETE endpoints with teacher ownership enforcement, enriched GET with teacherName
+5. **Noticeboard** - Professional notice system with smart targeting:
+   - Two tabs: "From Admin" (view admin notices) and "Post to Students" (create targeted notices)
+   - Smart Targeting System with scope toggle: Specific Section (class + multi-select section pills A-Z), Entire Class (class only, all sections), Class Range (from/to class dropdowns)
+   - Notice Type dropdown: Routine, Urgent, Holiday, Exam, Event
+   - Color-coded notice cards: Routine=slate, Urgent=red, Holiday=green, Exam=blue, Event=purple (border + accent + pill badge)
+   - Multimedia dropzone with preview, smart post button (amber/orange gradient)
+   - Backend: notices table has `notice_type`, extended `target_class` (50 chars for ranges), `target_section` (100 chars for comma-separated), school ownership enforcement on POST/GET
+   - All dates in dd/mm/yyyy format
 6. **Complaint** - File complaints against students
 7. **Examination** - Enter exam scores (gradebook)
 8. **Gallery** - View school gallery, upload images for approval
