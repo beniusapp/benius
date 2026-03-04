@@ -106,9 +106,25 @@ export const notices = pgTable("notices", {
 
 export const complaints = pgTable("complaints", {
   id: serial("id").primaryKey(),
+  ticketId: varchar("ticket_id", { length: 30 }).notNull(),
   teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
-  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").references(() => students.id, { onDelete: "cascade" }),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  complaintType: varchar("complaint_type", { length: 30 }).notNull().default("teacher-to-student"),
+  status: varchar("status", { length: 20 }).notNull().default("Pending"),
+  content: text("content").notNull(),
+  reportedStudentName: varchar("reported_student_name", { length: 100 }),
+  fileUrl: text("file_url"),
+  isDeleted: boolean("is_deleted").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const complaintNotes = pgTable("complaint_notes", {
+  id: serial("id").primaryKey(),
+  complaintId: integer("complaint_id").notNull().references(() => complaints.id, { onDelete: "cascade" }),
+  authorId: integer("author_id").notNull(),
+  authorRole: varchar("author_role", { length: 20 }).notNull(),
+  authorName: varchar("author_name", { length: 100 }).notNull(),
   content: text("content").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -121,6 +137,8 @@ export const examScores = pgTable("exam_scores", {
   subject: text("subject").notNull(),
   examType: text("exam_type").notNull(),
   marks: integer("marks").notNull(),
+  totalMarks: integer("total_marks").notNull().default(100),
+  isAbsent: boolean("is_absent").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -249,6 +267,10 @@ export type Notice = typeof notices.$inferSelect;
 export const insertComplaintSchema = createInsertSchema(complaints).omit({ id: true, createdAt: true });
 export type InsertComplaint = z.infer<typeof insertComplaintSchema>;
 export type Complaint = typeof complaints.$inferSelect;
+
+export const insertComplaintNoteSchema = createInsertSchema(complaintNotes).omit({ id: true, createdAt: true });
+export type InsertComplaintNote = z.infer<typeof insertComplaintNoteSchema>;
+export type ComplaintNote = typeof complaintNotes.$inferSelect;
 
 export const insertExamScoreSchema = createInsertSchema(examScores).omit({ id: true, createdAt: true });
 export type InsertExamScore = z.infer<typeof insertExamScoreSchema>;

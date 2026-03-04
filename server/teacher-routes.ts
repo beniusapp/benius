@@ -467,24 +467,122 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   // ===== COMPLAINTS =====
-  app.post("/api/complaints", async (req, res) => {
+  app.post("/api/complaints", diskUpload.single("file"), async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
-    const { studentId, content } = req.body;
-    if (!studentId || !content) return res.status(400).json({ message: "Student and content required" });
+    const { studentId, content, complaintType, reportedStudentName } = req.body;
+    if (!content) return res.status(400).json({ message: "Content required" });
+    if (complaintType !== "teacher-to-admin" && !studentId) return res.status(400).json({ message: "Student required for this complaint type" });
+
+    const ticketId = await storage.getNextTicketId(teacher.schoolId);
+    const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
 
     const complaint = await storage.createComplaint({
-      teacherId: teacher.id, studentId: parseInt(studentId), schoolId: teacher.schoolId, content,
+      ticketId,
+      teacherId: teacher.id,
+      studentId: complaintType === "teacher-to-admin" ? null : parseInt(studentId),
+      schoolId: teacher.schoolId,
+      complaintType: complaintType || "teacher-to-student",
+      content,
+      reportedStudentName: reportedStudentName || null,
+      fileUrl,
     });
     res.status(201).json(complaint);
   });
 
   app.get("/api/complaints/teacher/:teacherId", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const list = await storage.getComplaintsByTeacher(parseInt(req.params.teacherId));
+    const tid = parseInt(req.params.teacherId);
+    if (tid !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+    const list = await storage.getComplaintsByTeacher(tid);
     res.json(list);
+  });
+
+  app.patch("/api/complaints/:id", diskUpload.single("file"), async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    const c = await storage.getComplaintById(id);
+    if (!c) return res.status(404).json({ message: "Complaint not found" });
+    if (c.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+    if (c.status !== "Pending") return res.status(400).json({ message: "Cannot edit — complaint is no longer pending" });
+
+    const { content } = req.body;
+    const fileUrl = req.file ? `/uploads/${req.file.filename}` : (req.body.keepFile === "true" ? c.fileUrl : null);
+    const updated = await storage.updateComplaint(id, { content: content || c.content, fileUrl });
+    res.json(updated);
+  });
+
+  app.delete("/api/complaints/:id", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    const c = await storage.getComplaintById(id);
+    if (!c) return res.status(404).json({ message: "Complaint not found" });
+    if (c.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+    if (c.status !== "Pending") return res.status(400).json({ message: "Cannot delete — complaint is no longer pending" });
+    await storage.softDeleteComplaint(id);
+    res.json({ message: "Complaint deleted" });
+  });
+
+  app.patch("/api/complaints/:id/status", async (req, res) => {
+    if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    const c = await storage.getComplaintById(id);
+    if (!c) return res.status(404).json({ message: "Complaint not found" });
+
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== c.schoolId) return res.status(403).json({ message: "Not authorized for this school" });
+    }
+
+    const { status } = req.body;
+    if (!["Pending", "Investigating", "Resolved"].includes(status)) return res.status(400).json({ message: "Invalid status" });
+    const updated = await storage.updateComplaintStatus(id, status);
+    res.json(updated);
+  });
+
+  app.post("/api/complaints/:id/notes", async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const complaintId = parseInt(req.params.id);
+    const c = await storage.getComplaintById(complaintId);
+    if (!c) return res.status(404).json({ message: "Complaint not found" });
+
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== c.schoolId) return res.status(403).json({ message: "Not authorized for this school" });
+    }
+
+    const { content } = req.body;
+    if (!content) return res.status(400).json({ message: "Content required" });
+
+    let authorName = "Admin";
+    let authorRole = "admin";
+    let authorId = req.session.userId || 0;
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      authorName = teacher?.fullName || "Teacher";
+      authorRole = "teacher";
+      authorId = req.session.teacherId;
+    }
+
+    const note = await storage.addComplaintNote({ complaintId, authorId, authorRole, authorName, content });
+    res.status(201).json(note);
+  });
+
+  app.get("/api/complaints/:id/notes", async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const complaintId = parseInt(req.params.id);
+    const c = await storage.getComplaintById(complaintId);
+    if (!c) return res.status(404).json({ message: "Complaint not found" });
+
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== c.schoolId) return res.status(403).json({ message: "Not authorized for this school" });
+    }
+
+    const notes = await storage.getComplaintNotes(complaintId);
+    res.json(notes);
   });
 
   // ===== EXAMINATION =====
@@ -493,16 +591,19 @@ export function registerTeacherRoutes(app: Express) {
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
-    const { scores, subject, examType } = req.body;
+    const { scores, subject, examType, totalMarks } = req.body;
     if (!Array.isArray(scores) || !subject || !examType) return res.status(400).json({ message: "Scores, subject, and examType required" });
 
+    const maxMarks = parseInt(totalMarks) || 100;
     const formattedScores = scores.map((s: any) => ({
       studentId: s.studentId,
       teacherId: teacher.id,
       schoolId: teacher.schoolId,
       subject,
       examType,
-      marks: parseInt(s.marks),
+      marks: s.isAbsent ? 0 : parseInt(s.marks) || 0,
+      totalMarks: maxMarks,
+      isAbsent: !!s.isAbsent,
     }));
 
     const saved = await storage.upsertExamScores(formattedScores);
@@ -513,6 +614,18 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const { schoolId, subject, examType, class: cls, section } = req.params;
     const list = await storage.getExamScores(parseInt(schoolId), decodeURIComponent(subject), decodeURIComponent(examType), cls, section);
+    res.json(list);
+  });
+
+  app.get("/api/exam-scores/student/:studentId/:schoolId", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const studentId = parseInt(req.params.studentId);
+    const schoolId = parseInt(req.params.schoolId);
+
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher || teacher.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized for this school" });
+
+    const list = await storage.getExamScoresByStudent(studentId, schoolId);
     res.json(list);
   });
 

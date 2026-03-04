@@ -1,13 +1,14 @@
 import {
   schools, students, users, teachers,
   attendanceRecords, homework, homeworkViews, classwork, notices,
-  complaints, examScores, galleryItems, calendarEvents,
+  complaints, complaintNotes, examScores, galleryItems, calendarEvents,
   libraryBooks, bookBorrows, leaveRequests, timetableEntries,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
   type Homework, type InsertHomework, type HomeworkView, type Classwork, type InsertClasswork,
   type Notice, type InsertNotice, type Complaint, type InsertComplaint,
+  type ComplaintNote, type InsertComplaintNote,
   type ExamScore, type InsertExamScore, type GalleryItem, type InsertGalleryItem,
   type CalendarEvent, type InsertCalendarEvent, type LibraryBook, type InsertLibraryBook,
   type BookBorrow, type InsertBookBorrow, type LeaveRequest, type InsertLeaveRequest,
@@ -357,33 +358,80 @@ export class DatabaseStorage {
   }
 
   // ===== COMPLAINT METHODS =====
+  async getNextTicketId(schoolId: number): Promise<string> {
+    const year = new Date().getFullYear();
+    const prefix = `#DISC-${year}-`;
+    const result = await db.select({ ticketId: complaints.ticketId })
+      .from(complaints)
+      .where(and(eq(complaints.schoolId, schoolId), like(complaints.ticketId, `${prefix}%`)))
+      .orderBy(desc(complaints.id))
+      .limit(1);
+    let seq = 1;
+    if (result.length > 0) {
+      const last = result[0].ticketId;
+      const num = parseInt(last.split("-").pop() || "0");
+      if (!isNaN(num)) seq = num + 1;
+    }
+    return `${prefix}${String(seq).padStart(3, "0")}`;
+  }
+
   async createComplaint(data: InsertComplaint): Promise<Complaint> {
     const [c] = await db.insert(complaints).values(data).returning();
     return c;
   }
 
-  async getComplaintsBySchool(schoolId: number): Promise<(Complaint & { studentName: string; teacherName: string })[]> {
+  async getComplaintById(id: number): Promise<Complaint | undefined> {
+    const [c] = await db.select().from(complaints).where(eq(complaints.id, id));
+    return c;
+  }
+
+  async updateComplaint(id: number, data: { content?: string; fileUrl?: string | null }): Promise<Complaint> {
+    const [c] = await db.update(complaints).set(data).where(eq(complaints.id, id)).returning();
+    return c;
+  }
+
+  async softDeleteComplaint(id: number): Promise<void> {
+    await db.update(complaints).set({ isDeleted: true }).where(eq(complaints.id, id));
+  }
+
+  async updateComplaintStatus(id: number, status: string): Promise<Complaint> {
+    const [c] = await db.update(complaints).set({ status }).where(eq(complaints.id, id)).returning();
+    return c;
+  }
+
+  async getComplaintsBySchool(schoolId: number): Promise<(Complaint & { studentName: string | null; teacherName: string })[]> {
     const result = await db.select().from(complaints)
-      .innerJoin(students, eq(complaints.studentId, students.id))
+      .leftJoin(students, eq(complaints.studentId, students.id))
       .innerJoin(teachers, eq(complaints.teacherId, teachers.id))
-      .where(eq(complaints.schoolId, schoolId))
+      .where(and(eq(complaints.schoolId, schoolId), eq(complaints.isDeleted, false)))
       .orderBy(desc(complaints.createdAt));
     return result.map(r => ({
       ...r.complaints,
-      studentName: r.students.name,
+      studentName: r.students?.name || null,
       teacherName: r.teachers.fullName,
     }));
   }
 
-  async getComplaintsByTeacher(teacherId: number): Promise<(Complaint & { studentName: string })[]> {
+  async getComplaintsByTeacher(teacherId: number): Promise<(Complaint & { studentName: string | null })[]> {
     const result = await db.select().from(complaints)
-      .innerJoin(students, eq(complaints.studentId, students.id))
-      .where(eq(complaints.teacherId, teacherId))
+      .leftJoin(students, eq(complaints.studentId, students.id))
+      .where(and(eq(complaints.teacherId, teacherId), eq(complaints.isDeleted, false)))
       .orderBy(desc(complaints.createdAt));
     return result.map(r => ({
       ...r.complaints,
-      studentName: r.students.name,
+      studentName: r.students?.name || null,
     }));
+  }
+
+  async addComplaintNote(data: InsertComplaintNote): Promise<ComplaintNote> {
+    const [n] = await db.insert(complaintNotes).values(data).returning();
+    return n;
+  }
+
+  async getComplaintNotes(complaintId: number): Promise<ComplaintNote[]> {
+    return await db.select().from(complaintNotes)
+      .where(eq(complaintNotes.complaintId, complaintId))
+      .orderBy(complaintNotes.createdAt);
   }
 
   // ===== EXAM SCORE METHODS =====
@@ -398,7 +446,9 @@ export class DatabaseStorage {
         )
       );
       if (existing.length > 0) {
-        const [updated] = await db.update(examScores).set({ marks: score.marks }).where(eq(examScores.id, existing[0].id)).returning();
+        const [updated] = await db.update(examScores)
+          .set({ marks: score.marks, totalMarks: score.totalMarks, isAbsent: score.isAbsent })
+          .where(eq(examScores.id, existing[0].id)).returning();
         results.push(updated);
       } else {
         const [created] = await db.insert(examScores).values(score).returning();
@@ -425,6 +475,12 @@ export class DatabaseStorage {
       studentName: r.students.name,
       dsid: r.students.digitalStudentId,
     }));
+  }
+
+  async getExamScoresByStudent(studentId: number, schoolId: number): Promise<ExamScore[]> {
+    return await db.select().from(examScores)
+      .where(and(eq(examScores.studentId, studentId), eq(examScores.schoolId, schoolId)))
+      .orderBy(examScores.examType);
   }
 
   // ===== GALLERY METHODS =====
