@@ -148,6 +148,8 @@ export const galleryItems = pgTable("gallery_items", {
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
   uploadedById: integer("uploaded_by_id").notNull(),
   title: text("title").notNull(),
+  description: text("description"),
+  eventTag: text("event_tag"),
   imageUrl: text("image_url").notNull(),
   approved: boolean("approved").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -167,6 +169,12 @@ export const libraryBooks = pgTable("library_books", {
   title: text("title").notNull(),
   author: text("author").notNull(),
   isbn: varchar("isbn", { length: 20 }),
+  targetClass: text("target_class"),
+  category: text("category"),
+  fileUrl: text("file_url"),
+  fileType: text("file_type"),
+  uploadedById: integer("uploaded_by_id"),
+  verificationStatus: text("verification_status").notNull().default("approved"),
   totalCopies: integer("total_copies").notNull().default(1),
   availableCopies: integer("available_copies").notNull().default(1),
 });
@@ -190,6 +198,7 @@ export const leaveRequests = pgTable("leave_requests", {
   endDate: date("end_date").notNull(),
   reason: text("reason").notNull(),
   status: text("status").notNull().default("pending"),
+  approvedBy: integer("approved_by"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -212,6 +221,31 @@ export const timetableEntries = pgTable("timetable_entries", {
   class: varchar("class", { length: 20 }).notNull(),
   section: varchar("section", { length: 10 }).notNull(),
   subject: text("subject").notNull(),
+});
+
+export const studentLeaveRequests = pgTable("student_leave_requests", {
+  id: serial("id").primaryKey(),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default("pending"),
+  reviewedBy: integer("reviewed_by"),
+  reviewerRole: text("reviewer_role"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const auditLogs = pgTable("audit_logs", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull(),
+  actionType: text("action_type").notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: integer("entity_id").notNull(),
+  actionBy: integer("action_by").notNull(),
+  actionByRole: text("action_by_role").notNull(),
+  details: text("details"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const schoolsRelations = relations(schools, ({ many }) => ({
@@ -314,3 +348,11 @@ export type TimetableEntry = typeof timetableEntries.$inferSelect;
 export const insertSchoolMetadataSchema = createInsertSchema(schoolMetadata).omit({ id: true, updatedAt: true });
 export type InsertSchoolMetadata = z.infer<typeof insertSchoolMetadataSchema>;
 export type SchoolMetadata = typeof schoolMetadata.$inferSelect;
+
+export const insertStudentLeaveRequestSchema = createInsertSchema(studentLeaveRequests).omit({ id: true, createdAt: true });
+export type InsertStudentLeaveRequest = z.infer<typeof insertStudentLeaveRequestSchema>;
+export type StudentLeaveRequest = typeof studentLeaveRequests.$inferSelect;
+
+export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, createdAt: true });
+export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+export type AuditLog = typeof auditLogs.$inferSelect;

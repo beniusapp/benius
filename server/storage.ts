@@ -3,6 +3,7 @@ import {
   attendanceRecords, homework, homeworkViews, classwork, notices,
   complaints, complaintNotes, examScores, galleryItems, calendarEvents,
   libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata,
+  studentLeaveRequests, auditLogs,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
@@ -14,6 +15,8 @@ import {
   type BookBorrow, type InsertBookBorrow, type LeaveRequest, type InsertLeaveRequest,
   type TimetableEntry, type InsertTimetableEntry,
   type SchoolMetadata,
+  type StudentLeaveRequest, type InsertStudentLeaveRequest,
+  type AuditLog, type InsertAuditLog,
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
@@ -110,6 +113,11 @@ export class DatabaseStorage {
   async createStudent(insertStudent: InsertStudent): Promise<Student> {
     const [student] = await db.insert(students).values(insertStudent).returning();
     return student;
+  }
+
+  async getStudentById(id: number): Promise<Student | undefined> {
+    const [student] = await db.select().from(students).where(eq(students.id, id));
+    return student || undefined;
   }
 
   async getStudentByDsid(dsid: string): Promise<Student | undefined> {
@@ -764,6 +772,129 @@ export class DatabaseStorage {
       )
     ).limit(15);
     return results;
+  }
+
+  // ===== STUDENT LEAVE REQUESTS =====
+  async createStudentLeaveRequest(data: InsertStudentLeaveRequest): Promise<StudentLeaveRequest> {
+    const [req] = await db.insert(studentLeaveRequests).values(data).returning();
+    return req;
+  }
+
+  async getStudentLeavesByClassSection(schoolId: number, cls: string, section: string): Promise<(StudentLeaveRequest & { studentName: string; dsid: string })[]> {
+    const result = await db.select().from(studentLeaveRequests)
+      .innerJoin(students, eq(studentLeaveRequests.studentId, students.id))
+      .where(
+        and(
+          eq(studentLeaveRequests.schoolId, schoolId),
+          eq(students.class, cls),
+          eq(students.section, section)
+        )
+      )
+      .orderBy(desc(studentLeaveRequests.createdAt));
+    return result.map(r => ({
+      ...r.student_leave_requests,
+      studentName: r.students.name,
+      dsid: r.students.digitalStudentId,
+    }));
+  }
+
+  async updateStudentLeaveStatus(id: number, status: string, reviewedBy: number, reviewerRole: string): Promise<StudentLeaveRequest> {
+    const [req] = await db.update(studentLeaveRequests)
+      .set({ status, reviewedBy, reviewerRole })
+      .where(eq(studentLeaveRequests.id, id)).returning();
+    return req;
+  }
+
+  async getStudentLeaveById(id: number): Promise<StudentLeaveRequest | null> {
+    const [req] = await db.select().from(studentLeaveRequests).where(eq(studentLeaveRequests.id, id));
+    return req || null;
+  }
+
+  async markAttendanceAsLeave(studentId: number, teacherId: number, schoolId: number, startDate: string, endDate: string): Promise<void> {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      if (d.getDay() === 0) continue;
+      const dateStr = d.toISOString().split("T")[0];
+      const existing = await db.select().from(attendanceRecords)
+        .where(and(eq(attendanceRecords.studentId, studentId), eq(attendanceRecords.date, dateStr), eq(attendanceRecords.schoolId, schoolId)));
+      if (existing.length > 0) {
+        await db.update(attendanceRecords)
+          .set({ status: "leave", markedBy: "System (Leave Approved)", markedAt: new Date() })
+          .where(eq(attendanceRecords.id, existing[0].id));
+      } else {
+        await db.insert(attendanceRecords).values({
+          studentId, teacherId, schoolId, date: dateStr,
+          status: "leave", editCount: 0, markedBy: "System (Leave Approved)", markedAt: new Date(),
+        });
+      }
+    }
+  }
+
+  // ===== AUDIT LOGS =====
+  async createAuditLog(data: InsertAuditLog): Promise<AuditLog> {
+    const [log] = await db.insert(auditLogs).values(data).returning();
+    return log;
+  }
+
+  async getAuditLogs(schoolId: number, limit: number = 100): Promise<AuditLog[]> {
+    return await db.select().from(auditLogs)
+      .where(eq(auditLogs.schoolId, schoolId))
+      .orderBy(desc(auditLogs.createdAt))
+      .limit(limit);
+  }
+
+  // ===== ENHANCED LIBRARY =====
+  async updateBookVerificationStatus(id: number, status: string): Promise<LibraryBook> {
+    const [book] = await db.update(libraryBooks)
+      .set({ verificationStatus: status })
+      .where(eq(libraryBooks.id, id)).returning();
+    return book;
+  }
+
+  async searchLibraryBooksAdvanced(schoolId: number, query: string): Promise<LibraryBook[]> {
+    return await db.select().from(libraryBooks).where(
+      and(
+        eq(libraryBooks.schoolId, schoolId),
+        or(
+          ilike(libraryBooks.title, `%${query}%`),
+          ilike(libraryBooks.author, `%${query}%`),
+          ilike(libraryBooks.targetClass, `%${query}%`)
+        )
+      )
+    );
+  }
+
+  // ===== TEACHER LEAVE BALANCE =====
+  async getTeacherLeaveBalance(teacherId: number): Promise<{ sick: number; casual: number; earned: number }> {
+    const year = new Date().getFullYear();
+    const startOfYear = `${year}-01-01`;
+    const endOfYear = `${year}-12-31`;
+    const approved = await db.select().from(leaveRequests)
+      .where(
+        and(
+          eq(leaveRequests.teacherId, teacherId),
+          eq(leaveRequests.status, "approved"),
+          gte(leaveRequests.startDate, startOfYear),
+          lte(leaveRequests.endDate, endOfYear)
+        )
+      );
+    let sick = 0, casual = 0, earned = 0;
+    for (const r of approved) {
+      const start = new Date(r.startDate);
+      const end = new Date(r.endDate);
+      const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      const type = r.leaveType.toLowerCase();
+      if (type.includes("sick")) sick += days;
+      else if (type.includes("casual")) casual += days;
+      else earned += days;
+    }
+    return { sick, casual, earned };
+  }
+
+  async updateLeaveStatusWithApprover(id: number, status: string, approvedBy: number): Promise<LeaveRequest> {
+    const [req] = await db.update(leaveRequests).set({ status, approvedBy }).where(eq(leaveRequests.id, id)).returning();
+    return req;
   }
 }
 
