@@ -496,7 +496,8 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const tid = parseInt(req.params.teacherId);
     if (tid !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
-    const list = await storage.getComplaintsByTeacher(tid);
+    const teacher = await storage.getTeacherById(tid);
+    const list = await storage.getComplaintsByTeacher(tid, teacher?.assignedClass, teacher?.assignedSection);
     res.json(list);
   });
 
@@ -617,6 +618,16 @@ export function registerTeacherRoutes(app: Express) {
     res.json(list);
   });
 
+  app.get("/api/exam-scores/class-average/:schoolId/:class/:section/:subject", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const { schoolId, class: cls, section, subject } = req.params;
+    const sid = parseInt(schoolId);
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
+    const averages = await storage.getClassAverages(sid, decodeURIComponent(cls), decodeURIComponent(section), decodeURIComponent(subject));
+    res.json(averages);
+  });
+
   app.get("/api/exam-scores/student/:studentId/:schoolId", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const studentId = parseInt(req.params.studentId);
@@ -627,6 +638,33 @@ export function registerTeacherRoutes(app: Express) {
 
     const list = await storage.getExamScoresByStudent(studentId, schoolId);
     res.json(list);
+  });
+
+  // ===== SCHOOL CONFIG (Teacher Read-Only) =====
+  app.get("/api/school-config/:schoolId", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher || teacher.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const meta = await storage.getAllSchoolMetadata(schoolId);
+    res.json({
+      classes: meta.classes || [],
+      sections: meta.sections || [],
+      subjects: meta.subjects || [],
+      examTypes: meta.exam_types || [],
+    });
+  });
+
+  // ===== STUDENT SEARCH =====
+  app.get("/api/students/search/:schoolId", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher || teacher.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const q = (req.query.q as string) || "";
+    if (q.length < 2) return res.json([]);
+    const results = await storage.searchStudents(schoolId, q);
+    res.json(results);
   });
 
   // ===== GALLERY =====

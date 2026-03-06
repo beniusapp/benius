@@ -2,7 +2,7 @@ import {
   schools, students, users, teachers,
   attendanceRecords, homework, homeworkViews, classwork, notices,
   complaints, complaintNotes, examScores, galleryItems, calendarEvents,
-  libraryBooks, bookBorrows, leaveRequests, timetableEntries,
+  libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
@@ -13,6 +13,7 @@ import {
   type CalendarEvent, type InsertCalendarEvent, type LibraryBook, type InsertLibraryBook,
   type BookBorrow, type InsertBookBorrow, type LeaveRequest, type InsertLeaveRequest,
   type TimetableEntry, type InsertTimetableEntry,
+  type SchoolMetadata,
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
@@ -412,15 +413,43 @@ export class DatabaseStorage {
     }));
   }
 
-  async getComplaintsByTeacher(teacherId: number): Promise<(Complaint & { studentName: string | null })[]> {
-    const result = await db.select().from(complaints)
+  async getComplaintsByTeacher(teacherId: number, assignedClass?: string, assignedSection?: string): Promise<(Complaint & { studentName: string | null })[]> {
+    const ownComplaints = await db.select().from(complaints)
       .leftJoin(students, eq(complaints.studentId, students.id))
       .where(and(eq(complaints.teacherId, teacherId), eq(complaints.isDeleted, false)))
       .orderBy(desc(complaints.createdAt));
-    return result.map(r => ({
+
+    const ownResults = ownComplaints.map(r => ({
       ...r.complaints,
       studentName: r.students?.name || null,
     }));
+
+    if (assignedClass && assignedSection) {
+      const s2sFromOthers = await db.select().from(complaints)
+        .leftJoin(students, eq(complaints.studentId, students.id))
+        .where(
+          and(
+            eq(complaints.isDeleted, false),
+            eq(complaints.complaintType, "student-to-student"),
+            sql`${complaints.teacherId} != ${teacherId}`,
+            eq(students.class, assignedClass),
+            eq(students.section, assignedSection)
+          )
+        )
+        .orderBy(desc(complaints.createdAt));
+
+      const s2sResults = s2sFromOthers.map(r => ({
+        ...r.complaints,
+        studentName: r.students?.name || null,
+      }));
+
+      const merged = [...ownResults, ...s2sResults];
+      merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const seen = new Set<number>();
+      return merged.filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; });
+    }
+
+    return ownResults;
   }
 
   async addComplaintNote(data: InsertComplaintNote): Promise<ComplaintNote> {
@@ -481,6 +510,33 @@ export class DatabaseStorage {
     return await db.select().from(examScores)
       .where(and(eq(examScores.studentId, studentId), eq(examScores.schoolId, schoolId)))
       .orderBy(examScores.examType);
+  }
+
+  async getClassAverages(schoolId: number, cls: string, section: string, subject: string): Promise<{ examType: string; avgPercentage: number }[]> {
+    const studentList = await this.getStudentsByClassSection(schoolId, cls, section);
+    const studentIds = studentList.map(s => s.id);
+    if (studentIds.length === 0) return [];
+
+    const allScores = await db.select().from(examScores).where(
+      and(
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.subject, subject),
+        eq(examScores.isAbsent, false)
+      )
+    );
+
+    const filtered = allScores.filter(s => studentIds.includes(s.studentId));
+    const grouped: Record<string, { total: number; count: number }> = {};
+    for (const s of filtered) {
+      if (!grouped[s.examType]) grouped[s.examType] = { total: 0, count: 0 };
+      grouped[s.examType].total += Math.round((s.marks / s.totalMarks) * 100);
+      grouped[s.examType].count++;
+    }
+
+    return Object.entries(grouped).map(([examType, data]) => ({
+      examType,
+      avgPercentage: Math.round(data.total / data.count),
+    }));
   }
 
   // ===== GALLERY METHODS =====
@@ -653,6 +709,57 @@ export class DatabaseStorage {
 
   async clearTeacherResetToken(teacherId: number): Promise<void> {
     await db.update(teachers).set({ resetToken: null, resetTokenExpiresAt: null }).where(eq(teachers.id, teacherId));
+  }
+
+  // ===== SCHOOL METADATA METHODS =====
+  async getSchoolMetadata(schoolId: number, metaKey: string): Promise<string[]> {
+    const [row] = await db.select().from(schoolMetadata)
+      .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, metaKey)));
+    if (!row) return [];
+    try { return JSON.parse(row.metaValue); } catch { return []; }
+  }
+
+  async setSchoolMetadata(schoolId: number, metaKey: string, values: string[]): Promise<SchoolMetadata> {
+    const metaValue = JSON.stringify(values);
+    const existing = await db.select().from(schoolMetadata)
+      .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, metaKey)));
+    if (existing.length > 0) {
+      const [updated] = await db.update(schoolMetadata)
+        .set({ metaValue, updatedAt: new Date() })
+        .where(eq(schoolMetadata.id, existing[0].id)).returning();
+      return updated;
+    }
+    const [created] = await db.insert(schoolMetadata)
+      .values({ schoolId, metaKey, metaValue }).returning();
+    return created;
+  }
+
+  async getAllSchoolMetadata(schoolId: number): Promise<Record<string, string[]>> {
+    const rows = await db.select().from(schoolMetadata)
+      .where(eq(schoolMetadata.schoolId, schoolId));
+    const result: Record<string, string[]> = {};
+    for (const row of rows) {
+      try { result[row.metaKey] = JSON.parse(row.metaValue); } catch { result[row.metaKey] = []; }
+    }
+    return result;
+  }
+
+  // ===== STUDENT SEARCH =====
+  async searchStudents(schoolId: number, query: string): Promise<Pick<Student, 'id' | 'name' | 'digitalStudentId' | 'class' | 'section' | 'photoUrl'>[]> {
+    const results = await db.select({
+      id: students.id,
+      name: students.name,
+      digitalStudentId: students.digitalStudentId,
+      class: students.class,
+      section: students.section,
+      photoUrl: students.photoUrl,
+    }).from(students).where(
+      and(
+        eq(students.schoolId, schoolId),
+        or(ilike(students.name, `%${query}%`), ilike(students.digitalStudentId, `%${query}%`))
+      )
+    ).limit(15);
+    return results;
   }
 }
 

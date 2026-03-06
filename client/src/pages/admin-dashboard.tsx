@@ -7,7 +7,7 @@ import { z } from "zod";
 import {
   GraduationCap, Loader2, LogOut, Users, Upload, AlertTriangle, UserPlus,
   ChevronDown, ChevronUp, Trash2, BookOpen, Calendar, Bell, Image,
-  Clock, CalendarOff, Check, X,
+  Clock, CalendarOff, Check, X, Settings, Plus,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -155,6 +155,15 @@ export default function AdminDashboard() {
   const [ttSection, setTtSection] = useState("");
   const [ttSubject, setTtSubject] = useState("");
 
+  const [settingsClasses, setSettingsClasses] = useState<string[]>([]);
+  const [settingsSections, setSettingsSections] = useState<string[]>([]);
+  const [settingsSubjects, setSettingsSubjects] = useState<string[]>([]);
+  const [settingsExamTypes, setSettingsExamTypes] = useState<string[]>([]);
+  const [newClassInput, setNewClassInput] = useState("");
+  const [newSubjectInput, setNewSubjectInput] = useState("");
+  const [newExamTypeInput, setNewExamTypeInput] = useState("");
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+
   const form = useForm<AddStudentForm>({
     resolver: zodResolver(addStudentSchema),
     defaultValues: { name: "", class: "", section: "", phone: "", dob: "" },
@@ -252,6 +261,41 @@ export default function AdminDashboard() {
     },
     enabled: !!me?.schoolId,
   });
+
+  const { data: schoolMetaData } = useQuery<{ classes: string[]; sections: string[]; subjects: string[]; exam_types: string[] }>({
+    queryKey: ["/api/school-metadata", me?.schoolId],
+    queryFn: async () => {
+      if (!me?.schoolId) return { classes: [], sections: [], subjects: [], exam_types: [] };
+      const res = await fetch(`/api/school-metadata/${me.schoolId}`, { credentials: "include" });
+      if (!res.ok) return { classes: [], sections: [], subjects: [], exam_types: [] };
+      return res.json();
+    },
+    enabled: !!me?.schoolId,
+  });
+
+  useEffect(() => {
+    if (schoolMetaData && !settingsLoaded) {
+      setSettingsClasses(schoolMetaData.classes || []);
+      setSettingsSections(schoolMetaData.sections || []);
+      setSettingsSubjects(schoolMetaData.subjects || []);
+      setSettingsExamTypes(schoolMetaData.exam_types || []);
+      setSettingsLoaded(true);
+    }
+  }, [schoolMetaData, settingsLoaded]);
+
+  const saveMetaMutation = useMutation({
+    mutationFn: async ({ metaKey, values }: { metaKey: string; values: string[] }) => {
+      await apiRequest("PUT", `/api/school-metadata/${me!.schoolId}/${metaKey}`, { values });
+    },
+    onSuccess: () => {
+      toast({ title: "Settings Saved" });
+      queryClient.invalidateQueries({ queryKey: ["/api/school-metadata", me?.schoolId] });
+    },
+    onError: (error: Error) => { toast({ title: "Error", description: error.message, variant: "destructive" }); },
+  });
+
+  const CLASS_OPTIONS = ["LKG", "UKG", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
+  const SECTION_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
   const logoutMutation = useMutation({
     mutationFn: async () => { await apiRequest("POST", "/api/logout"); },
@@ -597,6 +641,269 @@ export default function AdminDashboard() {
             )}
           </CardContent>
         </Card>
+
+        {/* SCHOOL SETTINGS */}
+        <CollapsibleSection title="School Settings" icon={Settings} testId="school-settings">
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-sm font-semibold mb-3" data-testid="text-classes-heading">Classes</h3>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {CLASS_OPTIONS.map((cls) => (
+                  <Button
+                    key={cls}
+                    variant={settingsClasses.includes(cls) ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => {
+                      setSettingsClasses(prev =>
+                        prev.includes(cls) ? prev.filter(c => c !== cls) : [...prev, cls]
+                      );
+                    }}
+                    data-testid={`button-class-option-${cls}`}
+                  >
+                    {cls}
+                  </Button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-2 items-center mb-3">
+                <Input
+                  placeholder="Custom class name"
+                  value={newClassInput}
+                  onChange={(e) => setNewClassInput(e.target.value)}
+                  className="max-w-xs"
+                  data-testid="input-custom-class"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      const val = newClassInput.trim();
+                      if (val && !settingsClasses.includes(val)) {
+                        setSettingsClasses(prev => [...prev, val]);
+                        setNewClassInput("");
+                      }
+                    }
+                  }}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const val = newClassInput.trim();
+                    if (val && !settingsClasses.includes(val)) {
+                      setSettingsClasses(prev => [...prev, val]);
+                      setNewClassInput("");
+                    }
+                  }}
+                  data-testid="button-add-custom-class"
+                >
+                  <Plus className="w-4 h-4 mr-1" /> Add
+                </Button>
+              </div>
+              {settingsClasses.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {settingsClasses.map((cls) => (
+                    <span
+                      key={cls}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-muted text-sm font-medium"
+                      data-testid={`tag-class-${cls}`}
+                    >
+                      {cls}
+                      <button
+                        onClick={() => setSettingsClasses(prev => prev.filter(c => c !== cls))}
+                        className="ml-1 rounded-md"
+                        data-testid={`button-remove-class-${cls}`}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <Button
+                size="sm"
+                onClick={() => saveMetaMutation.mutate({ metaKey: "classes", values: settingsClasses })}
+                disabled={saveMetaMutation.isPending}
+                data-testid="button-save-classes"
+              >
+                {saveMetaMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                Save Classes
+              </Button>
+            </div>
+
+            <div className="border-t pt-4">
+              <h3 className="text-sm font-semibold mb-3" data-testid="text-sections-heading">Sections</h3>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {SECTION_LETTERS.map((letter) => (
+                  <Button
+                    key={letter}
+                    variant={settingsSections.includes(letter) ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => {
+                      setSettingsSections(prev =>
+                        prev.includes(letter) ? prev.filter(s => s !== letter) : [...prev, letter]
+                      );
+                    }}
+                    data-testid={`button-section-option-${letter}`}
+                  >
+                    {letter}
+                  </Button>
+                ))}
+              </div>
+              {settingsSections.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {settingsSections.map((sec) => (
+                    <span
+                      key={sec}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-muted text-sm font-medium"
+                      data-testid={`tag-section-${sec}`}
+                    >
+                      {sec}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <Button
+                size="sm"
+                onClick={() => saveMetaMutation.mutate({ metaKey: "sections", values: settingsSections })}
+                disabled={saveMetaMutation.isPending}
+                data-testid="button-save-sections"
+              >
+                {saveMetaMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                Save Sections
+              </Button>
+            </div>
+
+            <div className="border-t pt-4">
+              <h3 className="text-sm font-semibold mb-3" data-testid="text-subjects-heading">Subject Master</h3>
+              <div className="flex flex-wrap gap-2 items-center mb-3">
+                <Input
+                  placeholder="Type subject name, press Enter"
+                  value={newSubjectInput}
+                  onChange={(e) => setNewSubjectInput(e.target.value)}
+                  className="max-w-xs"
+                  data-testid="input-add-subject"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault();
+                      const val = newSubjectInput.trim().replace(/,+$/, "");
+                      if (val && !settingsSubjects.includes(val)) {
+                        setSettingsSubjects(prev => [...prev, val]);
+                        setNewSubjectInput("");
+                      }
+                    }
+                  }}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const val = newSubjectInput.trim();
+                    if (val && !settingsSubjects.includes(val)) {
+                      setSettingsSubjects(prev => [...prev, val]);
+                      setNewSubjectInput("");
+                    }
+                  }}
+                  data-testid="button-add-subject"
+                >
+                  <Plus className="w-4 h-4 mr-1" /> Add
+                </Button>
+              </div>
+              {settingsSubjects.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {settingsSubjects.map((subj) => (
+                    <span
+                      key={subj}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-muted text-sm font-medium"
+                      data-testid={`tag-subject-${subj}`}
+                    >
+                      {subj}
+                      <button
+                        onClick={() => setSettingsSubjects(prev => prev.filter(s => s !== subj))}
+                        className="ml-1 rounded-md"
+                        data-testid={`button-remove-subject-${subj}`}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <Button
+                size="sm"
+                onClick={() => saveMetaMutation.mutate({ metaKey: "subjects", values: settingsSubjects })}
+                disabled={saveMetaMutation.isPending}
+                data-testid="button-save-subjects"
+              >
+                {saveMetaMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                Save Subjects
+              </Button>
+            </div>
+
+            <div className="border-t pt-4">
+              <h3 className="text-sm font-semibold mb-3" data-testid="text-exam-types-heading">Exam Type Master</h3>
+              <div className="flex flex-wrap gap-2 items-center mb-3">
+                <Input
+                  placeholder="Type exam type, press Enter"
+                  value={newExamTypeInput}
+                  onChange={(e) => setNewExamTypeInput(e.target.value)}
+                  className="max-w-xs"
+                  data-testid="input-add-exam-type"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault();
+                      const val = newExamTypeInput.trim().replace(/,+$/, "");
+                      if (val && !settingsExamTypes.includes(val)) {
+                        setSettingsExamTypes(prev => [...prev, val]);
+                        setNewExamTypeInput("");
+                      }
+                    }
+                  }}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const val = newExamTypeInput.trim();
+                    if (val && !settingsExamTypes.includes(val)) {
+                      setSettingsExamTypes(prev => [...prev, val]);
+                      setNewExamTypeInput("");
+                    }
+                  }}
+                  data-testid="button-add-exam-type"
+                >
+                  <Plus className="w-4 h-4 mr-1" /> Add
+                </Button>
+              </div>
+              {settingsExamTypes.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {settingsExamTypes.map((et) => (
+                    <span
+                      key={et}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-muted text-sm font-medium"
+                      data-testid={`tag-exam-type-${et}`}
+                    >
+                      {et}
+                      <button
+                        onClick={() => setSettingsExamTypes(prev => prev.filter(e => e !== et))}
+                        className="ml-1 rounded-md"
+                        data-testid={`button-remove-exam-type-${et}`}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <Button
+                size="sm"
+                onClick={() => saveMetaMutation.mutate({ metaKey: "exam_types", values: settingsExamTypes })}
+                disabled={saveMetaMutation.isPending}
+                data-testid="button-save-exam-types"
+              >
+                {saveMetaMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                Save Exam Types
+              </Button>
+            </div>
+          </div>
+        </CollapsibleSection>
 
         {/* TEACHER NOTICES */}
         <CollapsibleSection title="Post Notice to Teachers" icon={Bell} testId="notices">

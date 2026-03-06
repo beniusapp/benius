@@ -4,21 +4,22 @@
 A school management platform with Super Admin functionality to manage schools, principal dashboard with student and teacher management, student self-activation, student login with digital ID cards, and a complete Teacher Module with 13 interactive sub-modules.
 
 ## Tech Stack
-- **Frontend**: React + Vite, Tailwind CSS, Shadcn UI, Wouter (routing), TanStack React Query
+- **Frontend**: React + Vite, Tailwind CSS, Shadcn UI, Wouter (routing), TanStack React Query, recharts
 - **Backend**: Express.js, PostgreSQL, Drizzle ORM, bcryptjs (password hashing), express-session + connect-pg-simple (sessions), multer (file uploads), csv-parse + xlsx (file parsing)
 - **Language**: TypeScript
 
 ## Project Structure
-- `shared/schema.ts` - Drizzle database models and Zod schemas (schools, users, students, teachers, attendance, homework, classwork, notices, complaints, examScores, galleryItems, calendarEvents, libraryBooks, bookBorrows, leaveRequests, timetableEntries)
+- `shared/schema.ts` - Drizzle database models and Zod schemas (schools, users, students, teachers, attendance, homework, classwork, notices, complaints, complaintNotes, examScores, galleryItems, calendarEvents, libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata)
 - `server/db.ts` - Database connection pool
 - `server/storage.ts` - DatabaseStorage class with all CRUD methods
-- `server/routes.ts` - Express API routes for schools, students, principals
-- `server/teacher-routes.ts` - Express API routes for teacher auth, attendance, homework, classwork, notices, complaints, exams, gallery, calendar, library, leave, timetable, faculty
+- `server/routes.ts` - Express API routes for schools, students, principals, school metadata (admin)
+- `server/teacher-routes.ts` - Express API routes for teacher auth, attendance, homework, classwork, notices, complaints, exams, gallery, calendar, library, leave, timetable, faculty, school config, student search
 - `server/index.ts` - Express server setup with session middleware and static file serving (/uploads)
+- `client/src/hooks/use-school-config.ts` - Shared hook for fetching school metadata (classes, sections, subjects, exam types) with fallback values
 - `client/src/pages/home.tsx` - Public landing page
 - `client/src/pages/super-master.tsx` - Hidden Super Admin page
 - `client/src/pages/login.tsx` - Principal login page
-- `client/src/pages/admin-dashboard.tsx` - Admin dashboard with student management, teacher management, notices, calendar, leave approvals, gallery approvals, library management, timetable management
+- `client/src/pages/admin-dashboard.tsx` - Admin dashboard with student management, teacher management, notices, calendar, leave approvals, gallery approvals, library management, timetable management, school settings
 - `client/src/pages/register.tsx` - Student activation
 - `client/src/pages/student-login.tsx` - Student login
 - `client/src/pages/student-dashboard.tsx` - Student dashboard with digital ID card
@@ -29,20 +30,52 @@ A school management platform with Super Admin functionality to manage schools, p
 ## Database Tables
 - **schools**: id, name, code (unique)
 - **users**: id, email (unique), password_hash, role (admin/teacher), school_id
-- **students**: id, school_id, digital_student_id (unique), name, class, section, phone, dob, password_hash, is_activated
-- **teachers**: id, user_id, school_id, full_name, phone, subject, assigned_class, assigned_section, must_change_password
+- **students**: id, school_id, digital_student_id (unique), name, class, section, phone, dob, password_hash, photo_url, is_activated
+- **teachers**: id, user_id, school_id, full_name, phone, subject, assigned_class, assigned_section, must_change_password, otp_code, otp_expires_at, reset_token, reset_token_expires_at
 - **attendance_records**: id, student_id, teacher_id, school_id, date, status, edit_count, marked_by, marked_at
-- **homework**: id, teacher_id, school_id, class, section, content, file_url, created_at
+- **homework**: id, teacher_id, school_id, class, section, subject, content, file_url, due_date, created_at
+- **homework_views**: id, homework_id, student_id, viewed_at
 - **classwork**: id, teacher_id, school_id, class, section, subject, content, file_url, created_at
-- **notices**: id, school_id, created_by_id, creator_role, target_type, target_class (varchar 50), target_section (varchar 100), notice_type, content, file_url, created_at
-- **complaints**: id, teacher_id, student_id, school_id, content, created_at
-- **exam_scores**: id, student_id, teacher_id, school_id, subject, exam_type, marks, created_at
+- **notices**: id, school_id, created_by_id, creator_role, target_type, target_class, target_section, notice_type, content, file_url, created_at
+- **complaints**: id, ticket_id, teacher_id, student_id (nullable), school_id, complaint_type, status, content, reported_student_name, file_url, is_deleted, created_at
+- **complaint_notes**: id, complaint_id, author_id, author_role, author_name, content, created_at
+- **exam_scores**: id, student_id, teacher_id, school_id, subject, exam_type, marks, total_marks, is_absent, created_at
 - **gallery_items**: id, school_id, uploaded_by_id, title, image_url, approved, created_at
 - **calendar_events**: id, school_id, title, date, event_type
 - **library_books**: id, school_id, title, author, isbn, total_copies, available_copies
 - **book_borrows**: id, book_id, borrower_id, borrower_type, school_id, borrowed_at, returned_at
 - **leave_requests**: id, teacher_id, school_id, leave_type, start_date, end_date, reason, status, created_at
 - **timetable_entries**: id, teacher_id, school_id, day_of_week, period, class, section, subject
+- **school_metadata**: id, school_id, meta_key (unique per school), meta_value (JSON array string), updated_at
+
+## Multi-Tenant Global Configuration System
+- Principal configures school-specific master lists via School Settings panel in admin dashboard
+- 4 configurable keys: `classes`, `sections`, `subjects`, `exam_types` (stored as JSON arrays in school_metadata)
+- Admin routes: `GET /api/school-metadata/:schoolId`, `PUT /api/school-metadata/:schoolId/:metaKey` (admin-only, role checked)
+- Teacher read-only route: `GET /api/school-config/:schoolId` returns parsed config
+- `useSchoolConfig(schoolId)` hook provides dynamic dropdowns with fallback to hardcoded values
+- Examination, Homework, Classwork modules use dynamic dropdowns from school config
+- If school config is empty, fallback values used: classes (L.K.G-12), sections (A-Z), exam types (UT1-Annual)
+
+## Discipline & Resolution Hub (Complaints)
+- 3 complaint types: teacher-to-student, student-to-student, teacher-to-admin
+- Auto-generated ticket IDs: #DISC-YYYY-NNN (sequential per school)
+- Status governance: Pending (red) → Investigating (orange) → Resolved (green)
+- Edit/delete locked after Pending status
+- Soft delete (isDeleted flag)
+- Resolution Thread: expandable notes per complaint
+- Live student search with debounce (300ms, min 2 chars)
+- Mini-profile card after student selection (photo/initials, name, DSID, class)
+- S2S privacy: student-to-student complaints visible to teachers of same class/section
+- Student search endpoint: `GET /api/students/search/:schoolId?q=...`
+
+## Examination & Performance Engine
+- Add Marks tab: spreadsheet grid, Tab-key nav, real-time % and grade (A+→F), absent toggle, red border guardrail, class average row
+- View Marks tab: results table, click student for inline timeline
+- StudentTimeline: dual-line recharts LineChart (student % vs class average %), 360° academic history across all subjects
+- Grade scale: A+≥90, A≥80, B+≥70, B≥60, C+≥50, C≥40, D≥33, F<33
+- Exam types: configurable via school metadata (fallback: UT1, UT2, Mid-term, UT3, Pre-Final, Annual)
+- Class average endpoint: `GET /api/exam-scores/class-average/:schoolId/:class/:section/:subject`
 
 ## Key Routes
 - `/` - Public home page
@@ -58,37 +91,12 @@ A school management platform with Super Admin functionality to manage schools, p
 
 ## Teacher Module Features
 1. **Profile** - View personal info
-2. **Attendance** - Enhanced multi-level module with premium EdTech UI:
-   - Level 1: Landing with "My Attendance" (Coming Soon) and "Class Attendance" cards
-   - Level 2: Class Attendance menu → "Mark Attendance" or "Attendance History"
-   - Level 3a (Mark): Glassmorphism filter bar, universal class/section override (L.K.G-12, A-Z), card-based student gallery with avatar initials, pill status buttons (P/A/L/H) with conditional logic (Absent disables Late/Half-day), "Attempts Remaining" glowing badges (green/orange/red), floating save FAB, skeleton loading, audit trail per student
-   - Level 3b (History): Date range picker, date-grouped records with student info, status badges, audit trail (markedBy, editCount)
-   - Rules: 3-edit limit, 7-day window, no future dates, audit trail
-   - API: GET /api/attendance/history/:schoolId/:class/:section/:startDate/:endDate returns enriched records with studentName and dsid
-3. **Homework** - Enhanced EdTech module with:
-   - Creation form: Class/Section dropdowns (L.K.G-12, A-Z), subject input, description, auto-date (read-only today), multimedia dropzone with thumbnail preview and remove button
-   - Smart Post button: gradient styling, lock logic (disabled with "Select Class & Section to Post" until both selected)
-   - Social-feed history cards: subject pill badges (color-coded), teacher avatar with initials, view counter ("Viewed by X/Y students"), hover lift effect, due date in bold indigo text
-   - Urgency badges: "Due Soon" (orange, pulsing) when due tomorrow, "Due Today" (red, pulsing), "Overdue" (gray, strikethrough date)
-   - Due Date field: required future date, button shows "Set a Future Due Date to Post" until valid date selected; editable in inline edit form
-   - Inline edit/delete with ownership checks; delete confirmation prompt
-   - Backend: homework table has `due_date` column, homework_views table for view tracking, PATCH/DELETE endpoints with teacher ownership enforcement, school authorization on GET, enriched API response with viewCount/totalStudents/teacherName
-4. **Classwork** - Enhanced "Class Activity / Lesson Log" module (mirrors Homework UI, no due date):
-   - Creation form: Class/Section dropdowns (L.K.G-12, A-Z), subject input, description, auto-date (read-only today), multimedia dropzone with thumbnail preview and remove button
-   - Smart Post button: emerald/teal gradient, lock logic ("Select Class & Section to Post")
-   - Social-feed history cards: subject pill badges (color-coded), teacher avatar with initials, dd/mm/yyyy dates, hover lift effect
-   - Inline edit/delete with ownership checks; delete confirmation prompt
-   - Backend: classwork table has `subject` column, PATCH/DELETE endpoints with teacher ownership enforcement, enriched GET with teacherName
-5. **Noticeboard** - Professional notice system with smart targeting:
-   - Two tabs: "From Admin" (view admin notices) and "Post to Students" (create targeted notices)
-   - Smart Targeting System with scope toggle: Specific Section (class + multi-select section pills A-Z), Entire Class (class only, all sections), Class Range (from/to class dropdowns)
-   - Notice Type dropdown: Routine, Urgent, Holiday, Exam, Event
-   - Color-coded notice cards: Routine=slate, Urgent=red, Holiday=green, Exam=blue, Event=purple (border + accent + pill badge)
-   - Multimedia dropzone with preview, smart post button (amber/orange gradient)
-   - Backend: notices table has `notice_type`, extended `target_class` (50 chars for ranges), `target_section` (100 chars for comma-separated), school ownership enforcement on POST/GET
-   - All dates in dd/mm/yyyy format
-6. **Complaint** - File complaints against students
-7. **Examination** - Enter exam scores (gradebook)
+2. **Attendance** - Enhanced multi-level module with premium EdTech UI
+3. **Homework** - Enhanced EdTech module with social-feed cards, due dates, view tracking
+4. **Classwork** - "Class Activity / Lesson Log" module (mirrors Homework UI, no due date)
+5. **Noticeboard** - Smart targeting (specific section, entire class, class range), 5 notice types
+6. **Complaint** - "Discipline & Resolution Hub" with ticketing, live search, mini-profile, resolution threads
+7. **Examination** - "Examination & Performance Engine" with spreadsheet grid, dual-line charts, 360° history
 8. **Gallery** - View school gallery, upload images for approval
 9. **Faculty Info** - Browse staff directory
 10. **Calendar** - View color-coded school calendar
@@ -96,35 +104,19 @@ A school management platform with Super Admin functionality to manage schools, p
 12. **Leave** - Apply for leave, track status
 13. **Timetable** - View weekly schedule
 
-## Teacher First-Login Flow
-1. Principal creates teacher with initial password
-2. Teacher logs in → mustChangePassword flag triggers password change dialog
-3. After changing password → redirected to teacher dashboard
-
-## Teacher Forgot Password (OTP Reset)
-1. Teacher clicks "Forgot Password?" on login page
-2. Enters registered email + phone → POST /api/teacher/forgot-password
-3. System validates both match a teacher record; generates 6-digit OTP (stored in DB, printed to console as [DEV OTP])
-4. Teacher enters OTP in 6-digit input screen → POST /api/teacher/verify-otp
-5. On valid OTP: OTP is cleared, a one-time resetToken is issued (stored in DB with 10-min expiry)
-6. Teacher sets new password → POST /api/teacher/reset-password (uses resetToken, not OTP)
-7. Reset token cleared, password updated, redirected to login
-- Schema: teachers table has otp_code, otp_expires_at, reset_token, reset_token_expires_at columns
-- OTP expires in 5 minutes; reset token expires in 10 minutes
-- OTP is invalidated immediately after verification (prevents reuse)
-
-## Attendance Rules
-- No future dates
-- 7-day edit window only
-- 3 edits max per student per date
-- Audit trail (teacher name + timestamp)
-
 ## Security
-- Admin-only endpoints (calendar CRUD, leave approval, gallery approval, library CRUD, timetable CRUD, teacher list/delete) enforce `userRole !== "teacher"` checks
+- Admin metadata routes enforce `userRole === "admin"` (teachers cannot modify school config)
 - Teacher endpoints require `req.session.teacherId`
-- School ownership verified on teacher create and list endpoints
+- School ownership verified on all data queries (WHERE school_id = current_user.school_id)
+- Complaint PATCH/DELETE check ownership + Pending status
+- Complaint notes/status check school ownership
+- Exam endpoints validate teacher's schoolId
 - bcryptjs password hashing, no plaintext passwords stored
-- Query error states shown in UI for attendance, calendar, timetable modules
+
+## Global Standards
+- Date format: dd/mm/yyyy (`toLocaleDateString("en-GB")`) across entire app
+- UI: EdTech aesthetic (white cards, rounded-2xl, shadow-lg, gradient buttons)
+- All interactive elements have `data-testid` attributes
 
 ## Running
 - `npm run dev` starts both Express backend and Vite frontend dev server

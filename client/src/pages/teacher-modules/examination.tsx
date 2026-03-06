@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Loader2, Save, GraduationCap, BarChart3, Download, ChevronDown, ChevronUp } from "lucide-react";
+import { Loader2, Save, GraduationCap, BarChart3, Download, ChevronDown, ChevronUp, BookOpen } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
+import { useSchoolConfig } from "@/hooks/use-school-config";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
@@ -34,10 +35,6 @@ interface StudentExamScore {
   isAbsent: boolean;
 }
 
-const CLASS_OPTIONS = ["L.K.G", "U.K.G", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
-const SECTION_OPTIONS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-const EXAM_TYPES = ["UT1", "UT2", "Mid-term", "UT3", "Pre-Final", "Annual"];
-
 function getGrade(pct: number): { grade: string; color: string } {
   if (pct >= 90) return { grade: "A+", color: "text-emerald-700 bg-emerald-100" };
   if (pct >= 80) return { grade: "A", color: "text-green-700 bg-green-100" };
@@ -49,8 +46,11 @@ function getGrade(pct: number): { grade: string; color: string } {
   return { grade: "F", color: "text-red-700 bg-red-100" };
 }
 
-function StudentTimeline({ studentId, studentName, schoolId, subject }: {
-  studentId: number; studentName: string; schoolId: number; subject: string;
+interface ClassAvgEntry { examType: string; avgPercentage: number; }
+
+function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes, viewClass, viewSection }: {
+  studentId: number; studentName: string; schoolId: number; subject: string; examTypes: string[];
+  viewClass: string; viewSection: string;
 }) {
   const { data: scores = [], isLoading } = useQuery<StudentExamScore[]>({
     queryKey: ["/api/exam-scores/student", studentId, schoolId],
@@ -61,23 +61,43 @@ function StudentTimeline({ studentId, studentName, schoolId, subject }: {
     },
   });
 
+  const { data: classAverages = [] } = useQuery<ClassAvgEntry[]>({
+    queryKey: ["/api/exam-scores/class-average", schoolId, viewClass, viewSection, subject],
+    queryFn: async () => {
+      const res = await fetch(`/api/exam-scores/class-average/${schoolId}/${encodeURIComponent(viewClass)}/${encodeURIComponent(viewSection)}/${encodeURIComponent(subject)}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+    enabled: !!viewClass && !!viewSection && !!subject,
+  });
+
   const subjectScores = useMemo(() => scores.filter(s => s.subject === subject && !s.isAbsent), [scores, subject]);
 
   const chartData = useMemo(() => {
-    return EXAM_TYPES.map(et => {
+    const avgMap = new Map(classAverages.map(a => [a.examType, a.avgPercentage]));
+    return examTypes.map(et => {
       const s = subjectScores.find(sc => sc.examType === et);
-      return {
-        exam: et,
-        percentage: s ? Math.round((s.marks / s.totalMarks) * 100) : null,
-      };
-    }).filter(d => d.percentage !== null);
-  }, [subjectScores]);
+      const studentPct = s ? Math.round((s.marks / s.totalMarks) * 100) : null;
+      const classAvg = avgMap.get(et) ?? null;
+      if (studentPct === null && classAvg === null) return null;
+      return { exam: et, studentPct, classAvg };
+    }).filter(Boolean) as { exam: string; studentPct: number | null; classAvg: number | null }[];
+  }, [subjectScores, classAverages, examTypes]);
+
+  const allSubjects = useMemo(() => {
+    const map: Record<string, StudentExamScore[]> = {};
+    for (const s of scores) {
+      if (!map[s.subject]) map[s.subject] = [];
+      map[s.subject].push(s);
+    }
+    return Object.entries(map).sort(([a], [b]) => a.localeCompare(b));
+  }, [scores]);
 
   if (isLoading) return <div className="flex justify-center py-4"><Loader2 className="w-4 h-4 animate-spin" /></div>;
 
   return (
     <div className="mt-3 p-4 bg-muted/30 rounded-xl border" data-testid={`timeline-${studentId}`}>
-      <h4 className="text-sm font-bold mb-3">{studentName} — Academic Timeline ({subject})</h4>
+      <h4 className="text-sm font-bold mb-3">{studentName} — Performance ({subject})</h4>
 
       {subjectScores.length === 0 ? (
         <p className="text-xs text-muted-foreground">No exam records found for this subject.</p>
@@ -113,21 +133,63 @@ function StudentTimeline({ studentId, studentName, schoolId, subject }: {
           </div>
 
           {chartData.length > 1 && (
-            <div className="h-48 w-full">
+            <div className="h-52 w-full" data-testid={`chart-dual-line-${studentId}`}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
                   <XAxis dataKey="exam" tick={{ fontSize: 10 }} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
-                  <Tooltip />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} unit="%" />
+                  <Tooltip formatter={(value: number, name: string) => [`${value}%`, name]} />
                   <Legend wrapperStyle={{ fontSize: 10 }} />
-                  <Line type="monotone" dataKey="percentage" stroke="#6366f1" strokeWidth={2}
-                    name={`${studentName} %`} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                  <Line type="monotone" dataKey="studentPct" stroke="#6366f1" strokeWidth={2}
+                    name={`${studentName}`} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />
+                  <Line type="monotone" dataKey="classAvg" stroke="#f59e0b" strokeWidth={2} strokeDasharray="5 5"
+                    name="Class Average" dot={{ r: 3 }} activeDot={{ r: 5 }} connectNulls />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           )}
         </>
+      )}
+
+      {allSubjects.length > 0 && (
+        <div className="mt-4 pt-4 border-t" data-testid={`history-360-${studentId}`}>
+          <div className="flex items-center gap-2 mb-3">
+            <BookOpen className="w-4 h-4 text-indigo-500" />
+            <h4 className="text-sm font-bold">360° Academic History</h4>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {allSubjects.map(([subj, subjectScoresList]) => (
+              <div key={subj} className="rounded-lg border bg-background p-3" data-testid={`history-subject-${subj}`}>
+                <h5 className="text-xs font-semibold mb-2 text-indigo-600">{subj}</h5>
+                <div className="space-y-1">
+                  {subjectScoresList.map((s, i) => {
+                    if (s.isAbsent) {
+                      return (
+                        <div key={i} className="flex items-center justify-between gap-2 text-[11px]">
+                          <span className="text-muted-foreground">{s.examType}</span>
+                          <span className="font-bold text-gray-500">AB</span>
+                        </div>
+                      );
+                    }
+                    const pct = Math.round((s.marks / s.totalMarks) * 100);
+                    const g = getGrade(pct);
+                    return (
+                      <div key={i} className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="text-muted-foreground">{s.examType}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{s.marks}/{s.totalMarks}</span>
+                          <span className="text-muted-foreground">({pct}%)</span>
+                          <span className={`px-1 py-0.5 rounded text-[9px] font-bold ${g.color}`}>{g.grade}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -135,6 +197,7 @@ function StudentTimeline({ studentId, studentName, schoolId, subject }: {
 
 export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
+  const { classes, sections, subjects, examTypes } = useSchoolConfig(teacher.schoolId);
   const today = new Date().toISOString().split("T")[0];
   const [tab, setTab] = useState<"add" | "view">("add");
 
@@ -286,7 +349,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent>
-                    {CLASS_OPTIONS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                    {classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -297,14 +360,25 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent>
-                    {SECTION_OPTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    {sections.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Subject *</label>
-                <Input value={subject} onChange={(e) => setSubject(e.target.value)}
-                  placeholder="Subject" className="rounded-xl" data-testid="input-subject" />
+                {subjects.length > 0 ? (
+                  <Select value={subject} onValueChange={setSubject}>
+                    <SelectTrigger className="rounded-xl" data-testid="select-subject">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {subjects.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input value={subject} onChange={(e) => setSubject(e.target.value)}
+                    placeholder="Subject" className="rounded-xl" data-testid="input-subject" />
+                )}
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Exam Type *</label>
@@ -313,7 +387,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent>
-                    {EXAM_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                    {examTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -458,7 +532,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent>
-                    {CLASS_OPTIONS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                    {classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -469,14 +543,25 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent>
-                    {SECTION_OPTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    {sections.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Subject</label>
-                <Input value={viewSubject} onChange={(e) => setViewSubject(e.target.value)}
-                  placeholder="Subject" className="rounded-xl" data-testid="input-view-subject" />
+                {subjects.length > 0 ? (
+                  <Select value={viewSubject} onValueChange={setViewSubject}>
+                    <SelectTrigger className="rounded-xl" data-testid="select-view-subject">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {subjects.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input value={viewSubject} onChange={(e) => setViewSubject(e.target.value)}
+                    placeholder="Subject" className="rounded-xl" data-testid="input-view-subject" />
+                )}
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Exam Type</label>
@@ -485,7 +570,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent>
-                    {EXAM_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                    {examTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -556,6 +641,9 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                                     studentName={s.studentName}
                                     schoolId={teacher.schoolId}
                                     subject={viewSubject}
+                                    examTypes={examTypes}
+                                    viewClass={viewClass}
+                                    viewSection={viewSection}
                                   />
                                 </td>
                               </tr>

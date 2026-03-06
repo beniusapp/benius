@@ -1,21 +1,26 @@
-import { useState, useRef, useCallback, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Loader2, Plus, FileDown, Upload, X, Pencil, Trash2,
-  Shield, Calendar, MessageSquare, ChevronDown, ChevronUp, Send
+  Shield, Calendar, MessageSquare, ChevronDown, ChevronUp, Send, Search
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
 
-interface StudentInfo { studentId: number; name: string; dsid: string; }
+interface SearchResult {
+  id: number;
+  name: string;
+  digitalStudentId: string;
+  class: string;
+  section: string;
+  photoUrl: string | null;
+}
 interface ComplaintEntry {
   id: number;
   ticketId: string;
@@ -153,12 +158,142 @@ function ResolutionThread({ complaintId, teacherId }: { complaintId: number; tea
   );
 }
 
+function StudentSearchInput({
+  schoolId,
+  label,
+  onSelect,
+  selectedStudent,
+  onClear,
+}: {
+  schoolId: number;
+  label: string;
+  onSelect: (student: SearchResult) => void;
+  selectedStudent: SearchResult | null;
+  onClear: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [showDropdown, setShowDropdown] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(query);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const { data: results = [], isFetching } = useQuery<SearchResult[]>({
+    queryKey: ["/api/students/search", schoolId, debouncedQuery],
+    queryFn: async () => {
+      const res = await fetch(`/api/students/search/${schoolId}?q=${encodeURIComponent(debouncedQuery)}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+    enabled: debouncedQuery.length >= 2,
+  });
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  if (selectedStudent) {
+    return (
+      <div className="space-y-1">
+        <label className="text-xs font-medium text-muted-foreground">{label}</label>
+        <Card className="rounded-xl border" data-testid="card-student-mini-profile">
+          <CardContent className="p-3 flex items-center gap-3">
+            <Avatar className="h-10 w-10" data-testid="img-student-avatar">
+              <AvatarImage src={selectedStudent.photoUrl || undefined} alt={selectedStudent.name} />
+              <AvatarFallback className="bg-indigo-100 text-indigo-700 text-sm font-semibold dark:bg-indigo-950 dark:text-indigo-300">
+                {selectedStudent.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold truncate" data-testid="text-student-name">{selectedStudent.name}</p>
+              <p className="text-xs text-muted-foreground" data-testid="text-student-details">
+                {selectedStudent.digitalStudentId} · Class {selectedStudent.class}-{selectedStudent.section}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClear}
+              className="w-7 h-7 rounded-full bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors shrink-0"
+              data-testid="button-clear-student"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1 relative" ref={containerRef}>
+      <label className="text-xs font-medium text-muted-foreground">{label}</label>
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+        <Input
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setShowDropdown(true); }}
+          onFocus={() => setShowDropdown(true)}
+          placeholder="Search by name or DSID (min 2 chars)..."
+          className="rounded-xl pl-9"
+          data-testid="input-search-student"
+        />
+        {isFetching && (
+          <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-muted-foreground" />
+        )}
+      </div>
+      {showDropdown && debouncedQuery.length >= 2 && (
+        <div className="absolute z-50 w-full mt-1 bg-card border rounded-xl shadow-lg max-h-60 overflow-y-auto" data-testid="dropdown-search-results">
+          {results.length === 0 && !isFetching ? (
+            <div className="p-3 text-center text-xs text-muted-foreground">No students found</div>
+          ) : (
+            results.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => {
+                  onSelect(s);
+                  setQuery("");
+                  setDebouncedQuery("");
+                  setShowDropdown(false);
+                }}
+                className="w-full flex items-center gap-3 p-2.5 text-left hover-elevate transition-colors"
+                data-testid={`option-student-${s.id}`}
+              >
+                <Avatar className="h-8 w-8">
+                  <AvatarImage src={s.photoUrl || undefined} alt={s.name} />
+                  <AvatarFallback className="bg-muted text-xs font-semibold">
+                    {s.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{s.name}</p>
+                  <p className="text-xs text-muted-foreground">{s.digitalStudentId} · {s.class}-{s.section}</p>
+                </div>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
-  const today = new Date().toISOString().split("T")[0];
 
   const [complaintType, setComplaintType] = useState<ComplaintType>("teacher-to-student");
-  const [selectedStudent, setSelectedStudent] = useState("");
+  const [selectedStudent, setSelectedStudent] = useState<SearchResult | null>(null);
   const [reportedStudentName, setReportedStudentName] = useState("");
   const [content, setContent] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -168,15 +303,6 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editContent, setEditContent] = useState("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
-
-  const { data: students = [] } = useQuery<StudentInfo[]>({
-    queryKey: ["/api/attendance", teacher.schoolId, teacher.assignedClass, teacher.assignedSection, today],
-    queryFn: async () => {
-      const res = await fetch(`/api/attendance/${teacher.schoolId}/${teacher.assignedClass}/${teacher.assignedSection}/${today}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed");
-      return res.json();
-    },
-  });
 
   const { data: complaints = [], isLoading } = useQuery<ComplaintEntry[]>({
     queryKey: ["/api/complaints/teacher", teacher.id],
@@ -190,7 +316,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
   const canPost = (() => {
     if (!content.trim()) return false;
     if (complaintType === "teacher-to-admin") return true;
-    return selectedStudent !== "";
+    return selectedStudent !== null;
   })();
 
   const handleFileSelect = useCallback((file: File | null) => {
@@ -215,7 +341,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
       const fd = new FormData();
       fd.append("content", content);
       fd.append("complaintType", complaintType);
-      if (complaintType !== "teacher-to-admin") fd.append("studentId", selectedStudent);
+      if (complaintType !== "teacher-to-admin" && selectedStudent) fd.append("studentId", String(selectedStudent.id));
       if (complaintType === "student-to-student" && reportedStudentName) fd.append("reportedStudentName", reportedStudentName);
       if (selectedFile) fd.append("file", selectedFile);
       const res = await fetch("/api/complaints", { method: "POST", body: fd, credentials: "include" });
@@ -225,7 +351,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
     onSuccess: () => {
       toast({ title: "Complaint Filed", description: "A unique ticket ID has been generated." });
       setContent("");
-      setSelectedStudent("");
+      setSelectedStudent(null);
       setReportedStudentName("");
       clearFile();
       queryClient.invalidateQueries({ queryKey: ["/api/complaints/teacher", teacher.id] });
@@ -289,7 +415,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
               ]).map(opt => (
                 <button
                   key={opt.key}
-                  onClick={() => { setComplaintType(opt.key); setSelectedStudent(""); setReportedStudentName(""); }}
+                  onClick={() => { setComplaintType(opt.key); setSelectedStudent(null); setReportedStudentName(""); }}
                   className={`flex-1 px-2 py-2 rounded-lg text-xs font-semibold transition-all ${
                     complaintType === opt.key
                       ? "bg-white dark:bg-gray-900 shadow-sm text-foreground"
@@ -304,24 +430,14 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
           </div>
 
           {complaintType !== "teacher-to-admin" && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">
-                  {complaintType === "student-to-student" ? "Complainant Student *" : "Student *"}
-                </label>
-                <Select value={selectedStudent} onValueChange={setSelectedStudent}>
-                  <SelectTrigger className="rounded-xl" data-testid="select-student">
-                    <SelectValue placeholder="Select a student" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {students.map((s) => (
-                      <SelectItem key={s.studentId} value={String(s.studentId)}>
-                        {s.name} ({s.dsid})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+            <div className="space-y-3">
+              <StudentSearchInput
+                schoolId={teacher.schoolId}
+                label={complaintType === "student-to-student" ? "Complainant Student *" : "Student *"}
+                onSelect={(s) => setSelectedStudent(s)}
+                selectedStudent={selectedStudent}
+                onClear={() => setSelectedStudent(null)}
+              />
               {complaintType === "student-to-student" && (
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-muted-foreground">Reported Student Name</label>

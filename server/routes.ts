@@ -544,6 +544,28 @@ export async function registerRoutes(
     });
   });
 
+  // ===== SCHOOL METADATA (Admin) =====
+  app.get("/api/school-metadata/:schoolId", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const meta = await storage.getAllSchoolMetadata(schoolId);
+    res.json(meta);
+  });
+
+  app.put("/api/school-metadata/:schoolId/:metaKey", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const { metaKey } = req.params;
+    const validKeys = ["classes", "sections", "subjects", "exam_types"];
+    if (!validKeys.includes(metaKey)) return res.status(400).json({ message: "Invalid meta key" });
+    const { values } = req.body;
+    if (!Array.isArray(values)) return res.status(400).json({ message: "Values must be an array" });
+    const result = await storage.setSchoolMetadata(schoolId, metaKey, values);
+    res.json(result);
+  });
+
   registerTeacherRoutes(app);
 
   return httpServer;

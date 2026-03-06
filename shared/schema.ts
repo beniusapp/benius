@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, boolean, date, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, boolean, date, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -27,6 +27,7 @@ export const students = pgTable("students", {
   phone: varchar("phone", { length: 20 }).notNull(),
   dob: date("dob").notNull(),
   passwordHash: text("password_hash").notNull(),
+  photoUrl: text("photo_url"),
   isActivated: boolean("is_activated").notNull().default(false),
 });
 
@@ -192,6 +193,16 @@ export const leaveRequests = pgTable("leave_requests", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const schoolMetadata = pgTable("school_metadata", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  metaKey: varchar("meta_key", { length: 50 }).notNull(),
+  metaValue: text("meta_value").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("school_metadata_unique").on(table.schoolId, table.metaKey),
+]);
+
 export const timetableEntries = pgTable("timetable_entries", {
   id: serial("id").primaryKey(),
   teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
@@ -299,3 +310,7 @@ export type LeaveRequest = typeof leaveRequests.$inferSelect;
 export const insertTimetableEntrySchema = createInsertSchema(timetableEntries).omit({ id: true });
 export type InsertTimetableEntry = z.infer<typeof insertTimetableEntrySchema>;
 export type TimetableEntry = typeof timetableEntries.$inferSelect;
+
+export const insertSchoolMetadataSchema = createInsertSchema(schoolMetadata).omit({ id: true, updatedAt: true });
+export type InsertSchoolMetadata = z.infer<typeof insertSchoolMetadataSchema>;
+export type SchoolMetadata = typeof schoolMetadata.$inferSelect;

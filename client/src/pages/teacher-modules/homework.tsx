@@ -15,6 +15,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
+import { useSchoolConfig } from "@/hooks/use-school-config";
 
 interface HomeworkEntry {
   id: number;
@@ -30,9 +31,6 @@ interface HomeworkEntry {
   totalStudents: number;
   teacherName: string;
 }
-
-const CLASS_OPTIONS = ["L.K.G", "U.K.G", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
-const SECTION_OPTIONS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
 const SUBJECT_COLORS: Record<string, string> = {
   Mathematics: "bg-blue-100 text-blue-700",
@@ -73,6 +71,7 @@ function getAvatarColor(name: string): string {
 
 export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
+  const { classes, sections, subjects } = useSchoolConfig(teacher.schoolId);
   const today = new Date().toISOString().split("T")[0];
 
   const [selectedClass, setSelectedClass] = useState(teacher.assignedClass || "");
@@ -217,7 +216,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
                   <SelectValue placeholder="Select" />
                 </SelectTrigger>
                 <SelectContent>
-                  {CLASS_OPTIONS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  {classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -228,19 +227,30 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
                   <SelectValue placeholder="Select" />
                 </SelectTrigger>
                 <SelectContent>
-                  {SECTION_OPTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  {sections.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Subject</label>
-              <Input
-                value={subject}
-                onChange={(e) => setSubject(e.target.value)}
-                placeholder={teacher.subject || "Subject"}
-                className="rounded-xl"
-                data-testid="input-subject"
-              />
+              {subjects.length > 0 ? (
+                <Select value={subject} onValueChange={setSubject}>
+                  <SelectTrigger className="rounded-xl" data-testid="select-subject">
+                    <SelectValue placeholder={teacher.subject || "Select"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {subjects.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  placeholder={teacher.subject || "Subject"}
+                  className="rounded-xl"
+                  data-testid="input-subject"
+                />
+              )}
             </div>
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Assigned Date</label>
