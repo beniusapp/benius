@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
+import { useSchoolConfig } from "@/hooks/use-school-config";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
 
 interface NoticeEntry {
@@ -26,11 +27,9 @@ interface NoticeEntry {
   noticeType: string | null;
 }
 
-const CLASS_OPTIONS = ["L.K.G", "U.K.G", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
-const SECTION_OPTIONS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-const NOTICE_TYPES = ["Routine", "Urgent", "Holiday", "Exam", "Event"];
+const DEFAULT_NOTICE_TYPES = ["Routine", "Urgent", "Holiday", "Exam", "Event"];
 
-type ScopeType = "specific" | "entire" | "range";
+type ScopeType = "specific" | "entire" | "range" | "whole_school";
 
 const NOTICE_TYPE_STYLES: Record<string, { border: string; bg: string; text: string; pill: string }> = {
   Routine: { border: "border-slate-300", bg: "bg-slate-50 dark:bg-slate-900/30", text: "text-slate-600", pill: "bg-slate-100 text-slate-700 border-slate-300" },
@@ -51,6 +50,7 @@ function getNoticeIcon(type: string | null) {
 }
 
 function getTargetLabel(entry: NoticeEntry): string {
+  if (entry.targetType === "whole_school") return "Whole School";
   if (!entry.targetClass) return "All Classes";
   if (entry.targetClass.includes("-")) return `Classes ${entry.targetClass}`;
   if (!entry.targetSection) return `Class ${entry.targetClass} (All Sections)`;
@@ -60,7 +60,16 @@ function getTargetLabel(entry: NoticeEntry): string {
 
 export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
+  const { classes: CLASS_OPTIONS, sections: SECTION_OPTIONS, examTypes } = useSchoolConfig(teacher.schoolId);
   const [tab, setTab] = useState<"admin" | "student">("admin");
+
+  const NOTICE_TYPES = (() => {
+    const merged = [...DEFAULT_NOTICE_TYPES];
+    for (const et of examTypes) {
+      if (!merged.includes(et)) merged.push(et);
+    }
+    return merged;
+  })();
 
   const [scope, setScope] = useState<ScopeType>("specific");
   const [targetClass, setTargetClass] = useState(teacher.assignedClass || "");
@@ -80,11 +89,13 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
   };
 
   const getPostTargetClass = (): string => {
+    if (scope === "whole_school") return "";
     if (scope === "range") return `${rangeFrom}-${rangeTo}`;
     return targetClass;
   };
 
   const getPostTargetSection = (): string | null => {
+    if (scope === "whole_school") return null;
     if (scope === "entire") return null;
     if (scope === "range") return null;
     return selectedSections.join(",");
@@ -92,6 +103,7 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
 
   const canPost = (() => {
     if (!content.trim()) return false;
+    if (scope === "whole_school") return true;
     if (scope === "specific") return targetClass !== "" && selectedSections.length > 0;
     if (scope === "entire") return targetClass !== "";
     if (scope === "range") return rangeFrom !== "" && rangeTo !== "" && CLASS_OPTIONS.indexOf(rangeTo) >= CLASS_OPTIONS.indexOf(rangeFrom);
@@ -137,8 +149,9 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
     mutationFn: async () => {
       const fd = new FormData();
       fd.append("content", content);
-      fd.append("targetType", "student");
-      fd.append("targetClass", getPostTargetClass());
+      fd.append("targetType", scope === "whole_school" ? "whole_school" : "student");
+      const postTargetClass = getPostTargetClass();
+      if (postTargetClass) fd.append("targetClass", postTargetClass);
       const sec = getPostTargetSection();
       if (sec) fd.append("targetSection", sec);
       fd.append("noticeType", noticeType);
@@ -159,7 +172,7 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
     },
   });
 
-  const scopeLabel = scope === "specific" ? "Specific Section" : scope === "entire" ? "Entire Class" : "Class Range";
+  const scopeLabel = scope === "specific" ? "Specific Section" : scope === "entire" ? "Entire Class" : scope === "range" ? "Class Range" : "Whole School";
 
   return (
     <div className="space-y-6">
@@ -258,11 +271,12 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
 
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Targeting Scope</label>
-                <div className="flex gap-1 p-1 bg-muted/50 rounded-xl" data-testid="scope-toggle">
+                <div className="flex gap-1 p-1 bg-muted/50 rounded-xl flex-wrap" data-testid="scope-toggle">
                   {([
                     { key: "specific" as ScopeType, label: "Specific Section" },
                     { key: "entire" as ScopeType, label: "Entire Class" },
                     { key: "range" as ScopeType, label: "Class Range" },
+                    { key: "whole_school" as ScopeType, label: "Whole School" },
                   ]).map(opt => (
                     <button
                       key={opt.key}

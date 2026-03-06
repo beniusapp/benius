@@ -353,7 +353,10 @@ export class DatabaseStorage {
   }
 
   async getNoticesByTarget(schoolId: number, targetType: string, cls?: string, section?: string): Promise<Notice[]> {
-    const conditions = [eq(notices.schoolId, schoolId), eq(notices.targetType, targetType)];
+    const typeFilter = targetType === "student"
+      ? or(eq(notices.targetType, "student"), eq(notices.targetType, "whole_school"))!
+      : eq(notices.targetType, targetType);
+    const conditions = [eq(notices.schoolId, schoolId), typeFilter];
     if (cls) conditions.push(or(eq(notices.targetClass, cls), isNull(notices.targetClass))!);
     return await db.select().from(notices).where(and(...conditions)).orderBy(desc(notices.createdAt));
   }
@@ -413,7 +416,7 @@ export class DatabaseStorage {
     }));
   }
 
-  async getComplaintsByTeacher(teacherId: number, assignedClass?: string, assignedSection?: string): Promise<(Complaint & { studentName: string | null })[]> {
+  async getComplaintsByTeacher(teacherId: number, assignedClass?: string, assignedSection?: string, schoolId?: number): Promise<(Complaint & { studentName: string | null })[]> {
     const ownComplaints = await db.select().from(complaints)
       .leftJoin(students, eq(complaints.studentId, students.id))
       .where(and(eq(complaints.teacherId, teacherId), eq(complaints.isDeleted, false)))
@@ -424,13 +427,14 @@ export class DatabaseStorage {
       studentName: r.students?.name || null,
     }));
 
-    if (assignedClass && assignedSection) {
+    if (assignedClass && assignedSection && schoolId) {
       const s2sFromOthers = await db.select().from(complaints)
         .leftJoin(students, eq(complaints.studentId, students.id))
         .where(
           and(
             eq(complaints.isDeleted, false),
             eq(complaints.complaintType, "student-to-student"),
+            eq(complaints.schoolId, schoolId),
             sql`${complaints.teacherId} != ${teacherId}`,
             eq(students.class, assignedClass),
             eq(students.section, assignedSection)

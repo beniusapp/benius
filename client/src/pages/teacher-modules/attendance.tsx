@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useSchoolConfig } from "@/hooks/use-school-config";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
 
 interface StudentAttendance {
@@ -40,8 +41,6 @@ interface HistoryRecord {
 
 type ViewState = "landing" | "class-menu" | "mark" | "history" | "my-attendance";
 
-const CLASS_OPTIONS = ["L.K.G", "U.K.G", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
-const SECTION_OPTIONS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
 const STATUS_CONFIG = [
   { value: "present", label: "P", bg: "bg-emerald-500", ring: "ring-emerald-400", text: "text-emerald-700", lightBg: "bg-emerald-50" },
@@ -110,6 +109,7 @@ function SkeletonCards() {
 
 export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
+  const { classes: classOptions, sections: sectionOptions } = useSchoolConfig(teacher.schoolId);
   const today = new Date().toISOString().split("T")[0];
 
   const [view, setView] = useState<ViewState>("landing");
@@ -331,7 +331,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {CLASS_OPTIONS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  {classOptions.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -342,7 +342,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {SECTION_OPTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  {sectionOptions.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -423,7 +423,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {CLASS_OPTIONS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                {classOptions.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -434,7 +434,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {SECTION_OPTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                {sectionOptions.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>

@@ -497,7 +497,7 @@ export function registerTeacherRoutes(app: Express) {
     const tid = parseInt(req.params.teacherId);
     if (tid !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
     const teacher = await storage.getTeacherById(tid);
-    const list = await storage.getComplaintsByTeacher(tid, teacher?.assignedClass, teacher?.assignedSection);
+    const list = await storage.getComplaintsByTeacher(tid, teacher?.assignedClass, teacher?.assignedSection, teacher?.schoolId);
     res.json(list);
   });
 

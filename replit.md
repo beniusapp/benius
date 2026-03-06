@@ -54,7 +54,7 @@ A school management platform with Super Admin functionality to manage schools, p
 - Admin routes: `GET /api/school-metadata/:schoolId`, `PUT /api/school-metadata/:schoolId/:metaKey` (admin-only, role checked)
 - Teacher read-only route: `GET /api/school-config/:schoolId` returns parsed config
 - `useSchoolConfig(schoolId)` hook provides dynamic dropdowns with fallback to hardcoded values
-- Examination, Homework, Classwork modules use dynamic dropdowns from school config
+- Examination, Homework, Classwork, Attendance, Noticeboard modules use dynamic dropdowns from school config
 - If school config is empty, fallback values used: classes (L.K.G-12), sections (A-Z), exam types (UT1-Annual)
 
 ## Discipline & Resolution Hub (Complaints)
@@ -66,7 +66,7 @@ A school management platform with Super Admin functionality to manage schools, p
 - Resolution Thread: expandable notes per complaint
 - Live student search with debounce (300ms, min 2 chars)
 - Mini-profile card after student selection (photo/initials, name, DSID, class)
-- S2S privacy: student-to-student complaints visible to teachers of same class/section
+- S2S privacy: student-to-student complaints visible to teachers of same class/section (with schoolId filter for multi-tenant isolation)
 - Student search endpoint: `GET /api/students/search/:schoolId?q=...`
 
 ## Examination & Performance Engine
@@ -94,7 +94,7 @@ A school management platform with Super Admin functionality to manage schools, p
 2. **Attendance** - Enhanced multi-level module with premium EdTech UI
 3. **Homework** - Enhanced EdTech module with social-feed cards, due dates, view tracking
 4. **Classwork** - "Class Activity / Lesson Log" module (mirrors Homework UI, no due date)
-5. **Noticeboard** - Smart targeting (specific section, entire class, class range), 5 notice types
+5. **Noticeboard** - Smart targeting (specific section, entire class, class range, whole school), 5+ notice types (merged from school config)
 6. **Complaint** - "Discipline & Resolution Hub" with ticketing, live search, mini-profile, resolution threads
 7. **Examination** - "Examination & Performance Engine" with spreadsheet grid, dual-line charts, 360° history
 8. **Gallery** - View school gallery, upload images for approval
