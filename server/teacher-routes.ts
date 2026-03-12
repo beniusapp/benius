@@ -996,4 +996,115 @@ export function registerTeacherRoutes(app: Express) {
     const list = await storage.getTeachersBySchool(parseInt(req.params.schoolId));
     res.json(list.map(t => ({ id: t.id, fullName: t.fullName, subject: t.subject, phone: t.phone, assignedClass: t.assignedClass, assignedSection: t.assignedSection })));
   });
+
+  // ===== PAGINATED STUDENTS (Big Data) =====
+  app.get("/api/schools/:schoolId/students/paginated", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
+    const { q, cls, section, page } = req.query;
+    const result = await storage.getStudentsPaginated(parseInt(req.params.schoolId), {
+      q: q as string, cls: cls as string, section: section as string, page: page ? parseInt(page as string) : 1,
+    });
+    res.json(result);
+  });
+
+  // ===== PAGINATED TEACHERS (Big Data) =====
+  app.get("/api/schools/:schoolId/teachers/paginated", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
+    const { q, page } = req.query;
+    const result = await storage.getTeachersPaginated(parseInt(req.params.schoolId), {
+      q: q as string, page: page ? parseInt(page as string) : 1,
+    });
+    res.json(result);
+  });
+
+  // ===== DAILY ATTENDANCE SUMMARY =====
+  app.get("/api/attendance/daily-summary/:schoolId/:date", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
+    const summary = await storage.getDailyAttendanceSummary(parseInt(req.params.schoolId), req.params.date);
+    res.json(summary);
+  });
+
+  // ===== COMPLAINTS BY SCHOOL (Admin) =====
+  app.get("/api/complaints/school/:schoolId", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
+    const list = await storage.getComplaintsBySchool(parseInt(req.params.schoolId));
+    res.json(list);
+  });
+
+  // ===== AUDIT LOGS (Admin) =====
+  app.get("/api/audit-logs/:schoolId", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
+    const list = await storage.getAuditLogsBySchool(parseInt(req.params.schoolId));
+    res.json(list);
+  });
+
+  // ===== STUDENT LEAVES FOR ADMIN =====
+  app.get("/api/student-leaves/school/:schoolId", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
+    const list = await storage.getStudentLeavesForAdmin(parseInt(req.params.schoolId));
+    res.json(list);
+  });
+
+  app.patch("/api/student-leaves/:id/admin-approve", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
+    if (!leave || leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const updated = await storage.updateStudentLeaveStatus(leave.id, "approved", req.session.userId!, "admin");
+    await storage.markAttendanceAsLeave(leave.studentId, req.session.userId!, leave.schoolId, leave.startDate, leave.endDate);
+    await storage.createAuditLog({
+      schoolId: leave.schoolId, actionType: "approve", entityType: "student_leave", entityId: leave.id,
+      actionBy: req.session.userId!, actionByRole: "admin",
+      details: `Admin approved student leave for dates ${leave.startDate} to ${leave.endDate}`,
+    });
+    res.json(updated);
+  });
+
+  app.patch("/api/student-leaves/:id/reject", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
+    if (!leave || leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const updated = await storage.updateStudentLeaveStatus(leave.id, "rejected", req.session.userId!, "admin");
+    res.json(updated);
+  });
+
+  // ===== PENDING EBOOKS (Admin) =====
+  app.get("/api/library/books/:schoolId/pending", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
+    const list = await storage.getPendingEbooks(parseInt(req.params.schoolId));
+    res.json(list);
+  });
+
+  // ===== VISITOR LOGS =====
+  app.post("/api/visitor-logs", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    const { visitorName, purpose, hostName, phone, badge } = req.body;
+    if (!visitorName || !purpose || !hostName) return res.status(400).json({ message: "Name, purpose, and host are required" });
+    const v = await storage.createVisitorLog({ schoolId: req.session.schoolId!, visitorName, purpose, hostName, phone: phone || null, badge: badge || null });
+    await storage.createAuditLog({
+      schoolId: req.session.schoolId!, actionType: "checkin", entityType: "visitor", entityId: v.id,
+      actionBy: req.session.userId!, actionByRole: "admin",
+      details: `Visitor checked in: ${visitorName}`,
+    });
+    res.status(201).json(v);
+  });
+
+  app.get("/api/visitor-logs/:schoolId", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
+    const list = await storage.getVisitorLogsBySchool(parseInt(req.params.schoolId));
+    res.json(list);
+  });
+
+  app.patch("/api/visitor-logs/:id/checkout", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    const v = await storage.checkoutVisitor(parseInt(req.params.id));
+    res.json(v);
+  });
 }

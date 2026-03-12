@@ -3,7 +3,7 @@ import {
   attendanceRecords, homework, homeworkViews, classwork, notices,
   complaints, complaintNotes, examScores, galleryItems, calendarEvents,
   libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata,
-  studentLeaveRequests, auditLogs,
+  studentLeaveRequests, auditLogs, visitorLogs,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
@@ -17,6 +17,7 @@ import {
   type SchoolMetadata,
   type StudentLeaveRequest, type InsertStudentLeaveRequest,
   type AuditLog, type InsertAuditLog,
+  type VisitorLog, type InsertVisitorLog,
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
@@ -895,6 +896,89 @@ export class DatabaseStorage {
   async updateLeaveStatusWithApprover(id: number, status: string, approvedBy: number): Promise<LeaveRequest> {
     const [req] = await db.update(leaveRequests).set({ status, approvedBy }).where(eq(leaveRequests.id, id)).returning();
     return req;
+  }
+
+  // ===== PAGINATED STUDENTS (Big Data) =====
+  async getStudentsPaginated(schoolId: number, opts: { q?: string; cls?: string; section?: string; page?: number }): Promise<{ data: Student[]; total: number }> {
+    const { q, cls, section, page = 1 } = opts;
+    const limit = 50;
+    const offset = (page - 1) * limit;
+    const conditions = [eq(students.schoolId, schoolId)];
+    if (cls) conditions.push(eq(students.class, cls));
+    if (section) conditions.push(eq(students.section, section));
+    if (q) conditions.push(or(ilike(students.name, `%${q}%`), ilike(students.digitalStudentId, `%${q}%`))!);
+    const [{ total }] = await db.select({ total: count() }).from(students).where(and(...conditions));
+    const data = await db.select().from(students).where(and(...conditions)).orderBy(students.name).limit(limit).offset(offset);
+    return { data, total: Number(total) };
+  }
+
+  // ===== PAGINATED TEACHERS (Big Data) =====
+  async getTeachersPaginated(schoolId: number, opts: { q?: string; page?: number }): Promise<{ data: Teacher[]; total: number }> {
+    const { q, page = 1 } = opts;
+    const limit = 50;
+    const offset = (page - 1) * limit;
+    const conditions = [eq(teachers.schoolId, schoolId)];
+    if (q) conditions.push(or(ilike(teachers.fullName, `%${q}%`), ilike(teachers.subject, `%${q}%`), ilike(teachers.email, `%${q}%`))!);
+    const [{ total }] = await db.select({ total: count() }).from(teachers).where(and(...conditions));
+    const data = await db.select().from(teachers).where(and(...conditions)).orderBy(teachers.fullName).limit(limit).offset(offset);
+    return { data, total: Number(total) };
+  }
+
+  // ===== DAILY ATTENDANCE SUMMARY =====
+  async getDailyAttendanceSummary(schoolId: number, date: string): Promise<{ total: number; present: number; absent: number; leave: number; percentage: number }> {
+    const records = await db.select().from(attendanceRecords).where(and(eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.date, date)));
+    const total = records.length;
+    const present = records.filter(r => r.status === "present").length;
+    const absent = records.filter(r => r.status === "absent").length;
+    const leave = records.filter(r => r.status === "leave").length;
+    const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
+    return { total, present, absent, leave, percentage };
+  }
+
+  // ===== COMPLAINTS BY SCHOOL (Admin) =====
+  async getComplaintsBySchool(schoolId: number): Promise<Complaint[]> {
+    return db.select().from(complaints).where(eq(complaints.schoolId, schoolId)).orderBy(desc(complaints.createdAt));
+  }
+
+  // ===== AUDIT LOGS READER =====
+  async getAuditLogsBySchool(schoolId: number, limit = 100): Promise<AuditLog[]> {
+    return db.select().from(auditLogs).where(eq(auditLogs.schoolId, schoolId)).orderBy(desc(auditLogs.createdAt)).limit(limit);
+  }
+
+  // ===== STUDENT LEAVES FOR ADMIN (forwarded to principal) =====
+  async getStudentLeavesForAdmin(schoolId: number): Promise<(StudentLeaveRequest & { studentName: string; dsid: string; class: string; section: string })[]> {
+    const leaves = await db.select().from(studentLeaveRequests).where(eq(studentLeaveRequests.schoolId, schoolId)).orderBy(desc(studentLeaveRequests.createdAt));
+    const result = [];
+    for (const l of leaves) {
+      const s = await this.getStudentById(l.studentId);
+      result.push({ ...l, studentName: s?.name ?? "Unknown", dsid: s?.digitalStudentId ?? "", class: s?.class ?? "", section: s?.section ?? "" });
+    }
+    return result;
+  }
+
+  // ===== VISITOR LOGS =====
+  async createVisitorLog(data: InsertVisitorLog): Promise<VisitorLog> {
+    const [v] = await db.insert(visitorLogs).values(data).returning();
+    return v;
+  }
+
+  async getVisitorLogsBySchool(schoolId: number): Promise<VisitorLog[]> {
+    return db.select().from(visitorLogs).where(eq(visitorLogs.schoolId, schoolId)).orderBy(desc(visitorLogs.createdAt)).limit(200);
+  }
+
+  async checkoutVisitor(id: number): Promise<VisitorLog> {
+    const [v] = await db.update(visitorLogs).set({ checkOut: new Date() }).where(eq(visitorLogs.id, id)).returning();
+    return v;
+  }
+
+  // ===== PENDING EBOOKS FOR APPROVAL =====
+  async getPendingEbooks(schoolId: number): Promise<LibraryBook[]> {
+    return db.select().from(libraryBooks).where(and(eq(libraryBooks.schoolId, schoolId), eq(libraryBooks.verificationStatus, "pending")));
+  }
+
+  // ===== EXAM SCORES AGGREGATION FOR ANALYTICS =====
+  async getExamScoresBySchool(schoolId: number): Promise<ExamScore[]> {
+    return db.select().from(examScores).where(eq(examScores.schoolId, schoolId)).orderBy(desc(examScores.createdAt)).limit(500);
   }
 }
 

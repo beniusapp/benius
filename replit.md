@@ -1,123 +1,124 @@
-# BENIUS - School Management System
+# BENIUS - Multi-Tenant School Management System
 
 ## Overview
-A school management platform with Super Admin functionality to manage schools, principal dashboard with student and teacher management, student self-activation, student login with digital ID cards, and a complete Teacher Module with 13 interactive sub-modules.
+A full-stack, enterprise-grade school management platform with:
+- **Super Admin** (`/super-master`) — school provisioning
+- **Principal/Admin Dashboard** (`/admin-dashboard`) — Navy & Gold Command Center with 15 tiles, Live Pulse analytics, server-side pagination for 5000+ students
+- **Teacher Dashboard** (`/teacher-dashboard`) — 13-module grid with glassmorphic EdTech UI
+- **Student Portal** — activation, login, digital ID card
 
 ## Tech Stack
 - **Frontend**: React + Vite, Tailwind CSS, Shadcn UI, Wouter (routing), TanStack React Query, recharts
-- **Backend**: Express.js, PostgreSQL, Drizzle ORM, bcryptjs (password hashing), express-session + connect-pg-simple (sessions), multer (file uploads), csv-parse + xlsx (file parsing)
+- **Backend**: Express.js, PostgreSQL, Drizzle ORM, bcryptjs, express-session + connect-pg-simple, multer
 - **Language**: TypeScript
 
 ## Project Structure
-- `shared/schema.ts` - Drizzle database models and Zod schemas (schools, users, students, teachers, attendance, homework, classwork, notices, complaints, complaintNotes, examScores, galleryItems, calendarEvents, libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata)
-- `server/db.ts` - Database connection pool
-- `server/storage.ts` - DatabaseStorage class with all CRUD methods
-- `server/routes.ts` - Express API routes for schools, students, principals, school metadata (admin)
-- `server/teacher-routes.ts` - Express API routes for teacher auth, attendance, homework, classwork, notices, complaints, exams, gallery, calendar, library, leave, timetable, faculty, school config, student search
-- `server/index.ts` - Express server setup with session middleware and static file serving (/uploads)
-- `client/src/hooks/use-school-config.ts` - Shared hook for fetching school metadata (classes, sections, subjects, exam types) with fallback values
-- `client/src/pages/home.tsx` - Public landing page
-- `client/src/pages/super-master.tsx` - Hidden Super Admin page
-- `client/src/pages/login.tsx` - Principal login page
-- `client/src/pages/admin-dashboard.tsx` - Admin dashboard with student management, teacher management, notices, calendar, leave approvals, gallery approvals, library management, timetable management, school settings
-- `client/src/pages/register.tsx` - Student activation
-- `client/src/pages/student-login.tsx` - Student login
-- `client/src/pages/student-dashboard.tsx` - Student dashboard with digital ID card
-- `client/src/pages/teacher-login.tsx` - Teacher login with first-login password change
-- `client/src/pages/teacher-dashboard.tsx` - Teacher dashboard with 13-module grid and module routing
-- `client/src/pages/teacher-modules/` - 13 module pages (profile, attendance, homework, classwork, noticeboard, complaint, examination, gallery, faculty-info, calendar, library, leave, timetable)
+- `shared/schema.ts` — All Drizzle table definitions, insert schemas, and inferred types
+- `server/db.ts` — Database connection (pool + drizzle)
+- `server/storage.ts` — `DatabaseStorage` class: all CRUD methods, paginated queries, audit log writer
+- `server/routes.ts` — Admin API routes (schools, students, principals, school metadata, bulk CSV import)
+- `server/teacher-routes.ts` — Teacher + admin extra routes (auth, attendance, homework, classwork, notices, complaints, exams, gallery, calendar, library, leave, timetable, student leaves, visitor logs, audit logs, paginated students/teachers)
+- `server/index.ts` — Express server, session middleware, static file serving (`/uploads`)
+- `client/src/hooks/use-school-config.ts` — Shared hook for school metadata (classes, sections, subjects, exam_types) with fallback
+- `client/src/pages/` — Page components (home, super-master, login, admin-dashboard, register, student-login, student-dashboard, teacher-login, teacher-dashboard)
+- `client/src/pages/teacher-modules/` — 13 teacher sub-module pages
+- `client/src/pages/admin-modules/` — 14 admin sub-module pages
 
 ## Database Tables
 - **schools**: id, name, code (unique)
-- **users**: id, email (unique), password_hash, role (admin/teacher), school_id
-- **students**: id, school_id, digital_student_id (unique), name, class, section, phone, dob, password_hash, photo_url, is_activated
+- **users**: id, email, password_hash, role (admin/teacher), school_id
+- **students**: id, school_id, digital_student_id, name, class, section, phone, dob, password_hash, photo_url, is_activated
 - **teachers**: id, user_id, school_id, full_name, phone, subject, assigned_class, assigned_section, must_change_password, otp_code, otp_expires_at, reset_token, reset_token_expires_at
-- **attendance_records**: id, student_id, teacher_id, school_id, date, status, edit_count, marked_by, marked_at
+- **attendance_records**: id, student_id, teacher_id, school_id, date, status (present/absent/leave), edit_count, marked_by, marked_at
 - **homework**: id, teacher_id, school_id, class, section, subject, content, file_url, due_date, created_at
 - **homework_views**: id, homework_id, student_id, viewed_at
 - **classwork**: id, teacher_id, school_id, class, section, subject, content, file_url, created_at
 - **notices**: id, school_id, created_by_id, creator_role, target_type, target_class, target_section, notice_type, content, file_url, created_at
-- **complaints**: id, ticket_id, teacher_id, student_id (nullable), school_id, complaint_type, status, content, reported_student_name, file_url, is_deleted, created_at
+- **complaints**: id, ticket_id, teacher_id, student_id, school_id, complaint_type, status, content, reported_student_name, file_url, is_deleted, created_at
 - **complaint_notes**: id, complaint_id, author_id, author_role, author_name, content, created_at
 - **exam_scores**: id, student_id, teacher_id, school_id, subject, exam_type, marks, total_marks, is_absent, created_at
-- **gallery_items**: id, school_id, uploaded_by_id, title, image_url, approved, created_at
-- **calendar_events**: id, school_id, title, date, event_type
-- **library_books**: id, school_id, title, author, isbn, total_copies, available_copies
+- **gallery_items**: id, school_id, uploaded_by_id, title, description, event_tag, image_url, approved, created_at
+- **calendar_events**: id, school_id, title, date, event_type (holiday/academic/event)
+- **library_books**: id, school_id, title, author, isbn, target_class, category, file_url, file_type, uploaded_by_id, verification_status, total_copies, available_copies
 - **book_borrows**: id, book_id, borrower_id, borrower_type, school_id, borrowed_at, returned_at
-- **leave_requests**: id, teacher_id, school_id, leave_type, start_date, end_date, reason, status, created_at
+- **leave_requests**: id, teacher_id, school_id, leave_type, start_date, end_date, reason, status, approved_by, created_at
 - **timetable_entries**: id, teacher_id, school_id, day_of_week, period, class, section, subject
 - **school_metadata**: id, school_id, meta_key (unique per school), meta_value (JSON array string), updated_at
+- **student_leave_requests**: id, student_id, school_id, start_date, end_date, reason, status (pending/approved/rejected/forwarded), reviewed_by, reviewer_role, created_at
+- **audit_logs**: id, school_id, action_type, entity_type, entity_id, action_by, action_by_role, details, created_at
+- **visitor_logs**: id, school_id, visitor_name, purpose, host_name, phone, check_in, check_out, badge, created_at
 
-## Multi-Tenant Global Configuration System
-- Principal configures school-specific master lists via School Settings panel in admin dashboard
-- 4 configurable keys: `classes`, `sections`, `subjects`, `exam_types` (stored as JSON arrays in school_metadata)
-- Admin routes: `GET /api/school-metadata/:schoolId`, `PUT /api/school-metadata/:schoolId/:metaKey` (admin-only, role checked)
-- Teacher read-only route: `GET /api/school-config/:schoolId` returns parsed config
-- `useSchoolConfig(schoolId)` hook provides dynamic dropdowns with fallback to hardcoded values
-- Examination, Homework, Classwork, Attendance, Noticeboard modules use dynamic dropdowns from school config
-- If school config is empty, fallback values used: classes (L.K.G-12), sections (A-Z), exam types (UT1-Annual)
+## Admin Dashboard — Navy & Gold Command Center
+- **Theme**: bg=#0A1628, cards=#1A2942, gold=#D4AF37
+- **Live Pulse Header**: Total Students · Faculty Strength · Daily Presence % · Action Required (red badge)
+- **15 tiles in 4 groups**:
+  - Foundation: School Setup, Student Registry, Faculty Mapping, Approval Center
+  - Oversight: Audit Logs, Visitor Log, Attendance Overview, Performance Analytics
+  - Management: Exam Controller, Complaint Hub, Noticeboard, Timetable Master
+  - Enterprise: ID Card Gen, Assets Inventory, (expandable)
+- **Student Registry**: debounced search + Class/Section filters + server-side pagination (LIMIT 50, OFFSET)
+- **Approval Center**: teacher leave, student leave, gallery images, e-book verifications — all pending items
+- **Visitor Log**: check-in form + check-out PATCH, audit trail
+- **Audit Logs**: chronological trail of all approve/reject/upload/checkin actions
 
-## Discipline & Resolution Hub (Complaints)
-- 3 complaint types: teacher-to-student, student-to-student, teacher-to-admin
-- Auto-generated ticket IDs: #DISC-YYYY-NNN (sequential per school)
-- Status governance: Pending (red) → Investigating (orange) → Resolved (green)
-- Edit/delete locked after Pending status
-- Soft delete (isDeleted flag)
-- Resolution Thread: expandable notes per complaint
-- Live student search with debounce (300ms, min 2 chars)
-- Mini-profile card after student selection (photo/initials, name, DSID, class)
-- S2S privacy: student-to-student complaints visible to teachers of same class/section (with schoolId filter for multi-tenant isolation)
-- Student search endpoint: `GET /api/students/search/:schoolId?q=...`
+## Teacher Dashboard — 13 Modules
+1. **Profile** — personal info
+2. **Attendance** — mark/edit, 7-day window, history table
+3. **Homework** — social-feed cards, view tracking, file upload, due dates
+4. **Classwork** — lesson log (mirrors homework, no due date)
+5. **Noticeboard** — smart targeting (section/class/school), 5+ notice types
+6. **Complaint** — Discipline & Resolution Hub, ticketing, live search, resolution threads
+7. **Examination** — spreadsheet grid, Tab-key nav, dual-line recharts, 360° history
+8. **Gallery** — batch upload (≤10 images), event tag, masonry grid, lightbox
+9. **Faculty Info** — staff directory
+10. **Calendar** — Month/Week toggle, holiday=red/academic=blue/event=green, today highlight, popovers
+11. **Library** — catalog search, e-book upload (PDF/EPUB → pending verification), borrow/return, my books
+12. **Leave** — My Leave (Sick/Casual/Earned balance cards, apply form, history) + Student Leave Requests tab (approve→auto-marks attendance, forward to principal)
+13. **Timetable** — weekly schedule grid
 
-## Examination & Performance Engine
-- Add Marks tab: spreadsheet grid, Tab-key nav, real-time % and grade (A+→F), absent toggle, red border guardrail, class average row
-- View Marks tab: results table, click student for inline timeline
-- StudentTimeline: dual-line recharts LineChart (student % vs class average %), 360° academic history across all subjects
-- Grade scale: A+≥90, A≥80, B+≥70, B≥60, C+≥50, C≥40, D≥33, F<33
-- Exam types: configurable via school metadata (fallback: UT1, UT2, Mid-term, UT3, Pre-Final, Annual)
-- Class average endpoint: `GET /api/exam-scores/class-average/:schoolId/:class/:section/:subject`
-
-## Key Routes
-- `/` - Public home page
-- `/super-master` - Hidden Super Admin panel
-- `/login` - Principal login
-- `/admin-dashboard` - Admin dashboard (protected)
-- `/register` - Student activation page
-- `/student-login` - Student login page
-- `/student-dashboard` - Student dashboard (protected)
-- `/teacher-login` - Teacher login with first-login password change
-- `/teacher-dashboard` - Teacher dashboard with 13-module grid (protected)
-- `/teacher-dashboard/:module` - Individual teacher module pages
-
-## Teacher Module Features
-1. **Profile** - View personal info
-2. **Attendance** - Enhanced multi-level module with premium EdTech UI
-3. **Homework** - Enhanced EdTech module with social-feed cards, due dates, view tracking
-4. **Classwork** - "Class Activity / Lesson Log" module (mirrors Homework UI, no due date)
-5. **Noticeboard** - Smart targeting (specific section, entire class, class range, whole school), 5+ notice types (merged from school config)
-6. **Complaint** - "Discipline & Resolution Hub" with ticketing, live search, mini-profile, resolution threads
-7. **Examination** - "Examination & Performance Engine" with spreadsheet grid, dual-line charts, 360° history
-8. **Gallery** - View school gallery, upload images for approval
-9. **Faculty Info** - Browse staff directory
-10. **Calendar** - View color-coded school calendar
-11. **Library** - Search books, borrow/return
-12. **Leave** - Apply for leave, track status
-13. **Timetable** - View weekly schedule
-
-## Security
-- Admin metadata routes enforce `userRole === "admin"` (teachers cannot modify school config)
+## Multi-Tenant Security
+- Admin metadata routes enforce `userRole === "admin"`
 - Teacher endpoints require `req.session.teacherId`
-- School ownership verified on all data queries (WHERE school_id = current_user.school_id)
-- Complaint PATCH/DELETE check ownership + Pending status
-- Complaint notes/status check school ownership
-- Exam endpoints validate teacher's schoolId
-- bcryptjs password hashing, no plaintext passwords stored
+- School ownership verified on all queries (`WHERE school_id = session.schoolId`)
+- Gallery upload routes verify teacher school ownership
+- Leave balance locked to own teacherId
+- Student leave routes verify assigned class/section match
+- Book verify route checks admin-school ownership
+- Paginated admin routes verify `req.session.schoolId === params.schoolId`
+
+## Multi-Tenant School Config
+- Principal configures master lists via School Settings tile
+- 4 keys: `classes`, `sections`, `subjects`, `exam_types` (stored as JSON in school_metadata)
+- `useSchoolConfig(schoolId)` hook provides dynamic dropdowns with fallback defaults
+- All modules use dynamic config; fallback if empty: classes (L.K.G–12), sections (A–E), exam types (UT1–Annual)
+
+## Leave & Attendance Sync
+- Teacher approve student leave → PATCH `/api/student-leaves/:id/approve` → marks attendance as "leave" for each date in range (skips Sundays)
+- Teacher forward → status = "forwarded" (goes to principal approval in Approval Center)
+- Admin approve student leave → same auto-attendance sync
+- Teacher leave balance: `GET /api/leave/balance/:teacherId` → counts days used per type for current year
+
+## Key API Endpoints
+- `POST /api/teacher-login`, `GET /api/teacher-me`, `POST /api/teacher-logout`
+- `GET /api/attendance/:schoolId/:class/:section/:date`, `POST /api/attendance`
+- `GET|POST /api/homework/:schoolId/:class/:section`, `PATCH|DELETE /api/homework/:id`
+- `GET|POST /api/gallery/:schoolId`, `POST /api/gallery/batch` (multer array ≤10)
+- `POST /api/library/ebooks` (multer single, teacher e-book upload)
+- `PATCH /api/library/books/:id/verify` (admin)
+- `GET /api/student-leaves/:schoolId/:class/:section`, `PATCH /api/student-leaves/:id/approve`, `PATCH /api/student-leaves/:id/forward`
+- `GET /api/leave/balance/:teacherId`
+- `GET /api/calendar/:schoolId`, `POST /api/calendar`, `DELETE /api/calendar/:id`
+- `GET|POST /api/visitor-logs`, `GET /api/visitor-logs/:schoolId`, `PATCH /api/visitor-logs/:id/checkout`
+- `GET /api/audit-logs/:schoolId`
+- `GET /api/schools/:schoolId/students/paginated?q=&cls=&section=&page=` (LIMIT 50)
+- `GET /api/schools/:schoolId/teachers/paginated?q=&page=` (LIMIT 50)
 
 ## Global Standards
 - Date format: dd/mm/yyyy (`toLocaleDateString("en-GB")`) across entire app
-- UI: EdTech aesthetic (white cards, rounded-2xl, shadow-lg, gradient buttons)
 - All interactive elements have `data-testid` attributes
+- Glassmorphic EdTech card aesthetic throughout teacher modules
+- recharts for all analytics charts
 
 ## Running
-- `npm run dev` starts both Express backend and Vite frontend dev server
-- `npm run db:push` pushes schema changes to PostgreSQL
+- `npm run dev` — starts Express backend + Vite frontend on port 5000
+- `npm run db:push` — sync Drizzle schema to PostgreSQL (never use db:push interactively; use direct SQL for new tables when needed)

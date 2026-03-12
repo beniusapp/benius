@@ -248,6 +248,19 @@ export const auditLogs = pgTable("audit_logs", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const visitorLogs = pgTable("visitor_logs", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull(),
+  visitorName: text("visitor_name").notNull(),
+  purpose: text("purpose").notNull(),
+  hostName: text("host_name").notNull(),
+  phone: text("phone"),
+  checkIn: timestamp("check_in").notNull().defaultNow(),
+  checkOut: timestamp("check_out"),
+  badge: text("badge"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const schoolsRelations = relations(schools, ({ many }) => ({
   students: many(students),
   users: many(users),
@@ -356,3 +369,7 @@ export type StudentLeaveRequest = typeof studentLeaveRequests.$inferSelect;
 export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, createdAt: true });
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 export type AuditLog = typeof auditLogs.$inferSelect;
+
+export const insertVisitorLogSchema = createInsertSchema(visitorLogs).omit({ id: true, createdAt: true, checkIn: true });
+export type InsertVisitorLog = z.infer<typeof insertVisitorLogSchema>;
+export type VisitorLog = typeof visitorLogs.$inferSelect;

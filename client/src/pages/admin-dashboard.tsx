@@ -1,178 +1,81 @@
-import { useRef, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import {
-  GraduationCap, Loader2, LogOut, Users, Upload, AlertTriangle, UserPlus,
-  ChevronDown, ChevronUp, Trash2, BookOpen, Calendar, Bell, Image,
-  Clock, CalendarOff, Check, X, Settings, Plus,
+  GraduationCap, LogOut, Users, UserCheck, Settings, BookOpen, Clock,
+  Bell, Image, BarChart2, Shield, UserSquare, CreditCard, Package,
+  TrendingUp, MessageSquare, CalendarDays, ChevronLeft, Loader2,
+  ArrowRight, AlertTriangle,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
-import type { Student } from "@shared/schema";
+
+import SchoolSetup from "./admin-modules/school-setup";
+import StudentRegistry from "./admin-modules/student-registry";
+import FacultyMapping from "./admin-modules/faculty-mapping";
+import ApprovalCenter from "./admin-modules/approval-center";
+import AuditLogsModule from "./admin-modules/audit-logs";
+import VisitorLogModule from "./admin-modules/visitor-log";
+import AttendanceOverview from "./admin-modules/attendance-overview";
+import PerformanceAnalytics from "./admin-modules/performance-analytics";
+import ExamController from "./admin-modules/exam-controller";
+import ComplaintHub from "./admin-modules/complaint-hub";
+import NoticeboardAdmin from "./admin-modules/noticeboard-admin";
+import TimetableMaster from "./admin-modules/timetable-master";
+import IdCardGen from "./admin-modules/id-card-gen";
+import AssetsInventory from "./admin-modules/assets-inventory";
 
 interface MeResponse {
-  id: number;
-  email: string;
-  role: string;
-  schoolId: number;
-  schoolName: string;
-  schoolCode: string;
-  studentCount: number;
+  id: number; email: string; role: string;
+  schoolId: number; schoolName: string; schoolCode: string; studentCount: number;
 }
 
-interface UploadResponse {
-  count: number;
-  skipped: number;
-  warnings: string[];
-  message: string;
+type ActiveModule =
+  | "grid" | "school-setup" | "timetable" | "attendance" | "exam-controller"
+  | "complaint-hub" | "noticeboard" | "approval-center" | "faculty-mapping"
+  | "student-registry" | "analytics" | "audit-logs" | "visitor-log"
+  | "id-card-gen" | "assets";
+
+interface TileConfig {
+  id: ActiveModule;
+  label: string;
+  icon: any;
+  group: string;
+  desc: string;
+  badgeKey?: string;
 }
 
-interface TeacherEntry {
-  id: number;
-  fullName: string;
-  email: string;
-  phone: string;
-  subject: string;
-  assignedClass: string;
-  assignedSection: string;
-}
+const TILES: TileConfig[] = [
+  { id: "school-setup", label: "School Setup", icon: Settings, group: "Foundation", desc: "Classes, Sections, Subjects, Exam Types" },
+  { id: "timetable", label: "Timetable Master", icon: Clock, group: "Foundation", desc: "Map teachers to periods and classes" },
+  { id: "attendance", label: "Attendance Overview", icon: CalendarDays, group: "Oversight", desc: "School-wide daily presence stats" },
+  { id: "exam-controller", label: "Exam Controller", icon: Shield, group: "Oversight", desc: "Lock scores & generate report cards" },
+  { id: "complaint-hub", label: "Complaint Hub", icon: MessageSquare, group: "Oversight", desc: "All teacher complaints in one place", badgeKey: "complaints" },
+  { id: "noticeboard", label: "Noticeboard", icon: Bell, group: "Oversight", desc: "Post notices to classes or whole school" },
+  { id: "approval-center", label: "Approval Center", icon: UserCheck, group: "Management", desc: "Leaves, gallery, e-books — unified", badgeKey: "approvals" },
+  { id: "faculty-mapping", label: "Faculty Mapping", icon: Users, group: "Management", desc: "Add, search, and manage teachers" },
+  { id: "student-registry", label: "Student Registry", icon: GraduationCap, group: "Management", desc: "5000+ students with smart pagination" },
+  { id: "analytics", label: "Performance Analytics", icon: BarChart2, group: "Enterprise", desc: "Exam scores and class analytics" },
+  { id: "audit-logs", label: "Audit Logs", icon: Shield, group: "Enterprise", desc: "Immutable trail of all admin actions" },
+  { id: "visitor-log", label: "Visitor Log", icon: UserSquare, group: "Enterprise", desc: "Campus visitor check-in & check-out" },
+  { id: "id-card-gen", label: "ID Card Gen", icon: CreditCard, group: "Enterprise", desc: "Generate & print student ID cards" },
+  { id: "assets", label: "Assets & Inventory", icon: Package, group: "Enterprise", desc: "Track school equipment and resources" },
+];
 
-interface LeaveEntry {
-  id: number;
-  teacherName: string;
-  leaveType: string;
-  startDate: string;
-  endDate: string;
-  reason: string;
-  status: string;
-}
+const GROUP_COLORS: Record<string, string> = {
+  Foundation: "text-blue-400 bg-blue-500/10 border-blue-500/20",
+  Oversight: "text-purple-400 bg-purple-500/10 border-purple-500/20",
+  Management: "text-green-400 bg-green-500/10 border-green-500/20",
+  Enterprise: "text-[#D4AF37] bg-[#D4AF37]/10 border-[#D4AF37]/20",
+};
 
-interface GalleryEntry {
-  id: number;
-  title: string;
-  imageUrl: string;
-  approved: boolean;
-}
-
-interface LibraryBookEntry {
-  id: number;
-  title: string;
-  author: string;
-  isbn: string | null;
-  totalCopies: number;
-  availableCopies: number;
-}
-
-interface CalendarEventEntry {
-  id: number;
-  title: string;
-  date: string;
-  eventType: string;
-}
-
-interface TimetableEntryData {
-  id: number;
-  teacherName: string;
-  dayOfWeek: number;
-  period: number;
-  class: string;
-  section: string;
-  subject: string;
-}
-
-const addStudentSchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  class: z.string().min(1, "Class is required"),
-  section: z.string().min(1, "Section is required"),
-  phone: z.string().min(7, "Valid phone number is required"),
-  dob: z.string().min(1, "Date of birth is required"),
-});
-
-type AddStudentForm = z.infer<typeof addStudentSchema>;
-
-const addTeacherSchema = z.object({
-  fullName: z.string().min(2, "Full name is required"),
-  email: z.string().email("Valid email is required"),
-  password: z.string().min(6, "At least 6 characters"),
-  phone: z.string().min(7, "Valid phone number is required"),
-  subject: z.string().min(1, "Subject is required"),
-  assignedClass: z.string().min(1, "Class is required"),
-  assignedSection: z.string().min(1, "Section is required"),
-});
-
-type AddTeacherForm = z.infer<typeof addTeacherSchema>;
-
-function CollapsibleSection({ title, icon: Icon, testId, children }: { title: string; icon: any; testId: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <Icon className="w-5 h-5" />
-            {title}
-          </CardTitle>
-          <Button variant="outline" size="sm" onClick={() => setOpen(!open)} data-testid={`button-toggle-${testId}`}>
-            {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          </Button>
-        </div>
-      </CardHeader>
-      {open && <CardContent>{children}</CardContent>}
-    </Card>
-  );
-}
+const GROUP_ORDER = ["Foundation", "Oversight", "Management", "Enterprise"];
 
 export default function AdminDashboard() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [uploadWarnings, setUploadWarnings] = useState<string[]>([]);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [showTeacherForm, setShowTeacherForm] = useState(false);
-
-  const [noticeContent, setNoticeContent] = useState("");
-  const [calTitle, setCalTitle] = useState("");
-  const [calDate, setCalDate] = useState("");
-  const [calType, setCalType] = useState("");
-  const [bookTitle, setBookTitle] = useState("");
-  const [bookAuthor, setBookAuthor] = useState("");
-  const [bookIsbn, setBookIsbn] = useState("");
-  const [bookCopies, setBookCopies] = useState("1");
-  const [ttTeacher, setTtTeacher] = useState("");
-  const [ttDay, setTtDay] = useState("");
-  const [ttPeriod, setTtPeriod] = useState("");
-  const [ttClass, setTtClass] = useState("");
-  const [ttSection, setTtSection] = useState("");
-  const [ttSubject, setTtSubject] = useState("");
-
-  const [settingsClasses, setSettingsClasses] = useState<string[]>([]);
-  const [settingsSections, setSettingsSections] = useState<string[]>([]);
-  const [settingsSubjects, setSettingsSubjects] = useState<string[]>([]);
-  const [settingsExamTypes, setSettingsExamTypes] = useState<string[]>([]);
-  const [newClassInput, setNewClassInput] = useState("");
-  const [newSubjectInput, setNewSubjectInput] = useState("");
-  const [newExamTypeInput, setNewExamTypeInput] = useState("");
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
-
-  const form = useForm<AddStudentForm>({
-    resolver: zodResolver(addStudentSchema),
-    defaultValues: { name: "", class: "", section: "", phone: "", dob: "" },
-  });
-
-  const teacherForm = useForm<AddTeacherForm>({
-    resolver: zodResolver(addTeacherSchema),
-    defaultValues: { fullName: "", email: "", password: "", phone: "", subject: "", assignedClass: "", assignedSection: "" },
-  });
+  const [activeModule, setActiveModule] = useState<ActiveModule>("grid");
 
   const { data: me, isLoading, isError } = useQuery<MeResponse | null>({
     queryKey: ["/api/me"],
@@ -180,913 +83,273 @@ export default function AdminDashboard() {
   });
 
   useEffect(() => {
-    if (!isLoading && (isError || !me)) {
-      setLocation("/login");
-    }
+    if (!isLoading && (isError || !me)) setLocation("/login");
   }, [isLoading, isError, me, setLocation]);
 
-  const { data: students = [], isLoading: studentsLoading } = useQuery<Student[]>({
-    queryKey: ["/api/schools", me?.schoolId, "students"],
-    queryFn: async () => {
-      if (!me?.schoolId) return [];
-      const res = await fetch(`/api/schools/${me.schoolId}/students`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch students");
-      return res.json();
-    },
-    enabled: !!me?.schoolId,
-  });
-
-  const { data: teachersList = [] } = useQuery<TeacherEntry[]>({
-    queryKey: ["/api/schools", me?.schoolId, "teachers"],
-    queryFn: async () => {
-      if (!me?.schoolId) return [];
-      const res = await fetch(`/api/schools/${me.schoolId}/teachers`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed");
-      return res.json();
-    },
-    enabled: !!me?.schoolId,
-  });
-
-  const { data: leaveRequests = [] } = useQuery<LeaveEntry[]>({
-    queryKey: ["/api/leave/school", me?.schoolId],
-    queryFn: async () => {
-      if (!me?.schoolId) return [];
-      const res = await fetch(`/api/leave/school/${me.schoolId}`, { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
-    },
-    enabled: !!me?.schoolId,
-  });
-
-  const { data: galleryItems = [] } = useQuery<GalleryEntry[]>({
-    queryKey: ["/api/gallery", me?.schoolId, "all"],
-    queryFn: async () => {
-      if (!me?.schoolId) return [];
-      const res = await fetch(`/api/gallery/${me.schoolId}?all=true`, { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
-    },
-    enabled: !!me?.schoolId,
-  });
-
-  const { data: libraryBooks = [] } = useQuery<LibraryBookEntry[]>({
-    queryKey: ["/api/library/books", me?.schoolId],
-    queryFn: async () => {
-      if (!me?.schoolId) return [];
-      const res = await fetch(`/api/library/books/${me.schoolId}`, { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
-    },
-    enabled: !!me?.schoolId,
-  });
-
-  const { data: calendarEvents = [] } = useQuery<CalendarEventEntry[]>({
-    queryKey: ["/api/calendar", me?.schoolId],
-    queryFn: async () => {
-      if (!me?.schoolId) return [];
-      const res = await fetch(`/api/calendar/${me.schoolId}`, { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
-    },
-    enabled: !!me?.schoolId,
-  });
-
-  const { data: timetableEntries = [] } = useQuery<TimetableEntryData[]>({
-    queryKey: ["/api/timetable/school", me?.schoolId],
-    queryFn: async () => {
-      if (!me?.schoolId) return [];
-      const res = await fetch(`/api/timetable/school/${me.schoolId}`, { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
-    },
-    enabled: !!me?.schoolId,
-  });
-
-  const { data: schoolMetaData } = useQuery<{ classes: string[]; sections: string[]; subjects: string[]; exam_types: string[] }>({
+  const { data: schoolMeta } = useQuery<{ classes: string[]; sections: string[]; subjects: string[]; exam_types: string[] }>({
     queryKey: ["/api/school-metadata", me?.schoolId],
     queryFn: async () => {
       if (!me?.schoolId) return { classes: [], sections: [], subjects: [], exam_types: [] };
-      const res = await fetch(`/api/school-metadata/${me.schoolId}`, { credentials: "include" });
-      if (!res.ok) return { classes: [], sections: [], subjects: [], exam_types: [] };
-      return res.json();
+      const r = await fetch(`/api/school-metadata/${me.schoolId}`, { credentials: "include" });
+      return r.ok ? r.json() : { classes: [], sections: [], subjects: [], exam_types: [] };
     },
     enabled: !!me?.schoolId,
   });
 
-  useEffect(() => {
-    if (schoolMetaData && !settingsLoaded) {
-      setSettingsClasses(schoolMetaData.classes || []);
-      setSettingsSections(schoolMetaData.sections || []);
-      setSettingsSubjects(schoolMetaData.subjects || []);
-      setSettingsExamTypes(schoolMetaData.exam_types || []);
-      setSettingsLoaded(true);
-    }
-  }, [schoolMetaData, settingsLoaded]);
-
-  const saveMetaMutation = useMutation({
-    mutationFn: async ({ metaKey, values }: { metaKey: string; values: string[] }) => {
-      await apiRequest("PUT", `/api/school-metadata/${me!.schoolId}/${metaKey}`, { values });
+  const { data: teachersList = [] } = useQuery<any[]>({
+    queryKey: ["/api/schools", me?.schoolId, "teachers"],
+    queryFn: async () => {
+      if (!me?.schoolId) return [];
+      const r = await fetch(`/api/schools/${me.schoolId}/teachers`, { credentials: "include" });
+      return r.ok ? r.json() : [];
     },
-    onSuccess: () => {
-      toast({ title: "Settings Saved" });
-      queryClient.invalidateQueries({ queryKey: ["/api/school-metadata", me?.schoolId] });
-    },
-    onError: (error: Error) => { toast({ title: "Error", description: error.message, variant: "destructive" }); },
+    enabled: !!me?.schoolId,
   });
 
-  const CLASS_OPTIONS = ["LKG", "UKG", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
-  const SECTION_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+  const today = new Date().toISOString().split("T")[0];
+  const { data: dailySummary } = useQuery<{ total: number; present: number; percentage: number }>({
+    queryKey: ["/api/attendance/daily-summary", me?.schoolId, today],
+    queryFn: async () => {
+      if (!me?.schoolId) return { total: 0, present: 0, percentage: 0 };
+      const r = await fetch(`/api/attendance/daily-summary/${me.schoolId}/${today}`, { credentials: "include" });
+      return r.ok ? r.json() : { total: 0, present: 0, percentage: 0 };
+    },
+    enabled: !!me?.schoolId,
+  });
+
+  const { data: pendingLeaves = [] } = useQuery<any[]>({
+    queryKey: ["/api/leave/school", me?.schoolId],
+    queryFn: async () => {
+      if (!me?.schoolId) return [];
+      const r = await fetch(`/api/leave/school/${me.schoolId}`, { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!me?.schoolId,
+  });
+
+  const { data: galleryItems = [] } = useQuery<any[]>({
+    queryKey: ["/api/gallery", me?.schoolId, "all"],
+    queryFn: async () => {
+      if (!me?.schoolId) return [];
+      const r = await fetch(`/api/gallery/${me.schoolId}?all=true`, { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!me?.schoolId,
+  });
+
+  const { data: pendingEbooks = [] } = useQuery<any[]>({
+    queryKey: ["/api/library/books", me?.schoolId, "pending"],
+    queryFn: async () => {
+      if (!me?.schoolId) return [];
+      const r = await fetch(`/api/library/books/${me.schoolId}/pending`, { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!me?.schoolId,
+  });
+
+  const { data: complaints = [] } = useQuery<any[]>({
+    queryKey: ["/api/complaints/school", me?.schoolId],
+    queryFn: async () => {
+      if (!me?.schoolId) return [];
+      const r = await fetch(`/api/complaints/school/${me.schoolId}`, { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!me?.schoolId,
+  });
+
+  const pendingLeavesCount = (pendingLeaves as any[]).filter(l => l.status === "pending").length;
+  const pendingGalleryCount = (galleryItems as any[]).filter(g => !g.approved).length;
+  const openComplaintsCount = (complaints as any[]).filter(c => c.status === "open" || c.status === "in_progress").length;
+  const totalActionRequired = pendingLeavesCount + pendingGalleryCount + pendingEbooks.length;
+
+  const BADGES: Record<string, number> = {
+    approvals: totalActionRequired,
+    complaints: openComplaintsCount,
+  };
 
   const logoutMutation = useMutation({
     mutationFn: async () => { await apiRequest("POST", "/api/logout"); },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/me"] }); setLocation("/login"); },
-    onError: (error: Error) => { toast({ title: "Error", description: error.message, variant: "destructive" }); },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
-
-  const uploadMutation = useMutation({
-    mutationFn: async (file: File): Promise<UploadResponse> => {
-      const formData = new FormData(); formData.append("file", file);
-      const res = await fetch(`/api/schools/${me!.schoolId}/students/upload`, { method: "POST", body: formData, credentials: "include" });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.message || "Upload failed"); }
-      return res.json();
-    },
-    onSuccess: (data) => {
-      toast({ title: "Upload Complete", description: data.message });
-      if (data.warnings.length > 0) setUploadWarnings(data.warnings);
-      queryClient.invalidateQueries({ queryKey: ["/api/me"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/schools", me?.schoolId, "students"] });
-    },
-    onError: (error: Error) => { toast({ title: "Upload Failed", description: error.message, variant: "destructive" }); },
-  });
-
-  const addStudentMutation = useMutation({
-    mutationFn: async (data: AddStudentForm) => { const res = await apiRequest("POST", `/api/schools/${me!.schoolId}/students`, data); return res.json(); },
-    onSuccess: (data) => {
-      toast({ title: "Student Added", description: `DSID: ${data.digitalStudentId}` });
-      form.reset(); setShowAddForm(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/me"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/schools", me?.schoolId, "students"] });
-    },
-    onError: (error: Error) => { toast({ title: "Failed to Add Student", description: error.message, variant: "destructive" }); },
-  });
-
-  const addTeacherMutation = useMutation({
-    mutationFn: async (data: AddTeacherForm) => { const res = await apiRequest("POST", `/api/schools/${me!.schoolId}/teachers`, data); return res.json(); },
-    onSuccess: () => {
-      toast({ title: "Teacher Added" });
-      teacherForm.reset(); setShowTeacherForm(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/schools", me?.schoolId, "teachers"] });
-    },
-    onError: (error: Error) => { toast({ title: "Failed", description: error.message, variant: "destructive" }); },
-  });
-
-  const deleteTeacherMutation = useMutation({
-    mutationFn: async (id: number) => { await apiRequest("DELETE", `/api/teachers/${id}`); },
-    onSuccess: () => { toast({ title: "Teacher Deleted" }); queryClient.invalidateQueries({ queryKey: ["/api/schools", me?.schoolId, "teachers"] }); },
-    onError: (error: Error) => { toast({ title: "Error", description: error.message, variant: "destructive" }); },
-  });
-
-  const postNoticeMutation = useMutation({
-    mutationFn: async () => {
-      const fd = new FormData();
-      fd.append("content", noticeContent); fd.append("targetType", "teacher"); fd.append("schoolId", String(me!.schoolId));
-      const res = await fetch("/api/notices", { method: "POST", body: fd, credentials: "include" });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
-    },
-    onSuccess: () => { toast({ title: "Notice Posted" }); setNoticeContent(""); },
-    onError: (error: Error) => { toast({ title: "Error", description: error.message, variant: "destructive" }); },
-  });
-
-  const addCalendarMutation = useMutation({
-    mutationFn: async () => { await apiRequest("POST", "/api/calendar", { title: calTitle, date: calDate, eventType: calType, schoolId: me!.schoolId }); },
-    onSuccess: () => {
-      toast({ title: "Event Added" }); setCalTitle(""); setCalDate(""); setCalType("");
-      queryClient.invalidateQueries({ queryKey: ["/api/calendar", me?.schoolId] });
-    },
-    onError: (error: Error) => { toast({ title: "Error", description: error.message, variant: "destructive" }); },
-  });
-
-  const deleteCalendarMutation = useMutation({
-    mutationFn: async (id: number) => { await apiRequest("DELETE", `/api/calendar/${id}`); },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/calendar", me?.schoolId] }); },
-  });
-
-  const leaveStatusMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: number; status: string }) => { await apiRequest("PATCH", `/api/leave/${id}/status`, { status }); },
-    onSuccess: () => { toast({ title: "Leave Updated" }); queryClient.invalidateQueries({ queryKey: ["/api/leave/school", me?.schoolId] }); },
-    onError: (error: Error) => { toast({ title: "Error", description: error.message, variant: "destructive" }); },
-  });
-
-  const approveGalleryMutation = useMutation({
-    mutationFn: async (id: number) => { await apiRequest("PATCH", `/api/gallery/${id}/approve`); },
-    onSuccess: () => { toast({ title: "Image Approved" }); queryClient.invalidateQueries({ queryKey: ["/api/gallery", me?.schoolId, "all"] }); },
-  });
-
-  const addBookMutation = useMutation({
-    mutationFn: async () => { await apiRequest("POST", "/api/library/books", { title: bookTitle, author: bookAuthor, isbn: bookIsbn || null, totalCopies: bookCopies, schoolId: me!.schoolId }); },
-    onSuccess: () => {
-      toast({ title: "Book Added" }); setBookTitle(""); setBookAuthor(""); setBookIsbn(""); setBookCopies("1");
-      queryClient.invalidateQueries({ queryKey: ["/api/library/books", me?.schoolId] });
-    },
-    onError: (error: Error) => { toast({ title: "Error", description: error.message, variant: "destructive" }); },
-  });
-
-  const deleteBookMutation = useMutation({
-    mutationFn: async (id: number) => { await apiRequest("DELETE", `/api/library/books/${id}`); },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/library/books", me?.schoolId] }); },
-  });
-
-  const addTimetableMutation = useMutation({
-    mutationFn: async () => {
-      await apiRequest("POST", "/api/timetable", { teacherId: ttTeacher, schoolId: me!.schoolId, dayOfWeek: ttDay, period: ttPeriod, class: ttClass, section: ttSection, subject: ttSubject });
-    },
-    onSuccess: () => {
-      toast({ title: "Timetable Entry Added" }); setTtDay(""); setTtPeriod(""); setTtClass(""); setTtSection(""); setTtSubject("");
-      queryClient.invalidateQueries({ queryKey: ["/api/timetable/school", me?.schoolId] });
-    },
-    onError: (error: Error) => { toast({ title: "Error", description: error.message, variant: "destructive" }); },
-  });
-
-  const deleteTimetableMutation = useMutation({
-    mutationFn: async (id: number) => { await apiRequest("DELETE", `/api/timetable/${id}`); },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/timetable/school", me?.schoolId] }); },
-  });
-
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) { setUploadWarnings([]); uploadMutation.mutate(file); }
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  }
 
   if (isLoading || !me) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      <div className="min-h-screen flex items-center justify-center bg-[#0A1628]">
+        <Loader2 className="w-8 h-8 animate-spin text-[#D4AF37]" />
       </div>
     );
   }
 
-  const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
-  const pendingLeaves = leaveRequests.filter(l => l.status === "pending");
-  const pendingGallery = galleryItems.filter(g => !g.approved);
+  const meta = {
+    classes: schoolMeta?.classes ?? [],
+    sections: schoolMeta?.sections ?? [],
+    subjects: schoolMeta?.subjects ?? [],
+    exam_types: schoolMeta?.exam_types ?? [],
+  };
+
+  const renderModule = () => {
+    switch (activeModule) {
+      case "school-setup": return <SchoolSetup schoolId={me.schoolId} />;
+      case "student-registry": return <StudentRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} />;
+      case "faculty-mapping": return <FacultyMapping schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
+      case "approval-center": return <ApprovalCenter schoolId={me.schoolId} />;
+      case "audit-logs": return <AuditLogsModule schoolId={me.schoolId} />;
+      case "visitor-log": return <VisitorLogModule schoolId={me.schoolId} />;
+      case "attendance": return <AttendanceOverview schoolId={me.schoolId} />;
+      case "analytics": return <PerformanceAnalytics schoolId={me.schoolId} classes={meta.classes} subjects={meta.subjects} examTypes={meta.exam_types} />;
+      case "exam-controller": return <ExamController schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} examTypes={meta.exam_types} />;
+      case "complaint-hub": return <ComplaintHub schoolId={me.schoolId} />;
+      case "noticeboard": return <NoticeboardAdmin schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} />;
+      case "timetable": return <TimetableMaster schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
+      case "id-card-gen": return <IdCardGen schoolId={me.schoolId} schoolName={me.schoolName} classes={meta.classes} sections={meta.sections} />;
+      case "assets": return <AssetsInventory schoolId={me.schoolId} />;
+      default: return null;
+    }
+  };
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
-      <header className="border-b bg-card">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
+    <div className="min-h-screen bg-[#0A1628] text-white flex flex-col">
+      {/* ===== TOP NAVBAR ===== */}
+      <header className="border-b border-white/10 bg-[#0F1E35] sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary">
-              <GraduationCap className="w-5 h-5 text-primary-foreground" />
+            {activeModule !== "grid" && (
+              <button onClick={() => setActiveModule("grid")}
+                className="p-1.5 rounded-lg hover:bg-white/10 transition-colors mr-1" data-testid="button-back-to-grid">
+                <ChevronLeft className="w-5 h-5 text-white/70" />
+              </button>
+            )}
+            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-[#D4AF37] to-[#B8962E] flex items-center justify-center shadow-lg">
+              <GraduationCap className="w-5 h-5 text-[#0A1628]" />
             </div>
             <div>
-              <h1 className="text-xl font-semibold tracking-tight" data-testid="text-dashboard-title">BENIUS</h1>
-              <p className="text-xs text-muted-foreground">Admin Dashboard</p>
+              <h1 className="text-base font-bold text-white tracking-tight" data-testid="text-dashboard-title">BENIUS</h1>
+              <p className="text-[10px] text-white/40 leading-none" data-testid="text-school-name">{me.schoolName}</p>
             </div>
           </div>
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-sm text-muted-foreground" data-testid="text-user-email">{me.email}</span>
-            <Button variant="secondary" size="sm" onClick={() => logoutMutation.mutate()} disabled={logoutMutation.isPending} data-testid="button-logout">
-              <LogOut className="w-3.5 h-3.5 mr-1" /> Logout
+          <div className="flex items-center gap-3">
+            <span className="hidden sm:block text-sm text-white/40" data-testid="text-user-email">{me.email}</span>
+            <Button variant="ghost" size="sm" onClick={() => logoutMutation.mutate()} disabled={logoutMutation.isPending}
+              className="text-white/60 hover:text-white hover:bg-white/10" data-testid="button-logout">
+              <LogOut className="w-4 h-4 mr-1" /> Logout
             </Button>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-6xl mx-auto w-full px-6 py-8 space-y-6">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center justify-center w-12 h-12 rounded-md bg-primary/10">
-                  <GraduationCap className="w-6 h-6 text-primary" />
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">School</p>
-                  <h2 className="text-lg font-bold tracking-tight" data-testid="text-school-name">{me.schoolName}</h2>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center justify-center w-12 h-12 rounded-md bg-primary/10">
-                  <Users className="w-6 h-6 text-primary" />
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Students</p>
-                  <h2 className="text-lg font-bold tracking-tight" data-testid="text-student-count">{me.studentCount}</h2>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center justify-center w-12 h-12 rounded-md bg-primary/10">
-                  <UserPlus className="w-6 h-6 text-primary" />
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Teachers</p>
-                  <h2 className="text-lg font-bold tracking-tight" data-testid="text-teacher-count">{teachersList.length}</h2>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* ADD STUDENT */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between gap-4 flex-wrap">
-              <CardTitle className="flex items-center gap-2 text-lg"><UserPlus className="w-5 h-5" /> Add Student</CardTitle>
-              <Button variant="outline" size="sm" onClick={() => setShowAddForm(!showAddForm)} data-testid="button-toggle-add-form">
-                {showAddForm ? <ChevronUp className="w-4 h-4 mr-1" /> : <ChevronDown className="w-4 h-4 mr-1" />}
-                {showAddForm ? "Hide" : "Manual Add"}
-              </Button>
-            </div>
-          </CardHeader>
-          {showAddForm && (
-            <CardContent>
-              <Form {...form}>
-                <form onSubmit={form.handleSubmit((d) => addStudentMutation.mutate(d))} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  <FormField control={form.control} name="name" render={({ field }) => (<FormItem><FormLabel>Name</FormLabel><FormControl><Input placeholder="Student full name" data-testid="input-add-name" {...field} /></FormControl><FormMessage /></FormItem>)} />
-                  <FormField control={form.control} name="class" render={({ field }) => (<FormItem><FormLabel>Class</FormLabel><FormControl><Input placeholder="e.g. 10" data-testid="input-add-class" {...field} /></FormControl><FormMessage /></FormItem>)} />
-                  <FormField control={form.control} name="section" render={({ field }) => (<FormItem><FormLabel>Section</FormLabel><FormControl><Input placeholder="e.g. A" data-testid="input-add-section" {...field} /></FormControl><FormMessage /></FormItem>)} />
-                  <FormField control={form.control} name="phone" render={({ field }) => (<FormItem><FormLabel>Phone</FormLabel><FormControl><Input placeholder="e.g. 9876543210" data-testid="input-add-phone" {...field} /></FormControl><FormMessage /></FormItem>)} />
-                  <FormField control={form.control} name="dob" render={({ field }) => (<FormItem><FormLabel>Date of Birth</FormLabel><FormControl><Input type="date" data-testid="input-add-dob" {...field} /></FormControl><FormMessage /></FormItem>)} />
-                  <div className="flex items-end">
-                    <Button type="submit" disabled={addStudentMutation.isPending} className="w-full" data-testid="button-add-student">
-                      {addStudentMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <UserPlus className="w-4 h-4 mr-2" />}
-                      Add Student
-                    </Button>
-                  </div>
-                </form>
-              </Form>
-            </CardContent>
-          )}
-        </Card>
-
-        {/* STUDENT LIST */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between gap-4 flex-wrap">
-              <CardTitle className="flex items-center gap-2 text-lg"><Users className="w-5 h-5" /> Student List</CardTitle>
+      {/* ===== LIVE PULSE HEADER ===== */}
+      <div className="border-b border-white/5 bg-[#0F1E35]/50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3">
+          <div className="flex flex-wrap items-center gap-4 sm:gap-8">
+            <div className="flex items-center gap-2" data-testid="stat-students">
+              <GraduationCap className="w-4 h-4 text-[#D4AF37]" />
               <div>
-                <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".csv,.xlsx,.xls" className="hidden" data-testid="input-file-upload" />
-                <Button onClick={() => fileInputRef.current?.click()} disabled={uploadMutation.isPending} data-testid="button-upload-students">
-                  {uploadMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Upload className="w-4 h-4 mr-2" />}
-                  Upload (Excel/CSV)
-                </Button>
+                <p className="text-[10px] text-white/40 leading-none">Total Students</p>
+                <p className="text-base font-bold text-white">{me.studentCount.toLocaleString()}</p>
               </div>
             </div>
-          </CardHeader>
-          <CardContent>
-            {uploadWarnings.length > 0 && (
-              <div className="mb-4 p-3 rounded-md bg-muted border border-border" data-testid="upload-warnings">
-                <div className="flex items-center gap-2 mb-2"><AlertTriangle className="w-4 h-4 text-muted-foreground" /><span className="text-sm font-medium">Upload Warnings</span></div>
-                <ul className="text-xs text-muted-foreground space-y-1">{uploadWarnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+            <div className="w-px h-8 bg-white/10 hidden sm:block" />
+            <div className="flex items-center gap-2" data-testid="stat-teachers">
+              <Users className="w-4 h-4 text-blue-400" />
+              <div>
+                <p className="text-[10px] text-white/40 leading-none">Faculty Strength</p>
+                <p className="text-base font-bold text-white">{teachersList.length}</p>
               </div>
-            )}
-            {studentsLoading ? (
-              <div className="flex items-center justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-            ) : students.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground text-sm" data-testid="text-no-students">No students registered yet.</div>
-            ) : (
-              <div className="rounded-md border overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>DSID</TableHead><TableHead>Name</TableHead><TableHead>Class</TableHead><TableHead>Section</TableHead><TableHead>Phone</TableHead><TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {students.map((s) => (
-                      <TableRow key={s.id} data-testid={`row-student-${s.id}`}>
-                        <TableCell className="font-mono text-sm" data-testid={`text-dsid-${s.id}`}>{s.digitalStudentId}</TableCell>
-                        <TableCell data-testid={`text-student-name-${s.id}`}>{s.name}</TableCell>
-                        <TableCell>{s.class}</TableCell><TableCell>{s.section}</TableCell><TableCell>{s.phone}</TableCell>
-                        <TableCell>
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${s.isActivated ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400" : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400"}`} data-testid={`text-status-${s.id}`}>
-                            {s.isActivated ? "Activated" : "Pending"}
-                          </span>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+            </div>
+            <div className="w-px h-8 bg-white/10 hidden sm:block" />
+            <div className="flex items-center gap-2" data-testid="stat-attendance">
+              <TrendingUp className="w-4 h-4 text-green-400" />
+              <div>
+                <p className="text-[10px] text-white/40 leading-none">Daily Presence</p>
+                <p className="text-base font-bold text-white">
+                  {dailySummary?.total ? `${dailySummary.percentage}%` : "—"}
+                </p>
               </div>
-            )}
-          </CardContent>
-        </Card>
+            </div>
+            <div className="w-px h-8 bg-white/10 hidden sm:block" />
+            <div className="flex items-center gap-2 cursor-pointer" onClick={() => setActiveModule("approval-center")} data-testid="stat-action-required">
+              <AlertTriangle className={`w-4 h-4 ${totalActionRequired > 0 ? "text-red-400" : "text-white/30"}`} />
+              <div>
+                <p className="text-[10px] text-white/40 leading-none">Action Required</p>
+                <p className={`text-base font-bold ${totalActionRequired > 0 ? "text-red-400" : "text-white"}`}>{totalActionRequired}</p>
+              </div>
+            </div>
+            <div className="ml-auto text-right hidden sm:block">
+              <p className="text-[10px] text-white/40 leading-none">Today</p>
+              <p className="text-sm font-medium text-white/70">{new Date().toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })}</p>
+            </div>
+          </div>
+        </div>
+      </div>
 
-        {/* MANAGE TEACHERS */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between gap-4 flex-wrap">
-              <CardTitle className="flex items-center gap-2 text-lg"><Users className="w-5 h-5" /> Manage Teachers</CardTitle>
-              <Button variant="outline" size="sm" onClick={() => setShowTeacherForm(!showTeacherForm)} data-testid="button-toggle-teacher-form">
-                {showTeacherForm ? <ChevronUp className="w-4 h-4 mr-1" /> : <ChevronDown className="w-4 h-4 mr-1" />}
-                {showTeacherForm ? "Hide" : "Add Teacher"}
-              </Button>
-            </div>
-          </CardHeader>
-          {showTeacherForm && (
-            <CardContent className="border-b pb-6">
-              <Form {...teacherForm}>
-                <form onSubmit={teacherForm.handleSubmit((d) => addTeacherMutation.mutate(d))} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  <FormField control={teacherForm.control} name="fullName" render={({ field }) => (<FormItem><FormLabel>Full Name</FormLabel><FormControl><Input placeholder="Teacher name" data-testid="input-teacher-name" {...field} /></FormControl><FormMessage /></FormItem>)} />
-                  <FormField control={teacherForm.control} name="email" render={({ field }) => (<FormItem><FormLabel>Email</FormLabel><FormControl><Input type="email" placeholder="teacher@school.com" data-testid="input-teacher-email" {...field} /></FormControl><FormMessage /></FormItem>)} />
-                  <FormField control={teacherForm.control} name="password" render={({ field }) => (<FormItem><FormLabel>Password</FormLabel><FormControl><Input type="password" placeholder="Initial password" data-testid="input-teacher-password" {...field} /></FormControl><FormMessage /></FormItem>)} />
-                  <FormField control={teacherForm.control} name="phone" render={({ field }) => (<FormItem><FormLabel>Phone</FormLabel><FormControl><Input placeholder="9876543210" data-testid="input-teacher-phone" {...field} /></FormControl><FormMessage /></FormItem>)} />
-                  <FormField control={teacherForm.control} name="subject" render={({ field }) => (<FormItem><FormLabel>Subject</FormLabel><FormControl><Input placeholder="e.g. Mathematics" data-testid="input-teacher-subject" {...field} /></FormControl><FormMessage /></FormItem>)} />
-                  <FormField control={teacherForm.control} name="assignedClass" render={({ field }) => (<FormItem><FormLabel>Class</FormLabel><FormControl><Input placeholder="e.g. 10" data-testid="input-teacher-class" {...field} /></FormControl><FormMessage /></FormItem>)} />
-                  <FormField control={teacherForm.control} name="assignedSection" render={({ field }) => (<FormItem><FormLabel>Section</FormLabel><FormControl><Input placeholder="e.g. A" data-testid="input-teacher-section" {...field} /></FormControl><FormMessage /></FormItem>)} />
-                  <div className="flex items-end">
-                    <Button type="submit" disabled={addTeacherMutation.isPending} className="w-full" data-testid="button-add-teacher">
-                      {addTeacherMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <UserPlus className="w-4 h-4 mr-2" />}
-                      Add Teacher
-                    </Button>
+      {/* ===== MAIN CONTENT ===== */}
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6">
+        {activeModule === "grid" ? (
+          <div className="space-y-8">
+            {GROUP_ORDER.map(group => {
+              const groupTiles = TILES.filter(t => t.group === group);
+              return (
+                <div key={group}>
+                  <div className="flex items-center gap-3 mb-4">
+                    <span className={`text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full border ${GROUP_COLORS[group]}`}>
+                      {group}
+                    </span>
+                    <div className="flex-1 h-px bg-white/5" />
                   </div>
-                </form>
-              </Form>
-            </CardContent>
-          )}
-          <CardContent className={showTeacherForm ? "pt-6" : ""}>
-            {teachersList.length === 0 ? (
-              <div className="text-center py-4 text-muted-foreground text-sm" data-testid="text-no-teachers">No teachers added yet.</div>
-            ) : (
-              <div className="rounded-md border overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead><TableHead>Email</TableHead><TableHead>Subject</TableHead><TableHead>Class</TableHead><TableHead>Section</TableHead><TableHead></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {teachersList.map((t) => (
-                      <TableRow key={t.id} data-testid={`row-teacher-${t.id}`}>
-                        <TableCell data-testid={`text-teacher-name-${t.id}`}>{t.fullName}</TableCell>
-                        <TableCell>{t.email}</TableCell><TableCell>{t.subject}</TableCell><TableCell>{t.assignedClass}</TableCell><TableCell>{t.assignedSection}</TableCell>
-                        <TableCell>
-                          <Button variant="ghost" size="icon" onClick={() => deleteTeacherMutation.mutate(t.id)} data-testid={`button-delete-teacher-${t.id}`}>
-                            <Trash2 className="w-4 h-4 text-destructive" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* SCHOOL SETTINGS */}
-        <CollapsibleSection title="School Settings" icon={Settings} testId="school-settings">
-          <div className="space-y-6">
-            <div>
-              <h3 className="text-sm font-semibold mb-3" data-testid="text-classes-heading">Classes</h3>
-              <div className="flex flex-wrap gap-2 mb-3">
-                {CLASS_OPTIONS.map((cls) => (
-                  <Button
-                    key={cls}
-                    variant={settingsClasses.includes(cls) ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => {
-                      setSettingsClasses(prev =>
-                        prev.includes(cls) ? prev.filter(c => c !== cls) : [...prev, cls]
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {groupTiles.map(tile => {
+                      const badge = tile.badgeKey ? BADGES[tile.badgeKey] : undefined;
+                      return (
+                        <button
+                          key={tile.id}
+                          onClick={() => setActiveModule(tile.id)}
+                          data-testid={`tile-${tile.id}`}
+                          className="group relative text-left rounded-xl border border-white/10 bg-[#1A2942] p-5 hover:bg-[#1E3350] hover:border-[#D4AF37]/40 transition-all duration-200 hover:shadow-lg hover:shadow-[#D4AF37]/5"
+                        >
+                          {badge !== undefined && badge > 0 && (
+                            <span className="absolute top-3 right-3 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center" data-testid={`badge-${tile.id}`}>
+                              {badge > 9 ? "9+" : badge}
+                            </span>
+                          )}
+                          <div className="flex items-start gap-3 mb-3">
+                            <div className="p-2.5 rounded-lg bg-[#D4AF37]/15 group-hover:bg-[#D4AF37]/25 transition-colors shrink-0">
+                              <tile.icon className="w-5 h-5 text-[#D4AF37]" />
+                            </div>
+                          </div>
+                          <h3 className="font-semibold text-white text-sm leading-tight mb-1 group-hover:text-[#D4AF37] transition-colors">{tile.label}</h3>
+                          <p className="text-white/40 text-xs leading-relaxed">{tile.desc}</p>
+                          <div className="mt-3 flex items-center gap-1 text-[#D4AF37]/50 text-xs group-hover:text-[#D4AF37] transition-colors">
+                            <span>Open</span>
+                            <ArrowRight className="w-3 h-3" />
+                          </div>
+                        </button>
                       );
-                    }}
-                    data-testid={`button-class-option-${cls}`}
-                  >
-                    {cls}
-                  </Button>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-2 items-center mb-3">
-                <Input
-                  placeholder="Custom class name"
-                  value={newClassInput}
-                  onChange={(e) => setNewClassInput(e.target.value)}
-                  className="max-w-xs"
-                  data-testid="input-custom-class"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      const val = newClassInput.trim();
-                      if (val && !settingsClasses.includes(val)) {
-                        setSettingsClasses(prev => [...prev, val]);
-                        setNewClassInput("");
-                      }
-                    }
-                  }}
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const val = newClassInput.trim();
-                    if (val && !settingsClasses.includes(val)) {
-                      setSettingsClasses(prev => [...prev, val]);
-                      setNewClassInput("");
-                    }
-                  }}
-                  data-testid="button-add-custom-class"
-                >
-                  <Plus className="w-4 h-4 mr-1" /> Add
-                </Button>
-              </div>
-              {settingsClasses.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {settingsClasses.map((cls) => (
-                    <span
-                      key={cls}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-muted text-sm font-medium"
-                      data-testid={`tag-class-${cls}`}
-                    >
-                      {cls}
-                      <button
-                        onClick={() => setSettingsClasses(prev => prev.filter(c => c !== cls))}
-                        className="ml-1 rounded-md"
-                        data-testid={`button-remove-class-${cls}`}
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
+                    })}
+                  </div>
                 </div>
-              )}
-              <Button
-                size="sm"
-                onClick={() => saveMetaMutation.mutate({ metaKey: "classes", values: settingsClasses })}
-                disabled={saveMetaMutation.isPending}
-                data-testid="button-save-classes"
-              >
-                {saveMetaMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
-                Save Classes
-              </Button>
-            </div>
-
-            <div className="border-t pt-4">
-              <h3 className="text-sm font-semibold mb-3" data-testid="text-sections-heading">Sections</h3>
-              <div className="flex flex-wrap gap-2 mb-3">
-                {SECTION_LETTERS.map((letter) => (
-                  <Button
-                    key={letter}
-                    variant={settingsSections.includes(letter) ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => {
-                      setSettingsSections(prev =>
-                        prev.includes(letter) ? prev.filter(s => s !== letter) : [...prev, letter]
-                      );
-                    }}
-                    data-testid={`button-section-option-${letter}`}
-                  >
-                    {letter}
-                  </Button>
-                ))}
-              </div>
-              {settingsSections.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {settingsSections.map((sec) => (
-                    <span
-                      key={sec}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-muted text-sm font-medium"
-                      data-testid={`tag-section-${sec}`}
-                    >
-                      {sec}
-                    </span>
-                  ))}
-                </div>
-              )}
-              <Button
-                size="sm"
-                onClick={() => saveMetaMutation.mutate({ metaKey: "sections", values: settingsSections })}
-                disabled={saveMetaMutation.isPending}
-                data-testid="button-save-sections"
-              >
-                {saveMetaMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
-                Save Sections
-              </Button>
-            </div>
-
-            <div className="border-t pt-4">
-              <h3 className="text-sm font-semibold mb-3" data-testid="text-subjects-heading">Subject Master</h3>
-              <div className="flex flex-wrap gap-2 items-center mb-3">
-                <Input
-                  placeholder="Type subject name, press Enter"
-                  value={newSubjectInput}
-                  onChange={(e) => setNewSubjectInput(e.target.value)}
-                  className="max-w-xs"
-                  data-testid="input-add-subject"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === ",") {
-                      e.preventDefault();
-                      const val = newSubjectInput.trim().replace(/,+$/, "");
-                      if (val && !settingsSubjects.includes(val)) {
-                        setSettingsSubjects(prev => [...prev, val]);
-                        setNewSubjectInput("");
-                      }
-                    }
-                  }}
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const val = newSubjectInput.trim();
-                    if (val && !settingsSubjects.includes(val)) {
-                      setSettingsSubjects(prev => [...prev, val]);
-                      setNewSubjectInput("");
-                    }
-                  }}
-                  data-testid="button-add-subject"
-                >
-                  <Plus className="w-4 h-4 mr-1" /> Add
-                </Button>
-              </div>
-              {settingsSubjects.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {settingsSubjects.map((subj) => (
-                    <span
-                      key={subj}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-muted text-sm font-medium"
-                      data-testid={`tag-subject-${subj}`}
-                    >
-                      {subj}
-                      <button
-                        onClick={() => setSettingsSubjects(prev => prev.filter(s => s !== subj))}
-                        className="ml-1 rounded-md"
-                        data-testid={`button-remove-subject-${subj}`}
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              <Button
-                size="sm"
-                onClick={() => saveMetaMutation.mutate({ metaKey: "subjects", values: settingsSubjects })}
-                disabled={saveMetaMutation.isPending}
-                data-testid="button-save-subjects"
-              >
-                {saveMetaMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
-                Save Subjects
-              </Button>
-            </div>
-
-            <div className="border-t pt-4">
-              <h3 className="text-sm font-semibold mb-3" data-testid="text-exam-types-heading">Exam Type Master</h3>
-              <div className="flex flex-wrap gap-2 items-center mb-3">
-                <Input
-                  placeholder="Type exam type, press Enter"
-                  value={newExamTypeInput}
-                  onChange={(e) => setNewExamTypeInput(e.target.value)}
-                  className="max-w-xs"
-                  data-testid="input-add-exam-type"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === ",") {
-                      e.preventDefault();
-                      const val = newExamTypeInput.trim().replace(/,+$/, "");
-                      if (val && !settingsExamTypes.includes(val)) {
-                        setSettingsExamTypes(prev => [...prev, val]);
-                        setNewExamTypeInput("");
-                      }
-                    }
-                  }}
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const val = newExamTypeInput.trim();
-                    if (val && !settingsExamTypes.includes(val)) {
-                      setSettingsExamTypes(prev => [...prev, val]);
-                      setNewExamTypeInput("");
-                    }
-                  }}
-                  data-testid="button-add-exam-type"
-                >
-                  <Plus className="w-4 h-4 mr-1" /> Add
-                </Button>
-              </div>
-              {settingsExamTypes.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {settingsExamTypes.map((et) => (
-                    <span
-                      key={et}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-muted text-sm font-medium"
-                      data-testid={`tag-exam-type-${et}`}
-                    >
-                      {et}
-                      <button
-                        onClick={() => setSettingsExamTypes(prev => prev.filter(e => e !== et))}
-                        className="ml-1 rounded-md"
-                        data-testid={`button-remove-exam-type-${et}`}
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              <Button
-                size="sm"
-                onClick={() => saveMetaMutation.mutate({ metaKey: "exam_types", values: settingsExamTypes })}
-                disabled={saveMetaMutation.isPending}
-                data-testid="button-save-exam-types"
-              >
-                {saveMetaMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
-                Save Exam Types
-              </Button>
-            </div>
+              );
+            })}
           </div>
-        </CollapsibleSection>
-
-        {/* TEACHER NOTICES */}
-        <CollapsibleSection title="Post Notice to Teachers" icon={Bell} testId="notices">
-          <div className="space-y-3">
-            <Textarea placeholder="Notice content..." value={noticeContent} onChange={(e) => setNoticeContent(e.target.value)} rows={3} data-testid="input-admin-notice" />
-            <Button onClick={() => postNoticeMutation.mutate()} disabled={!noticeContent.trim() || postNoticeMutation.isPending} data-testid="button-post-teacher-notice">
-              {postNoticeMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Bell className="w-4 h-4 mr-2" />}
-              Post Notice
-            </Button>
+        ) : (
+          <div>
+            <div className="mb-6 flex items-center gap-2">
+              <button onClick={() => setActiveModule("grid")}
+                className="text-white/40 hover:text-white text-sm flex items-center gap-1 transition-colors" data-testid="breadcrumb-back">
+                <ChevronLeft className="w-4 h-4" /> Dashboard
+              </button>
+              <span className="text-white/20">/</span>
+              <span className="text-white/70 text-sm">{TILES.find(t => t.id === activeModule)?.label ?? activeModule}</span>
+            </div>
+            {renderModule()}
           </div>
-        </CollapsibleSection>
-
-        {/* CALENDAR EVENTS */}
-        <CollapsibleSection title="Calendar Events" icon={Calendar} testId="calendar">
-          <div className="space-y-4">
-            <div className="flex flex-wrap gap-3 items-end">
-              <Input placeholder="Event title" value={calTitle} onChange={(e) => setCalTitle(e.target.value)} className="max-w-xs" data-testid="input-cal-title" />
-              <Input type="date" value={calDate} onChange={(e) => setCalDate(e.target.value)} className="w-44" data-testid="input-cal-date" />
-              <Select value={calType} onValueChange={setCalType}>
-                <SelectTrigger className="w-36" data-testid="select-cal-type"><SelectValue placeholder="Type" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="holiday">Holiday</SelectItem>
-                  <SelectItem value="event">Event</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button onClick={() => addCalendarMutation.mutate()} disabled={!calTitle || !calDate || !calType || addCalendarMutation.isPending} data-testid="button-add-event">
-                Add
-              </Button>
-            </div>
-            {calendarEvents.length > 0 && (
-              <div className="space-y-2">
-                {calendarEvents.map(e => (
-                  <div key={e.id} className="flex items-center justify-between p-2 rounded border text-sm" data-testid={`card-event-${e.id}`}>
-                    <div>
-                      <span className={`inline-block w-2 h-2 rounded-full mr-2 ${e.eventType === "holiday" ? "bg-red-500" : "bg-blue-500"}`} />
-                      {e.title} — {e.date}
-                    </div>
-                    <Button variant="ghost" size="icon" onClick={() => deleteCalendarMutation.mutate(e.id)} data-testid={`button-delete-event-${e.id}`}>
-                      <Trash2 className="w-3.5 h-3.5 text-destructive" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </CollapsibleSection>
-
-        {/* LEAVE REQUESTS */}
-        <CollapsibleSection title={`Leave Requests${pendingLeaves.length > 0 ? ` (${pendingLeaves.length} pending)` : ""}`} icon={CalendarOff} testId="leave">
-          {leaveRequests.length === 0 ? (
-            <p className="text-sm text-muted-foreground" data-testid="text-no-leave-requests">No leave requests.</p>
-          ) : (
-            <div className="space-y-3">
-              {leaveRequests.map(l => (
-                <div key={l.id} className="p-3 rounded-md border" data-testid={`card-leave-${l.id}`}>
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div>
-                      <p className="font-medium text-sm">{l.teacherName} — {l.leaveType}</p>
-                      <p className="text-xs text-muted-foreground">{l.startDate} to {l.endDate}</p>
-                      <p className="text-sm mt-1">{l.reason}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {l.status === "pending" ? (
-                        <>
-                          <Button size="sm" variant="outline" className="text-green-600" onClick={() => leaveStatusMutation.mutate({ id: l.id, status: "approved" })} data-testid={`button-approve-leave-${l.id}`}>
-                            <Check className="w-3.5 h-3.5 mr-1" /> Approve
-                          </Button>
-                          <Button size="sm" variant="outline" className="text-red-600" onClick={() => leaveStatusMutation.mutate({ id: l.id, status: "rejected" })} data-testid={`button-reject-leave-${l.id}`}>
-                            <X className="w-3.5 h-3.5 mr-1" /> Reject
-                          </Button>
-                        </>
-                      ) : (
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${l.status === "approved" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
-                          {l.status.charAt(0).toUpperCase() + l.status.slice(1)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CollapsibleSection>
-
-        {/* GALLERY APPROVAL */}
-        <CollapsibleSection title={`Gallery${pendingGallery.length > 0 ? ` (${pendingGallery.length} pending)` : ""}`} icon={Image} testId="gallery">
-          {galleryItems.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No gallery uploads.</p>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {galleryItems.map(g => (
-                <div key={g.id} className="border rounded-md overflow-hidden" data-testid={`card-gallery-admin-${g.id}`}>
-                  <div className="aspect-square bg-muted overflow-hidden">
-                    <img src={g.imageUrl} alt={g.title} className="w-full h-full object-cover" />
-                  </div>
-                  <div className="p-2 flex items-center justify-between">
-                    <p className="text-xs truncate">{g.title}</p>
-                    {!g.approved && (
-                      <Button size="sm" variant="outline" onClick={() => approveGalleryMutation.mutate(g.id)} data-testid={`button-approve-gallery-${g.id}`}>
-                        <Check className="w-3 h-3 mr-1" /> Approve
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CollapsibleSection>
-
-        {/* LIBRARY */}
-        <CollapsibleSection title="Library Management" icon={BookOpen} testId="library">
-          <div className="space-y-4">
-            <div className="flex flex-wrap gap-3 items-end">
-              <Input placeholder="Book title" value={bookTitle} onChange={(e) => setBookTitle(e.target.value)} className="max-w-xs" data-testid="input-book-title" />
-              <Input placeholder="Author" value={bookAuthor} onChange={(e) => setBookAuthor(e.target.value)} className="max-w-xs" data-testid="input-book-author" />
-              <Input placeholder="ISBN" value={bookIsbn} onChange={(e) => setBookIsbn(e.target.value)} className="w-36" data-testid="input-book-isbn" />
-              <Input type="number" min="1" placeholder="Copies" value={bookCopies} onChange={(e) => setBookCopies(e.target.value)} className="w-24" data-testid="input-book-copies" />
-              <Button onClick={() => addBookMutation.mutate()} disabled={!bookTitle || !bookAuthor || addBookMutation.isPending} data-testid="button-add-book">
-                Add Book
-              </Button>
-            </div>
-            {libraryBooks.length > 0 && (
-              <div className="space-y-2">
-                {libraryBooks.map(b => (
-                  <div key={b.id} className="flex items-center justify-between p-2 rounded border text-sm" data-testid={`card-book-admin-${b.id}`}>
-                    <div>
-                      <span className="font-medium">{b.title}</span> by {b.author}
-                      <span className="text-muted-foreground ml-2">({b.availableCopies}/{b.totalCopies} available)</span>
-                    </div>
-                    <Button variant="ghost" size="icon" onClick={() => deleteBookMutation.mutate(b.id)} data-testid={`button-delete-book-${b.id}`}>
-                      <Trash2 className="w-3.5 h-3.5 text-destructive" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </CollapsibleSection>
-
-        {/* TIMETABLE */}
-        <CollapsibleSection title="Timetable Management" icon={Clock} testId="timetable">
-          <div className="space-y-4">
-            <div className="flex flex-wrap gap-3 items-end">
-              <Select value={ttTeacher} onValueChange={setTtTeacher}>
-                <SelectTrigger className="w-44" data-testid="select-tt-teacher"><SelectValue placeholder="Teacher" /></SelectTrigger>
-                <SelectContent>
-                  {teachersList.map(t => <SelectItem key={t.id} value={String(t.id)}>{t.fullName}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Select value={ttDay} onValueChange={setTtDay}>
-                <SelectTrigger className="w-32" data-testid="select-tt-day"><SelectValue placeholder="Day" /></SelectTrigger>
-                <SelectContent>
-                  {dayNames.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Select value={ttPeriod} onValueChange={setTtPeriod}>
-                <SelectTrigger className="w-28" data-testid="select-tt-period"><SelectValue placeholder="Period" /></SelectTrigger>
-                <SelectContent>
-                  {[1,2,3,4,5,6,7,8].map(p => <SelectItem key={p} value={String(p)}>Period {p}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Input placeholder="Class" value={ttClass} onChange={(e) => setTtClass(e.target.value)} className="w-20" data-testid="input-tt-class" />
-              <Input placeholder="Section" value={ttSection} onChange={(e) => setTtSection(e.target.value)} className="w-20" data-testid="input-tt-section" />
-              <Input placeholder="Subject" value={ttSubject} onChange={(e) => setTtSubject(e.target.value)} className="w-32" data-testid="input-tt-subject" />
-              <Button onClick={() => addTimetableMutation.mutate()} disabled={!ttTeacher || !ttDay || !ttPeriod || !ttClass || !ttSection || !ttSubject} data-testid="button-add-timetable">
-                Add
-              </Button>
-            </div>
-            {timetableEntries.length > 0 && (
-              <div className="space-y-2">
-                {timetableEntries.map(e => (
-                  <div key={e.id} className="flex items-center justify-between p-2 rounded border text-sm" data-testid={`card-tt-${e.id}`}>
-                    <span>{e.teacherName} | {dayNames[e.dayOfWeek]} P{e.period} | {e.class}-{e.section} {e.subject}</span>
-                    <Button variant="ghost" size="icon" onClick={() => deleteTimetableMutation.mutate(e.id)} data-testid={`button-delete-tt-${e.id}`}>
-                      <Trash2 className="w-3.5 h-3.5 text-destructive" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </CollapsibleSection>
+        )}
       </main>
+
+      {/* ===== FOOTER ===== */}
+      <footer className="border-t border-white/5 py-4 text-center">
+        <p className="text-white/20 text-xs">BENIUS School Management Platform · {me.schoolName} · School Code: <span className="font-mono text-[#D4AF37]/50">{me.schoolCode}</span></p>
+      </footer>
     </div>
   );
 }
