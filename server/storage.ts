@@ -903,7 +903,7 @@ export class DatabaseStorage {
     const { q, cls, section, page = 1 } = opts;
     const limit = 50;
     const offset = (page - 1) * limit;
-    const conditions = [eq(students.schoolId, schoolId)];
+    const conditions = [eq(students.schoolId, schoolId), eq(students.isActive, true)];
     if (cls) conditions.push(eq(students.class, cls));
     if (section) conditions.push(eq(students.section, section));
     if (q) conditions.push(or(ilike(students.name, `%${q}%`), ilike(students.digitalStudentId, `%${q}%`))!);
@@ -917,11 +917,42 @@ export class DatabaseStorage {
     const { q, page = 1 } = opts;
     const limit = 50;
     const offset = (page - 1) * limit;
-    const conditions = [eq(teachers.schoolId, schoolId)];
+    const conditions = [eq(teachers.schoolId, schoolId), eq(users.isActive, true)];
     if (q) conditions.push(or(ilike(teachers.fullName, `%${q}%`), ilike(teachers.subject, `%${q}%`), ilike(teachers.email, `%${q}%`))!);
-    const [{ total }] = await db.select({ total: count() }).from(teachers).where(and(...conditions));
-    const data = await db.select().from(teachers).where(and(...conditions)).orderBy(teachers.fullName).limit(limit).offset(offset);
-    return { data, total: Number(total) };
+    const [{ total }] = await db.select({ total: count() }).from(teachers)
+      .innerJoin(users, eq(teachers.userId, users.id))
+      .where(and(...conditions));
+    const data = await db.select().from(teachers)
+      .innerJoin(users, eq(teachers.userId, users.id))
+      .where(and(...conditions)).orderBy(teachers.fullName).limit(limit).offset(offset);
+    return { data: data.map(r => ({ ...r.teachers, email: r.users.email })) as any, total: Number(total) };
+  }
+
+  // ===== DEACTIVATION (Soft Delete) =====
+  async deactivateStudent(studentId: number): Promise<Student> {
+    const [s] = await db.update(students).set({ isActive: false }).where(eq(students.id, studentId)).returning();
+    return s;
+  }
+
+  async deactivateTeacher(teacherId: number): Promise<void> {
+    const teacher = await this.getTeacherById(teacherId);
+    if (!teacher) return;
+    await db.update(users).set({ isActive: false }).where(eq(users.id, teacher.userId));
+  }
+
+  async verifyAdminPassword(userId: number, password: string): Promise<boolean> {
+    const [user] = await db.select().from(users).where(eq(users.id, userId));
+    if (!user) return false;
+    const bcrypt = await import("bcryptjs");
+    return bcrypt.compare(password, user.passwordHash);
+  }
+
+  async getStudentCountBySchoolActive(schoolId: number): Promise<number> {
+    const [result] = await db
+      .select({ value: count() })
+      .from(students)
+      .where(and(eq(students.schoolId, schoolId), eq(students.isActive, true)));
+    return result?.value ?? 0;
   }
 
   // ===== DAILY ATTENDANCE SUMMARY =====

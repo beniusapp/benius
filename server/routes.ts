@@ -183,6 +183,10 @@ export async function registerRoutes(
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
+    if (!user.isActive) {
+      return res.status(403).json({ message: "This account has been deactivated. Please contact your administrator." });
+    }
+
     const valid = await bcrypt.compare(parsed.data.password, user.passwordHash);
     if (!valid) {
       return res.status(401).json({ message: "Invalid email or password" });
@@ -207,7 +211,7 @@ export async function registerRoutes(
       return res.status(401).json({ message: "User not found" });
     }
 
-    const studentCount = await storage.getStudentCountBySchool(data.school.id);
+    const studentCount = await storage.getStudentCountBySchoolActive(data.school.id);
 
     res.json({
       id: data.user.id,
@@ -499,6 +503,10 @@ export async function registerRoutes(
       return res.status(401).json({ message: "Invalid DSID or password" });
     }
 
+    if (!student.isActive) {
+      return res.status(403).json({ message: "This account has been deactivated. Please contact your school administrator." });
+    }
+
     if (!student.isActivated) {
       return res.status(403).json({ message: "Account not activated. Please register first at /register." });
     }
@@ -564,6 +572,68 @@ export async function registerRoutes(
     if (!Array.isArray(values)) return res.status(400).json({ message: "Values must be an array" });
     const result = await storage.setSchoolMetadata(schoolId, metaKey, values);
     res.json(result);
+  });
+
+  // ===== ADMIN PASSWORD VERIFICATION (for Double-Lock Modal) =====
+  app.post("/api/admin/verify-password", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const { password } = req.body;
+    if (!password) return res.status(400).json({ message: "Password is required" });
+    const ok = await storage.verifyAdminPassword(req.session.userId, password);
+    if (!ok) return res.status(401).json({ message: "Incorrect password" });
+    res.json({ verified: true });
+  });
+
+  // ===== STUDENT DEACTIVATION =====
+  app.post("/api/schools/:schoolId/students/:studentId/deactivate", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const schoolId = parseInt(req.params.schoolId);
+    const studentId = parseInt(req.params.studentId);
+    if (isNaN(schoolId) || isNaN(studentId)) return res.status(400).json({ message: "Invalid ID" });
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const student = await storage.getStudentById(studentId);
+    if (!student || student.schoolId !== schoolId) return res.status(404).json({ message: "Student not found" });
+    const { reason } = req.body;
+    await storage.deactivateStudent(studentId);
+    await storage.createAuditLog({
+      schoolId,
+      actionType: "deactivate",
+      entityType: "student",
+      entityId: studentId,
+      actionBy: req.session.userId!,
+      actionByRole: "admin",
+      details: `Student ${student.name} (${student.digitalStudentId}) deactivated. Reason: ${reason || "Not specified"}`,
+    });
+    res.json({ message: "Student deactivated successfully" });
+  });
+
+  // ===== TEACHER DEACTIVATION =====
+  app.post("/api/schools/:schoolId/teachers/:teacherId/deactivate", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const schoolId = parseInt(req.params.schoolId);
+    const teacherId = parseInt(req.params.teacherId);
+    if (isNaN(schoolId) || isNaN(teacherId)) return res.status(400).json({ message: "Invalid ID" });
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const teacher = await storage.getTeacherById(teacherId);
+    if (!teacher || teacher.schoolId !== schoolId) return res.status(404).json({ message: "Teacher not found" });
+    const { reason } = req.body;
+    await storage.deactivateTeacher(teacherId);
+    await storage.createAuditLog({
+      schoolId,
+      actionType: "deactivate",
+      entityType: "teacher",
+      entityId: teacherId,
+      actionBy: req.session.userId!,
+      actionByRole: "admin",
+      details: `Teacher ${teacher.fullName} deactivated. Reason: ${reason || "Not specified"}`,
+    });
+    res.json({ message: "Teacher deactivated successfully" });
   });
 
   registerTeacherRoutes(app);

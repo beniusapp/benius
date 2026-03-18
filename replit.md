@@ -26,8 +26,8 @@ A full-stack, enterprise-grade school management platform with:
 
 ## Database Tables
 - **schools**: id, name, code (unique)
-- **users**: id, email, password_hash, role (admin/teacher), school_id
-- **students**: id, school_id, digital_student_id, name, class, section, phone, dob, password_hash, photo_url, is_activated
+- **users**: id, email, password_hash, role (admin/teacher), school_id, is_active (default true)
+- **students**: id, school_id, digital_student_id, name, class, section, phone, dob, password_hash, photo_url, is_activated, is_active (default true)
 - **teachers**: id, user_id, school_id, full_name, phone, subject, assigned_class, assigned_section, must_change_password, otp_code, otp_expires_at, reset_token, reset_token_expires_at
 - **attendance_records**: id, student_id, teacher_id, school_id, date, status (present/absent/leave), edit_count, marked_by, marked_at
 - **homework**: id, teacher_id, school_id, class, section, subject, content, file_url, due_date, created_at
@@ -110,8 +110,23 @@ A full-stack, enterprise-grade school management platform with:
 - `GET /api/calendar/:schoolId`, `POST /api/calendar`, `DELETE /api/calendar/:id`
 - `GET|POST /api/visitor-logs`, `GET /api/visitor-logs/:schoolId`, `PATCH /api/visitor-logs/:id/checkout`
 - `GET /api/audit-logs/:schoolId`
-- `GET /api/schools/:schoolId/students/paginated?q=&cls=&section=&page=` (LIMIT 50)
-- `GET /api/schools/:schoolId/teachers/paginated?q=&page=` (LIMIT 50)
+- `GET /api/schools/:schoolId/students/paginated?q=&cls=&section=&page=` (LIMIT 50, only active students)
+- `GET /api/schools/:schoolId/teachers/paginated?q=&page=` (LIMIT 50, only active teachers)
+- `POST /api/admin/verify-password { password }` — re-auth admin for Double-Lock Modal
+- `POST /api/schools/:schoolId/students/:studentId/deactivate { reason }` — soft-delete student
+- `POST /api/schools/:schoolId/teachers/:teacherId/deactivate { reason }` — soft-delete teacher (deactivates user login)
+
+## Secure Deactivation Workflow
+- Soft delete: sets `is_active = false` on students / users (teachers); never hard deletes
+- Double-Lock Security Modal: danger red theme, reason dropdown, admin password re-entry field
+- Student reasons: Graduated / Transferred / Long Absence / Disciplinary Action / Other
+- Teacher reasons: Resigned / Transferred / Contract Ended / Disciplinary Action / Other
+- Confirm button disabled until both reason and password are filled
+- On submit: verifies admin password server-side first, then deactivates + writes audit log
+- Deactivated users are blocked at login (403 "account deactivated" error)
+- Deactivated students are blocked at student login too
+- Paginated queries filter to `is_active = true` only, so deactivated records disappear from lists
+- Live Pulse student count also reflects only active students
 
 ## Global Standards
 - Date format: dd/mm/yyyy (`toLocaleDateString("en-GB")`) across entire app

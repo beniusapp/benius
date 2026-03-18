@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Search, UserPlus, Trash2, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { Search, UserPlus, UserX, ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -10,8 +10,8 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { X } from "lucide-react";
 import type { Teacher } from "@shared/schema";
+import DeactivationModal from "@/components/deactivation-modal";
 
 interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[] }
 
@@ -38,6 +38,7 @@ export default function FacultyMapping({ schoolId, classes, sections, subjects }
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(null);
+  const [deactivateTarget, setDeactivateTarget] = useState<(Teacher & { email?: string }) | null>(null);
 
   const handleSearch = useCallback((val: string) => {
     setQ(val);
@@ -80,21 +81,12 @@ export default function FacultyMapping({ schoolId, classes, sections, subjects }
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: async (id: number) => { await apiRequest("DELETE", `/api/teachers/${id}`); },
-    onSuccess: () => {
-      toast({ title: "Teacher Removed" });
-      queryClient.invalidateQueries({ queryKey: ["/api/schools", schoolId, "teachers"] });
-    },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-xl font-bold text-white">Faculty Mapping</h2>
-          <p className="text-white/50 text-sm">{data?.total ?? "..."} teachers · Page {page} of {totalPages}</p>
+          <p className="text-white/50 text-sm">{data?.total ?? "..."} active teachers · Page {page} of {totalPages}</p>
         </div>
         <Button size="sm" className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
           onClick={() => setShowForm(!showForm)} data-testid="button-add-teacher-toggle">
@@ -174,19 +166,20 @@ export default function FacultyMapping({ schoolId, classes, sections, subjects }
           <tbody>
             {isLoading ? [...Array(8)].map((_, i) => <SkeletonRow key={i} />) :
               data?.data.length === 0 ? (
-                <tr><td colSpan={6} className="py-12 text-center text-white/40">No teachers found</td></tr>
+                <tr><td colSpan={6} className="py-12 text-center text-white/40">No active teachers found</td></tr>
               ) : data?.data.map(t => (
                 <tr key={t.id} className="border-b border-white/5 hover:bg-white/5 transition-colors" data-testid={`row-teacher-${t.id}`}>
                   <td className="py-3 px-4 text-white font-medium">{t.fullName}</td>
-                  <td className="py-3 px-4 text-white/70 text-xs">{t.email}</td>
+                  <td className="py-3 px-4 text-white/70 text-xs">{(t as any).email}</td>
                   <td className="py-3 px-4 text-[#D4AF37] text-xs">{t.subject}</td>
                   <td className="py-3 px-4 text-white/70">{t.assignedClass}</td>
                   <td className="py-3 px-4 text-white/70">{t.assignedSection}</td>
                   <td className="py-3 px-4">
                     <Button variant="ghost" size="icon" className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-7 w-7"
-                      onClick={() => { if (confirm("Remove this teacher?")) deleteMutation.mutate(t.id); }}
-                      data-testid={`button-delete-teacher-${t.id}`}>
-                      <Trash2 className="w-3.5 h-3.5" />
+                      onClick={() => setDeactivateTarget(t)}
+                      data-testid={`button-deactivate-teacher-${t.id}`}
+                      title="Deactivate teacher">
+                      <UserX className="w-3.5 h-3.5" />
                     </Button>
                   </td>
                 </tr>
@@ -210,6 +203,21 @@ export default function FacultyMapping({ schoolId, classes, sections, subjects }
           </Button>
         </div>
       </div>
+
+      {deactivateTarget && (
+        <DeactivationModal
+          open={!!deactivateTarget}
+          onClose={() => setDeactivateTarget(null)}
+          type="teacher"
+          targetId={deactivateTarget.id}
+          targetName={deactivateTarget.fullName}
+          schoolId={schoolId}
+          invalidateKeys={[
+            ["/api/schools", schoolId, "teachers", "paginated"],
+            ["/api/schools", schoolId, "teachers"],
+          ]}
+        />
+      )}
     </div>
   );
 }

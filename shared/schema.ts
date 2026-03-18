@@ -15,6 +15,7 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull().default("admin"),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  isActive: boolean("is_active").notNull().default(true),
 });
 
 export const students = pgTable("students", {
@@ -29,6 +30,7 @@ export const students = pgTable("students", {
   passwordHash: text("password_hash").notNull(),
   photoUrl: text("photo_url"),
   isActivated: boolean("is_activated").notNull().default(false),
+  isActive: boolean("is_active").notNull().default(true),
 });
 
 export const teachers = pgTable("teachers", {

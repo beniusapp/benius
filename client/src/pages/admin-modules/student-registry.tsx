@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Search, ChevronLeft, ChevronRight, UserPlus, Upload, X, Loader2, Users } from "lucide-react";
+import { Search, ChevronLeft, ChevronRight, UserPlus, Upload, X, Loader2, Users, UserX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -11,6 +11,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import type { Student } from "@shared/schema";
+import DeactivationModal from "@/components/deactivation-modal";
 
 interface Props { schoolId: number; classes: string[]; sections: string[] }
 
@@ -23,7 +24,7 @@ type AddForm = z.infer<typeof addSchema>;
 function SkeletonRow() {
   return (
     <tr className="border-b border-white/5">
-      {[...Array(5)].map((_, i) => (
+      {[...Array(6)].map((_, i) => (
         <td key={i} className="py-3 px-4">
           <div className="h-4 rounded bg-white/10 animate-pulse" style={{ width: `${60 + Math.random() * 40}%` }} />
         </td>
@@ -41,6 +42,7 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(null);
+  const [deactivateTarget, setDeactivateTarget] = useState<Student | null>(null);
 
   const handleSearch = useCallback((val: string) => {
     setQ(val);
@@ -102,7 +104,7 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-xl font-bold text-white">Student Registry</h2>
-          <p className="text-white/50 text-sm">{data?.total ?? "..."} students enrolled · Page {page} of {totalPages}</p>
+          <p className="text-white/50 text-sm">{data?.total ?? "..."} active students · Page {page} of {totalPages}</p>
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" className="border-[#D4AF37]/40 text-[#D4AF37] hover:bg-[#D4AF37]/10"
@@ -203,7 +205,7 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
         <table className="w-full text-sm">
           <thead className="bg-[#0F1E35]">
             <tr>
-              {["DSID", "Name", "Class", "Section", "Phone"].map(h => (
+              {["DSID", "Name", "Class", "Section", "Phone", ""].map(h => (
                 <th key={h} className="text-left py-3 px-4 text-white/60 font-medium text-xs uppercase tracking-wide">{h}</th>
               ))}
             </tr>
@@ -211,7 +213,7 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
           <tbody>
             {isLoading ? [...Array(8)].map((_, i) => <SkeletonRow key={i} />) :
               data?.data.length === 0 ? (
-                <tr><td colSpan={5} className="py-12 text-center text-white/40">
+                <tr><td colSpan={6} className="py-12 text-center text-white/40">
                   <Users className="w-8 h-8 mx-auto mb-2 opacity-40" />No students found
                 </td></tr>
               ) : data?.data.map(s => (
@@ -221,6 +223,16 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
                   <td className="py-3 px-4 text-white/70">{s.class}</td>
                   <td className="py-3 px-4 text-white/70">{s.section}</td>
                   <td className="py-3 px-4 text-white/70">{s.phone}</td>
+                  <td className="py-3 px-4">
+                    <Button
+                      variant="ghost" size="icon"
+                      className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-7 w-7"
+                      onClick={() => setDeactivateTarget(s)}
+                      data-testid={`button-deactivate-student-${s.id}`}
+                      title="Deactivate student">
+                      <UserX className="w-3.5 h-3.5" />
+                    </Button>
+                  </td>
                 </tr>
               ))
             }
@@ -242,6 +254,22 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
           </Button>
         </div>
       </div>
+
+      {deactivateTarget && (
+        <DeactivationModal
+          open={!!deactivateTarget}
+          onClose={() => setDeactivateTarget(null)}
+          type="student"
+          targetId={deactivateTarget.id}
+          targetName={deactivateTarget.name}
+          schoolId={schoolId}
+          invalidateKeys={[
+            ["/api/schools", schoolId, "students", "paginated"],
+            ["/api/schools", schoolId, "students"],
+            ["/api/me"],
+          ]}
+        />
+      )}
     </div>
   );
 }
