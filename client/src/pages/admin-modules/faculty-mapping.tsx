@@ -14,6 +14,7 @@ import type { Teacher } from "@shared/schema";
 import DeactivationModal from "@/components/deactivation-modal";
 
 interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[] }
+type TeacherWithEmail = Teacher & { email: string };
 
 const addTeacherSchema = z.object({
   fullName: z.string().min(2), email: z.string().email(), password: z.string().min(6),
@@ -38,7 +39,7 @@ export default function FacultyMapping({ schoolId, classes, sections, subjects }
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(null);
-  const [deactivateTarget, setDeactivateTarget] = useState<(Teacher & { email?: string }) | null>(null);
+  const [deactivateTarget, setDeactivateTarget] = useState<TeacherWithEmail | null>(null);
 
   const handleSearch = useCallback((val: string) => {
     setQ(val);
@@ -51,7 +52,7 @@ export default function FacultyMapping({ schoolId, classes, sections, subjects }
   if (debouncedQ) params.set("q", debouncedQ);
   params.set("page", String(page));
 
-  const { data, isLoading } = useQuery<{ data: Teacher[]; total: number }>({
+  const { data, isLoading } = useQuery<{ data: TeacherWithEmail[]; total: number }>({
     queryKey: ["/api/schools", schoolId, "teachers", "paginated", debouncedQ, page],
     queryFn: async () => {
       const r = await fetch(`/api/schools/${schoolId}/teachers/paginated?${params}`, { credentials: "include" });
@@ -170,7 +171,7 @@ export default function FacultyMapping({ schoolId, classes, sections, subjects }
               ) : data?.data.map(t => (
                 <tr key={t.id} className="border-b border-white/5 hover:bg-white/5 transition-colors" data-testid={`row-teacher-${t.id}`}>
                   <td className="py-3 px-4 text-white font-medium">{t.fullName}</td>
-                  <td className="py-3 px-4 text-white/70 text-xs">{(t as any).email}</td>
+                  <td className="py-3 px-4 text-white/70 text-xs">{t.email}</td>
                   <td className="py-3 px-4 text-[#D4AF37] text-xs">{t.subject}</td>
                   <td className="py-3 px-4 text-white/70">{t.assignedClass}</td>
                   <td className="py-3 px-4 text-white/70">{t.assignedSection}</td>

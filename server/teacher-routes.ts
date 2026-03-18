@@ -103,13 +103,8 @@ export function registerTeacherRoutes(app: Express) {
     res.json(teacherList);
   });
 
-  app.delete("/api/teachers/:id", async (req, res) => {
-    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid teacher ID" });
-    const deleted = await storage.deleteTeacher(id);
-    if (!deleted) return res.status(404).json({ message: "Teacher not found" });
-    res.json({ message: "Teacher deleted" });
+  app.delete("/api/teachers/:id", async (_req, res) => {
+    res.status(410).json({ message: "Hard deletion is disabled. Use the deactivation endpoint instead." });
   });
 
   // ===== TEACHER AUTH =====

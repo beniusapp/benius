@@ -33,15 +33,10 @@ export default function DeactivationModal({
 
   const deactivateMutation = useMutation({
     mutationFn: async () => {
-      const verifyRes = await apiRequest("POST", "/api/admin/verify-password", { password });
-      if (!verifyRes.ok) {
-        const err = await verifyRes.json();
-        throw new Error(err.message || "Incorrect password");
-      }
       const url = type === "student"
         ? `/api/schools/${schoolId}/students/${targetId}/deactivate`
         : `/api/schools/${schoolId}/teachers/${targetId}/deactivate`;
-      const res = await apiRequest("POST", url, { reason });
+      const res = await apiRequest("POST", url, { reason, password });
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.message || "Deactivation failed");
