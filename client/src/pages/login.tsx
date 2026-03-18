@@ -40,7 +40,7 @@ export default function Login() {
       setLocation("/admin-dashboard");
     },
     onError: (error: Error) => {
-      setErrorMessage("Invalid Email or Password");
+      setErrorMessage(error.message || "Invalid Email or Password");
     },
   });
 
