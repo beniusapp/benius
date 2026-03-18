@@ -913,19 +913,25 @@ export class DatabaseStorage {
   }
 
   // ===== PAGINATED TEACHERS (Big Data) =====
-  async getTeachersPaginated(schoolId: number, opts: { q?: string; page?: number }): Promise<{ data: Teacher[]; total: number }> {
+  async getTeachersPaginated(schoolId: number, opts: { q?: string; page?: number }): Promise<{ data: (Teacher & { email: string })[]; total: number }> {
     const { q, page = 1 } = opts;
     const limit = 50;
     const offset = (page - 1) * limit;
-    const conditions = [eq(teachers.schoolId, schoolId), eq(users.isActive, true)];
-    if (q) conditions.push(or(ilike(teachers.fullName, `%${q}%`), ilike(teachers.subject, `%${q}%`), ilike(teachers.email, `%${q}%`))!);
+    const baseConditions = [eq(teachers.schoolId, schoolId), eq(users.isActive, true)];
+    if (q) {
+      baseConditions.push(or(
+        ilike(teachers.fullName, `%${q}%`),
+        ilike(teachers.subject, `%${q}%`),
+        ilike(users.email, `%${q}%`)
+      )!);
+    }
     const [{ total }] = await db.select({ total: count() }).from(teachers)
       .innerJoin(users, eq(teachers.userId, users.id))
-      .where(and(...conditions));
-    const data = await db.select().from(teachers)
+      .where(and(...baseConditions));
+    const rows = await db.select().from(teachers)
       .innerJoin(users, eq(teachers.userId, users.id))
-      .where(and(...conditions)).orderBy(teachers.fullName).limit(limit).offset(offset);
-    return { data: data.map(r => ({ ...r.teachers, email: r.users.email })) as any, total: Number(total) };
+      .where(and(...baseConditions)).orderBy(teachers.fullName).limit(limit).offset(offset);
+    return { data: rows.map(r => ({ ...r.teachers, email: r.users.email })), total: Number(total) };
   }
 
   // ===== DEACTIVATION (Soft Delete) =====

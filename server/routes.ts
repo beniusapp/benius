@@ -504,7 +504,7 @@ export async function registerRoutes(
     }
 
     if (!student.isActive) {
-      return res.status(403).json({ message: "This account has been deactivated. Please contact your school administrator." });
+      return res.status(403).json({ message: "This account has been deactivated. Please contact your administrator." });
     }
 
     if (!student.isActivated) {

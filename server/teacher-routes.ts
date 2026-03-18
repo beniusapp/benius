@@ -120,6 +120,10 @@ export function registerTeacherRoutes(app: Express) {
     const user = await storage.getUserByEmail(parsed.data.email);
     if (!user || user.role !== "teacher") return res.status(401).json({ message: "Invalid email or password" });
 
+    if (!user.isActive) {
+      return res.status(403).json({ message: "This account has been deactivated. Please contact your administrator." });
+    }
+
     const valid = await bcrypt.compare(parsed.data.password, user.passwordHash);
     if (!valid) return res.status(401).json({ message: "Invalid email or password" });
 

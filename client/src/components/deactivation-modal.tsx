@@ -17,8 +17,8 @@ interface DeactivationModalProps {
   invalidateKeys: string[][];
 }
 
-const STUDENT_REASONS = ["Graduated", "Transferred", "Long Absence", "Disciplinary Action", "Other"];
-const TEACHER_REASONS = ["Resigned", "Transferred", "Contract Ended", "Disciplinary Action", "Other"];
+const STUDENT_REASONS = ["Graduated", "Transferred", "Resigned", "Disciplinary", "Other"];
+const TEACHER_REASONS = ["Graduated", "Transferred", "Resigned", "Disciplinary", "Other"];
 
 export default function DeactivationModal({
   open, onClose, type, targetId, targetName, schoolId, invalidateKeys
