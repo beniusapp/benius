@@ -1,8 +1,23 @@
 import { useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { GraduationCap, Loader2, LogOut, IdCard } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  GraduationCap,
+  Loader2,
+  LogOut,
+  User,
+  CalendarCheck,
+  BookOpen,
+  PenLine,
+  CreditCard,
+  ClipboardList,
+  MessageSquareWarning,
+  Image,
+  Users,
+  CalendarDays,
+  FileText,
+  Clock,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -17,7 +32,23 @@ interface StudentMeResponse {
   dob: string;
   schoolName: string;
   schoolCode: string;
+  schoolId?: number;
 }
+
+const TILES = [
+  { id: "profile",          label: "Profile",          Icon: User },
+  { id: "attendance",       label: "Attendance",       Icon: CalendarCheck },
+  { id: "homework",         label: "Homework",         Icon: BookOpen },
+  { id: "classwork",        label: "Classwork",        Icon: PenLine },
+  { id: "fees",             label: "Fees",             Icon: CreditCard },
+  { id: "examination",      label: "Examination",      Icon: ClipboardList },
+  { id: "complaints",       label: "Complaints",       Icon: MessageSquareWarning },
+  { id: "gallery",          label: "Gallery",          Icon: Image },
+  { id: "faculty-info",     label: "Faculty Info",     Icon: Users },
+  { id: "school-calendar",  label: "School Calendar",  Icon: CalendarDays },
+  { id: "leave",            label: "Leave",            Icon: FileText },
+  { id: "timetable",        label: "Timetable",        Icon: Clock },
+] as const;
 
 export default function StudentDashboard() {
   const { toast } = useToast();
@@ -47,92 +78,173 @@ export default function StudentDashboard() {
     },
   });
 
-  if (isLoading) {
+  if (isLoading || !student) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      <div className="min-h-screen flex items-center justify-center bg-[#f0fdf4]">
+        <Loader2 className="w-9 h-9 animate-spin text-[#10b981]" />
       </div>
     );
   }
 
-  if (!student) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  const initials = student.name
+    .split(" ")
+    .map((n) => n[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
-      <header className="border-b bg-card">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
+    <div className="min-h-screen flex flex-col bg-[#f0fdf4]">
+
+      {/* ── Sticky top nav ── */}
+      <header className="sticky top-0 z-30 bg-[#10b981] shadow-md">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary">
-              <GraduationCap className="w-5 h-5 text-primary-foreground" />
+            <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-white/20">
+              <GraduationCap className="w-5 h-5 text-white" />
             </div>
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight" data-testid="text-app-title">BENIUS</h1>
-              <p className="text-xs text-muted-foreground">Student Portal</p>
+            <div className="leading-tight">
+              <p className="text-white font-bold text-base sm:text-lg tracking-tight" data-testid="text-app-title">
+                BENIUS
+              </p>
+              <p className="text-emerald-100 text-xs hidden sm:block">Student Portal</p>
             </div>
           </div>
-          <Button
-            variant="secondary"
-            size="sm"
+
+          <button
             onClick={() => logoutMutation.mutate()}
             disabled={logoutMutation.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 active:bg-white/40 text-white text-sm font-medium transition-colors disabled:opacity-60"
             data-testid="button-student-logout"
           >
-            <LogOut className="w-3.5 h-3.5 mr-1" />
-            Logout
-          </Button>
+            {logoutMutation.isPending
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <LogOut className="w-4 h-4" />}
+            <span className="hidden sm:inline">Logout</span>
+          </button>
         </div>
       </header>
 
-      <main className="flex-1 max-w-6xl mx-auto w-full px-6 py-8 space-y-6">
-        <div className="text-center">
-          <h2 className="text-2xl font-bold tracking-tight" data-testid="text-welcome">
-            Welcome, {student.name}!
-          </h2>
-          <p className="text-muted-foreground mt-1">Here is your Digital Student ID Card</p>
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 sm:py-8 space-y-6 sm:space-y-8">
+
+        {/* ── Profile Summary Card ── */}
+        <div
+          className="bg-white rounded-2xl shadow-sm border border-emerald-100 p-4 sm:p-6 flex flex-col sm:flex-row items-center sm:items-start gap-4"
+          data-testid="card-student-profile"
+        >
+          {/* Avatar */}
+          <div
+            className="flex-shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-[#10b981] flex items-center justify-center shadow-md"
+            data-testid="avatar-student"
+          >
+            <span className="text-white font-bold text-xl sm:text-2xl select-none">{initials}</span>
+          </div>
+
+          {/* Info */}
+          <div className="flex-1 text-center sm:text-left space-y-1 min-w-0">
+            <h2
+              className="text-lg sm:text-xl font-bold text-gray-900 truncate"
+              data-testid="text-student-name"
+            >
+              {student.name}
+            </h2>
+            <p className="text-sm text-gray-500" data-testid="text-school-name">{student.schoolName}</p>
+            <div className="flex flex-wrap justify-center sm:justify-start gap-2 pt-1">
+              <span
+                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[#10b981] text-xs font-semibold"
+                data-testid="text-student-dsid"
+              >
+                DSID: {student.digitalStudentId}
+              </span>
+              <span
+                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[#10b981] text-xs font-semibold"
+                data-testid="text-student-class"
+              >
+                Class {student.class} – {student.section}
+              </span>
+            </div>
+          </div>
+
+          {/* School badge (desktop) */}
+          <div className="hidden sm:flex flex-col items-end gap-1 flex-shrink-0">
+            <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-[#10b981]/10">
+              <GraduationCap className="w-6 h-6 text-[#10b981]" />
+            </div>
+            <p className="text-xs text-gray-400 font-mono">{student.schoolCode}</p>
+          </div>
         </div>
 
-        <div className="flex justify-center">
-          <Card className="w-full max-w-lg">
-            <CardHeader className="text-center border-b">
-              <div className="flex items-center justify-center gap-2 mb-2">
-                <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary">
-                  <GraduationCap className="w-5 h-5 text-primary-foreground" />
-                </div>
-              </div>
-              <CardTitle className="text-lg" data-testid="text-card-school-name">{student.schoolName}</CardTitle>
-              <p className="text-xs text-muted-foreground">Digital Student Identity Card</p>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="flex items-start gap-6">
-                <div className="flex items-center justify-center w-20 h-20 rounded-lg bg-primary/10 shrink-0">
-                  <IdCard className="w-10 h-10 text-primary" />
-                </div>
-                <div className="space-y-3 flex-1">
-                  <div>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wider">Student Name</p>
-                    <p className="text-lg font-semibold" data-testid="text-card-name">{student.name}</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <p className="text-xs text-muted-foreground uppercase tracking-wider">DSID</p>
-                      <p className="font-mono font-semibold text-primary" data-testid="text-card-dsid">{student.digitalStudentId}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground uppercase tracking-wider">Class</p>
-                      <p className="font-semibold" data-testid="text-card-class">{student.class} - {student.section}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+        {/* ── Section heading ── */}
+        <div>
+          <h3 className="text-base sm:text-lg font-semibold text-gray-700 mb-1">My Modules</h3>
+          <p className="text-xs sm:text-sm text-gray-400">Tap a card to access your module</p>
         </div>
+
+        {/* ── 12-Tile grid ── */}
+        {/*
+          Breakpoints:
+            Mobile  < 640px  → 2 columns
+            Tablet  640–1023px → 3 columns
+            Desktop ≥ 1024px → 4 columns
+        */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-5">
+          {TILES.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              data-testid={`tile-${id}`}
+              className="
+                group relative bg-white rounded-2xl border border-emerald-50
+                p-4 sm:p-5 lg:p-6
+                flex flex-col items-center justify-center gap-3
+                min-h-[110px] sm:min-h-[130px] lg:min-h-[140px]
+                cursor-pointer select-none
+                shadow-sm hover:shadow-lg active:shadow-md
+                hover:-translate-y-1 active:translate-y-0
+                transition-all duration-200 ease-out
+                focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:ring-offset-2
+              "
+              onClick={() => {
+                toast({
+                  title: label,
+                  description: `${label} module coming soon.`,
+                });
+              }}
+            >
+              {/* Icon container */}
+              <div className="
+                flex items-center justify-center
+                w-12 h-12 sm:w-14 sm:h-14
+                rounded-xl bg-emerald-50
+                group-hover:bg-[#10b981]/15
+                transition-colors duration-200
+              ">
+                <Icon className="w-6 h-6 sm:w-7 sm:h-7 text-[#10b981]" strokeWidth={1.75} />
+              </div>
+
+              {/* Label */}
+              <span className="
+                text-gray-800 font-semibold
+                text-xs sm:text-sm
+                text-center leading-tight
+              ">
+                {label}
+              </span>
+
+              {/* Subtle emerald glow on hover (desktop only) */}
+              <span className="
+                absolute inset-0 rounded-2xl opacity-0
+                group-hover:opacity-100 transition-opacity duration-200
+                ring-1 ring-inset ring-[#10b981]/20
+                pointer-events-none
+              " />
+            </button>
+          ))}
+        </div>
+
+        {/* ── Footer ── */}
+        <p className="text-center text-xs text-gray-400 pb-4">
+          © {new Date().getFullYear()} BENIUS · {student.schoolName}
+        </p>
       </main>
     </div>
   );
