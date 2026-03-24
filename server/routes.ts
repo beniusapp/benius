@@ -540,6 +540,7 @@ export async function registerRoutes(
       dob: data.student.dob,
       schoolName: data.school.name,
       schoolCode: data.school.code,
+      schoolId: data.student.schoolId,
     });
   });
 

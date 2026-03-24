@@ -18,7 +18,6 @@ import {
   FileText,
   Clock,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -60,7 +59,7 @@ export default function StudentDashboard() {
   });
 
   useEffect(() => {
-    if (!isLoading && (isError || !student)) {
+    if (!isLoading && (isError || !student || !student.schoolId)) {
       setLocation("/student-login");
     }
   }, [isLoading, isError, student, setLocation]);
@@ -183,11 +182,11 @@ export default function StudentDashboard() {
         {/* ── 12-Tile grid ── */}
         {/*
           Breakpoints:
-            Mobile  < 640px  → 2 columns
-            Tablet  640–1023px → 3 columns
-            Desktop ≥ 1024px → 4 columns
+            Mobile  < 768px  → 2 columns  (grid-cols-2)
+            Tablet  768–1023px → 3 columns (md:grid-cols-3)
+            Desktop ≥ 1024px → 4 columns  (lg:grid-cols-4)
         */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-5">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-5">
           {TILES.map(({ id, label, Icon }) => (
             <button
               key={id}
