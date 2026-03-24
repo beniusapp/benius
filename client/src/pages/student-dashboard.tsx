@@ -106,7 +106,7 @@ export default function StudentDashboard() {
               <p className="text-white font-bold text-base sm:text-lg tracking-tight" data-testid="text-app-title">
                 BENIUS
               </p>
-              <p className="text-emerald-100 text-xs hidden sm:block">Student Portal</p>
+              <p className="text-emerald-100 text-xs">Student Portal</p>
             </div>
           </div>
 
