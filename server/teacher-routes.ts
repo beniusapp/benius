@@ -1137,7 +1137,12 @@ export function registerTeacherRoutes(app: Express) {
     if (student.class !== teacher.assignedClass || student.section !== teacher.assignedSection)
       return res.status(403).json({ message: "Student is not in your assigned class" });
 
+    const existing = await storage.getStudentProfile(studentId);
+    if (!existing) return res.status(404).json({ message: "Student profile not found" });
+    if (existing.status !== "pending") return res.status(409).json({ message: "Profile is not in pending state" });
+
     const profile = await storage.approveStudentProfile(studentId, req.session.teacherId);
+    if (!profile) return res.status(500).json({ message: "Failed to approve profile" });
     if (profile.photoUrl && profile.photoStatus === "approved") {
       await storage.updateStudentLivePhoto(studentId, profile.photoUrl);
     }
@@ -1164,7 +1169,12 @@ export function registerTeacherRoutes(app: Express) {
     if (student.class !== teacher.assignedClass || student.section !== teacher.assignedSection)
       return res.status(403).json({ message: "Student is not in your assigned class" });
 
-    const profile = await storage.rejectStudentProfile(studentId, req.session.teacherId, parsed.data.note);
+    const existing = await storage.getStudentProfile(studentId);
+    if (!existing) return res.status(404).json({ message: "Student profile not found" });
+    if (existing.status !== "pending") return res.status(409).json({ message: "Profile is not in pending state" });
+
+    const profile = await storage.rejectStudentProfile(studentId, req.session.teacherId, parsed.data.note ?? "");
+    if (!profile) return res.status(500).json({ message: "Failed to reject profile" });
     res.json(profile);
   });
 }

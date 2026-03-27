@@ -745,8 +745,20 @@ export async function registerRoutes(
 
   app.get("/api/student/profile", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
     const profile = await storage.getStudentProfile(req.session.studentId);
-    res.json(profile || null);
+    res.json({
+      profile: profile || null,
+      liveData: {
+        name: student.name,
+        class: student.class,
+        section: student.section,
+        digitalStudentId: student.digitalStudentId,
+        photoUrl: student.photoUrl,
+        enrollmentDate: student.enrollmentDate,
+      },
+    });
   });
 
   const saveProfileSchema = z.object({
@@ -766,21 +778,20 @@ export async function registerRoutes(
     if (!student) return res.status(404).json({ message: "Student not found" });
 
     const existing = await storage.getStudentProfile(req.session.studentId);
-    if (existing && existing.status === "pending") {
-      return res.status(409).json({ message: "Profile is under review and cannot be edited until it is approved or rejected" });
-    }
 
     const parsed = saveProfileSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
 
     const resetStatus = existing?.status === "approved" ? "draft" : undefined;
 
-    const profile = await storage.upsertStudentProfile({
-      studentId: req.session.studentId,
-      schoolId: student.schoolId,
-      ...(resetStatus ? { status: resetStatus } : {}),
-      ...parsed.data,
-    });
+    const profile = await storage.upsertStudentProfile(
+      {
+        studentId: req.session.studentId,
+        schoolId: student.schoolId,
+        ...parsed.data,
+      },
+      resetStatus,
+    );
     res.json(profile);
   });
 

@@ -23,7 +23,7 @@ interface StudentMeResponse {
   schoolId?: number;
 }
 
-interface StudentProfile {
+interface StudentProfileRecord {
   id: number;
   studentId: number;
   schoolId: number;
@@ -40,6 +40,20 @@ interface StudentProfile {
   rejectionNote: string | null;
   submittedAt: string | null;
   verifiedAt: string | null;
+}
+
+interface LiveStudentData {
+  name: string;
+  class: string;
+  section: string;
+  digitalStudentId: string;
+  photoUrl: string | null;
+  enrollmentDate: string | null;
+}
+
+interface StudentProfileResponse {
+  profile: StudentProfileRecord | null;
+  liveData: LiveStudentData;
 }
 
 const STATUS_CONFIG = {
@@ -101,10 +115,12 @@ export default function StudentProfile() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
-  const { data: profile, isLoading: profileLoading } = useQuery<StudentProfile | null>({
+  const { data: profileData, isLoading: profileLoading } = useQuery<StudentProfileResponse | null>({
     queryKey: ["/api/student/profile"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
+
+  const profile = profileData?.profile ?? null;
 
   useEffect(() => {
     if (profile) {
@@ -203,7 +219,7 @@ export default function StudentProfile() {
   const status = profile?.status || "draft";
   const statusCfg = STATUS_CONFIG[status];
   const StatusIcon = statusCfg.icon;
-  const isLocked = status === "pending";
+  const canSubmit = status !== "pending";
 
   const dob = student.dob
     ? new Date(student.dob).toLocaleDateString("en-GB")
@@ -439,8 +455,8 @@ export default function StudentProfile() {
               <div className="px-5 py-4 border-b border-emerald-50 flex items-center gap-2">
                 <Users className="w-4 h-4 text-[#10b981]" />
                 <h2 className="text-sm font-bold text-gray-800">Verification Details</h2>
-                {isLocked && (
-                  <span className="ml-auto text-xs text-gray-400 bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-full">
+                {status === "pending" && (
+                  <span className="ml-auto text-xs text-yellow-600 bg-yellow-50 border border-yellow-200 px-2 py-0.5 rounded-full">
                     Under Review
                   </span>
                 )}
@@ -455,9 +471,8 @@ export default function StudentProfile() {
                       type="text"
                       value={form.fullName}
                       onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
-                      disabled={isLocked}
                       placeholder="Full name as in certificate"
-                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed"
+                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
                       data-testid="input-full-name"
                     />
                   </div>
@@ -467,9 +482,8 @@ export default function StudentProfile() {
                       type="text"
                       value={form.rollNo}
                       onChange={(e) => setForm((f) => ({ ...f, rollNo: e.target.value }))}
-                      disabled={isLocked}
                       placeholder="e.g. 01"
-                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed"
+                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
                       data-testid="input-roll-no"
                     />
                   </div>
@@ -478,8 +492,7 @@ export default function StudentProfile() {
                     <select
                       value={form.class}
                       onChange={(e) => setForm((f) => ({ ...f, class: e.target.value }))}
-                      disabled={isLocked}
-                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed bg-white"
+                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent bg-white"
                       data-testid="select-class"
                     >
                       <option value="">Select class</option>
@@ -493,8 +506,7 @@ export default function StudentProfile() {
                     <select
                       value={form.section}
                       onChange={(e) => setForm((f) => ({ ...f, section: e.target.value }))}
-                      disabled={isLocked}
-                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed bg-white"
+                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent bg-white"
                       data-testid="select-section"
                     >
                       <option value="">Select section</option>
@@ -511,9 +523,8 @@ export default function StudentProfile() {
                       type="text"
                       value={form.fatherName}
                       onChange={(e) => setForm((f) => ({ ...f, fatherName: e.target.value }))}
-                      disabled={isLocked}
                       placeholder="Father's full name"
-                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed"
+                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
                       data-testid="input-father-name"
                     />
                   </div>
@@ -525,9 +536,8 @@ export default function StudentProfile() {
                       type="text"
                       value={form.motherName}
                       onChange={(e) => setForm((f) => ({ ...f, motherName: e.target.value }))}
-                      disabled={isLocked}
                       placeholder="Mother's full name"
-                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed"
+                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
                       data-testid="input-mother-name"
                     />
                   </div>
@@ -539,10 +549,9 @@ export default function StudentProfile() {
                   <textarea
                     value={form.presentAddress}
                     onChange={(e) => setForm((f) => ({ ...f, presentAddress: e.target.value }))}
-                    disabled={isLocked}
                     placeholder="Full residential address"
                     rows={3}
-                    className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed resize-none"
+                    className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent resize-none"
                     data-testid="input-address"
                   />
                 </div>
@@ -550,17 +559,17 @@ export default function StudentProfile() {
             </div>
 
             {/* ── Action Buttons ── */}
-            {!isLocked && (
-              <div className="flex flex-col sm:flex-row gap-3">
-                <button
-                  onClick={handleSaveDraft}
-                  disabled={saveMutation.isPending || submitMutation.isPending}
-                  className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl border-2 border-[#10b981] text-[#10b981] text-sm font-semibold hover:bg-emerald-50 transition-colors disabled:opacity-60"
-                  data-testid="button-save-draft"
-                >
-                  {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                  Save as Draft
-                </button>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                onClick={handleSaveDraft}
+                disabled={saveMutation.isPending || submitMutation.isPending}
+                className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl border-2 border-[#10b981] text-[#10b981] text-sm font-semibold hover:bg-emerald-50 transition-colors disabled:opacity-60"
+                data-testid="button-save-draft"
+              >
+                {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                Save Changes
+              </button>
+              {canSubmit && (
                 <button
                   onClick={handleSubmit}
                   disabled={saveMutation.isPending || submitMutation.isPending}
@@ -570,8 +579,14 @@ export default function StudentProfile() {
                   {submitMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                   Submit for Verification
                 </button>
-              </div>
-            )}
+              )}
+              {!canSubmit && (
+                <div className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-yellow-50 border border-yellow-200 text-yellow-700 text-sm font-semibold">
+                  <Clock className="w-4 h-4" />
+                  Awaiting Teacher Review
+                </div>
+              )}
+            </div>
           </>
         )}
 

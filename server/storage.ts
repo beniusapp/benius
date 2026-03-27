@@ -1031,12 +1031,17 @@ export class DatabaseStorage {
     return profile || undefined;
   }
 
-  async upsertStudentProfile(data: Omit<InsertStudentProfile, "status" | "submittedAt" | "verifiedAt" | "verifiedBy" | "rejectionNote">): Promise<StudentProfile> {
+  async upsertStudentProfile(
+    data: Omit<InsertStudentProfile, "status" | "submittedAt" | "verifiedAt" | "verifiedBy" | "rejectionNote">,
+    statusOverride?: string,
+  ): Promise<StudentProfile> {
     const existing = await this.getStudentProfile(data.studentId);
     if (existing) {
+      const setData: Record<string, unknown> = { ...data, updatedAt: new Date() };
+      if (statusOverride) setData.status = statusOverride;
       const [updated] = await db
         .update(studentProfiles)
-        .set({ ...data, updatedAt: new Date() })
+        .set(setData as Partial<InsertStudentProfile>)
         .where(eq(studentProfiles.studentId, data.studentId))
         .returning();
       return updated;
