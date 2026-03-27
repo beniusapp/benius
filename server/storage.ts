@@ -1109,24 +1109,49 @@ export class DatabaseStorage {
   }
 
   async bulkApproveStudentProfiles(studentIds: number[], teacherId: number): Promise<{ approved: number; skipped: number }> {
-    let approved = 0;
-    let skipped = 0;
+    const eligible: { studentId: number; snapshot: string }[] = [];
+    const photoUpdates: { studentId: number; photoUrl: string }[] = [];
+
     for (const studentId of studentIds) {
       const existing = await this.getStudentProfile(studentId);
-      if (!existing || existing.status !== "pending") { skipped++; continue; }
-      const profile = await this.approveStudentProfile(studentId, teacherId);
-      if (profile.photoUrl) {
-        await this.updateStudentLivePhoto(studentId, profile.photoUrl);
-      }
-      const verifiedJson = JSON.stringify({
-        fullName: profile.fullName, class: profile.class, section: profile.section,
-        rollNo: profile.rollNo, fatherName: profile.fatherName, motherName: profile.motherName,
-        presentAddress: profile.presentAddress, photoUrl: profile.photoUrl, verifiedAt: profile.verifiedAt,
+      if (!existing || existing.status !== "pending") continue;
+      const snap = JSON.stringify({
+        fullName: existing.fullName, class: existing.class, section: existing.section,
+        rollNo: existing.rollNo, fatherName: existing.fatherName, motherName: existing.motherName,
+        presentAddress: existing.presentAddress, photoUrl: existing.photoUrl, approvedAt: new Date().toISOString(),
       });
-      await this.updateStudentVerifiedProfile(studentId, verifiedJson);
-      approved++;
+      eligible.push({ studentId, snapshot: snap });
+      if (existing.photoUrl) photoUpdates.push({ studentId, photoUrl: existing.photoUrl });
     }
-    return { approved, skipped };
+
+    const skipped = studentIds.length - eligible.length;
+
+    if (eligible.length === 0) return { approved: 0, skipped };
+
+    await db.transaction(async (tx) => {
+      const now = new Date();
+      for (const { studentId, snapshot } of eligible) {
+        await tx.update(studentProfiles).set({
+          status: "approved",
+          verifiedAt: now,
+          verifiedBy: teacherId,
+          photoStatus: "approved",
+          approvedSnapshot: snapshot,
+          updatedAt: now,
+        }).where(eq(studentProfiles.studentId, studentId));
+
+        const verifiedJson = JSON.stringify({
+          ...JSON.parse(snapshot),
+          verifiedAt: now.toISOString(),
+        });
+        await tx.update(students).set({ verifiedProfile: verifiedJson }).where(eq(students.id, studentId));
+      }
+      for (const { studentId, photoUrl } of photoUpdates) {
+        await tx.update(students).set({ photoUrl }).where(eq(students.id, studentId));
+      }
+    });
+
+    return { approved: eligible.length, skipped };
   }
 
   async approveStudentProfile(studentId: number, teacherId: number): Promise<StudentProfile> {

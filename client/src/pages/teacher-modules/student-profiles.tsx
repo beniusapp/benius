@@ -110,7 +110,8 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
 
   const bulkApproveMutation = useMutation({
     mutationFn: async (studentIds: number[]) => {
-      return await apiRequest("POST", "/api/teacher/profiles/bulk-approve", { studentIds });
+      const res = await apiRequest("POST", "/api/teacher/profiles/bulk-approve", { studentIds });
+      return res.json() as Promise<{ approved: number; skipped: number }>;
     },
     onSuccess: (data: { approved: number; skipped: number }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/pending-profiles"] });
