@@ -65,7 +65,7 @@ const modules: TeacherModule[] = [
   { key: "library", label: "Library", icon: BookMarked, color: "bg-emerald-500" },
   { key: "leave", label: "Leave", icon: CalendarOff, color: "bg-rose-500" },
   { key: "timetable", label: "Timetable", icon: Clock, color: "bg-violet-500" },
-  { key: "student-profiles", label: "Student Profiles", icon: ClipboardList, color: "bg-amber-500", hasPendingBadge: true },
+  { key: "student-profiles", label: "Approval Center", icon: ClipboardList, color: "bg-amber-600", hasPendingBadge: true },
 ];
 
 const moduleComponents: Record<string, React.ComponentType<{ teacher: TeacherMe }>> = {
@@ -215,7 +215,7 @@ export default function TeacherDashboard() {
                       )}
                       {mod.hasPendingBadge && pendingProfilesCount > 0 && (
                         <span
-                          className="absolute top-2 right-2 min-w-[20px] h-5 bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 shadow"
+                          className="absolute top-2 right-2 min-w-[20px] h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 shadow"
                           title={`${pendingProfilesCount} pending profile${pendingProfilesCount !== 1 ? "s" : ""}`}
                           data-testid="badge-pending-profiles"
                         >

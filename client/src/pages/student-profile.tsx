@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   ArrowLeft, Camera, CheckCircle, Clock, XCircle, AlertCircle, Loader2,
-  User, Users, Home, Lock, Eye, EyeOff, GraduationCap, RefreshCw,
+  User, Users, Lock, Eye, EyeOff, GraduationCap, RefreshCw,
 } from "lucide-react";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -82,32 +82,6 @@ interface StudentProfileResponse {
   liveData: LiveStudentData;
 }
 
-const STATUS_CONFIG = {
-  draft: {
-    icon: AlertCircle,
-    label: "Draft — Not Submitted",
-    banner: "bg-gray-50 border-gray-200 text-gray-700",
-    iconColor: "text-gray-500",
-  },
-  pending: {
-    icon: Clock,
-    label: "Pending Teacher Verification",
-    banner: "bg-yellow-50 border-yellow-200 text-yellow-800",
-    iconColor: "text-yellow-500",
-  },
-  approved: {
-    icon: CheckCircle,
-    label: "Profile Approved",
-    banner: "bg-emerald-50 border-emerald-200 text-emerald-800",
-    iconColor: "text-emerald-500",
-  },
-  rejected: {
-    icon: XCircle,
-    label: "Profile Rejected — Please Edit & Re-Submit",
-    banner: "bg-red-50 border-red-200 text-red-800",
-    iconColor: "text-red-500",
-  },
-};
 
 const CLASS_OPTIONS = Array.from({ length: 12 }, (_, i) => String(i + 1));
 const SECTION_OPTIONS = ["A", "B", "C", "D", "E", "F"];
@@ -244,8 +218,6 @@ export default function StudentProfile() {
   }
 
   const status = profile?.status || "draft";
-  const statusCfg = STATUS_CONFIG[status];
-  const StatusIcon = statusCfg.icon;
   const canSubmit = status !== "pending";
 
   const dob = student.dob
@@ -324,27 +296,47 @@ export default function StudentProfile() {
       <main className="flex-1 max-w-3xl mx-auto w-full px-4 sm:px-6 py-6 space-y-5">
 
         {/* ── Status Banner ── */}
-        <div className={`flex items-start gap-3 p-4 rounded-xl border ${statusCfg.banner}`} data-testid="status-banner">
-          <StatusIcon className={`w-5 h-5 mt-0.5 flex-shrink-0 ${statusCfg.iconColor}`} />
-          <div className="flex-1 min-w-0">
-            <p className="font-semibold text-sm" data-testid="status-label">{statusCfg.label}</p>
-            {status === "rejected" && profile?.rejectionNote && (
-              <p className="text-xs mt-1 text-red-600" data-testid="rejection-note">
-                Reason: {profile.rejectionNote}
-              </p>
-            )}
-            {status === "pending" && profile?.submittedAt && (
-              <p className="text-xs mt-1 opacity-75">
-                Submitted on {new Date(profile.submittedAt).toLocaleDateString("en-GB")}
-              </p>
-            )}
-            {status === "approved" && profile?.verifiedAt && (
-              <p className="text-xs mt-1 opacity-75">
-                Verified on {new Date(profile.verifiedAt).toLocaleDateString("en-GB")}
-              </p>
+        {status === "pending" && (
+          <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-yellow-200 bg-yellow-50 text-yellow-800 text-xs font-medium" data-testid="status-banner">
+            <Clock className="w-3.5 h-3.5 flex-shrink-0 text-yellow-500" />
+            <span data-testid="status-label">Awaiting Teacher Verification</span>
+            {profile?.submittedAt && (
+              <span className="ml-auto text-yellow-600 opacity-80">
+                Submitted {new Date(profile.submittedAt).toLocaleDateString("en-GB")}
+              </span>
             )}
           </div>
-        </div>
+        )}
+        {status === "approved" && (
+          <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-emerald-300 bg-emerald-500 text-white text-sm font-semibold shadow-sm" data-testid="status-banner">
+            <CheckCircle className="w-5 h-5 flex-shrink-0" />
+            <span data-testid="status-label">Profile Verified ✓</span>
+            {profile?.verifiedAt && (
+              <span className="ml-auto text-emerald-100 text-xs font-normal">
+                Verified on {new Date(profile.verifiedAt).toLocaleDateString("en-GB")}
+              </span>
+            )}
+          </div>
+        )}
+        {status === "rejected" && (
+          <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-red-200 bg-red-50 text-red-800" data-testid="status-banner">
+            <XCircle className="w-5 h-5 mt-0.5 flex-shrink-0 text-red-500" />
+            <div>
+              <p className="font-semibold text-sm" data-testid="status-label">Profile Rejected — Please Edit & Re-Submit</p>
+              {profile?.rejectionNote && (
+                <p className="text-xs mt-1 text-red-600" data-testid="rejection-note">
+                  Reason: {profile.rejectionNote}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+        {status === "draft" && (
+          <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-gray-200 bg-gray-50 text-gray-600 text-xs font-medium" data-testid="status-banner">
+            <AlertCircle className="w-3.5 h-3.5 text-gray-400" />
+            <span data-testid="status-label">Draft — Fill in your details and submit for verification</span>
+          </div>
+        )}
 
         {/* ── Sub-nav tabs ── */}
         <div className="flex gap-2">
@@ -375,58 +367,75 @@ export default function StudentProfile() {
         {activeSection === "profile" && (
           <>
             {/* ── Photo Upload ── */}
-            <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-6 flex flex-col items-center gap-4">
-              <div className="relative">
+            <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-6 flex flex-col items-center gap-3">
+              {/* Center-aligned photo with overlay camera button */}
+              <div className="relative group">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleFileChange}
+                  data-testid="input-photo-file"
+                />
                 {photoToShow ? (
                   <img
                     src={photoToShow}
                     alt="Profile photo"
-                    className="w-24 h-24 rounded-full object-cover border-4 border-[#10b981] shadow"
+                    className="w-28 h-28 rounded-full object-cover border-4 border-[#10b981] shadow-lg"
                     data-testid="img-profile-photo"
                   />
                 ) : (
-                  <div className="w-24 h-24 rounded-full bg-[#10b981] flex items-center justify-center shadow border-4 border-white">
-                    <span className="text-white font-bold text-2xl select-none">{initials}</span>
+                  <div className="w-28 h-28 rounded-full bg-[#10b981] flex items-center justify-center shadow-lg border-4 border-white">
+                    <span className="text-white font-bold text-3xl select-none">{initials}</span>
                   </div>
                 )}
-                {profile?.photoStatus === "pending" && (
-                  <span className="absolute -bottom-1 -right-1 bg-yellow-400 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full shadow">
-                    PENDING
-                  </span>
+                {/* Camera overlay button */}
+                {profile?.photoStatus !== "approved" && (
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={photoMutation.isPending}
+                    className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer disabled:cursor-not-allowed"
+                    title="Upload photo"
+                    data-testid="button-upload-photo"
+                  >
+                    {photoMutation.isPending
+                      ? <Loader2 className="w-6 h-6 text-white animate-spin" />
+                      : <Camera className="w-6 h-6 text-white" />}
+                  </button>
                 )}
+                {/* Status badge */}
                 {profile?.photoStatus === "approved" && (
-                  <span className="absolute -bottom-1 -right-1 bg-emerald-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full shadow">
-                    APPROVED
+                  <span className="absolute -bottom-1 -right-1 bg-emerald-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow">
+                    ✓ APPROVED
                   </span>
                 )}
               </div>
+
               <div className="text-center">
                 <p className="text-sm font-semibold text-gray-800">{student.name}</p>
                 <p className="text-xs text-gray-500">DSID: {student.digitalStudentId}</p>
               </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleFileChange}
-                data-testid="input-photo-file"
-              />
+
+              {/* Yellow photo pending banner */}
+              {profile?.photoStatus === "pending" && (
+                <div className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-yellow-300 bg-yellow-50 text-yellow-800 text-xs font-semibold">
+                  <Camera className="w-3.5 h-3.5 text-yellow-500 flex-shrink-0" />
+                  Photo Pending Approval — Awaiting teacher review
+                </div>
+              )}
+
+              {/* Upload button (only when not approved and not hovering over avatar) */}
               {profile?.photoStatus !== "approved" && (
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={photoMutation.isPending}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-[#10b981] text-sm font-medium hover:bg-emerald-100 transition-colors disabled:opacity-60"
-                  data-testid="button-upload-photo"
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-[#10b981] text-xs font-medium hover:bg-emerald-100 transition-colors disabled:opacity-60"
+                  data-testid="button-upload-photo-alt"
                 >
-                  {photoMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                  {photoMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
                   {profile?.photoStatus === "pending" ? "Replace Photo" : "Upload Photo"}
                 </button>
-              )}
-              {profile?.photoStatus === "pending" && (
-                <p className="text-xs text-yellow-700 bg-yellow-50 border border-yellow-200 px-3 py-1.5 rounded-lg text-center">
-                  Photo submitted — awaiting teacher approval
-                </p>
               )}
             </div>
 
@@ -705,7 +714,11 @@ export default function StudentProfile() {
                     value={passwordForm.newPassword}
                     onChange={(e) => setPasswordForm((f) => ({ ...f, newPassword: e.target.value }))}
                     placeholder="At least 6 characters"
-                    className="w-full px-3 py-2.5 pr-10 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
+                    className={`w-full px-3 py-2.5 pr-10 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:border-transparent ${
+                      passwordForm.newPassword && passwordForm.newPassword.length < 6
+                        ? "border-red-300 focus:ring-red-300"
+                        : "border-gray-200 focus:ring-[#10b981]"
+                    }`}
                     data-testid="input-new-password"
                   />
                   <button
@@ -716,6 +729,9 @@ export default function StudentProfile() {
                     {showNewPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
+                {passwordForm.newPassword && passwordForm.newPassword.length < 6 && (
+                  <p className="text-xs text-red-500 mt-1">Password must be at least 6 characters</p>
+                )}
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-600 mb-1 block">Confirm New Password</label>
@@ -724,9 +740,21 @@ export default function StudentProfile() {
                   value={passwordForm.confirmPassword}
                   onChange={(e) => setPasswordForm((f) => ({ ...f, confirmPassword: e.target.value }))}
                   placeholder="Repeat new password"
-                  className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
+                  className={`w-full px-3 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:border-transparent ${
+                    passwordForm.confirmPassword && passwordForm.confirmPassword !== passwordForm.newPassword
+                      ? "border-red-300 focus:ring-red-300"
+                      : passwordForm.confirmPassword && passwordForm.confirmPassword === passwordForm.newPassword
+                      ? "border-emerald-400 focus:ring-[#10b981]"
+                      : "border-gray-200 focus:ring-[#10b981]"
+                  }`}
                   data-testid="input-confirm-password"
                 />
+                {passwordForm.confirmPassword && passwordForm.confirmPassword !== passwordForm.newPassword && (
+                  <p className="text-xs text-red-500 mt-1">Passwords do not match</p>
+                )}
+                {passwordForm.confirmPassword && passwordForm.confirmPassword === passwordForm.newPassword && passwordForm.newPassword.length >= 6 && (
+                  <p className="text-xs text-emerald-600 mt-1">✓ Passwords match</p>
+                )}
               </div>
               <button
                 onClick={handleChangePassword}

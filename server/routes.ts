@@ -734,9 +734,17 @@ export async function registerRoutes(
         cb(null, dir);
       },
       filename: (_req, file, cb) => {
-        const path = require("path");
+        const mimeToExt: Record<string, string> = {
+          "image/jpeg": ".jpg",
+          "image/jpg": ".jpg",
+          "image/png": ".png",
+          "image/gif": ".gif",
+          "image/webp": ".webp",
+          "image/avif": ".avif",
+        };
         const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
-        cb(null, unique + path.extname(file.originalname));
+        const ext = mimeToExt[file.mimetype] || ".jpg";
+        cb(null, unique + ext);
       },
     }),
     limits: { fileSize: 5 * 1024 * 1024 },
@@ -821,14 +829,23 @@ export async function registerRoutes(
     res.json(profile);
   });
 
-  app.post("/api/student/profile/photo", profileDiskUpload.single("photo"), async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    if (!req.file) return res.status(400).json({ message: "No image uploaded" });
-
-    const photoUrl = `/uploads/student-photos/${req.file.filename}`;
-    const profile = await storage.updateStudentProfilePhoto(req.session.studentId, photoUrl);
-    res.json(profile);
-  });
+  app.post(
+    "/api/student/profile/photo",
+    (req, res, next) => {
+      if (!req.session.studentId) {
+        res.status(401).json({ message: "Not authenticated" });
+        return;
+      }
+      next();
+    },
+    profileDiskUpload.single("photo"),
+    async (req, res) => {
+      if (!req.file) return res.status(400).json({ message: "No image uploaded" });
+      const photoUrl = `/uploads/student-photos/${req.file.filename}`;
+      const profile = await storage.updateStudentProfilePhoto(req.session.studentId!, photoUrl);
+      res.json(profile);
+    },
+  );
 
   const changeStudentPasswordSchema = z.object({
     currentPassword: z.string().min(1),

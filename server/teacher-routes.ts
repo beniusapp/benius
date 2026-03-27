@@ -1108,6 +1108,26 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   // ===== STUDENT PROFILE VERIFICATION (Teacher) =====
+  app.post("/api/teacher/profiles/bulk-approve", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const parsed = z.object({ studentIds: z.array(z.number()).min(1) }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid student IDs" });
+
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+    const validIds: number[] = [];
+    for (const sid of parsed.data.studentIds) {
+      const student = await storage.getStudentById(sid);
+      if (!student || student.schoolId !== teacher.schoolId) continue;
+      if (student.class !== teacher.assignedClass || student.section !== teacher.assignedSection) continue;
+      validIds.push(sid);
+    }
+
+    const result = await storage.bulkApproveStudentProfiles(validIds, req.session.teacherId);
+    res.json(result);
+  });
+
   app.get("/api/teacher/pending-profiles", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);

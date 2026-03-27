@@ -1092,7 +1092,7 @@ export class DatabaseStorage {
     return updated;
   }
 
-  async getPendingProfilesForTeacher(schoolId: number, cls: string, section: string): Promise<(StudentProfile & { studentName: string; dsid: string })[]> {
+  async getPendingProfilesForTeacher(schoolId: number, cls: string, section: string): Promise<(StudentProfile & { studentName: string; dsid: string; currentVerifiedProfile: string | null })[]> {
     const profiles = await db
       .select()
       .from(studentProfiles)
@@ -1103,9 +1103,30 @@ export class DatabaseStorage {
       const student = await this.getStudentById(p.studentId);
       if (!student) continue;
       if (student.class !== cls || student.section !== section) continue;
-      result.push({ ...p, studentName: student.name, dsid: student.digitalStudentId });
+      result.push({ ...p, studentName: student.name, dsid: student.digitalStudentId, currentVerifiedProfile: student.verifiedProfile || null });
     }
     return result;
+  }
+
+  async bulkApproveStudentProfiles(studentIds: number[], teacherId: number): Promise<{ approved: number; skipped: number }> {
+    let approved = 0;
+    let skipped = 0;
+    for (const studentId of studentIds) {
+      const existing = await this.getStudentProfile(studentId);
+      if (!existing || existing.status !== "pending") { skipped++; continue; }
+      const profile = await this.approveStudentProfile(studentId, teacherId);
+      if (profile.photoUrl) {
+        await this.updateStudentLivePhoto(studentId, profile.photoUrl);
+      }
+      const verifiedJson = JSON.stringify({
+        fullName: profile.fullName, class: profile.class, section: profile.section,
+        rollNo: profile.rollNo, fatherName: profile.fatherName, motherName: profile.motherName,
+        presentAddress: profile.presentAddress, photoUrl: profile.photoUrl, verifiedAt: profile.verifiedAt,
+      });
+      await this.updateStudentVerifiedProfile(studentId, verifiedJson);
+      approved++;
+    }
+    return { approved, skipped };
   }
 
   async approveStudentProfile(studentId: number, teacherId: number): Promise<StudentProfile> {
