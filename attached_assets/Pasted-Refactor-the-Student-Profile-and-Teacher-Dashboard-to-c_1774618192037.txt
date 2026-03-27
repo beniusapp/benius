@@ -1,0 +1,56 @@
+Refactor the Student Profile and Teacher Dashboard to create a unified Verified Registration System.
+
+1. THE STUDENT MODULE (/student/profile)
+Theme: Emerald Green & White.
+
+Self-Registration Workflow: Implement two data states: is_verified: false (Draft) and is_verified: true (Live).
+
+Initial Entry: Allow students to fill in their details. While is_verified is false, display a non-intrusive 'Awaiting Teacher Verification' status bar at the top.
+
+Profile Image 'Double-Lock':
+
+Center-aligned image upload.
+
+If a photo is uploaded, set photo_status = 'pending'. Show a yellow banner: 'Photo Pending Approval'.
+
+The image only updates on the main dashboard once the teacher approves.
+
+Data Grid (2-Column):
+
+[Fixed - Read Only]: School ID, DSID, Enrollment Date.
+
+[Editable - Needs Verification]: Full Name, Class (Dropdown), Section (Dropdown), Roll No, Father’s Name, Mother’s Name, and Present Address.
+
+Security: Reset Password section (Current, New, Confirm New) with real-time matching logic.
+
+2. THE TEACHER MODULE (/teacher/dashboard)
+Theme: Benius Blue.
+
+The 'Approval Center' Tile: Add a new tile to the 3-column grid.
+
+Notification Badge: Display a red circle with the count of pending students (e.g., '5') on the tile.
+
+The Pending List: Inside the tile, show a table of students in the teacher's specific Class/Section where is_verified: false.
+
+Columns: Date | Student Name | Request Type | Action (Review Button).
+
+The Side-by-Side Review Modal:
+
+Left Side: Current live data (or 'New Registration' if empty).
+
+Right Side: New pending data highlighted in Emerald Green.
+
+Actions:
+
+Approve: Move pending data to the students table and set is_verified: true.
+
+Reject: Open a text box for the teacher to type a reason (e.g., 'Check Father's Name spelling').
+
+Bulk Action: Include a 'Select All' checkbox and a 'Bulk Approve' button at the top.
+
+3. TECHNICAL ARCHITECTURE & MULTI-TENANCY
+Database Isolation: Every query (Student fetch, Teacher Approval, Photo Update) MUST be filtered by school_id.
+
+Instant Sync: Upon Teacher approval, the Student's profile must immediately show the Green Verified Checkmark.
+
+Mobile Optimization: Ensure the Review Modal and Profile Grid stack vertically for mobile users
