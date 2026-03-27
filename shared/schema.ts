@@ -31,6 +31,7 @@ export const students = pgTable("students", {
   photoUrl: text("photo_url"),
   isActivated: boolean("is_activated").notNull().default(false),
   isActive: boolean("is_active").notNull().default(true),
+  enrollmentDate: date("enrollment_date"),
 });
 
 export const teachers = pgTable("teachers", {

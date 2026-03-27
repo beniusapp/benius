@@ -480,7 +480,8 @@ export async function registerRoutes(
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-    await storage.activateStudent(student.id, passwordHash);
+    const enrollmentDate = new Date().toISOString().split("T")[0];
+    await storage.activateStudent(student.id, passwordHash, enrollmentDate);
 
     res.json({ message: "Account activated successfully. You can now log in." });
   });
@@ -538,6 +539,8 @@ export async function registerRoutes(
       section: data.student.section,
       phone: data.student.phone,
       dob: data.student.dob,
+      photoUrl: data.student.photoUrl,
+      enrollmentDate: data.student.enrollmentDate,
       schoolName: data.school.name,
       schoolCode: data.school.code,
       schoolId: data.student.schoolId,
@@ -763,16 +766,19 @@ export async function registerRoutes(
     if (!student) return res.status(404).json({ message: "Student not found" });
 
     const existing = await storage.getStudentProfile(req.session.studentId);
-    if (existing && (existing.status === "pending" || existing.status === "approved")) {
-      return res.status(409).json({ message: "Profile is already submitted and cannot be edited" });
+    if (existing && existing.status === "pending") {
+      return res.status(409).json({ message: "Profile is under review and cannot be edited until it is approved or rejected" });
     }
 
     const parsed = saveProfileSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
 
+    const resetStatus = existing?.status === "approved" ? "draft" : undefined;
+
     const profile = await storage.upsertStudentProfile({
       studentId: req.session.studentId,
       schoolId: student.schoolId,
+      ...(resetStatus ? { status: resetStatus } : {}),
       ...parsed.data,
     });
     res.json(profile);

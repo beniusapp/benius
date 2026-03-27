@@ -1,9 +1,9 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   ArrowLeft, Camera, CheckCircle, Clock, XCircle, AlertCircle, Loader2,
-  User, Users, Home, Lock, Eye, EyeOff, GraduationCap,
+  User, Users, Home, Lock, Eye, EyeOff, GraduationCap, RefreshCw,
 } from "lucide-react";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -16,6 +16,8 @@ interface StudentMeResponse {
   section: string;
   phone: string;
   dob: string;
+  photoUrl: string | null;
+  enrollmentDate: string | null;
   schoolName: string;
   schoolCode: string;
   schoolId?: number;
@@ -67,6 +69,9 @@ const STATUS_CONFIG = {
   },
 };
 
+const CLASS_OPTIONS = Array.from({ length: 12 }, (_, i) => String(i + 1));
+const SECTION_OPTIONS = ["A", "B", "C", "D", "E", "F"];
+
 export default function StudentProfile() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -99,20 +104,21 @@ export default function StudentProfile() {
   const { data: profile, isLoading: profileLoading } = useQuery<StudentProfile | null>({
     queryKey: ["/api/student/profile"],
     queryFn: getQueryFn({ on401: "returnNull" }),
-    onSuccess: (data) => {
-      if (data) {
-        setForm({
-          fullName: data.fullName || "",
-          class: data.class || "",
-          section: data.section || "",
-          rollNo: data.rollNo || "",
-          fatherName: data.fatherName || "",
-          motherName: data.motherName || "",
-          presentAddress: data.presentAddress || "",
-        });
-      }
-    },
   });
+
+  useEffect(() => {
+    if (profile) {
+      setForm({
+        fullName: profile.fullName || "",
+        class: profile.class || "",
+        section: profile.section || "",
+        rollNo: profile.rollNo || "",
+        fatherName: profile.fatherName || "",
+        motherName: profile.motherName || "",
+        presentAddress: profile.presentAddress || "",
+      });
+    }
+  }, [profile?.id]);
 
   const saveMutation = useMutation({
     mutationFn: async (data: typeof form) => {
@@ -197,11 +203,17 @@ export default function StudentProfile() {
   const status = profile?.status || "draft";
   const statusCfg = STATUS_CONFIG[status];
   const StatusIcon = statusCfg.icon;
-  const isLocked = status === "pending" || status === "approved";
+  const isLocked = status === "pending";
 
   const dob = student.dob
     ? new Date(student.dob).toLocaleDateString("en-GB")
     : "—";
+
+  const enrollmentDateDisplay = student.enrollmentDate
+    ? new Date(student.enrollmentDate).toLocaleDateString("en-GB")
+    : "—";
+
+  const photoToShow = profile?.photoUrl || student.photoUrl;
 
   const initials = student.name
     .split(" ")
@@ -322,9 +334,9 @@ export default function StudentProfile() {
             {/* ── Photo Upload ── */}
             <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-6 flex flex-col items-center gap-4">
               <div className="relative">
-                {profile?.photoUrl ? (
+                {photoToShow ? (
                   <img
-                    src={profile.photoUrl}
+                    src={photoToShow}
                     alt="Profile photo"
                     className="w-24 h-24 rounded-full object-cover border-4 border-[#10b981] shadow"
                     data-testid="img-profile-photo"
@@ -334,7 +346,6 @@ export default function StudentProfile() {
                     <span className="text-white font-bold text-2xl select-none">{initials}</span>
                   </div>
                 )}
-                {/* Photo status badge */}
                 {profile?.photoStatus === "pending" && (
                   <span className="absolute -bottom-1 -right-1 bg-yellow-400 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full shadow">
                     PENDING
@@ -405,11 +416,23 @@ export default function StudentProfile() {
                   <p className="mt-1 text-sm font-semibold text-gray-900" data-testid="field-phone">{student.phone}</p>
                 </div>
                 <div>
+                  <label className="text-xs text-gray-500 font-medium">Enrollment Date</label>
+                  <p className="mt-1 text-sm font-semibold text-gray-900" data-testid="field-enrollment-date">{enrollmentDateDisplay}</p>
+                </div>
+                <div>
                   <label className="text-xs text-gray-500 font-medium">School</label>
                   <p className="mt-1 text-sm font-semibold text-gray-900" data-testid="field-school">{student.schoolName}</p>
                 </div>
               </div>
             </div>
+
+            {/* ── Approved re-edit notice ── */}
+            {status === "approved" && (
+              <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-800 text-xs">
+                <RefreshCw className="w-4 h-4 flex-shrink-0" />
+                <span>Your profile is approved. You may still edit the fields below — doing so will reset it to draft and require re-verification.</span>
+              </div>
+            )}
 
             {/* ── Editable Verification Fields ── */}
             <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm overflow-hidden">
@@ -418,7 +441,7 @@ export default function StudentProfile() {
                 <h2 className="text-sm font-bold text-gray-800">Verification Details</h2>
                 {isLocked && (
                   <span className="ml-auto text-xs text-gray-400 bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-full">
-                    {status === "approved" ? "Verified" : "Under Review"}
+                    Under Review
                   </span>
                 )}
               </div>
@@ -449,6 +472,36 @@ export default function StudentProfile() {
                       className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed"
                       data-testid="input-roll-no"
                     />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 mb-1 block">Class</label>
+                    <select
+                      value={form.class}
+                      onChange={(e) => setForm((f) => ({ ...f, class: e.target.value }))}
+                      disabled={isLocked}
+                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed bg-white"
+                      data-testid="select-class"
+                    >
+                      <option value="">Select class</option>
+                      {CLASS_OPTIONS.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 mb-1 block">Section</label>
+                    <select
+                      value={form.section}
+                      onChange={(e) => setForm((f) => ({ ...f, section: e.target.value }))}
+                      disabled={isLocked}
+                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed bg-white"
+                      data-testid="select-section"
+                    >
+                      <option value="">Select section</option>
+                      {SECTION_OPTIONS.map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="text-xs font-medium text-gray-600 mb-1 block">
@@ -517,14 +570,6 @@ export default function StudentProfile() {
                   {submitMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                   Submit for Verification
                 </button>
-              </div>
-            )}
-
-            {status === "approved" && (
-              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center">
-                <CheckCircle className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
-                <p className="text-emerald-800 font-semibold text-sm">Profile Verified</p>
-                <p className="text-emerald-600 text-xs mt-1">Your profile has been approved by your teacher.</p>
               </div>
             )}
           </>

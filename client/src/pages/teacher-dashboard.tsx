@@ -42,7 +42,16 @@ export interface TeacherMe {
   attendanceDoneToday: boolean;
 }
 
-const modules = [
+type TeacherModule = {
+  key: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  color: string;
+  hasBadge?: boolean;
+  hasPendingBadge?: boolean;
+};
+
+const modules: TeacherModule[] = [
   { key: "profile", label: "Teacher Profile", icon: User, color: "bg-blue-500" },
   { key: "attendance", label: "Attendance", icon: ClipboardCheck, color: "bg-green-500", hasBadge: true },
   { key: "homework", label: "Homework", icon: BookOpen, color: "bg-purple-500" },
@@ -204,7 +213,7 @@ export default function TeacherDashboard() {
                           data-testid="badge-attendance-status"
                         />
                       )}
-                      {(mod as any).hasPendingBadge && pendingProfilesCount > 0 && (
+                      {mod.hasPendingBadge && pendingProfilesCount > 0 && (
                         <span
                           className="absolute top-2 right-2 min-w-[20px] h-5 bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 shadow"
                           title={`${pendingProfilesCount} pending profile${pendingProfilesCount !== 1 ? "s" : ""}`}

@@ -1138,11 +1138,14 @@ export function registerTeacherRoutes(app: Express) {
       return res.status(403).json({ message: "Student is not in your assigned class" });
 
     const profile = await storage.approveStudentProfile(studentId, req.session.teacherId);
+    if (profile.photoUrl && profile.photoStatus === "approved") {
+      await storage.updateStudentLivePhoto(studentId, profile.photoUrl);
+    }
     res.json(profile);
   });
 
   const rejectProfileSchema = z.object({
-    note: z.string().min(1, "Rejection reason is required"),
+    note: z.string().optional().default(""),
   });
 
   app.post("/api/teacher/profiles/:studentId/reject", async (req, res) => {

@@ -134,9 +134,15 @@ export class DatabaseStorage {
     return student || undefined;
   }
 
-  async activateStudent(studentId: number, passwordHash: string): Promise<Student> {
-    const [student] = await db.update(students).set({ passwordHash, isActivated: true }).where(eq(students.id, studentId)).returning();
+  async activateStudent(studentId: number, passwordHash: string, enrollmentDate?: string): Promise<Student> {
+    const setFields: Partial<typeof students.$inferInsert> = { passwordHash, isActivated: true };
+    if (enrollmentDate) setFields.enrollmentDate = enrollmentDate;
+    const [student] = await db.update(students).set(setFields).where(eq(students.id, studentId)).returning();
     return student;
+  }
+
+  async updateStudentLivePhoto(studentId: number, photoUrl: string): Promise<void> {
+    await db.update(students).set({ photoUrl }).where(eq(students.id, studentId));
   }
 
   async getStudentWithSchool(studentId: number): Promise<{ student: Student; school: School } | undefined> {
