@@ -1233,6 +1233,7 @@ export class DatabaseStorage {
     const holidays = await db.select().from(calendarEvents).where(
       and(
         eq(calendarEvents.schoolId, schoolId),
+        eq(calendarEvents.eventType, "holiday"),
         gte(calendarEvents.date, startDate),
         lte(calendarEvents.date, endDate)
       )
@@ -1300,6 +1301,7 @@ export class DatabaseStorage {
     const holidays = await db.select().from(calendarEvents).where(
       and(
         eq(calendarEvents.schoolId, schoolId),
+        eq(calendarEvents.eventType, "holiday"),
         gte(calendarEvents.date, startDate),
         lte(calendarEvents.date, endDate)
       )
@@ -1357,7 +1359,7 @@ export class DatabaseStorage {
     return Array.from(monthMap.values());
   }
 
-  async getStudentAttendanceStats(studentId: number, schoolId: number, academicStartDate: string): Promise<{
+  async getStudentAttendanceStats(studentId: number, schoolId: number, academicStartDate: string, academicEndDate?: string): Promise<{
     overallPercent: number;
     workingDays: number;
     totalPresent: number;
@@ -1366,21 +1368,23 @@ export class DatabaseStorage {
     totalLeave: number;
   }> {
     const today = new Date().toISOString().split("T")[0];
+    const upperBound = academicEndDate && academicEndDate < today ? academicEndDate : today;
 
     const records = await db.select().from(attendanceRecords).where(
       and(
         eq(attendanceRecords.schoolId, schoolId),
         eq(attendanceRecords.studentId, studentId),
         gte(attendanceRecords.date, academicStartDate),
-        lte(attendanceRecords.date, today)
+        lte(attendanceRecords.date, upperBound)
       )
     );
 
     const holidays = await db.select().from(calendarEvents).where(
       and(
         eq(calendarEvents.schoolId, schoolId),
+        eq(calendarEvents.eventType, "holiday"),
         gte(calendarEvents.date, academicStartDate),
-        lte(calendarEvents.date, today)
+        lte(calendarEvents.date, upperBound)
       )
     );
 
@@ -1389,7 +1393,7 @@ export class DatabaseStorage {
         eq(studentLeaveRequests.schoolId, schoolId),
         eq(studentLeaveRequests.studentId, studentId),
         eq(studentLeaveRequests.status, "approved"),
-        lte(studentLeaveRequests.startDate, today),
+        lte(studentLeaveRequests.startDate, upperBound),
         gte(studentLeaveRequests.endDate, academicStartDate)
       )
     );
@@ -1397,7 +1401,7 @@ export class DatabaseStorage {
     let workingDays = 0, totalPresent = 0, totalAbsent = 0, totalHalfDay = 0, totalLeave = 0;
 
     const start = new Date(academicStartDate);
-    const end = new Date(today);
+    const end = new Date(upperBound);
     let cur = new Date(start);
 
     while (cur <= end) {

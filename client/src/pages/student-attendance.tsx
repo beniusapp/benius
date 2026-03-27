@@ -477,12 +477,15 @@ export default function StudentAttendance() {
                   {tooltip.day.isApprovedLeave && tooltip.day.status === "none" && (
                     <p className="text-sky-300">✅ Approved Leave</p>
                   )}
+                  {!tooltip.day.isHoliday && !tooltip.day.isApprovedLeave && tooltip.day.status === "none" && (
+                    <p className="text-slate-400">— Not marked yet</p>
+                  )}
                   {!tooltip.day.isHoliday && tooltip.day.status !== "none" && (
                     <>
                       <p className="capitalize">
                         {tooltip.day.status === "present" && "✅ Present"}
                         {tooltip.day.status === "absent" && "❌ Absent"}
-                        {(tooltip.day.status === "half_day") && "⚠️ Half Day"}
+                        {tooltip.day.status === "half_day" && "⚠️ Half Day"}
                         {tooltip.day.status === "late" && "⚠️ Late"}
                         {tooltip.day.status === "leave" && "🔵 Leave"}
                       </p>

@@ -925,7 +925,8 @@ export async function registerRoutes(
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
 
-    const stats = await storage.getStudentAttendanceStats(student.id, student.schoolId, startDate);
+    const endDate = dates ? dates.endDate : undefined;
+    const stats = await storage.getStudentAttendanceStats(student.id, student.schoolId, startDate, endDate);
     res.json({ schoolId: student.schoolId, studentId: student.id, startDate, ...stats });
   });
 
