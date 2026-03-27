@@ -541,6 +541,9 @@ export async function registerRoutes(
       dob: data.student.dob,
       photoUrl: data.student.photoUrl,
       enrollmentDate: data.student.enrollmentDate,
+      verifiedProfile: data.student.verifiedProfile
+        ? (() => { try { return JSON.parse(data.student.verifiedProfile); } catch { return null; } })()
+        : null,
       schoolName: data.school.name,
       schoolCode: data.school.code,
       schoolId: data.student.schoolId,
@@ -761,6 +764,9 @@ export async function registerRoutes(
         digitalStudentId: student.digitalStudentId,
         photoUrl: student.photoUrl,
         enrollmentDate: student.enrollmentDate,
+        verifiedProfile: student.verifiedProfile
+          ? (() => { try { return JSON.parse(student.verifiedProfile); } catch { return null; } })()
+          : null,
       },
     });
   });

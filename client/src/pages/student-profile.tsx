@@ -42,6 +42,18 @@ interface StudentProfileRecord {
   verifiedAt: string | null;
 }
 
+interface VerifiedProfileData {
+  fullName: string | null;
+  class: string | null;
+  section: string | null;
+  rollNo: string | null;
+  fatherName: string | null;
+  motherName: string | null;
+  presentAddress: string | null;
+  photoUrl: string | null;
+  verifiedAt: string | null;
+}
+
 interface LiveStudentData {
   name: string;
   class: string;
@@ -49,6 +61,7 @@ interface LiveStudentData {
   digitalStudentId: string;
   photoUrl: string | null;
   enrollmentDate: string | null;
+  verifiedProfile: VerifiedProfileData | null;
 }
 
 interface ApprovedSnapshot {

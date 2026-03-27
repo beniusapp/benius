@@ -103,6 +103,7 @@ app.use((req, res, next) => {
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
     ALTER TABLE students ADD COLUMN IF NOT EXISTS enrollment_date DATE;
+    ALTER TABLE students ADD COLUMN IF NOT EXISTS verified_profile TEXT;
     ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS approved_snapshot TEXT;
   `);
 

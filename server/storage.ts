@@ -145,6 +145,10 @@ export class DatabaseStorage {
     await db.update(students).set({ photoUrl }).where(eq(students.id, studentId));
   }
 
+  async updateStudentVerifiedProfile(studentId: number, verifiedProfileJson: string): Promise<void> {
+    await db.update(students).set({ verifiedProfile: verifiedProfileJson }).where(eq(students.id, studentId));
+  }
+
   async getStudentWithSchool(studentId: number): Promise<{ student: Student; school: School } | undefined> {
     const result = await db.select().from(students)
       .innerJoin(schools, eq(students.schoolId, schools.id))
@@ -1074,9 +1078,15 @@ export class DatabaseStorage {
         .returning();
       return created;
     }
+    const resetFields: Record<string, unknown> = { photoUrl, photoStatus: "pending", updatedAt: new Date() };
+    if (existing && existing.status === "approved") {
+      resetFields.status = "draft";
+      resetFields.verifiedAt = null;
+      resetFields.verifiedBy = null;
+    }
     const [updated] = await db
       .update(studentProfiles)
-      .set({ photoUrl, photoStatus: "pending", updatedAt: new Date() })
+      .set(resetFields as Partial<typeof studentProfiles.$inferInsert>)
       .where(eq(studentProfiles.studentId, studentId))
       .returning();
     return updated;

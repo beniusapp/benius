@@ -1143,9 +1143,21 @@ export function registerTeacherRoutes(app: Express) {
 
     const profile = await storage.approveStudentProfile(studentId, req.session.teacherId);
     if (!profile) return res.status(500).json({ message: "Failed to approve profile" });
-    if (profile.photoUrl && profile.photoStatus === "approved") {
+    if (profile.photoUrl) {
       await storage.updateStudentLivePhoto(studentId, profile.photoUrl);
     }
+    const verifiedProfileJson = JSON.stringify({
+      fullName: profile.fullName,
+      class: profile.class,
+      section: profile.section,
+      rollNo: profile.rollNo,
+      fatherName: profile.fatherName,
+      motherName: profile.motherName,
+      presentAddress: profile.presentAddress,
+      photoUrl: profile.photoUrl,
+      verifiedAt: profile.verifiedAt,
+    });
+    await storage.updateStudentVerifiedProfile(studentId, verifiedProfileJson);
     res.json(profile);
   });
 
