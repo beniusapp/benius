@@ -51,8 +51,21 @@ interface LiveStudentData {
   enrollmentDate: string | null;
 }
 
+interface ApprovedSnapshot {
+  fullName: string | null;
+  class: string | null;
+  section: string | null;
+  rollNo: string | null;
+  fatherName: string | null;
+  motherName: string | null;
+  presentAddress: string | null;
+  photoUrl: string | null;
+  approvedAt: string | null;
+}
+
 interface StudentProfileResponse {
   profile: StudentProfileRecord | null;
+  approvedSnapshot: ApprovedSnapshot | null;
   liveData: LiveStudentData;
 }
 
@@ -121,6 +134,7 @@ export default function StudentProfile() {
   });
 
   const profile = profileData?.profile ?? null;
+  const approvedSnapshot = profileData?.approvedSnapshot ?? null;
 
   useEffect(() => {
     if (profile) {
@@ -447,6 +461,59 @@ export default function StudentProfile() {
               <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-800 text-xs">
                 <RefreshCw className="w-4 h-4 flex-shrink-0" />
                 <span>Your profile is approved. You may still edit the fields below — doing so will reset it to draft and require re-verification.</span>
+              </div>
+            )}
+
+            {/* ── Last Approved Data snapshot ── */}
+            {approvedSnapshot && status !== "approved" && (
+              <div className="bg-emerald-50 rounded-2xl border border-emerald-200 shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-emerald-100 flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-emerald-600" />
+                  <h2 className="text-sm font-bold text-emerald-800">Last Verified Data</h2>
+                  {approvedSnapshot.approvedAt && (
+                    <span className="ml-auto text-xs text-emerald-600">
+                      Verified {new Date(approvedSnapshot.approvedAt).toLocaleDateString("en-GB")}
+                    </span>
+                  )}
+                </div>
+                <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  {approvedSnapshot.fullName && (
+                    <div>
+                      <span className="text-emerald-600 font-medium">Full Name:</span>
+                      <span className="ml-1 text-emerald-900 font-semibold">{approvedSnapshot.fullName}</span>
+                    </div>
+                  )}
+                  {(approvedSnapshot.class || approvedSnapshot.section) && (
+                    <div>
+                      <span className="text-emerald-600 font-medium">Class/Section:</span>
+                      <span className="ml-1 text-emerald-900 font-semibold">{approvedSnapshot.class} – {approvedSnapshot.section}</span>
+                    </div>
+                  )}
+                  {approvedSnapshot.rollNo && (
+                    <div>
+                      <span className="text-emerald-600 font-medium">Roll No:</span>
+                      <span className="ml-1 text-emerald-900 font-semibold">{approvedSnapshot.rollNo}</span>
+                    </div>
+                  )}
+                  {approvedSnapshot.fatherName && (
+                    <div>
+                      <span className="text-emerald-600 font-medium">Father's Name:</span>
+                      <span className="ml-1 text-emerald-900 font-semibold">{approvedSnapshot.fatherName}</span>
+                    </div>
+                  )}
+                  {approvedSnapshot.motherName && (
+                    <div>
+                      <span className="text-emerald-600 font-medium">Mother's Name:</span>
+                      <span className="ml-1 text-emerald-900 font-semibold">{approvedSnapshot.motherName}</span>
+                    </div>
+                  )}
+                  {approvedSnapshot.presentAddress && (
+                    <div className="sm:col-span-2">
+                      <span className="text-emerald-600 font-medium">Address:</span>
+                      <span className="ml-1 text-emerald-900">{approvedSnapshot.presentAddress}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 

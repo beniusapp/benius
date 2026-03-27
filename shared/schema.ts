@@ -279,6 +279,7 @@ export const studentProfiles = pgTable("student_profiles", {
   photoUrl: text("photo_url"),
   photoStatus: varchar("photo_status", { length: 20 }).notNull().default("none"),
   rejectionNote: text("rejection_note"),
+  approvedSnapshot: text("approved_snapshot"),
   submittedAt: timestamp("submitted_at"),
   verifiedAt: timestamp("verified_at"),
   verifiedBy: integer("verified_by"),

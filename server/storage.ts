@@ -1099,9 +1099,30 @@ export class DatabaseStorage {
   }
 
   async approveStudentProfile(studentId: number, teacherId: number): Promise<StudentProfile> {
+    const existing = await this.getStudentProfile(studentId);
+    const snapshot = existing
+      ? JSON.stringify({
+          fullName: existing.fullName,
+          class: existing.class,
+          section: existing.section,
+          rollNo: existing.rollNo,
+          fatherName: existing.fatherName,
+          motherName: existing.motherName,
+          presentAddress: existing.presentAddress,
+          photoUrl: existing.photoUrl,
+          approvedAt: new Date().toISOString(),
+        })
+      : null;
     const [updated] = await db
       .update(studentProfiles)
-      .set({ status: "approved", verifiedAt: new Date(), verifiedBy: teacherId, photoStatus: "approved", updatedAt: new Date() })
+      .set({
+        status: "approved",
+        verifiedAt: new Date(),
+        verifiedBy: teacherId,
+        photoStatus: "approved",
+        approvedSnapshot: snapshot,
+        updatedAt: new Date(),
+      })
       .where(eq(studentProfiles.studentId, studentId))
       .returning();
     return updated;

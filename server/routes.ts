@@ -748,8 +748,12 @@ export async function registerRoutes(
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
     const profile = await storage.getStudentProfile(req.session.studentId);
+    const approvedSnapshot = profile?.approvedSnapshot
+      ? (() => { try { return JSON.parse(profile.approvedSnapshot); } catch { return null; } })()
+      : null;
     res.json({
       profile: profile || null,
+      approvedSnapshot,
       liveData: {
         name: student.name,
         class: student.class,
