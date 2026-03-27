@@ -1106,4 +1106,62 @@ export function registerTeacherRoutes(app: Express) {
     const v = await storage.checkoutVisitor(parseInt(req.params.id));
     res.json(v);
   });
+
+  // ===== STUDENT PROFILE VERIFICATION (Teacher) =====
+  app.get("/api/teacher/pending-profiles", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const profiles = await storage.getPendingProfilesForTeacher(teacher.schoolId, teacher.assignedClass, teacher.assignedSection);
+    res.json(profiles);
+  });
+
+  app.get("/api/teacher/pending-profiles/count", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const count = await storage.getPendingProfilesCountForTeacher(teacher.schoolId, teacher.assignedClass, teacher.assignedSection);
+    res.json({ count });
+  });
+
+  app.post("/api/teacher/profiles/:studentId/approve", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const studentId = parseInt(req.params.studentId);
+    if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
+
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+    const student = await storage.getStudentById(studentId);
+    if (!student || student.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Access denied" });
+    if (student.class !== teacher.assignedClass || student.section !== teacher.assignedSection)
+      return res.status(403).json({ message: "Student is not in your assigned class" });
+
+    const profile = await storage.approveStudentProfile(studentId, req.session.teacherId);
+    res.json(profile);
+  });
+
+  const rejectProfileSchema = z.object({
+    note: z.string().min(1, "Rejection reason is required"),
+  });
+
+  app.post("/api/teacher/profiles/:studentId/reject", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const studentId = parseInt(req.params.studentId);
+    if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
+
+    const parsed = rejectProfileSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+    const student = await storage.getStudentById(studentId);
+    if (!student || student.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Access denied" });
+    if (student.class !== teacher.assignedClass || student.section !== teacher.assignedSection)
+      return res.status(403).json({ message: "Student is not in your assigned class" });
+
+    const profile = await storage.rejectStudentProfile(studentId, req.session.teacherId, parsed.data.note);
+    res.json(profile);
+  });
 }

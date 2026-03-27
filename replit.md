@@ -5,7 +5,7 @@ A full-stack, enterprise-grade school management platform with:
 - **Super Admin** (`/super-master`) — school provisioning
 - **Principal/Admin Dashboard** (`/admin-dashboard`) — Navy & Gold Command Center with 15 tiles, Live Pulse analytics, server-side pagination for 5000+ students
 - **Teacher Dashboard** (`/teacher-dashboard`) — 13-module grid with glassmorphic EdTech UI
-- **Student Portal** — activation, login, digital ID card
+- **Student Portal** — activation, login, 12-tile Emerald dashboard, self-service profile with verification workflow
 
 ## Tech Stack
 - **Frontend**: React + Vite, Tailwind CSS, Shadcn UI, Wouter (routing), TanStack React Query, recharts
@@ -47,6 +47,7 @@ A full-stack, enterprise-grade school management platform with:
 - **student_leave_requests**: id, student_id, school_id, start_date, end_date, reason, status (pending/approved/rejected/forwarded), reviewed_by, reviewer_role, created_at
 - **audit_logs**: id, school_id, action_type, entity_type, entity_id, action_by, action_by_role, details, created_at
 - **visitor_logs**: id, school_id, visitor_name, purpose, host_name, phone, check_in, check_out, badge, created_at
+- **student_profiles**: id, student_id (unique FK), school_id, status (draft|pending|approved|rejected), full_name, class, section, roll_no, father_name, mother_name, present_address, photo_url, photo_status (none|pending|approved), rejection_note, submitted_at, verified_at, verified_by, updated_at
 
 ## Admin Dashboard — Navy & Gold Command Center
 - **Theme**: bg=#0A1628, cards=#1A2942, gold=#D4AF37
@@ -61,7 +62,7 @@ A full-stack, enterprise-grade school management platform with:
 - **Visitor Log**: check-in form + check-out PATCH, audit trail
 - **Audit Logs**: chronological trail of all approve/reject/upload/checkin actions
 
-## Teacher Dashboard — 13 Modules
+## Teacher Dashboard — 14 Modules
 1. **Profile** — personal info
 2. **Attendance** — mark/edit, 7-day window, history table
 3. **Homework** — social-feed cards, view tracking, file upload, due dates
@@ -75,6 +76,7 @@ A full-stack, enterprise-grade school management platform with:
 11. **Library** — catalog search, e-book upload (PDF/EPUB → pending verification), borrow/return, my books
 12. **Leave** — My Leave (Sick/Casual/Earned balance cards, apply form, history) + Student Leave Requests tab (approve→auto-marks attendance, forward to principal)
 13. **Timetable** — weekly schedule grid
+14. **Student Profiles** — Verify pending student profile submissions; amber badge shows count; approve/reject with note; filtered to teacher's assigned class/section
 
 ## Multi-Tenant Security
 - Admin metadata routes enforce `userRole === "admin"`
@@ -112,9 +114,30 @@ A full-stack, enterprise-grade school management platform with:
 - `GET /api/audit-logs/:schoolId`
 - `GET /api/schools/:schoolId/students/paginated?q=&cls=&section=&page=` (LIMIT 50, only active students)
 - `GET /api/schools/:schoolId/teachers/paginated?q=&page=` (LIMIT 50, only active teachers)
+- `GET /api/student/profile` — get own student profile (studentId from session)
+- `POST /api/student/profile` — save/update draft profile fields
+- `POST /api/student/profile/submit` — submit profile for teacher verification
+- `POST /api/student/profile/photo` — upload profile photo (multer, saved to /uploads/student-photos/)
+- `POST /api/student/change-password { currentPassword, newPassword }` — student self-service password change
+- `GET /api/teacher/pending-profiles` — pending profiles for teacher's class/section
+- `GET /api/teacher/pending-profiles/count` — count only (for badge)
+- `POST /api/teacher/profiles/:studentId/approve` — approve profile
+- `POST /api/teacher/profiles/:studentId/reject { note }` — reject with reason note
 - `POST /api/admin/verify-password { password }` — re-auth admin for Double-Lock Modal
 - `POST /api/schools/:schoolId/students/:studentId/deactivate { reason }` — soft-delete student
 - `POST /api/schools/:schoolId/teachers/:teacherId/deactivate { reason }` — soft-delete teacher (deactivates user login)
+
+## Student Profile & Data Verification System
+- **Route**: `/student-profile` — protected by session guard (redirects to `/student-login` if not authenticated)
+- **Status lifecycle**: draft → pending → approved | rejected (rejected restores editability)
+- **Status banner**: color-coded (gray=draft, yellow=pending, green=approved, red=rejected with rejection note)
+- **Photo upload**: POST to `/api/student/profile/photo` (stored in `/uploads/student-photos/`), shows PENDING/APPROVED badge overlay
+- **Read-only section**: shows DSID registration data (name, class, section, phone, DOB) that cannot be self-edited
+- **Editable fields**: fullName (cert), rollNo, fatherName, motherName, presentAddress — locked when pending/approved
+- **Two action buttons**: "Save as Draft" (upsert only) and "Submit for Verification" (requires fullName+fatherName+motherName+address to be filled)
+- **Security tab**: password change form with current/new/confirm fields, eye toggle icons
+- **Teacher Verification module**: 14th teacher module (amber tile with numeric pending badge), filters profiles by teacher's `assignedClass`+`assignedSection`, shows student details, expand/collapse rows, approve → marks verified, reject → opens modal for rejection note which student sees on re-login
+- **DB table**: `student_profiles` created via direct SQL in `server/index.ts` (CREATE TABLE IF NOT EXISTS)
 
 ## Secure Deactivation Workflow
 - Soft delete: sets `is_active = false` on students / users (teachers); never hard deletes

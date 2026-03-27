@@ -4,7 +4,7 @@ import { useLocation, useRoute } from "wouter";
 import {
   GraduationCap, Loader2, LogOut, User, ClipboardCheck, BookOpen, PenTool,
   Bell, AlertTriangle, FileText, Image, Users, Calendar, BookMarked,
-  CalendarOff, Clock, ArrowLeft,
+  CalendarOff, Clock, ArrowLeft, ClipboardList,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import CalendarModule from "@/pages/teacher-modules/calendar";
 import LibraryModule from "@/pages/teacher-modules/library";
 import LeaveModule from "@/pages/teacher-modules/leave";
 import TimetableModule from "@/pages/teacher-modules/timetable";
+import StudentProfilesModule from "@/pages/teacher-modules/student-profiles";
 
 export interface TeacherMe {
   id: number;
@@ -55,6 +56,7 @@ const modules = [
   { key: "library", label: "Library", icon: BookMarked, color: "bg-emerald-500" },
   { key: "leave", label: "Leave", icon: CalendarOff, color: "bg-rose-500" },
   { key: "timetable", label: "Timetable", icon: Clock, color: "bg-violet-500" },
+  { key: "student-profiles", label: "Student Profiles", icon: ClipboardList, color: "bg-amber-500", hasPendingBadge: true },
 ];
 
 const moduleComponents: Record<string, React.ComponentType<{ teacher: TeacherMe }>> = {
@@ -71,6 +73,7 @@ const moduleComponents: Record<string, React.ComponentType<{ teacher: TeacherMe 
   library: LibraryModule,
   leave: LeaveModule,
   timetable: TimetableModule,
+  "student-profiles": StudentProfilesModule,
 };
 
 export default function TeacherDashboard() {
@@ -83,6 +86,14 @@ export default function TeacherDashboard() {
     queryKey: ["/api/teacher-me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
+
+  const { data: pendingProfilesData } = useQuery<{ count: number }>({
+    queryKey: ["/api/teacher/pending-profiles/count"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!teacher,
+    refetchInterval: 60000,
+  });
+  const pendingProfilesCount = pendingProfilesData?.count ?? 0;
 
   useEffect(() => {
     if (!isLoading && (isError || !teacher)) {
@@ -192,6 +203,15 @@ export default function TeacherDashboard() {
                           title={teacher.attendanceDoneToday ? "Attendance marked today" : "Attendance pending"}
                           data-testid="badge-attendance-status"
                         />
+                      )}
+                      {(mod as any).hasPendingBadge && pendingProfilesCount > 0 && (
+                        <span
+                          className="absolute top-2 right-2 min-w-[20px] h-5 bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 shadow"
+                          title={`${pendingProfilesCount} pending profile${pendingProfilesCount !== 1 ? "s" : ""}`}
+                          data-testid="badge-pending-profiles"
+                        >
+                          {pendingProfilesCount}
+                        </span>
                       )}
                     </CardContent>
                   </Card>

@@ -80,6 +80,31 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // ===== DB MIGRATIONS (safe, idempotent) =====
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS student_profiles (
+      id SERIAL PRIMARY KEY,
+      student_id INTEGER NOT NULL UNIQUE REFERENCES students(id) ON DELETE CASCADE,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      status VARCHAR(20) NOT NULL DEFAULT 'draft',
+      full_name TEXT,
+      class VARCHAR(20),
+      section VARCHAR(10),
+      roll_no VARCHAR(20),
+      father_name TEXT,
+      mother_name TEXT,
+      present_address TEXT,
+      photo_url TEXT,
+      photo_status VARCHAR(20) NOT NULL DEFAULT 'none',
+      rejection_note TEXT,
+      submitted_at TIMESTAMP,
+      verified_at TIMESTAMP,
+      verified_by INTEGER,
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE students ADD COLUMN IF NOT EXISTS enrollment_date DATE;
+  `);
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

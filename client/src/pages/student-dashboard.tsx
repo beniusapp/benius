@@ -203,6 +203,10 @@ export default function StudentDashboard() {
                 focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:ring-offset-2
               "
               onClick={() => {
+                if (id === "profile") {
+                  setLocation("/student-profile");
+                  return;
+                }
                 toast({
                   title: label,
                   description: `${label} module coming soon.`,

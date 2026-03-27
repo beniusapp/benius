@@ -717,6 +717,114 @@ export async function registerRoutes(
     res.json({ message: "Teacher deactivated successfully" });
   });
 
+  // ===== STUDENT PROFILE (Self-Service) =====
+  const profileDiskUpload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => {
+        const path = require("path");
+        const fs = require("fs");
+        const dir = path.join(process.cwd(), "uploads", "student-photos");
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+      },
+      filename: (_req, file, cb) => {
+        const path = require("path");
+        const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
+        cb(null, unique + path.extname(file.originalname));
+      },
+    }),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      if (file.mimetype.startsWith("image/")) cb(null, true);
+      else cb(new Error("Only image files are allowed"));
+    },
+  });
+
+  app.get("/api/student/profile", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const profile = await storage.getStudentProfile(req.session.studentId);
+    res.json(profile || null);
+  });
+
+  const saveProfileSchema = z.object({
+    fullName: z.string().optional(),
+    class: z.string().optional(),
+    section: z.string().optional(),
+    rollNo: z.string().optional(),
+    fatherName: z.string().optional(),
+    motherName: z.string().optional(),
+    presentAddress: z.string().optional(),
+  });
+
+  app.post("/api/student/profile", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    const existing = await storage.getStudentProfile(req.session.studentId);
+    if (existing && (existing.status === "pending" || existing.status === "approved")) {
+      return res.status(409).json({ message: "Profile is already submitted and cannot be edited" });
+    }
+
+    const parsed = saveProfileSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+    const profile = await storage.upsertStudentProfile({
+      studentId: req.session.studentId,
+      schoolId: student.schoolId,
+      ...parsed.data,
+    });
+    res.json(profile);
+  });
+
+  app.post("/api/student/profile/submit", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+
+    const existing = await storage.getStudentProfile(req.session.studentId);
+    if (!existing) return res.status(400).json({ message: "Please save a draft before submitting" });
+    if (existing.status === "pending") return res.status(409).json({ message: "Profile is already pending review" });
+    if (existing.status === "approved") return res.status(409).json({ message: "Profile is already approved" });
+
+    if (!existing.fullName || !existing.fatherName || !existing.motherName || !existing.presentAddress) {
+      return res.status(400).json({ message: "Please fill in all required fields: Full Name, Father's Name, Mother's Name, and Present Address" });
+    }
+
+    const profile = await storage.submitStudentProfile(req.session.studentId);
+    res.json(profile);
+  });
+
+  app.post("/api/student/profile/photo", profileDiskUpload.single("photo"), async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    if (!req.file) return res.status(400).json({ message: "No image uploaded" });
+
+    const photoUrl = `/uploads/student-photos/${req.file.filename}`;
+    const profile = await storage.updateStudentProfilePhoto(req.session.studentId, photoUrl);
+    res.json(profile);
+  });
+
+  const changeStudentPasswordSchema = z.object({
+    currentPassword: z.string().min(1),
+    newPassword: z.string().min(6, "New password must be at least 6 characters"),
+  });
+
+  app.post("/api/student/change-password", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+
+    const parsed = changeStudentPasswordSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    const valid = await bcrypt.compare(parsed.data.currentPassword, student.passwordHash);
+    if (!valid) return res.status(401).json({ message: "Current password is incorrect" });
+
+    const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+    await storage.updateStudentPassword(req.session.studentId, passwordHash);
+    res.json({ message: "Password changed successfully" });
+  });
+
   registerTeacherRoutes(app);
 
   return httpServer;

@@ -263,6 +263,27 @@ export const visitorLogs = pgTable("visitor_logs", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const studentProfiles = pgTable("student_profiles", {
+  id: serial("id").primaryKey(),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }).unique(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  status: varchar("status", { length: 20 }).notNull().default("draft"),
+  fullName: text("full_name"),
+  class: varchar("class", { length: 20 }),
+  section: varchar("section", { length: 10 }),
+  rollNo: varchar("roll_no", { length: 20 }),
+  fatherName: text("father_name"),
+  motherName: text("mother_name"),
+  presentAddress: text("present_address"),
+  photoUrl: text("photo_url"),
+  photoStatus: varchar("photo_status", { length: 20 }).notNull().default("none"),
+  rejectionNote: text("rejection_note"),
+  submittedAt: timestamp("submitted_at"),
+  verifiedAt: timestamp("verified_at"),
+  verifiedBy: integer("verified_by"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 export const schoolsRelations = relations(schools, ({ many }) => ({
   students: many(students),
   users: many(users),
@@ -375,3 +396,7 @@ export type AuditLog = typeof auditLogs.$inferSelect;
 export const insertVisitorLogSchema = createInsertSchema(visitorLogs).omit({ id: true, createdAt: true, checkIn: true });
 export type InsertVisitorLog = z.infer<typeof insertVisitorLogSchema>;
 export type VisitorLog = typeof visitorLogs.$inferSelect;
+
+export const insertStudentProfileSchema = createInsertSchema(studentProfiles).omit({ id: true, updatedAt: true });
+export type InsertStudentProfile = z.infer<typeof insertStudentProfileSchema>;
+export type StudentProfile = typeof studentProfiles.$inferSelect;

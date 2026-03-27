@@ -3,7 +3,7 @@ import {
   attendanceRecords, homework, homeworkViews, classwork, notices,
   complaints, complaintNotes, examScores, galleryItems, calendarEvents,
   libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata,
-  studentLeaveRequests, auditLogs, visitorLogs,
+  studentLeaveRequests, auditLogs, visitorLogs, studentProfiles,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
@@ -18,6 +18,7 @@ import {
   type StudentLeaveRequest, type InsertStudentLeaveRequest,
   type AuditLog, type InsertAuditLog,
   type VisitorLog, type InsertVisitorLog,
+  type StudentProfile, type InsertStudentProfile,
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
@@ -1016,6 +1017,101 @@ export class DatabaseStorage {
   // ===== EXAM SCORES AGGREGATION FOR ANALYTICS =====
   async getExamScoresBySchool(schoolId: number): Promise<ExamScore[]> {
     return db.select().from(examScores).where(eq(examScores.schoolId, schoolId)).orderBy(desc(examScores.createdAt)).limit(500);
+  }
+
+  // ===== STUDENT PROFILES =====
+  async getStudentProfile(studentId: number): Promise<StudentProfile | undefined> {
+    const [profile] = await db.select().from(studentProfiles).where(eq(studentProfiles.studentId, studentId));
+    return profile || undefined;
+  }
+
+  async upsertStudentProfile(data: Omit<InsertStudentProfile, "status" | "submittedAt" | "verifiedAt" | "verifiedBy" | "rejectionNote">): Promise<StudentProfile> {
+    const existing = await this.getStudentProfile(data.studentId);
+    if (existing) {
+      const [updated] = await db
+        .update(studentProfiles)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(studentProfiles.studentId, data.studentId))
+        .returning();
+      return updated;
+    } else {
+      const [created] = await db
+        .insert(studentProfiles)
+        .values({ ...data, status: "draft", photoStatus: "none" })
+        .returning();
+      return created;
+    }
+  }
+
+  async submitStudentProfile(studentId: number): Promise<StudentProfile> {
+    const [updated] = await db
+      .update(studentProfiles)
+      .set({ status: "pending", submittedAt: new Date(), updatedAt: new Date(), rejectionNote: null })
+      .where(eq(studentProfiles.studentId, studentId))
+      .returning();
+    return updated;
+  }
+
+  async updateStudentProfilePhoto(studentId: number, photoUrl: string): Promise<StudentProfile> {
+    const existing = await this.getStudentProfile(studentId);
+    if (!existing) {
+      const student = await this.getStudentById(studentId);
+      if (!student) throw new Error("Student not found");
+      const [created] = await db
+        .insert(studentProfiles)
+        .values({ studentId, schoolId: student.schoolId, status: "draft", photoUrl, photoStatus: "pending" })
+        .returning();
+      return created;
+    }
+    const [updated] = await db
+      .update(studentProfiles)
+      .set({ photoUrl, photoStatus: "pending", updatedAt: new Date() })
+      .where(eq(studentProfiles.studentId, studentId))
+      .returning();
+    return updated;
+  }
+
+  async getPendingProfilesForTeacher(schoolId: number, cls: string, section: string): Promise<(StudentProfile & { studentName: string; dsid: string })[]> {
+    const profiles = await db
+      .select()
+      .from(studentProfiles)
+      .where(and(eq(studentProfiles.schoolId, schoolId), eq(studentProfiles.status, "pending")))
+      .orderBy(desc(studentProfiles.submittedAt));
+    const result = [];
+    for (const p of profiles) {
+      const student = await this.getStudentById(p.studentId);
+      if (!student) continue;
+      if (student.class !== cls || student.section !== section) continue;
+      result.push({ ...p, studentName: student.name, dsid: student.digitalStudentId });
+    }
+    return result;
+  }
+
+  async approveStudentProfile(studentId: number, teacherId: number): Promise<StudentProfile> {
+    const [updated] = await db
+      .update(studentProfiles)
+      .set({ status: "approved", verifiedAt: new Date(), verifiedBy: teacherId, photoStatus: "approved", updatedAt: new Date() })
+      .where(eq(studentProfiles.studentId, studentId))
+      .returning();
+    return updated;
+  }
+
+  async rejectStudentProfile(studentId: number, teacherId: number, note: string): Promise<StudentProfile> {
+    const [updated] = await db
+      .update(studentProfiles)
+      .set({ status: "rejected", verifiedAt: new Date(), verifiedBy: teacherId, rejectionNote: note, updatedAt: new Date() })
+      .where(eq(studentProfiles.studentId, studentId))
+      .returning();
+    return updated;
+  }
+
+  async updateStudentPassword(studentId: number, passwordHash: string): Promise<void> {
+    await db.update(students).set({ passwordHash }).where(eq(students.id, studentId));
+  }
+
+  async getPendingProfilesCountForTeacher(schoolId: number, cls: string, section: string): Promise<number> {
+    const profiles = await this.getPendingProfilesForTeacher(schoolId, cls, section);
+    return profiles.length;
   }
 }
 
