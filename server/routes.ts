@@ -876,6 +876,10 @@ export async function registerRoutes(
     if (!match) return null;
     const startYear = parseInt(match[1], 10);
     const endYear = startYear + 1;
+    const endSuffix = match[2];
+    const expectedSuffix2 = String(endYear).slice(-2);
+    const expectedSuffix4 = String(endYear);
+    if (endSuffix !== expectedSuffix2 && endSuffix !== expectedSuffix4) return null;
     return {
       startDate: `${startYear}-04-01`,
       endDate: `${endYear}-03-31`,

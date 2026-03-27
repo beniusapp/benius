@@ -139,20 +139,31 @@ export default function StudentAttendance() {
 
   const { data: statsData, isLoading: statsLoading } = useQuery<StatsResponse>({
     queryKey: ["/api/student/attendance/stats", academicYear],
-    queryFn: (): Promise<StatsResponse> =>
-      fetch(`/api/student/attendance/stats?academicYear=${encodeURIComponent(academicYear)}`, { credentials: "include" }).then(r => r.json()),
+    queryFn: async (): Promise<StatsResponse> => {
+      const res = await fetch(`/api/student/attendance/stats?academicYear=${encodeURIComponent(academicYear)}`, { credentials: "include" });
+      if (!res.ok) throw new Error(`Failed to load attendance stats (${res.status})`);
+      return res.json();
+    },
     enabled: !!student,
   });
 
   const { data: monthlyData, isLoading: monthlyLoading } = useQuery<MonthlyResponse>({
     queryKey: ["/api/student/attendance/monthly", selectedYear, selectedMonth],
-    queryFn: () => fetch(`/api/student/attendance/monthly?year=${selectedYear}&month=${selectedMonth}`, { credentials: "include" }).then(r => r.json()),
+    queryFn: async (): Promise<MonthlyResponse> => {
+      const res = await fetch(`/api/student/attendance/monthly?year=${selectedYear}&month=${selectedMonth}`, { credentials: "include" });
+      if (!res.ok) throw new Error(`Failed to load monthly attendance (${res.status})`);
+      return res.json();
+    },
     enabled: !!student && activeTab === "monthly",
   });
 
   const { data: yearlyData, isLoading: yearlyLoading } = useQuery<YearlyResponse>({
     queryKey: ["/api/student/attendance/yearly", academicYear],
-    queryFn: () => fetch(`/api/student/attendance/yearly?academicYear=${academicYear}`, { credentials: "include" }).then(r => r.json()),
+    queryFn: async (): Promise<YearlyResponse> => {
+      const res = await fetch(`/api/student/attendance/yearly?academicYear=${academicYear}`, { credentials: "include" });
+      if (!res.ok) throw new Error(`Failed to load yearly attendance (${res.status})`);
+      return res.json();
+    },
     enabled: !!student && activeTab === "yearly",
   });
 
