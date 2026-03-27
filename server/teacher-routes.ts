@@ -1116,7 +1116,7 @@ export function registerTeacherRoutes(app: Express) {
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
-    const uniqueIds = [...new Set(parsed.data.studentIds)];
+    const uniqueIds = Array.from(new Set(parsed.data.studentIds));
     const validIds: number[] = [];
     for (const sid of uniqueIds) {
       const student = await storage.getStudentById(sid);
