@@ -24,6 +24,7 @@ interface DayData {
   date: string;
   dayOfWeek: number;
   status: string;
+  teacherId: number | null;
   markedBy: string | null;
   isHoliday: boolean;
   holidayName: string | null;
@@ -138,9 +139,9 @@ export default function StudentAttendance() {
 
   const { data: statsData, isLoading: statsLoading } = useQuery<StatsResponse>({
     queryKey: ["/api/student/attendance/stats", academicYear],
-    queryFn: getQueryFn({ on401: "returnNull" }),
+    queryFn: (): Promise<StatsResponse> =>
+      fetch(`/api/student/attendance/stats?academicYear=${encodeURIComponent(academicYear)}`, { credentials: "include" }).then(r => r.json()),
     enabled: !!student,
-    select: (d: any) => d as StatsResponse,
   });
 
   const { data: monthlyData, isLoading: monthlyLoading } = useQuery<MonthlyResponse>({

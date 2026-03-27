@@ -1208,6 +1208,7 @@ export class DatabaseStorage {
     date: string;
     dayOfWeek: number;
     status: string;
+    teacherId: number | null;
     markedBy: string | null;
     isHoliday: boolean;
     holidayName: string | null;
@@ -1222,6 +1223,7 @@ export class DatabaseStorage {
 
     const records = await db.select().from(attendanceRecords).where(
       and(
+        eq(attendanceRecords.schoolId, schoolId),
         eq(attendanceRecords.studentId, studentId),
         gte(attendanceRecords.date, startDate),
         lte(attendanceRecords.date, endDate)
@@ -1238,6 +1240,7 @@ export class DatabaseStorage {
 
     const leaves = await db.select().from(studentLeaveRequests).where(
       and(
+        eq(studentLeaveRequests.schoolId, schoolId),
         eq(studentLeaveRequests.studentId, studentId),
         eq(studentLeaveRequests.status, "approved"),
         lte(studentLeaveRequests.startDate, endDate),
@@ -1261,6 +1264,7 @@ export class DatabaseStorage {
         date: dateStr,
         dayOfWeek,
         status: record?.status || "none",
+        teacherId: record?.teacherId ?? null,
         markedBy: record?.markedBy || null,
         isHoliday: !!holiday,
         holidayName: holiday?.title || null,
@@ -1282,9 +1286,11 @@ export class DatabaseStorage {
     leave: number;
     holiday: number;
     workingDays: number;
+    total: number;
   }[]> {
     const records = await db.select().from(attendanceRecords).where(
       and(
+        eq(attendanceRecords.schoolId, schoolId),
         eq(attendanceRecords.studentId, studentId),
         gte(attendanceRecords.date, startDate),
         lte(attendanceRecords.date, endDate)
@@ -1301,6 +1307,7 @@ export class DatabaseStorage {
 
     const leaves = await db.select().from(studentLeaveRequests).where(
       and(
+        eq(studentLeaveRequests.schoolId, schoolId),
         eq(studentLeaveRequests.studentId, studentId),
         eq(studentLeaveRequests.status, "approved"),
         lte(studentLeaveRequests.startDate, endDate),
@@ -1311,19 +1318,20 @@ export class DatabaseStorage {
     const today = new Date().toISOString().split("T")[0];
     const start = new Date(startDate);
     const end = new Date(endDate);
-    const monthMap = new Map<string, { month: number; year: number; present: number; absent: number; halfDay: number; leave: number; holiday: number; workingDays: number }>();
+    const monthMap = new Map<string, { month: number; year: number; present: number; absent: number; halfDay: number; leave: number; holiday: number; workingDays: number; total: number }>();
 
     let cur = new Date(start);
     while (cur <= end) {
       const key = `${cur.getFullYear()}-${cur.getMonth() + 1}`;
       if (!monthMap.has(key)) {
-        monthMap.set(key, { month: cur.getMonth() + 1, year: cur.getFullYear(), present: 0, absent: 0, halfDay: 0, leave: 0, holiday: 0, workingDays: 0 });
+        monthMap.set(key, { month: cur.getMonth() + 1, year: cur.getFullYear(), present: 0, absent: 0, halfDay: 0, leave: 0, holiday: 0, workingDays: 0, total: 0 });
       }
       const dateStr = cur.toISOString().split("T")[0];
       const isSunday = cur.getDay() === 0;
       const isFuture = dateStr > today;
       if (!isSunday && !isFuture) {
         const bucket = monthMap.get(key)!;
+        bucket.total++;
         const isHoliday = holidays.some(h => h.date === dateStr);
         if (isHoliday) {
           bucket.holiday++;
@@ -1361,6 +1369,7 @@ export class DatabaseStorage {
 
     const records = await db.select().from(attendanceRecords).where(
       and(
+        eq(attendanceRecords.schoolId, schoolId),
         eq(attendanceRecords.studentId, studentId),
         gte(attendanceRecords.date, academicStartDate),
         lte(attendanceRecords.date, today)
@@ -1377,6 +1386,7 @@ export class DatabaseStorage {
 
     const leaves = await db.select().from(studentLeaveRequests).where(
       and(
+        eq(studentLeaveRequests.schoolId, schoolId),
         eq(studentLeaveRequests.studentId, studentId),
         eq(studentLeaveRequests.status, "approved"),
         lte(studentLeaveRequests.startDate, today),
