@@ -439,50 +439,11 @@ export default function StudentProfile() {
               )}
             </div>
 
-            {/* ── Read-Only Fields (from DSID registration) ── */}
-            <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm overflow-hidden">
-              <div className="px-5 py-4 border-b border-emerald-50 flex items-center gap-2">
-                <User className="w-4 h-4 text-[#10b981]" />
-                <h2 className="text-sm font-bold text-gray-800">Basic Information</h2>
-                <span className="ml-auto text-xs text-gray-400 bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-full">Read-only</span>
-              </div>
-              <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs text-gray-500 font-medium">Name (as registered)</label>
-                  <p className="mt-1 text-sm font-semibold text-gray-900" data-testid="field-reg-name">{student.name}</p>
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500 font-medium">DSID</label>
-                  <p className="mt-1 text-sm font-semibold text-gray-900 font-mono" data-testid="field-dsid">{student.digitalStudentId}</p>
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500 font-medium">Class</label>
-                  <p className="mt-1 text-sm font-semibold text-gray-900" data-testid="field-class">Class {student.class} – {student.section}</p>
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500 font-medium">Date of Birth</label>
-                  <p className="mt-1 text-sm font-semibold text-gray-900" data-testid="field-dob">{dob}</p>
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500 font-medium">Phone</label>
-                  <p className="mt-1 text-sm font-semibold text-gray-900" data-testid="field-phone">{student.phone}</p>
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500 font-medium">Enrollment Date</label>
-                  <p className="mt-1 text-sm font-semibold text-gray-900" data-testid="field-enrollment-date">{enrollmentDateDisplay}</p>
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500 font-medium">School</label>
-                  <p className="mt-1 text-sm font-semibold text-gray-900" data-testid="field-school">{student.schoolName}</p>
-                </div>
-              </div>
-            </div>
-
             {/* ── Approved re-edit notice ── */}
             {status === "approved" && (
               <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-800 text-xs">
                 <RefreshCw className="w-4 h-4 flex-shrink-0" />
-                <span>Your profile is approved. You may still edit the fields below — doing so will reset it to draft and require re-verification.</span>
+                <span>Your profile is approved. You may still edit the fields on the right — doing so will reset it to draft and require re-verification.</span>
               </div>
             )}
 
@@ -539,110 +500,137 @@ export default function StudentProfile() {
               </div>
             )}
 
-            {/* ── Editable Verification Fields ── */}
-            <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm overflow-hidden">
-              <div className="px-5 py-4 border-b border-emerald-50 flex items-center gap-2">
-                <Users className="w-4 h-4 text-[#10b981]" />
-                <h2 className="text-sm font-bold text-gray-800">Verification Details</h2>
-                {status === "pending" && (
-                  <span className="ml-auto text-xs text-yellow-600 bg-yellow-50 border border-yellow-200 px-2 py-0.5 rounded-full">
-                    Under Review
-                  </span>
-                )}
-              </div>
-              <div className="p-5 space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* ── Data Grid: 2-Column Split — Fixed Read-Only LEFT | Editable RIGHT ── */}
+            <div className="flex flex-col sm:flex-row gap-4 items-stretch">
+
+              {/* LEFT — Fixed Read-Only */}
+              <div className="sm:w-64 flex-shrink-0 bg-gray-50 rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-2 bg-gray-100">
+                  <User className="w-4 h-4 text-gray-500" />
+                  <h2 className="text-xs font-bold text-gray-600 uppercase tracking-wide">Fixed Info</h2>
+                  <span className="ml-auto text-xs text-gray-400 bg-white border border-gray-200 px-1.5 py-0.5 rounded-full">Read-only</span>
+                </div>
+                <div className="p-4 space-y-4">
                   <div>
-                    <label className="text-xs font-medium text-gray-600 mb-1 block">
-                      Full Name <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={form.fullName}
-                      onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
-                      placeholder="Full name as in certificate"
-                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
-                      data-testid="input-full-name"
-                    />
+                    <label className="text-xs text-gray-500 font-medium">School ID</label>
+                    <p className="mt-1 text-sm font-semibold text-gray-900 font-mono" data-testid="field-school-id">{student.schoolCode}</p>
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-gray-600 mb-1 block">Roll Number</label>
-                    <input
-                      type="text"
-                      value={form.rollNo}
-                      onChange={(e) => setForm((f) => ({ ...f, rollNo: e.target.value }))}
-                      placeholder="e.g. 01"
-                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
-                      data-testid="input-roll-no"
-                    />
+                    <label className="text-xs text-gray-500 font-medium">DSID</label>
+                    <p className="mt-1 text-sm font-semibold text-gray-900 font-mono" data-testid="field-dsid">{student.digitalStudentId}</p>
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-gray-600 mb-1 block">Class</label>
-                    <select
-                      value={form.class}
-                      onChange={(e) => setForm((f) => ({ ...f, class: e.target.value }))}
-                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent bg-white"
-                      data-testid="select-class"
-                    >
-                      <option value="">Select class</option>
-                      {CLASS_OPTIONS.map((c) => (
-                        <option key={c} value={c}>{c}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-gray-600 mb-1 block">Section</label>
-                    <select
-                      value={form.section}
-                      onChange={(e) => setForm((f) => ({ ...f, section: e.target.value }))}
-                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent bg-white"
-                      data-testid="select-section"
-                    >
-                      <option value="">Select section</option>
-                      {SECTION_OPTIONS.map((s) => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-gray-600 mb-1 block">
-                      Father's Name <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={form.fatherName}
-                      onChange={(e) => setForm((f) => ({ ...f, fatherName: e.target.value }))}
-                      placeholder="Father's full name"
-                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
-                      data-testid="input-father-name"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-gray-600 mb-1 block">
-                      Mother's Name <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={form.motherName}
-                      onChange={(e) => setForm((f) => ({ ...f, motherName: e.target.value }))}
-                      placeholder="Mother's full name"
-                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
-                      data-testid="input-mother-name"
-                    />
+                    <label className="text-xs text-gray-500 font-medium">Enrollment Date</label>
+                    <p className="mt-1 text-sm font-semibold text-gray-900" data-testid="field-enrollment-date">{enrollmentDateDisplay}</p>
                   </div>
                 </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-600 mb-1 block">
-                    Present Address <span className="text-red-500">*</span>
-                  </label>
-                  <textarea
-                    value={form.presentAddress}
-                    onChange={(e) => setForm((f) => ({ ...f, presentAddress: e.target.value }))}
-                    placeholder="Full residential address"
-                    rows={3}
-                    className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent resize-none"
-                    data-testid="input-address"
-                  />
+              </div>
+
+              {/* RIGHT — Editable Verification Fields */}
+              <div className="flex-1 bg-white rounded-2xl border border-emerald-100 shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-emerald-50 flex items-center gap-2">
+                  <Users className="w-4 h-4 text-[#10b981]" />
+                  <h2 className="text-sm font-bold text-gray-800">Verification Details</h2>
+                  {status === "pending" && (
+                    <span className="ml-auto text-xs text-yellow-600 bg-yellow-50 border border-yellow-200 px-2 py-0.5 rounded-full">
+                      Under Review
+                    </span>
+                  )}
+                </div>
+                <div className="p-5 space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 mb-1 block">
+                        Full Name <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={form.fullName}
+                        onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
+                        placeholder="Full name as in certificate"
+                        className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
+                        data-testid="input-full-name"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 mb-1 block">Roll Number</label>
+                      <input
+                        type="text"
+                        value={form.rollNo}
+                        onChange={(e) => setForm((f) => ({ ...f, rollNo: e.target.value }))}
+                        placeholder="e.g. 01"
+                        className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
+                        data-testid="input-roll-no"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 mb-1 block">Class</label>
+                      <select
+                        value={form.class}
+                        onChange={(e) => setForm((f) => ({ ...f, class: e.target.value }))}
+                        className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent bg-white"
+                        data-testid="select-class"
+                      >
+                        <option value="">Select class</option>
+                        {CLASS_OPTIONS.map((c) => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 mb-1 block">Section</label>
+                      <select
+                        value={form.section}
+                        onChange={(e) => setForm((f) => ({ ...f, section: e.target.value }))}
+                        className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent bg-white"
+                        data-testid="select-section"
+                      >
+                        <option value="">Select section</option>
+                        {SECTION_OPTIONS.map((s) => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 mb-1 block">
+                        Father's Name <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={form.fatherName}
+                        onChange={(e) => setForm((f) => ({ ...f, fatherName: e.target.value }))}
+                        placeholder="Father's full name"
+                        className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
+                        data-testid="input-father-name"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 mb-1 block">
+                        Mother's Name <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={form.motherName}
+                        onChange={(e) => setForm((f) => ({ ...f, motherName: e.target.value }))}
+                        placeholder="Mother's full name"
+                        className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
+                        data-testid="input-mother-name"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 mb-1 block">
+                      Present Address <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                      value={form.presentAddress}
+                      onChange={(e) => setForm((f) => ({ ...f, presentAddress: e.target.value }))}
+                      placeholder="Full residential address"
+                      rows={3}
+                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent resize-none"
+                      data-testid="input-address"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
