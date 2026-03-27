@@ -1201,6 +1201,224 @@ export class DatabaseStorage {
     const profiles = await this.getPendingProfilesForTeacher(schoolId, cls, section);
     return profiles.length;
   }
+
+  // ===== STUDENT ATTENDANCE (Student-Facing) =====
+
+  async getStudentMonthlyAttendance(studentId: number, schoolId: number, year: number, month: number): Promise<{
+    date: string;
+    dayOfWeek: number;
+    status: string;
+    markedBy: string | null;
+    isHoliday: boolean;
+    holidayName: string | null;
+    isApprovedLeave: boolean;
+    isSunday: boolean;
+    isFuture: boolean;
+  }[]> {
+    const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const endDate = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    const today = new Date().toISOString().split("T")[0];
+
+    const records = await db.select().from(attendanceRecords).where(
+      and(
+        eq(attendanceRecords.studentId, studentId),
+        gte(attendanceRecords.date, startDate),
+        lte(attendanceRecords.date, endDate)
+      )
+    );
+
+    const holidays = await db.select().from(calendarEvents).where(
+      and(
+        eq(calendarEvents.schoolId, schoolId),
+        gte(calendarEvents.date, startDate),
+        lte(calendarEvents.date, endDate)
+      )
+    );
+
+    const leaves = await db.select().from(studentLeaveRequests).where(
+      and(
+        eq(studentLeaveRequests.studentId, studentId),
+        eq(studentLeaveRequests.status, "approved"),
+        lte(studentLeaveRequests.startDate, endDate),
+        gte(studentLeaveRequests.endDate, startDate)
+      )
+    );
+
+    const result = [];
+    for (let day = 1; day <= lastDay; day++) {
+      const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      const d = new Date(year, month - 1, day);
+      const dayOfWeek = d.getDay();
+      const isSunday = dayOfWeek === 0;
+      const isFuture = dateStr > today;
+
+      const record = records.find(r => r.date === dateStr);
+      const holiday = holidays.find(h => h.date === dateStr);
+      const isApprovedLeave = leaves.some(l => l.startDate <= dateStr && l.endDate >= dateStr);
+
+      result.push({
+        date: dateStr,
+        dayOfWeek,
+        status: record?.status || "none",
+        markedBy: record?.markedBy || null,
+        isHoliday: !!holiday,
+        holidayName: holiday?.title || null,
+        isApprovedLeave,
+        isSunday,
+        isFuture,
+      });
+    }
+
+    return result;
+  }
+
+  async getStudentYearlyAttendance(studentId: number, schoolId: number, startDate: string, endDate: string): Promise<{
+    month: number;
+    year: number;
+    present: number;
+    absent: number;
+    halfDay: number;
+    leave: number;
+    holiday: number;
+    workingDays: number;
+  }[]> {
+    const records = await db.select().from(attendanceRecords).where(
+      and(
+        eq(attendanceRecords.studentId, studentId),
+        gte(attendanceRecords.date, startDate),
+        lte(attendanceRecords.date, endDate)
+      )
+    );
+
+    const holidays = await db.select().from(calendarEvents).where(
+      and(
+        eq(calendarEvents.schoolId, schoolId),
+        gte(calendarEvents.date, startDate),
+        lte(calendarEvents.date, endDate)
+      )
+    );
+
+    const leaves = await db.select().from(studentLeaveRequests).where(
+      and(
+        eq(studentLeaveRequests.studentId, studentId),
+        eq(studentLeaveRequests.status, "approved"),
+        lte(studentLeaveRequests.startDate, endDate),
+        gte(studentLeaveRequests.endDate, startDate)
+      )
+    );
+
+    const today = new Date().toISOString().split("T")[0];
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const monthMap = new Map<string, { month: number; year: number; present: number; absent: number; halfDay: number; leave: number; holiday: number; workingDays: number }>();
+
+    let cur = new Date(start);
+    while (cur <= end) {
+      const key = `${cur.getFullYear()}-${cur.getMonth() + 1}`;
+      if (!monthMap.has(key)) {
+        monthMap.set(key, { month: cur.getMonth() + 1, year: cur.getFullYear(), present: 0, absent: 0, halfDay: 0, leave: 0, holiday: 0, workingDays: 0 });
+      }
+      const dateStr = cur.toISOString().split("T")[0];
+      const isSunday = cur.getDay() === 0;
+      const isFuture = dateStr > today;
+      if (!isSunday && !isFuture) {
+        const bucket = monthMap.get(key)!;
+        const isHoliday = holidays.some(h => h.date === dateStr);
+        if (isHoliday) {
+          bucket.holiday++;
+        } else {
+          const isLeave = leaves.some(l => l.startDate <= dateStr && l.endDate >= dateStr);
+          const record = records.find(r => r.date === dateStr);
+          bucket.workingDays++;
+          if (isLeave && !record) {
+            bucket.leave++;
+          } else if (record) {
+            const s = record.status;
+            if (s === "present") bucket.present++;
+            else if (s === "absent") bucket.absent++;
+            else if (s === "half_day" || s === "late") bucket.halfDay++;
+            else if (s === "leave") bucket.leave++;
+            else bucket.present++;
+          }
+        }
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+
+    return Array.from(monthMap.values());
+  }
+
+  async getStudentAttendanceStats(studentId: number, schoolId: number, academicStartDate: string): Promise<{
+    overallPercent: number;
+    workingDays: number;
+    totalPresent: number;
+    totalAbsent: number;
+    totalHalfDay: number;
+    totalLeave: number;
+  }> {
+    const today = new Date().toISOString().split("T")[0];
+
+    const records = await db.select().from(attendanceRecords).where(
+      and(
+        eq(attendanceRecords.studentId, studentId),
+        gte(attendanceRecords.date, academicStartDate),
+        lte(attendanceRecords.date, today)
+      )
+    );
+
+    const holidays = await db.select().from(calendarEvents).where(
+      and(
+        eq(calendarEvents.schoolId, schoolId),
+        gte(calendarEvents.date, academicStartDate),
+        lte(calendarEvents.date, today)
+      )
+    );
+
+    const leaves = await db.select().from(studentLeaveRequests).where(
+      and(
+        eq(studentLeaveRequests.studentId, studentId),
+        eq(studentLeaveRequests.status, "approved"),
+        lte(studentLeaveRequests.startDate, today),
+        gte(studentLeaveRequests.endDate, academicStartDate)
+      )
+    );
+
+    let workingDays = 0, totalPresent = 0, totalAbsent = 0, totalHalfDay = 0, totalLeave = 0;
+
+    const start = new Date(academicStartDate);
+    const end = new Date(today);
+    let cur = new Date(start);
+
+    while (cur <= end) {
+      const dateStr = cur.toISOString().split("T")[0];
+      const isSunday = cur.getDay() === 0;
+      if (!isSunday) {
+        const isHoliday = holidays.some(h => h.date === dateStr);
+        if (!isHoliday) {
+          workingDays++;
+          const isLeave = leaves.some(l => l.startDate <= dateStr && l.endDate >= dateStr);
+          const record = records.find(r => r.date === dateStr);
+          if (isLeave && !record) {
+            totalLeave++;
+          } else if (record) {
+            const s = record.status;
+            if (s === "present") totalPresent++;
+            else if (s === "absent") totalAbsent++;
+            else if (s === "half_day" || s === "late") totalHalfDay++;
+            else if (s === "leave") totalLeave++;
+            else totalPresent++;
+          }
+        }
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+
+    const effectivePresent = totalPresent + totalHalfDay * 0.5 + totalLeave;
+    const overallPercent = workingDays > 0 ? Math.round((effectivePresent / workingDays) * 1000) / 10 : 0;
+
+    return { overallPercent, workingDays, totalPresent, totalAbsent, totalHalfDay, totalLeave };
+  }
 }
 
 export const storage = new DatabaseStorage();

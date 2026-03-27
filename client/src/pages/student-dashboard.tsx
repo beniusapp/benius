@@ -207,6 +207,10 @@ export default function StudentDashboard() {
                   setLocation("/student-profile");
                   return;
                 }
+                if (id === "attendance") {
+                  setLocation("/student/attendance");
+                  return;
+                }
                 toast({
                   title: label,
                   description: `${label} module coming soon.`,

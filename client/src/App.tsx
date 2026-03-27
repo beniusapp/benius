@@ -14,6 +14,7 @@ import StudentDashboard from "@/pages/student-dashboard";
 import TeacherLogin from "@/pages/teacher-login";
 import TeacherDashboard from "@/pages/teacher-dashboard";
 import StudentProfilePage from "@/pages/student-profile";
+import StudentAttendance from "@/pages/student-attendance";
 
 function Router() {
   return (
@@ -26,6 +27,7 @@ function Router() {
       <Route path="/student-login" component={StudentLogin} />
       <Route path="/student-dashboard" component={StudentDashboard} />
       <Route path="/student-profile" component={StudentProfilePage} />
+      <Route path="/student/attendance" component={StudentAttendance} />
       <Route path="/teacher-login" component={TeacherLogin} />
       <Route path="/teacher-dashboard" component={TeacherDashboard} />
       <Route path="/teacher-dashboard/:module" component={TeacherDashboard} />
