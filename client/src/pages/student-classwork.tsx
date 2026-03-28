@@ -40,7 +40,7 @@ function getWeekDates(anchor: Date): Date[] {
   const day = anchor.getDay();
   const monday = new Date(anchor);
   monday.setDate(anchor.getDate() - (day === 0 ? 6 : day - 1));
-  return Array.from({ length: 7 }, (_, i) => {
+  return Array.from({ length: 6 }, (_, i) => {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
     return d;

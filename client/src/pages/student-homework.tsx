@@ -52,7 +52,7 @@ function getWeekDates(anchor: Date): Date[] {
   const day = anchor.getDay();
   const monday = new Date(anchor);
   monday.setDate(anchor.getDate() - (day === 0 ? 6 : day - 1));
-  return Array.from({ length: 7 }, (_, i) => {
+  return Array.from({ length: 6 }, (_, i) => {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
     return d;
@@ -326,7 +326,7 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
               <h3 className="text-sm font-semibold text-slate-700 mb-2">
                 {hw.submission ? "Update Submission" : "Submit Homework"}
               </h3>
-              {isOverdue && !hw.submission && (
+              {isOverdue && !isApproved && (
                 <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 mb-3">
                   <AlertCircle className="w-4 h-4 flex-shrink-0" />
                   Past due date — late submission will still be accepted

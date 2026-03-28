@@ -1015,7 +1015,7 @@ export async function registerRoutes(
       if (existing?.status === "approved") {
         return res.status(400).json({ message: "This homework has already been approved and cannot be re-submitted" });
       }
-      const fileUrl = req.file ? `/uploads/homework-submissions/${req.file.filename}` : null;
+      const fileUrl = req.file ? `/uploads/homework-submissions/${req.file.filename}` : undefined;
       const today = new Date().toISOString().split("T")[0];
       const isLate = hw.dueDate ? hw.dueDate < today : false;
       const submission = await storage.upsertHomeworkSubmission({
