@@ -56,8 +56,8 @@ function getResourceTag(fileUrl: string | null): { label: string; icon: typeof F
   const lower = fileUrl.toLowerCase();
   if (lower.endsWith(".pdf")) return { label: "#Notes", icon: FileText, color: "text-red-600 bg-red-50 border-red-200" };
   if (lower.match(/\.(mp4|webm|mov|avi)$/)) return { label: "#Video", icon: Play, color: "text-purple-600 bg-purple-50 border-purple-200" };
-  if (lower.match(/\.(jpg|jpeg|png|gif|webp|svg)$/)) return { label: "#Image", icon: ImageIcon, color: "text-blue-600 bg-blue-50 border-blue-200" };
-  return { label: "#Material", icon: BookOpen, color: "text-amber-700 bg-amber-50 border-amber-200" };
+  if (lower.match(/\.(jpg|jpeg|png|gif|webp|svg)$/)) return { label: "#Reference_Material", icon: ImageIcon, color: "text-blue-600 bg-blue-50 border-blue-200" };
+  return { label: "#Reference_Material", icon: BookOpen, color: "text-amber-700 bg-amber-50 border-amber-200" };
 }
 
 function getSubjectColor(subject: string): string {
@@ -144,19 +144,13 @@ function ClassworkViewer({ cw, onClose }: { cw: ClassworkItem; onClose: () => vo
               />
             )}
             {isPdf && (
-              <div className="flex flex-col items-center gap-3 p-6">
-                <FileText className="w-12 h-12 text-red-400" />
-                <p className="text-sm text-slate-600 font-medium">PDF Document</p>
-                <a
-                  href={cw.fileUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm font-semibold hover:bg-red-100 transition-colors"
-                  data-testid="link-open-pdf"
-                >
-                  <ExternalLink className="w-4 h-4" /> Open PDF
-                </a>
-              </div>
+              <iframe
+                src={cw.fileUrl!}
+                title="PDF Viewer"
+                className="w-full"
+                style={{ height: "70vh", border: "none" }}
+                data-testid="viewer-pdf-iframe"
+              />
             )}
             {isVideo && (
               <video
