@@ -229,7 +229,7 @@ export default function StudentExamination() {
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
           <button
             onClick={() => setLocation("/student-dashboard")}
-            className="flex items-center justify-center w-9 h-9 rounded-xl bg-white/20 hover:bg-white/30 text-white transition-colors"
+            className="flex items-center justify-center w-11 h-11 rounded-xl bg-white/20 hover:bg-white/30 text-white transition-colors"
             data-testid="button-back"
             aria-label="Back"
           >
@@ -263,7 +263,7 @@ export default function StudentExamination() {
             <div className="relative">
               <button
                 onClick={() => setShowClassDropdown(v => !v)}
-                className="flex items-center gap-2 min-w-[120px] px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-semibold hover:bg-emerald-100 transition-colors"
+                className="flex items-center gap-2 min-w-[130px] px-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-semibold hover:bg-emerald-100 transition-colors h-11"
                 data-testid="button-class-switcher"
               >
                 <GraduationCap className="w-4 h-4 text-[#10b981]" />
@@ -276,7 +276,7 @@ export default function StudentExamination() {
                     <button
                       key={cls}
                       onClick={() => { setSelectedClass(cls); setShowClassDropdown(false); }}
-                      className={`w-full text-left px-4 py-2 text-sm font-medium transition-colors ${
+                      className={`w-full text-left px-4 py-2.5 text-sm font-medium transition-colors min-h-[44px] flex items-center ${
                         cls === selectedClass ? "bg-emerald-50 text-[#10b981]" : "text-gray-700 hover:bg-gray-50"
                       }`}
                       data-testid={`option-class-${cls}`}
@@ -307,7 +307,7 @@ export default function StudentExamination() {
                 <button
                   key={et}
                   onClick={() => setSelectedExamType(et)}
-                  className={`flex-shrink-0 px-4 py-2 rounded-xl text-sm font-semibold border transition-all min-h-[40px] ${
+                  className={`flex-shrink-0 px-4 rounded-xl text-sm font-semibold border transition-all min-h-[44px] ${
                     selectedExamType === et
                       ? "bg-[#10b981] text-white border-[#10b981] shadow-sm"
                       : "bg-white text-gray-600 border-gray-200 hover:border-emerald-300 hover:text-[#10b981]"
@@ -358,6 +358,8 @@ export default function StudentExamination() {
                   <span className="text-gray-500">DSID:</span><span className="font-semibold">{student.digitalStudentId}</span>
                   <span className="text-gray-500">Class/Section:</span><span className="font-semibold">Class {selectedClass} – {student.section}</span>
                   <span className="text-gray-500">School Code:</span><span className="font-semibold">{student.schoolCode}</span>
+                  <span className="text-gray-500">Date Issued:</span>
+                  <span className="font-semibold">{new Date().toLocaleDateString("en-GB")}</span>
                 </div>
               </div>
             </div>
@@ -368,7 +370,7 @@ export default function StudentExamination() {
                 <h3 className="text-sm font-bold text-gray-800">{selectedExamType} — Class {selectedClass}</h3>
                 <button
                   onClick={handlePrint}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-[#10b981] text-xs font-semibold border border-emerald-200 transition-colors min-h-[36px]"
+                  className="flex items-center gap-1.5 px-3 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-[#10b981] text-xs font-semibold border border-emerald-200 transition-colors min-h-[44px]"
                   data-testid="button-download-marksheet"
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -514,7 +516,7 @@ function AcademicJourneySection({
   if (journey.length === 0) return null;
 
   const chartData = journey.map(j => ({ cls: j.cls, pct: j.percentage }));
-  const uniqueExamTypes = [...new Set(journey.map(j => j.examType))];
+  const uniqueExamTypes = Array.from(new Set(journey.map(j => j.examType)));
   const subtitle = uniqueExamTypes.length === 1
     ? `${uniqueExamTypes[0]} percentage across classes`
     : "Final exam percentage across classes";
