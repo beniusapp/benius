@@ -960,6 +960,12 @@ export async function registerRoutes(
   });
 
   {
+    const ALLOWED_SUBMISSION_MIMES = new Set([
+      "image/jpeg", "image/png", "image/webp",
+      "application/pdf",
+    ]);
+    const ALLOWED_SUBMISSION_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp", ".pdf"]);
+
     const homeworkSubmissionUpload = multer({
       storage: multer.diskStorage({
         destination: (_req, _file, cb) => {
@@ -972,16 +978,30 @@ export async function registerRoutes(
         filename: (_req, file, cb) => {
           const pathMod = require("path");
           const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
-          cb(null, unique + pathMod.extname(file.originalname));
+          cb(null, unique + pathMod.extname(file.originalname).toLowerCase());
         },
       }),
       limits: { fileSize: 10 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        const pathMod = require("path");
+        const ext = pathMod.extname(file.originalname).toLowerCase();
+        if (ALLOWED_SUBMISSION_MIMES.has(file.mimetype) && ALLOWED_SUBMISSION_EXTS.has(ext)) {
+          cb(null, true);
+        } else {
+          cb(new Error("Only JPG, PNG, WebP, and PDF files are allowed for homework submissions"));
+        }
+      },
     });
 
     app.post("/api/student/homework/:id/submit", async (req, res, next) => {
       if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
       next();
-    }, homeworkSubmissionUpload.single("file"), async (req, res) => {
+    }, (req, res, next) => {
+      homeworkSubmissionUpload.single("file")(req, res, (err) => {
+        if (err) return res.status(400).json({ message: err.message || "File upload failed" });
+        next();
+      });
+    }, async (req, res) => {
       const hwId = parseInt(req.params.id);
       if (isNaN(hwId)) return res.status(400).json({ message: "Invalid homework ID" });
       const student = await storage.getStudentById(req.session.studentId!);

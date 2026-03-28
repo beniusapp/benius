@@ -23,7 +23,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
-import { eq, sql, like, count, and, desc, gte, lte, or, ilike, isNull, inArray } from "drizzle-orm";
+import { eq, sql, like, count, and, desc, gte, lte, or, ilike, isNull, inArray, type SQL } from "drizzle-orm";
 
 export class DatabaseStorage {
   async getSchools(): Promise<School[]> {
@@ -339,7 +339,7 @@ export class DatabaseStorage {
     subject: string; content: string; fileUrl: string | null; dueDate: string | null;
     createdAt: Date; teacherName: string; submission: HomeworkSubmission | null;
   }[]> {
-    const conditions: any[] = [
+    const conditions: SQL<unknown>[] = [
       eq(homework.schoolId, schoolId),
       eq(homework.class, cls),
       eq(homework.section, section),
@@ -380,7 +380,7 @@ export class DatabaseStorage {
     id: number; schoolId: number; teacherId: number; class: string; section: string;
     subject: string; content: string; fileUrl: string | null; createdAt: Date; teacherName: string;
   }[]> {
-    const conditions: any[] = [
+    const conditions: SQL<unknown>[] = [
       eq(classwork.schoolId, schoolId),
       eq(classwork.class, cls),
       eq(classwork.section, section),
