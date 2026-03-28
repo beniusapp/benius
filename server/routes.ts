@@ -934,6 +934,90 @@ export async function registerRoutes(
     res.json({ schoolId: student.schoolId, studentId: student.id, startDate, ...stats });
   });
 
+  // ===== STUDENT HOMEWORK ROUTES =====
+  app.get("/api/student/homework", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const date = (req.query.date as string) || undefined;
+    const items = await storage.getStudentHomework(student.schoolId, student.class, student.section, student.id, date);
+    res.json(items);
+  });
+
+  app.get("/api/student/homework/:id", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const hwId = parseInt(req.params.id);
+    if (isNaN(hwId)) return res.status(400).json({ message: "Invalid homework ID" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const hw = await storage.getHomeworkById(hwId);
+    if (!hw) return res.status(404).json({ message: "Homework not found" });
+    if (hw.schoolId !== student.schoolId || hw.class !== student.class || hw.section !== student.section) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    const submission = await storage.getHomeworkSubmission(hwId, student.id);
+    res.json({ ...hw, submission: submission || null });
+  });
+
+  {
+    const homeworkSubmissionUpload = multer({
+      storage: multer.diskStorage({
+        destination: (_req, _file, cb) => {
+          const pathMod = require("path");
+          const fsMod = require("fs");
+          const dir = pathMod.join(process.cwd(), "uploads", "homework-submissions");
+          if (!fsMod.existsSync(dir)) fsMod.mkdirSync(dir, { recursive: true });
+          cb(null, dir);
+        },
+        filename: (_req, file, cb) => {
+          const pathMod = require("path");
+          const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
+          cb(null, unique + pathMod.extname(file.originalname));
+        },
+      }),
+      limits: { fileSize: 10 * 1024 * 1024 },
+    });
+
+    app.post("/api/student/homework/:id/submit", async (req, res, next) => {
+      if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+      next();
+    }, homeworkSubmissionUpload.single("file"), async (req, res) => {
+      const hwId = parseInt(req.params.id);
+      if (isNaN(hwId)) return res.status(400).json({ message: "Invalid homework ID" });
+      const student = await storage.getStudentById(req.session.studentId!);
+      if (!student) return res.status(404).json({ message: "Student not found" });
+      const hw = await storage.getHomeworkById(hwId);
+      if (!hw) return res.status(404).json({ message: "Homework not found" });
+      if (hw.schoolId !== student.schoolId || hw.class !== student.class || hw.section !== student.section) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      const existing = await storage.getHomeworkSubmission(hwId, student.id);
+      if (existing?.status === "approved") {
+        return res.status(400).json({ message: "This homework has already been approved and cannot be re-submitted" });
+      }
+      const fileUrl = req.file ? `/uploads/homework-submissions/${req.file.filename}` : null;
+      const today = new Date().toISOString().split("T")[0];
+      const isLate = hw.dueDate ? hw.dueDate < today : false;
+      const submission = await storage.upsertHomeworkSubmission({
+        homeworkId: hwId,
+        studentId: student.id,
+        schoolId: student.schoolId,
+        fileUrl,
+      });
+      res.json({ submission, isLate });
+    });
+  }
+
+  // ===== STUDENT CLASSWORK ROUTES =====
+  app.get("/api/student/classwork", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const date = (req.query.date as string) || undefined;
+    const items = await storage.getStudentClasswork(student.schoolId, student.class, student.section, date);
+    res.json(items);
+  });
+
   registerTeacherRoutes(app);
 
   return httpServer;

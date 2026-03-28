@@ -32,6 +32,7 @@ A full-stack, enterprise-grade school management platform with:
 - **attendance_records**: id, student_id, teacher_id, school_id, date, status (present/absent/leave), edit_count, marked_by, marked_at
 - **homework**: id, teacher_id, school_id, class, section, subject, content, file_url, due_date, created_at
 - **homework_views**: id, homework_id, student_id, viewed_at
+- **homework_submissions**: id, homework_id, student_id, school_id, file_url, status (submitted/approved/rejected), submitted_at, reviewed_at, reviewed_by
 - **classwork**: id, teacher_id, school_id, class, section, subject, content, file_url, created_at
 - **notices**: id, school_id, created_by_id, creator_role, target_type, target_class, target_section, notice_type, content, file_url, created_at
 - **complaints**: id, ticket_id, teacher_id, student_id, school_id, complaint_type, status, content, reported_student_name, file_url, is_deleted, created_at
@@ -116,6 +117,10 @@ A full-stack, enterprise-grade school management platform with:
 - `GET /api/schools/:schoolId/teachers/paginated?q=&page=` (LIMIT 50, only active teachers)
 - `GET /api/student/profile` — get own student profile (studentId from session)
 - `POST /api/student/profile` — save/update draft profile fields
+- `GET /api/student/homework?date=YYYY-MM-DD` — list homework for student's class/section, filtered by date (assigned on or due on)
+- `GET /api/student/homework/:id` — single homework item with submission status
+- `POST /api/student/homework/:id/submit` — submit homework (multipart/form-data, file optional); upserts submission record
+- `GET /api/student/classwork?date=YYYY-MM-DD` — list classwork for student's class/section, filtered by date
 - `POST /api/student/profile/submit` — submit profile for teacher verification
 - `POST /api/student/profile/photo` — upload profile photo (multer, saved to /uploads/student-photos/)
 - `POST /api/student/change-password { currentPassword, newPassword }` — student self-service password change

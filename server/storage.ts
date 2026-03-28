@@ -1,6 +1,6 @@
 import {
   schools, students, users, teachers,
-  attendanceRecords, homework, homeworkViews, classwork, notices,
+  attendanceRecords, homework, homeworkViews, homeworkSubmissions, classwork, notices,
   complaints, complaintNotes, examScores, galleryItems, calendarEvents,
   libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata,
   studentLeaveRequests, auditLogs, visitorLogs, studentProfiles,
@@ -8,6 +8,7 @@ import {
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
   type Homework, type InsertHomework, type HomeworkView, type Classwork, type InsertClasswork,
+  type HomeworkSubmission,
   type Notice, type InsertNotice, type Complaint, type InsertComplaint,
   type ComplaintNote, type InsertComplaintNote,
   type ExamScore, type InsertExamScore, type GalleryItem, type InsertGalleryItem,
@@ -22,7 +23,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
-import { eq, sql, like, count, and, desc, gte, lte, or, ilike, isNull } from "drizzle-orm";
+import { eq, sql, like, count, and, desc, gte, lte, or, ilike, isNull, inArray } from "drizzle-orm";
 
 export class DatabaseStorage {
   async getSchools(): Promise<School[]> {
@@ -331,6 +332,104 @@ export class DatabaseStorage {
   async getHomeworkViewCount(homeworkId: number): Promise<number> {
     const result = await db.select({ count: count() }).from(homeworkViews).where(eq(homeworkViews.homeworkId, homeworkId));
     return result[0]?.count || 0;
+  }
+
+  async getStudentHomework(schoolId: number, cls: string, section: string, studentId: number, date?: string): Promise<{
+    id: number; schoolId: number; teacherId: number; class: string; section: string;
+    subject: string; content: string; fileUrl: string | null; dueDate: string | null;
+    createdAt: Date; teacherName: string; submission: HomeworkSubmission | null;
+  }[]> {
+    const conditions: any[] = [
+      eq(homework.schoolId, schoolId),
+      eq(homework.class, cls),
+      eq(homework.section, section),
+    ];
+    if (date) {
+      conditions.push(or(
+        sql`${homework.createdAt}::date = ${date}::date`,
+        eq(homework.dueDate, date),
+      )!);
+    }
+    const rows = await db.select({
+      id: homework.id,
+      schoolId: homework.schoolId,
+      teacherId: homework.teacherId,
+      class: homework.class,
+      section: homework.section,
+      subject: homework.subject,
+      content: homework.content,
+      fileUrl: homework.fileUrl,
+      dueDate: homework.dueDate,
+      createdAt: homework.createdAt,
+      teacherName: teachers.fullName,
+    }).from(homework)
+      .innerJoin(teachers, eq(homework.teacherId, teachers.id))
+      .where(and(...conditions))
+      .orderBy(desc(homework.createdAt));
+
+    if (rows.length === 0) return [];
+    const hwIds = rows.map(r => r.id);
+    const subs = await db.select().from(homeworkSubmissions).where(
+      and(eq(homeworkSubmissions.studentId, studentId), inArray(homeworkSubmissions.homeworkId, hwIds))
+    );
+    const subMap = new Map(subs.map(s => [s.homeworkId, s]));
+    return rows.map(r => ({ ...r, submission: subMap.get(r.id) ?? null }));
+  }
+
+  async getStudentClasswork(schoolId: number, cls: string, section: string, date?: string): Promise<{
+    id: number; schoolId: number; teacherId: number; class: string; section: string;
+    subject: string; content: string; fileUrl: string | null; createdAt: Date; teacherName: string;
+  }[]> {
+    const conditions: any[] = [
+      eq(classwork.schoolId, schoolId),
+      eq(classwork.class, cls),
+      eq(classwork.section, section),
+    ];
+    if (date) {
+      conditions.push(sql`${classwork.createdAt}::date = ${date}::date`);
+    }
+    const rows = await db.select({
+      id: classwork.id,
+      schoolId: classwork.schoolId,
+      teacherId: classwork.teacherId,
+      class: classwork.class,
+      section: classwork.section,
+      subject: classwork.subject,
+      content: classwork.content,
+      fileUrl: classwork.fileUrl,
+      createdAt: classwork.createdAt,
+      teacherName: teachers.fullName,
+    }).from(classwork)
+      .innerJoin(teachers, eq(classwork.teacherId, teachers.id))
+      .where(and(...conditions))
+      .orderBy(desc(classwork.createdAt));
+    return rows;
+  }
+
+  async getHomeworkSubmission(homeworkId: number, studentId: number): Promise<HomeworkSubmission | undefined> {
+    const [sub] = await db.select().from(homeworkSubmissions).where(
+      and(eq(homeworkSubmissions.homeworkId, homeworkId), eq(homeworkSubmissions.studentId, studentId))
+    );
+    return sub;
+  }
+
+  async upsertHomeworkSubmission(data: { homeworkId: number; studentId: number; schoolId: number; fileUrl?: string | null }): Promise<HomeworkSubmission> {
+    const existing = await this.getHomeworkSubmission(data.homeworkId, data.studentId);
+    if (existing) {
+      const [updated] = await db.update(homeworkSubmissions)
+        .set({ fileUrl: data.fileUrl !== undefined ? data.fileUrl : existing.fileUrl, status: "submitted", submittedAt: new Date() })
+        .where(eq(homeworkSubmissions.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(homeworkSubmissions).values({
+      homeworkId: data.homeworkId,
+      studentId: data.studentId,
+      schoolId: data.schoolId,
+      fileUrl: data.fileUrl ?? null,
+      status: "submitted",
+    }).returning();
+    return created;
   }
 
   async getStudentCountByClassSection(schoolId: number, cls: string, section: string): Promise<number> {

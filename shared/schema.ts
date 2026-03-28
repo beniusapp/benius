@@ -83,6 +83,18 @@ export const homeworkViews = pgTable("homework_views", {
   viewedAt: timestamp("viewed_at").notNull().defaultNow(),
 });
 
+export const homeworkSubmissions = pgTable("homework_submissions", {
+  id: serial("id").primaryKey(),
+  homeworkId: integer("homework_id").notNull().references(() => homework.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  fileUrl: text("file_url"),
+  status: text("status").notNull().default("submitted"),
+  submittedAt: timestamp("submitted_at").notNull().defaultNow(),
+  reviewedAt: timestamp("reviewed_at"),
+  reviewedBy: integer("reviewed_by"),
+});
+
 export const classwork = pgTable("classwork", {
   id: serial("id").primaryKey(),
   teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
@@ -403,3 +415,7 @@ export type VisitorLog = typeof visitorLogs.$inferSelect;
 export const insertStudentProfileSchema = createInsertSchema(studentProfiles).omit({ id: true, updatedAt: true });
 export type InsertStudentProfile = z.infer<typeof insertStudentProfileSchema>;
 export type StudentProfile = typeof studentProfiles.$inferSelect;
+
+export const insertHomeworkSubmissionSchema = createInsertSchema(homeworkSubmissions).omit({ id: true, submittedAt: true });
+export type InsertHomeworkSubmission = z.infer<typeof insertHomeworkSubmissionSchema>;
+export type HomeworkSubmission = typeof homeworkSubmissions.$inferSelect;
