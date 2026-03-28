@@ -302,12 +302,13 @@ export default function StudentExamination() {
           <div className="no-print" />
         ) : (
           <div className="no-print">
-            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+            {/* Mobile: horizontal scroll; Desktop: flex-wrap standard tab bar */}
+            <div className="flex gap-2 overflow-x-auto sm:flex-wrap sm:overflow-x-visible pb-1 scrollbar-hide">
               {examTypes.map(et => (
                 <button
                   key={et}
                   onClick={() => setSelectedExamType(et)}
-                  className={`flex-shrink-0 px-4 rounded-xl text-sm font-semibold border transition-all min-h-[44px] ${
+                  className={`flex-shrink-0 sm:flex-shrink px-4 rounded-xl text-sm font-semibold border transition-all min-h-[44px] ${
                     selectedExamType === et
                       ? "bg-[#10b981] text-white border-[#10b981] shadow-sm"
                       : "bg-white text-gray-600 border-gray-200 hover:border-emerald-300 hover:text-[#10b981]"
@@ -351,6 +352,12 @@ export default function StudentExamination() {
             {/* Print header (only shows on print) */}
             <div className="hidden print:block mb-6">
               <div className="text-center border-b-2 border-emerald-600 pb-4 mb-4">
+                {/* Logo placeholder for print marksheet */}
+                <div className="flex justify-center mb-2">
+                  <div className="w-14 h-14 rounded-full border-2 border-emerald-700 flex items-center justify-center bg-emerald-50">
+                    <GraduationCap className="w-7 h-7 text-emerald-700" />
+                  </div>
+                </div>
                 <h1 className="text-2xl font-bold text-emerald-800">{student.schoolName}</h1>
                 <p className="text-sm text-gray-600 mt-1">Academic Marksheet · {selectedExamType} Examination · Class {selectedClass}</p>
                 <div className="mt-3 grid grid-cols-2 gap-x-8 text-sm text-left max-w-sm mx-auto">

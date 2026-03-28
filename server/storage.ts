@@ -620,15 +620,16 @@ export class DatabaseStorage {
   }
 
   async publishExamScores(schoolId: number, cls: string, section: string, examType: string): Promise<number> {
-    const result = await db.update(examScores)
+    const updated = await db.update(examScores)
       .set({ published: true })
       .where(and(
         eq(examScores.schoolId, schoolId),
         eq(examScores.class, cls),
         eq(examScores.section, section),
         eq(examScores.examType, examType),
-      ));
-    return (result as unknown as { rowCount: number }).rowCount ?? 0;
+      ))
+      .returning();
+    return updated.length;
   }
 
   async getExamScores(schoolId: number, subject: string, examType: string, cls: string, section: string): Promise<(ExamScore & { studentName: string; dsid: string })[]> {
