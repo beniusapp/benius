@@ -591,10 +591,13 @@ export function registerTeacherRoutes(app: Express) {
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
-    const { scores, subject, examType, totalMarks } = req.body;
+    const { scores, subject, examType, totalMarks, passMarks, class: cls, section } = req.body;
     if (!Array.isArray(scores) || !subject || !examType) return res.status(400).json({ message: "Scores, subject, and examType required" });
 
+    const resolvedClass = cls || teacher.assignedClass;
+    const resolvedSection = section || teacher.assignedSection;
     const maxMarks = parseInt(totalMarks) || 100;
+    const pMarks = parseInt(passMarks) || 33;
     const formattedScores = scores.map((s: any) => ({
       studentId: s.studentId,
       teacherId: teacher.id,
@@ -603,11 +606,33 @@ export function registerTeacherRoutes(app: Express) {
       examType,
       marks: s.isAbsent ? 0 : parseInt(s.marks) || 0,
       totalMarks: maxMarks,
+      passMarks: pMarks,
       isAbsent: !!s.isAbsent,
+      class: resolvedClass || null,
+      section: resolvedSection || null,
     }));
 
     const saved = await storage.upsertExamScores(formattedScores);
     res.json({ message: `Saved ${saved.length} scores`, count: saved.length });
+  });
+
+  app.post("/api/exam-scores/publish", async (req, res) => {
+    if (!req.session.teacherId && (!req.session.userId || req.session.userRole !== "admin")) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const { class: cls, section, examType, schoolId } = req.body;
+    if (!cls || !section || !examType || !schoolId) {
+      return res.status(400).json({ message: "class, section, examType, schoolId required" });
+    }
+    const sid = parseInt(schoolId);
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
+    } else if (req.session.schoolId !== sid) {
+      return res.status(403).json({ message: "Not authorized for this school" });
+    }
+    const count = await storage.publishExamScores(sid, cls, section, examType);
+    res.json({ message: `Published ${count} scores`, count });
   });
 
   app.get("/api/exam-scores/:schoolId/:subject/:examType/:class/:section", async (req, res) => {

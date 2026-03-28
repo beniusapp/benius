@@ -1041,9 +1041,11 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    const cls = (req.query.class as string) || student.class;
-    const section = student.section;
-    const examTypes = await storage.getStudentExamTypes(student.schoolId, cls, section);
+    const requestedCls = (req.query.class as string) || student.class;
+    const allowedClasses = await storage.getStudentDistinctClasses(student.schoolId, student.id);
+    const cls = (requestedCls === student.class || allowedClasses.includes(requestedCls))
+      ? requestedCls : student.class;
+    const examTypes = await storage.getStudentExamTypes(student.schoolId, cls, student.section);
     res.json({ examTypes });
   });
 
@@ -1051,7 +1053,10 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    const cls = (req.query.class as string) || student.class;
+    const requestedCls = (req.query.class as string) || student.class;
+    const allowedClasses = await storage.getStudentDistinctClasses(student.schoolId, student.id);
+    const cls = (requestedCls === student.class || allowedClasses.includes(requestedCls))
+      ? requestedCls : student.class;
     const examType = req.query.examType as string;
     if (!examType) return res.status(400).json({ message: "examType is required" });
     const scores = await storage.getStudentExamScores(student.schoolId, student.id, cls, examType);
@@ -1065,6 +1070,27 @@ export async function registerRoutes(
     const grade = percentage >= 90 ? "A+" : percentage >= 80 ? "A" : percentage >= 70 ? "B+" :
       percentage >= 60 ? "B" : percentage >= 50 ? "C" : percentage >= 40 ? "D" : "F";
     res.json({ scores, summary: { totalObtained, totalMax, percentage, grade, rank } });
+  });
+
+  app.get("/api/student/exam/journey", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const classes = await storage.getStudentDistinctClasses(student.schoolId, student.id);
+    const allClasses = classes.length > 0 ? classes : [student.class];
+    const journey: { cls: string; examType: string; percentage: number }[] = [];
+    for (const cls of allClasses) {
+      const examTypes = await storage.getStudentExamTypes(student.schoolId, cls, student.section);
+      if (examTypes.length === 0) continue;
+      const finalExamType = examTypes.includes("Annual") ? "Annual" : examTypes[examTypes.length - 1];
+      const scores = await storage.getStudentExamScores(student.schoolId, student.id, cls, finalExamType);
+      if (scores.length === 0) continue;
+      const obtained = scores.filter(s => !s.isAbsent).reduce((sum, s) => sum + s.marks, 0);
+      const total = scores.reduce((sum, s) => sum + s.totalMarks, 0);
+      const pct = total > 0 ? Math.round((obtained / total) * 100 * 10) / 10 : 0;
+      journey.push({ cls, examType: finalExamType, percentage: pct });
+    }
+    res.json({ journey });
   });
 
   // ===== STUDENT CLASSWORK ROUTES =====

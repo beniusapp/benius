@@ -484,39 +484,25 @@ export default function StudentExamination() {
   );
 }
 
+interface JourneyPoint {
+  cls: string;
+  examType: string;
+  percentage: number;
+}
+
 function AcademicJourneySection({
-  student,
-  currentClass,
-  classes,
+  currentClass: _currentClass,
+  classes: _classes,
 }: {
   student: StudentMeResponse;
   currentClass: string;
   classes: string[];
 }) {
-  const allClasses = classes.length > 0 ? classes : [currentClass];
+  const { data: journeyData, isLoading } = useQuery<{ journey: JourneyPoint[] }>({
+    queryKey: ["/api/student/exam/journey"],
+  });
 
-  const [chartData, setChartData] = useState<{ cls: string; pct: number }[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (allClasses.length === 0) return;
-    setLoading(true);
-    Promise.all(
-      allClasses.map(async cls => {
-        const params = new URLSearchParams({ class: cls, examType: "Annual" });
-        const res = await fetch(`/api/student/exam/scores?${params}`, { credentials: "include" });
-        if (!res.ok) return null;
-        const data: ScoresResponse = await res.json();
-        return { cls, pct: data.summary?.percentage ?? 0 };
-      })
-    ).then(results => {
-      const valid = results.filter((r): r is { cls: string; pct: number } => r !== null && r.pct > 0);
-      setChartData(valid);
-      setLoading(false);
-    });
-  }, [allClasses.join(",")]);
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-6 flex justify-center no-print">
         <Loader2 className="w-6 h-6 animate-spin text-[#10b981]" />
@@ -524,7 +510,14 @@ function AcademicJourneySection({
     );
   }
 
-  if (chartData.length === 0) return null;
+  const journey = journeyData?.journey ?? [];
+  if (journey.length === 0) return null;
+
+  const chartData = journey.map(j => ({ cls: j.cls, pct: j.percentage }));
+  const uniqueExamTypes = [...new Set(journey.map(j => j.examType))];
+  const subtitle = uniqueExamTypes.length === 1
+    ? `${uniqueExamTypes[0]} percentage across classes`
+    : "Final exam percentage across classes";
 
   return (
     <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-5 no-print" data-testid="section-academic-journey">
@@ -534,7 +527,7 @@ function AcademicJourneySection({
         </div>
         <div>
           <h3 className="text-sm font-bold text-gray-800">Academic Journey</h3>
-          <p className="text-xs text-gray-400">Annual exam percentage across classes</p>
+          <p className="text-xs text-gray-400">{subtitle}</p>
         </div>
       </div>
       <AcademicJourneyChart classData={chartData} />

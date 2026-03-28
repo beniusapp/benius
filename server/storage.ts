@@ -590,16 +590,25 @@ export class DatabaseStorage {
   async upsertExamScores(scores: InsertExamScore[]): Promise<ExamScore[]> {
     const results: ExamScore[] = [];
     for (const score of scores) {
-      const existing = await db.select().from(examScores).where(
-        and(
-          eq(examScores.studentId, score.studentId),
-          eq(examScores.subject, score.subject),
-          eq(examScores.examType, score.examType)
-        )
-      );
+      const conditions: SQL<unknown>[] = [
+        eq(examScores.studentId, score.studentId),
+        eq(examScores.subject, score.subject),
+        eq(examScores.examType, score.examType),
+      ];
+      if (score.class != null) conditions.push(eq(examScores.class, score.class));
+      if (score.section != null) conditions.push(eq(examScores.section, score.section));
+
+      const existing = await db.select().from(examScores).where(and(...conditions));
       if (existing.length > 0) {
         const [updated] = await db.update(examScores)
-          .set({ marks: score.marks, totalMarks: score.totalMarks, isAbsent: score.isAbsent })
+          .set({
+            marks: score.marks,
+            totalMarks: score.totalMarks,
+            passMarks: score.passMarks ?? 33,
+            isAbsent: score.isAbsent,
+            class: score.class ?? existing[0].class,
+            section: score.section ?? existing[0].section,
+          })
           .where(eq(examScores.id, existing[0].id)).returning();
         results.push(updated);
       } else {
@@ -608,6 +617,18 @@ export class DatabaseStorage {
       }
     }
     return results;
+  }
+
+  async publishExamScores(schoolId: number, cls: string, section: string, examType: string): Promise<number> {
+    const result = await db.update(examScores)
+      .set({ published: true })
+      .where(and(
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.class, cls),
+        eq(examScores.section, section),
+        eq(examScores.examType, examType),
+      ));
+    return (result as unknown as { rowCount: number }).rowCount ?? 0;
   }
 
   async getExamScores(schoolId: number, subject: string, examType: string, cls: string, section: string): Promise<(ExamScore & { studentName: string; dsid: string })[]> {
