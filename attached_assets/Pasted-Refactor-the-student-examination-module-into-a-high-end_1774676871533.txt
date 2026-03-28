@@ -1,0 +1,39 @@
+Refactor the /student/examination module into a high-end Academic Performance Center. This page must be optimized for Mobile (Motorola 60 Fusion) and Desktop using the Emerald Green & White professional theme.
+
+1. The Header & Multi-Year Selector:
+
+Default State: Automatically detect the student’s current class (e.g., Class 9) and set it as the active view.
+
+Historical Toggle: Add a professional dropdown or 'Year Switcher' that allows the student to select previous classes (e.g., Class 8, Class 7).
+
+Logic: When a previous class is selected, fetch all verified marks for that specific year from the marks_archive.
+
+2. Dynamic Exam-Type Tabs:
+
+Below the class selector, implement a horizontal scroll bar (Mobile) or Tabs (Desktop) that dynamically pull Exam Types defined by the Principal (e.g., Unit Test 1, Half-Yearly, Annual).
+
+Active Tab: Selecting an Exam Type instantly updates the Marks Table below.
+
+3. The Modern Marks Table:
+
+Display a clean, borderless table with columns: Subject | Full Marks | Pass Marks | Marks Obtained | Grade | Status (Pass/Fail).
+
+Visuals: Use Emerald Green text for 'Pass' and a soft Red for 'Fail'.
+
+Total Card: At the bottom of the table, show a summary card with: Grand Total | Percentage (%) | Overall Grade | Rank in Class (if enabled by school).
+
+4. 'Finals Only' Performance Metrics (The Growth Chart):
+
+Create a dedicated section at the bottom titled 'Academic Journey'.
+
+Visual Analytics: Use a Line Chart or Bar Chart to show the Final Exam Percentages across different classes (e.g., Class 6: 85%, Class 7: 88%, Class 8: 82%, Class 9: 91%).
+
+Professional Polish: This chart should use a smooth Emerald Green gradient to visualize the student's growth over the years.
+
+5. UI/UX & Technical Standards:
+
+In-App PDF: Add a 'Download Marksheet' button that generates a professional PDF with the school's logo and the Principal’s digital signature.
+
+Multi-Tenancy: Strictly isolate data by school_id and the student's uid.
+
+Empty States: If a Principal has not yet 'Published' the marks for a specific exam type, show a 'Results Awaiting Publication' message.
