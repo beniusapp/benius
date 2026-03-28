@@ -1,0 +1,55 @@
+Refactor /student/homework and /student/classwork into a High-End Digital Learning Diary. Use a Modern Emerald Green (#10b981) and Pure White professional theme, optimized for both Mobile (2-column/list) and Desktop (3-column grid).
+
+1. The 'Smart Date Navigation' Header:
+
+Top of the page: Implement a Horizontal Scrolling Date Picker showing the current week's dates (e.g., Mon 23, Tue 24, etc.).
+
+Calendar Icon: Include a 'Calendar' button on the right that opens a full Date-Picker Modal to select any past date.
+
+Dynamic Filtering: When a date is selected (Format: dd/mm/yyyy), the feed below must instantly update to show only items assigned on that specific day.
+
+2. The Homework 'Action Hub' (/student/homework):
+
+UI Style: Glassmorphism cards with a subtle 1px border and soft shadow.
+
+Metadata: Each card must show: Subject Name (Bold), Topic Title, Assigned Date, and Due Date.
+
+Status Badges:
+
+Red: 'Pending' (with a pulsing dot if due within 24 hours).
+
+Blue: 'Submitted' (Awaiting Teacher Review).
+
+Emerald: 'Completed' (Teacher Approved/Graded).
+
+The Submission Drawer: Clicking a card opens a Slide-up Bottom Sheet (Mobile) or Right-Side Drawer (Desktop) with:
+
+Detailed instructions from the Teacher.
+
+File Upload Zone: A dashed-border 'Drag & Drop' or 'Take Photo' area.
+
+Action Button: 'Submit Final Work' button in solid Emerald Green.
+
+3. The Classwork 'Knowledge Feed' (/student/classwork):
+
+UI Style: A chronological list of 'Resources'.
+
+In-App Preview (Crucial): Clicking a classwork entry must open a Full-Screen PDF/Image Viewer inside the app. No external downloads to the phone's storage.
+
+Resource Tags: Use small pill-shaped tags: #Notes, #Video, #Reference_Material.
+
+4. High-End UI Specs:
+
+Empty States: If no data exists for the selected date, show a high-quality 3D illustration with 'No assignments found for today.'
+
+Skeleton Loaders: Use shimmering gray placeholders while the date-specific data is fetching.
+
+Animations: Use smooth 'Framer Motion' style transitions when switching dates.
+
+5. Security & Multi-Tenancy:
+
+Strict Scoping: Filter all queries by school_id, class_id, and section_id.
+
+Data Guard: Ensure the student cannot 'Submit' homework if the due_date has passed (show 'Late Submission' warning).
+
+File Integrity: Ensure all uploaded homework is securely linked to the student's uid and the specific assignment ID.
