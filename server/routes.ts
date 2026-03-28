@@ -1028,6 +1028,45 @@ export async function registerRoutes(
     });
   }
 
+  // ===== STUDENT EXAM ROUTES =====
+  app.get("/api/student/exam/classes", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const classes = await storage.getStudentDistinctClasses(student.schoolId, student.id);
+    res.json({ classes });
+  });
+
+  app.get("/api/student/exam/types", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const cls = (req.query.class as string) || student.class;
+    const section = student.section;
+    const examTypes = await storage.getStudentExamTypes(student.schoolId, cls, section);
+    res.json({ examTypes });
+  });
+
+  app.get("/api/student/exam/scores", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const cls = (req.query.class as string) || student.class;
+    const examType = req.query.examType as string;
+    if (!examType) return res.status(400).json({ message: "examType is required" });
+    const scores = await storage.getStudentExamScores(student.schoolId, student.id, cls, examType);
+    let rank: { rank: number; total: number } | null = null;
+    if (scores.length > 0) {
+      rank = await storage.getClassRank(student.schoolId, cls, student.section, examType, student.id);
+    }
+    const totalObtained = scores.filter(s => !s.isAbsent).reduce((sum, s) => sum + s.marks, 0);
+    const totalMax = scores.reduce((sum, s) => sum + s.totalMarks, 0);
+    const percentage = totalMax > 0 ? Math.round((totalObtained / totalMax) * 100 * 10) / 10 : 0;
+    const grade = percentage >= 90 ? "A+" : percentage >= 80 ? "A" : percentage >= 70 ? "B+" :
+      percentage >= 60 ? "B" : percentage >= 50 ? "C" : percentage >= 40 ? "D" : "F";
+    res.json({ scores, summary: { totalObtained, totalMax, percentage, grade, rank } });
+  });
+
   // ===== STUDENT CLASSWORK ROUTES =====
   app.get("/api/student/classwork", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });

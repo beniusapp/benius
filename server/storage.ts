@@ -635,6 +635,73 @@ export class DatabaseStorage {
       .orderBy(examScores.examType);
   }
 
+  async getStudentDistinctClasses(schoolId: number, studentId: number): Promise<string[]> {
+    const rows = await db.selectDistinct({ class: examScores.class })
+      .from(examScores)
+      .where(and(
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.studentId, studentId),
+        eq(examScores.published, true),
+      ))
+      .orderBy(sql`${examScores.class} ASC NULLS LAST`);
+    return rows.map(r => r.class).filter((c): c is string => c !== null);
+  }
+
+  async getStudentExamTypes(schoolId: number, cls: string, section: string): Promise<string[]> {
+    const rows = await db.select({
+      examType: examScores.examType,
+      minId: sql<number>`MIN(${examScores.id})`,
+    })
+      .from(examScores)
+      .where(and(
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.class, cls),
+        eq(examScores.section, section),
+        eq(examScores.published, true),
+      ))
+      .groupBy(examScores.examType)
+      .orderBy(sql`MIN(${examScores.id}) ASC`);
+    return rows.map(r => r.examType);
+  }
+
+  async getStudentExamScores(schoolId: number, studentId: number, cls: string, examType: string): Promise<ExamScore[]> {
+    return await db.select().from(examScores)
+      .where(and(
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.studentId, studentId),
+        eq(examScores.class, cls),
+        eq(examScores.examType, examType),
+        eq(examScores.published, true),
+      ))
+      .orderBy(examScores.subject);
+  }
+
+  async getClassRank(schoolId: number, cls: string, section: string, examType: string, studentId: number): Promise<{ rank: number; total: number }> {
+    const allScores = await db.select().from(examScores)
+      .where(and(
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.class, cls),
+        eq(examScores.section, section),
+        eq(examScores.examType, examType),
+        eq(examScores.published, true),
+      ));
+
+    const byStudent: Record<number, { obtained: number; total: number }> = {};
+    for (const s of allScores) {
+      if (!byStudent[s.studentId]) byStudent[s.studentId] = { obtained: 0, total: 0 };
+      if (!s.isAbsent) byStudent[s.studentId].obtained += s.marks;
+      byStudent[s.studentId].total += s.totalMarks;
+    }
+
+    const studentPcts = Object.entries(byStudent).map(([sid, d]) => ({
+      studentId: parseInt(sid),
+      pct: d.total > 0 ? (d.obtained / d.total) * 100 : 0,
+    })).sort((a, b) => b.pct - a.pct);
+
+    const rank = studentPcts.findIndex(s => s.studentId === studentId) + 1;
+    return { rank: rank || studentPcts.length, total: studentPcts.length };
+  }
+
   async getClassAverages(schoolId: number, cls: string, section: string, subject: string): Promise<{ examType: string; avgPercentage: number }[]> {
     const studentList = await this.getStudentsByClassSection(schoolId, cls, section);
     const studentIds = studentList.map(s => s.id);

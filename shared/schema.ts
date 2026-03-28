@@ -155,7 +155,11 @@ export const examScores = pgTable("exam_scores", {
   examType: text("exam_type").notNull(),
   marks: integer("marks").notNull(),
   totalMarks: integer("total_marks").notNull().default(100),
+  passMarks: integer("pass_marks").notNull().default(33),
   isAbsent: boolean("is_absent").notNull().default(false),
+  class: text("class"),
+  section: text("section"),
+  published: boolean("published").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

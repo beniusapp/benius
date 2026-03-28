@@ -107,6 +107,13 @@ app.use((req, res, next) => {
     ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS approved_snapshot TEXT;
   `);
 
+  await pool.query(`
+    ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS pass_marks INTEGER NOT NULL DEFAULT 33;
+    ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS class TEXT;
+    ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS section TEXT;
+    ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS published BOOLEAN NOT NULL DEFAULT FALSE;
+  `);
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

@@ -37,7 +37,7 @@ A full-stack, enterprise-grade school management platform with:
 - **notices**: id, school_id, created_by_id, creator_role, target_type, target_class, target_section, notice_type, content, file_url, created_at
 - **complaints**: id, ticket_id, teacher_id, student_id, school_id, complaint_type, status, content, reported_student_name, file_url, is_deleted, created_at
 - **complaint_notes**: id, complaint_id, author_id, author_role, author_name, content, created_at
-- **exam_scores**: id, student_id, teacher_id, school_id, subject, exam_type, marks, total_marks, is_absent, created_at
+- **exam_scores**: id, student_id, teacher_id, school_id, subject, exam_type, marks, total_marks, pass_marks (default 33), is_absent, class, section, published (default false), created_at
 - **gallery_items**: id, school_id, uploaded_by_id, title, description, event_tag, image_url, approved, created_at
 - **calendar_events**: id, school_id, title, date, event_type (holiday/academic/event)
 - **library_books**: id, school_id, title, author, isbn, target_class, category, file_url, file_type, uploaded_by_id, verification_status, total_copies, available_copies

@@ -219,6 +219,10 @@ export default function StudentDashboard() {
                   setLocation("/student/classwork");
                   return;
                 }
+                if (id === "examination") {
+                  setLocation("/student/examination");
+                  return;
+                }
                 toast({
                   title: label,
                   description: `${label} module coming soon.`,

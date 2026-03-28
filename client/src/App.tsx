@@ -17,6 +17,7 @@ import StudentProfilePage from "@/pages/student-profile";
 import StudentAttendance from "@/pages/student-attendance";
 import StudentHomework from "@/pages/student-homework";
 import StudentClasswork from "@/pages/student-classwork";
+import StudentExamination from "@/pages/student-examination";
 
 function Router() {
   return (
@@ -32,6 +33,7 @@ function Router() {
       <Route path="/student/attendance" component={StudentAttendance} />
       <Route path="/student/homework" component={StudentHomework} />
       <Route path="/student/classwork" component={StudentClasswork} />
+      <Route path="/student/examination" component={StudentExamination} />
       <Route path="/teacher-login" component={TeacherLogin} />
       <Route path="/teacher-dashboard" component={TeacherDashboard} />
       <Route path="/teacher-dashboard/:module" component={TeacherDashboard} />
