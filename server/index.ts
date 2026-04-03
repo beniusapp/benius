@@ -114,6 +114,14 @@ app.use((req, res, next) => {
     ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS published BOOLEAN NOT NULL DEFAULT FALSE;
   `);
 
+  await pool.query(`
+    ALTER TABLE complaints ADD COLUMN IF NOT EXISTS complainant_student_id INTEGER REFERENCES students(id) ON DELETE CASCADE;
+    ALTER TABLE complaints ADD COLUMN IF NOT EXISTS contact_number TEXT;
+    ALTER TABLE complaints ADD COLUMN IF NOT EXISTS suggestions TEXT;
+    ALTER TABLE complaints ADD COLUMN IF NOT EXISTS incident_date TIMESTAMP;
+    ALTER TABLE complaints ALTER COLUMN teacher_id DROP NOT NULL;
+  `);
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

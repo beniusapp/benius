@@ -522,23 +522,28 @@ export class DatabaseStorage {
     return c;
   }
 
-  async getComplaintsBySchool(schoolId: number): Promise<(Complaint & { studentName: string | null; teacherName: string })[]> {
+  async getComplaintsBySchool(schoolId: number): Promise<(Complaint & { studentName: string | null; teacherName: string | null })[]> {
     const result = await db.select().from(complaints)
       .leftJoin(students, eq(complaints.studentId, students.id))
-      .innerJoin(teachers, eq(complaints.teacherId, teachers.id))
+      .leftJoin(teachers, eq(complaints.teacherId, teachers.id))
       .where(and(eq(complaints.schoolId, schoolId), eq(complaints.isDeleted, false)))
       .orderBy(desc(complaints.createdAt));
     return result.map(r => ({
       ...r.complaints,
       studentName: r.students?.name || null,
-      teacherName: r.teachers.fullName,
+      teacherName: r.teachers?.fullName || null,
     }));
   }
 
   async getComplaintsByTeacher(teacherId: number, assignedClass?: string, assignedSection?: string, schoolId?: number): Promise<(Complaint & { studentName: string | null })[]> {
+    const STUDENT_FILED_TYPES = ["student-to-staff", "student-peer-report"];
     const ownComplaints = await db.select().from(complaints)
       .leftJoin(students, eq(complaints.studentId, students.id))
-      .where(and(eq(complaints.teacherId, teacherId), eq(complaints.isDeleted, false)))
+      .where(and(
+        eq(complaints.teacherId, teacherId),
+        eq(complaints.isDeleted, false),
+        sql`${complaints.complaintType} NOT IN ('student-to-staff', 'student-peer-report')`
+      ))
       .orderBy(desc(complaints.createdAt));
 
     const ownResults = ownComplaints.map(r => ({
@@ -569,10 +574,46 @@ export class DatabaseStorage {
       const merged = [...ownResults, ...s2sResults];
       merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       const seen = new Set<number>();
-      return merged.filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; });
+      return merged.filter(c => {
+        if (STUDENT_FILED_TYPES.includes(c.complaintType)) return false;
+        if (seen.has(c.id)) return false;
+        seen.add(c.id);
+        return true;
+      });
     }
 
     return ownResults;
+  }
+
+  async getStudentInboxComplaints(studentId: number, schoolId: number): Promise<(Complaint & { teacherName: string })[]> {
+    const result = await db.select().from(complaints)
+      .innerJoin(teachers, eq(complaints.teacherId, teachers.id))
+      .where(and(
+        eq(complaints.studentId, studentId),
+        eq(complaints.schoolId, schoolId),
+        eq(complaints.complaintType, "teacher-to-student"),
+        eq(complaints.isDeleted, false),
+      ))
+      .orderBy(desc(complaints.createdAt));
+    return result.map(r => ({ ...r.complaints, teacherName: r.teachers.fullName }));
+  }
+
+  async getStudentFiledComplaints(complainantStudentId: number, schoolId: number): Promise<(Complaint & { teacherName: string | null })[]> {
+    const result = await db.select().from(complaints)
+      .leftJoin(teachers, eq(complaints.teacherId, teachers.id))
+      .where(and(
+        eq(complaints.complainantStudentId, complainantStudentId),
+        eq(complaints.schoolId, schoolId),
+        eq(complaints.isDeleted, false),
+        sql`${complaints.complaintType} IN ('student-to-staff', 'student-peer-report')`
+      ))
+      .orderBy(desc(complaints.createdAt));
+    return result.map(r => ({ ...r.complaints, teacherName: r.teachers?.fullName || null }));
+  }
+
+  async createStudentComplaint(data: InsertComplaint): Promise<Complaint> {
+    const [c] = await db.insert(complaints).values(data).returning();
+    return c;
   }
 
   async addComplaintNote(data: InsertComplaintNote): Promise<ComplaintNote> {

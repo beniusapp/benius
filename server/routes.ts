@@ -1103,6 +1103,79 @@ export async function registerRoutes(
     res.json(items);
   });
 
+  // ===== STUDENT COMPLAINT ROUTES =====
+
+  app.get("/api/student/complaints/inbox", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const list = await storage.getStudentInboxComplaints(student.id, student.schoolId);
+    res.json(list);
+  });
+
+  app.get("/api/student/complaints/filed", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const list = await storage.getStudentFiledComplaints(student.id, student.schoolId);
+    res.json(list);
+  });
+
+  app.get("/api/student/complaint-teachers", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const teachers = await storage.getTeachersBySchool(student.schoolId);
+    res.json(teachers.map(t => ({ id: t.id, name: t.fullName, subject: t.subject })));
+  });
+
+  app.post("/api/student/complaints/staff-grievance", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const { teacherId, content, contactNumber, suggestions } = req.body;
+    if (!teacherId || !content?.trim()) {
+      return res.status(400).json({ message: "Teacher and complaint description are required" });
+    }
+    const ticketId = await storage.getNextTicketId(student.schoolId);
+    const complaint = await storage.createStudentComplaint({
+      ticketId,
+      teacherId: parseInt(teacherId),
+      complainantStudentId: student.id,
+      schoolId: student.schoolId,
+      complaintType: "student-to-staff",
+      content: content.trim(),
+      contactNumber: contactNumber?.trim() || null,
+      suggestions: suggestions?.trim() || null,
+      status: "Pending",
+      isDeleted: false,
+    });
+    res.status(201).json(complaint);
+  });
+
+  app.post("/api/student/complaints/peer-report", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const { reportedStudentName, incidentDate, content } = req.body;
+    if (!reportedStudentName?.trim() || !content?.trim()) {
+      return res.status(400).json({ message: "Reported student name and description are required" });
+    }
+    const ticketId = await storage.getNextTicketId(student.schoolId);
+    const complaint = await storage.createStudentComplaint({
+      ticketId,
+      complainantStudentId: student.id,
+      schoolId: student.schoolId,
+      complaintType: "student-peer-report",
+      content: content.trim(),
+      reportedStudentName: reportedStudentName.trim(),
+      incidentDate: incidentDate ? new Date(incidentDate) : null,
+      status: "Pending",
+      isDeleted: false,
+    });
+    res.status(201).json(complaint);
+  });
+
   registerTeacherRoutes(app);
 
   return httpServer;

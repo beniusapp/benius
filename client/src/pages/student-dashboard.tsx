@@ -223,6 +223,10 @@ export default function StudentDashboard() {
                   setLocation("/student/examination");
                   return;
                 }
+                if (id === "complaints") {
+                  setLocation("/student/complaints");
+                  return;
+                }
                 toast({
                   title: label,
                   description: `${label} module coming soon.`,

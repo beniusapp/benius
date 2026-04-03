@@ -124,7 +124,7 @@ export const notices = pgTable("notices", {
 export const complaints = pgTable("complaints", {
   id: serial("id").primaryKey(),
   ticketId: varchar("ticket_id", { length: 30 }).notNull(),
-  teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
+  teacherId: integer("teacher_id").references(() => teachers.id, { onDelete: "cascade" }),
   studentId: integer("student_id").references(() => students.id, { onDelete: "cascade" }),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
   complaintType: varchar("complaint_type", { length: 30 }).notNull().default("teacher-to-student"),
@@ -133,6 +133,10 @@ export const complaints = pgTable("complaints", {
   reportedStudentName: varchar("reported_student_name", { length: 100 }),
   fileUrl: text("file_url"),
   isDeleted: boolean("is_deleted").notNull().default(false),
+  complainantStudentId: integer("complainant_student_id").references(() => students.id, { onDelete: "cascade" }),
+  contactNumber: text("contact_number"),
+  suggestions: text("suggestions"),
+  incidentDate: timestamp("incident_date"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
