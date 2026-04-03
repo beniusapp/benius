@@ -50,10 +50,10 @@ function Router() {
       <Route path="/teacher-dashboard" component={TeacherDashboard} />
       <Route path="/teacher-dashboard/:module" component={TeacherDashboard} />
       <Route path="/teacher/dashboard/:module">
-        {(params) => { window.location.replace(`/teacher-dashboard/${params.module}`); return null; }}
+        {(params) => { const [, nav] = useLocation(); nav(`/teacher-dashboard/${params.module}`); return null; }}
       </Route>
       <Route path="/teacher/dashboard">
-        {() => { window.location.replace("/teacher-dashboard"); return null; }}
+        {() => { const [, nav] = useLocation(); nav("/teacher-dashboard"); return null; }}
       </Route>
       <Route component={NotFound} />
     </Switch>

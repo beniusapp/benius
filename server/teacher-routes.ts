@@ -1109,6 +1109,7 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.patch("/api/student-leaves/:id/reject", async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
     if (!leave) return res.status(404).json({ message: "Leave request not found" });
     const { rejectionReason } = req.body;
