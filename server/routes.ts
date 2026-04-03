@@ -1137,10 +1137,14 @@ export async function registerRoutes(
     if (!teacherId || !content?.trim()) {
       return res.status(400).json({ message: "Teacher and complaint description are required" });
     }
+    const targetTeacher = await storage.getTeacherById(parseInt(teacherId));
+    if (!targetTeacher || targetTeacher.schoolId !== student.schoolId) {
+      return res.status(400).json({ message: "Invalid staff member" });
+    }
     const ticketId = await storage.getNextTicketId(student.schoolId);
     const complaint = await storage.createStudentComplaint({
       ticketId,
-      teacherId: parseInt(teacherId),
+      teacherId: targetTeacher.id,
       complainantStudentId: student.id,
       schoolId: student.schoolId,
       complaintType: "student-to-staff",

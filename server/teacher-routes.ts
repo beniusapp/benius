@@ -525,6 +525,8 @@ export function registerTeacherRoutes(app: Express) {
     res.json({ message: "Complaint deleted" });
   });
 
+  const STUDENT_ONLY_TYPES = ["student-to-staff", "student-peer-report"] as const;
+
   app.patch("/api/complaints/:id/status", async (req, res) => {
     if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const id = parseInt(req.params.id);
@@ -534,6 +536,9 @@ export function registerTeacherRoutes(app: Express) {
     if (req.session.teacherId) {
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher || teacher.schoolId !== c.schoolId) return res.status(403).json({ message: "Not authorized for this school" });
+      if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
+        return res.status(403).json({ message: "Access denied" });
+      }
     }
 
     const { status } = req.body;
@@ -551,6 +556,9 @@ export function registerTeacherRoutes(app: Express) {
     if (req.session.teacherId) {
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher || teacher.schoolId !== c.schoolId) return res.status(403).json({ message: "Not authorized for this school" });
+      if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
+        return res.status(403).json({ message: "Access denied" });
+      }
     }
 
     const { content } = req.body;
@@ -579,6 +587,9 @@ export function registerTeacherRoutes(app: Express) {
     if (req.session.teacherId) {
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher || teacher.schoolId !== c.schoolId) return res.status(403).json({ message: "Not authorized for this school" });
+      if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
+        return res.status(403).json({ message: "Access denied" });
+      }
     }
 
     const notes = await storage.getComplaintNotes(complaintId);

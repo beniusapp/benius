@@ -120,7 +120,7 @@ export default function StudentComplaints() {
 
   const [staffTeacherId, setStaffTeacherId] = useState("");
   const [staffContent, setStaffContent] = useState("");
-  const [staffContact, setStaffContact] = useState("");
+  const [staffContact, setStaffContact] = useState<string | null>(null);
   const [staffSuggestions, setStaffSuggestions] = useState("");
 
   const [peerName, setPeerName] = useState("");
@@ -152,7 +152,7 @@ export default function StudentComplaints() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/student/complaints/filed"] });
       toast({ title: "Grievance submitted", description: "Your complaint has been sent directly to the Principal." });
-      setStaffTeacherId(""); setStaffContent(""); setStaffSuggestions("");
+      setStaffTeacherId(""); setStaffContent(""); setStaffContact(null); setStaffSuggestions("");
       setShowFabForm(false);
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -195,7 +195,7 @@ export default function StudentComplaints() {
     staffMutation.mutate({
       teacherId: parseInt(staffTeacherId),
       content: staffContent,
-      contactNumber: staffContact || student.phone,
+      contactNumber: staffContact !== null ? staffContact : student.phone,
       suggestions: staffSuggestions,
     });
   };
@@ -339,9 +339,9 @@ export default function StudentComplaints() {
                   <label className="block text-xs font-semibold text-gray-600 mb-1.5">Your Contact Number</label>
                   <input
                     type="tel"
-                    value={staffContact}
+                    value={staffContact !== null ? staffContact : (student.phone || "")}
                     onChange={e => setStaffContact(e.target.value)}
-                    placeholder={student.phone || "Enter contact number"}
+                    placeholder="Enter contact number"
                     className="w-full px-3 h-11 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
                     data-testid="input-staff-contact"
                   />
