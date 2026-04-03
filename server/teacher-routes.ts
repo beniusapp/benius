@@ -1000,25 +1000,6 @@ export function registerTeacherRoutes(app: Express) {
     res.json(updated);
   });
 
-  app.patch("/api/student-leaves/:id/teacher-reject", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
-    if (!leave || leave.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Not authorized" });
-    const student = await storage.getStudentById(leave.studentId);
-    if (!student || student.class !== teacher.assignedClass || student.section !== teacher.assignedSection) {
-      return res.status(403).json({ message: "Not authorized for this student's class/section" });
-    }
-    const { rejectionReason } = req.body;
-    const updated = await storage.updateStudentLeaveStatus(leave.id, "rejected", teacher.id, "teacher", rejectionReason || undefined);
-    await storage.createAuditLog({
-      schoolId: teacher.schoolId, actionType: "reject", entityType: "student_leave", entityId: leave.id,
-      actionBy: teacher.id, actionByRole: "teacher",
-      details: `Rejected student leave${rejectionReason ? `: ${rejectionReason}` : ""}`,
-    });
-    res.json(updated);
-  });
 
   // ===== TIMETABLE =====
   app.post("/api/timetable", async (req, res) => {
@@ -1128,17 +1109,41 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.patch("/api/student-leaves/:id/reject", async (req, res) => {
-    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
     const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
-    if (!leave || leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    if (!leave) return res.status(404).json({ message: "Leave request not found" });
     const { rejectionReason } = req.body;
-    const updated = await storage.updateStudentLeaveStatus(leave.id, "rejected", req.session.userId!, "admin", rejectionReason || undefined);
-    await storage.createAuditLog({
-      schoolId: req.session.schoolId!, actionType: "reject", entityType: "student_leave", entityId: leave.id,
-      actionBy: req.session.userId!, actionByRole: "admin",
-      details: `Admin rejected student leave${rejectionReason ? `: ${rejectionReason}` : ""}`,
-    });
-    res.json(updated);
+
+    // Teacher path: class/section scoped rejection
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      if (leave.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Not authorized" });
+      const student = await storage.getStudentById(leave.studentId);
+      if (!student || student.class !== teacher.assignedClass || student.section !== teacher.assignedSection) {
+        return res.status(403).json({ message: "Not authorized for this student's class/section" });
+      }
+      const updated = await storage.updateStudentLeaveStatus(leave.id, "rejected", teacher.id, "teacher", rejectionReason || undefined);
+      await storage.createAuditLog({
+        schoolId: teacher.schoolId, actionType: "reject", entityType: "student_leave", entityId: leave.id,
+        actionBy: teacher.id, actionByRole: "teacher",
+        details: `Teacher rejected student leave${rejectionReason ? `: ${rejectionReason}` : ""}`,
+      });
+      return res.json(updated);
+    }
+
+    // Admin path: school-scoped rejection
+    if (req.session.userId) {
+      if (leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+      const updated = await storage.updateStudentLeaveStatus(leave.id, "rejected", req.session.userId!, "admin", rejectionReason || undefined);
+      await storage.createAuditLog({
+        schoolId: req.session.schoolId!, actionType: "reject", entityType: "student_leave", entityId: leave.id,
+        actionBy: req.session.userId!, actionByRole: "admin",
+        details: `Admin rejected student leave${rejectionReason ? `: ${rejectionReason}` : ""}`,
+      });
+      return res.json(updated);
+    }
+
+    return res.status(401).json({ message: "Not authenticated" });
   });
 
   // ===== PENDING EBOOKS (Admin) =====

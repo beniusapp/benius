@@ -149,7 +149,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
 
   const rejectMutation = useMutation({
     mutationFn: async ({ id, reason }: { id: number; reason: string }) => {
-      await apiRequest("PATCH", `/api/student-leaves/${id}/teacher-reject`, { rejectionReason: reason });
+      await apiRequest("PATCH", `/api/student-leaves/${id}/reject`, { rejectionReason: reason });
     },
     onSuccess: () => {
       toast({ title: "Leave Rejected", description: "The student has been notified." });
