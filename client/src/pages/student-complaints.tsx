@@ -116,7 +116,6 @@ export default function StudentComplaints() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabId>("inbox");
-  const [showFabForm, setShowFabForm] = useState(false);
 
   const [staffTeacherId, setStaffTeacherId] = useState("");
   const [staffContent, setStaffContent] = useState("");
@@ -153,7 +152,6 @@ export default function StudentComplaints() {
       queryClient.invalidateQueries({ queryKey: ["/api/student/complaints/filed"] });
       toast({ title: "Grievance submitted", description: "Your complaint has been sent directly to the Principal." });
       setStaffTeacherId(""); setStaffContent(""); setStaffContact(null); setStaffSuggestions("");
-      setShowFabForm(false);
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -164,7 +162,6 @@ export default function StudentComplaints() {
       queryClient.invalidateQueries({ queryKey: ["/api/student/complaints/filed"] });
       toast({ title: "Report submitted", description: "Your peer report has been filed." });
       setPeerName(""); setPeerIncidentDate(""); setPeerContent("");
-      setShowFabForm(false);
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -244,7 +241,7 @@ export default function StudentComplaints() {
           {tabs.map(({ id, label, Icon, count }) => (
             <button
               key={id}
-              onClick={() => { setActiveTab(id); setShowFabForm(false); }}
+              onClick={() => { setActiveTab(id); }}
               className={`flex-1 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-2 py-2.5 rounded-xl text-xs font-semibold transition-all min-h-[52px] ${
                 activeTab === id
                   ? "bg-[#10b981] text-white shadow-sm"
@@ -465,11 +462,8 @@ export default function StudentComplaints() {
         <div className="sm:hidden fixed bottom-6 right-5 z-40">
           <button
             onClick={() => {
-              setShowFabForm(v => !v);
               const formId = activeTab === "staff" ? "form-staff-grievance" : "form-peer-report";
-              setTimeout(() => {
-                document.querySelector(`[data-testid="${formId}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }, 100);
+              document.querySelector(`[data-testid="${formId}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
             }}
             className="w-14 h-14 rounded-full bg-[#10b981] hover:bg-[#059669] text-white shadow-lg flex items-center justify-center transition-all active:scale-95"
             data-testid="button-fab"
