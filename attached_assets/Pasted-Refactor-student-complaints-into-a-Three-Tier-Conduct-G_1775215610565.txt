@@ -1,0 +1,62 @@
+Refactor /student/complaints into a Three-Tier Conduct & Grievance Hub. Use an Emerald Green & White theme, optimized for Motorola 60 Fusion and Desktop.
+
+1. The Three-Section Navigation (Upper Tabs):
+Implement a segmented toggle or three large high-end cards at the top:
+
+'From Teachers': (The Student's Inbox) - Complaints made against the student.
+
+'Staff Grievance': (The Student's Outbox) - Complaints made by the student against staff.
+
+'Peer Reports': (Student-to-Student) - Complaints made by the student against other students.
+
+2. Section 1: Teacher's Complaints (View Only):
+
+Display a list of 'Conduct Alerts' from teachers.
+
+Data Points: Teacher Name, Subject (if applicable), Date, Time, and the specific Complaint Detail.
+
+UI: Use a soft red 'Attention' icon to distinguish these from regular messages.
+
+3. Section 2: Staff Grievance (Submission Form):
+
+Create a professional form for students to report issues with staff/teachers.
+
+Input Fields:
+
+Staff Name (Dropdown or Search).
+
+Complaint Description (Text area).
+
+Student Contact Number (Pre-filled but editable).
+
+Suggestions for Improvement (Dedicated text area).
+
+Logic: Ensure this remains confidential and is only visible to the Principal.
+
+4. Section 3: Peer-to-Peer Complaint (Submission Form):
+
+A form for reporting issues with other students (e.g., bullying or misconduct).
+
+Input Fields:
+
+Target Student Name/ID.
+
+Incident Date & Time.
+
+Description of Incident.
+
+5. High-End UI/UX Specifications:
+
+Status Tracking: Every complaint filed by the student should have a 'Status' badge: Pending | Under Investigation | Resolved.
+
+Mailbox Aesthetic: Use a 'Clean Inbox' style with thin gray dividers, Emerald Green accents, and Lucide-React icons (Mail, ShieldAlert, UserX).
+
+Mobile Logic: On mobile, use a 'Floating Action Button' (FAB) with a '+' to open the specific complaint forms.
+
+6. Technical Guardrails:
+
+Multi-Tenancy: Filter all data by school_id.
+
+Security: Students must NEVER be able to see complaints made by a teacher against another student.
+
+Audit Trail: Every entry must log the exact created_at timestamp for legal and school record purposes."
