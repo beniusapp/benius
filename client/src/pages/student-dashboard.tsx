@@ -227,6 +227,14 @@ export default function StudentDashboard() {
                   setLocation("/student/complaints");
                   return;
                 }
+                if (id === "gallery") {
+                  setLocation("/student/gallery");
+                  return;
+                }
+                if (id === "faculty-info") {
+                  setLocation("/student/faculty");
+                  return;
+                }
                 toast({
                   title: label,
                   description: `${label} module coming soon.`,

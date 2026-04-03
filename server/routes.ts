@@ -1103,6 +1103,35 @@ export async function registerRoutes(
     res.json(items);
   });
 
+  // ===== STUDENT GALLERY ROUTES =====
+
+  app.get("/api/student/gallery/tags", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const tags = await storage.getGalleryTagsBySchool(student.schoolId);
+    res.json(tags);
+  });
+
+  app.get("/api/student/gallery", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const tag = (req.query.tag as string) || undefined;
+    const items = await storage.getApprovedGalleryItems(student.schoolId, tag);
+    res.json(items);
+  });
+
+  // ===== STUDENT FACULTY ROUTES =====
+
+  app.get("/api/student/faculty", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const faculty = await storage.getFacultyBySchool(student.schoolId);
+    res.json(faculty);
+  });
+
   // ===== STUDENT COMPLAINT ROUTES =====
 
   app.get("/api/student/complaints/inbox", async (req, res) => {

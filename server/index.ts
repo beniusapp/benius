@@ -122,6 +122,13 @@ app.use((req, res, next) => {
     ALTER TABLE complaints ALTER COLUMN teacher_id DROP NOT NULL;
   `);
 
+  await pool.query(`
+    ALTER TABLE teachers ADD COLUMN IF NOT EXISTS profile_image_url TEXT;
+    ALTER TABLE teachers ADD COLUMN IF NOT EXISTS designation TEXT;
+    ALTER TABLE teachers ADD COLUMN IF NOT EXISTS qualifications TEXT;
+    ALTER TABLE teachers ADD COLUMN IF NOT EXISTS department TEXT;
+  `);
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

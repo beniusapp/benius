@@ -19,6 +19,8 @@ import StudentHomework from "@/pages/student-homework";
 import StudentClasswork from "@/pages/student-classwork";
 import StudentExamination from "@/pages/student-examination";
 import StudentComplaints from "@/pages/student-complaints";
+import StudentGallery from "@/pages/student-gallery";
+import StudentFaculty from "@/pages/student-faculty";
 
 function Router() {
   return (
@@ -36,6 +38,8 @@ function Router() {
       <Route path="/student/classwork" component={StudentClasswork} />
       <Route path="/student/examination" component={StudentExamination} />
       <Route path="/student/complaints" component={StudentComplaints} />
+      <Route path="/student/gallery" component={StudentGallery} />
+      <Route path="/student/faculty" component={StudentFaculty} />
       <Route path="/teacher-login" component={TeacherLogin} />
       <Route path="/teacher-dashboard" component={TeacherDashboard} />
       <Route path="/teacher-dashboard/:module" component={TeacherDashboard} />

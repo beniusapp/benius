@@ -809,6 +809,35 @@ export class DatabaseStorage {
     return item;
   }
 
+  async getApprovedGalleryItems(schoolId: number, tag?: string): Promise<GalleryItem[]> {
+    const conditions = [eq(galleryItems.schoolId, schoolId), eq(galleryItems.approved, true)];
+    if (tag) conditions.push(eq(galleryItems.eventTag, tag));
+    return await db.select().from(galleryItems).where(and(...conditions)).orderBy(desc(galleryItems.createdAt));
+  }
+
+  async getGalleryTagsBySchool(schoolId: number): Promise<string[]> {
+    const rows = await db.selectDistinct({ eventTag: galleryItems.eventTag })
+      .from(galleryItems)
+      .where(and(eq(galleryItems.schoolId, schoolId), eq(galleryItems.approved, true)));
+    return rows.map(r => r.eventTag).filter((t): t is string => t !== null && t !== "");
+  }
+
+  async getFacultyBySchool(schoolId: number): Promise<{
+    id: number; fullName: string; subject: string; designation: string | null;
+    qualifications: string | null; department: string | null; profileImageUrl: string | null;
+  }[]> {
+    const rows = await db.select({
+      id: teachers.id,
+      fullName: teachers.fullName,
+      subject: teachers.subject,
+      designation: teachers.designation,
+      qualifications: teachers.qualifications,
+      department: teachers.department,
+      profileImageUrl: teachers.profileImageUrl,
+    }).from(teachers).where(eq(teachers.schoolId, schoolId)).orderBy(teachers.fullName);
+    return rows;
+  }
+
   // ===== CALENDAR METHODS =====
   async createCalendarEvent(data: InsertCalendarEvent): Promise<CalendarEvent> {
     const [event] = await db.insert(calendarEvents).values(data).returning();

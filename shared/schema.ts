@@ -49,6 +49,10 @@ export const teachers = pgTable("teachers", {
   otpExpiresAt: timestamp("otp_expires_at"),
   resetToken: text("reset_token"),
   resetTokenExpiresAt: timestamp("reset_token_expires_at"),
+  profileImageUrl: text("profile_image_url"),
+  designation: text("designation"),
+  qualifications: text("qualifications"),
+  department: text("department"),
 });
 
 export const attendanceRecords = pgTable("attendance_records", {
