@@ -1,8 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { ArrowLeft, Aperture, X, Download, Loader2, Image } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
+
+function normalizeImageUrl(url: string): string {
+  if (!url) return url;
+  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("//")) return url;
+  return `${window.location.origin}${url.startsWith("/") ? "" : "/"}${url}`;
+}
 
 interface StudentMe {
   id: number;
@@ -42,10 +48,16 @@ export default function StudentGallery() {
   const [activeTag, setActiveTag] = useState<string>("all");
   const [lightbox, setLightbox] = useState<GalleryItem | null>(null);
 
-  const { data: student, isLoading: studentLoading } = useQuery<StudentMe>({
+  const { data: student, isLoading: studentLoading } = useQuery<StudentMe | null>({
     queryKey: ["/api/student-me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
+
+  useEffect(() => {
+    if (!studentLoading && !student) {
+      setLocation("/student-login");
+    }
+  }, [studentLoading, student, setLocation]);
 
   const { data: tags = [], isLoading: tagsLoading } = useQuery<string[]>({
     queryKey: ["/api/student/gallery/tags"],
@@ -170,7 +182,7 @@ export default function StudentGallery() {
               >
                 <div className="relative overflow-hidden">
                   <img
-                    src={item.imageUrl}
+                    src={normalizeImageUrl(item.imageUrl)}
                     alt={item.title}
                     className="w-full object-cover group-hover:scale-105 transition-transform duration-300"
                     loading="lazy"
@@ -209,7 +221,7 @@ export default function StudentGallery() {
             </div>
             <div className="flex items-center gap-2 flex-shrink-0 ml-3">
               <a
-                href={lightbox.imageUrl}
+                href={normalizeImageUrl(lightbox.imageUrl)}
                 download
                 target="_blank"
                 rel="noopener noreferrer"
@@ -234,7 +246,7 @@ export default function StudentGallery() {
           {/* Image */}
           <div className="flex-1 flex items-center justify-center p-4 overflow-hidden" onClick={() => setLightbox(null)}>
             <img
-              src={lightbox.imageUrl}
+              src={normalizeImageUrl(lightbox.imageUrl)}
               alt={lightbox.title}
               className="max-w-full max-h-full object-contain rounded-xl shadow-2xl"
               onClick={e => e.stopPropagation()}

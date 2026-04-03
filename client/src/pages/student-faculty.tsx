@@ -1,8 +1,14 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { ArrowLeft, UserCheck, Search, GraduationCap, Loader2 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
+
+function normalizeImageUrl(url: string): string {
+  if (!url) return url;
+  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("//")) return url;
+  return `${window.location.origin}${url.startsWith("/") ? "" : "/"}${url}`;
+}
 
 interface StudentMe {
   id: number;
@@ -67,7 +73,7 @@ function FacultyCard({ member }: { member: FacultyMember }) {
       <div className="relative">
         {member.profileImageUrl && !imgError ? (
           <img
-            src={member.profileImageUrl}
+            src={normalizeImageUrl(member.profileImageUrl)}
             alt={member.fullName}
             className="w-20 h-20 rounded-full object-cover border-4 border-[#10b981] shadow-sm"
             onError={() => setImgError(true)}
@@ -117,10 +123,16 @@ export default function StudentFaculty() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeDept, setActiveDept] = useState("all");
 
-  const { data: student, isLoading: studentLoading } = useQuery<StudentMe>({
+  const { data: student, isLoading: studentLoading } = useQuery<StudentMe | null>({
     queryKey: ["/api/student-me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
+
+  useEffect(() => {
+    if (!studentLoading && !student) {
+      setLocation("/student-login");
+    }
+  }, [studentLoading, student, setLocation]);
 
   const { data: faculty = [], isLoading: facultyLoading } = useQuery<FacultyMember[]>({
     queryKey: ["/api/student/faculty"],
