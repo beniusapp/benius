@@ -297,7 +297,8 @@ export default function StudentCalendar() {
             {/* Modal header */}
             <div className="bg-[#10b981] px-5 py-4">
               <p className="text-white font-bold text-base">
-                {new Date(modalDate + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}
+                {new Date(modalDate + "T12:00:00").toLocaleDateString("en-GB")}
+                {" — "}{new Date(modalDate + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long" })}
               </p>
             </div>
 

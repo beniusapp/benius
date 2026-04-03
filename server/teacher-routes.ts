@@ -1131,7 +1131,13 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
     const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
     if (!leave || leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
-    const updated = await storage.updateStudentLeaveStatus(leave.id, "rejected", req.session.userId!, "admin");
+    const { rejectionReason } = req.body;
+    const updated = await storage.updateStudentLeaveStatus(leave.id, "rejected", req.session.userId!, "admin", rejectionReason || undefined);
+    await storage.createAuditLog({
+      schoolId: req.session.schoolId!, actionType: "reject", entityType: "student_leave", entityId: leave.id,
+      actionBy: req.session.userId!, actionByRole: "admin",
+      details: `Admin rejected student leave${rejectionReason ? `: ${rejectionReason}` : ""}`,
+    });
     res.json(updated);
   });
 
