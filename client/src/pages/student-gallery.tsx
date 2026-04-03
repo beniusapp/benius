@@ -52,10 +52,12 @@ export default function StudentGallery() {
     enabled: !!student,
   });
 
+  const galleryUrl = activeTag === "all"
+    ? "/api/student/gallery"
+    : `/api/student/gallery?tag=${encodeURIComponent(activeTag)}`;
+
   const { data: items = [], isLoading: itemsLoading } = useQuery<GalleryItem[]>({
-    queryKey: activeTag === "all"
-      ? ["/api/student/gallery"]
-      : ["/api/student/gallery", activeTag],
+    queryKey: [galleryUrl],
     queryFn: getQueryFn({ on401: "returnNull" }),
     enabled: !!student,
   });

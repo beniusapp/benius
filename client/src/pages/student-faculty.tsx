@@ -198,7 +198,7 @@ export default function StudentFaculty() {
             <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-0.5">
               <button
                 onClick={() => setActiveDept("all")}
-                className={`flex-shrink-0 px-3 h-8 rounded-full text-xs font-semibold transition-all ${
+                className={`flex-shrink-0 px-4 h-11 rounded-full text-xs font-semibold transition-all ${
                   activeDept === "all"
                     ? "bg-[#10b981] text-white"
                     : "bg-white text-gray-600 border border-emerald-100 hover:border-[#10b981] hover:text-[#10b981]"
@@ -211,7 +211,7 @@ export default function StudentFaculty() {
                 <button
                   key={dept}
                   onClick={() => setActiveDept(dept)}
-                  className={`flex-shrink-0 px-3 h-8 rounded-full text-xs font-semibold transition-all whitespace-nowrap ${
+                  className={`flex-shrink-0 px-4 h-11 rounded-full text-xs font-semibold transition-all whitespace-nowrap ${
                     activeDept === dept
                       ? "bg-[#10b981] text-white"
                       : "bg-white text-gray-600 border border-emerald-100 hover:border-[#10b981] hover:text-[#10b981]"
