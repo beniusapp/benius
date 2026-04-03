@@ -1068,11 +1068,19 @@ export class DatabaseStorage {
     }));
   }
 
-  async updateStudentLeaveStatus(id: number, status: string, reviewedBy: number, reviewerRole: string): Promise<StudentLeaveRequest> {
+  async updateStudentLeaveStatus(id: number, status: string, reviewedBy: number, reviewerRole: string, rejectionReason?: string): Promise<StudentLeaveRequest> {
+    const updateData: Record<string, unknown> = { status, reviewedBy, reviewerRole };
+    if (rejectionReason !== undefined) updateData.rejectionReason = rejectionReason;
     const [req] = await db.update(studentLeaveRequests)
-      .set({ status, reviewedBy, reviewerRole })
+      .set(updateData)
       .where(eq(studentLeaveRequests.id, id)).returning();
     return req;
+  }
+
+  async getStudentLeavesByStudent(studentId: number): Promise<StudentLeaveRequest[]> {
+    return await db.select().from(studentLeaveRequests)
+      .where(eq(studentLeaveRequests.studentId, studentId))
+      .orderBy(desc(studentLeaveRequests.createdAt));
   }
 
   async getStudentLeaveById(id: number): Promise<StudentLeaveRequest | null> {

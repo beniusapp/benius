@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Loader2, Send, CheckCircle, Forward, Calendar, Briefcase, Clock } from "lucide-react";
+import { Loader2, Send, CheckCircle, Forward, Calendar, Briefcase, Clock, XCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -70,6 +70,8 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
   const [activeTab, setActiveTab] = useState("my-leave");
+  const [rejectingId, setRejectingId] = useState<number | null>(null);
+  const [rejectionReason, setRejectionReason] = useState("");
 
   const { data: leaves = [], isLoading } = useQuery<LeaveEntry[]>({
     queryKey: ["/api/leave/teacher", teacher.id],
@@ -138,6 +140,21 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
     },
     onSuccess: () => {
       toast({ title: "Leave Forwarded", description: "Leave request forwarded to principal." });
+      queryClient.invalidateQueries({ queryKey: ["/api/student-leaves", teacher.schoolId, teacher.assignedClass, teacher.assignedSection] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: async ({ id, reason }: { id: number; reason: string }) => {
+      await apiRequest("PATCH", `/api/student-leaves/${id}/teacher-reject`, { rejectionReason: reason });
+    },
+    onSuccess: () => {
+      toast({ title: "Leave Rejected", description: "The student has been notified." });
+      setRejectingId(null);
+      setRejectionReason("");
       queryClient.invalidateQueries({ queryKey: ["/api/student-leaves", teacher.schoolId, teacher.assignedClass, teacher.assignedSection] });
     },
     onError: (error: Error) => {
@@ -336,7 +353,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                         {formatDate(sl.startDate)} to {formatDate(sl.endDate)}
                       </p>
                       <p className="text-sm mt-1 mb-2">{sl.reason}</p>
-                      {sl.status === "pending" && (
+                      {sl.status === "pending" && rejectingId !== sl.id && (
                         <div className="flex items-center gap-2 flex-wrap">
                           <Button
                             size="sm"
@@ -354,6 +371,15 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                           <Button
                             size="sm"
                             variant="outline"
+                            onClick={() => { setRejectingId(sl.id); setRejectionReason(""); }}
+                            data-testid={`button-reject-leave-${sl.id}`}
+                          >
+                            <XCircle className="w-3 h-3 mr-1" />
+                            Reject
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
                             onClick={() => forwardMutation.mutate(sl.id)}
                             disabled={forwardMutation.isPending}
                             data-testid={`button-forward-leave-${sl.id}`}
@@ -363,9 +389,40 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                             ) : (
                               <Forward className="w-3 h-3 mr-1" />
                             )}
-                            Forward to Principal
+                            Escalate
                           </Button>
                         </div>
+                      )}
+                      {sl.status === "pending" && rejectingId === sl.id && (
+                        <div className="mt-2 space-y-2">
+                          <Textarea
+                            placeholder="Reason for rejection (optional)..."
+                            value={rejectionReason}
+                            onChange={e => setRejectionReason(e.target.value)}
+                            rows={2}
+                            className="text-sm"
+                            data-testid={`input-rejection-reason-${sl.id}`}
+                          />
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => rejectMutation.mutate({ id: sl.id, reason: rejectionReason })}
+                              disabled={rejectMutation.isPending}
+                              data-testid={`button-confirm-reject-${sl.id}`}
+                            >
+                              {rejectMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <XCircle className="w-3 h-3 mr-1" />}
+                              Confirm Reject
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => setRejectingId(null)}>Cancel</Button>
+                          </div>
+                        </div>
+                      )}
+                      {sl.status === "rejected" && (sl as StudentLeaveEntry & { rejectionReason?: string }).rejectionReason && (
+                        <p className="text-xs text-red-500 mt-1">Reason: {(sl as StudentLeaveEntry & { rejectionReason?: string }).rejectionReason}</p>
+                      )}
+                      {sl.status === "forwarded" && (
+                        <p className="text-xs text-blue-500 mt-1">Sent to Principal for final review</p>
                       )}
                     </div>
                   ))}

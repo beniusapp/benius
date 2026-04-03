@@ -129,6 +129,16 @@ app.use((req, res, next) => {
     ALTER TABLE teachers ADD COLUMN IF NOT EXISTS department TEXT;
   `);
 
+  await pool.query(`
+    ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS venue TEXT;
+    ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS description TEXT;
+    ALTER TABLE timetable_entries ADD COLUMN IF NOT EXISTS start_time TEXT;
+    ALTER TABLE timetable_entries ADD COLUMN IF NOT EXISTS end_time TEXT;
+    ALTER TABLE student_leave_requests ADD COLUMN IF NOT EXISTS category TEXT;
+    ALTER TABLE student_leave_requests ADD COLUMN IF NOT EXISTS attachment_url TEXT;
+    ALTER TABLE student_leave_requests ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+  `);
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

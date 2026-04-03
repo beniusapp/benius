@@ -235,6 +235,18 @@ export default function StudentDashboard() {
                   setLocation("/student/faculty");
                   return;
                 }
+                if (id === "school-calendar") {
+                  setLocation("/student/calendar");
+                  return;
+                }
+                if (id === "timetable") {
+                  setLocation("/student/timetable");
+                  return;
+                }
+                if (id === "leave") {
+                  setLocation("/student/leave");
+                  return;
+                }
                 toast({
                   title: label,
                   description: `${label} module coming soon.`,

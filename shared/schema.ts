@@ -189,6 +189,8 @@ export const calendarEvents = pgTable("calendar_events", {
   title: text("title").notNull(),
   date: date("date").notNull(),
   eventType: text("event_type").notNull(),
+  venue: text("venue"),
+  description: text("description"),
 });
 
 export const libraryBooks = pgTable("library_books", {
@@ -249,6 +251,8 @@ export const timetableEntries = pgTable("timetable_entries", {
   class: varchar("class", { length: 20 }).notNull(),
   section: varchar("section", { length: 10 }).notNull(),
   subject: text("subject").notNull(),
+  startTime: text("start_time"),
+  endTime: text("end_time"),
 });
 
 export const studentLeaveRequests = pgTable("student_leave_requests", {
@@ -262,6 +266,9 @@ export const studentLeaveRequests = pgTable("student_leave_requests", {
   reviewedBy: integer("reviewed_by"),
   reviewerRole: text("reviewer_role"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  category: text("category"),
+  attachmentUrl: text("attachment_url"),
+  rejectionReason: text("rejection_reason"),
 });
 
 export const auditLogs = pgTable("audit_logs", {

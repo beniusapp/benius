@@ -1000,6 +1000,26 @@ export function registerTeacherRoutes(app: Express) {
     res.json(updated);
   });
 
+  app.patch("/api/student-leaves/:id/teacher-reject", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
+    if (!leave || leave.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const student = await storage.getStudentById(leave.studentId);
+    if (!student || student.class !== teacher.assignedClass || student.section !== teacher.assignedSection) {
+      return res.status(403).json({ message: "Not authorized for this student's class/section" });
+    }
+    const { rejectionReason } = req.body;
+    const updated = await storage.updateStudentLeaveStatus(leave.id, "rejected", teacher.id, "teacher", rejectionReason || undefined);
+    await storage.createAuditLog({
+      schoolId: teacher.schoolId, actionType: "reject", entityType: "student_leave", entityId: leave.id,
+      actionBy: teacher.id, actionByRole: "teacher",
+      details: `Rejected student leave${rejectionReason ? `: ${rejectionReason}` : ""}`,
+    });
+    res.json(updated);
+  });
+
   // ===== TIMETABLE =====
   app.post("/api/timetable", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });

@@ -1132,6 +1132,55 @@ export async function registerRoutes(
     res.json(faculty);
   });
 
+  // ===== STUDENT CALENDAR ROUTES =====
+
+  app.get("/api/student/calendar", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const events = await storage.getCalendarEvents(student.schoolId);
+    res.json(events);
+  });
+
+  // ===== STUDENT TIMETABLE ROUTES =====
+
+  app.get("/api/student/timetable", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const all = await storage.getTimetableBySchool(student.schoolId);
+    const entries = all.filter(e =>
+      e.class === student.class && e.section === student.section
+    );
+    res.json(entries);
+  });
+
+  // ===== STUDENT LEAVE ROUTES =====
+
+  app.post("/api/student/leave", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const { startDate, endDate, reason, category, attachmentUrl } = req.body;
+    if (!startDate || !endDate || !reason) return res.status(400).json({ message: "startDate, endDate, and reason are required" });
+    const leave = await storage.createStudentLeaveRequest({
+      studentId: student.id,
+      schoolId: student.schoolId,
+      startDate,
+      endDate,
+      reason,
+      category: category || null,
+      attachmentUrl: attachmentUrl || null,
+    });
+    res.status(201).json(leave);
+  });
+
+  app.get("/api/student/leave", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const leaves = await storage.getStudentLeavesByStudent(req.session.studentId);
+    res.json(leaves);
+  });
+
   // ===== STUDENT COMPLAINT ROUTES =====
 
   app.get("/api/student/complaints/inbox", async (req, res) => {
