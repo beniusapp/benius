@@ -1009,8 +1009,12 @@ export function registerTeacherRoutes(app: Express) {
       return res.status(400).json({ message: "All fields required" });
     // Always use session schoolId — never trust body schoolId
     const sessionSchoolId = req.session.schoolId!;
+    // Verify teacher belongs to admin's school
+    const tid = parseInt(teacherId);
+    const teacher = await storage.getTeacherById(tid);
+    if (!teacher || teacher.schoolId !== sessionSchoolId) return res.status(403).json({ message: "Teacher does not belong to your school" });
     const entry = await storage.createTimetableEntry({
-      teacherId: parseInt(teacherId), schoolId: sessionSchoolId,
+      teacherId: tid, schoolId: sessionSchoolId,
       dayOfWeek: parseInt(dayOfWeek), period: parseInt(period), class: cls, section, subject,
     });
     res.status(201).json(entry);
@@ -1044,7 +1048,10 @@ export function registerTeacherRoutes(app: Express) {
 
   app.delete("/api/timetable/:id", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
-    await storage.deleteTimetableEntry(parseInt(req.params.id));
+    const entry = await storage.getTimetableEntryById(parseInt(req.params.id));
+    if (!entry) return res.status(404).json({ message: "Entry not found" });
+    if (entry.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    await storage.deleteTimetableEntry(entry.id);
     res.json({ message: "Entry deleted" });
   });
 
@@ -1054,9 +1061,13 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
     const { teacherId, subject, class: cls, section, weeklyQuota } = req.body;
     if (!teacherId || !subject || !cls || !section) return res.status(400).json({ message: "teacherId, subject, class, section required" });
+    // Verify teacher belongs to admin's school
+    const tid = parseInt(teacherId);
+    const teacher = await storage.getTeacherById(tid);
+    if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Teacher does not belong to your school" });
     const alloc = await storage.createTeacherAllocation({
       schoolId: req.session.schoolId!,
-      teacherId: parseInt(teacherId),
+      teacherId: tid,
       subject,
       class: cls,
       section,
