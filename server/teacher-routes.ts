@@ -1004,11 +1004,13 @@ export function registerTeacherRoutes(app: Express) {
   // ===== TIMETABLE =====
   app.post("/api/timetable", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
-    const { teacherId, schoolId, dayOfWeek, period, class: cls, section, subject } = req.body;
-    if (teacherId === undefined || !schoolId || dayOfWeek === undefined || period === undefined || !cls || !section || !subject)
+    const { teacherId, dayOfWeek, period, class: cls, section, subject } = req.body;
+    if (teacherId === undefined || dayOfWeek === undefined || period === undefined || !cls || !section || !subject)
       return res.status(400).json({ message: "All fields required" });
+    // Always use session schoolId — never trust body schoolId
+    const sessionSchoolId = req.session.schoolId!;
     const entry = await storage.createTimetableEntry({
-      teacherId: parseInt(teacherId), schoolId: parseInt(schoolId),
+      teacherId: parseInt(teacherId), schoolId: sessionSchoolId,
       dayOfWeek: parseInt(dayOfWeek), period: parseInt(period), class: cls, section, subject,
     });
     res.status(201).json(entry);
@@ -1016,13 +1018,27 @@ export function registerTeacherRoutes(app: Express) {
 
   app.get("/api/timetable/teacher/:teacherId", async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
-    const list = await storage.getTimetableByTeacher(parseInt(req.params.teacherId));
+    const tid = parseInt(req.params.teacherId);
+    // Teachers can only view their own timetable
+    if (req.session.teacherId && req.session.teacherId !== tid)
+      return res.status(403).json({ message: "Not authorized" });
+    // Admins can only view teachers in their own school
+    if (req.session.userId) {
+      const teacher = await storage.getTeacherById(tid);
+      if (!teacher || teacher.schoolId !== req.session.schoolId)
+        return res.status(403).json({ message: "Not authorized" });
+    }
+    const list = await storage.getTimetableByTeacher(tid);
     res.json(list);
   });
 
   app.get("/api/timetable/school/:schoolId", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
-    const list = await storage.getTimetableBySchool(parseInt(req.params.schoolId));
+    // Enforce session school — never trust path param for authorization
+    const requestedSchoolId = parseInt(req.params.schoolId);
+    if (requestedSchoolId !== req.session.schoolId)
+      return res.status(403).json({ message: "Not authorized" });
+    const list = await storage.getTimetableBySchool(req.session.schoolId!);
     res.json(list);
   });
 
@@ -1081,7 +1097,15 @@ export function registerTeacherRoutes(app: Express) {
 
   app.get("/api/timetable/teacher/:teacherId/with-status", async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
-    const list = await storage.getTimetableByTeacher(parseInt(req.params.teacherId));
+    const tid = parseInt(req.params.teacherId);
+    if (req.session.teacherId && req.session.teacherId !== tid)
+      return res.status(403).json({ message: "Not authorized" });
+    if (req.session.userId) {
+      const teacher = await storage.getTeacherById(tid);
+      if (!teacher || teacher.schoolId !== req.session.schoolId)
+        return res.status(403).json({ message: "Not authorized" });
+    }
+    const list = await storage.getTimetableByTeacher(tid);
     res.json(list);
   });
 

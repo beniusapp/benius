@@ -959,13 +959,16 @@ export class DatabaseStorage {
   }
 
   async updateTimetableEntryStatus(schoolId: number, cls: string, section: string, status: string): Promise<number> {
+    // When publishing, only promote draft entries (not already-published ones)
+    const whereConditions = and(
+      eq(timetableEntries.schoolId, schoolId),
+      eq(timetableEntries.class, cls),
+      eq(timetableEntries.section, section),
+      status === "published" ? eq(timetableEntries.status, "draft") : undefined,
+    );
     const result = await db.update(timetableEntries)
       .set({ status })
-      .where(and(
-        eq(timetableEntries.schoolId, schoolId),
-        eq(timetableEntries.class, cls),
-        eq(timetableEntries.section, section),
-      ))
+      .where(whereConditions)
       .returning();
     return result.length;
   }
