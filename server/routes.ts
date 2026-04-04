@@ -1254,6 +1254,8 @@ export async function registerRoutes(
       incidentDate: incidentDate ? new Date(incidentDate) : null,
       status: "Pending",
       isDeleted: false,
+      complainantClass: student.class,
+      complainantSection: student.section,
     });
     res.status(201).json(complaint);
   });

@@ -617,6 +617,43 @@ export class DatabaseStorage {
     return c;
   }
 
+  async getClassFeedComplaints(schoolId: number, cls: string, section: string): Promise<(Complaint & { complainantStudentName: string | null })[]> {
+    const result = await db.select().from(complaints)
+      .leftJoin(students, eq(complaints.complainantStudentId, students.id))
+      .where(and(
+        eq(complaints.schoolId, schoolId),
+        eq(complaints.complaintType, "student-peer-report"),
+        eq(complaints.complainantClass, cls),
+        eq(complaints.complainantSection, section),
+        eq(complaints.isDeleted, false),
+      ))
+      .orderBy(desc(complaints.createdAt));
+    return result.map(r => ({
+      ...r.complaints,
+      complainantStudentName: r.students?.name || null,
+    }));
+  }
+
+  async resolveComplaint(id: number, schoolId: number, remarks: string): Promise<Complaint | null> {
+    const [c] = await db.update(complaints)
+      .set({ status: "Resolved", resolutionRemarks: remarks })
+      .where(and(eq(complaints.id, id), eq(complaints.schoolId, schoolId)))
+      .returning();
+    return c || null;
+  }
+
+  async escalateComplaint(id: number, schoolId: number): Promise<Complaint | null> {
+    const [c] = await db.update(complaints)
+      .set({ escalatedToPrincipal: true, status: "Escalated" })
+      .where(and(eq(complaints.id, id), eq(complaints.schoolId, schoolId)))
+      .returning();
+    return c || null;
+  }
+
+  async updateTeacherProfilePicture(teacherId: number, profileImageUrl: string): Promise<void> {
+    await db.update(teachers).set({ profileImageUrl }).where(eq(teachers.id, teacherId));
+  }
+
   async addComplaintNote(data: InsertComplaintNote): Promise<ComplaintNote> {
     const [n] = await db.insert(complaintNotes).values(data).returning();
     return n;

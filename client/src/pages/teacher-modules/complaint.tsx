@@ -2,7 +2,8 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Loader2, Plus, FileDown, Upload, X, Pencil, Trash2,
-  Shield, Calendar, MessageSquare, ChevronDown, ChevronUp, Send, Search
+  Shield, Calendar, MessageSquare, ChevronDown, ChevronUp, Send, Search,
+  Users, AlertTriangle, CheckCircle, Clock, ArrowUpCircle
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,21 @@ interface ComplaintNote {
   authorName: string;
   authorRole: string;
   content: string;
+  createdAt: string;
+}
+
+interface ClassFeedEntry {
+  id: number;
+  ticketId: string;
+  status: string;
+  content: string;
+  reportedStudentName: string | null;
+  incidentDate: string | null;
+  complainantClass: string | null;
+  complainantSection: string | null;
+  resolutionRemarks: string | null;
+  escalatedToPrincipal: boolean | null;
+  complainantStudentName: string | null;
   createdAt: string;
 }
 
@@ -289,8 +305,252 @@ function StudentSearchInput({
   );
 }
 
+function feedStatusBadge(status: string) {
+  const cfg: Record<string, { label: string; cls: string; Icon: typeof CheckCircle }> = {
+    Pending:   { label: "Pending",   cls: "bg-amber-100 text-amber-700 border-amber-300",   Icon: Clock         },
+    Resolved:  { label: "Resolved",  cls: "bg-green-100 text-green-700 border-green-300",   Icon: CheckCircle   },
+    Escalated: { label: "Escalated", cls: "bg-red-100   text-red-700   border-red-300",     Icon: AlertTriangle },
+  };
+  const s = cfg[status] ?? { label: status, cls: "bg-gray-100 text-gray-600 border-gray-200", Icon: Clock };
+  const Icon = s.Icon;
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold ${s.cls}`}>
+      <Icon className="w-3 h-3" /> {s.label}
+    </span>
+  );
+}
+
+function ClassFeedDrawer({
+  entry, teacher, onClose,
+}: {
+  entry: ClassFeedEntry;
+  teacher: TeacherMe;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [resolveRemarks, setResolveRemarks] = useState("");
+  const [showResolveBox, setShowResolveBox] = useState(false);
+
+  const resolveMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/complaints/${entry.id}/resolve`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resolutionRemarks: resolveRemarks }),
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Complaint Resolved" });
+      queryClient.invalidateQueries({ queryKey: ["/api/complaints/class-feed"] });
+      onClose();
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const escalateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/complaints/${entry.id}/escalate`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Escalated to Principal" });
+      queryClient.invalidateQueries({ queryKey: ["/api/complaints/class-feed"] });
+      onClose();
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const canAct = entry.status === "Pending" || entry.status === "Investigating";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40" onClick={onClose}>
+      <div
+        className="bg-white dark:bg-gray-900 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-2xl p-5 space-y-4"
+        onClick={e => e.stopPropagation()}
+        data-testid="drawer-class-feed"
+      >
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="font-bold text-sm">Peer Report #{entry.ticketId}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {new Date(entry.createdAt).toLocaleDateString("en-GB")} · Class {entry.complainantClass}-{entry.complainantSection}
+            </p>
+          </div>
+          {feedStatusBadge(entry.status)}
+        </div>
+
+        <div className="space-y-2 text-sm">
+          <div><span className="text-xs font-semibold text-muted-foreground">Reported by</span>
+            <p className="font-medium">{entry.complainantStudentName || "Anonymous"}</p>
+          </div>
+          {entry.reportedStudentName && (
+            <div><span className="text-xs font-semibold text-muted-foreground">Against</span>
+              <p className="font-medium">{entry.reportedStudentName}</p>
+            </div>
+          )}
+          {entry.incidentDate && (
+            <div><span className="text-xs font-semibold text-muted-foreground">Incident Date</span>
+              <p>{new Date(entry.incidentDate).toLocaleDateString("en-GB")}</p>
+            </div>
+          )}
+          <div><span className="text-xs font-semibold text-muted-foreground">Description</span>
+            <p className="whitespace-pre-wrap text-sm leading-relaxed">{entry.content}</p>
+          </div>
+          {entry.resolutionRemarks && (
+            <div className="p-3 bg-green-50 dark:bg-green-950/20 rounded-xl border border-green-200">
+              <p className="text-xs font-semibold text-green-700">Resolution Remarks</p>
+              <p className="text-xs text-green-600 mt-0.5">{entry.resolutionRemarks}</p>
+            </div>
+          )}
+          {entry.escalatedToPrincipal && (
+            <div className="flex items-center gap-1.5 text-xs text-red-600 font-medium">
+              <AlertTriangle className="w-3.5 h-3.5" /> Escalated to Principal
+            </div>
+          )}
+        </div>
+
+        {canAct && (
+          <div className="pt-2 space-y-3 border-t">
+            {showResolveBox ? (
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-muted-foreground">Resolution Remarks *</label>
+                <Textarea
+                  value={resolveRemarks}
+                  onChange={e => setResolveRemarks(e.target.value)}
+                  rows={3}
+                  placeholder="Describe how this was resolved..."
+                  className="rounded-xl resize-none text-sm"
+                  data-testid="input-resolve-remarks"
+                />
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => resolveMutation.mutate()}
+                    disabled={!resolveRemarks.trim() || resolveMutation.isPending}
+                    className="rounded-xl bg-green-600 hover:bg-green-700 text-white flex-1"
+                    data-testid="button-confirm-resolve"
+                  >
+                    {resolveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4 mr-1" />}
+                    Confirm Resolve
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setShowResolveBox(false)} className="rounded-xl">
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => setShowResolveBox(true)}
+                  className="rounded-xl bg-green-600 hover:bg-green-700 text-white flex-1"
+                  data-testid="button-resolve"
+                >
+                  <CheckCircle className="w-4 h-4 mr-1" /> Resolve
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => escalateMutation.mutate()}
+                  disabled={escalateMutation.isPending || !!entry.escalatedToPrincipal}
+                  className="rounded-xl border-red-200 text-red-600 hover:bg-red-50 flex-1"
+                  data-testid="button-escalate"
+                >
+                  {escalateMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUpCircle className="w-4 h-4 mr-1" />}
+                  Escalate
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
+        <Button variant="ghost" size="sm" onClick={onClose} className="w-full rounded-xl" data-testid="button-close-drawer">
+          Close
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ClassFeedTab({ teacher }: { teacher: TeacherMe }) {
+  const [selected, setSelected] = useState<ClassFeedEntry | null>(null);
+
+  const { data: feed = [], isLoading } = useQuery<ClassFeedEntry[]>({
+    queryKey: ["/api/complaints/class-feed"],
+    queryFn: async () => {
+      const res = await fetch("/api/complaints/class-feed", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <Users className="w-5 h-5 text-purple-600" />
+        <h2 className="text-base font-bold">Class Feed — Peer Reports</h2>
+        <span className="ml-auto text-xs text-muted-foreground">Class {teacher.assignedClass}-{teacher.assignedSection}</span>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-purple-600" /></div>
+      ) : feed.length === 0 ? (
+        <div className="text-center py-10 text-muted-foreground">
+          <Users className="w-10 h-10 mx-auto mb-2 opacity-20" />
+          <p className="text-sm">No peer reports for your class yet.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {feed.map(entry => (
+            <button
+              key={entry.id}
+              onClick={() => setSelected(entry)}
+              className="w-full text-left rounded-xl border bg-card shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 p-4"
+              data-testid={`card-feed-${entry.id}`}
+            >
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <span className="font-mono text-xs font-bold text-purple-600 bg-purple-50 dark:bg-purple-950/30 px-2 py-0.5 rounded">
+                  {entry.ticketId}
+                </span>
+                {feedStatusBadge(entry.status)}
+              </div>
+              <p className="text-xs text-muted-foreground mb-1">
+                <span className="font-semibold text-foreground">{entry.complainantStudentName || "Anonymous"}</span>
+                {entry.reportedStudentName && <span> → against <span className="font-semibold text-foreground">{entry.reportedStudentName}</span></span>}
+              </p>
+              <p className="text-sm line-clamp-2 text-muted-foreground">{entry.content}</p>
+              <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+                <Calendar className="w-3 h-3" />
+                {new Date(entry.createdAt).toLocaleDateString("en-GB")}
+                {entry.escalatedToPrincipal && <span className="ml-2 text-red-500 font-medium">· Escalated</span>}
+              </p>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {selected && (
+        <ClassFeedDrawer
+          entry={selected}
+          teacher={teacher}
+          onClose={() => setSelected(null)}
+        />
+      )}
+    </div>
+  );
+}
+
 export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
+  const [activeView, setActiveView] = useState<"my" | "feed">("my");
 
   const [complaintType, setComplaintType] = useState<ComplaintType>("teacher-to-student");
   const [selectedStudent, setSelectedStudent] = useState<SearchResult | null>(null);
@@ -398,6 +658,32 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
 
   return (
     <div className="space-y-6">
+      {/* Tab switcher */}
+      <div className="flex gap-1 p-1 bg-muted/50 rounded-xl" data-testid="complaint-view-toggle">
+        <button
+          onClick={() => setActiveView("my")}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+            activeView === "my" ? "bg-white dark:bg-gray-900 shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
+          }`}
+          data-testid="tab-my-complaints"
+        >
+          <Shield className="w-3.5 h-3.5" /> My Complaints
+        </button>
+        <button
+          onClick={() => setActiveView("feed")}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+            activeView === "feed" ? "bg-white dark:bg-gray-900 shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
+          }`}
+          data-testid="tab-class-feed"
+        >
+          <Users className="w-3.5 h-3.5" /> Class Feed
+        </button>
+      </div>
+
+      {activeView === "feed" && <ClassFeedTab teacher={teacher} />}
+
+      {activeView === "my" && (
+      <div className="space-y-6">
       <Card className="rounded-2xl shadow-lg border-0 bg-white dark:bg-gray-950" data-testid="card-create-complaint">
         <CardContent className="p-5 sm:p-6 space-y-5">
           <div className="flex items-center gap-2 mb-1">
@@ -672,6 +958,8 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
           </div>
         )}
       </div>
+      </div>
+      )}
     </div>
   );
 }

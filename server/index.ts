@@ -153,6 +153,13 @@ app.use((req, res, next) => {
     );
   `);
 
+  await pool.query(`
+    ALTER TABLE complaints ADD COLUMN IF NOT EXISTS complainant_class VARCHAR(20);
+    ALTER TABLE complaints ADD COLUMN IF NOT EXISTS complainant_section VARCHAR(10);
+    ALTER TABLE complaints ADD COLUMN IF NOT EXISTS resolution_remarks TEXT;
+    ALTER TABLE complaints ADD COLUMN IF NOT EXISTS escalated_to_principal BOOLEAN NOT NULL DEFAULT FALSE;
+  `);
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

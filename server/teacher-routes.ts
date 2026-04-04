@@ -38,6 +38,7 @@ const teacherLoginSchema = z.object({
 });
 
 const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
   newPassword: z.string().min(6),
 });
 
@@ -156,6 +157,7 @@ export function registerTeacherRoutes(app: Express) {
       schoolName: data.school.name,
       schoolCode: data.school.code,
       attendanceDoneToday: todayDone,
+      profileImageUrl: data.teacher.profileImageUrl || null,
     });
   });
 
@@ -167,9 +169,22 @@ export function registerTeacherRoutes(app: Express) {
     const data = await storage.getTeacherWithSchool(req.session.teacherId);
     if (!data) return res.status(401).json({ message: "Teacher not found" });
 
+    const currentValid = await bcrypt.compare(parsed.data.currentPassword, data.user.passwordHash);
+    if (!currentValid) return res.status(400).json({ message: "Current password is incorrect" });
+
     const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
     await storage.updateTeacherPassword(data.user.id, passwordHash, false);
     res.json({ message: "Password changed successfully" });
+  });
+
+  app.post("/api/teacher/profile-picture", diskUpload.single("file"), async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const profileImageUrl = `/uploads/${req.file.filename}`;
+    await storage.updateTeacherProfilePicture(teacher.id, profileImageUrl);
+    res.json({ message: "Profile picture updated", profileImageUrl });
   });
 
   // ===== FORGOT PASSWORD / OTP =====
@@ -600,6 +615,43 @@ export function registerTeacherRoutes(app: Express) {
 
     const notes = await storage.getComplaintNotes(complaintId);
     res.json(notes);
+  });
+
+  // ===== CLASS FEED (Peer Reports for Class Teacher) =====
+  app.get("/api/complaints/class-feed", async (req, res) => {
+    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const list = await storage.getClassFeedComplaints(teacher.schoolId, teacher.assignedClass, teacher.assignedSection);
+    res.json(list);
+  });
+
+  app.patch("/api/complaints/:id/resolve", async (req, res) => {
+    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const id = parseInt(req.params.id);
+    const { resolutionRemarks } = req.body;
+    if (!resolutionRemarks?.trim()) return res.status(400).json({ message: "Resolution remarks are required" });
+    const complaint = await storage.getComplaintById(id);
+    if (!complaint || complaint.schoolId !== teacher.schoolId) return res.status(404).json({ message: "Complaint not found" });
+    if (complaint.complaintType !== "student-peer-report") return res.status(403).json({ message: "Access denied" });
+    const updated = await storage.resolveComplaint(id, teacher.schoolId, resolutionRemarks.trim());
+    if (!updated) return res.status(404).json({ message: "Complaint not found" });
+    res.json(updated);
+  });
+
+  app.patch("/api/complaints/:id/escalate", async (req, res) => {
+    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const id = parseInt(req.params.id);
+    const complaint = await storage.getComplaintById(id);
+    if (!complaint || complaint.schoolId !== teacher.schoolId) return res.status(404).json({ message: "Complaint not found" });
+    if (complaint.complaintType !== "student-peer-report") return res.status(403).json({ message: "Access denied" });
+    const updated = await storage.escalateComplaint(id, teacher.schoolId);
+    if (!updated) return res.status(404).json({ message: "Complaint not found" });
+    res.json(updated);
   });
 
   // ===== EXAMINATION =====

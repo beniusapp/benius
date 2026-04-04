@@ -35,7 +35,7 @@ A full-stack, enterprise-grade school management platform with:
 - **homework_submissions**: id, homework_id, student_id, school_id, file_url, status (submitted/approved/rejected), submitted_at, reviewed_at, reviewed_by
 - **classwork**: id, teacher_id, school_id, class, section, subject, content, file_url, created_at
 - **notices**: id, school_id, created_by_id, creator_role, target_type, target_class, target_section, notice_type, content, file_url, created_at
-- **complaints**: id, ticket_id, teacher_id, student_id, school_id, complaint_type, status, content, reported_student_name, file_url, is_deleted, created_at
+- **complaints**: id, ticket_id, teacher_id, student_id, school_id, complaint_type, status, content, reported_student_name, file_url, is_deleted, created_at, complainant_student_id, complainant_class, complainant_section, resolution_remarks, escalated_to_principal
 - **complaint_notes**: id, complaint_id, author_id, author_role, author_name, content, created_at
 - **exam_scores**: id, student_id, teacher_id, school_id, subject, exam_type, marks, total_marks, pass_marks (default 33), is_absent, class, section, published (default false), created_at
 - **gallery_items**: id, school_id, uploaded_by_id, title, description, event_tag, image_url, approved, created_at

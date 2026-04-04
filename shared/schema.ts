@@ -141,6 +141,10 @@ export const complaints = pgTable("complaints", {
   contactNumber: text("contact_number"),
   suggestions: text("suggestions"),
   incidentDate: timestamp("incident_date"),
+  complainantClass: varchar("complainant_class", { length: 20 }),
+  complainantSection: varchar("complainant_section", { length: 10 }),
+  resolutionRemarks: text("resolution_remarks"),
+  escalatedToPrincipal: boolean("escalated_to_principal").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

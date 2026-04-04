@@ -40,6 +40,7 @@ export interface TeacherMe {
   schoolName: string;
   schoolCode: string;
   attendanceDoneToday: boolean;
+  profileImageUrl: string | null;
 }
 
 type TeacherModule = {
