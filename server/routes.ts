@@ -1288,15 +1288,23 @@ export async function registerRoutes(
     if (!cls || !section || !date) return res.status(400).json({ message: "class, section, and date are required" });
     try {
       const studentList = await storage.getStudentsByClassSection(schoolId, cls, section);
-      const records = await storage.getAttendanceForStudentsOnDate(studentList.map(s => s.id), date);
+      // SQL-level school_id + date filter — strict isolation
+      const records = await db.select().from(attendanceRecords).where(
+        and(
+          eq(attendanceRecords.schoolId, schoolId),
+          eq(attendanceRecords.date, date)
+        )
+      );
+      const studentIds = new Set(studentList.map(s => s.id));
+      const filteredRecords = records.filter(r => studentIds.has(r.studentId));
       const result = studentList.map(student => {
-        const record = records.find(r => r.studentId === student.id);
+        const record = filteredRecords.find(r => r.studentId === student.id);
         return {
           studentId: student.id,
           name: student.name,
-          rollNo: student.rollNo ?? "",
+          rollNo: "",
           digitalStudentId: student.digitalStudentId,
-          status: record?.status ?? "not-marked",
+          status: record?.status ?? "present",
         };
       });
       res.json(result);

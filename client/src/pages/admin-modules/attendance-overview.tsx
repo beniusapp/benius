@@ -2,10 +2,12 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Users, UserX, Loader2, Calendar, Filter, CheckCircle, Search, Eye,
-  Clock, BookOpen, ChevronRight, AlertTriangle, TrendingUp,
+  Clock, BookOpen, ChevronRight, AlertTriangle, TrendingUp, type LucideIcon,
 } from "lucide-react";
-
-interface Props { schoolId: number }
+interface Props {
+  schoolId: number;
+  onViewStudent?: (studentId: number) => void;
+}
 
 interface SchoolConfig {
   classes: string[];
@@ -84,7 +86,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function StatCard({ label, value, color, bg, icon: Icon }: { label: string; value: number | string; color: string; bg: string; icon: any }) {
+function StatCard({ label, value, color, bg, icon: Icon }: { label: string; value: number | string; color: string; bg: string; icon: LucideIcon }) {
   return (
     <div className="rounded-xl border border-white/10 bg-[#1A2942] p-4 min-w-0">
       <div className={`inline-flex p-2 rounded-lg ${bg} mb-2`}>
@@ -108,7 +110,7 @@ function SkeletonRow() {
   );
 }
 
-export default function AttendanceOverview({ schoolId }: Props) {
+export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   const today = new Date().toISOString().split("T")[0];
   const [date, setDate] = useState(today);
   const [activeTab, setActiveTab] = useState<Tab>("students");
@@ -393,7 +395,8 @@ export default function AttendanceOverview({ schoolId }: Props) {
                             </td>
                             <td className="px-3 py-3">
                               <button
-                                title="View student profile"
+                                title="View student in registry"
+                                onClick={() => onViewStudent?.(s.studentId)}
                                 className="inline-flex items-center gap-1 text-xs text-[#10b981] hover:text-emerald-300 transition-colors h-8 px-2 rounded-lg hover:bg-emerald-500/10"
                                 data-testid={`button-view-student-${s.studentId}`}
                               >
