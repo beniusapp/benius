@@ -253,6 +253,18 @@ export const timetableEntries = pgTable("timetable_entries", {
   subject: text("subject").notNull(),
   startTime: text("start_time"),
   endTime: text("end_time"),
+  status: text("status").notNull().default("draft"),
+  room: text("room"),
+});
+
+export const teacherAllocations = pgTable("teacher_allocations", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
+  subject: text("subject").notNull(),
+  class: varchar("class", { length: 20 }).notNull(),
+  section: varchar("section", { length: 10 }).notNull(),
+  weeklyQuota: integer("weekly_quota").notNull().default(6),
 });
 
 export const studentLeaveRequests = pgTable("student_leave_requests", {
@@ -414,6 +426,10 @@ export type LeaveRequest = typeof leaveRequests.$inferSelect;
 export const insertTimetableEntrySchema = createInsertSchema(timetableEntries).omit({ id: true });
 export type InsertTimetableEntry = z.infer<typeof insertTimetableEntrySchema>;
 export type TimetableEntry = typeof timetableEntries.$inferSelect;
+
+export const insertTeacherAllocationSchema = createInsertSchema(teacherAllocations).omit({ id: true });
+export type InsertTeacherAllocation = z.infer<typeof insertTeacherAllocationSchema>;
+export type TeacherAllocation = typeof teacherAllocations.$inferSelect;
 
 export const insertSchoolMetadataSchema = createInsertSchema(schoolMetadata).omit({ id: true, updatedAt: true });
 export type InsertSchoolMetadata = z.infer<typeof insertSchoolMetadataSchema>;

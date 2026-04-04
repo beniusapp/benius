@@ -139,6 +139,20 @@ app.use((req, res, next) => {
     ALTER TABLE student_leave_requests ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
   `);
 
+  await pool.query(`
+    ALTER TABLE timetable_entries ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft';
+    ALTER TABLE timetable_entries ADD COLUMN IF NOT EXISTS room TEXT;
+    CREATE TABLE IF NOT EXISTS teacher_allocations (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+      subject TEXT NOT NULL,
+      class VARCHAR(20) NOT NULL,
+      section VARCHAR(10) NOT NULL,
+      weekly_quota INTEGER NOT NULL DEFAULT 6
+    );
+  `);
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

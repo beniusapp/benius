@@ -3,7 +3,7 @@ import {
   attendanceRecords, homework, homeworkViews, homeworkSubmissions, classwork, notices,
   complaints, complaintNotes, examScores, galleryItems, calendarEvents,
   libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata,
-  studentLeaveRequests, auditLogs, visitorLogs, studentProfiles,
+  studentLeaveRequests, auditLogs, visitorLogs, studentProfiles, teacherAllocations,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
@@ -15,6 +15,7 @@ import {
   type CalendarEvent, type InsertCalendarEvent, type LibraryBook, type InsertLibraryBook,
   type BookBorrow, type InsertBookBorrow, type LeaveRequest, type InsertLeaveRequest,
   type TimetableEntry, type InsertTimetableEntry,
+  type TeacherAllocation, type InsertTeacherAllocation,
   type SchoolMetadata,
   type StudentLeaveRequest, type InsertStudentLeaveRequest,
   type AuditLog, type InsertAuditLog,
@@ -940,6 +941,138 @@ export class DatabaseStorage {
 
   async deleteTimetableEntry(id: number): Promise<boolean> {
     const result = await db.delete(timetableEntries).where(eq(timetableEntries.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getTimetableEntryById(id: number): Promise<TimetableEntry | null> {
+    const [entry] = await db.select().from(timetableEntries).where(eq(timetableEntries.id, id));
+    return entry || null;
+  }
+
+  async updateTimetableEntry(
+    id: number,
+    data: Partial<Pick<TimetableEntry, "dayOfWeek" | "period" | "class" | "section" | "subject" | "room" | "startTime" | "endTime" | "status">>
+  ): Promise<TimetableEntry> {
+    const updateData: Record<string, unknown> = { ...data };
+    const [entry] = await db.update(timetableEntries).set(updateData).where(eq(timetableEntries.id, id)).returning();
+    return entry;
+  }
+
+  async updateTimetableEntryStatus(schoolId: number, cls: string, section: string, status: string): Promise<number> {
+    const result = await db.update(timetableEntries)
+      .set({ status })
+      .where(and(
+        eq(timetableEntries.schoolId, schoolId),
+        eq(timetableEntries.class, cls),
+        eq(timetableEntries.section, section),
+      ))
+      .returning();
+    return result.length;
+  }
+
+  async getClassSectionStatus(schoolId: number): Promise<{ class: string; section: string; totalCount: number; draftCount: number; publishedCount: number }[]> {
+    const entries = await db.select().from(timetableEntries).where(eq(timetableEntries.schoolId, schoolId));
+    const map: Record<string, { class: string; section: string; totalCount: number; draftCount: number; publishedCount: number }> = {};
+    for (const e of entries) {
+      const key = `${e.class}-${e.section}`;
+      if (!map[key]) map[key] = { class: e.class, section: e.section, totalCount: 0, draftCount: 0, publishedCount: 0 };
+      map[key].totalCount++;
+      if (e.status === "published") map[key].publishedCount++;
+      else map[key].draftCount++;
+    }
+    return Object.values(map).sort((a, b) => a.class.localeCompare(b.class, undefined, { numeric: true }) || a.section.localeCompare(b.section));
+  }
+
+  async validateTimetableEntry(opts: {
+    schoolId: number;
+    teacherId: number;
+    dayOfWeek: number;
+    period: number;
+    class: string;
+    section: string;
+    room?: string | null;
+    excludeId?: number;
+  }): Promise<{ valid: boolean; error?: string }> {
+    const { schoolId, teacherId, dayOfWeek, period, excludeId } = opts;
+
+    const existing = await db.select().from(timetableEntries).where(
+      and(
+        eq(timetableEntries.schoolId, schoolId),
+        eq(timetableEntries.dayOfWeek, dayOfWeek),
+        eq(timetableEntries.period, period),
+      )
+    );
+
+    const others = existing.filter(e => e.id !== (excludeId ?? -1));
+
+    const teacherConflict = others.find(e => e.teacherId === teacherId);
+    if (teacherConflict) {
+      return { valid: false, error: `Conflict: You are already teaching Class ${teacherConflict.class}-${teacherConflict.section} at this time.` };
+    }
+
+    const classConflict = others.find(e => e.class === opts.class && e.section === opts.section);
+    if (classConflict) {
+      return { valid: false, error: `Conflict: Class ${opts.class}-${opts.section} already has ${classConflict.subject} in this slot.` };
+    }
+
+    if (opts.room) {
+      const roomConflict = others.find(e => e.room && e.room.toLowerCase() === opts.room!.toLowerCase());
+      if (roomConflict) {
+        return { valid: false, error: `Conflict: Room "${opts.room}" is already occupied by Class ${roomConflict.class}-${roomConflict.section} (${roomConflict.subject}).` };
+      }
+    }
+
+    const allocations = await db.select().from(teacherAllocations).where(
+      and(
+        eq(teacherAllocations.schoolId, schoolId),
+        eq(teacherAllocations.teacherId, teacherId),
+        eq(teacherAllocations.class, opts.class),
+        eq(teacherAllocations.section, opts.section),
+      )
+    );
+
+    if (allocations.length > 0) {
+      const weeklyQuota = allocations[0].weeklyQuota;
+      const weeklyEntries = await db.select().from(timetableEntries).where(
+        and(
+          eq(timetableEntries.schoolId, schoolId),
+          eq(timetableEntries.teacherId, teacherId),
+          eq(timetableEntries.class, opts.class),
+          eq(timetableEntries.section, opts.section),
+        )
+      );
+      const count = weeklyEntries.filter(e => e.id !== (excludeId ?? -1)).length;
+      if (count >= weeklyQuota) {
+        return { valid: false, error: `Quota exceeded: You are limited to ${weeklyQuota} periods/week for Class ${opts.class}-${opts.section}.` };
+      }
+    }
+
+    return { valid: true };
+  }
+
+  // ===== TEACHER ALLOCATION METHODS =====
+  async createTeacherAllocation(data: InsertTeacherAllocation): Promise<TeacherAllocation> {
+    const [alloc] = await db.insert(teacherAllocations).values(data).returning();
+    return alloc;
+  }
+
+  async getTeacherAllocationsBySchool(schoolId: number): Promise<(TeacherAllocation & { teacherName: string })[]> {
+    const result = await db.select().from(teacherAllocations)
+      .innerJoin(teachers, eq(teacherAllocations.teacherId, teachers.id))
+      .where(eq(teacherAllocations.schoolId, schoolId));
+    return result.map(r => ({ ...r.teacher_allocations, teacherName: r.teachers.fullName }));
+  }
+
+  async getTeacherAllocationsByTeacher(teacherId: number, schoolId: number): Promise<TeacherAllocation[]> {
+    return await db.select().from(teacherAllocations).where(
+      and(eq(teacherAllocations.teacherId, teacherId), eq(teacherAllocations.schoolId, schoolId))
+    );
+  }
+
+  async deleteTeacherAllocation(id: number, schoolId: number): Promise<boolean> {
+    const result = await db.delete(teacherAllocations).where(
+      and(eq(teacherAllocations.id, id), eq(teacherAllocations.schoolId, schoolId))
+    ).returning();
     return result.length > 0;
   }
 
