@@ -1058,6 +1058,10 @@ export function registerTeacherRoutes(app: Express) {
   app.get("/api/teacher-allocations/teacher/:teacherId", async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const tid = parseInt(req.params.teacherId);
+    if (req.session.teacherId) {
+      // Teachers can only access their own allocations
+      if (req.session.teacherId !== tid) return res.status(403).json({ message: "Not authorized" });
+    }
     const schoolId = req.session.teacherId
       ? (await storage.getTeacherById(req.session.teacherId))?.schoolId
       : req.session.schoolId;
@@ -1095,7 +1099,9 @@ export function registerTeacherRoutes(app: Express) {
       period: parseInt(period),
       class: cls,
       section,
+      subject,
       room: room || null,
+      requireAllocation: true,
     });
     if (!validation.valid) return res.status(409).json({ message: validation.error });
     const entry = await storage.createTimetableEntry({
@@ -1126,6 +1132,7 @@ export function registerTeacherRoutes(app: Express) {
     const newPeriod = period !== undefined ? parseInt(period) : entry.period;
     const newClass = cls || entry.class;
     const newSection = section || entry.section;
+    const newSubject = subject || entry.subject;
     const validation = await storage.validateTimetableEntry({
       schoolId: teacher.schoolId,
       teacherId: teacher.id,
@@ -1133,8 +1140,10 @@ export function registerTeacherRoutes(app: Express) {
       period: newPeriod,
       class: newClass,
       section: newSection,
+      subject: newSubject,
       room: room !== undefined ? (room || null) : entry.room,
       excludeId: entry.id,
+      requireAllocation: true,
     });
     if (!validation.valid) return res.status(409).json({ message: validation.error });
     const updated = await storage.updateTimetableEntry(entry.id, {
@@ -1142,7 +1151,7 @@ export function registerTeacherRoutes(app: Express) {
       period: newPeriod,
       class: newClass,
       section: newSection,
-      subject: subject || entry.subject,
+      subject: newSubject,
       room: room !== undefined ? (room || null) : entry.room,
       startTime: startTime !== undefined ? (startTime || null) : entry.startTime,
       endTime: endTime !== undefined ? (endTime || null) : entry.endTime,

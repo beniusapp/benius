@@ -990,10 +990,28 @@ export class DatabaseStorage {
     period: number;
     class: string;
     section: string;
+    subject: string;
     room?: string | null;
     excludeId?: number;
+    requireAllocation?: boolean; // When true: teacher must have an allocation for (subject, class, section)
   }): Promise<{ valid: boolean; error?: string }> {
     const { schoolId, teacherId, dayOfWeek, period, excludeId } = opts;
+
+    // 1. Allocation boundary check (for teacher self-management)
+    if (opts.requireAllocation) {
+      const alloc = await db.select().from(teacherAllocations).where(
+        and(
+          eq(teacherAllocations.schoolId, schoolId),
+          eq(teacherAllocations.teacherId, teacherId),
+          eq(teacherAllocations.class, opts.class),
+          eq(teacherAllocations.section, opts.section),
+          eq(teacherAllocations.subject, opts.subject),
+        )
+      );
+      if (alloc.length === 0) {
+        return { valid: false, error: `Not allowed: No allocation found for ${opts.subject} in Class ${opts.class}-${opts.section}. Contact your admin.` };
+      }
+    }
 
     const existing = await db.select().from(timetableEntries).where(
       and(
@@ -1005,16 +1023,19 @@ export class DatabaseStorage {
 
     const others = existing.filter(e => e.id !== (excludeId ?? -1));
 
+    // 2. Teacher conflict (same teacher, same slot)
     const teacherConflict = others.find(e => e.teacherId === teacherId);
     if (teacherConflict) {
       return { valid: false, error: `Conflict: You are already teaching Class ${teacherConflict.class}-${teacherConflict.section} at this time.` };
     }
 
+    // 3. Class conflict (same class+section already has a slot)
     const classConflict = others.find(e => e.class === opts.class && e.section === opts.section);
     if (classConflict) {
       return { valid: false, error: `Conflict: Class ${opts.class}-${opts.section} already has ${classConflict.subject} in this slot.` };
     }
 
+    // 4. Room conflict
     if (opts.room) {
       const roomConflict = others.find(e => e.room && e.room.toLowerCase() === opts.room!.toLowerCase());
       if (roomConflict) {
@@ -1022,28 +1043,31 @@ export class DatabaseStorage {
       }
     }
 
-    const allocations = await db.select().from(teacherAllocations).where(
+    // 5. Weekly quota: subject-specific (matches exact allocation row)
+    const specificAlloc = await db.select().from(teacherAllocations).where(
       and(
         eq(teacherAllocations.schoolId, schoolId),
         eq(teacherAllocations.teacherId, teacherId),
         eq(teacherAllocations.class, opts.class),
         eq(teacherAllocations.section, opts.section),
+        eq(teacherAllocations.subject, opts.subject),
       )
     );
 
-    if (allocations.length > 0) {
-      const weeklyQuota = allocations[0].weeklyQuota;
+    if (specificAlloc.length > 0) {
+      const weeklyQuota = specificAlloc[0].weeklyQuota;
       const weeklyEntries = await db.select().from(timetableEntries).where(
         and(
           eq(timetableEntries.schoolId, schoolId),
           eq(timetableEntries.teacherId, teacherId),
           eq(timetableEntries.class, opts.class),
           eq(timetableEntries.section, opts.section),
+          eq(timetableEntries.subject, opts.subject),
         )
       );
-      const count = weeklyEntries.filter(e => e.id !== (excludeId ?? -1)).length;
-      if (count >= weeklyQuota) {
-        return { valid: false, error: `Quota exceeded: You are limited to ${weeklyQuota} periods/week for Class ${opts.class}-${opts.section}.` };
+      const currentCount = weeklyEntries.filter(e => e.id !== (excludeId ?? -1)).length;
+      if (currentCount >= weeklyQuota) {
+        return { valid: false, error: `Quota exceeded: You are limited to ${weeklyQuota} ${opts.subject} periods/week for Class ${opts.class}-${opts.section}.` };
       }
     }
 

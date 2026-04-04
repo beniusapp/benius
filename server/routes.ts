@@ -1150,7 +1150,7 @@ export async function registerRoutes(
     if (!student) return res.status(404).json({ message: "Student not found" });
     const all = await storage.getTimetableBySchool(student.schoolId);
     const entries = all.filter(e =>
-      e.class === student.class && e.section === student.section
+      e.class === student.class && e.section === student.section && e.status === "published"
     );
     res.json(entries);
   });
