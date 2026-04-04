@@ -527,9 +527,12 @@ function ClassFeedTab({ teacher }: { teacher: TeacherMe }) {
                 {entry.reportedStudentName && <span> → against <span className="font-semibold text-foreground">{entry.reportedStudentName}</span></span>}
               </p>
               <p className="text-sm line-clamp-2 text-muted-foreground">{entry.content}</p>
-              <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+              <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1 flex-wrap">
                 <Calendar className="w-3 h-3" />
-                {new Date(entry.createdAt).toLocaleDateString("en-GB")}
+                {entry.incidentDate
+                  ? <>Incident: {new Date(entry.incidentDate).toLocaleDateString("en-GB")}</>
+                  : <>Filed: {new Date(entry.createdAt).toLocaleDateString("en-GB")}</>
+                }
                 {entry.escalatedToPrincipal && <span className="ml-2 text-red-500 font-medium">· Escalated</span>}
               </p>
             </button>

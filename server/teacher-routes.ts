@@ -524,8 +524,10 @@ export function registerTeacherRoutes(app: Express) {
 
   app.patch("/api/complaints/:id", diskUpload.single("file"), async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
     const id = parseInt(req.params.id);
-    const c = await storage.getComplaintById(id);
+    const c = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
     if (!c) return res.status(404).json({ message: "Complaint not found" });
     if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
       return res.status(403).json({ message: "Access denied" });
@@ -535,53 +537,70 @@ export function registerTeacherRoutes(app: Express) {
 
     const { content } = req.body;
     const fileUrl = req.file ? `/uploads/${req.file.filename}` : (req.body.keepFile === "true" ? c.fileUrl : null);
-    const updated = await storage.updateComplaint(id, { content: content || c.content, fileUrl });
+    const updated = await storage.updateComplaint(id, teacher.schoolId, { content: content || c.content, fileUrl });
     res.json(updated);
   });
 
   app.delete("/api/complaints/:id", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
     const id = parseInt(req.params.id);
-    const c = await storage.getComplaintById(id);
+    const c = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
     if (!c) return res.status(404).json({ message: "Complaint not found" });
     if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
       return res.status(403).json({ message: "Access denied" });
     }
     if (c.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
     if (c.status !== "Pending") return res.status(400).json({ message: "Cannot delete — complaint is no longer pending" });
-    await storage.softDeleteComplaint(id);
+    await storage.softDeleteComplaint(id, teacher.schoolId);
     res.json({ message: "Complaint deleted" });
   });
 
   app.patch("/api/complaints/:id/status", async (req, res) => {
     if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const id = parseInt(req.params.id);
-    const c = await storage.getComplaintById(id);
-    if (!c) return res.status(404).json({ message: "Complaint not found" });
 
     if (req.session.teacherId) {
       const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher || teacher.schoolId !== c.schoolId) return res.status(403).json({ message: "Not authorized for this school" });
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const c = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
+      if (!c) return res.status(404).json({ message: "Complaint not found" });
       if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
         return res.status(403).json({ message: "Access denied" });
       }
+      const { status } = req.body;
+      if (!["Pending", "Investigating", "Resolved"].includes(status)) return res.status(400).json({ message: "Invalid status" });
+      const updated = await storage.updateComplaintStatus(id, teacher.schoolId, status);
+      return res.json(updated);
     }
 
+    const c = await storage.getComplaintById(id);
+    if (!c) return res.status(404).json({ message: "Complaint not found" });
     const { status } = req.body;
     if (!["Pending", "Investigating", "Resolved"].includes(status)) return res.status(400).json({ message: "Invalid status" });
-    const updated = await storage.updateComplaintStatus(id, status);
+    const updated = await storage.updateComplaintStatus(id, c.schoolId, status);
     res.json(updated);
   });
 
   app.post("/api/complaints/:id/notes", async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const complaintId = parseInt(req.params.id);
-    const c = await storage.getComplaintById(complaintId);
+
+    let schoolId: number | undefined;
+    let teacher = null;
+    if (req.session.teacherId) {
+      teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      schoolId = teacher.schoolId;
+    }
+
+    const c = schoolId
+      ? await storage.getComplaintByIdForSchool(complaintId, schoolId)
+      : await storage.getComplaintById(complaintId);
     if (!c) return res.status(404).json({ message: "Complaint not found" });
 
-    if (req.session.teacherId) {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher || teacher.schoolId !== c.schoolId) return res.status(403).json({ message: "Not authorized for this school" });
+    if (teacher) {
       if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
         return res.status(403).json({ message: "Access denied" });
       }
@@ -593,11 +612,10 @@ export function registerTeacherRoutes(app: Express) {
     let authorName = "Admin";
     let authorRole = "admin";
     let authorId = req.session.userId || 0;
-    if (req.session.teacherId) {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      authorName = teacher?.fullName || "Teacher";
+    if (teacher) {
+      authorName = teacher.fullName || "Teacher";
       authorRole = "teacher";
-      authorId = req.session.teacherId;
+      authorId = req.session.teacherId!;
     }
 
     const note = await storage.addComplaintNote({ complaintId, authorId, authorRole, authorName, content });
@@ -607,12 +625,20 @@ export function registerTeacherRoutes(app: Express) {
   app.get("/api/complaints/:id/notes", async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const complaintId = parseInt(req.params.id);
-    const c = await storage.getComplaintById(complaintId);
+
+    let schoolId: number | undefined;
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      schoolId = teacher.schoolId;
+    }
+
+    const c = schoolId
+      ? await storage.getComplaintByIdForSchool(complaintId, schoolId)
+      : await storage.getComplaintById(complaintId);
     if (!c) return res.status(404).json({ message: "Complaint not found" });
 
     if (req.session.teacherId) {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher || teacher.schoolId !== c.schoolId) return res.status(403).json({ message: "Not authorized for this school" });
       if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
         return res.status(403).json({ message: "Access denied" });
       }

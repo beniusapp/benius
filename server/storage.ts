@@ -514,17 +514,17 @@ export class DatabaseStorage {
     return c;
   }
 
-  async updateComplaint(id: number, data: { content?: string; fileUrl?: string | null }): Promise<Complaint> {
-    const [c] = await db.update(complaints).set(data).where(eq(complaints.id, id)).returning();
+  async updateComplaint(id: number, schoolId: number, data: { content?: string; fileUrl?: string | null }): Promise<Complaint> {
+    const [c] = await db.update(complaints).set(data).where(and(eq(complaints.id, id), eq(complaints.schoolId, schoolId))).returning();
     return c;
   }
 
-  async softDeleteComplaint(id: number): Promise<void> {
-    await db.update(complaints).set({ isDeleted: true }).where(eq(complaints.id, id));
+  async softDeleteComplaint(id: number, schoolId: number): Promise<void> {
+    await db.update(complaints).set({ isDeleted: true }).where(and(eq(complaints.id, id), eq(complaints.schoolId, schoolId)));
   }
 
-  async updateComplaintStatus(id: number, status: string): Promise<Complaint> {
-    const [c] = await db.update(complaints).set({ status }).where(eq(complaints.id, id)).returning();
+  async updateComplaintStatus(id: number, schoolId: number, status: string): Promise<Complaint> {
+    const [c] = await db.update(complaints).set({ status }).where(and(eq(complaints.id, id), eq(complaints.schoolId, schoolId))).returning();
     return c;
   }
 
@@ -543,13 +543,17 @@ export class DatabaseStorage {
 
   async getComplaintsByTeacher(teacherId: number, assignedClass?: string, assignedSection?: string, schoolId?: number): Promise<(Complaint & { studentName: string | null })[]> {
     const STUDENT_FILED_TYPES = ["student-to-staff", "student-peer-report"];
+    const ownWhereConditions = [
+      eq(complaints.teacherId, teacherId),
+      eq(complaints.isDeleted, false),
+      sql`${complaints.complaintType} NOT IN ('student-to-staff', 'student-peer-report')`,
+    ] as const;
     const ownComplaints = await db.select().from(complaints)
       .leftJoin(students, eq(complaints.studentId, students.id))
-      .where(and(
-        eq(complaints.teacherId, teacherId),
-        eq(complaints.isDeleted, false),
-        sql`${complaints.complaintType} NOT IN ('student-to-staff', 'student-peer-report')`
-      ))
+      .where(schoolId
+        ? and(...ownWhereConditions, eq(complaints.schoolId, schoolId))
+        : and(...ownWhereConditions)
+      )
       .orderBy(desc(complaints.createdAt));
 
     const ownResults = ownComplaints.map(r => ({
