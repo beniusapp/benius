@@ -1362,7 +1362,35 @@ export async function registerRoutes(
     }
   });
 
-  // ===== ADMIN ATTENDANCE: TEACHER SUMMARY =====
+  // ===== ADMIN ATTENDANCE: SCHOOL-WIDE OVERVIEW (enrollment-based) =====
+  app.get("/api/admin/attendance/overview", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
+    const { date } = req.query as { date?: string };
+    if (!date) return res.status(400).json({ message: "date is required" });
+    try {
+      const { students: studentsTable } = await import("@shared/schema");
+      const enrolledRows = await db.select({ id: studentsTable.id })
+        .from(studentsTable)
+        .where(and(eq(studentsTable.schoolId, schoolId), eq(studentsTable.isActive, true)));
+      const enrolledTotal = enrolledRows.length;
+
+      const recs = await db.select().from(attendanceRecords)
+        .where(and(eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.date, date)));
+
+      const markedTotal = recs.length;
+      const present = recs.filter(r => r.status === "present").length;
+      const absent = recs.filter(r => r.status === "absent").length;
+      const leave = recs.filter(r => r.status === "leave").length;
+      const percentage = markedTotal > 0 ? Math.round((present / markedTotal) * 100) : 0;
+
+      res.json({ enrolledTotal, markedTotal, present, absent, leave, percentage });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch attendance overview" });
+    }
+  });
+
   app.get("/api/admin/attendance/teacher-summary", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId;
