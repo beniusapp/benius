@@ -1,11 +1,12 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
-  Loader2, Save, X, AlertTriangle, Search, BookOpen, Calendar, Pencil, Trash2, Plus,
+  Loader2, Save, X, AlertTriangle, Search, BookOpen, Calendar, Pencil, Trash2, Plus, Settings,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
+import { useSchoolConfig } from "@/hooks/use-school-config";
 
 interface TimetableEntry {
   id: number;
@@ -26,11 +27,20 @@ interface SlotDraft {
 
 type DraftMap = Record<string, SlotDraft | null>; // key: `${day}-${period}`, null = delete
 
+// Fields that are invalid (not filled) in draft — key is `${day}-${period}`
+type ValidationErrors = Record<string, { class?: boolean; section?: boolean; subject?: boolean }>;
+
 interface ConflictInfo {
   dayOfWeek: number;
   period: number;
   teacherName: string;
   subject: string;
+}
+
+interface SlotCheckResult {
+  taken: boolean;
+  teacherName?: string;
+  subject?: string;
 }
 
 interface PopoverState {
@@ -42,24 +52,24 @@ interface PopoverState {
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const PERIODS = [1, 2, 3, 4, 5, 6, 7, 8];
 
-const COMMON_SUBJECTS = [
-  "Math", "Science", "English", "Hindi", "Social Studies", "Computer",
-  "Physics", "Chemistry", "Biology", "History", "Geography", "Economics",
-  "Bengali", "Sanskrit", "Physical Education", "Art", "Music",
-];
-
-const CLASS_LIST = ["1","2","3","4","5","6","7","8","9","10","11","12"];
-const SECTION_LIST = ["A","B","C","D","E"];
-
 export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
 
+  // ── School-scoped config ──
+  const { classes: CLASS_LIST, sections: SECTION_LIST, subjects: SUBJECT_LIST, isLoading: configLoading } = useSchoolConfig(teacher.schoolId);
+  const hasSubjects = SUBJECT_LIST.length > 0;
+
   // ── My Schedule state ──
   const [draftMap, setDraftMap] = useState<DraftMap>({});
+  const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
   const [popover, setPopover] = useState<PopoverState | null>(null);
   const [popClass, setPopClass] = useState("");
   const [popSection, setPopSection] = useState("");
   const [popSubject, setPopSubject] = useState("");
+  const [popCollision, setPopCollision] = useState<SlotCheckResult | null>(null);
+  const [popClassError, setPopClassError] = useState(false);
+  const [popSectionError, setPopSectionError] = useState(false);
+  const [popSubjectError, setPopSubjectError] = useState(false);
   const [conflicts, setConflicts] = useState<ConflictInfo[]>([]);
 
   // ── Class Explorer state ──
@@ -86,6 +96,31 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
     enabled: !!explorerClass && !!explorerSection,
   });
 
+  // ── Inline collision check when class+section changes in popover ──
+  const { data: collisionData, isFetching: collisionChecking } = useQuery<SlotCheckResult>({
+    queryKey: ["/api/timetable/slot-check", popClass, popSection, popover?.day, popover?.period],
+    queryFn: async () => {
+      if (!popover || !popClass || !popSection) return { taken: false };
+      const r = await fetch(
+        `/api/timetable/slot-check?class=${encodeURIComponent(popClass)}&section=${encodeURIComponent(popSection)}&dayOfWeek=${popover.day}&period=${popover.period}`,
+        { credentials: "include" }
+      );
+      return r.ok ? r.json() : { taken: false };
+    },
+    enabled: !!popover && !!popClass && !!popSection,
+    staleTime: 0,
+  });
+
+  // Keep local collision state in sync
+  useEffect(() => {
+    setPopCollision(collisionData ?? null);
+  }, [collisionData]);
+
+  // Reset collision when popover closes
+  useEffect(() => {
+    if (!popover) setPopCollision(null);
+  }, [popover]);
+
   const hasDraft = Object.keys(draftMap).length > 0;
 
   const getEffectiveSlot = useCallback((day: number, period: number): { class: string; section: string; subject: string; isDraft: boolean; isDelete: boolean } | null => {
@@ -104,6 +139,9 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
     const key = `${day}-${period}`;
     const existing = myEntries.find(e => e.dayOfWeek === day && e.period === period) ?? null;
     const draft = draftMap[key];
+    setPopClassError(false);
+    setPopSectionError(false);
+    setPopSubjectError(false);
     if (draft !== undefined && draft !== null) {
       setPopClass(draft.class);
       setPopSection(draft.section);
@@ -125,15 +163,44 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
     const key = `${popover.day}-${popover.period}`;
     if (isDelete) {
       setDraftMap(prev => ({ ...prev, [key]: null }));
-    } else {
-      if (!popClass || !popSection || !popSubject) return;
-      setDraftMap(prev => ({ ...prev, [key]: { class: popClass, section: popSection, subject: popSubject } }));
+      setValidationErrors(prev => { const n = { ...prev }; delete n[key]; return n; });
+      setPopover(null);
+      return;
     }
+    // Validate fields
+    const classErr = !popClass;
+    const sectionErr = !popSection;
+    const subjectErr = !popSubject;
+    setPopClassError(classErr);
+    setPopSectionError(sectionErr);
+    setPopSubjectError(subjectErr);
+    if (classErr || sectionErr || subjectErr) return;
+    setDraftMap(prev => ({ ...prev, [key]: { class: popClass, section: popSection, subject: popSubject } }));
+    setValidationErrors(prev => { const n = { ...prev }; delete n[key]; return n; });
     setPopover(null);
+  }
+
+  function validateAllDrafts(): boolean {
+    const errors: ValidationErrors = {};
+    let hasErrors = false;
+    for (const [key, draft] of Object.entries(draftMap)) {
+      if (draft === null) continue; // deletes are fine
+      const err: { class?: boolean; section?: boolean; subject?: boolean } = {};
+      if (!draft.class) { err.class = true; hasErrors = true; }
+      if (!draft.section) { err.section = true; hasErrors = true; }
+      if (!draft.subject) { err.subject = true; hasErrors = true; }
+      if (Object.keys(err).length > 0) errors[key] = err;
+    }
+    setValidationErrors(errors);
+    return !hasErrors;
   }
 
   const saveMutation = useMutation({
     mutationFn: async () => {
+      if (!validateAllDrafts()) {
+        toast({ title: "Incomplete fields", description: "Fill in all required fields (Class, Section, Subject) before saving.", variant: "destructive" });
+        throw new Error("Validation failed");
+      }
       const changes = Object.entries(draftMap).map(([key, draft]) => {
         const [day, period] = key.split("-").map(Number);
         if (draft === null) {
@@ -163,7 +230,7 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
       } else {
         toast({ title: "Schedule saved", description: `${saved.length} slot(s) updated.`, className: "border-emerald-500 bg-emerald-900/30 text-emerald-100" });
       }
-      // Remove successfully saved/deleted from draft
+      // Keep only conflicted drafts
       const conflictKeys = new Set(newConflicts.map(c => `${c.dayOfWeek}-${c.period}`));
       setDraftMap(prev => {
         const next: DraftMap = {};
@@ -172,21 +239,49 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
         }
         return next;
       });
+      setValidationErrors({});
       queryClient.invalidateQueries({ queryKey: ["/api/timetable/teacher", teacher.id] });
     },
-    onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => {
+      if (e.message !== "Validation failed") {
+        toast({ title: "Save failed", description: e.message, variant: "destructive" });
+      }
+    },
   });
 
   function discardDrafts() {
     setDraftMap({});
     setConflicts([]);
+    setValidationErrors({});
     setPopover(null);
   }
 
-  if (isLoading) {
+  if (isLoading || configLoading) {
     return (
       <div className="flex justify-center items-center py-16">
         <Loader2 className="w-7 h-7 animate-spin text-[#10b981]" />
+      </div>
+    );
+  }
+
+  // If school has no subjects configured, tell the teacher
+  if (!hasSubjects) {
+    return (
+      <div className="space-y-4">
+        <h3 className="text-base font-bold flex items-center gap-2">
+          <Calendar className="w-4 h-4 text-[#10b981]" /> My Schedule
+        </h3>
+        <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-900/15 p-8 flex flex-col items-center gap-4 text-center">
+          <div className="w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-500/20 flex items-center justify-center">
+            <Settings className="w-6 h-6 text-amber-500" />
+          </div>
+          <div>
+            <p className="font-semibold text-amber-700 dark:text-amber-300 text-sm mb-1">Timetable configuration required</p>
+            <p className="text-amber-600/80 dark:text-amber-200/70 text-xs max-w-xs">
+              Your school admin has not yet defined subjects. Once they configure classes and subjects in School Settings, you can start building your schedule.
+            </p>
+          </div>
+        </div>
       </div>
     );
   }
@@ -210,7 +305,7 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
             <div className="flex items-center gap-2">
               <button
                 onClick={discardDrafts}
-                className="h-10 px-3 rounded-xl border border-border text-muted-foreground hover:bg-muted text-sm font-medium flex items-center gap-1.5 transition-colors"
+                className="h-11 px-3 rounded-xl border border-border text-muted-foreground hover:bg-muted text-sm font-medium flex items-center gap-1.5 transition-colors"
                 data-testid="button-discard"
               >
                 <X className="w-3.5 h-3.5" /> Discard
@@ -218,7 +313,7 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
               <button
                 onClick={() => saveMutation.mutate()}
                 disabled={saveMutation.isPending}
-                className="h-10 px-4 rounded-xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-semibold text-sm flex items-center gap-1.5 transition-colors min-w-[130px] justify-center"
+                className="h-11 px-4 rounded-xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-semibold text-sm flex items-center gap-1.5 transition-colors min-w-[130px] justify-center"
                 data-testid="button-save-schedule"
               >
                 {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
@@ -276,6 +371,7 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
                     const slot = getEffectiveSlot(dayIdx, p);
                     const key = `${dayIdx}-${p}`;
                     const isConflict = conflicts.some(c => c.dayOfWeek === dayIdx && c.period === p);
+                    const hasValErr = !!validationErrors[key];
                     const isPopoverOpen = popover?.day === dayIdx && popover?.period === p;
                     return (
                       <td
@@ -285,7 +381,9 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
                       >
                         <div
                           className={`rounded-lg p-2 min-h-[54px] flex flex-col justify-center cursor-pointer transition-colors ${
-                            isConflict
+                            hasValErr
+                              ? "bg-red-50 dark:bg-red-900/20 border border-red-400 dark:border-red-500"
+                              : isConflict
                               ? "bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-700/50"
                               : slot?.isDelete
                               ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700/30"
@@ -297,7 +395,9 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
                           }`}
                           data-testid={`cell-${dayIdx}-${p}`}
                         >
-                          {slot && !slot.isDelete ? (
+                          {hasValErr ? (
+                            <p className="text-[10px] text-red-500 italic text-center">Required fields missing</p>
+                          ) : slot && !slot.isDelete ? (
                             <>
                               <p className="text-[11px] font-bold text-gray-800 dark:text-white leading-tight truncate">{slot.subject}</p>
                               <p className="text-[10px] text-muted-foreground truncate mt-0.5">{slot.class}-{slot.section}</p>
@@ -314,7 +414,7 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
                         {/* Inline Popover */}
                         {isPopoverOpen && (
                           <div
-                            className="absolute left-0 top-full z-50 w-64 bg-white dark:bg-slate-900 border border-border rounded-xl shadow-2xl p-4 space-y-3"
+                            className="absolute left-0 top-full z-50 w-72 bg-white dark:bg-slate-900 border border-border rounded-xl shadow-2xl p-4 space-y-3"
                             onClick={e => e.stopPropagation()}
                           >
                             <div className="flex items-center justify-between">
@@ -323,42 +423,73 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
                                 <X className="w-3.5 h-3.5" />
                               </button>
                             </div>
+
+                            {/* Inline collision warning */}
+                            {collisionChecking && popClass && popSection && (
+                              <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-muted text-xs text-muted-foreground">
+                                <Loader2 className="w-3 h-3 animate-spin" /> Checking availability…
+                              </div>
+                            )}
+                            {!collisionChecking && popCollision?.taken && (
+                              <div className="flex items-start gap-2 px-2 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700/40" data-testid="inline-collision-warning">
+                                <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+                                <p className="text-xs text-red-600 dark:text-red-400">
+                                  This slot is already booked by <strong>{popCollision.teacherName}</strong> for <strong>{popCollision.subject}</strong>
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Class (school-defined only) */}
                             <div>
-                              <label className="block text-xs font-semibold text-muted-foreground mb-1">Class</label>
+                              <label className="block text-xs font-semibold text-muted-foreground mb-1">
+                                Class <span className="text-muted-foreground/50 font-normal">(school-defined)</span>
+                                {popClassError && <span className="ml-1 text-red-500">*</span>}
+                              </label>
                               <select
                                 value={popClass}
-                                onChange={e => setPopClass(e.target.value)}
-                                className="w-full h-9 px-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981]"
+                                onChange={e => { setPopClass(e.target.value); setPopClassError(false); }}
+                                className={`w-full h-11 px-2 rounded-lg border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] ${popClassError ? "border-red-500 bg-red-50 dark:bg-red-900/10" : "border-border"}`}
                                 data-testid={`select-pop-class-${dayIdx}-${p}`}
                               >
                                 <option value="">Select class</option>
                                 {CLASS_LIST.map(c => <option key={c} value={c}>Class {c}</option>)}
                               </select>
                             </div>
+
+                            {/* Section (school-defined only) */}
                             <div>
-                              <label className="block text-xs font-semibold text-muted-foreground mb-1">Section</label>
+                              <label className="block text-xs font-semibold text-muted-foreground mb-1">
+                                Section <span className="text-muted-foreground/50 font-normal">(school-defined)</span>
+                                {popSectionError && <span className="ml-1 text-red-500">*</span>}
+                              </label>
                               <select
                                 value={popSection}
-                                onChange={e => setPopSection(e.target.value)}
-                                className="w-full h-9 px-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981]"
+                                onChange={e => { setPopSection(e.target.value); setPopSectionError(false); }}
+                                className={`w-full h-11 px-2 rounded-lg border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] ${popSectionError ? "border-red-500 bg-red-50 dark:bg-red-900/10" : "border-border"}`}
                                 data-testid={`select-pop-section-${dayIdx}-${p}`}
                               >
                                 <option value="">Select section</option>
                                 {SECTION_LIST.map(s => <option key={s} value={s}>{s}</option>)}
                               </select>
                             </div>
+
+                            {/* Subject (school-defined only) */}
                             <div>
-                              <label className="block text-xs font-semibold text-muted-foreground mb-1">Subject</label>
+                              <label className="block text-xs font-semibold text-muted-foreground mb-1">
+                                Subject <span className="text-muted-foreground/50 font-normal">(school-defined)</span>
+                                {popSubjectError && <span className="ml-1 text-red-500">*</span>}
+                              </label>
                               <select
                                 value={popSubject}
-                                onChange={e => setPopSubject(e.target.value)}
-                                className="w-full h-9 px-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981]"
+                                onChange={e => { setPopSubject(e.target.value); setPopSubjectError(false); }}
+                                className={`w-full h-11 px-2 rounded-lg border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] ${popSubjectError ? "border-red-500 bg-red-50 dark:bg-red-900/10" : "border-border"}`}
                                 data-testid={`select-pop-subject-${dayIdx}-${p}`}
                               >
                                 <option value="">Select subject</option>
-                                {COMMON_SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+                                {SUBJECT_LIST.map(s => <option key={s} value={s}>{s}</option>)}
                               </select>
                             </div>
+
                             <div className="flex gap-2 pt-1">
                               {(slot || (key in draftMap && draftMap[key] !== null)) && (
                                 <button
@@ -371,8 +502,7 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
                               )}
                               <button
                                 onClick={() => applyPopoverChange(false)}
-                                disabled={!popClass || !popSection || !popSubject}
-                                className="flex-1 h-11 rounded-lg bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 text-white text-xs font-semibold flex items-center justify-center gap-1"
+                                className="flex-1 h-11 rounded-lg bg-[#10b981] hover:bg-[#059669] text-white text-xs font-semibold flex items-center justify-center gap-1"
                                 data-testid={`button-pop-apply-${dayIdx}-${p}`}
                               >
                                 <Pencil className="w-3 h-3" /> Apply

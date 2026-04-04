@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
-  Save, Loader2, Lock, Grid3x3, X, Pencil, Trash2,
+  Save, Loader2, Lock, Grid3x3, X, Pencil, Trash2, AlertTriangle, Settings,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
@@ -39,9 +39,12 @@ interface PopoverState {
 export default function TimetableMaster({ schoolId, classes, sections, subjects }: Props) {
   const { toast } = useToast();
 
-  const CLASS_LIST = classes.length > 0 ? classes : ["1","2","3","4","5","6","7","8","9","10","11","12"];
-  const SECTION_LIST = sections.length > 0 ? sections : ["A","B","C","D"];
-  const SUBJECT_LIST = subjects.length > 0 ? subjects : ["Math","Science","English","Hindi","Social Studies","Computer"];
+  // Strictly use only what the admin has configured — no hardcoded fallbacks
+  const CLASS_LIST = classes;
+  const SECTION_LIST = sections;
+  const SUBJECT_LIST = subjects;
+
+  const hasConfig = CLASS_LIST.length > 0 && SUBJECT_LIST.length > 0;
 
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedSection, setSelectedSection] = useState("");
@@ -58,8 +61,6 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
     },
     enabled: !!schoolId,
   });
-
-  const gridKey = selectedClass && selectedSection ? `${selectedClass}-${selectedSection}` : null;
 
   const { data: gridEntries = [], isLoading: gridLoading } = useQuery<SlotEntry[]>({
     queryKey: ["/api/timetable/class-view", selectedClass, selectedSection],
@@ -162,6 +163,33 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
     setSelectedSection(val);
     setDraftMap({});
     setPopover(null);
+  }
+
+  // If school has not configured classes or subjects, show a config-required notice
+  if (!hasConfig) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <div className="flex items-center gap-2 mb-0.5">
+            <Lock className="w-4 h-4 text-[#D4AF37]" />
+            <h2 className="text-xl font-bold text-white">Timetable Master</h2>
+          </div>
+          <p className="text-white/50 text-sm">School-isolated · Source-of-Truth mode</p>
+        </div>
+        <div className="rounded-xl border border-amber-500/30 bg-amber-900/15 p-8 flex flex-col items-center gap-4 text-center">
+          <div className="w-12 h-12 rounded-full bg-amber-500/20 flex items-center justify-center">
+            <Settings className="w-6 h-6 text-amber-400" />
+          </div>
+          <div>
+            <p className="text-amber-300 font-semibold text-base mb-1">School configuration required</p>
+            <p className="text-amber-200/70 text-sm max-w-sm">
+              No classes or subjects have been defined for this school yet.<br />
+              Please configure them in <strong>School Settings → Metadata</strong> before editing the timetable.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -291,7 +319,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
                           )}
                         </div>
 
-                        {/* Popover */}
+                        {/* Popover — strict school-defined lists only */}
                         {isPopoverOpen && (
                           <div
                             className="absolute left-0 top-full z-50 w-64 bg-[#1A2942] border border-white/20 rounded-xl shadow-2xl p-4 space-y-3"
@@ -308,7 +336,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
                               <select
                                 value={popTeacher}
                                 onChange={e => setPopTeacher(e.target.value)}
-                                className="w-full h-9 px-2 rounded-lg bg-[#0A1628] border border-white/20 text-white text-xs focus:outline-none focus:ring-1 focus:ring-[#10b981]"
+                                className="w-full h-11 px-2 rounded-lg bg-[#0A1628] border border-white/20 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#10b981]"
                                 data-testid={`select-pop-teacher-${dayIdx}-${p}`}
                               >
                                 <option value="">Select teacher</option>
@@ -316,11 +344,13 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
                               </select>
                             </div>
                             <div>
-                              <label className="block text-xs text-white/50 mb-1">Subject</label>
+                              <label className="block text-xs text-white/50 mb-1">
+                                Subject <span className="text-white/30 font-normal">(school-defined)</span>
+                              </label>
                               <select
                                 value={popSubject}
                                 onChange={e => setPopSubject(e.target.value)}
-                                className="w-full h-9 px-2 rounded-lg bg-[#0A1628] border border-white/20 text-white text-xs focus:outline-none focus:ring-1 focus:ring-[#10b981]"
+                                className="w-full h-11 px-2 rounded-lg bg-[#0A1628] border border-white/20 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#10b981]"
                                 data-testid={`select-pop-subject-${dayIdx}-${p}`}
                               >
                                 <option value="">Select subject</option>

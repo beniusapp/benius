@@ -1331,6 +1331,30 @@ export function registerTeacherRoutes(app: Express) {
     res.json(list);
   });
 
+  // ===== SLOT CHECK: real-time collision check for teacher popover =====
+  app.get("/api/timetable/slot-check", async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const { class: cls, section, dayOfWeek, period } = req.query as { class?: string; section?: string; dayOfWeek?: string; period?: string };
+    if (!cls || !section || dayOfWeek === undefined || period === undefined) {
+      return res.status(400).json({ message: "class, section, dayOfWeek, period required" });
+    }
+    let schoolId: number;
+    let excludeTeacherId: number | undefined;
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      schoolId = teacher.schoolId;
+      excludeTeacherId = teacher.id;
+    } else {
+      schoolId = req.session.schoolId!;
+    }
+    const occupancy = await storage.checkSlotOccupancy(schoolId, cls, section, parseInt(dayOfWeek), parseInt(period), excludeTeacherId);
+    if (!occupancy) {
+      return res.json({ taken: false });
+    }
+    return res.json({ taken: true, teacherName: occupancy.teacherName, subject: occupancy.subject });
+  });
+
   // ===== ADMIN BATCH SAVE =====
   app.post("/api/timetable/admin/save-batch", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
