@@ -180,11 +180,21 @@ export function registerTeacherRoutes(app: Express) {
   app.post("/api/teacher/profile-picture", diskUpload.single("file"), async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+    const ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp"];
+    const ALLOWED_EXT = [".jpg", ".jpeg", ".png", ".webp"];
+    const fileMime = req.file.mimetype?.toLowerCase() ?? "";
+    const fileExt = path.extname(req.file.originalname).toLowerCase();
+    if (!ALLOWED_MIME.includes(fileMime) || !ALLOWED_EXT.includes(fileExt)) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ message: "Only JPG, PNG, or WebP images are allowed" });
+    }
+
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
     const schoolDir = path.join(process.cwd(), "uploads", "schools", String(teacher.schoolId), "teachers", String(teacher.id));
     if (!fs.existsSync(schoolDir)) fs.mkdirSync(schoolDir, { recursive: true });
-    const destFilename = `profile-${Date.now()}${path.extname(req.file.originalname)}`;
+    const destFilename = `profile-${Date.now()}${fileExt}`;
     const destPath = path.join(schoolDir, destFilename);
     fs.renameSync(req.file.path, destPath);
     const profileImageUrl = `/uploads/schools/${teacher.schoolId}/teachers/${teacher.id}/${destFilename}`;
