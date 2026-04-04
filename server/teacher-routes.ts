@@ -1048,10 +1048,10 @@ export function registerTeacherRoutes(app: Express) {
 
   app.delete("/api/timetable/:id", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
-    // Pass schoolId to enforce tenant isolation at query level
+    // Pass schoolId to enforce tenant isolation at storage query level
     const entry = await storage.getTimetableEntryById(parseInt(req.params.id), req.session.schoolId!);
     if (!entry) return res.status(404).json({ message: "Entry not found" });
-    await storage.deleteTimetableEntry(entry.id);
+    await storage.deleteTimetableEntry(entry.id, req.session.schoolId!);
     res.json({ message: "Entry deleted" });
   });
 
@@ -1105,20 +1105,6 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   // ===== TEACHER SELF-MANAGEMENT TIMETABLE ROUTES =====
-
-  app.get("/api/timetable/teacher/:teacherId/with-status", async (req, res) => {
-    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
-    const tid = parseInt(req.params.teacherId);
-    if (req.session.teacherId && req.session.teacherId !== tid)
-      return res.status(403).json({ message: "Not authorized" });
-    if (req.session.userId) {
-      const teacher = await storage.getTeacherById(tid);
-      if (!teacher || teacher.schoolId !== req.session.schoolId)
-        return res.status(403).json({ message: "Not authorized" });
-    }
-    const list = await storage.getTimetableByTeacher(tid);
-    res.json(list);
-  });
 
   app.post("/api/timetable/teacher-slot", async (req, res) => {
     if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
@@ -1201,11 +1187,11 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    // School-scoped query: null returned if ID belongs to another school
+    // School-scoped query at storage level: null returned if ID belongs to another school
     const entry = await storage.getTimetableEntryById(parseInt(req.params.id), teacher.schoolId);
     if (!entry || entry.teacherId !== teacher.id)
       return res.status(403).json({ message: "Not authorized" });
-    await storage.deleteTimetableEntry(entry.id);
+    await storage.deleteTimetableEntry(entry.id, teacher.schoolId);
     res.json({ message: "Entry deleted" });
   });
 

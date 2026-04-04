@@ -939,8 +939,11 @@ export class DatabaseStorage {
     return result.map(r => ({ ...r.timetable_entries, teacherName: r.teachers.fullName }));
   }
 
-  async deleteTimetableEntry(id: number): Promise<boolean> {
-    const result = await db.delete(timetableEntries).where(eq(timetableEntries.id, id)).returning();
+  async deleteTimetableEntry(id: number, schoolId?: number): Promise<boolean> {
+    const conditions = schoolId !== undefined
+      ? and(eq(timetableEntries.id, id), eq(timetableEntries.schoolId, schoolId))
+      : eq(timetableEntries.id, id);
+    const result = await db.delete(timetableEntries).where(conditions).returning();
     return result.length > 0;
   }
 
