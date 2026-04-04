@@ -1364,8 +1364,17 @@ export function registerTeacherRoutes(app: Express) {
         errors.push(`Slot Day${dayOfWeek} P${period}: teacher not found in your school`);
         continue;
       }
-      const entry = await storage.upsertTimetableSlot(schoolId, { dayOfWeek, period, class: cls, section, teacherId, subject });
-      saved.push(entry);
+      try {
+        const entry = await storage.upsertTimetableSlot(schoolId, { dayOfWeek, period, class: cls, section, teacherId, subject });
+        saved.push(entry);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("unique") || msg.includes("duplicate")) {
+          errors.push(`Slot Day${dayOfWeek} P${period} (${cls}-${section}): slot conflict — another entry already occupies this slot`);
+        } else {
+          errors.push(`Slot Day${dayOfWeek} P${period}: unexpected error saving slot`);
+        }
+      }
     }
     res.json({ saved, errors });
   });
