@@ -1,13 +1,15 @@
 import type { Express } from "express";
 import { type Server } from "http";
 import { storage } from "./storage";
-import { insertSchoolSchema } from "@shared/schema";
+import { insertSchoolSchema, attendanceRecords } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import multer from "multer";
 import { parse } from "csv-parse/sync";
 import * as XLSX from "xlsx";
 import { registerTeacherRoutes } from "./teacher-routes";
+import { db } from "./db";
+import { eq, and } from "drizzle-orm";
 
 declare module "express-session" {
   interface SessionData {
@@ -1258,6 +1260,106 @@ export async function registerRoutes(
       complainantSection: student.section,
     });
     res.status(201).json(complaint);
+  });
+
+  // ===== ADMIN SCHOOL CONFIG (strict session-scoped) =====
+  app.get("/api/admin/school-config", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
+    try {
+      const meta = await storage.getAllSchoolMetadata(schoolId);
+      res.json({
+        classes: meta["classes"] ?? [],
+        sections: meta["sections"] ?? [],
+        subjects: meta["subjects"] ?? [],
+      });
+    } catch {
+      res.json({ classes: [], sections: [], subjects: [] });
+    }
+  });
+
+  // ===== ADMIN ATTENDANCE: CLASS DETAIL =====
+  app.get("/api/admin/attendance/class-detail", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
+    const { class: cls, section, date } = req.query as { class?: string; section?: string; date?: string };
+    if (!cls || !section || !date) return res.status(400).json({ message: "class, section, and date are required" });
+    try {
+      const studentList = await storage.getStudentsByClassSection(schoolId, cls, section);
+      const records = await storage.getAttendanceForStudentsOnDate(studentList.map(s => s.id), date);
+      const result = studentList.map(student => {
+        const record = records.find(r => r.studentId === student.id);
+        return {
+          studentId: student.id,
+          name: student.name,
+          rollNo: student.rollNo ?? "",
+          digitalStudentId: student.digitalStudentId,
+          status: record?.status ?? "not-marked",
+        };
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch class attendance" });
+    }
+  });
+
+  // ===== ADMIN ATTENDANCE: TEACHER SUMMARY =====
+  app.get("/api/admin/attendance/teacher-summary", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
+    const { date } = req.query as { date?: string };
+    if (!date) return res.status(400).json({ message: "date is required" });
+    try {
+      const allTeachers = await storage.getTeachersBySchool(schoolId);
+      const records = await db.select().from(attendanceRecords)
+        .where(and(eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.date, date)));
+
+      const teacherMap = new Map<number, { firstMarkAt: Date | null }>();
+      for (const r of records) {
+        const existing = teacherMap.get(r.teacherId);
+        if (!existing) {
+          teacherMap.set(r.teacherId, { firstMarkAt: r.markedAt });
+        } else if (r.markedAt < (existing.firstMarkAt ?? r.markedAt)) {
+          existing.firstMarkAt = r.markedAt;
+        }
+      }
+
+      const result = allTeachers.map(t => {
+        const markInfo = teacherMap.get(t.id);
+        const hasMarked = !!markInfo;
+        const firstMarkAt = markInfo?.firstMarkAt ?? null;
+        let status = "not-marked";
+        let isLate = false;
+        if (hasMarked && firstMarkAt) {
+          status = "marked";
+          const h = firstMarkAt.getHours();
+          const m = firstMarkAt.getMinutes();
+          if (h > 9 || (h === 9 && m > 0)) isLate = true;
+        }
+        return {
+          teacherId: t.id,
+          name: t.fullName,
+          assignedClass: t.assignedClass,
+          assignedSection: t.assignedSection,
+          subject: t.subject,
+          department: t.department ?? "",
+          status,
+          isLate,
+          submittedAt: firstMarkAt ? firstMarkAt.toISOString() : null,
+        };
+      });
+
+      const totalFaculty = result.length;
+      const marked = result.filter(r => r.status === "marked").length;
+      const notMarked = result.filter(r => r.status === "not-marked").length;
+
+      res.json({ summary: { totalFaculty, marked, notMarked }, teachers: result });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch teacher attendance summary" });
+    }
   });
 
   registerTeacherRoutes(app);
