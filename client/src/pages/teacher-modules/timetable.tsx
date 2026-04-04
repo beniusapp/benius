@@ -6,7 +6,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
-import { useSchoolConfig } from "@/hooks/use-school-config";
+import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 
 interface TimetableEntry {
   id: number;
@@ -55,9 +55,17 @@ const PERIODS = [1, 2, 3, 4, 5, 6, 7, 8];
 export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
 
-  // ── School-scoped config ──
-  const { classes: CLASS_LIST, sections: SECTION_LIST, subjects: SUBJECT_LIST, isLoading: configLoading } = useSchoolConfig(teacher.schoolId);
-  const hasSubjects = SUBJECT_LIST.length > 0;
+  // ── School-scoped config — STRICT: no hardcoded fallbacks ──
+  const {
+    classes: CLASS_LIST,
+    sections: SECTION_LIST,
+    subjects: SUBJECT_LIST,
+    isLoading: configLoading,
+    hasClasses,
+    hasSections,
+    hasSubjects,
+    isFullyConfigured,
+  } = useSchoolConfigStrict(teacher.schoolId);
 
   // ── My Schedule state ──
   const [draftMap, setDraftMap] = useState<DraftMap>({});
@@ -264,21 +272,27 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
     );
   }
 
-  // If school has no subjects configured, tell the teacher
-  if (!hasSubjects) {
+  // If school has not configured classes, sections, or subjects — block timetable UI
+  if (!isFullyConfigured) {
+    const missing: string[] = [];
+    if (!hasClasses) missing.push("classes");
+    if (!hasSections) missing.push("sections");
+    if (!hasSubjects) missing.push("subjects");
     return (
       <div className="space-y-4">
         <h3 className="text-base font-bold flex items-center gap-2">
           <Calendar className="w-4 h-4 text-[#10b981]" /> My Schedule
         </h3>
-        <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-900/15 p-8 flex flex-col items-center gap-4 text-center">
+        <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-900/15 p-8 flex flex-col items-center gap-4 text-center" data-testid="timetable-config-warning">
           <div className="w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-500/20 flex items-center justify-center">
             <Settings className="w-6 h-6 text-amber-500" />
           </div>
           <div>
             <p className="font-semibold text-amber-700 dark:text-amber-300 text-sm mb-1">Timetable configuration required</p>
             <p className="text-amber-600/80 dark:text-amber-200/70 text-xs max-w-xs">
-              Your school admin has not yet defined subjects. Once they configure classes and subjects in School Settings, you can start building your schedule.
+              Your school admin has not yet defined{" "}
+              <strong>{missing.join(", ")}</strong> in School Settings.
+              Once they configure classes, sections, and subjects you can start building your schedule.
             </p>
           </div>
         </div>
