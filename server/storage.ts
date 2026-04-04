@@ -944,18 +944,25 @@ export class DatabaseStorage {
     return result.length > 0;
   }
 
-  async getTimetableEntryById(id: number): Promise<TimetableEntry | null> {
-    const [entry] = await db.select().from(timetableEntries).where(eq(timetableEntries.id, id));
+  async getTimetableEntryById(id: number, schoolId?: number): Promise<TimetableEntry | null> {
+    const conditions = schoolId !== undefined
+      ? and(eq(timetableEntries.id, id), eq(timetableEntries.schoolId, schoolId))
+      : eq(timetableEntries.id, id);
+    const [entry] = await db.select().from(timetableEntries).where(conditions);
     return entry || null;
   }
 
   async updateTimetableEntry(
     id: number,
+    schoolId: number,
     data: Partial<Pick<TimetableEntry, "dayOfWeek" | "period" | "class" | "section" | "subject" | "room" | "startTime" | "endTime" | "status">>
-  ): Promise<TimetableEntry> {
+  ): Promise<TimetableEntry | null> {
     const updateData: Record<string, unknown> = { ...data };
-    const [entry] = await db.update(timetableEntries).set(updateData).where(eq(timetableEntries.id, id)).returning();
-    return entry;
+    const [entry] = await db.update(timetableEntries)
+      .set(updateData)
+      .where(and(eq(timetableEntries.id, id), eq(timetableEntries.schoolId, schoolId)))
+      .returning();
+    return entry || null;
   }
 
   async updateTimetableEntryStatus(schoolId: number, cls: string, section: string, status: string): Promise<number> {

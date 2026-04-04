@@ -1048,9 +1048,9 @@ export function registerTeacherRoutes(app: Express) {
 
   app.delete("/api/timetable/:id", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
-    const entry = await storage.getTimetableEntryById(parseInt(req.params.id));
+    // Pass schoolId to enforce tenant isolation at query level
+    const entry = await storage.getTimetableEntryById(parseInt(req.params.id), req.session.schoolId!);
     if (!entry) return res.status(404).json({ message: "Entry not found" });
-    if (entry.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
     await storage.deleteTimetableEntry(entry.id);
     res.json({ message: "Entry deleted" });
   });
@@ -1159,8 +1159,9 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const entry = await storage.getTimetableEntryById(parseInt(req.params.id));
-    if (!entry || entry.schoolId !== teacher.schoolId || entry.teacherId !== teacher.id)
+    // Pass teacher.schoolId and teacher.id for school+ownership isolation at query level
+    const entry = await storage.getTimetableEntryById(parseInt(req.params.id), teacher.schoolId);
+    if (!entry || entry.teacherId !== teacher.id)
       return res.status(403).json({ message: "Not authorized" });
     const { dayOfWeek, period, class: cls, section, subject, room, startTime, endTime } = req.body;
     const newDay = dayOfWeek !== undefined ? parseInt(dayOfWeek) : entry.dayOfWeek;
@@ -1181,7 +1182,7 @@ export function registerTeacherRoutes(app: Express) {
       requireAllocation: true,
     });
     if (!validation.valid) return res.status(409).json({ message: validation.error });
-    const updated = await storage.updateTimetableEntry(entry.id, {
+    const updated = await storage.updateTimetableEntry(entry.id, teacher.schoolId, {
       dayOfWeek: newDay,
       period: newPeriod,
       class: newClass,
@@ -1192,6 +1193,7 @@ export function registerTeacherRoutes(app: Express) {
       endTime: endTime !== undefined ? (endTime || null) : entry.endTime,
       status: entry.status === "published" ? "draft" : entry.status,
     });
+    if (!updated) return res.status(404).json({ message: "Entry not found" });
     res.json(updated);
   });
 
@@ -1199,8 +1201,9 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const entry = await storage.getTimetableEntryById(parseInt(req.params.id));
-    if (!entry || entry.schoolId !== teacher.schoolId || entry.teacherId !== teacher.id)
+    // School-scoped query: null returned if ID belongs to another school
+    const entry = await storage.getTimetableEntryById(parseInt(req.params.id), teacher.schoolId);
+    if (!entry || entry.teacherId !== teacher.id)
       return res.status(403).json({ message: "Not authorized" });
     await storage.deleteTimetableEntry(entry.id);
     res.json({ message: "Entry deleted" });
