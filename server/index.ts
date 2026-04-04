@@ -160,6 +160,11 @@ app.use((req, res, next) => {
     ALTER TABLE complaints ADD COLUMN IF NOT EXISTS escalated_to_principal BOOLEAN NOT NULL DEFAULT FALSE;
   `);
 
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS timetable_class_slot_unique
+      ON timetable_entries (school_id, class, section, day_of_week, period);
+  `);
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

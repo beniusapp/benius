@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
-  Save, Loader2, Lock, Grid3x3, Search, X, ChevronDown, Pencil, Trash2, BookOpen,
+  Save, Loader2, Lock, Grid3x3, X, Pencil, Trash2,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
@@ -139,7 +139,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
       if (data.errors && data.errors.length > 0) {
         toast({ title: "Saved with warnings", description: data.errors.join("; "), variant: "destructive" });
       } else {
-        toast({ title: "Timetable saved", description: `${data.saved?.length ?? 0} slot(s) updated for Class ${selectedClass}-${selectedSection}.` });
+        toast({ title: "Timetable saved", description: `${data.saved?.length ?? 0} slot(s) updated for Class ${selectedClass}-${selectedSection}.`, className: "border-emerald-500 bg-emerald-900/30 text-emerald-100" });
       }
       setDraftMap({});
       queryClient.invalidateQueries({ queryKey: ["/api/timetable/class-view", selectedClass, selectedSection] });
@@ -331,7 +331,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
                               {(slot || (key in draftMap && draftMap[key] !== null)) && (
                                 <button
                                   onClick={() => applyPopoverChange(true)}
-                                  className="h-8 px-3 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-900/20 text-xs font-semibold flex items-center gap-1"
+                                  className="h-11 px-3 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-900/20 text-xs font-semibold flex items-center gap-1"
                                   data-testid={`button-pop-delete-${dayIdx}-${p}`}
                                 >
                                   <Trash2 className="w-3 h-3" /> Clear
@@ -340,7 +340,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
                               <button
                                 onClick={() => applyPopoverChange(false)}
                                 disabled={!popTeacher || !popSubject}
-                                className="flex-1 h-8 rounded-lg bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 text-white text-xs font-semibold flex items-center justify-center gap-1"
+                                className="flex-1 h-11 rounded-lg bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 text-white text-xs font-semibold flex items-center justify-center gap-1"
                                 data-testid={`button-pop-apply-${dayIdx}-${p}`}
                               >
                                 <Pencil className="w-3 h-3" /> Apply

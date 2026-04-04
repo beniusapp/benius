@@ -151,17 +151,17 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
       if (newConflicts.length > 0 && saved.length === 0) {
         toast({
           title: "Conflicts detected",
-          description: `${newConflicts.length} slot(s) could not be saved due to conflicts. See details below.`,
+          description: `${newConflicts.length} slot(s) could not be saved. See conflict details below.`,
           variant: "destructive",
         });
       } else if (newConflicts.length > 0) {
         toast({
           title: `${saved.length} saved, ${newConflicts.length} conflict(s)`,
-          description: "Some slots were skipped. See conflict details below.",
-          variant: "destructive",
+          description: "Some slots were skipped — see conflict banner below.",
+          className: "border-amber-500 bg-amber-900/30 text-amber-100",
         });
       } else {
-        toast({ title: "Schedule saved", description: `${saved.length} slot(s) updated.` });
+        toast({ title: "Schedule saved", description: `${saved.length} slot(s) updated.`, className: "border-emerald-500 bg-emerald-900/30 text-emerald-100" });
       }
       // Remove successfully saved/deleted from draft
       const conflictKeys = new Set(newConflicts.map(c => `${c.dayOfWeek}-${c.period}`));
@@ -363,7 +363,7 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
                               {(slot || (key in draftMap && draftMap[key] !== null)) && (
                                 <button
                                   onClick={() => applyPopoverChange(true)}
-                                  className="h-9 px-3 rounded-lg border border-red-200 dark:border-red-700/40 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 text-xs font-semibold flex items-center gap-1"
+                                  className="h-11 px-3 rounded-lg border border-red-200 dark:border-red-700/40 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 text-xs font-semibold flex items-center gap-1"
                                   data-testid={`button-pop-delete-${dayIdx}-${p}`}
                                 >
                                   <Trash2 className="w-3 h-3" /> Remove
@@ -372,7 +372,7 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
                               <button
                                 onClick={() => applyPopoverChange(false)}
                                 disabled={!popClass || !popSection || !popSubject}
-                                className="flex-1 h-9 rounded-lg bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 text-white text-xs font-semibold flex items-center justify-center gap-1"
+                                className="flex-1 h-11 rounded-lg bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 text-white text-xs font-semibold flex items-center justify-center gap-1"
                                 data-testid={`button-pop-apply-${dayIdx}-${p}`}
                               >
                                 <Pencil className="w-3 h-3" /> Apply

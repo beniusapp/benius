@@ -259,7 +259,9 @@ export const timetableEntries = pgTable("timetable_entries", {
   endTime: text("end_time"),
   status: text("status").notNull().default("draft"),
   room: text("room"),
-});
+}, (table) => [
+  uniqueIndex("timetable_class_slot_unique").on(table.schoolId, table.class, table.section, table.dayOfWeek, table.period),
+]);
 
 export const teacherAllocations = pgTable("teacher_allocations", {
   id: serial("id").primaryKey(),

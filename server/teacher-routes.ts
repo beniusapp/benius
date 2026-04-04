@@ -1386,7 +1386,6 @@ export function registerTeacherRoutes(app: Express) {
       }>;
     };
     if (!Array.isArray(changes)) return res.status(400).json({ message: "changes array required" });
-    const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const saved: unknown[] = [];
     const conflicts: Array<{ dayOfWeek: number; period: number; teacherName: string; subject: string }> = [];
     for (const change of changes) {
