@@ -294,7 +294,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
             <div className="flex items-center gap-2 px-4 py-2">
               <UserX className="w-4 h-4 text-red-400" />
               <div>
-                <p className="text-[10px] text-white/40 uppercase tracking-wider">Absent</p>
+                <p className="text-[10px] text-white/40 uppercase tracking-wider">Not Marked</p>
                 <p className="text-lg font-bold text-red-400" data-testid="stat-faculty-absent">
                   {teacherLoading ? <span className="inline-block w-6 h-4 rounded bg-white/10 animate-pulse" /> : teacherSummary.notMarked}
                 </p>
