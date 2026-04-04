@@ -509,6 +509,11 @@ export class DatabaseStorage {
     return c;
   }
 
+  async getComplaintByIdForSchool(id: number, schoolId: number): Promise<Complaint | undefined> {
+    const [c] = await db.select().from(complaints).where(and(eq(complaints.id, id), eq(complaints.schoolId, schoolId)));
+    return c;
+  }
+
   async updateComplaint(id: number, data: { content?: string; fileUrl?: string | null }): Promise<Complaint> {
     const [c] = await db.update(complaints).set(data).where(eq(complaints.id, id)).returning();
     return c;

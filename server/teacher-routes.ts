@@ -182,7 +182,12 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const profileImageUrl = `/uploads/${req.file.filename}`;
+    const schoolDir = path.join(process.cwd(), "uploads", "schools", String(teacher.schoolId), "teachers", String(teacher.id));
+    if (!fs.existsSync(schoolDir)) fs.mkdirSync(schoolDir, { recursive: true });
+    const destFilename = `profile-${Date.now()}${path.extname(req.file.originalname)}`;
+    const destPath = path.join(schoolDir, destFilename);
+    fs.renameSync(req.file.path, destPath);
+    const profileImageUrl = `/uploads/schools/${teacher.schoolId}/teachers/${teacher.id}/${destFilename}`;
     await storage.updateTeacherProfilePicture(teacher.id, profileImageUrl);
     res.json({ message: "Profile picture updated", profileImageUrl });
   });
@@ -633,9 +638,12 @@ export function registerTeacherRoutes(app: Express) {
     const id = parseInt(req.params.id);
     const { resolutionRemarks } = req.body;
     if (!resolutionRemarks?.trim()) return res.status(400).json({ message: "Resolution remarks are required" });
-    const complaint = await storage.getComplaintById(id);
-    if (!complaint || complaint.schoolId !== teacher.schoolId) return res.status(404).json({ message: "Complaint not found" });
+    const complaint = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
+    if (!complaint) return res.status(404).json({ message: "Complaint not found" });
     if (complaint.complaintType !== "student-peer-report") return res.status(403).json({ message: "Access denied" });
+    if (complaint.complainantClass !== teacher.assignedClass || complaint.complainantSection !== teacher.assignedSection) {
+      return res.status(403).json({ message: "Not authorized: complaint does not belong to your class" });
+    }
     const updated = await storage.resolveComplaint(id, teacher.schoolId, resolutionRemarks.trim());
     if (!updated) return res.status(404).json({ message: "Complaint not found" });
     res.json(updated);
@@ -646,9 +654,12 @@ export function registerTeacherRoutes(app: Express) {
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
     const id = parseInt(req.params.id);
-    const complaint = await storage.getComplaintById(id);
-    if (!complaint || complaint.schoolId !== teacher.schoolId) return res.status(404).json({ message: "Complaint not found" });
+    const complaint = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
+    if (!complaint) return res.status(404).json({ message: "Complaint not found" });
     if (complaint.complaintType !== "student-peer-report") return res.status(403).json({ message: "Access denied" });
+    if (complaint.complainantClass !== teacher.assignedClass || complaint.complainantSection !== teacher.assignedSection) {
+      return res.status(403).json({ message: "Not authorized: complaint does not belong to your class" });
+    }
     const updated = await storage.escalateComplaint(id, teacher.schoolId);
     if (!updated) return res.status(404).json({ message: "Complaint not found" });
     res.json(updated);
