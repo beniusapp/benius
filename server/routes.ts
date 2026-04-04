@@ -9,7 +9,7 @@ import { parse } from "csv-parse/sync";
 import * as XLSX from "xlsx";
 import { registerTeacherRoutes } from "./teacher-routes";
 import { db } from "./db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, inArray } from "drizzle-orm";
 
 declare module "express-session" {
   interface SessionData {
@@ -1334,15 +1334,17 @@ export async function registerRoutes(
             eq(studentsTable.isActive, true)
           )
         );
-      // SQL-level school_id + date filter — strict multi-tenant isolation
-      const records = await db.select().from(attendanceRecords).where(
-        and(
-          eq(attendanceRecords.schoolId, schoolId),
-          eq(attendanceRecords.date, date)
-        )
-      );
-      const studentIds = new Set(studentRows.map(s => s.id));
-      const filteredRecords = records.filter(r => studentIds.has(r.studentId));
+      // SQL-level filter: school_id + date + student_id IN (...) — no in-memory scan
+      const studentIdList = studentRows.map(s => s.id);
+      const filteredRecords = studentIdList.length > 0
+        ? await db.select().from(attendanceRecords).where(
+            and(
+              eq(attendanceRecords.schoolId, schoolId),
+              eq(attendanceRecords.date, date),
+              inArray(attendanceRecords.studentId, studentIdList)
+            )
+          )
+        : [];
       const result = studentRows.map(student => {
         const record = filteredRecords.find(r => r.studentId === student.id);
         return {
