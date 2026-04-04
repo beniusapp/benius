@@ -575,11 +575,13 @@ export function registerTeacherRoutes(app: Express) {
       return res.json(updated);
     }
 
-    const c = await storage.getComplaintById(id);
+    const adminSchoolId = req.session.schoolId;
+    if (!adminSchoolId) return res.status(403).json({ message: "Admin school context missing" });
+    const c = await storage.getComplaintByIdForSchool(id, adminSchoolId);
     if (!c) return res.status(404).json({ message: "Complaint not found" });
     const { status } = req.body;
     if (!["Pending", "Investigating", "Resolved"].includes(status)) return res.status(400).json({ message: "Invalid status" });
-    const updated = await storage.updateComplaintStatus(id, c.schoolId, status);
+    const updated = await storage.updateComplaintStatus(id, adminSchoolId, status);
     res.json(updated);
   });
 
@@ -587,17 +589,18 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const complaintId = parseInt(req.params.id);
 
-    let schoolId: number | undefined;
+    let actorSchoolId: number | undefined;
     let teacher = null;
     if (req.session.teacherId) {
       teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-      schoolId = teacher.schoolId;
+      actorSchoolId = teacher.schoolId;
+    } else if (req.session.userId && req.session.schoolId) {
+      actorSchoolId = req.session.schoolId;
     }
 
-    const c = schoolId
-      ? await storage.getComplaintByIdForSchool(complaintId, schoolId)
-      : await storage.getComplaintById(complaintId);
+    if (!actorSchoolId) return res.status(403).json({ message: "School context missing" });
+    const c = await storage.getComplaintByIdForSchool(complaintId, actorSchoolId);
     if (!c) return res.status(404).json({ message: "Complaint not found" });
 
     if (teacher) {
@@ -626,16 +629,17 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const complaintId = parseInt(req.params.id);
 
-    let schoolId: number | undefined;
+    let actorSchoolId: number | undefined;
     if (req.session.teacherId) {
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-      schoolId = teacher.schoolId;
+      actorSchoolId = teacher.schoolId;
+    } else if (req.session.userId && req.session.schoolId) {
+      actorSchoolId = req.session.schoolId;
     }
 
-    const c = schoolId
-      ? await storage.getComplaintByIdForSchool(complaintId, schoolId)
-      : await storage.getComplaintById(complaintId);
+    if (!actorSchoolId) return res.status(403).json({ message: "School context missing" });
+    const c = await storage.getComplaintByIdForSchool(complaintId, actorSchoolId);
     if (!c) return res.status(404).json({ message: "Complaint not found" });
 
     if (req.session.teacherId) {
