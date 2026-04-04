@@ -1314,6 +1314,98 @@ export function registerTeacherRoutes(app: Express) {
     res.json(statuses);
   });
 
+  // ===== CLASS-VIEW: full grid for a class (admin + teacher) =====
+  app.get("/api/timetable/class-view", async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const { class: cls, section } = req.query as { class?: string; section?: string };
+    if (!cls || !section) return res.status(400).json({ message: "class and section query params required" });
+    let schoolId: number;
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      schoolId = teacher.schoolId;
+    } else {
+      schoolId = req.session.schoolId!;
+    }
+    const list = await storage.getTimetableByClassSection(schoolId, cls, section);
+    res.json(list);
+  });
+
+  // ===== ADMIN BATCH SAVE =====
+  app.post("/api/timetable/admin/save-batch", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const { changes } = req.body as {
+      changes: Array<{
+        dayOfWeek: number;
+        period: number;
+        class: string;
+        section: string;
+        teacherId: number | null;
+        subject: string | null;
+        _delete?: boolean;
+      }>;
+    };
+    if (!Array.isArray(changes)) return res.status(400).json({ message: "changes array required" });
+    const saved: unknown[] = [];
+    const errors: string[] = [];
+    for (const change of changes) {
+      const { dayOfWeek, period, class: cls, section, teacherId, subject } = change;
+      if (change._delete) {
+        await storage.deleteTimetableSlot(schoolId, cls, section, dayOfWeek, period);
+        continue;
+      }
+      if (teacherId === null || !subject) {
+        errors.push(`Slot Day${dayOfWeek} P${period}: teacher and subject required`);
+        continue;
+      }
+      const teacher = await storage.getTeacherById(teacherId);
+      if (!teacher || teacher.schoolId !== schoolId) {
+        errors.push(`Slot Day${dayOfWeek} P${period}: teacher not found in your school`);
+        continue;
+      }
+      const entry = await storage.upsertTimetableSlot(schoolId, { dayOfWeek, period, class: cls, section, teacherId, subject });
+      saved.push(entry);
+    }
+    res.json({ saved, errors });
+  });
+
+  // ===== TEACHER BATCH SAVE with collision detection =====
+  app.post("/api/timetable/teacher/save-batch", async (req, res) => {
+    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const { changes } = req.body as {
+      changes: Array<{
+        dayOfWeek: number;
+        period: number;
+        class: string;
+        section: string;
+        subject: string;
+        _delete?: boolean;
+      }>;
+    };
+    if (!Array.isArray(changes)) return res.status(400).json({ message: "changes array required" });
+    const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const saved: unknown[] = [];
+    const conflicts: Array<{ dayOfWeek: number; period: number; teacherName: string; subject: string }> = [];
+    for (const change of changes) {
+      const { dayOfWeek, period, class: cls, section, subject } = change;
+      if (change._delete) {
+        await storage.deleteTeacherTimetableSlot(teacher.schoolId, teacher.id, dayOfWeek, period);
+        continue;
+      }
+      const occupancy = await storage.checkSlotOccupancy(teacher.schoolId, cls, section, dayOfWeek, period, teacher.id);
+      if (occupancy) {
+        conflicts.push({ dayOfWeek, period, teacherName: occupancy.teacherName, subject: occupancy.subject });
+        continue;
+      }
+      const entry = await storage.upsertTeacherTimetableSlot(teacher.schoolId, teacher.id, { dayOfWeek, period, class: cls, section, subject });
+      saved.push(entry);
+    }
+    res.json({ saved, conflicts });
+  });
+
   // ===== FACULTY INFO =====
   app.get("/api/faculty/:schoolId", async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });

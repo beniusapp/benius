@@ -1133,6 +1133,129 @@ export class DatabaseStorage {
     return { valid: true };
   }
 
+  async getTimetableByClassSection(schoolId: number, cls: string, section: string): Promise<(TimetableEntry & { teacherName: string })[]> {
+    const result = await db.select().from(timetableEntries)
+      .leftJoin(teachers, eq(timetableEntries.teacherId, teachers.id))
+      .where(and(
+        eq(timetableEntries.schoolId, schoolId),
+        eq(timetableEntries.class, cls),
+        eq(timetableEntries.section, section),
+      ));
+    return result.map(r => ({ ...r.timetable_entries, teacherName: r.teachers?.fullName ?? "" }));
+  }
+
+  async upsertTimetableSlot(
+    schoolId: number,
+    opts: { dayOfWeek: number; period: number; class: string; section: string; teacherId: number; subject: string }
+  ): Promise<TimetableEntry> {
+    const existing = await db.select().from(timetableEntries).where(
+      and(
+        eq(timetableEntries.schoolId, schoolId),
+        eq(timetableEntries.class, opts.class),
+        eq(timetableEntries.section, opts.section),
+        eq(timetableEntries.dayOfWeek, opts.dayOfWeek),
+        eq(timetableEntries.period, opts.period),
+      )
+    );
+    if (existing.length > 0) {
+      const [updated] = await db.update(timetableEntries)
+        .set({ teacherId: opts.teacherId, subject: opts.subject, status: "draft" })
+        .where(and(eq(timetableEntries.id, existing[0].id), eq(timetableEntries.schoolId, schoolId)))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(timetableEntries).values({
+      schoolId,
+      teacherId: opts.teacherId,
+      dayOfWeek: opts.dayOfWeek,
+      period: opts.period,
+      class: opts.class,
+      section: opts.section,
+      subject: opts.subject,
+      status: "draft",
+    }).returning();
+    return created;
+  }
+
+  async deleteTimetableSlot(schoolId: number, cls: string, section: string, dayOfWeek: number, period: number): Promise<boolean> {
+    const result = await db.delete(timetableEntries).where(
+      and(
+        eq(timetableEntries.schoolId, schoolId),
+        eq(timetableEntries.class, cls),
+        eq(timetableEntries.section, section),
+        eq(timetableEntries.dayOfWeek, dayOfWeek),
+        eq(timetableEntries.period, period),
+      )
+    ).returning();
+    return result.length > 0;
+  }
+
+  async checkSlotOccupancy(schoolId: number, cls: string, section: string, dayOfWeek: number, period: number, excludeTeacherId?: number): Promise<{ occupied: boolean; teacherName: string; teacherId: number; subject: string } | null> {
+    const rows = await db.select().from(timetableEntries)
+      .innerJoin(teachers, eq(timetableEntries.teacherId, teachers.id))
+      .where(and(
+        eq(timetableEntries.schoolId, schoolId),
+        eq(timetableEntries.class, cls),
+        eq(timetableEntries.section, section),
+        eq(timetableEntries.dayOfWeek, dayOfWeek),
+        eq(timetableEntries.period, period),
+      ));
+    if (rows.length === 0) return null;
+    const row = rows[0];
+    if (excludeTeacherId !== undefined && row.timetable_entries.teacherId === excludeTeacherId) return null;
+    return {
+      occupied: true,
+      teacherName: row.teachers.fullName,
+      teacherId: row.timetable_entries.teacherId,
+      subject: row.timetable_entries.subject,
+    };
+  }
+
+  async upsertTeacherTimetableSlot(
+    schoolId: number,
+    teacherId: number,
+    opts: { dayOfWeek: number; period: number; class: string; section: string; subject: string }
+  ): Promise<TimetableEntry> {
+    const existing = await db.select().from(timetableEntries).where(
+      and(
+        eq(timetableEntries.schoolId, schoolId),
+        eq(timetableEntries.teacherId, teacherId),
+        eq(timetableEntries.dayOfWeek, opts.dayOfWeek),
+        eq(timetableEntries.period, opts.period),
+      )
+    );
+    if (existing.length > 0) {
+      const [updated] = await db.update(timetableEntries)
+        .set({ class: opts.class, section: opts.section, subject: opts.subject, status: "draft" })
+        .where(and(eq(timetableEntries.id, existing[0].id), eq(timetableEntries.schoolId, schoolId)))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(timetableEntries).values({
+      schoolId,
+      teacherId,
+      dayOfWeek: opts.dayOfWeek,
+      period: opts.period,
+      class: opts.class,
+      section: opts.section,
+      subject: opts.subject,
+      status: "draft",
+    }).returning();
+    return created;
+  }
+
+  async deleteTeacherTimetableSlot(schoolId: number, teacherId: number, dayOfWeek: number, period: number): Promise<boolean> {
+    const result = await db.delete(timetableEntries).where(
+      and(
+        eq(timetableEntries.schoolId, schoolId),
+        eq(timetableEntries.teacherId, teacherId),
+        eq(timetableEntries.dayOfWeek, dayOfWeek),
+        eq(timetableEntries.period, period),
+      )
+    ).returning();
+    return result.length > 0;
+  }
+
   // ===== TEACHER ALLOCATION METHODS =====
   async createTeacherAllocation(data: InsertTeacherAllocation): Promise<TeacherAllocation> {
     const [alloc] = await db.insert(teacherAllocations).values(data).returning();
