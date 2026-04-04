@@ -1,0 +1,43 @@
+Refactor the existing Timetable module for my platform. I have two existing pages: /admin-dashboard/timetable-master and /teacher/dashboard/timetable.
+
+1. MULTI-TENANT ISOLATION (Strict Requirement):
+
+Every database table (allocations, timetables, teachers, rooms) must have a school_id column.
+
+Mandatory: All queries (Select, Insert, Update, Delete) must include a WHERE school_id = CURRENT_USER_SCHOOL_ID clause. This ensures School A's timetable never collides or leaks into School B's data.
+
+2. ADMIN MASTER CONTROL (/admin-dashboard/timetable-master):
+
+Allocation Engine: Admin assigns 'Teacher X' to 'Subject Y' for 'Class Z' and sets a Weekly Period Quota.
+
+Global Approval: Provide a 'Publish' button per class that moves entries from status: draft to status: published. Only 'Published' entries are visible to students.
+
+3. TEACHER FLEXIBILITY (/teacher/dashboard/timetable):
+
+Self-Management: Allow the teacher to Create, Edit, or Delete their own timetable slots at any time.
+
+Live Editing: If a teacher needs to change a period, the system should allow it instantly, provided there is no conflict within their own school.
+
+4. THE CONFLICT DETECTION ENGINE (The Guard):
+
+Develop a shared backend function validateTimetableEntry. It must run a 4-Way Check (Scoped to the school_id):
+
+Teacher Conflict: Is the teacher busy in another class in this school at this time?
+
+Class Conflict: Does this class already have a subject in this slot?
+
+Room Conflict: Is the assigned classroom/lab already occupied?
+
+Quota Guard: Is the teacher exceeding the 'Weekly Quota' set by the Admin?
+
+5. STATE MANAGEMENT & PORTABILITY:
+
+Use a status field: draft (Teacher is editing) and published (Admin has approved).
+
+Local Migration Ready: Write the logic using standard SQL queries so the code can be moved to a local machine without losing school-specific isolation.
+
+6. UI/UX SPECIFICATIONS:
+
+Theme: Modern Emerald Green (#10b981).
+
+Icons: Use Lucide-React (Lock for Isolation, ShieldCheck for valid slots, AlertTriangle for conflicts).

@@ -1,0 +1,43 @@
+Refactor the existing Timetable module for my platform. I have two existing pages: /admin-dashboard/timetable-master and /teacher/dashboard/timetable. The goal is to implement a Hybrid Management System that allows teachers to manage their own schedules while the Admin maintains oversight.
+
+1. ADMIN MASTER CONTROL (/admin-dashboard/timetable-master):
+
+Allocation Engine: Add a section where the Admin assigns 'Teacher X' to 'Subject Y' for 'Class Z' and sets a Weekly Period Quota (e.g., 6 periods/week). This acts as the 'Permission' for the teacher.
+
+Master Monitoring: Create a grid view showing the status of all classes. Use color-coding: Orange for 'In-Progress (Draft)', Emerald Green for 'Published'.
+
+Global Approval: Add a 'Publish' button per class that moves all entries from status: draft to status: published. Only 'Published' entries are visible to students.
+
+2. TEACHER FLEXIBILITY (/teacher/dashboard/timetable):
+
+Self-Management: Allow the teacher to Create, Edit, or Delete their own timetable slots at any time.
+
+Restricted Dropdown: When adding a slot, the teacher can ONLY select subjects and classes assigned to them by the Admin in Step 1.
+
+Live Editing: If a teacher needs to change a period (e.g., move Monday Period 1 to Tuesday Period 3), the system should allow it instantly, provided there is no conflict.
+
+3. THE CONFLICT DETECTION ENGINE (The Guard):
+
+Develop a shared backend function validateTimetableEntry. It must run a 3-Way Check every time a teacher saves or edits a slot:
+
+Teacher Conflict: Is the teacher already teaching another class during this specific Day/Period?
+
+Class Conflict: Does this specific Class/Section already have a subject assigned by another teacher in this slot?
+
+Quota Guard: Is the teacher exceeding the 'Weekly Quota' set by the Admin?
+
+Error Handling: If a conflict exists, block the save and show a clear error message (e.g., 'Conflict: You are already in Class 10B at this time').
+
+4. STATE MANAGEMENT & PORTABILITY:
+
+Use a status field in the database: draft (Teacher is editing) and published (Admin has approved).
+
+Continuous Access: Ensure the teacher can edit 'Published' slots; however, edits revert the slot to draft status until the Admin re-approves it.
+
+Local Migration Ready: Write the logic using standard SQL queries (PostgreSQL/SQLite) so the code can be easily moved from Replit to a local machine.
+
+5. UI/UX SPECIFICATIONS:
+
+Theme: Modern Emerald Green (#10b981) and Slate.
+
+Icons: Use Lucide-React (ShieldCheck for valid slots, AlertTriangle for conflicts, RefreshCw for edits).
