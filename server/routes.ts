@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { type Server } from "http";
 import { storage } from "./storage";
-import { insertSchoolSchema, attendanceRecords } from "@shared/schema";
+import { insertSchoolSchema, attendanceRecords, studentProfiles } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import multer from "multer";
@@ -9,7 +9,7 @@ import { parse } from "csv-parse/sync";
 import * as XLSX from "xlsx";
 import { registerTeacherRoutes } from "./teacher-routes";
 import { db } from "./db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 
 declare module "express-session" {
   interface SessionData {
@@ -694,6 +694,34 @@ export async function registerRoutes(
     res.json({ message: "Student deactivated successfully" });
   });
 
+  // ===== ADMIN: STUDENT PROFILE SUMMARY (for Quick Action in attendance) =====
+  app.get("/api/admin/students/:studentId/summary", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const studentId = parseInt(req.params.studentId);
+    if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
+    const { students: studentsTable } = await import("@shared/schema");
+    const [row] = await db
+      .select({
+        id: studentsTable.id,
+        name: studentsTable.name,
+        class: studentsTable.class,
+        section: studentsTable.section,
+        digitalStudentId: studentsTable.digitalStudentId,
+        phone: studentsTable.phone,
+        isActive: studentsTable.isActive,
+        rollNo: sql<string>`COALESCE(${studentProfiles.rollNo}, '')`.as("roll_no"),
+        fatherName: sql<string>`COALESCE(${studentProfiles.fatherName}, '')`.as("father_name"),
+        presentAddress: sql<string>`COALESCE(${studentProfiles.presentAddress}, '')`.as("present_address"),
+      })
+      .from(studentsTable)
+      .leftJoin(studentProfiles, eq(studentProfiles.studentId, studentsTable.id))
+      .where(and(eq(studentsTable.id, studentId), eq(studentsTable.schoolId, schoolId)));
+    if (!row) return res.status(404).json({ message: "Student not found" });
+    res.json(row);
+  });
+
   app.patch("/api/teachers/:teacherId/deactivate", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") {
       return res.status(403).json({ message: "Admin access required" });
@@ -1264,7 +1292,7 @@ export async function registerRoutes(
 
   // ===== ADMIN SCHOOL CONFIG (strict session-scoped) =====
   app.get("/api/admin/school-config", async (req, res) => {
-    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
     try {
@@ -1281,41 +1309,60 @@ export async function registerRoutes(
 
   // ===== ADMIN ATTENDANCE: CLASS DETAIL =====
   app.get("/api/admin/attendance/class-detail", async (req, res) => {
-    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
     const { class: cls, section, date } = req.query as { class?: string; section?: string; date?: string };
     if (!cls || !section || !date) return res.status(400).json({ message: "class, section, and date are required" });
     try {
-      const studentList = await storage.getStudentsByClassSection(schoolId, cls, section);
-      // SQL-level school_id + date filter — strict isolation
+      const { students: studentsTable } = await import("@shared/schema");
+      // Fetch students with their rollNo via LEFT JOIN on student_profiles
+      const studentRows = await db
+        .select({
+          id: studentsTable.id,
+          name: studentsTable.name,
+          digitalStudentId: studentsTable.digitalStudentId,
+          rollNo: sql<string>`COALESCE(${studentProfiles.rollNo}, '')`.as("roll_no"),
+        })
+        .from(studentsTable)
+        .leftJoin(studentProfiles, eq(studentProfiles.studentId, studentsTable.id))
+        .where(
+          and(
+            eq(studentsTable.schoolId, schoolId),
+            eq(studentsTable.class, cls),
+            eq(studentsTable.section, section),
+            eq(studentsTable.isActive, true)
+          )
+        );
+      // SQL-level school_id + date filter — strict multi-tenant isolation
       const records = await db.select().from(attendanceRecords).where(
         and(
           eq(attendanceRecords.schoolId, schoolId),
           eq(attendanceRecords.date, date)
         )
       );
-      const studentIds = new Set(studentList.map(s => s.id));
+      const studentIds = new Set(studentRows.map(s => s.id));
       const filteredRecords = records.filter(r => studentIds.has(r.studentId));
-      const result = studentList.map(student => {
+      const result = studentRows.map(student => {
         const record = filteredRecords.find(r => r.studentId === student.id);
         return {
           studentId: student.id,
           name: student.name,
-          rollNo: "",
+          rollNo: student.rollNo ?? "",
           digitalStudentId: student.digitalStudentId,
           status: record?.status ?? "present",
         };
       });
       res.json(result);
     } catch (err) {
+      console.error("class-detail error:", err);
       res.status(500).json({ message: "Failed to fetch class attendance" });
     }
   });
 
   // ===== ADMIN ATTENDANCE: TEACHER SUMMARY =====
   app.get("/api/admin/attendance/teacher-summary", async (req, res) => {
-    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
     const { date } = req.query as { date?: string };

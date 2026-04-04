@@ -2,11 +2,26 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Users, UserX, Loader2, Calendar, Filter, CheckCircle, Search, Eye,
-  Clock, BookOpen, ChevronRight, AlertTriangle, TrendingUp, type LucideIcon,
+  Clock, BookOpen, ChevronRight, AlertTriangle, TrendingUp, X,
+  Phone, MapPin, User, type LucideIcon,
 } from "lucide-react";
+
 interface Props {
   schoolId: number;
   onViewStudent?: (studentId: number) => void;
+}
+
+interface StudentSummary {
+  id: number;
+  name: string;
+  class: string;
+  section: string;
+  digitalStudentId: string;
+  phone: string;
+  rollNo: string;
+  fatherName: string;
+  presentAddress: string;
+  isActive: boolean;
 }
 
 interface SchoolConfig {
@@ -118,6 +133,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   const [filterSection, setFilterSection] = useState("");
   const [studentSearch, setStudentSearch] = useState("");
   const [teacherSearch, setTeacherSearch] = useState("");
+  const [selectedStudentId, setSelectedStudentId] = useState<number | null>(null);
 
   // ── School config (admin-scoped endpoint, no fallbacks) ──
   const { data: schoolConfig, isLoading: configLoading } = useQuery<SchoolConfig>({
@@ -193,8 +209,25 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
     return rows.filter(t => t.name.toLowerCase().includes(q) || t.subject.toLowerCase().includes(q) || t.department.toLowerCase().includes(q));
   }, [teacherSummaryData, teacherSearch]);
 
+  // ── Student detail (for Quick Action panel) ──
+  const { data: selectedStudentDetail, isLoading: studentDetailLoading } = useQuery<StudentSummary>({
+    queryKey: ["/api/admin/students", selectedStudentId, "summary"],
+    queryFn: async () => {
+      const r = await fetch(`/api/admin/students/${selectedStudentId}/summary`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to fetch student");
+      return r.json();
+    },
+    enabled: selectedStudentId !== null,
+  });
+
   const displayDate = new Date(date).toLocaleDateString("en-GB");
   const ts = teacherSummaryData?.summary;
+
+  // ── Student status in current view for detail panel ──
+  const selectedStudentStatus = useMemo(
+    () => studentData.find(s => s.studentId === selectedStudentId)?.status ?? null,
+    [studentData, selectedStudentId]
+  );
 
   return (
     <div className="space-y-5">
@@ -395,8 +428,8 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
                             </td>
                             <td className="px-3 py-3">
                               <button
-                                title="View student in registry"
-                                onClick={() => onViewStudent?.(s.studentId)}
+                                title="View student detail"
+                                onClick={() => setSelectedStudentId(s.studentId)}
                                 className="inline-flex items-center gap-1 text-xs text-[#10b981] hover:text-emerald-300 transition-colors h-8 px-2 rounded-lg hover:bg-emerald-500/10"
                                 data-testid={`button-view-student-${s.studentId}`}
                               >
@@ -557,6 +590,113 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
           <p className="text-yellow-400 text-sm">
             No student attendance records found for {displayDate}. Teachers may not have marked attendance yet.
           </p>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════ */}
+      {/* STUDENT DETAIL MODAL (Quick Action drill-down)            */}
+      {/* ══════════════════════════════════════════════════════════ */}
+      {selectedStudentId !== null && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm" data-testid="modal-student-detail">
+          <div className="w-full max-w-md rounded-2xl bg-[#1A2942] border border-white/10 shadow-2xl overflow-hidden">
+            {/* Modal header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <User className="w-4 h-4 text-[#D4AF37]" />
+                <span className="text-sm font-semibold text-white">Student Profile</span>
+              </div>
+              <button
+                onClick={() => setSelectedStudentId(null)}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors"
+                data-testid="button-close-student-modal"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal body */}
+            {studentDetailLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-6 h-6 animate-spin text-[#D4AF37]" />
+              </div>
+            ) : selectedStudentDetail ? (
+              <div className="p-5 space-y-4">
+                {/* Name + DSID */}
+                <div className="flex items-start gap-3">
+                  <div className="w-12 h-12 rounded-full bg-[#D4AF37]/20 border border-[#D4AF37]/30 flex items-center justify-center flex-shrink-0">
+                    <span className="text-[#D4AF37] font-bold text-lg">
+                      {selectedStudentDetail.name.charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-white font-semibold" data-testid="text-modal-student-name">{selectedStudentDetail.name}</p>
+                    <p className="text-white/40 text-xs font-mono mt-0.5" data-testid="text-modal-student-dsid">{selectedStudentDetail.digitalStudentId}</p>
+                    {selectedStudentStatus && (
+                      <div className="mt-1">
+                        <StatusBadge status={selectedStudentStatus} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Info grid */}
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="bg-[#0A1628] rounded-lg p-3">
+                    <p className="text-white/40 text-xs mb-1">Class / Section</p>
+                    <p className="text-white font-medium" data-testid="text-modal-student-class">
+                      Class {selectedStudentDetail.class} – {selectedStudentDetail.section}
+                    </p>
+                  </div>
+                  <div className="bg-[#0A1628] rounded-lg p-3">
+                    <p className="text-white/40 text-xs mb-1">Roll No</p>
+                    <p className="text-white font-medium" data-testid="text-modal-student-roll">
+                      {selectedStudentDetail.rollNo || "—"}
+                    </p>
+                  </div>
+                </div>
+
+                {selectedStudentDetail.phone && (
+                  <div className="flex items-center gap-2 text-sm text-white/60">
+                    <Phone className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span data-testid="text-modal-student-phone">{selectedStudentDetail.phone}</span>
+                  </div>
+                )}
+                {selectedStudentDetail.fatherName && (
+                  <div className="flex items-center gap-2 text-sm text-white/60">
+                    <User className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span data-testid="text-modal-student-father">Father: {selectedStudentDetail.fatherName}</span>
+                  </div>
+                )}
+                {selectedStudentDetail.presentAddress && (
+                  <div className="flex items-start gap-2 text-sm text-white/60">
+                    <MapPin className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    <span data-testid="text-modal-student-address" className="line-clamp-2">{selectedStudentDetail.presentAddress}</span>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="flex gap-2 pt-2 border-t border-white/10">
+                  <button
+                    onClick={() => { setSelectedStudentId(null); onViewStudent?.(selectedStudentDetail.id); }}
+                    className="flex-1 flex items-center justify-center gap-1.5 h-10 rounded-lg bg-[#D4AF37]/10 border border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 transition-colors text-sm font-medium"
+                    data-testid="button-go-to-registry"
+                  >
+                    <Users className="w-4 h-4" />
+                    Open in Registry
+                  </button>
+                  <button
+                    onClick={() => setSelectedStudentId(null)}
+                    className="h-10 px-4 rounded-lg bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 transition-colors text-sm"
+                    data-testid="button-close-student-detail"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="py-10 text-center text-white/40 text-sm">Failed to load student data</div>
+            )}
+          </div>
         </div>
       )}
     </div>
