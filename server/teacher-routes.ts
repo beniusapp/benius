@@ -1456,6 +1456,34 @@ export function registerTeacherRoutes(app: Express) {
     res.json(result);
   });
 
+  // ===== STUDENT EDIT (Admin only) =====
+  const updateStudentSchema = z.object({
+    name: z.string().min(2, "Name must be at least 2 characters"),
+    class: z.string().min(1, "Class is required"),
+    section: z.string().min(1, "Section is required"),
+    phone: z.string().regex(/^[0-9+\-\s()]{7,15}$/, "Invalid phone number"),
+  });
+
+  app.patch("/api/admin/students/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid student ID" });
+
+    const parsed = updateStudentSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+    const student = await storage.getStudentById(id);
+    if (!student || student.schoolId !== req.session.schoolId)
+      return res.status(404).json({ message: "Student not found" });
+
+    const updated = await storage.updateStudent(id, req.session.schoolId!, parsed.data);
+    if (!updated) return res.status(404).json({ message: "Update failed" });
+
+    res.json(updated);
+  });
+
   // ===== PAGINATED TEACHERS (Big Data) =====
   app.get("/api/schools/:schoolId/teachers/paginated", async (req, res) => {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });

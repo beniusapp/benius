@@ -1,6 +1,9 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, type KeyboardEvent } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Search, ChevronLeft, ChevronRight, UserPlus, Upload, X, Loader2, Users, UserX } from "lucide-react";
+import {
+  Search, ChevronLeft, ChevronRight, UserPlus, Upload, X,
+  Loader2, Users, UserX, Pencil, AlignJustify, UserCog,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -15,18 +18,28 @@ import DeactivationModal from "@/components/deactivation-modal";
 
 interface Props { schoolId: number; classes: string[]; sections: string[] }
 
+const PAGE_SIZE = 50;
+
 const addSchema = z.object({
   name: z.string().min(1), class: z.string().min(1), section: z.string().min(1),
   phone: z.string().min(7), dob: z.string().min(1),
 });
 type AddForm = z.infer<typeof addSchema>;
 
-function SkeletonRow() {
+const editSchema = z.object({
+  name: z.string().min(2, "Name must be at least 2 characters"),
+  class: z.string().min(1, "Class is required"),
+  section: z.string().min(1, "Section is required"),
+  phone: z.string().regex(/^[0-9+\-\s()]{7,15}$/, "Invalid phone number (7–15 digits)"),
+});
+type EditForm = z.infer<typeof editSchema>;
+
+function SkeletonRow({ compact }: { compact: boolean }) {
   return (
     <tr className="border-b border-white/5">
-      {[...Array(6)].map((_, i) => (
-        <td key={i} className="py-3 px-4">
-          <div className="h-4 rounded bg-white/10 animate-pulse" style={{ width: `${60 + Math.random() * 40}%` }} />
+      {[...Array(7)].map((_, i) => (
+        <td key={i} className={compact ? "py-1.5 px-3" : "py-3 px-4"}>
+          <div className="h-3.5 rounded bg-white/10 animate-pulse" style={{ width: `${55 + (i * 7) % 40}%` }} />
         </td>
       ))}
     </tr>
@@ -40,9 +53,12 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
   const [cls, setCls] = useState("");
   const [section, setSection] = useState("");
   const [page, setPage] = useState(1);
+  const [gotoPage, setGotoPage] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [compact, setCompact] = useState(false);
   const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(null);
   const [deactivateTarget, setDeactivateTarget] = useState<Student | null>(null);
+  const [editTarget, setEditTarget] = useState<Student | null>(null);
 
   const handleSearch = useCallback((val: string) => {
     setQ(val);
@@ -67,15 +83,12 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
     enabled: !!schoolId,
   });
 
-  const totalPages = data ? Math.ceil(data.total / 50) : 1;
+  const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 1;
 
+  /* ── Add-student form ── */
   const form = useForm<AddForm>({ resolver: zodResolver(addSchema), defaultValues: { name: "", class: "", section: "", phone: "", dob: "" } });
-
   const addMutation = useMutation({
-    mutationFn: async (d: AddForm) => {
-      const r = await apiRequest("POST", `/api/schools/${schoolId}/students`, d);
-      return r.json();
-    },
+    mutationFn: async (d: AddForm) => { const r = await apiRequest("POST", `/api/schools/${schoolId}/students`, d); return r.json(); },
     onSuccess: (d) => {
       toast({ title: "Student Added", description: `DSID: ${d.digitalStudentId}` });
       form.reset(); setShowForm(false);
@@ -84,6 +97,7 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
+  /* ── Upload CSV ── */
   const uploadRef = { current: null as HTMLInputElement | null };
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
@@ -99,17 +113,82 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
     onError: (e: Error) => toast({ title: "Upload Failed", description: e.message, variant: "destructive" }),
   });
 
+  /* ── Edit form ── */
+  const editForm = useForm<EditForm>({ resolver: zodResolver(editSchema), defaultValues: { name: "", class: "", section: "", phone: "" } });
+
+  useEffect(() => {
+    if (editTarget) {
+      editForm.reset({
+        name: editTarget.name,
+        class: editTarget.class,
+        section: editTarget.section,
+        phone: editTarget.phone,
+      });
+    }
+  }, [editTarget]);
+
+  const editMutation = useMutation({
+    mutationFn: async (d: EditForm) => {
+      const r = await apiRequest("PATCH", `/api/admin/students/${editTarget!.id}`, d);
+      return r.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Student Updated", description: `${editTarget?.name} record saved.` });
+      setEditTarget(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/schools", schoolId, "students", "paginated"] });
+    },
+    onError: (e: Error) => toast({ title: "Update Failed", description: e.message, variant: "destructive" }),
+  });
+
+  /* ── Go-to-page navigation ── */
+  function commitGotoPage() {
+    const n = parseInt(gotoPage);
+    if (!isNaN(n) && n >= 1 && n <= totalPages) { setPage(n); }
+    setGotoPage("");
+  }
+  function onGotoKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") commitGotoPage();
+  }
+
+  /* ── Row & cell density ── */
+  const cell = compact ? "py-1.5 px-3 text-xs" : "py-3 px-4 text-sm";
+
+  /* ── Class/section fallbacks ── */
+  const classList = classes.length > 0 ? classes : ["LKG", "UKG", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
+  const sectionList = sections.length > 0 ? sections : ["A", "B", "C", "D", "E"];
+
+  /* ── Edit modal dropdown options (always include the student's current value) ── */
+  const editClassList = editTarget && !classList.includes(editTarget.class)
+    ? [editTarget.class, ...classList] : classList;
+  const editSectionList = editTarget && !sectionList.includes(editTarget.section)
+    ? [editTarget.section, ...sectionList] : sectionList;
+
   return (
     <div className="space-y-4">
+      {/* ── Header ── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-xl font-bold text-white">Student Registry</h2>
-          <p className="text-white/50 text-sm">{data?.total ?? "..."} active students · Page {page} of {totalPages}</p>
+          <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <UserCog className="w-5 h-5 text-[#10b981]" /> Student Registry
+          </h2>
+          <p className="text-white/50 text-sm">{data?.total ?? "…"} active students · Page {page} of {totalPages}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Compact toggle */}
+          <button
+            onClick={() => setCompact(c => !c)}
+            title={compact ? "Normal View" : "Compact View"}
+            data-testid="button-toggle-compact"
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition-colors min-h-[36px]
+              ${compact ? "border-[#10b981]/50 bg-[#10b981]/10 text-[#10b981]" : "border-white/20 text-white/60 hover:bg-white/10"}`}
+          >
+            <AlignJustify className="w-3.5 h-3.5" />
+            {compact ? "Compact" : "Normal"}
+          </button>
+
           <Button size="sm" variant="outline" className="border-[#D4AF37]/40 text-[#D4AF37] hover:bg-[#D4AF37]/10"
-            onClick={() => { uploadRef.current?.click(); }} data-testid="button-upload-csv" disabled={uploadMutation.isPending}>
-            <Upload className="w-4 h-4 mr-1" /> {uploadMutation.isPending ? "Uploading..." : "Bulk CSV"}
+            onClick={() => uploadRef.current?.click()} data-testid="button-upload-csv" disabled={uploadMutation.isPending}>
+            <Upload className="w-4 h-4 mr-1" /> {uploadMutation.isPending ? "Uploading…" : "Bulk CSV"}
           </Button>
           <input ref={el => uploadRef.current = el} type="file" accept=".csv,.xlsx" className="hidden"
             onChange={e => { const f = e.target.files?.[0]; if (f) uploadMutation.mutate(f); }} />
@@ -120,11 +199,12 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
         </div>
       </div>
 
+      {/* ── Add-student inline form ── */}
       {showForm && (
         <div className="rounded-xl border border-[#D4AF37]/30 bg-[#1A2942] p-5">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-semibold text-white">New Student</h3>
-            <button onClick={() => setShowForm(false)} className="text-white/40 hover:text-white"><X className="w-4 h-4" /></button>
+            <button onClick={() => setShowForm(false)} className="text-white/40 hover:text-white min-h-[36px] min-w-[36px] flex items-center justify-center"><X className="w-4 h-4" /></button>
           </div>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(d => addMutation.mutate(d))} className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -139,9 +219,8 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
                     <SelectTrigger className="bg-[#0A1628] border-white/20 text-white" data-testid="select-student-class">
                       <SelectValue placeholder="Class" />
                     </SelectTrigger>
-                    <SelectContent>{(classes.length > 0 ? classes : ["LKG","UKG","1","2","3","4","5","6","7","8","9","10","11","12"]).map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                  </Select>
-                  <FormMessage /></FormItem>
+                    <SelectContent>{classList.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                  </Select><FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="section" render={({ field }) => (
                 <FormItem><FormLabel className="text-white/70">Section</FormLabel>
@@ -149,9 +228,8 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
                     <SelectTrigger className="bg-[#0A1628] border-white/20 text-white" data-testid="select-student-section">
                       <SelectValue placeholder="Section" />
                     </SelectTrigger>
-                    <SelectContent>{(sections.length > 0 ? sections : ["A","B","C","D","E"]).map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
-                  </Select>
-                  <FormMessage /></FormItem>
+                    <SelectContent>{sectionList.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                  </Select><FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="phone" render={({ field }) => (
                 <FormItem><FormLabel className="text-white/70">Phone</FormLabel>
@@ -173,88 +251,245 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
         </div>
       )}
 
-      <div className="flex flex-wrap gap-3">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
-          <Input value={q} onChange={e => handleSearch(e.target.value)}
-            placeholder="Search name or DSID..."
-            className="pl-9 bg-[#1A2942] border-white/20 text-white placeholder:text-white/30"
-            data-testid="input-search-students" />
+      {/* ── Sticky search + filter bar ── */}
+      <div className="sticky top-0 z-20 bg-[#0A1628] pt-1 pb-3">
+        <div className="flex flex-wrap gap-3">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+            <Input value={q} onChange={e => handleSearch(e.target.value)}
+              placeholder="Search name, DSID or phone…"
+              className="pl-9 bg-[#1A2942] border-white/20 text-white placeholder:text-white/30"
+              data-testid="input-search-students" />
+          </div>
+          <Select value={cls} onValueChange={v => { setCls(v === "all" ? "" : v); setPage(1); }}>
+            <SelectTrigger className="w-32 bg-[#1A2942] border-white/20 text-white" data-testid="select-filter-class">
+              <SelectValue placeholder="All Classes" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Classes</SelectItem>
+              {classList.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={section} onValueChange={v => { setSection(v === "all" ? "" : v); setPage(1); }}>
+            <SelectTrigger className="w-32 bg-[#1A2942] border-white/20 text-white" data-testid="select-filter-section">
+              <SelectValue placeholder="All Sections" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Sections</SelectItem>
+              {sectionList.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            </SelectContent>
+          </Select>
         </div>
-        <Select value={cls} onValueChange={v => { setCls(v === "all" ? "" : v); setPage(1); }}>
-          <SelectTrigger className="w-32 bg-[#1A2942] border-white/20 text-white" data-testid="select-filter-class">
-            <SelectValue placeholder="All Classes" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Classes</SelectItem>
-            {(classes.length > 0 ? classes : ["1","2","3","4","5","6","7","8","9","10","11","12"]).map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Select value={section} onValueChange={v => { setSection(v === "all" ? "" : v); setPage(1); }}>
-          <SelectTrigger className="w-32 bg-[#1A2942] border-white/20 text-white" data-testid="select-filter-section">
-            <SelectValue placeholder="All Sections" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Sections</SelectItem>
-            {(sections.length > 0 ? sections : ["A","B","C","D","E"]).map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-          </SelectContent>
-        </Select>
       </div>
 
+      {/* ── Table ── */}
       <div className="rounded-xl border border-white/10 bg-[#1A2942] overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-[#0F1E35]">
+          <thead className="bg-[#0F1E35] sticky top-[68px] z-10">
             <tr>
-              {["DSID", "Name", "Class", "Section", "Phone", ""].map(h => (
-                <th key={h} className="text-left py-3 px-4 text-white/60 font-medium text-xs uppercase tracking-wide">{h}</th>
+              {["DSID", "Name", "Class", "Sec", "Phone", ""].map((h, i) => (
+                <th key={i} className="text-left py-3 px-4 text-white/60 font-medium text-xs uppercase tracking-wide">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {isLoading ? [...Array(8)].map((_, i) => <SkeletonRow key={i} />) :
-              data?.data.length === 0 ? (
-                <tr><td colSpan={6} className="py-12 text-center text-white/40">
-                  <Users className="w-8 h-8 mx-auto mb-2 opacity-40" />No students found
-                </td></tr>
-              ) : data?.data.map(s => (
-                <tr key={s.id} className="border-b border-white/5 hover:bg-white/5 transition-colors" data-testid={`row-student-${s.id}`}>
-                  <td className="py-3 px-4 font-mono text-[#D4AF37] text-xs">{s.digitalStudentId}</td>
-                  <td className="py-3 px-4 text-white font-medium">{s.name}</td>
-                  <td className="py-3 px-4 text-white/70">{s.class}</td>
-                  <td className="py-3 px-4 text-white/70">{s.section}</td>
-                  <td className="py-3 px-4 text-white/70">{s.phone}</td>
-                  <td className="py-3 px-4">
-                    <Button
-                      variant="ghost" size="icon"
-                      className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-7 w-7"
-                      onClick={() => setDeactivateTarget(s)}
-                      data-testid={`button-deactivate-student-${s.id}`}
-                      title="Deactivate student">
-                      <UserX className="w-3.5 h-3.5" />
-                    </Button>
-                  </td>
-                </tr>
-              ))
+            {isLoading
+              ? [...Array(8)].map((_, i) => <SkeletonRow key={i} compact={compact} />)
+              : data?.data.length === 0
+                ? (
+                  <tr>
+                    <td colSpan={6} className="py-12 text-center text-white/40">
+                      <Users className="w-8 h-8 mx-auto mb-2 opacity-40" />No students found
+                    </td>
+                  </tr>
+                )
+                : data?.data.map(s => (
+                  <tr key={s.id} className="border-b border-white/5 hover:bg-white/5 transition-colors" data-testid={`row-student-${s.id}`}>
+                    <td className={`${cell} font-mono text-[#D4AF37]`}>{s.digitalStudentId}</td>
+                    <td className={`${cell} text-white font-medium`}>{s.name}</td>
+                    <td className={`${cell} text-white/70`}>{s.class}</td>
+                    <td className={`${cell} text-white/70`}>{s.section}</td>
+                    <td className={`${cell} text-white/70`}>{s.phone}</td>
+                    <td className={compact ? "py-1.5 px-3" : "py-3 px-4"}>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost" size="icon"
+                          className="text-[#10b981] hover:text-emerald-300 hover:bg-[#10b981]/10 h-7 w-7"
+                          onClick={() => setEditTarget(s)}
+                          data-testid={`button-edit-student-${s.id}`}
+                          title="Edit student">
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost" size="icon"
+                          className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-7 w-7"
+                          onClick={() => setDeactivateTarget(s)}
+                          data-testid={`button-deactivate-student-${s.id}`}
+                          title="Deactivate student">
+                          <UserX className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
             }
           </tbody>
         </table>
       </div>
 
-      <div className="flex items-center justify-between">
-        <p className="text-white/40 text-sm">Showing {((page - 1) * 50) + 1}–{Math.min(page * 50, data?.total ?? 0)} of {data?.total ?? 0}</p>
-        <div className="flex gap-2">
+      {/* ── Pagination ── */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <p className="text-white/40 text-sm">
+          Showing {data?.total ? (page - 1) * PAGE_SIZE + 1 : 0}–{Math.min(page * PAGE_SIZE, data?.total ?? 0)} of {data?.total ?? 0}
+        </p>
+        <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" disabled={page === 1} onClick={() => setPage(p => p - 1)}
-            className="border-white/20 text-white hover:bg-white/10" data-testid="button-prev-page">
+            className="border-white/20 text-white hover:bg-white/10 min-h-[36px]" data-testid="button-prev-page">
             <ChevronLeft className="w-4 h-4" />
           </Button>
-          <span className="px-3 py-1.5 rounded bg-[#1A2942] text-white text-sm">{page} / {totalPages}</span>
+          <span className="px-3 py-1.5 rounded bg-[#1A2942] text-white text-sm min-w-[70px] text-center">{page} / {totalPages}</span>
+          {/* Go to page */}
+          <div className="flex items-center gap-1">
+            <input
+              type="number"
+              min={1}
+              max={totalPages}
+              value={gotoPage}
+              onChange={e => setGotoPage(e.target.value)}
+              onKeyDown={onGotoKeyDown}
+              onBlur={commitGotoPage}
+              placeholder="Go to…"
+              data-testid="input-goto-page"
+              className="w-[72px] h-9 px-2 rounded bg-[#1A2942] border border-white/20 text-white text-sm text-center placeholder:text-white/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none focus:outline-none focus:border-[#10b981]/60"
+            />
+          </div>
           <Button size="sm" variant="outline" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}
-            className="border-white/20 text-white hover:bg-white/10" data-testid="button-next-page">
+            className="border-white/20 text-white hover:bg-white/10 min-h-[36px]" data-testid="button-next-page">
             <ChevronRight className="w-4 h-4" />
           </Button>
         </div>
       </div>
 
+      {/* ── Edit Modal ── */}
+      {editTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" data-testid="modal-edit-student">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setEditTarget(null)} />
+          <div className="relative z-10 w-full max-w-md rounded-2xl border border-white/10 bg-[#1A2942] shadow-2xl overflow-hidden">
+            {/* Modal header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-[#10b981]/20 flex items-center justify-center">
+                  <Pencil className="w-4 h-4 text-[#10b981]" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-white">Edit Student</h3>
+                  <p className="text-xs text-white/40">{editTarget.digitalStudentId}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setEditTarget(null)}
+                className="p-2 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors min-h-[40px] min-w-[40px] flex items-center justify-center"
+                data-testid="button-close-edit-modal">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal body */}
+            <div className="p-5">
+              <Form {...editForm}>
+                <form onSubmit={editForm.handleSubmit(d => editMutation.mutate(d))} className="space-y-4">
+                  {/* DSID read-only */}
+                  <div>
+                    <label className="text-xs text-white/50 font-medium uppercase tracking-wide mb-1.5 block">DSID (read-only)</label>
+                    <Input
+                      value={editTarget.digitalStudentId}
+                      readOnly
+                      data-testid="input-edit-dsid"
+                      className="bg-[#0A1628] border-white/10 text-[#D4AF37] font-mono cursor-not-allowed opacity-75" />
+                  </div>
+
+                  <FormField control={editForm.control} name="name" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-white/70">Full Name</FormLabel>
+                      <FormControl>
+                        <Input {...field} data-testid="input-edit-name" className="bg-[#0A1628] border-white/20 text-white" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField control={editForm.control} name="class" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-white/70">Class</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <SelectTrigger className="bg-[#0A1628] border-white/20 text-white" data-testid="select-edit-class">
+                            <SelectValue placeholder="Select" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {editClassList.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={editForm.control} name="section" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-white/70">Section</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <SelectTrigger className="bg-[#0A1628] border-white/20 text-white" data-testid="select-edit-section">
+                            <SelectValue placeholder="Select" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {editSectionList.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                  </div>
+
+                  <FormField control={editForm.control} name="phone" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-white/70">Phone Number</FormLabel>
+                      <FormControl>
+                        <Input {...field} data-testid="input-edit-phone" placeholder="e.g. 9876543210"
+                          className="bg-[#0A1628] border-white/20 text-white" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+
+                  {/* Footer buttons */}
+                  <div className="flex gap-3 pt-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={editMutation.isPending}
+                      onClick={() => setEditTarget(null)}
+                      className="flex-1 border-white/20 text-white/60 hover:bg-white/10 min-h-[44px]"
+                      data-testid="button-cancel-edit">
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={editMutation.isPending}
+                      className="flex-1 min-h-[44px] font-semibold text-white"
+                      style={{ background: "#10b981" }}
+                      data-testid="button-save-student">
+                      {editMutation.isPending
+                        ? <><Loader2 className="w-4 h-4 animate-spin mr-2" />Saving…</>
+                        : "Save Changes"}
+                    </Button>
+                  </div>
+                </form>
+              </Form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Deactivation modal ── */}
       {deactivateTarget && (
         <DeactivationModal
           open={!!deactivateTarget}

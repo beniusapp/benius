@@ -1522,10 +1522,18 @@ export class DatabaseStorage {
     const conditions = [eq(students.schoolId, schoolId), eq(students.isActive, true)];
     if (cls) conditions.push(eq(students.class, cls));
     if (section) conditions.push(eq(students.section, section));
-    if (q) conditions.push(or(ilike(students.name, `%${q}%`), ilike(students.digitalStudentId, `%${q}%`))!);
+    if (q) conditions.push(or(ilike(students.name, `%${q}%`), ilike(students.digitalStudentId, `%${q}%`), ilike(students.phone, `%${q}%`))!);
     const [{ total }] = await db.select({ total: count() }).from(students).where(and(...conditions));
     const data = await db.select().from(students).where(and(...conditions)).orderBy(students.name).limit(limit).offset(offset);
     return { data, total: Number(total) };
+  }
+
+  async updateStudent(id: number, schoolId: number, data: { name: string; class: string; section: string; phone: string }): Promise<Student | undefined> {
+    const [updated] = await db.update(students)
+      .set({ name: data.name, class: data.class, section: data.section, phone: data.phone })
+      .where(and(eq(students.id, id), eq(students.schoolId, schoolId)))
+      .returning();
+    return updated;
   }
 
   // ===== PAGINATED TEACHERS (Big Data) =====
