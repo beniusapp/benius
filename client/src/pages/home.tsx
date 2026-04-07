@@ -89,7 +89,7 @@ function PortalCard({
         <motion.div
           onMouseMove={onMouseMove}
           onMouseLeave={() => setGlow((g) => ({ ...g, visible: false }))}
-          whileHover={{ scale: 1.03, y: -4 }}
+          whileHover={{ scale: 1.04 }}
           whileTap={{ scale: 0.98 }}
           transition={{ type: "spring", stiffness: 400, damping: 28 }}
           className={`relative rounded-2xl border border-white/10 ${borderHover} overflow-hidden cursor-pointer min-h-[240px] p-7 flex flex-col gap-5 transition-colors duration-300`}
@@ -179,7 +179,7 @@ export default function Home() {
         .aura-2 { animation: aura-drift-2 22s ease-in-out infinite; }
         .aura-3 { animation: aura-drift-3 26s ease-in-out infinite; }
         .text-gradient-hero {
-          background: linear-gradient(135deg, #10b981 0%, #3b82f6 50%, #8b5cf6 100%);
+          background: linear-gradient(135deg, #10b981 0%, #3b82f6 100%);
           -webkit-background-clip: text;
           -webkit-text-fill-color: transparent;
           background-clip: text;
@@ -276,7 +276,7 @@ export default function Home() {
 
             {/* Main heading */}
             <motion.h1
-              initial={{ opacity: 0, y: 30 }}
+              initial={{ opacity: 0, y: 40 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1], delay: 0.1 }}
               data-testid="text-hero-title"
@@ -289,7 +289,7 @@ export default function Home() {
 
             {/* Subheading */}
             <motion.p
-              initial={{ opacity: 0, y: 30 }}
+              initial={{ opacity: 0, y: 40 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1], delay: 0.2 }}
               data-testid="text-hero-sub"
@@ -322,22 +322,11 @@ export default function Home() {
 
       {/* ── Footer ── */}
       <footer className="relative z-10 border-t border-white/5 py-5">
-        <div className="max-w-6xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Globe className="w-3.5 h-3.5 text-white/20" />
-            <p className="text-xs text-white/30 font-medium">
-              BENIUS: Multi-Tenant Secure Infrastructure
-            </p>
-          </div>
-          <div className="flex items-center gap-4">
-            <span className="text-xs text-white/20">© {new Date().getFullYear()} BENIUS</span>
-            <div className="flex items-center gap-1.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-xs text-emerald-500/70 font-medium">
-                All Systems Operational
-              </span>
-            </div>
-          </div>
+        <div className="max-w-6xl mx-auto px-6 flex items-center justify-center gap-2">
+          <Globe className="w-3.5 h-3.5 text-white/20 flex-shrink-0" />
+          <p className="text-xs text-white/30 font-medium text-center">
+            BENIUS: Multi-Tenant Secure Infrastructure · © 2025
+          </p>
         </div>
       </footer>
     </div>
