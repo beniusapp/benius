@@ -1290,6 +1290,31 @@ export async function registerRoutes(
     res.status(201).json(complaint);
   });
 
+  // ===== ADMIN TEACHERS: PATCH (edit assignment — strict session-scoped) =====
+  const editTeacherSchema = z.object({
+    fullName: z.string().min(2, "Name must be at least 2 characters"),
+    subject: z.string().min(1, "Subject is required"),
+    assignedClass: z.string().min(1, "Class is required"),
+    assignedSection: z.string().min(1, "Section is required"),
+  });
+
+  app.patch("/api/admin/teachers/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
+    const teacherId = parseInt(req.params.id);
+    if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
+    const parsed = editTeacherSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      const updated = await storage.updateTeacherAssignment(teacherId, schoolId, parsed.data);
+      if (!updated) return res.status(404).json({ message: "Teacher not found or does not belong to this school" });
+      res.json(updated);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to update teacher" });
+    }
+  });
+
   // ===== ADMIN SCHOOL CONFIG (strict session-scoped) =====
   app.get("/api/admin/school-config", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });

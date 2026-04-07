@@ -1529,9 +1529,17 @@ export class DatabaseStorage {
   }
 
   // ===== PAGINATED TEACHERS (Big Data) =====
+  async updateTeacherAssignment(teacherId: number, schoolId: number, data: { fullName: string; subject: string; assignedClass: string; assignedSection: string }): Promise<Teacher | undefined> {
+    const [updated] = await db.update(teachers)
+      .set({ fullName: data.fullName, subject: data.subject, assignedClass: data.assignedClass, assignedSection: data.assignedSection })
+      .where(and(eq(teachers.id, teacherId), eq(teachers.schoolId, schoolId)))
+      .returning();
+    return updated;
+  }
+
   async getTeachersPaginated(schoolId: number, opts: { q?: string; page?: number }): Promise<{ data: (Teacher & { email: string })[]; total: number }> {
     const { q, page = 1 } = opts;
-    const limit = 50;
+    const limit = 20;
     const offset = (page - 1) * limit;
     const baseConditions = [eq(teachers.schoolId, schoolId), eq(users.isActive, true)];
     if (q) {
