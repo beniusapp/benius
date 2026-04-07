@@ -239,7 +239,7 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
         </div>
       )}
 
-      <div className="sticky top-0 z-20 bg-[#0A1628] pt-1 pb-3">
+      <div className="pb-3">
         <div className="flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
@@ -270,57 +270,72 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
       </div>
 
       <div className="rounded-xl border border-white/10 bg-[#1A2942] overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-[#0F1E35] sticky top-[104px] z-10">
-            <tr>
-              {["DSID", "Name", "Class", "Sec", "Phone", ""].map((h, i) => (
-                <th key={i} className="text-left py-3 px-4 text-white/60 font-medium text-xs uppercase tracking-wide">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading
-              ? [...Array(8)].map((_, i) => <SkeletonRow key={i} compact={compact} />)
-              : data?.data.length === 0
-                ? (
-                  <tr>
-                    <td colSpan={6} className="py-12 text-center text-white/40">
-                      <Users className="w-8 h-8 mx-auto mb-2 opacity-40" />No students found
-                    </td>
-                  </tr>
-                )
-                : data?.data.map(s => (
-                  <tr key={s.id} className="border-b border-white/5 hover:bg-white/5 transition-colors" data-testid={`row-student-${s.id}`}>
-                    <td className={`${cell} font-mono text-[#D4AF37]`}>{s.digitalStudentId}</td>
-                    <td className={`${cell} text-white font-medium`}>{s.name}</td>
-                    <td className={`${cell} text-white/70`}>{s.class}</td>
-                    <td className={`${cell} text-white/70`}>{s.section}</td>
-                    <td className={`${cell} text-white/70`}>{s.phone}</td>
-                    <td className={compact ? "py-1.5 px-3" : "py-3 px-4"}>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost" size="icon"
-                          className="text-[#10b981] hover:text-emerald-300 hover:bg-[#10b981]/10 h-11 w-11"
-                          onClick={() => setEditTarget(s)}
-                          data-testid={`button-edit-student-${s.id}`}
-                          title="Edit student">
-                          <Pencil className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost" size="icon"
-                          className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-11 w-11"
-                          onClick={() => setDeactivateTarget(s)}
-                          data-testid={`button-deactivate-student-${s.id}`}
-                          title="Deactivate student">
-                          <UserX className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-            }
-          </tbody>
-        </table>
+        <div className="overflow-x-auto" style={{ maxHeight: "70vh", overflowY: "auto" }}>
+          <table className="text-sm" style={{ minWidth: "640px", width: "100%", tableLayout: "fixed" }}>
+            <colgroup>
+              <col style={{ width: "150px" }} />
+              <col style={{ width: "auto" }} />
+              <col style={{ width: "70px" }} />
+              <col style={{ width: "55px" }} />
+              <col style={{ width: "130px" }} />
+              <col style={{ width: "96px" }} />
+            </colgroup>
+            <thead className="bg-[#0F1E35] sticky top-0 z-10">
+              <tr>
+                <th className="text-left py-3 px-4 text-white/60 font-medium text-xs uppercase tracking-wide">DSID</th>
+                <th className="text-left py-3 px-4 text-white/60 font-medium text-xs uppercase tracking-wide">Name</th>
+                <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Class</th>
+                <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Sec</th>
+                <th className="text-left py-3 px-4 text-white/60 font-medium text-xs uppercase tracking-wide">Phone</th>
+                <th className="text-left py-3 px-2 text-white/60 font-medium text-xs uppercase tracking-wide"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading
+                ? [...Array(8)].map((_, i) => <SkeletonRow key={i} compact={compact} />)
+                : data?.data.length === 0
+                  ? (
+                    <tr>
+                      <td colSpan={6} className="py-12 text-center text-white/40">
+                        <Users className="w-8 h-8 mx-auto mb-2 opacity-40" />No students found
+                      </td>
+                    </tr>
+                  )
+                  : data?.data.map(s => (
+                    <tr key={s.id}
+                      className="border-b border-white/5 hover:bg-white/5 even:bg-white/[0.025] transition-colors"
+                      data-testid={`row-student-${s.id}`}>
+                      <td className={`${cell} font-mono text-[#D4AF37] overflow-hidden text-ellipsis`}>{s.digitalStudentId}</td>
+                      <td className={`${cell} text-white font-medium overflow-hidden text-ellipsis`}>{s.name}</td>
+                      <td className={`${compact ? "py-1.5 px-3 text-xs" : "py-3 px-3 text-sm"} text-white/70`}>{s.class}</td>
+                      <td className={`${compact ? "py-1.5 px-3 text-xs" : "py-3 px-3 text-sm"} text-white/70`}>{s.section}</td>
+                      <td className={`${cell} text-white/70 overflow-hidden text-ellipsis`}>{s.phone}</td>
+                      <td className={`${compact ? "py-1.5 px-2" : "py-3 px-2"} whitespace-nowrap`}>
+                        <div className="flex items-center gap-0.5">
+                          <Button
+                            variant="ghost" size="icon"
+                            className="text-[#10b981] hover:text-emerald-300 hover:bg-[#10b981]/10 h-11 w-11 shrink-0"
+                            onClick={() => setEditTarget(s)}
+                            data-testid={`button-edit-student-${s.id}`}
+                            title="Edit student">
+                            <Pencil className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost" size="icon"
+                            className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-11 w-11 shrink-0"
+                            onClick={() => setDeactivateTarget(s)}
+                            data-testid={`button-deactivate-student-${s.id}`}
+                            title="Deactivate student">
+                            <UserX className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+              }
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="flex items-center justify-between flex-wrap gap-3">

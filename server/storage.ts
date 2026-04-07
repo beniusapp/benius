@@ -1524,7 +1524,7 @@ export class DatabaseStorage {
     if (section) conditions.push(eq(students.section, section));
     if (q) conditions.push(or(ilike(students.name, `%${q}%`), ilike(students.digitalStudentId, `%${q}%`), ilike(students.phone, `%${q}%`))!);
     const [{ total }] = await db.select({ total: count() }).from(students).where(and(...conditions));
-    const data = await db.select().from(students).where(and(...conditions)).orderBy(students.name).limit(limit).offset(offset);
+    const data = await db.select().from(students).where(and(...conditions)).orderBy(students.digitalStudentId).limit(limit).offset(offset);
     return { data, total: Number(total) };
   }
 
