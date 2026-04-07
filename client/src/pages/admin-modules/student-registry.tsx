@@ -83,7 +83,7 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
     enabled: !!schoolId,
   });
 
-  const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 1;
+  const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
 
   const form = useForm<AddForm>({ resolver: zodResolver(addSchema), defaultValues: { name: "", class: "", section: "", phone: "", dob: "" } });
   const addMutation = useMutation({
@@ -122,6 +122,7 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
         phone: editTarget.phone,
       });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editTarget]);
 
   const editMutation = useMutation({
