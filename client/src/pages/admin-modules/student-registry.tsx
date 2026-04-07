@@ -269,7 +269,7 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
         </div>
       </div>
 
-      <div className="rounded-xl border border-white/10 bg-[#1A2942] overflow-hidden">
+      <div className="rounded-xl border border-white/10 bg-[#1A2942]">
         <div className="overflow-x-auto" style={{ maxHeight: "70vh", overflowY: "auto" }}>
           <table className="text-sm" style={{ minWidth: "640px", width: "100%", tableLayout: "fixed" }}>
             <colgroup>
@@ -277,7 +277,7 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
               <col style={{ width: "auto" }} />
               <col style={{ width: "70px" }} />
               <col style={{ width: "55px" }} />
-              <col style={{ width: "130px" }} />
+              <col style={{ width: "120px" }} />
               <col style={{ width: "96px" }} />
             </colgroup>
             <thead className="bg-[#0F1E35] sticky top-0 z-10">
