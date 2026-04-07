@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 import { motion } from "framer-motion";
 import { Link } from "wouter";
 import { Shield, BookOpen, GraduationCap, Zap, Lock, Globe } from "lucide-react";
@@ -59,7 +59,7 @@ function PortalCard({
 }) {
   const [glow, setGlow] = useState({ x: 50, y: 50, visible: false });
 
-  function onMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+  function onMouseMove(e: MouseEvent<HTMLDivElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
     setGlow({ x: e.clientX - rect.left, y: e.clientY - rect.top, visible: true });
   }
