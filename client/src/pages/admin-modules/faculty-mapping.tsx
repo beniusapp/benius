@@ -42,7 +42,7 @@ type EditTeacherForm = z.infer<typeof editTeacherSchema>;
 function SkeletonRow() {
   return (
     <tr className="border-b border-white/5">
-      {Array.from({ length: 7 }).map((_, i) => (
+      {Array.from({ length: 6 }).map((_, i) => (
         <td key={i} className="py-3 px-4">
           <div className="h-4 rounded bg-white/10 animate-pulse" style={{ width: `${50 + (i * 13) % 50}%` }} />
         </td>
@@ -413,7 +413,7 @@ export default function FacultyMapping({ schoolId, classes, sections, subjects }
               <button
                 onClick={() => setEditTarget(null)}
                 className="p-2 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-                data-testid="button-cancel-edit"
+                data-testid="button-close-edit-modal"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -514,7 +514,7 @@ export default function FacultyMapping({ schoolId, classes, sections, subjects }
                       disabled={editMutation.isPending}
                       onClick={() => setEditTarget(null)}
                       className="border-white/20 text-white/60 hover:bg-white/10 min-h-[44px]"
-                      data-testid="button-cancel-edit-footer"
+                      data-testid="button-cancel-edit"
                     >
                       Cancel
                     </Button>
