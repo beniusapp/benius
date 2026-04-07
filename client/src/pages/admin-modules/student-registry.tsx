@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, type KeyboardEvent } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Search, ChevronLeft, ChevronRight, UserPlus, Upload, X,
-  Loader2, Users, UserX, Pencil, AlignJustify, UserCog,
+  Loader2, Users, UserX, Pencil, AlignJustify,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -85,7 +85,6 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
 
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 1;
 
-  /* ── Add-student form ── */
   const form = useForm<AddForm>({ resolver: zodResolver(addSchema), defaultValues: { name: "", class: "", section: "", phone: "", dob: "" } });
   const addMutation = useMutation({
     mutationFn: async (d: AddForm) => { const r = await apiRequest("POST", `/api/schools/${schoolId}/students`, d); return r.json(); },
@@ -97,7 +96,6 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
-  /* ── Upload CSV ── */
   const uploadRef = { current: null as HTMLInputElement | null };
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
@@ -113,7 +111,6 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
     onError: (e: Error) => toast({ title: "Upload Failed", description: e.message, variant: "destructive" }),
   });
 
-  /* ── Edit form ── */
   const editForm = useForm<EditForm>({ resolver: zodResolver(editSchema), defaultValues: { name: "", class: "", section: "", phone: "" } });
 
   useEffect(() => {
@@ -140,7 +137,6 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
     onError: (e: Error) => toast({ title: "Update Failed", description: e.message, variant: "destructive" }),
   });
 
-  /* ── Go-to-page navigation ── */
   function commitGotoPage() {
     const n = parseInt(gotoPage);
     if (!isNaN(n) && n >= 1 && n <= totalPages) { setPage(n); }
@@ -150,14 +146,11 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
     if (e.key === "Enter") commitGotoPage();
   }
 
-  /* ── Row & cell density ── */
   const cell = compact ? "py-1.5 px-3 text-xs" : "py-3 px-4 text-sm";
 
-  /* ── Class/section fallbacks ── */
   const classList = classes.length > 0 ? classes : ["LKG", "UKG", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
   const sectionList = sections.length > 0 ? sections : ["A", "B", "C", "D", "E"];
 
-  /* ── Edit modal dropdown options (always include the student's current value) ── */
   const editClassList = editTarget && !classList.includes(editTarget.class)
     ? [editTarget.class, ...classList] : classList;
   const editSectionList = editTarget && !sectionList.includes(editTarget.section)
@@ -165,46 +158,40 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
 
   return (
     <div className="space-y-4">
-      {/* ── Header ── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <UserCog className="w-5 h-5 text-[#10b981]" /> Student Registry
-          </h2>
+          <h2 className="text-xl font-bold text-white">Student Registry</h2>
           <p className="text-white/50 text-sm">{data?.total ?? "…"} active students · Page {page} of {totalPages}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Compact toggle */}
           <button
             onClick={() => setCompact(c => !c)}
             title={compact ? "Normal View" : "Compact View"}
             data-testid="button-toggle-compact"
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition-colors min-h-[36px]
+            className={`flex items-center gap-1.5 px-3 rounded-lg border text-xs font-medium transition-colors h-11 min-w-[44px]
               ${compact ? "border-[#10b981]/50 bg-[#10b981]/10 text-[#10b981]" : "border-white/20 text-white/60 hover:bg-white/10"}`}
           >
             <AlignJustify className="w-3.5 h-3.5" />
             {compact ? "Compact" : "Normal"}
           </button>
-
-          <Button size="sm" variant="outline" className="border-[#D4AF37]/40 text-[#D4AF37] hover:bg-[#D4AF37]/10"
+          <Button size="sm" variant="outline" className="border-[#D4AF37]/40 text-[#D4AF37] hover:bg-[#D4AF37]/10 h-11"
             onClick={() => uploadRef.current?.click()} data-testid="button-upload-csv" disabled={uploadMutation.isPending}>
             <Upload className="w-4 h-4 mr-1" /> {uploadMutation.isPending ? "Uploading…" : "Bulk CSV"}
           </Button>
           <input ref={el => uploadRef.current = el} type="file" accept=".csv,.xlsx" className="hidden"
             onChange={e => { const f = e.target.files?.[0]; if (f) uploadMutation.mutate(f); }} />
-          <Button size="sm" className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
+          <Button size="sm" className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-11"
             onClick={() => setShowForm(!showForm)} data-testid="button-add-student-toggle">
             <UserPlus className="w-4 h-4 mr-1" /> Add Student
           </Button>
         </div>
       </div>
 
-      {/* ── Add-student inline form ── */}
       {showForm && (
         <div className="rounded-xl border border-[#D4AF37]/30 bg-[#1A2942] p-5">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-semibold text-white">New Student</h3>
-            <button onClick={() => setShowForm(false)} className="text-white/40 hover:text-white min-h-[36px] min-w-[36px] flex items-center justify-center"><X className="w-4 h-4" /></button>
+            <button onClick={() => setShowForm(false)} className="text-white/40 hover:text-white h-11 w-11 flex items-center justify-center"><X className="w-4 h-4" /></button>
           </div>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(d => addMutation.mutate(d))} className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -251,7 +238,6 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
         </div>
       )}
 
-      {/* ── Sticky search + filter bar ── */}
       <div className="sticky top-0 z-20 bg-[#0A1628] pt-1 pb-3">
         <div className="flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-[200px]">
@@ -282,10 +268,9 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
         </div>
       </div>
 
-      {/* ── Table ── */}
       <div className="rounded-xl border border-white/10 bg-[#1A2942] overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-[#0F1E35] sticky top-[68px] z-10">
+          <thead className="bg-[#0F1E35] sticky top-[104px] z-10">
             <tr>
               {["DSID", "Name", "Class", "Sec", "Phone", ""].map((h, i) => (
                 <th key={i} className="text-left py-3 px-4 text-white/60 font-medium text-xs uppercase tracking-wide">{h}</th>
@@ -314,19 +299,19 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
                       <div className="flex items-center gap-1">
                         <Button
                           variant="ghost" size="icon"
-                          className="text-[#10b981] hover:text-emerald-300 hover:bg-[#10b981]/10 h-7 w-7"
+                          className="text-[#10b981] hover:text-emerald-300 hover:bg-[#10b981]/10 h-11 w-11"
                           onClick={() => setEditTarget(s)}
                           data-testid={`button-edit-student-${s.id}`}
                           title="Edit student">
-                          <Pencil className="w-3.5 h-3.5" />
+                          <Pencil className="w-4 h-4" />
                         </Button>
                         <Button
                           variant="ghost" size="icon"
-                          className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-7 w-7"
+                          className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-11 w-11"
                           onClick={() => setDeactivateTarget(s)}
                           data-testid={`button-deactivate-student-${s.id}`}
                           title="Deactivate student">
-                          <UserX className="w-3.5 h-3.5" />
+                          <UserX className="w-4 h-4" />
                         </Button>
                       </div>
                     </td>
@@ -337,45 +322,39 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
         </table>
       </div>
 
-      {/* ── Pagination ── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <p className="text-white/40 text-sm">
           Showing {data?.total ? (page - 1) * PAGE_SIZE + 1 : 0}–{Math.min(page * PAGE_SIZE, data?.total ?? 0)} of {data?.total ?? 0}
         </p>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" disabled={page === 1} onClick={() => setPage(p => p - 1)}
-            className="border-white/20 text-white hover:bg-white/10 min-h-[36px]" data-testid="button-prev-page">
+            className="border-white/20 text-white hover:bg-white/10 h-11 min-w-[44px]" data-testid="button-prev-page">
             <ChevronLeft className="w-4 h-4" />
           </Button>
-          <span className="px-3 py-1.5 rounded bg-[#1A2942] text-white text-sm min-w-[70px] text-center">{page} / {totalPages}</span>
-          {/* Go to page */}
-          <div className="flex items-center gap-1">
-            <input
-              type="number"
-              min={1}
-              max={totalPages}
-              value={gotoPage}
-              onChange={e => setGotoPage(e.target.value)}
-              onKeyDown={onGotoKeyDown}
-              onBlur={commitGotoPage}
-              placeholder="Go to…"
-              data-testid="input-goto-page"
-              className="w-[72px] h-9 px-2 rounded bg-[#1A2942] border border-white/20 text-white text-sm text-center placeholder:text-white/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none focus:outline-none focus:border-[#10b981]/60"
-            />
-          </div>
+          <span className="px-3 py-2 rounded bg-[#1A2942] text-white text-sm min-w-[70px] text-center">{page} / {totalPages}</span>
+          <input
+            type="number"
+            min={1}
+            max={totalPages}
+            value={gotoPage}
+            onChange={e => setGotoPage(e.target.value)}
+            onKeyDown={onGotoKeyDown}
+            onBlur={commitGotoPage}
+            placeholder="Go to…"
+            data-testid="input-goto-page"
+            className="w-[72px] h-11 px-2 rounded bg-[#1A2942] border border-white/20 text-white text-sm text-center placeholder:text-white/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none focus:outline-none focus:border-[#10b981]/60"
+          />
           <Button size="sm" variant="outline" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}
-            className="border-white/20 text-white hover:bg-white/10 min-h-[36px]" data-testid="button-next-page">
+            className="border-white/20 text-white hover:bg-white/10 h-11 min-w-[44px]" data-testid="button-next-page">
             <ChevronRight className="w-4 h-4" />
           </Button>
         </div>
       </div>
 
-      {/* ── Edit Modal ── */}
       {editTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" data-testid="modal-edit-student">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setEditTarget(null)} />
           <div className="relative z-10 w-full max-w-md rounded-2xl border border-white/10 bg-[#1A2942] shadow-2xl overflow-hidden">
-            {/* Modal header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-lg bg-[#10b981]/20 flex items-center justify-center">
@@ -383,22 +362,19 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-white">Edit Student</h3>
-                  <p className="text-xs text-white/40">{editTarget.digitalStudentId}</p>
+                  <p className="text-xs text-white/40">{editTarget.name}</p>
                 </div>
               </div>
               <button
                 onClick={() => setEditTarget(null)}
-                className="p-2 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors min-h-[40px] min-w-[40px] flex items-center justify-center"
+                className="rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors h-11 w-11 flex items-center justify-center"
                 data-testid="button-close-edit-modal">
                 <X className="w-4 h-4" />
               </button>
             </div>
-
-            {/* Modal body */}
             <div className="p-5">
               <Form {...editForm}>
                 <form onSubmit={editForm.handleSubmit(d => editMutation.mutate(d))} className="space-y-4">
-                  {/* DSID read-only */}
                   <div>
                     <label className="text-xs text-white/50 font-medium uppercase tracking-wide mb-1.5 block">DSID (read-only)</label>
                     <Input
@@ -407,7 +383,6 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
                       data-testid="input-edit-dsid"
                       className="bg-[#0A1628] border-white/10 text-[#D4AF37] font-mono cursor-not-allowed opacity-75" />
                   </div>
-
                   <FormField control={editForm.control} name="name" render={({ field }) => (
                     <FormItem>
                       <FormLabel className="text-white/70">Full Name</FormLabel>
@@ -417,7 +392,6 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
                       <FormMessage />
                     </FormItem>
                   )} />
-
                   <div className="grid grid-cols-2 gap-3">
                     <FormField control={editForm.control} name="class" render={({ field }) => (
                       <FormItem>
@@ -448,7 +422,6 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
                       </FormItem>
                     )} />
                   </div>
-
                   <FormField control={editForm.control} name="phone" render={({ field }) => (
                     <FormItem>
                       <FormLabel className="text-white/70">Phone Number</FormLabel>
@@ -459,22 +432,20 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
                       <FormMessage />
                     </FormItem>
                   )} />
-
-                  {/* Footer buttons */}
                   <div className="flex gap-3 pt-2">
                     <Button
                       type="button"
                       variant="outline"
                       disabled={editMutation.isPending}
                       onClick={() => setEditTarget(null)}
-                      className="flex-1 border-white/20 text-white/60 hover:bg-white/10 min-h-[44px]"
+                      className="flex-1 border-white/20 text-white/60 hover:bg-white/10 h-11"
                       data-testid="button-cancel-edit">
                       Cancel
                     </Button>
                     <Button
                       type="submit"
                       disabled={editMutation.isPending}
-                      className="flex-1 min-h-[44px] font-semibold text-white"
+                      className="flex-1 h-11 font-semibold text-white"
                       style={{ background: "#10b981" }}
                       data-testid="button-save-student">
                       {editMutation.isPending
@@ -489,7 +460,6 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
         </div>
       )}
 
-      {/* ── Deactivation modal ── */}
       {deactivateTarget && (
         <DeactivationModal
           open={!!deactivateTarget}
