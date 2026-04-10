@@ -28,7 +28,7 @@ const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const EVENT_TYPES = [
   { value: "holiday", label: "Holiday", color: "#ef4444", icon: Flame },
   { value: "academic", label: "Academic", color: "#3b82f6", icon: BookOpen },
-  { value: "examination", label: "Examination", color: "#8b5cf6", icon: Award },
+  { value: "examination", label: "Examination", color: "#3b82f6", icon: Award },
   { value: "event", label: "Event", color: "#10b981", icon: Star },
 ];
 
@@ -128,13 +128,19 @@ export default function SchoolCalendar() {
   const selectedDayEvents = selectedDay ? (eventsByDate[selectedDay] || []) : [];
 
   function prevMonth() {
-    if (month === 0) { setMonth(11); setYear(y => y > YEAR_START ? y - 1 : y); }
-    else setMonth(m => m - 1);
+    if (month === 0) {
+      if (year > YEAR_START) { setMonth(11); setYear(y => y - 1); }
+    } else {
+      setMonth(m => m - 1);
+    }
     setSelectedDay(null);
   }
   function nextMonth() {
-    if (month === 11) { setMonth(0); setYear(y => y < YEAR_END ? y + 1 : y); }
-    else setMonth(m => m + 1);
+    if (month === 11) {
+      if (year < YEAR_END) { setMonth(0); setYear(y => y + 1); }
+    } else {
+      setMonth(m => m + 1);
+    }
     setSelectedDay(null);
   }
   function goToday() {

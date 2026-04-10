@@ -27,7 +27,7 @@ const DAYS_FULL = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","
 const EVENT_TYPES = [
   { value: "holiday", label: "Holiday", color: "#ef4444", icon: Flame },
   { value: "academic", label: "Academic", color: "#3b82f6", icon: BookOpen },
-  { value: "examination", label: "Examination", color: "#8b5cf6", icon: Award },
+  { value: "examination", label: "Examination", color: "#3b82f6", icon: Award },
   { value: "event", label: "Event", color: "#10b981", icon: Star },
 ];
 
@@ -260,26 +260,33 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
           <div className="space-y-3">
             {agendaDates.map(dateKey => {
               const d = new Date(dateKey + "T00:00:00");
-              const isToday = dateKey === buildKey(now.getFullYear(), now.getMonth(), now.getDate());
+              const isCurrentDay = dateKey === buildKey(now.getFullYear(), now.getMonth(), now.getDate());
               const dayEvs = groupedByDate[dateKey];
               return (
                 <div key={dateKey} data-testid={`agenda-group-${dateKey}`}>
-                  <div className={`flex items-center gap-2 mb-2 px-1 ${isToday ? "text-emerald-400" : "text-white/40"}`}>
-                    <span className={`text-xs font-bold uppercase tracking-widest`}>
+                  <button
+                    className={`flex items-center gap-2 mb-2 px-1 w-full text-left rounded-lg hover:bg-white/5 transition-colors min-h-[44px] ${isCurrentDay ? "text-emerald-400" : "text-white/40"}`}
+                    onClick={() => { setSelectedDay(dateKey); setBottomSheetOpen(true); }}
+                    data-testid={`agenda-date-header-${dateKey}`}
+                    aria-label={`View events for ${d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}`}
+                  >
+                    <span className="text-xs font-bold uppercase tracking-widest">
                       {d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
                     </span>
                     <span className="text-xs">{DAYS_FULL[d.getDay()]}</span>
-                    {isToday && <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full">Today</span>}
-                  </div>
+                    {isCurrentDay && <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full">Today</span>}
+                    <span className="ml-auto text-[10px] text-white/20">{dayEvs.length} event{dayEvs.length !== 1 ? "s" : ""} ›</span>
+                  </button>
                   <div className="space-y-2">
                     {dayEvs.map(ev => {
                       const color = getColor(ev);
                       return (
                         <div
                           key={ev.id}
-                          className="p-3 rounded-xl border border-white/5"
+                          className="p-3 rounded-xl border border-white/5 cursor-pointer hover:bg-white/5 transition-colors"
                           style={{ borderLeftColor: color, borderLeftWidth: 3, background: `${color}10` }}
                           data-testid={`mobile-event-detail-${ev.id}`}
+                          onClick={() => { setSelectedDay(dateKey); setBottomSheetOpen(true); }}
                         >
                           <div className="flex items-start justify-between gap-2">
                             <p className="text-sm font-semibold text-white">{ev.title}</p>
@@ -298,6 +305,67 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
             })}
           </div>
         )}
+
+        <AnimatePresence>
+          {bottomSheetOpen && selectedDay ? (
+            <motion.div
+              className="fixed inset-0 z-50 flex flex-col justify-end"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+            >
+              <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.6)" }} onClick={() => setBottomSheetOpen(false)} />
+              <motion.div
+                className="relative rounded-t-2xl border-t border-white/10 shadow-2xl max-h-[70vh] overflow-y-auto"
+                style={{ background: "#1A2942" }}
+                initial={{ y: "100%" }}
+                animate={{ y: 0 }}
+                exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 30, stiffness: 300 }}
+              >
+                <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 sticky top-0 bg-[#1A2942]">
+                  <div>
+                    <p className="text-base font-bold text-white">{formatDate(selectedDay)}</p>
+                    <p className="text-xs text-white/40">{DAYS_FULL[new Date(selectedDay + "T00:00:00").getDay()]}</p>
+                  </div>
+                  <button
+                    onClick={() => setBottomSheetOpen(false)}
+                    className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
+                    data-testid="button-close-bottom-sheet"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="px-5 py-4 space-y-3">
+                  {(eventsByDate[selectedDay] || []).length === 0 ? (
+                    <div className="text-center py-8">
+                      <Calendar className="w-10 h-10 text-white/10 mx-auto mb-3" />
+                      <p className="text-white/30">No events on this day</p>
+                    </div>
+                  ) : (
+                    (eventsByDate[selectedDay] || []).map(ev => (
+                      <div
+                        key={ev.id}
+                        className="p-3 rounded-xl border border-white/5"
+                        style={{ borderLeftColor: getColor(ev), borderLeftWidth: 3, background: `${getColor(ev)}10` }}
+                        data-testid={`bottom-sheet-event-${ev.id}`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <p className="text-sm font-semibold text-white">{ev.title}</p>
+                          {ev.isRecurring && <Repeat className="w-3.5 h-3.5 text-white/30 mt-0.5" />}
+                        </div>
+                        <p className="text-xs mt-1" style={{ color: getColor(ev) }}>
+                          <EventTypeLabel eventType={ev.eventType} />
+                        </p>
+                        {ev.description && <p className="text-xs text-white/40 mt-1">{ev.description}</p>}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </motion.div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
       </div>
     );
   }
