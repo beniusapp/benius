@@ -1049,7 +1049,7 @@ export default function StudentProfile() {
                   <button
                     onClick={() => setSecurityOpen(false)}
                     className="flex-1 flex items-center justify-center py-3 px-4 rounded-xl border border-white/15 text-white/60 text-sm font-medium hover:bg-white/8 transition-colors"
-                    data-testid="button-cancel-security"
+                    data-testid="button-close-security-modal"
                   >
                     Cancel
                   </button>
