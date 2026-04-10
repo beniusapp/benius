@@ -197,7 +197,7 @@ export default function AdminDashboard() {
       case "audit-logs": return <AuditLogsModule schoolId={me.schoolId} />;
       case "visitor-log": return <VisitorLogModule schoolId={me.schoolId} />;
       case "attendance": return <AttendanceOverview schoolId={me.schoolId} onViewStudent={() => setActiveModule("student-registry")} />;
-      case "analytics": return <PerformanceAnalytics schoolId={me.schoolId} classes={meta.classes} subjects={meta.subjects} examTypes={meta.exam_types} />;
+      case "analytics": return <PerformanceAnalytics schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} examTypes={meta.exam_types} />;
       case "exam-controller": return <ExamController schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} examTypes={meta.exam_types} />;
       case "complaint-hub": return <ComplaintHub schoolId={me.schoolId} />;
       case "noticeboard": return <NoticeboardAdmin schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} />;

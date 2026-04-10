@@ -1976,4 +1976,53 @@ export function registerTeacherRoutes(app: Express) {
       res.status(500).json({ message: error.message || "Failed to delete asset" });
     }
   });
+
+  // ===== ACADEMIC INTELLIGENCE ANALYTICS =====
+
+  app.get("/api/admin/analytics/sections", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const { class: cls } = req.query as Record<string, string>;
+    if (!cls) return res.status(400).json({ message: "class is required" });
+    const schoolId = req.session.schoolId!;
+    try {
+      const sections = await storage.getDistinctSectionsByClass(schoolId, cls);
+      res.json(sections);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to fetch sections" });
+    }
+  });
+
+  app.get("/api/admin/analytics/performance", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const { class: cls, section, examType, subject, search } = req.query as Record<string, string>;
+    if (!cls) return res.status(400).json({ message: "class is required" });
+    const schoolId = req.session.schoolId!;
+    try {
+      const data = await storage.getAnalyticsData(schoolId, cls, {
+        section: section || undefined,
+        examType: examType || undefined,
+        subject: subject || undefined,
+        search: search || undefined,
+      });
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to fetch analytics data" });
+    }
+  });
+
+  app.get("/api/admin/analytics/student-journey/:studentId", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const studentId = parseInt(req.params.studentId);
+    if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
+    const schoolId = req.session.schoolId!;
+    try {
+      const data = await storage.getStudentJourneyData(studentId, schoolId);
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to fetch student journey" });
+    }
+  });
 }

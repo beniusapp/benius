@@ -2234,6 +2234,166 @@ export class DatabaseStorage {
     await db.insert(assetLogs).values(entry);
   }
 
+  // ===== ANALYTICS DATA HELPERS =====
+
+  async getDistinctSectionsByClass(schoolId: number, cls: string): Promise<string[]> {
+    const rows = await db.selectDistinct({ section: examScores.section })
+      .from(examScores)
+      .where(and(
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.class, cls),
+        eq(examScores.published, true),
+      ));
+    return rows.map(r => r.section).filter(Boolean) as string[];
+  }
+
+  async getAnalyticsData(
+    schoolId: number,
+    cls: string,
+    opts: { section?: string; examType?: string; subject?: string; search?: string }
+  ): Promise<{
+    students: Array<{
+      studentId: number; dsid: string; name: string;
+      subjectScores: Record<string, { marks: number; totalMarks: number; isAbsent: boolean }>;
+      totalObtained: number; totalMax: number; percentage: number;
+      gradeLabel: string | null; gradePoint: string | null; gradeRemarks: string | null;
+      tierPassThreshold: number; passStatus: "PASS" | "FAIL" | "GRACE_PASS";
+      overrideStatus: string | null;
+    }>;
+    subjectAverages: Array<{ subject: string; average: number }>;
+    subjectList: string[];
+    passThreshold: number;
+  }> {
+    const conditions: SQL<unknown>[] = [
+      eq(examScores.schoolId, schoolId),
+      eq(examScores.class, cls),
+      eq(examScores.published, true),
+    ];
+    if (opts.section) conditions.push(eq(examScores.section, opts.section));
+    if (opts.examType) conditions.push(eq(examScores.examType, opts.examType));
+
+    const rows = await db.select().from(examScores)
+      .innerJoin(students, and(eq(examScores.studentId, students.id), eq(students.schoolId, schoolId)))
+      .where(and(...conditions));
+
+    const byStudent: Record<number, {
+      dsid: string; name: string;
+      subjectScores: Record<string, { marks: number; totalMarks: number; isAbsent: boolean }>;
+      obtained: number; total: number;
+    }> = {};
+
+    for (const r of rows) {
+      const sid = r.exam_scores.studentId;
+      if (!byStudent[sid]) {
+        byStudent[sid] = { dsid: r.students.digitalStudentId, name: r.students.name, subjectScores: {}, obtained: 0, total: 0 };
+      }
+      const subj = r.exam_scores.subject;
+      if (!(subj in byStudent[sid].subjectScores)) {
+        byStudent[sid].subjectScores[subj] = { marks: r.exam_scores.marks, totalMarks: r.exam_scores.totalMarks, isAbsent: r.exam_scores.isAbsent };
+      }
+      if (!r.exam_scores.isAbsent) byStudent[sid].obtained += r.exam_scores.marks;
+      byStudent[sid].total += r.exam_scores.totalMarks;
+    }
+
+    let overrideMap: Record<number, string> = {};
+    if (opts.section && opts.examType) {
+      const overrides = await this.getPromotionOverrides(schoolId, cls, opts.section, opts.examType);
+      for (const o of overrides) overrideMap[o.studentId] = o.overrideStatus;
+    }
+
+    let studentList = await Promise.all(Object.entries(byStudent).map(async ([id, d]) => {
+      const studentId = parseInt(id);
+      const percentage = d.total > 0 ? parseFloat(((d.obtained / d.total) * 100).toFixed(2)) : 0;
+      const grade = await this.resolveGrade(schoolId, cls, percentage);
+      const overrideStatus = overrideMap[studentId] || null;
+      let passStatus: "PASS" | "FAIL" | "GRACE_PASS" = percentage >= grade.passPercentage ? "PASS" : "FAIL";
+      if (overrideStatus === "GRACE_PASS") passStatus = "GRACE_PASS";
+      else if (overrideStatus === "PASS") passStatus = "PASS";
+      else if (overrideStatus === "FAIL" || overrideStatus === "REPEAT") passStatus = "FAIL";
+      return {
+        studentId, dsid: d.dsid, name: d.name, subjectScores: d.subjectScores,
+        totalObtained: d.obtained, totalMax: d.total, percentage,
+        gradeLabel: grade.gradeLabel, gradePoint: grade.gradePoint, gradeRemarks: grade.remarks,
+        tierPassThreshold: grade.passPercentage, passStatus, overrideStatus,
+      };
+    }));
+
+    if (opts.subject) studentList = studentList.filter(s => opts.subject! in s.subjectScores);
+    if (opts.search) {
+      const q = opts.search.toLowerCase();
+      studentList = studentList.filter(s => s.name.toLowerCase().includes(q) || s.dsid.toLowerCase().includes(q));
+    }
+    studentList.sort((a, b) => a.dsid.localeCompare(b.dsid));
+
+    const subjectSums: Record<string, { sum: number; cnt: number }> = {};
+    for (const s of studentList) {
+      for (const [subj, score] of Object.entries(s.subjectScores)) {
+        if (!score.isAbsent && score.totalMarks > 0) {
+          if (!subjectSums[subj]) subjectSums[subj] = { sum: 0, cnt: 0 };
+          subjectSums[subj].sum += (score.marks / score.totalMarks) * 100;
+          subjectSums[subj].cnt++;
+        }
+      }
+    }
+    const subjectAverages = Object.entries(subjectSums)
+      .map(([subject, { sum, cnt }]) => ({ subject, average: parseFloat((sum / cnt).toFixed(1)) }))
+      .sort((a, b) => b.average - a.average);
+
+    const subjectSet = new Set<string>();
+    for (const d of Object.values(byStudent)) for (const s of Object.keys(d.subjectScores)) subjectSet.add(s);
+    const subjectList = Array.from(subjectSet);
+    const passThreshold = studentList.length > 0 ? studentList[0].tierPassThreshold : 35;
+
+    return { students: studentList, subjectAverages, subjectList, passThreshold };
+  }
+
+  async getStudentJourneyData(studentId: number, schoolId: number): Promise<{
+    examTypes: string[];
+    subjectRows: { subject: string; scores: (number | null)[] }[];
+    totals: number[];
+  }> {
+    const scores = await db.select().from(examScores)
+      .where(and(
+        eq(examScores.studentId, studentId),
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.published, true),
+      ))
+      .orderBy(examScores.id);
+
+    const examTypeOrder: string[] = [];
+    const byExamType: Record<string, Record<string, { marks: number; totalMarks: number }>> = {};
+
+    for (const score of scores) {
+      if (!examTypeOrder.includes(score.examType)) examTypeOrder.push(score.examType);
+      if (!byExamType[score.examType]) byExamType[score.examType] = {};
+      if (!score.isAbsent) {
+        byExamType[score.examType][score.subject] = { marks: score.marks, totalMarks: score.totalMarks };
+      }
+    }
+
+    const subjectSet = new Set<string>();
+    for (const examSubjects of Object.values(byExamType)) for (const s of Object.keys(examSubjects)) subjectSet.add(s);
+    const subjectList = Array.from(subjectSet);
+
+    const subjectRows = subjectList.map(subject => ({
+      subject,
+      scores: examTypeOrder.map(et => {
+        const s = byExamType[et]?.[subject];
+        return s ? Math.round((s.marks / s.totalMarks) * 100) : null;
+      }),
+    }));
+
+    const totals = examTypeOrder.map(et => {
+      const subjects = byExamType[et];
+      if (!subjects || Object.keys(subjects).length === 0) return 0;
+      let obtained = 0, total = 0;
+      for (const { marks, totalMarks } of Object.values(subjects)) { obtained += marks; total += totalMarks; }
+      return total > 0 ? parseFloat(((obtained / total) * 100).toFixed(1)) : 0;
+    });
+
+    return { examTypes: examTypeOrder, subjectRows, totals };
+  }
+
   // ===== TIER-AWARE GRADING HELPER =====
 
   async resolveGrade(schoolId: number, studentClass: string, percentage: number): Promise<{
