@@ -899,8 +899,23 @@ export class DatabaseStorage {
     return event;
   }
 
+  async createCalendarEvents(data: InsertCalendarEvent[]): Promise<CalendarEvent[]> {
+    if (data.length === 0) return [];
+    return await db.insert(calendarEvents).values(data).returning();
+  }
+
   async getCalendarEvents(schoolId: number): Promise<CalendarEvent[]> {
     return await db.select().from(calendarEvents).where(eq(calendarEvents.schoolId, schoolId));
+  }
+
+  async getCalendarEventsByRange(schoolId: number, startDate: string, endDate: string): Promise<CalendarEvent[]> {
+    return await db.select().from(calendarEvents).where(
+      and(
+        eq(calendarEvents.schoolId, schoolId),
+        gte(calendarEvents.date, startDate),
+        lte(calendarEvents.date, endDate),
+      )
+    );
   }
 
   async deleteCalendarEvent(id: number): Promise<boolean> {

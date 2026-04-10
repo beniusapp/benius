@@ -1182,6 +1182,167 @@ export async function registerRoutes(
     res.json(faculty);
   });
 
+  // ===== ADMIN CALENDAR ROUTES =====
+
+  app.get("/api/admin/calendar", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const { month, year } = req.query;
+    if (month && year) {
+      const m = parseInt(month as string);
+      const y = parseInt(year as string);
+      const startDate = `${y}-${String(m).padStart(2, "0")}-01`;
+      const lastDay = new Date(y, m, 0).getDate();
+      const endDate = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+      const events = await storage.getCalendarEventsByRange(schoolId, startDate, endDate);
+      return res.json(events);
+    }
+    const events = await storage.getCalendarEvents(schoolId);
+    res.json(events);
+  });
+
+  app.post("/api/admin/calendar", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const { title, description, eventType, startDate, endDate, isRecurring, colorCode } = req.body;
+    if (!title || !eventType || !startDate) return res.status(400).json({ message: "title, eventType, startDate required" });
+    const color = colorCode || (eventType === "holiday" ? "#ef4444" : eventType === "academic" || eventType === "examination" ? "#3b82f6" : "#10b981");
+
+    const baseInsert = { schoolId, title, description: description || null, eventType, venue: null, colorCode: color, isRecurring: !!isRecurring };
+    const entries: { schoolId: number; title: string; description: string | null; eventType: string; venue: null; colorCode: string; isRecurring: boolean; date: string }[] = [];
+
+    const start = new Date(startDate + "T00:00:00");
+    const end = endDate ? new Date(endDate + "T00:00:00") : start;
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      entries.push({ ...baseInsert, date: dateStr });
+    }
+
+    if (isRecurring) {
+      const extraYears = 9;
+      const baseEntries = [...entries];
+      for (let yearOffset = 1; yearOffset <= extraYears; yearOffset++) {
+        baseEntries.forEach(e => {
+          const origDate = new Date(e.date + "T00:00:00");
+          origDate.setFullYear(origDate.getFullYear() + yearOffset);
+          const futureDate = `${origDate.getFullYear()}-${String(origDate.getMonth() + 1).padStart(2, "0")}-${String(origDate.getDate()).padStart(2, "0")}`;
+          entries.push({ ...e, date: futureDate });
+        });
+      }
+    }
+
+    const created = await storage.createCalendarEvents(entries);
+    res.status(201).json(created);
+  });
+
+  app.delete("/api/admin/calendar/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+    const ok = await storage.deleteCalendarEvent(id);
+    if (!ok) return res.status(404).json({ message: "Event not found" });
+    res.json({ message: "Deleted" });
+  });
+
+  app.post("/api/admin/calendar/seed-holidays", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+
+    const FIXED_HOLIDAYS = [
+      { month: 1, day: 1, title: "New Year's Day" },
+      { month: 1, day: 26, title: "Republic Day" },
+      { month: 8, day: 15, title: "Independence Day" },
+      { month: 10, day: 2, title: "Gandhi Jayanti" },
+      { month: 12, day: 25, title: "Christmas Day" },
+    ];
+
+    const VARIABLE_HOLIDAYS: Record<number, { month: number; day: number; title: string }[]> = {
+      2026: [
+        { month: 2, day: 26, title: "Maha Shivaratri" },
+        { month: 3, day: 3, title: "Holi" },
+        { month: 3, day: 30, title: "Eid ul-Fitr" },
+        { month: 4, day: 2, title: "Ram Navami" },
+        { month: 4, day: 14, title: "Dr. Ambedkar Jayanti" },
+        { month: 6, day: 7, title: "Eid ul-Adha" },
+        { month: 8, day: 1, title: "Muharram" },
+        { month: 8, day: 25, title: "Janmashtami" },
+        { month: 9, day: 29, title: "Dussehra" },
+        { month: 10, day: 19, title: "Diwali" },
+        { month: 11, day: 6, title: "Guru Nanak Jayanti" },
+      ],
+      2027: [
+        { month: 2, day: 16, title: "Maha Shivaratri" },
+        { month: 3, day: 22, title: "Holi" },
+        { month: 3, day: 20, title: "Eid ul-Fitr" },
+        { month: 4, day: 14, title: "Dr. Ambedkar Jayanti" },
+        { month: 5, day: 27, title: "Eid ul-Adha" },
+        { month: 8, day: 11, title: "Janmashtami" },
+        { month: 9, day: 19, title: "Dussehra" },
+        { month: 10, day: 8, title: "Diwali" },
+        { month: 11, day: 25, title: "Guru Nanak Jayanti" },
+      ],
+      2028: [
+        { month: 3, day: 7, title: "Maha Shivaratri" },
+        { month: 3, day: 11, title: "Holi" },
+        { month: 4, day: 7, title: "Eid ul-Fitr" },
+        { month: 4, day: 14, title: "Dr. Ambedkar Jayanti" },
+        { month: 6, day: 15, title: "Eid ul-Adha" },
+        { month: 8, day: 29, title: "Janmashtami" },
+        { month: 10, day: 2, title: "Diwali" },
+        { month: 10, day: 18, title: "Dussehra" },
+        { month: 11, day: 13, title: "Guru Nanak Jayanti" },
+      ],
+      2029: [
+        { month: 2, day: 24, title: "Maha Shivaratri" },
+        { month: 3, day: 1, title: "Holi" },
+        { month: 3, day: 27, title: "Eid ul-Fitr" },
+        { month: 4, day: 14, title: "Dr. Ambedkar Jayanti" },
+        { month: 6, day: 4, title: "Eid ul-Adha" },
+        { month: 8, day: 19, title: "Janmashtami" },
+        { month: 10, day: 7, title: "Dussehra" },
+        { month: 10, day: 19, title: "Diwali" },
+      ],
+      2030: [
+        { month: 2, day: 14, title: "Maha Shivaratri" },
+        { month: 3, day: 20, title: "Holi" },
+        { month: 3, day: 16, title: "Eid ul-Fitr" },
+        { month: 4, day: 14, title: "Dr. Ambedkar Jayanti" },
+        { month: 5, day: 24, title: "Eid ul-Adha" },
+        { month: 8, day: 8, title: "Janmashtami" },
+        { month: 9, day: 27, title: "Dussehra" },
+        { month: 10, day: 9, title: "Diwali" },
+      ],
+    };
+
+    const currentYear = new Date().getFullYear();
+    const years = Array.from({ length: 6 }, (_, i) => currentYear + i);
+    const existing = await storage.getCalendarEvents(schoolId);
+    const existingTitles = new Set(existing.map(e => `${e.date}::${e.title}`));
+
+    const toInsert: { schoolId: number; title: string; description: null; eventType: string; venue: null; colorCode: string; isRecurring: boolean; date: string }[] = [];
+
+    for (const year of years) {
+      for (const h of FIXED_HOLIDAYS) {
+        const date = `${year}-${String(h.month).padStart(2, "0")}-${String(h.day).padStart(2, "0")}`;
+        const key = `${date}::${h.title}`;
+        if (!existingTitles.has(key)) {
+          toInsert.push({ schoolId, title: h.title, description: null, eventType: "holiday", venue: null, colorCode: "#ef4444", isRecurring: true, date });
+        }
+      }
+      const varHolidays = VARIABLE_HOLIDAYS[year] || [];
+      for (const h of varHolidays) {
+        const date = `${year}-${String(h.month).padStart(2, "0")}-${String(h.day).padStart(2, "0")}`;
+        const key = `${date}::${h.title}`;
+        if (!existingTitles.has(key)) {
+          toInsert.push({ schoolId, title: h.title, description: null, eventType: "holiday", venue: null, colorCode: "#ef4444", isRecurring: false, date });
+        }
+      }
+    }
+
+    const created = await storage.createCalendarEvents(toInsert);
+    res.json({ message: `Seeded ${created.length} holidays`, count: created.length });
+  });
+
   // ===== STUDENT CALENDAR ROUTES =====
 
   app.get("/api/student/calendar", async (req, res) => {

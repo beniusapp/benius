@@ -195,6 +195,8 @@ export const calendarEvents = pgTable("calendar_events", {
   eventType: text("event_type").notNull(),
   venue: text("venue"),
   description: text("description"),
+  colorCode: text("color_code"),
+  isRecurring: boolean("is_recurring").notNull().default(false),
 });
 
 export const libraryBooks = pgTable("library_books", {

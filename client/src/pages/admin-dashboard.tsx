@@ -25,6 +25,7 @@ import NoticeboardAdmin from "./admin-modules/noticeboard-admin";
 import TimetableMaster from "./admin-modules/timetable-master";
 import IdCardGen from "./admin-modules/id-card-gen";
 import AssetsInventory from "./admin-modules/assets-inventory";
+import SchoolCalendar from "./admin-modules/school-calendar";
 
 interface MeResponse {
   id: number; email: string; role: string;
@@ -35,7 +36,7 @@ type ActiveModule =
   | "grid" | "school-setup" | "timetable" | "attendance" | "exam-controller"
   | "complaint-hub" | "noticeboard" | "approval-center" | "faculty-mapping"
   | "student-registry" | "analytics" | "audit-logs" | "visitor-log"
-  | "id-card-gen" | "assets";
+  | "id-card-gen" | "assets" | "school-calendar";
 
 interface TileConfig {
   id: ActiveModule;
@@ -61,6 +62,7 @@ const TILES: TileConfig[] = [
   { id: "visitor-log", label: "Visitor Log", icon: UserSquare, group: "Enterprise", desc: "Campus visitor check-in & check-out" },
   { id: "id-card-gen", label: "ID Card Gen", icon: CreditCard, group: "Enterprise", desc: "Generate & print student ID cards" },
   { id: "assets", label: "Assets & Inventory", icon: Package, group: "Enterprise", desc: "Track school equipment and resources" },
+  { id: "school-calendar", label: "School Calendar", icon: CalendarDays, group: "Foundation", desc: "Events, holidays and academic schedule" },
 ];
 
 const GROUP_COLORS: Record<string, string> = {
@@ -204,6 +206,7 @@ export default function AdminDashboard() {
       case "timetable": return <TimetableMaster schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
       case "id-card-gen": return <IdCardGen schoolId={me.schoolId} schoolName={me.schoolName} classes={meta.classes} sections={meta.sections} />;
       case "assets": return <AssetsInventory schoolId={me.schoolId} />;
+      case "school-calendar": return <SchoolCalendar />;
       default: return null;
     }
   };

@@ -2032,4 +2032,24 @@ export function registerTeacherRoutes(app: Express) {
       res.status(500).json({ message: error.message || "Failed to fetch student journey" });
     }
   });
+
+  // ===== TEACHER CALENDAR ROUTE =====
+  app.get("/api/teacher/calendar", async (req, res) => {
+    const teacherId = req.session.teacherId;
+    if (!teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(teacherId);
+    if (!teacher) return res.status(404).json({ message: "Teacher not found" });
+    const { month, year } = req.query;
+    if (month && year) {
+      const m = parseInt(month as string);
+      const y = parseInt(year as string);
+      const startDate = `${y}-${String(m).padStart(2, "0")}-01`;
+      const lastDay = new Date(y, m, 0).getDate();
+      const endDate = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+      const events = await storage.getCalendarEventsByRange(teacher.schoolId, startDate, endDate);
+      return res.json(events);
+    }
+    const events = await storage.getCalendarEvents(teacher.schoolId);
+    res.json(events);
+  });
 }

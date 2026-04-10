@@ -18,6 +18,8 @@ interface CalendarEvent {
   eventType: string;
   venue: string | null;
   description: string | null;
+  colorCode: string | null;
+  isRecurring: boolean;
 }
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -32,8 +34,20 @@ function getEventColor(eventType: string): { dot: string; bg: string; text: stri
       return { dot: "bg-red-400", bg: "bg-red-50", text: "text-red-700", border: "border-red-200" };
     case "examination":
       return { dot: "bg-blue-500", bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200" };
+    case "academic":
+      return { dot: "bg-blue-400", bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200" };
     default:
       return { dot: "bg-[#10b981]", bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200" };
+  }
+}
+
+function getEventDotColor(ev: CalendarEvent): string {
+  if (ev.colorCode) return ev.colorCode;
+  switch (ev.eventType.toLowerCase()) {
+    case "holiday": return "#f87171";
+    case "examination": return "#3b82f6";
+    case "academic": return "#60a5fa";
+    default: return "#10b981";
   }
 }
 
@@ -218,7 +232,7 @@ export default function StudentCalendar() {
                         <span className="w-1.5 h-1.5 rounded-full bg-red-300" />
                       )}
                       {dayEvents.slice(0, 3).map(ev => (
-                        <span key={ev.id} className={`w-1.5 h-1.5 rounded-full ${getEventColor(ev.eventType).dot}`} />
+                        <span key={ev.id} className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getEventDotColor(ev) }} />
                       ))}
                       {dayEvents.length > 3 && <span className="text-[8px] text-gray-400">+{dayEvents.length - 3}</span>}
                     </div>
