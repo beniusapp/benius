@@ -4,7 +4,7 @@ import {
   complaints, complaintNotes, examScores, galleryItems, calendarEvents,
   libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata,
   studentLeaveRequests, auditLogs, visitorLogs, studentProfiles, teacherAllocations,
-  promotionOverrides,
+  promotionOverrides, gradingTiers, gradingRules, academicHistory,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
@@ -23,6 +23,9 @@ import {
   type VisitorLog, type InsertVisitorLog,
   type StudentProfile, type InsertStudentProfile,
   type PromotionOverride,
+  type GradingTier, type InsertGradingTier,
+  type GradingRule,
+  type InsertAcademicHistory,
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
@@ -2124,6 +2127,95 @@ export class DatabaseStorage {
       }
     });
     return promoted;
+  }
+
+  // ===== GRADING TIERS =====
+
+  async getGradingTiers(schoolId: number): Promise<GradingTier[]> {
+    return await db.select().from(gradingTiers)
+      .where(eq(gradingTiers.schoolId, schoolId))
+      .orderBy(gradingTiers.sortOrder);
+  }
+
+  async upsertGradingTier(data: InsertGradingTier & { id?: number }): Promise<GradingTier> {
+    if (data.id) {
+      const { id, ...rest } = data;
+      const [updated] = await db.update(gradingTiers)
+        .set(rest)
+        .where(and(eq(gradingTiers.id, id), eq(gradingTiers.schoolId, data.schoolId)))
+        .returning();
+      return updated;
+    }
+    const [inserted] = await db.insert(gradingTiers).values(data).returning();
+    return inserted;
+  }
+
+  async deleteGradingTier(id: number, schoolId: number): Promise<void> {
+    await db.delete(gradingTiers)
+      .where(and(eq(gradingTiers.id, id), eq(gradingTiers.schoolId, schoolId)));
+  }
+
+  // ===== GRADING RULES =====
+
+  async getGradingRules(schoolId: number, tierId?: number): Promise<GradingRule[]> {
+    const conditions = tierId
+      ? and(eq(gradingRules.schoolId, schoolId), eq(gradingRules.tierId, tierId))
+      : eq(gradingRules.schoolId, schoolId);
+    return await db.select().from(gradingRules)
+      .where(conditions)
+      .orderBy(gradingRules.tierId, gradingRules.sortOrder);
+  }
+
+  async replaceGradingRules(tierId: number, schoolId: number, rules: Omit<GradingRule, "id" | "tierId" | "schoolId">[]): Promise<GradingRule[]> {
+    await db.delete(gradingRules)
+      .where(and(eq(gradingRules.tierId, tierId), eq(gradingRules.schoolId, schoolId)));
+    if (rules.length === 0) return [];
+    const inserted = await db.insert(gradingRules)
+      .values(rules.map((r, i) => ({ ...r, tierId, schoolId, sortOrder: i })))
+      .returning();
+    return inserted;
+  }
+
+  // ===== ACADEMIC HISTORY =====
+
+  async archiveStudentHistory(records: InsertAcademicHistory[]): Promise<void> {
+    if (records.length === 0) return;
+    await db.insert(academicHistory).values(records);
+  }
+
+  async getAcademicHistory(schoolId: number, studentId?: number): Promise<typeof academicHistory.$inferSelect[]> {
+    const conditions = studentId
+      ? and(eq(academicHistory.schoolId, schoolId), eq(academicHistory.studentId, studentId))
+      : eq(academicHistory.schoolId, schoolId);
+    return await db.select().from(academicHistory)
+      .where(conditions)
+      .orderBy(desc(academicHistory.archivedAt));
+  }
+
+  // ===== TIER-AWARE GRADING HELPER =====
+
+  async resolveGrade(schoolId: number, studentClass: string, percentage: number): Promise<{
+    passPercentage: number; gradeLabel: string | null; gradePoint: string | null; remarks: string | null;
+  }> {
+    const tiers = await this.getGradingTiers(schoolId);
+    const allRules = await this.getGradingRules(schoolId);
+    const matchedTier = tiers.find(t => {
+      const allClasses = ["LKG","UKG","1","2","3","4","5","6","7","8","9","10","11","12"];
+      const minIdx = allClasses.indexOf(t.minClass);
+      const maxIdx = allClasses.indexOf(t.maxClass);
+      const curIdx = allClasses.indexOf(studentClass);
+      return curIdx !== -1 && curIdx >= minIdx && curIdx <= maxIdx;
+    });
+    if (!matchedTier) return { passPercentage: 35, gradeLabel: null, gradePoint: null, remarks: null };
+    const tierRules = allRules.filter(r => r.tierId === matchedTier.id)
+      .sort((a, b) => b.minPercent - a.minPercent);
+    const matchedRule = tierRules.find(r => percentage >= r.minPercent && percentage <= r.maxPercent);
+    return {
+      passPercentage: matchedTier.passPercentage,
+      gradeLabel: matchedRule?.gradeLabel ?? null,
+      gradePoint: matchedRule?.gradePoint ?? null,
+      remarks: matchedRule?.remarks ?? null,
+    };
   }
 }
 

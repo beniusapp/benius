@@ -21,6 +21,10 @@ type StudentResult = {
   totalMax: number;
   percentage: number;
   subjects: string[];
+  gradeLabel: string | null;
+  gradePoint: string | null;
+  gradeRemarks: string | null;
+  tierPassThreshold: number;
 };
 
 type OverrideStatus = "PASS" | "FAIL" | "GRACE_PASS" | "REPEAT";
@@ -93,8 +97,8 @@ function StatusBadge({ status }: { status: OverrideStatus | "AUTO_PASS" | "AUTO_
 function SkeletonRow() {
   return (
     <tr className="border-b border-white/5">
-      {[...Array(7)].map((_, i) => (
-        <td key={i} className="py-3 px-4">
+      {[...Array(10)].map((_, i) => (
+        <td key={i} className="py-3 px-2">
           <div className="h-3.5 rounded bg-white/10 animate-pulse" style={{ width: `${50 + (i * 11) % 40}%` }} />
         </td>
       ))}
@@ -116,6 +120,9 @@ export default function ExamController({ schoolId, classes, sections, examTypes 
   const [overrideMap, setOverrideMap] = useState<Record<number, Override>>({});
   const [openOverrideFor, setOpenOverrideFor] = useState<number | null>(null);
   const [draftOverride, setDraftOverride] = useState<{ status: OverrideStatus; nextClass: string; nextSection: string } | null>(null);
+
+  // ── Selection for bulk-promote ──
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   // ── Execution ──
   const [confirmed, setConfirmed] = useState(false);
@@ -164,8 +171,14 @@ export default function ExamController({ schoolId, classes, sections, examTypes 
   });
 
   // ── Promote mutation ──
+  type PromoteItem = {
+    studentId: number; nextClass: string; nextSection: string;
+    fromClass: string; fromSection: string; examType: string;
+    totalObtained: number; totalMax: number; percentage: number;
+    gradeLabel?: string | null; gradePoint?: string | null; gradeRemarks?: string | null;
+  };
   const promoteMutation = useMutation({
-    mutationFn: async (items: { studentId: number; nextClass: string; nextSection: string }[]) => {
+    mutationFn: async (items: PromoteItem[]) => {
       const r = await apiRequest("POST", "/api/admin/promote", { items });
       return r.json();
     },
@@ -175,6 +188,7 @@ export default function ExamController({ schoolId, classes, sections, examTypes 
       setTimeout(() => setShowConfetti(false), 2500);
       toast({ title: "Promotion Complete!", description: `${d.promoted} students have been advanced to their new class.` });
       setConfirmed(false);
+      setSelectedIds(new Set());
       queryClient.invalidateQueries({ queryKey: ["/api/schools", schoolId, "students"] });
     },
     onError: (e: Error) => toast({ title: "Promotion Failed", description: e.message, variant: "destructive" }),
@@ -196,6 +210,23 @@ export default function ExamController({ schoolId, classes, sections, examTypes 
     setConfirmed(false);
     setProgress(0);
     setSearchQ("");
+    setSelectedIds(new Set());
+  }
+
+  function selectAllPassed() {
+    const ids = (data?.students ?? []).filter(s => {
+      const st = getEffectiveStatus(s, passThreshold);
+      return st === "AUTO_PASS" || st === "PASS" || st === "GRACE_PASS";
+    }).map(s => s.studentId);
+    setSelectedIds(new Set(ids));
+  }
+
+  function selectAllFailed() {
+    const ids = (data?.students ?? []).filter(s => {
+      const st = getEffectiveStatus(s, passThreshold);
+      return st === "AUTO_FAIL" || st === "FAIL";
+    }).map(s => s.studentId);
+    setSelectedIds(new Set(ids));
   }
 
   function getEffectiveStatus(s: StudentResult, passThreshold: number): OverrideStatus | "AUTO_PASS" | "AUTO_FAIL" {
@@ -228,14 +259,27 @@ export default function ExamController({ schoolId, classes, sections, examTypes 
   const repeating = (data?.students ?? []).filter(s => overrideMap[s.studentId]?.overrideStatus === "REPEAT").length;
   const graceCount = (data?.students ?? []).filter(s => overrideMap[s.studentId]?.overrideStatus === "GRACE_PASS").length;
 
-  // Build promotion items: exclude REPEAT, include PASS/GRACE_PASS/AUTO_PASS
-  const promotionItems = (data?.students ?? []).filter(s => {
+  // Build promotion items: if selectedIds is non-empty, use selection; else auto-include all passing
+  const eligibleByStatus = (data?.students ?? []).filter(s => {
     const st = getEffectiveStatus(s, passThreshold);
     return st !== "AUTO_FAIL" && st !== "FAIL" && st !== "REPEAT";
-  }).map(s => ({
+  });
+  const promotionItems: PromoteItem[] = (selectedIds.size > 0
+    ? (data?.students ?? []).filter(s => selectedIds.has(s.studentId))
+    : eligibleByStatus
+  ).map(s => ({
     studentId: s.studentId,
     nextClass: getNextClassForStudent(s),
     nextSection: getNextSectionForStudent(s),
+    fromClass: cls,
+    fromSection: section,
+    examType,
+    totalObtained: s.totalObtained,
+    totalMax: s.totalMax,
+    percentage: s.percentage,
+    gradeLabel: s.gradeLabel ?? null,
+    gradePoint: s.gradePoint ?? null,
+    gradeRemarks: s.gradeRemarks ?? null,
   }));
 
   function openOverride(s: StudentResult) {
@@ -376,32 +420,55 @@ export default function ExamController({ schoolId, classes, sections, examTypes 
             </div>
           )}
 
-          {/* Search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
-            <Input value={searchQ} onChange={e => setSearchQ(e.target.value)}
-              placeholder="Search by name or DSID…"
-              className="pl-9 bg-[#1A2942] border-white/20 text-white placeholder:text-white/30"
-              data-testid="input-search-results" />
+          {/* Bulk selection + Search */}
+          <div className="flex flex-wrap gap-2 items-center">
+            <Button size="sm" variant="outline" onClick={selectAllPassed}
+              className="h-9 border-[#10b981]/40 text-[#10b981] hover:bg-[#10b981]/10 text-xs font-semibold"
+              data-testid="button-select-all-passed">
+              ✓ Select All Passed
+            </Button>
+            <Button size="sm" variant="outline" onClick={selectAllFailed}
+              className="h-9 border-red-400/40 text-red-400 hover:bg-red-400/10 text-xs font-semibold"
+              data-testid="button-select-all-failed">
+              ✗ Select All Failed
+            </Button>
+            {selectedIds.size > 0 && (
+              <span className="text-xs text-white/50 ml-1">{selectedIds.size} selected</span>
+            )}
+            {selectedIds.size > 0 && (
+              <button onClick={() => setSelectedIds(new Set())} className="text-xs text-white/30 hover:text-white/60 underline" data-testid="button-clear-selection">
+                Clear
+              </button>
+            )}
+            <div className="flex-1 min-w-[200px] relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+              <Input value={searchQ} onChange={e => setSearchQ(e.target.value)}
+                placeholder="Search by name or DSID…"
+                className="pl-9 bg-[#1A2942] border-white/20 text-white placeholder:text-white/30"
+                data-testid="input-search-results" />
+            </div>
           </div>
 
           {/* Table */}
           <div className="rounded-xl border border-white/10 bg-[#1A2942]">
             <div className="overflow-x-auto" style={{ maxHeight: "70vh", overflowY: "auto" }}>
-              <table className="text-sm" style={{ minWidth: "700px", width: "100%", tableLayout: "fixed" }}>
+              <table className="text-sm" style={{ minWidth: "900px", width: "100%", tableLayout: "fixed" }}>
                 <colgroup>
-                  <col style={{ width: "130px" }} />
-                  <col style={{ width: "auto" }} />
+                  <col style={{ width: "36px" }} />
                   <col style={{ width: "120px" }} />
-                  <col style={{ width: "70px" }} />
-                  <col style={{ width: "90px" }} />
+                  <col style={{ width: "auto" }} />
                   <col style={{ width: "110px" }} />
-                  <col style={{ width: "60px" }} />
+                  <col style={{ width: "64px" }} />
+                  <col style={{ width: "90px" }} />
+                  <col style={{ width: "70px" }} />
+                  <col style={{ width: "80px" }} />
+                  <col style={{ width: "110px" }} />
+                  <col style={{ width: "56px" }} />
                 </colgroup>
                 <thead className="bg-[#0F1E35] sticky top-0 z-10">
                   <tr>
-                    {["DSID","Name","Total / Max","%","Status","Next Class",""].map((h, i) => (
-                      <th key={i} className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">{h}</th>
+                    {["","DSID","Name","Total / Max","%","Status","Grade","Remarks","Next Class",""].map((h, i) => (
+                      <th key={i} className="text-left py-3 px-2 text-white/60 font-medium text-xs uppercase tracking-wide">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -410,13 +477,13 @@ export default function ExamController({ schoolId, classes, sections, examTypes 
                     ? [...Array(6)].map((_, i) => <SkeletonRow key={i} />)
                     : isError
                       ? (
-                        <tr><td colSpan={7} className="py-12 text-center text-red-400 text-sm">
+                        <tr><td colSpan={10} className="py-12 text-center text-red-400 text-sm">
                           Failed to load results. Try reloading.
                         </td></tr>
                       )
                       : filteredStudents.length === 0
                         ? (
-                          <tr><td colSpan={7} className="py-12 text-center text-white/40">
+                          <tr><td colSpan={10} className="py-12 text-center text-white/40">
                             <TrendingUp className="w-8 h-8 mx-auto mb-2 opacity-40" />
                             {data?.students.length === 0 ? "No exam scores found for this cohort." : "No results match your search."}
                           </td></tr>
@@ -426,22 +493,37 @@ export default function ExamController({ schoolId, classes, sections, examTypes 
                           const isOverrideOpen = openOverrideFor === s.studentId;
                           const nextCls = getNextClassForStudent(s);
                           const nextSec = getNextSectionForStudent(s);
+                          const isSelected = selectedIds.has(s.studentId);
                           return (
                             <React.Fragment key={s.studentId}>
                               <tr
-                                className={`border-b border-white/5 hover:bg-white/5 transition-colors ${rowIdx % 2 === 1 ? "bg-white/[0.025]" : ""}`}
+                                className={`border-b border-white/5 hover:bg-white/5 transition-colors ${rowIdx % 2 === 1 ? "bg-white/[0.025]" : ""} ${isSelected ? "ring-1 ring-inset ring-[#10b981]/30" : ""}`}
                                 data-testid={`row-result-${s.studentId}`}>
-                                <td className="py-3 px-3 font-mono text-[#D4AF37] text-xs overflow-hidden text-ellipsis">{s.dsid}</td>
-                                <td className="py-3 px-3 text-white font-medium text-sm overflow-hidden text-ellipsis">{s.name}</td>
-                                <td className="py-3 px-3 text-white/70 text-sm">{s.totalObtained} / {s.totalMax}</td>
-                                <td className="py-3 px-3 text-white font-semibold text-sm">{s.percentage.toFixed(1)}%</td>
-                                <td className="py-3 px-3 whitespace-nowrap"><StatusBadge status={effStatus} /></td>
-                                <td className="py-3 px-3 text-white/60 text-xs whitespace-nowrap">
+                                <td className="py-3 px-2">
+                                  <div
+                                    onClick={() => setSelectedIds(prev => { const n = new Set(prev); isSelected ? n.delete(s.studentId) : n.add(s.studentId); return n; })}
+                                    className={`w-4 h-4 rounded border cursor-pointer flex items-center justify-center ${isSelected ? "bg-[#10b981] border-[#10b981]" : "border-white/30"}`}
+                                    data-testid={`checkbox-select-${s.studentId}`}>
+                                    {isSelected && <svg viewBox="0 0 10 8" className="w-2.5 h-2.5 fill-white"><path d="M1 4l2.5 2.5L9 1"/></svg>}
+                                  </div>
+                                </td>
+                                <td className="py-3 px-2 font-mono text-[#D4AF37] text-xs overflow-hidden text-ellipsis">{s.dsid}</td>
+                                <td className="py-3 px-2 text-white font-medium text-sm overflow-hidden text-ellipsis">{s.name}</td>
+                                <td className="py-3 px-2 text-white/70 text-sm">{s.totalObtained} / {s.totalMax}</td>
+                                <td className="py-3 px-2 text-white font-semibold text-sm">{s.percentage.toFixed(1)}%</td>
+                                <td className="py-3 px-2 whitespace-nowrap"><StatusBadge status={effStatus} /></td>
+                                <td className="py-3 px-2">
+                                  {s.gradeLabel
+                                    ? <span className="px-1.5 py-0.5 rounded bg-[#D4AF37]/20 text-[#D4AF37] text-xs font-bold">{s.gradeLabel}</span>
+                                    : <span className="text-white/20 text-xs">—</span>}
+                                </td>
+                                <td className="py-3 px-2 text-white/50 text-xs overflow-hidden text-ellipsis">{s.gradeRemarks || "—"}</td>
+                                <td className="py-3 px-2 text-white/60 text-xs whitespace-nowrap">
                                   {effStatus === "REPEAT" ? <span className="text-orange-400">Repeat {cls}-{section}</span> : `${nextCls}-${nextSec}`}
                                 </td>
                                 <td className="py-3 px-2 whitespace-nowrap">
                                   <Button variant="ghost" size="icon"
-                                    className="h-11 w-11 min-w-[44px] text-[#10b981] hover:bg-[#10b981]/10"
+                                    className="h-9 w-9 text-[#10b981] hover:bg-[#10b981]/10"
                                     onClick={() => isOverrideOpen ? setOpenOverrideFor(null) : openOverride(s)}
                                     data-testid={`button-override-${s.studentId}`}
                                     title="Override status">
@@ -451,7 +533,7 @@ export default function ExamController({ schoolId, classes, sections, examTypes 
                               </tr>
                               {isOverrideOpen && draftOverride && (
                                 <tr key={`override-${s.studentId}`} className="bg-[#0F1E35]/80">
-                                  <td colSpan={7} className="px-4 py-3">
+                                  <td colSpan={10} className="px-4 py-3">
                                     <div className="flex flex-wrap items-center gap-3">
                                       <span className="text-white/60 text-xs font-medium w-16">Override:</span>
                                       <Select value={draftOverride.status}

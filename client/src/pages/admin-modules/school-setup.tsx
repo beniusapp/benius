@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Plus, X, Save, BookOpen, Grid3X3, FlaskConical, FileText } from "lucide-react";
+import { Plus, X, Save, BookOpen, Grid3X3, FileText, ChevronDown, ChevronRight, Trash2, GraduationCap, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -8,13 +8,15 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 
 interface Props { schoolId: number }
 
+const CLASS_ORDER = ["LKG","UKG","1","2","3","4","5","6","7","8","9","10","11","12"];
+
 function TagList({ items, onRemove }: { items: string[]; onRemove: (v: string) => void }) {
   return (
     <div className="flex flex-wrap gap-2 mt-2">
       {items.map(v => (
         <span key={v} className="flex items-center gap-1 px-3 py-1 rounded-full text-sm bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/40">
           {v}
-          <button onClick={() => onRemove(v)} className="hover:text-red-400 transition-colors">
+          <button onClick={() => onRemove(v)} className="hover:text-red-400 transition-colors" data-testid={`btn-remove-tag-${v}`}>
             <X className="w-3 h-3" />
           </button>
         </span>
@@ -56,6 +58,210 @@ function MetaSection({ title, icon: Icon, items, onAdd, onRemove, onSave, input,
   );
 }
 
+interface GradeRow { gradeLabel: string; minPercent: string; maxPercent: string; gradePoint: string; remarks: string; }
+interface TierLocal {
+  id?: number;
+  tempId: string;
+  name: string;
+  minClass: string;
+  maxClass: string;
+  passPercentage: string;
+  sortOrder: number;
+  expanded: boolean;
+  rules: GradeRow[];
+}
+
+function emptyRule(): GradeRow { return { gradeLabel: "", minPercent: "", maxPercent: "", gradePoint: "", remarks: "" }; }
+
+function validateTiers(tiers: TierLocal[]): string[] {
+  const errors: string[] = [];
+  for (const t of tiers) {
+    if (!t.name.trim()) { errors.push(`A tier is missing a name.`); continue; }
+    const minIdx = CLASS_ORDER.indexOf(t.minClass);
+    const maxIdx = CLASS_ORDER.indexOf(t.maxClass);
+    if (minIdx === -1 || maxIdx === -1) { errors.push(`"${t.name}": Invalid class selection.`); continue; }
+    if (minIdx > maxIdx) { errors.push(`"${t.name}": Min class must be before Max class.`); continue; }
+    for (const r of t.rules) {
+      const mn = parseInt(r.minPercent); const mx = parseInt(r.maxPercent);
+      if (!r.gradeLabel.trim()) { errors.push(`"${t.name}": Grade label is required for all rows.`); }
+      if (isNaN(mn) || isNaN(mx)) { errors.push(`"${t.name}": Min/Max % must be numbers.`); }
+      else if (mn >= mx) { errors.push(`"${t.name}": Min % must be less than Max % in each grade row.`); }
+    }
+    const sortedRules = [...t.rules].sort((a, b) => parseInt(a.minPercent) - parseInt(b.minPercent));
+    for (let i = 1; i < sortedRules.length; i++) {
+      const prev = parseInt(sortedRules[i - 1].maxPercent);
+      const cur = parseInt(sortedRules[i].minPercent);
+      if (cur < prev) { errors.push(`"${t.name}": Grade ranges overlap.`); break; }
+      if (cur > prev + 1) { errors.push(`"${t.name}": Gap between grade ranges (${prev} to ${cur}).`); break; }
+    }
+  }
+  for (let i = 0; i < tiers.length; i++) {
+    for (let j = i + 1; j < tiers.length; j++) {
+      const a = tiers[i]; const b = tiers[j];
+      const aMin = CLASS_ORDER.indexOf(a.minClass); const aMax = CLASS_ORDER.indexOf(a.maxClass);
+      const bMin = CLASS_ORDER.indexOf(b.minClass); const bMax = CLASS_ORDER.indexOf(b.maxClass);
+      if (aMin <= bMax && bMin <= aMax) {
+        errors.push(`"${a.name}" and "${b.name}" have overlapping class ranges.`);
+      }
+    }
+  }
+  return Array.from(new Set(errors));
+}
+
+function TierAccordion({ tier, classesList, onChange, onDelete, onSave, isSaving }: {
+  tier: TierLocal;
+  classesList: string[];
+  onChange: (t: TierLocal) => void;
+  onDelete: () => void;
+  onSave: () => void;
+  isSaving: boolean;
+}) {
+  const setField = (field: keyof TierLocal, val: any) => onChange({ ...tier, [field]: val });
+  const setRule = (idx: number, field: keyof GradeRow, val: string) => {
+    const newRules = tier.rules.map((r, i) => i === idx ? { ...r, [field]: val } : r);
+    onChange({ ...tier, rules: newRules });
+  };
+  const addRule = () => onChange({ ...tier, rules: [...tier.rules, emptyRule()] });
+  const removeRule = (idx: number) => onChange({ ...tier, rules: tier.rules.filter((_, i) => i !== idx) });
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-[#1A2942] overflow-hidden" data-testid={`tier-card-${tier.tempId}`}>
+      <button
+        className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-white/5 transition-colors"
+        onClick={() => setField("expanded", !tier.expanded)}
+        data-testid={`btn-expand-tier-${tier.tempId}`}
+      >
+        <div className="p-1.5 rounded-lg bg-[#10b981]/20">
+          <GraduationCap className="w-4 h-4 text-[#10b981]" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold text-white text-sm truncate">{tier.name || "Unnamed Tier"}</p>
+          <p className="text-white/40 text-xs">
+            {tier.minClass && tier.maxClass ? `Classes ${tier.minClass} – ${tier.maxClass}` : "No range set"} &nbsp;·&nbsp; Pass: {tier.passPercentage || "?"}%
+          </p>
+        </div>
+        <span className="text-xs text-white/40 mr-2">{tier.rules.length} grade{tier.rules.length !== 1 ? "s" : ""}</span>
+        {tier.expanded ? <ChevronDown className="w-4 h-4 text-white/40 shrink-0" /> : <ChevronRight className="w-4 h-4 text-white/40 shrink-0" />}
+      </button>
+
+      {tier.expanded && (
+        <div className="px-5 pb-5 space-y-4 border-t border-white/10">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-4">
+            <div>
+              <label className="text-xs text-white/50 mb-1 block">Tier Name</label>
+              <Input value={tier.name} onChange={e => setField("name", e.target.value)}
+                placeholder="e.g. Primary" className="bg-[#0A1628] border-white/20 text-white text-sm h-9"
+                data-testid={`input-tier-name-${tier.tempId}`} />
+            </div>
+            <div>
+              <label className="text-xs text-white/50 mb-1 block">Pass Percentage (%)</label>
+              <Input type="number" min={0} max={100} value={tier.passPercentage}
+                onChange={e => setField("passPercentage", e.target.value)}
+                placeholder="35" className="bg-[#0A1628] border-white/20 text-white text-sm h-9"
+                data-testid={`input-tier-pass-${tier.tempId}`} />
+            </div>
+            <div>
+              <label className="text-xs text-white/50 mb-1 block">From Class</label>
+              <select value={tier.minClass} onChange={e => setField("minClass", e.target.value)}
+                className="w-full h-9 rounded-md bg-[#0A1628] border border-white/20 text-white text-sm px-3"
+                data-testid={`select-min-class-${tier.tempId}`}>
+                <option value="">Select</option>
+                {classesList.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-white/50 mb-1 block">To Class</label>
+              <select value={tier.maxClass} onChange={e => setField("maxClass", e.target.value)}
+                className="w-full h-9 rounded-md bg-[#0A1628] border border-white/20 text-white text-sm px-3"
+                data-testid={`select-max-class-${tier.tempId}`}>
+                <option value="">Select</option>
+                {classesList.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-white/60 uppercase tracking-wide">Grade Brackets</p>
+              <Button size="sm" variant="ghost" onClick={addRule}
+                className="h-7 text-[#10b981] hover:bg-[#10b981]/10 text-xs"
+                data-testid={`btn-add-rule-${tier.tempId}`}>
+                <Plus className="w-3 h-3 mr-1" /> Add Row
+              </Button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs" style={{ minWidth: "520px" }}>
+                <thead>
+                  <tr className="border-b border-white/10">
+                    {["Grade","Min %","Max %","Grade Point","Remarks",""].map((h, i) => (
+                      <th key={i} className="text-left py-1.5 px-2 text-white/40 font-medium">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tier.rules.length === 0 && (
+                    <tr><td colSpan={6} className="text-center py-3 text-white/30 italic">No grade rows yet. Add one above.</td></tr>
+                  )}
+                  {tier.rules.map((r, idx) => (
+                    <tr key={idx} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="py-1.5 px-2">
+                        <Input value={r.gradeLabel} onChange={e => setRule(idx, "gradeLabel", e.target.value)}
+                          placeholder="A+" className="h-7 bg-[#0A1628] border-white/20 text-white text-xs w-16"
+                          data-testid={`input-grade-label-${tier.tempId}-${idx}`} />
+                      </td>
+                      <td className="py-1.5 px-2">
+                        <Input type="number" min={0} max={100} value={r.minPercent}
+                          onChange={e => setRule(idx, "minPercent", e.target.value)}
+                          placeholder="0" className="h-7 bg-[#0A1628] border-white/20 text-white text-xs w-16"
+                          data-testid={`input-min-pct-${tier.tempId}-${idx}`} />
+                      </td>
+                      <td className="py-1.5 px-2">
+                        <Input type="number" min={0} max={100} value={r.maxPercent}
+                          onChange={e => setRule(idx, "maxPercent", e.target.value)}
+                          placeholder="100" className="h-7 bg-[#0A1628] border-white/20 text-white text-xs w-16"
+                          data-testid={`input-max-pct-${tier.tempId}-${idx}`} />
+                      </td>
+                      <td className="py-1.5 px-2">
+                        <Input value={r.gradePoint} onChange={e => setRule(idx, "gradePoint", e.target.value)}
+                          placeholder="4.0" className="h-7 bg-[#0A1628] border-white/20 text-white text-xs w-16"
+                          data-testid={`input-grade-point-${tier.tempId}-${idx}`} />
+                      </td>
+                      <td className="py-1.5 px-2">
+                        <Input value={r.remarks} onChange={e => setRule(idx, "remarks", e.target.value)}
+                          placeholder="Excellent" className="h-7 bg-[#0A1628] border-white/20 text-white text-xs w-24"
+                          data-testid={`input-remarks-${tier.tempId}-${idx}`} />
+                      </td>
+                      <td className="py-1.5 px-2">
+                        <button onClick={() => removeRule(idx)} className="text-red-400/60 hover:text-red-400 transition-colors min-w-[28px] min-h-[28px] flex items-center justify-center"
+                          data-testid={`btn-del-rule-${tier.tempId}-${idx}`}>
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <Button onClick={onSave} disabled={isSaving} size="sm"
+              className="bg-[#10b981] hover:bg-emerald-600 text-white font-semibold h-9"
+              data-testid={`btn-save-tier-${tier.tempId}`}>
+              <Save className="w-3.5 h-3.5 mr-1.5" /> {isSaving ? "Saving…" : "Save Tier"}
+            </Button>
+            <Button onClick={onDelete} size="sm" variant="ghost"
+              className="text-red-400/70 hover:text-red-400 hover:bg-red-400/10 h-9"
+              data-testid={`btn-del-tier-${tier.tempId}`}>
+              <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Delete Tier
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SchoolSetup({ schoolId }: Props) {
   const { toast } = useToast();
   const [classes, setClasses] = useState<string[]>([]);
@@ -67,12 +273,25 @@ export default function SchoolSetup({ schoolId }: Props) {
   const [subjectInput, setSubjectInput] = useState("");
   const [examInput, setExamInput] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [tiers, setTiers] = useState<TierLocal[]>([]);
+  const [policyLoaded, setPolicyLoaded] = useState(false);
+  const [savingTierId, setSavingTierId] = useState<string | null>(null);
+  const [policyErrors, setPolicyErrors] = useState<string[]>([]);
 
   const { data: meta } = useQuery({
     queryKey: ["/api/school-metadata", schoolId],
     queryFn: async () => {
       const r = await fetch(`/api/school-metadata/${schoolId}`, { credentials: "include" });
       return r.ok ? r.json() : { classes: [], sections: [], subjects: [], exam_types: [] };
+    },
+    enabled: !!schoolId,
+  });
+
+  const { data: policyData } = useQuery({
+    queryKey: ["/api/admin/grading-tiers"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/grading-tiers", { credentials: "include" });
+      return r.ok ? r.json() : { tiers: [], rules: [] };
     },
     enabled: !!schoolId,
   });
@@ -86,6 +305,23 @@ export default function SchoolSetup({ schoolId }: Props) {
       setLoaded(true);
     }
   }, [meta, loaded]);
+
+  useEffect(() => {
+    if (policyData && !policyLoaded) {
+      const { tiers: dbTiers, rules: dbRules } = policyData as { tiers: any[]; rules: any[] };
+      setTiers(dbTiers.map((t: any) => ({
+        id: t.id, tempId: String(t.id), name: t.name,
+        minClass: t.minClass, maxClass: t.maxClass,
+        passPercentage: String(t.passPercentage), sortOrder: t.sortOrder,
+        expanded: false,
+        rules: dbRules.filter((r: any) => r.tierId === t.id).map((r: any) => ({
+          gradeLabel: r.gradeLabel, minPercent: String(r.minPercent),
+          maxPercent: String(r.maxPercent), gradePoint: r.gradePoint, remarks: r.remarks,
+        })),
+      })));
+      setPolicyLoaded(true);
+    }
+  }, [policyData, policyLoaded]);
 
   const saveMutation = useMutation({
     mutationFn: async ({ key, values }: { key: string; values: string[] }) => {
@@ -104,8 +340,71 @@ export default function SchoolSetup({ schoolId }: Props) {
   };
   const removeFrom = (arr: string[], set: (v: string[]) => void, val: string) => set(arr.filter(x => x !== val));
 
+  const addTier = () => {
+    const tempId = `new-${Date.now()}`;
+    setTiers(prev => [...prev, {
+      tempId, name: "", minClass: "", maxClass: "", passPercentage: "35",
+      sortOrder: prev.length, expanded: true, rules: [],
+    }]);
+  };
+
+  const updateTier = (tempId: string, updated: TierLocal) => {
+    setTiers(prev => prev.map(t => t.tempId === tempId ? updated : t));
+    setPolicyErrors([]);
+  };
+
+  const deleteTier = async (tier: TierLocal) => {
+    if (tier.id) {
+      try {
+        await apiRequest("DELETE", `/api/admin/grading-tiers/${tier.id}`, undefined);
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/grading-tiers"] });
+        toast({ title: "Tier deleted" });
+      } catch {
+        toast({ title: "Delete failed", variant: "destructive" });
+        return;
+      }
+    }
+    setTiers(prev => prev.filter(t => t.tempId !== tier.tempId));
+  };
+
+  const saveTier = async (tier: TierLocal) => {
+    const errors = validateTiers(tiers);
+    if (errors.length > 0) { setPolicyErrors(errors); return; }
+    setPolicyErrors([]);
+    setSavingTierId(tier.tempId);
+    try {
+      const tierRes = await apiRequest("POST", "/api/admin/grading-tiers", {
+        id: tier.id,
+        name: tier.name.trim(),
+        minClass: tier.minClass,
+        maxClass: tier.maxClass,
+        passPercentage: parseInt(tier.passPercentage) || 35,
+        sortOrder: tier.sortOrder,
+      });
+      const saved = await tierRes.json();
+      await apiRequest("POST", `/api/admin/grading-rules/${saved.id}`,
+        tier.rules.map((r, i) => ({
+          gradeLabel: r.gradeLabel, minPercent: parseInt(r.minPercent),
+          maxPercent: parseInt(r.maxPercent), gradePoint: r.gradePoint,
+          remarks: r.remarks, sortOrder: i,
+        }))
+      );
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/grading-tiers"] });
+      setPolicyLoaded(false);
+      toast({ title: "Tier saved", description: `"${tier.name}" updated successfully.` });
+    } catch (e: any) {
+      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    } finally {
+      setSavingTierId(null);
+    }
+  };
+
+  const classesList = classes.length > 0
+    ? CLASS_ORDER.filter(c => classes.includes(c))
+    : CLASS_ORDER;
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="mb-2">
         <h2 className="text-xl font-bold text-white">School Setup</h2>
         <p className="text-white/50 text-sm">Configure master lists for classes, sections, subjects and exam types.</p>
@@ -131,6 +430,55 @@ export default function SchoolSetup({ schoolId }: Props) {
           onRemove={v => removeFrom(examTypes, setExamTypes, v)}
           onSave={() => saveMutation.mutate({ key: "exam_types", values: examTypes })}
           testId="exam-types" isPending={saveMutation.isPending} />
+      </div>
+
+      {/* ===== ACADEMIC POLICY ===== */}
+      <div className="pt-2">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-2 rounded-lg bg-[#10b981]/20">
+            <GraduationCap className="w-5 h-5 text-[#10b981]" />
+          </div>
+          <div>
+            <h3 className="font-bold text-white">Academic Policy</h3>
+            <p className="text-white/40 text-xs">Define grading tiers for different class ranges, each with its own pass mark and grade brackets.</p>
+          </div>
+          <Button size="sm" onClick={addTier}
+            className="ml-auto bg-[#10b981] hover:bg-emerald-600 text-white font-semibold h-9"
+            data-testid="btn-add-tier">
+            <Plus className="w-4 h-4 mr-1" /> Add Tier
+          </Button>
+        </div>
+
+        {policyErrors.length > 0 && (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 mb-3 flex gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              {policyErrors.map((e, i) => <p key={i} className="text-red-300 text-xs">{e}</p>)}
+            </div>
+          </div>
+        )}
+
+        {tiers.length === 0 && (
+          <div className="rounded-xl border border-dashed border-white/10 p-8 text-center">
+            <GraduationCap className="w-8 h-8 mx-auto mb-2 text-white/20" />
+            <p className="text-white/30 text-sm">No grading tiers configured yet.</p>
+            <p className="text-white/20 text-xs mt-1">Click "Add Tier" to create your first grading group (e.g. Primary: Classes 1–5).</p>
+          </div>
+        )}
+
+        <div className="space-y-3">
+          {tiers.map(tier => (
+            <TierAccordion
+              key={tier.tempId}
+              tier={tier}
+              classesList={classesList}
+              onChange={updated => updateTier(tier.tempId, updated)}
+              onDelete={() => deleteTier(tier)}
+              onSave={() => saveTier(tier)}
+              isSaving={savingTierId === tier.tempId}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );

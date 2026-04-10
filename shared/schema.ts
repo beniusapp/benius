@@ -479,3 +479,55 @@ export const promotionOverrides = pgTable("promotion_overrides", {
 export const insertPromotionOverrideSchema = createInsertSchema(promotionOverrides).omit({ id: true, overriddenAt: true });
 export type InsertPromotionOverride = z.infer<typeof insertPromotionOverrideSchema>;
 export type PromotionOverride = typeof promotionOverrides.$inferSelect;
+
+export const gradingTiers = pgTable("grading_tiers", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  minClass: text("min_class").notNull(),
+  maxClass: text("max_class").notNull(),
+  passPercentage: integer("pass_percentage").notNull().default(35),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+export const insertGradingTierSchema = createInsertSchema(gradingTiers).omit({ id: true });
+export type InsertGradingTier = z.infer<typeof insertGradingTierSchema>;
+export type GradingTier = typeof gradingTiers.$inferSelect;
+
+export const gradingRules = pgTable("grading_rules", {
+  id: serial("id").primaryKey(),
+  tierId: integer("tier_id").notNull().references(() => gradingTiers.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  gradeLabel: text("grade_label").notNull(),
+  minPercent: integer("min_percent").notNull(),
+  maxPercent: integer("max_percent").notNull(),
+  gradePoint: text("grade_point").notNull().default(""),
+  remarks: text("remarks").notNull().default(""),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+export const insertGradingRuleSchema = createInsertSchema(gradingRules).omit({ id: true });
+export type InsertGradingRule = z.infer<typeof insertGradingRuleSchema>;
+export type GradingRule = typeof gradingRules.$inferSelect;
+
+export const academicHistory = pgTable("academic_history", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  fromClass: text("from_class").notNull(),
+  fromSection: text("from_section").notNull(),
+  toClass: text("to_class").notNull(),
+  toSection: text("to_section").notNull(),
+  examType: text("exam_type").notNull(),
+  totalObtained: integer("total_obtained").notNull(),
+  totalMax: integer("total_max").notNull(),
+  percentage: integer("percentage").notNull(),
+  gradeLabel: text("grade_label"),
+  gradePoint: text("grade_point"),
+  remarks: text("remarks"),
+  archivedAt: timestamp("archived_at").notNull().defaultNow(),
+});
+
+export const insertAcademicHistorySchema = createInsertSchema(academicHistory).omit({ id: true, archivedAt: true });
+export type InsertAcademicHistory = z.infer<typeof insertAcademicHistorySchema>;
+export type AcademicHistory = typeof academicHistory.$inferSelect;

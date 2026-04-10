@@ -1,0 +1,55 @@
+Refactor the /admin-dashboard/school-setup and /admin-dashboard/exam-controller modules to implement a Multi-Tier Academic Policy and a Global Cascading Promotion System. This is an additive refactor; do not delete existing Class/Section/Subject configurations.
+
+PART 1: MULTI-TIER ACADEMIC POLICY (Configuration)
+
+Module Path: /admin-dashboard/school-setup/academic-policy.
+
+Grading Tiers: Allow Admins to create multiple 'Grading Groups' based on class ranges (e.g., 'Primary: 1-5', 'Middle: 6-8', 'Secondary: 9-10').
+
+Tier-Specific Pass Marks: Each group must have its own 'Minimum Pass Percentage' (e.g., 30% for Primary, 40% for Secondary).
+
+Dynamic Grade Builder: For each tier, provide an editable table with columns: Grade Label, Min %, Max %, Grade Point, and Remarks.
+
+Validation: Ensure class ranges (e.g., 1-5 and 6-8) do not overlap and grade percentages within a tier are continuous.
+
+Storage: Use a grading_tiers table and a grading_rules table, both strictly scoped by school_id.
+
+PART 2: THE INTELLIGENT EXAM ENGINE (Processing)
+
+Data Linkage: Fetch marks from the Teacher's exam_scores table.
+
+Context-Aware Evaluation: For each student:
+
+Detect their current_class and find the corresponding Grading Tier.
+
+Calculate Aggregate Percentage across all subjects.
+
+Assign PASS/FAIL based on that Tier's specific pass mark.
+
+Map the score to the Tier's specific Grade Label and Remarks.
+
+PART 3: TRIPLE-MODE PROMOTION (The 'Change Everywhere' Logic)
+
+Bulk Promotion: High-speed processing to move entire classes (e.g., all of 5A to 6A).
+
+Manual Override: Allow the Admin to manually change any student's status (e.g., 'Grace Pass') or target destination (e.g., moving a specific student from 5A to 6B or keeping them back in 5A).
+
+The Global Sync (SQL Transaction): Upon clicking 'Execute Promotion', the system must:
+
+Update current_class and current_section in the students table.
+
+Immediate Refresh: Update the student's visibility in the Attendance Roster and Teacher Marks Entry lists for the new term.
+
+Portal Update: Automatically switch the Student Dashboard to display the subjects and timetables of the new class.
+
+Audit Log: Archive the previous year's marks into academic_history for that school_id.
+
+PART 4: UI/UX & TECHNICAL STANDARDS
+
+Theme: Benius Emerald Green (#10b981) for 'Active/Pass' and Slate Gray for UI structure.
+
+Design: Use 'Accordions' to organize different Grading Tiers to keep the UI clean.
+
+Mobile Focus: Optimized for Motorola 60 Fusion with touch-friendly toggles and horizontal scrolling for results grids.
+
+Security: Strictly enforce WHERE school_id = ? on every query for secure multi-tenant hosting on local machines.

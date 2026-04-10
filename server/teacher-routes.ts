@@ -1484,6 +1484,77 @@ export function registerTeacherRoutes(app: Express) {
     res.json(updated);
   });
 
+  // ===== GRADING TIERS & RULES =====
+
+  app.get("/api/admin/grading-tiers", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const [tiers, rules] = await Promise.all([
+      storage.getGradingTiers(schoolId),
+      storage.getGradingRules(schoolId),
+    ]);
+    res.json({ tiers, rules });
+  });
+
+  app.post("/api/admin/grading-tiers", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schema = z.object({
+      id: z.number().int().positive().optional(),
+      name: z.string().min(1),
+      minClass: z.string().min(1),
+      maxClass: z.string().min(1),
+      passPercentage: z.number().int().min(0).max(100),
+      sortOrder: z.number().int().default(0),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const tier = await storage.upsertGradingTier({ ...parsed.data, schoolId: req.session.schoolId! });
+    res.json(tier);
+  });
+
+  app.delete("/api/admin/grading-tiers/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id as string);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+    await storage.deleteGradingTier(id, req.session.schoolId!);
+    res.json({ message: "Deleted" });
+  });
+
+  app.get("/api/admin/grading-rules/:tierId", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const tierId = parseInt(req.params.tierId as string);
+    if (isNaN(tierId)) return res.status(400).json({ message: "Invalid tierId" });
+    const rules = await storage.getGradingRules(req.session.schoolId!, tierId);
+    res.json(rules);
+  });
+
+  app.post("/api/admin/grading-rules/:tierId", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const tierId = parseInt(req.params.tierId as string);
+    if (isNaN(tierId)) return res.status(400).json({ message: "Invalid tierId" });
+    const ruleSchema = z.array(z.object({
+      gradeLabel: z.string().min(1),
+      minPercent: z.number().int().min(0).max(100),
+      maxPercent: z.number().int().min(0).max(100),
+      gradePoint: z.string().default(""),
+      remarks: z.string().default(""),
+      sortOrder: z.number().int().default(0),
+    }));
+    const parsed = ruleSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const schoolId = req.session.schoolId!;
+    const tierCheck = await storage.getGradingTiers(schoolId);
+    const validTier = tierCheck.find(t => t.id === tierId);
+    if (!validTier) return res.status(403).json({ message: "Tier not found for this school" });
+    const rules = await storage.replaceGradingRules(tierId, schoolId, parsed.data);
+    res.json(rules);
+  });
+
   // ===== ACADEMIC ADVANCEMENT WIZARD =====
 
   app.get("/api/admin/exam/aggregated", async (req, res) => {
@@ -1502,10 +1573,15 @@ export function registerTeacherRoutes(app: Express) {
     const presentSubjects = Array.from(new Set(studentsData.flatMap(s => s.subjects)));
     const missingSubjects = configuredSubjects.filter(s => !presentSubjects.includes(s));
     const rawThreshold = meta.pass_threshold;
-    const passThreshold = (Array.isArray(rawThreshold) && rawThreshold.length > 0)
+    const legacyThreshold = (Array.isArray(rawThreshold) && rawThreshold.length > 0)
       ? (parseInt(rawThreshold[0]) || 35)
       : 35;
-    res.json({ students: studentsData, overrides, missingSubjects, passThreshold });
+    const studentsWithGrades = await Promise.all(studentsData.map(async (s) => {
+      const grade = await storage.resolveGrade(schoolId, cls, s.percentage);
+      return { ...s, gradeLabel: grade.gradeLabel, gradePoint: grade.gradePoint, gradeRemarks: grade.remarks, tierPassThreshold: grade.passPercentage };
+    }));
+    const passThreshold = studentsWithGrades.length > 0 ? studentsWithGrades[0].tierPassThreshold : legacyThreshold;
+    res.json({ students: studentsWithGrades, overrides, missingSubjects, passThreshold });
   });
 
   app.post("/api/admin/exam/override", async (req, res) => {
@@ -1534,11 +1610,37 @@ export function registerTeacherRoutes(app: Express) {
         studentId: z.number().int().positive(),
         nextClass: z.string().min(1),
         nextSection: z.string().min(1),
+        fromClass: z.string().min(1),
+        fromSection: z.string().min(1),
+        examType: z.string().min(1),
+        totalObtained: z.number().int().min(0),
+        totalMax: z.number().int().min(0),
+        percentage: z.number().int().min(0),
+        gradeLabel: z.string().nullable().optional(),
+        gradePoint: z.string().nullable().optional(),
+        gradeRemarks: z.string().nullable().optional(),
       })).min(1),
     });
     const parsed = promoteSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-    const promoted = await storage.bulkPromoteStudents(req.session.schoolId!, parsed.data.items);
+    const schoolId = req.session.schoolId!;
+    const historyRecords = parsed.data.items.map(item => ({
+      schoolId,
+      studentId: item.studentId,
+      fromClass: item.fromClass,
+      fromSection: item.fromSection,
+      toClass: item.nextClass,
+      toSection: item.nextSection,
+      examType: item.examType,
+      totalObtained: item.totalObtained,
+      totalMax: item.totalMax,
+      percentage: item.percentage,
+      gradeLabel: item.gradeLabel ?? null,
+      gradePoint: item.gradePoint ?? null,
+      remarks: item.gradeRemarks ?? null,
+    }));
+    await storage.archiveStudentHistory(historyRecords);
+    const promoted = await storage.bulkPromoteStudents(schoolId, parsed.data.items);
     res.json({ promoted });
   });
 
