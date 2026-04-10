@@ -482,7 +482,7 @@ export default function SchoolCalendar() {
                 />
                 <span className="text-sm text-white/60 flex items-center gap-1.5">
                   <Repeat className="w-3.5 h-3.5" />
-                  Recurring annually (next 10 years)
+                  Recurring annually through 2126
                 </span>
               </label>
             </div>
