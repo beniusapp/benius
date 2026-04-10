@@ -114,14 +114,14 @@ export function registerTeacherRoutes(app: Express) {
     if (!parsed.success) return res.status(400).json({ message: "Email and password are required" });
 
     const user = await storage.getUserByEmail(parsed.data.email);
-    if (!user || user.role !== "teacher") return res.status(401).json({ message: "Invalid email or password" });
+    if (!user || user.role !== "teacher") return res.status(401).json({ message: "Invalid Credentials" });
 
     if (!user.isActive) {
       return res.status(403).json({ message: "This account has been deactivated. Please contact your administrator." });
     }
 
     const valid = await bcrypt.compare(parsed.data.password, user.passwordHash);
-    if (!valid) return res.status(401).json({ message: "Invalid email or password" });
+    if (!valid) return res.status(401).json({ message: "Invalid Credentials" });
 
     const teacher = await storage.getTeacherByUserId(user.id);
     if (!teacher) return res.status(401).json({ message: "Teacher record not found" });
@@ -169,12 +169,19 @@ export function registerTeacherRoutes(app: Express) {
     const data = await storage.getTeacherWithSchool(req.session.teacherId);
     if (!data) return res.status(401).json({ message: "Teacher not found" });
 
+    if (data.teacher.schoolId !== req.session.schoolId) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
     const currentValid = await bcrypt.compare(parsed.data.currentPassword, data.user.passwordHash);
-    if (!currentValid) return res.status(400).json({ message: "Current password is incorrect" });
+    if (!currentValid) return res.status(400).json({ message: "Incorrect Current Password" });
 
     const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
     await storage.updateTeacherPassword(data.user.id, passwordHash, false);
-    res.json({ message: "Password changed successfully" });
+    req.session.destroy((err) => {
+      if (err) return res.status(500).json({ message: "Password updated but session cleanup failed" });
+      res.json({ message: "Password changed successfully" });
+    });
   });
 
   app.post("/api/teacher/profile-picture", diskUpload.single("file"), async (req, res) => {

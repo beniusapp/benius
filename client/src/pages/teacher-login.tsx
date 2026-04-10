@@ -53,11 +53,11 @@ export default function TeacherLogin() {
 
   const changePasswordMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", "/api/teacher/change-password", { newPassword });
+      await apiRequest("POST", "/api/teacher/change-password", { currentPassword: password, newPassword });
     },
     onSuccess: () => {
-      toast({ title: "Password Changed", description: "Your password has been updated successfully." });
-      setLocation("/teacher-dashboard");
+      toast({ title: "Security credentials updated successfully." });
+      setLocation("/teacher-login");
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });

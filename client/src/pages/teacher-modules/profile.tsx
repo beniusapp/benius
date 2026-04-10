@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from "react";
+import { useLocation } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import {
   User, Mail, Phone, BookOpen, GraduationCap,
@@ -65,6 +66,7 @@ const stagger = {
 
 export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [cropOpen, setCropOpen] = useState(false);
@@ -79,7 +81,6 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [pwSuccess, setPwSuccess] = useState(false);
 
   const fields = [
     { icon: User, label: "Full Name", value: teacher.fullName },
@@ -132,13 +133,13 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
       }
       return res.json();
     },
-    onSuccess: () => {
-      toast({ title: "Password changed successfully" });
+    onSuccess: async () => {
+      toast({ title: "Security credentials updated successfully." });
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      setPwSuccess(true);
-      setTimeout(() => setPwSuccess(false), 4000);
+      await fetch("/api/teacher-logout", { method: "POST", credentials: "include" });
+      setLocation("/teacher-login");
     },
     onError: (e: Error) =>
       toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -364,13 +365,6 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
           </div>
 
           <div className="px-5 py-5">
-            {pwSuccess && (
-              <div className="flex items-center gap-2 mb-4 px-4 py-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30">
-                <CheckCircle className="w-4 h-4 text-[#10b981] flex-shrink-0" />
-                <p className="text-sm font-medium text-emerald-300">Password changed successfully!</p>
-              </div>
-            )}
-
             <form onSubmit={handlePasswordSubmit} className="space-y-4">
               {/* Current Password */}
               <div className="space-y-1.5">
