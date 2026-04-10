@@ -2289,9 +2289,13 @@ export class DatabaseStorage {
       }
       const subj = r.exam_scores.subject;
       if (!(subj in byStudent[sid].subjectScores)) {
-        byStudent[sid].subjectScores[subj] = { marks: r.exam_scores.marks, totalMarks: r.exam_scores.totalMarks, isAbsent: r.exam_scores.isAbsent };
+        byStudent[sid].subjectScores[subj] = { marks: 0, totalMarks: 0, isAbsent: false };
       }
-      if (!r.exam_scores.isAbsent) byStudent[sid].obtained += r.exam_scores.marks;
+      if (!r.exam_scores.isAbsent) {
+        byStudent[sid].subjectScores[subj].marks += r.exam_scores.marks;
+        byStudent[sid].obtained += r.exam_scores.marks;
+      }
+      byStudent[sid].subjectScores[subj].totalMarks += r.exam_scores.totalMarks;
       byStudent[sid].total += r.exam_scores.totalMarks;
     }
 
@@ -2321,9 +2325,6 @@ export class DatabaseStorage {
       };
     }));
 
-    if (!opts.examType) {
-      for (const s of studentList) s.subjectScores = {};
-    }
     if (opts.subject) studentList = studentList.filter(s => opts.subject! in s.subjectScores);
     if (opts.search) {
       const q = opts.search.toLowerCase();
