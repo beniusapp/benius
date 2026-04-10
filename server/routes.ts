@@ -1343,8 +1343,9 @@ export async function registerRoutes(
       ],
     };
 
+    const targetYear = req.body.year ? parseInt(req.body.year) : null;
     const currentYear = new Date().getFullYear();
-    const years = Array.from({ length: 6 }, (_, i) => currentYear + i);
+    const years = targetYear ? [targetYear] : Array.from({ length: 6 }, (_, i) => currentYear + i);
     const existing = await storage.getCalendarEvents(schoolId);
     const existingTitles = new Set(existing.map(e => `${e.date}::${e.title}`));
 

@@ -787,25 +787,23 @@ export default function StudentCalendar() {
           </div>
         )}
 
-        {view === "month" && (
-          <div className="mt-4 bg-white rounded-2xl border border-emerald-100 shadow-sm p-4">
-            <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide flex items-center gap-2">
-              <CalendarDays className="w-3.5 h-3.5 text-[#10b981]" /> Event Legend
-            </p>
-            <div className="flex flex-wrap gap-4">
-              {EVENT_TYPES.map(t => (
-                <div key={t.value} className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-full" style={{ backgroundColor: t.color }} />
-                  <span className="text-xs text-gray-600">{t.label}</span>
-                </div>
-              ))}
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-full bg-red-300" />
-                <span className="text-xs text-gray-600">Sunday</span>
+        <div className="mt-4 bg-white rounded-2xl border border-emerald-100 shadow-sm p-4">
+          <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide flex items-center gap-2">
+            <CalendarDays className="w-3.5 h-3.5 text-[#10b981]" /> Event Legend
+          </p>
+          <div className="flex flex-wrap gap-4">
+            {EVENT_TYPES.map(t => (
+              <div key={t.value} className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-full" style={{ backgroundColor: t.color }} />
+                <span className="text-xs text-gray-600">{t.label}</span>
               </div>
+            ))}
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-full bg-red-300" />
+              <span className="text-xs text-gray-600">Sunday</span>
             </div>
           </div>
-        )}
+        </div>
       </main>
 
       {(view === "month" || view === "week") && bottomSheet}

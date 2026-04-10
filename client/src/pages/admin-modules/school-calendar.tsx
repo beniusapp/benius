@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, CalendarDays, Loader2,
@@ -68,6 +68,12 @@ const EMPTY_EDIT = {
   colorCode: "",
 };
 
+function invalidateAll() {
+  queryClient.invalidateQueries({ queryKey: ["/api/admin/calendar"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/teacher/calendar"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/student/calendar"] });
+}
+
 export default function SchoolCalendar() {
   const { toast } = useToast();
   const now = new Date();
@@ -82,6 +88,8 @@ export default function SchoolCalendar() {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [editForm, setEditForm] = useState(EMPTY_EDIT);
 
+  const lastAutoSeedYear = useRef<number | null>(null);
+
   const { data: events = [], isLoading, refetch, isFetching } = useQuery<CalendarEvent[]>({
     queryKey: ["/api/admin/calendar", month + 1, year],
     queryFn: async () => {
@@ -92,10 +100,27 @@ export default function SchoolCalendar() {
     staleTime: 30000,
   });
 
+  /* Auto-seed holidays when navigating to a year with no holidays */
+  useEffect(() => {
+    if (!isLoading && events.filter(e => e.eventType === "holiday").length === 0 && lastAutoSeedYear.current !== year) {
+      lastAutoSeedYear.current = year;
+      fetch("/api/admin/calendar/seed-holidays", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ year }),
+      }).then(r => r.ok ? r.json() : null).then(json => {
+        if (json && json.count > 0) {
+          invalidateAll();
+        }
+      }).catch(() => {});
+    }
+  }, [isLoading, events, year]);
+
   const addMutation = useMutation({
     mutationFn: (data: typeof form) => apiRequest("POST", "/api/admin/calendar", data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/calendar"] });
+      invalidateAll();
       setAddOpen(false);
       setForm(EMPTY_FORM);
       toast({ title: "Event added", description: "Calendar updated successfully." });
@@ -107,7 +132,7 @@ export default function SchoolCalendar() {
     mutationFn: (data: typeof editForm & { id: number }) =>
       apiRequest("PATCH", `/api/admin/calendar/${data.id}`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/calendar"] });
+      invalidateAll();
       setEditOpen(false);
       setEditingEvent(null);
       setDeleteConfirm(false);
@@ -120,7 +145,7 @@ export default function SchoolCalendar() {
   const deleteMutation = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/admin/calendar/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/calendar"] });
+      invalidateAll();
       setEditOpen(false);
       setEditingEvent(null);
       setDeleteConfirm(false);
@@ -131,10 +156,12 @@ export default function SchoolCalendar() {
   });
 
   const seedMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/admin/calendar/seed-holidays", {}),
-    onSuccess: async (res: Response) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/calendar"] });
-      const json = await res.json();
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/calendar/seed-holidays", {});
+      return res.json() as Promise<{ message: string; count: number }>;
+    },
+    onSuccess: (json) => {
+      invalidateAll();
       toast({ title: "Holidays seeded", description: json.message });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant:"destructive" }),
@@ -214,6 +241,18 @@ export default function SchoolCalendar() {
   const monthEventCount = events.length;
   const holidayCount = events.filter(e => e.eventType === "holiday").length;
 
+  /* ══ LEGEND ══ */
+  const legend = (
+    <div className="flex items-center gap-4 flex-wrap">
+      {EVENT_TYPES.map(t => (
+        <div key={t.value} className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: t.color }} />
+          <span className="text-xs text-white/50">{t.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -256,15 +295,7 @@ export default function SchoolCalendar() {
         </div>
       </div>
 
-      {/* Legend row */}
-      <div className="flex items-center gap-4 flex-wrap">
-        {EVENT_TYPES.map(t => (
-          <div key={t.value} className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: t.color }} />
-            <span className="text-xs text-white/50">{t.label}</span>
-          </div>
-        ))}
-      </div>
+      {legend}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="lg:col-span-2">
@@ -288,7 +319,7 @@ export default function SchoolCalendar() {
                   value={year}
                   onChange={e => { setYear(parseInt(e.target.value)); setSelectedDay(null); }}
                   className="bg-[#0A1628] border border-white/10 rounded-lg px-2 py-1 text-sm text-white focus:outline-none focus:border-[#D4AF37]/50 cursor-pointer w-24"
-                  data-testid="select-year"
+                  data-testid="input-year"
                   aria-label="Year (2026–2126)"
                 >
                   {YEARS.map(y => (
@@ -349,7 +380,7 @@ export default function SchoolCalendar() {
                         {dayEvs.slice(0, 2).map(ev => (
                           <div
                             key={ev.id}
-                            className="px-1 py-0.5 rounded text-[10px] truncate font-medium hover:opacity-80 transition-opacity group/chip"
+                            className="px-1 py-0.5 rounded text-[10px] truncate font-medium hover:opacity-80 transition-opacity"
                             style={{ backgroundColor: `${getEventColor(ev)}25`, color: getEventColor(ev) }}
                             data-testid={`event-chip-${ev.id}`}
                             onClick={(e) => { e.stopPropagation(); openEdit(ev); }}
@@ -574,7 +605,7 @@ export default function SchoolCalendar() {
                 onClick={() => addMutation.mutate(form)}
                 disabled={addMutation.isPending || !form.title || !form.startDate}
                 className="flex-1 py-2.5 rounded-lg bg-[#D4AF37] text-[#0A1628] text-sm font-bold hover:bg-[#D4AF37]/90 transition-colors disabled:opacity-60"
-                data-testid="button-submit-add"
+                data-testid="button-confirm-add"
               >
                 {addMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : "Add Event"}
               </button>

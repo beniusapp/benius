@@ -732,7 +732,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
   return (
     <div className="space-y-5" data-testid="teacher-calendar-desktop">
       {navBar}
-      {view !== "year" && legend}
+      {legend}
       {view === "month" && monthView}
       {view === "week" && weekView}
       {view === "year" && yearView}
