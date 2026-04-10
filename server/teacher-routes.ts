@@ -2040,6 +2040,13 @@ export function registerTeacherRoutes(app: Express) {
     const teacher = await storage.getTeacherById(teacherId);
     if (!teacher) return res.status(404).json({ message: "Teacher not found" });
     const { month, year } = req.query;
+    if (year && !month) {
+      const y = parseInt(year as string);
+      const startDate = `${y}-01-01`;
+      const endDate = `${y}-12-31`;
+      const events = await storage.getCalendarEventsByRange(teacher.schoolId, startDate, endDate);
+      return res.json(events);
+    }
     if (month && year) {
       const m = parseInt(month as string);
       const y = parseInt(year as string);

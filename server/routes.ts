@@ -1237,6 +1237,21 @@ export async function registerRoutes(
     res.status(201).json(created);
   });
 
+  app.patch("/api/admin/calendar/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+    const { title, description, eventType, date, venue, colorCode, isRecurring } = req.body;
+    if (!title || !eventType || !date) return res.status(400).json({ message: "title, eventType, date required" });
+    const color = colorCode || (eventType === "holiday" ? "#ef4444" : eventType === "academic" || eventType === "examination" ? "#3b82f6" : "#10b981");
+    const updated = await storage.updateCalendarEvent(id, schoolId, {
+      title, description: description || null, eventType, date, venue: venue || null, colorCode: color, isRecurring: !!isRecurring,
+    });
+    if (!updated) return res.status(404).json({ message: "Event not found or access denied" });
+    res.json(updated);
+  });
+
   app.delete("/api/admin/calendar/:id", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId!;
@@ -1363,8 +1378,14 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    const monthParam = req.query.month ? parseInt(req.query.month as string) : null;
+    const monthParam = req.query.month !== undefined ? parseInt(req.query.month as string) : null;
     const yearParam = req.query.year ? parseInt(req.query.year as string) : null;
+    if (yearParam !== null && monthParam === null) {
+      const startDate = `${yearParam}-01-01`;
+      const endDate = `${yearParam}-12-31`;
+      const events = await storage.getCalendarEventsByRange(student.schoolId, startDate, endDate);
+      return res.json(events);
+    }
     if (monthParam !== null && yearParam !== null) {
       const firstDay = new Date(yearParam, monthParam, 1);
       const lastDay = new Date(yearParam, monthParam + 1, 0);

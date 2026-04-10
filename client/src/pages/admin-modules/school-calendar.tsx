@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, CalendarDays, Loader2,
-  Calendar, Repeat, Flame, BookOpen, Award, Star, X, RefreshCw,
+  Calendar, Repeat, Flame, BookOpen, Award, Star, X, RefreshCw, Pencil, AlertTriangle,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -34,6 +34,7 @@ const EVENT_TYPES = [
 
 const YEAR_START = 2026;
 const YEAR_END = 2126;
+const YEARS = Array.from({ length: YEAR_END - YEAR_START + 1 }, (_, i) => YEAR_START + i);
 
 function getEventColor(ev: CalendarEvent) {
   return ev.colorCode || EVENT_TYPES.find(t => t.value === ev.eventType)?.color || "#D4AF37";
@@ -48,6 +49,25 @@ function formatDisplay(dateStr: string) {
   return d.toLocaleDateString("en-GB", { day:"2-digit", month:"short", year:"numeric" });
 }
 
+const EMPTY_FORM = {
+  title: "",
+  description: "",
+  eventType: "holiday",
+  startDate: "",
+  endDate: "",
+  isRecurring: false,
+  colorCode: "",
+};
+
+const EMPTY_EDIT = {
+  title: "",
+  description: "",
+  eventType: "holiday",
+  date: "",
+  isRecurring: false,
+  colorCode: "",
+};
+
 export default function SchoolCalendar() {
   const { toast } = useToast();
   const now = new Date();
@@ -55,15 +75,12 @@ export default function SchoolCalendar() {
   const [year, setYear] = useState(now.getFullYear());
   const [addOpen, setAddOpen] = useState(false);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
-  const [form, setForm] = useState({
-    title: "",
-    description: "",
-    eventType: "holiday",
-    startDate: "",
-    endDate: "",
-    isRecurring: false,
-    colorCode: "",
-  });
+  const [form, setForm] = useState(EMPTY_FORM);
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [editForm, setEditForm] = useState(EMPTY_EDIT);
 
   const { data: events = [], isLoading, refetch, isFetching } = useQuery<CalendarEvent[]>({
     queryKey: ["/api/admin/calendar", month + 1, year],
@@ -80,8 +97,22 @@ export default function SchoolCalendar() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/calendar"] });
       setAddOpen(false);
-      setForm({ title:"", description:"", eventType:"holiday", startDate:"", endDate:"", isRecurring:false, colorCode:"" });
+      setForm(EMPTY_FORM);
       toast({ title: "Event added", description: "Calendar updated successfully." });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant:"destructive" }),
+  });
+
+  const editMutation = useMutation({
+    mutationFn: (data: typeof editForm & { id: number }) =>
+      apiRequest("PATCH", `/api/admin/calendar/${data.id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/calendar"] });
+      setEditOpen(false);
+      setEditingEvent(null);
+      setDeleteConfirm(false);
+      setEditForm(EMPTY_EDIT);
+      toast({ title: "Event updated", description: "Changes saved successfully." });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant:"destructive" }),
   });
@@ -90,6 +121,9 @@ export default function SchoolCalendar() {
     mutationFn: (id: number) => apiRequest("DELETE", `/api/admin/calendar/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/calendar"] });
+      setEditOpen(false);
+      setEditingEvent(null);
+      setDeleteConfirm(false);
       setSelectedDay(null);
       toast({ title: "Event deleted" });
     },
@@ -157,6 +191,26 @@ export default function SchoolCalendar() {
     setAddOpen(true);
   }
 
+  function openEdit(ev: CalendarEvent) {
+    setEditingEvent(ev);
+    setEditForm({
+      title: ev.title,
+      description: ev.description || "",
+      eventType: ev.eventType,
+      date: ev.date.split("T")[0],
+      isRecurring: ev.isRecurring,
+      colorCode: ev.colorCode || "",
+    });
+    setDeleteConfirm(false);
+    setEditOpen(true);
+  }
+
+  function openEditWithDelete(ev: CalendarEvent, e: React.MouseEvent) {
+    e.stopPropagation();
+    openEdit(ev);
+    setDeleteConfirm(true);
+  }
+
   const monthEventCount = events.length;
   const holidayCount = events.filter(e => e.eventType === "holiday").length;
 
@@ -202,6 +256,16 @@ export default function SchoolCalendar() {
         </div>
       </div>
 
+      {/* Legend row */}
+      <div className="flex items-center gap-4 flex-wrap">
+        {EVENT_TYPES.map(t => (
+          <div key={t.value} className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: t.color }} />
+            <span className="text-xs text-white/50">{t.label}</span>
+          </div>
+        ))}
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="lg:col-span-2">
           <div className="bg-[#1A2942] rounded-xl border border-white/10 overflow-hidden">
@@ -220,22 +284,17 @@ export default function SchoolCalendar() {
                     <option key={m} value={i}>{m}</option>
                   ))}
                 </select>
-                <input
-                  type="number"
+                <select
                   value={year}
-                  min={YEAR_START}
-                  max={YEAR_END}
-                  onChange={e => {
-                    const v = parseInt(e.target.value);
-                    if (!isNaN(v) && v >= YEAR_START && v <= YEAR_END) {
-                      setYear(v);
-                      setSelectedDay(null);
-                    }
-                  }}
-                  className="bg-[#0A1628] border border-white/10 rounded-lg px-2 py-1 text-sm text-white focus:outline-none focus:border-[#D4AF37]/50 w-20 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                  data-testid="input-year"
+                  onChange={e => { setYear(parseInt(e.target.value)); setSelectedDay(null); }}
+                  className="bg-[#0A1628] border border-white/10 rounded-lg px-2 py-1 text-sm text-white focus:outline-none focus:border-[#D4AF37]/50 cursor-pointer w-24"
+                  data-testid="select-year"
                   aria-label="Year (2026–2126)"
-                />
+                >
+                  {YEARS.map(y => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
                 <button onClick={goToday} className="text-[10px] px-2 py-0.5 rounded border border-[#D4AF37]/40 text-[#D4AF37]/70 hover:text-[#D4AF37] hover:border-[#D4AF37] transition-colors" data-testid="button-today">
                   Today
                 </button>
@@ -276,9 +335,13 @@ export default function SchoolCalendar() {
                       `}
                     >
                       <div className="flex items-center justify-between mb-1">
-                        <span className={`text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full
-                          ${today ? "bg-[#D4AF37] text-[#0A1628] font-bold" : "text-white/60"}
-                        `} data-testid={`text-day-${day}`}>
+                        <span
+                          className={`text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full
+                            ${today ? "bg-[#D4AF37] text-[#0A1628] font-bold" : "text-white/60"}
+                          `}
+                          style={today ? { boxShadow: "0 0 0 3px rgba(212,175,55,0.3), 0 0 10px rgba(212,175,55,0.4)" } : {}}
+                          data-testid={`text-day-${day}`}
+                        >
                           {day}
                         </span>
                       </div>
@@ -286,9 +349,11 @@ export default function SchoolCalendar() {
                         {dayEvs.slice(0, 2).map(ev => (
                           <div
                             key={ev.id}
-                            className="px-1 py-0.5 rounded text-[10px] truncate font-medium"
+                            className="px-1 py-0.5 rounded text-[10px] truncate font-medium hover:opacity-80 transition-opacity group/chip"
                             style={{ backgroundColor: `${getEventColor(ev)}25`, color: getEventColor(ev) }}
                             data-testid={`event-chip-${ev.id}`}
+                            onClick={(e) => { e.stopPropagation(); openEdit(ev); }}
+                            title={`Click to edit: ${ev.title}`}
                           >
                             {ev.title}
                           </div>
@@ -309,20 +374,10 @@ export default function SchoolCalendar() {
           <div className="bg-[#1A2942] rounded-xl border border-white/10 p-4">
             <h4 className="text-sm font-semibold text-white/70 mb-3 flex items-center gap-2">
               <CalendarDays className="w-4 h-4 text-[#D4AF37]" />
-              {selectedDay ? formatDisplay(selectedDay) : "Legend"}
+              {selectedDay ? formatDisplay(selectedDay) : "Events"}
             </h4>
             {!selectedDay ? (
-              <div className="space-y-2">
-                {EVENT_TYPES.map(t => (
-                  <div key={t.value} className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: t.color }} />
-                    <span className="text-sm text-white/50">{t.label}</span>
-                  </div>
-                ))}
-                <div className="mt-3 pt-3 border-t border-white/10 text-xs text-white/30">
-                  Click a day to view events. Use dropdowns to jump to any month/year (2026–2126).
-                </div>
-              </div>
+              <p className="text-xs text-white/30 text-center py-4">Click a day on the calendar to view or manage its events.</p>
             ) : selectedDayEvents.length === 0 ? (
               <div className="text-center py-4">
                 <p className="text-white/30 text-sm mb-3">No events on this day</p>
@@ -337,21 +392,36 @@ export default function SchoolCalendar() {
             ) : (
               <div className="space-y-2">
                 {selectedDayEvents.map(ev => (
-                  <div key={ev.id} className="group flex items-start gap-2 p-2 rounded-lg border border-white/5 hover:border-white/10 transition-colors" data-testid={`event-card-${ev.id}`}>
+                  <div
+                    key={ev.id}
+                    className="group flex items-start gap-2 p-2 rounded-lg border border-white/5 hover:border-white/15 transition-colors cursor-pointer"
+                    data-testid={`event-card-${ev.id}`}
+                    onClick={() => openEdit(ev)}
+                  >
                     <span className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: getEventColor(ev) }} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-white truncate" data-testid={`text-event-title-${ev.id}`}>{ev.title}</p>
                       <p className="text-[11px] text-white/40 capitalize">{ev.eventType}{ev.isRecurring ? " · recurring" : ""}</p>
                       {ev.description && <p className="text-[11px] text-white/30 mt-0.5 line-clamp-1">{ev.description}</p>}
                     </div>
-                    <button
-                      onClick={() => deleteMutation.mutate(ev.id)}
-                      disabled={deleteMutation.isPending}
-                      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-500/20 text-red-400 transition-all"
-                      data-testid={`button-delete-event-${ev.id}`}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); openEdit(ev); }}
+                        className="p-1 rounded hover:bg-white/10 text-white/40 hover:text-white transition-colors"
+                        data-testid={`button-edit-event-${ev.id}`}
+                        aria-label="Edit event"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => openEditWithDelete(ev, e)}
+                        className="p-1 rounded hover:bg-red-500/20 text-red-400 transition-colors"
+                        data-testid={`button-delete-event-${ev.id}`}
+                        aria-label="Delete event"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 ))}
                 <button
@@ -375,7 +445,12 @@ export default function SchoolCalendar() {
                   .slice()
                   .sort((a, b) => a.date.localeCompare(b.date))
                   .map(ev => (
-                    <div key={ev.id} className="flex items-center gap-2 group" data-testid={`sidebar-event-${ev.id}`}>
+                    <div
+                      key={ev.id}
+                      className="flex items-center gap-2 group cursor-pointer hover:bg-white/5 rounded-lg px-1 py-0.5 transition-colors"
+                      data-testid={`sidebar-event-${ev.id}`}
+                      onClick={() => openEdit(ev)}
+                    >
                       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getEventColor(ev) }} />
                       <span className="text-xs text-white/50 shrink-0">{new Date(ev.date + "T00:00:00").getDate()}</span>
                       <span className="text-xs text-white/70 truncate flex-1">{ev.title}</span>
@@ -389,6 +464,7 @@ export default function SchoolCalendar() {
         </div>
       </div>
 
+      {/* ══ ADD EVENT MODAL ══ */}
       {addOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.7)" }}>
           <div className="bg-[#1A2942] rounded-xl border border-white/10 w-full max-w-md shadow-2xl">
@@ -497,13 +573,163 @@ export default function SchoolCalendar() {
               <button
                 onClick={() => addMutation.mutate(form)}
                 disabled={addMutation.isPending || !form.title || !form.startDate}
-                className="flex-1 py-2.5 rounded-lg bg-[#D4AF37] text-[#0A1628] text-sm font-semibold hover:bg-[#C9A227] transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
-                data-testid="button-confirm-add"
+                className="flex-1 py-2.5 rounded-lg bg-[#D4AF37] text-[#0A1628] text-sm font-bold hover:bg-[#D4AF37]/90 transition-colors disabled:opacity-60"
+                data-testid="button-submit-add"
               >
-                {addMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                Add Event
+                {addMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : "Add Event"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ EDIT EVENT MODAL ══ */}
+      {editOpen && editingEvent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.7)" }}>
+          <div className="bg-[#1A2942] rounded-xl border border-white/10 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+              <h3 className="text-base font-semibold text-white flex items-center gap-2">
+                <Pencil className="w-4 h-4 text-[#D4AF37]" />
+                {deleteConfirm ? "Confirm Delete" : "Edit Event"}
+              </h3>
+              <button
+                onClick={() => { setEditOpen(false); setEditingEvent(null); setDeleteConfirm(false); }}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
+                data-testid="button-close-edit-modal"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {deleteConfirm ? (
+              /* ── Confirm Delete Step ── */
+              <div className="px-5 py-6 text-center space-y-4">
+                <div className="w-12 h-12 rounded-full bg-red-500/15 flex items-center justify-center mx-auto">
+                  <AlertTriangle className="w-6 h-6 text-red-400" />
+                </div>
+                <div>
+                  <p className="text-white font-semibold mb-1">Delete this event?</p>
+                  <p className="text-white/50 text-sm">
+                    "<span className="text-white/70">{editingEvent.title}</span>" on {formatDisplay(editingEvent.date.split("T")[0])} will be permanently removed.
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setDeleteConfirm(false)}
+                    className="flex-1 py-2.5 rounded-lg border border-white/10 text-white/50 text-sm hover:text-white hover:border-white/20 transition-colors"
+                    data-testid="button-cancel-delete"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => deleteMutation.mutate(editingEvent.id)}
+                    disabled={deleteMutation.isPending}
+                    className="flex-1 py-2.5 rounded-lg bg-red-500 text-white text-sm font-bold hover:bg-red-600 transition-colors disabled:opacity-60"
+                    data-testid="button-confirm-delete"
+                  >
+                    {deleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : "Yes, Delete"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* ── Edit Form ── */
+              <>
+                <div className="px-5 py-4 space-y-4">
+                  <div>
+                    <label className="text-xs text-white/50 uppercase tracking-wide block mb-1">Event Title *</label>
+                    <input
+                      value={editForm.title}
+                      onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))}
+                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#D4AF37]/50"
+                      data-testid="input-edit-event-title"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/50 uppercase tracking-wide block mb-1">Date *</label>
+                    <input
+                      type="date"
+                      value={editForm.date}
+                      onChange={e => setEditForm(f => ({ ...f, date: e.target.value }))}
+                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#D4AF37]/50 [color-scheme:dark]"
+                      data-testid="input-edit-event-date"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/50 uppercase tracking-wide block mb-1">Event Type *</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {EVENT_TYPES.map(t => (
+                        <button
+                          key={t.value}
+                          type="button"
+                          onClick={() => setEditForm(f => ({ ...f, eventType: t.value }))}
+                          data-testid={`button-edit-type-${t.value}`}
+                          className="flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-all"
+                          style={{
+                            borderColor: editForm.eventType === t.value ? t.color : "rgba(255,255,255,0.1)",
+                            backgroundColor: editForm.eventType === t.value ? `${t.color}20` : "transparent",
+                            color: editForm.eventType === t.value ? t.color : "rgba(255,255,255,0.4)",
+                          }}
+                        >
+                          <t.icon className="w-3.5 h-3.5" />
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/50 uppercase tracking-wide block mb-1">Description</label>
+                    <textarea
+                      value={editForm.description}
+                      onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
+                      rows={2}
+                      placeholder="Optional notes..."
+                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#D4AF37]/50 resize-none"
+                      data-testid="input-edit-event-description"
+                    />
+                  </div>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editForm.isRecurring}
+                      onChange={e => setEditForm(f => ({ ...f, isRecurring: e.target.checked }))}
+                      className="w-4 h-4 rounded accent-[#D4AF37]"
+                      data-testid="checkbox-edit-recurring"
+                    />
+                    <span className="text-sm text-white/60 flex items-center gap-1.5">
+                      <Repeat className="w-3.5 h-3.5" />
+                      Recurring annually
+                    </span>
+                  </label>
+                </div>
+                <div className="px-5 py-4 border-t border-white/10 space-y-2">
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => { setEditOpen(false); setEditingEvent(null); }}
+                      className="flex-1 py-2.5 rounded-lg border border-white/10 text-white/50 text-sm hover:text-white hover:border-white/20 transition-colors"
+                      data-testid="button-cancel-edit"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => editMutation.mutate({ ...editForm, id: editingEvent.id })}
+                      disabled={editMutation.isPending || !editForm.title || !editForm.date}
+                      className="flex-1 py-2.5 rounded-lg bg-[#D4AF37] text-[#0A1628] text-sm font-bold hover:bg-[#D4AF37]/90 transition-colors disabled:opacity-60"
+                      data-testid="button-submit-edit"
+                    >
+                      {editMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : "Save Changes"}
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => setDeleteConfirm(true)}
+                    className="w-full py-2.5 rounded-lg border border-red-500/30 text-red-400 text-sm font-medium hover:bg-red-500/10 transition-colors"
+                    data-testid="button-open-delete-confirm"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 inline mr-1.5" />
+                    Delete Event
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

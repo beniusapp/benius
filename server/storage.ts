@@ -923,6 +923,22 @@ export class DatabaseStorage {
     return result.length > 0;
   }
 
+  async updateCalendarEvent(id: number, schoolId: number, data: {
+    title?: string;
+    date?: string;
+    eventType?: string;
+    venue?: string | null;
+    description?: string | null;
+    colorCode?: string | null;
+    isRecurring?: boolean;
+  }): Promise<CalendarEvent | null> {
+    const [updated] = await db.update(calendarEvents)
+      .set(data)
+      .where(and(eq(calendarEvents.id, id), eq(calendarEvents.schoolId, schoolId)))
+      .returning();
+    return updated || null;
+  }
+
   async deleteCalendarEventBySchool(id: number, schoolId: number): Promise<boolean> {
     const result = await db.delete(calendarEvents).where(
       and(eq(calendarEvents.id, id), eq(calendarEvents.schoolId, schoolId))
