@@ -357,6 +357,10 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
     setResetKey(k => k + 1);
   }, []);
 
+  const effectiveSection = filterSection && filterSection !== "all" ? filterSection : "";
+  const effectiveExam = filterExam && filterExam !== "all" ? filterExam : "";
+  const effectiveSubject = filterSubject && filterSubject !== "all" ? filterSubject : "";
+
   const handleReset = useCallback(() => {
     setFilterClass("");
     setFilterSection("");
@@ -370,10 +374,12 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    await queryClient.invalidateQueries({ queryKey: ["/api/admin/analytics/performance"] });
+    await queryClient.invalidateQueries({
+      queryKey: ["/api/admin/analytics/performance", filterClass, effectiveSection, effectiveExam, effectiveSubject, searchDebounced],
+    });
     setRefreshing(false);
     setLastUpdated(new Date());
-  }, [queryClient]);
+  }, [queryClient, filterClass, effectiveSection, effectiveExam, effectiveSubject, searchDebounced]);
 
   const { data: availSections = [] } = useQuery<string[]>({
     queryKey: ["/api/admin/analytics/sections", filterClass],
@@ -386,10 +392,6 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
   });
 
   const sectionList = availSections.length > 0 ? availSections : configSections;
-
-  const effectiveSection = filterSection && filterSection !== "all" ? filterSection : "";
-  const effectiveExam = filterExam && filterExam !== "all" ? filterExam : "";
-  const effectiveSubject = filterSubject && filterSubject !== "all" ? filterSubject : "";
 
   const params = new URLSearchParams();
   params.set("class", filterClass);
