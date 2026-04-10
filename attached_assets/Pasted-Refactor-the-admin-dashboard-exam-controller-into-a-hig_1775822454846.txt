@@ -1,0 +1,55 @@
+Refactor the /admin-dashboard/exam-controller into a high-end, state-driven Academic Advancement Wizard that integrates directly with the existing Teacher Portal marks entry system.
+
+1. THE DATA BRIDGE (Linking Teacher Marks to Admin):
+
+Aggregation Engine: Create a backend function that queries the exam_scores table. When an Admin selects a Class and 'Final Exam,' the system must:
+
+Sum all 'Marks Obtained' across every subject for each student.
+
+Compare the total against the combined 'Full Marks' of all subjects.
+
+Calculate a live Aggregate Percentage for the entire class.
+
+Data Integrity Check: Display a 'Status Alert.' If any subject marks (e.g., Math or Physics) are missing for the class, show a Yellow Alert: 'Results Incomplete: Pending marks from [Subject Name] Teacher.'
+
+2. THE AUTOMATED EVALUATION GRID:
+
+Display a professional, searchable table (optimized for 5,000+ students) with:
+
+DSID & Name
+
+Marks Breakdown: Total/Max Marks and %.
+
+Auto-Status: System-generated badge: 'PASS' (Emerald Green) or 'FAIL' (Red) based on the school's configured pass threshold (e.g., 35%).
+
+3. THE PRINCIPAL'S MANUAL OVERRIDE:
+
+Individual Overrides: Add a toggle or 'Edit' icon next to each student. Allow the Principal to manually upgrade a 'FAIL' to a 'GRACE PASS' or retain a student regardless of their marks.
+
+Promotion Targeting: Add a dropdown for 'Next Class/Section.'
+
+Default: Auto-increment (e.g., 6A goes to 7A).
+
+Manual: Allow shifting a student to a different section or making them repeat the year.
+
+4. THE BULK ADVANCEMENT EXECUTION:
+
+Action Hub: Implement a secure 'EXECUTE PROMOTION' module.
+
+Atomic Transaction: On click, perform a bulk SQL update: UPDATE students SET current_class = ?, current_section = ? WHERE dsid = ? AND school_id = ?.
+
+Security: This button must be disabled until a 'Confirmation Checkbox' is clicked by the Admin.
+
+5. UI/UX & MOBILE OPTIMIZATION:
+
+Design: Use the Benius Emerald Green (#10b981) and Deep Slate palette.
+
+Scannability: Use Sticky Headers for the result table and Zebra Striping for readability on the Motorola 60 Fusion.
+
+Visual Feedback: Show a 'Success Confetti' animation and a progress bar when promoting large batches of students.
+
+6. MULTI-TENANCY & LOCAL COMPATIBILITY:
+
+Every query MUST include WHERE school_id = ?.
+
+Write all logic using standard relational SQL to ensure the application is ready for migration from Replit to a local PC environment.
