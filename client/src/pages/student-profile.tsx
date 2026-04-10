@@ -9,13 +9,6 @@ import {
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 
 interface StudentMeResponse {
   id: number;
@@ -665,7 +658,7 @@ export default function StudentProfile() {
               )}
 
               {/* Photo upload section */}
-              <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm px-5 py-5 flex flex-col items-center gap-3">
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-5 flex flex-col items-center gap-3">
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -728,7 +721,7 @@ export default function StudentProfile() {
               </div>
 
               {/* Form fields card */}
-              <div className="rounded-2xl border border-[#10b981]/25 bg-white/5 backdrop-blur-sm overflow-hidden">
+              <div className="rounded-2xl border border-[#10b981]/25 bg-white/5 overflow-hidden">
                 <div className="px-5 py-4 border-b border-white/8 flex items-center gap-2">
                   <User className="w-4 h-4 text-[#10b981]" />
                   <h2 className="text-sm font-bold text-white">Verification Details</h2>
@@ -891,20 +884,28 @@ export default function StudentProfile() {
         </div>
       </main>
 
-      {/* ══ SECURITY MODAL (independent of isEditing) ══ */}
-      <Dialog open={securityOpen} onOpenChange={setSecurityOpen}>
-        <DialogContent className="bg-[#0f2a1e] border border-white/10 rounded-2xl max-w-md mx-auto shadow-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-white">
-              <Shield className="w-5 h-5 text-blue-400" />
-              Change Password
-            </DialogTitle>
-            <DialogDescription className="sr-only">
-              Update your account password
-            </DialogDescription>
-          </DialogHeader>
+      {/* ══ SECURITY MODAL (inline fixed, no Radix portal) ══ */}
+      {securityOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/70"
+            onClick={() => setSecurityOpen(false)}
+          />
+          <div className="relative z-10 w-full max-w-md bg-[#0f2a1e] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="px-6 pt-6 pb-4 border-b border-white/8 flex items-center gap-3">
+              <Shield className="w-5 h-5 text-blue-400 flex-shrink-0" />
+              <h2 className="text-base font-semibold text-white">Change Password</h2>
+              <button
+                onClick={() => setSecurityOpen(false)}
+                className="ml-auto text-white/40 hover:text-white/70 transition-colors p-1 rounded-lg hover:bg-white/8"
+                data-testid="button-close-security-modal"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
-          <div className="space-y-4 pt-2">
+          <div className="space-y-4 px-6 pb-6 pt-4">
             {/* Current Password */}
             <div>
               <label className="text-xs font-medium text-white/50 uppercase tracking-wide mb-1.5 block">Current Password</label>
@@ -1013,8 +1014,9 @@ export default function StudentProfile() {
               </button>
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
