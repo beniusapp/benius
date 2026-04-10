@@ -102,16 +102,16 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
-  // Close menu on outside click
+  // Close menu on outside click/tap
   useEffect(() => {
     if (!menuOpen) return;
-    function handleOutside(e: MouseEvent) {
+    function handleOutside(e: PointerEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false);
       }
     }
-    document.addEventListener("mousedown", handleOutside);
-    return () => document.removeEventListener("mousedown", handleOutside);
+    document.addEventListener("pointerdown", handleOutside);
+    return () => document.removeEventListener("pointerdown", handleOutside);
   }, [menuOpen]);
 
   // Clear password fields when modal closes
@@ -491,7 +491,7 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
                     className="w-full flex items-center gap-3 px-4 py-3.5 text-sm text-white/80 hover:text-white hover:bg-white/[0.08] active:bg-white/[0.12] transition-colors min-h-[44px]"
                     data-testid="menu-security-option"
                   >
-                    <ShieldCheck className="w-4 h-4 text-[#10b981] flex-shrink-0" />
+                    <Lock className="w-4 h-4 text-[#10b981] flex-shrink-0" />
                     Security & Credentials
                   </button>
                 </motion.div>
