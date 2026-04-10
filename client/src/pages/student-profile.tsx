@@ -434,34 +434,8 @@ export default function StudentProfile() {
             </div>
           </div>
 
-          {/* Right: ⋮ menu (read-only) or Submit button (editing) */}
-          {isEditing ? (
-            <div className="flex-shrink-0">
-              {canSubmit && !isVerificationLocked ? (
-                <button
-                  onClick={handleSubmit}
-                  disabled={submitMutation.isPending}
-                  className="flex items-center gap-1.5 h-10 px-3 rounded-xl bg-white/20 hover:bg-white/30 text-white text-sm font-semibold transition-colors disabled:opacity-50"
-                  data-testid="button-submit-header"
-                >
-                  {submitMutation.isPending
-                    ? <Loader2 className="w-4 h-4 animate-spin" />
-                    : <FileText className="w-4 h-4" />}
-                  Submit
-                </button>
-              ) : isVerificationLocked ? (
-                <div className="flex items-center gap-1.5 h-10 px-3 rounded-xl bg-red-500/20 text-red-300 text-xs font-medium">
-                  <Lock className="w-3.5 h-3.5" />
-                  Locked
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5 h-10 px-3 rounded-xl bg-yellow-400/20 text-yellow-300 text-xs font-medium">
-                  <Clock className="w-3.5 h-3.5" />
-                  Pending
-                </div>
-              )}
-            </div>
-          ) : (
+          {/* Right: ⋮ menu (read-only mode only) */}
+          {!isEditing ? (
             <div className="relative" ref={menuRef}>
               <button
                 onClick={() => setMenuOpen((v) => !v)}
@@ -540,7 +514,7 @@ export default function StudentProfile() {
                 )}
               </AnimatePresence>
             </div>
-          )}
+          ) : null}
         </div>
       </header>
 
