@@ -2123,13 +2123,15 @@ export class DatabaseStorage {
 
   async bulkPromoteStudents(schoolId: number, items: { studentId: number; nextClass: string; nextSection: string }[]): Promise<number> {
     let promoted = 0;
-    for (const item of items) {
-      const updated = await db.update(students)
-        .set({ class: item.nextClass, section: item.nextSection })
-        .where(and(eq(students.id, item.studentId), eq(students.schoolId, schoolId)))
-        .returning();
-      if (updated.length > 0) promoted++;
-    }
+    await db.transaction(async (tx) => {
+      for (const item of items) {
+        const updated = await tx.update(students)
+          .set({ class: item.nextClass, section: item.nextSection })
+          .where(and(eq(students.id, item.studentId), eq(students.schoolId, schoolId)))
+          .returning();
+        if (updated.length > 0) promoted++;
+      }
+    });
     return promoted;
   }
 }

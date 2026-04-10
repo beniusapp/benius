@@ -1501,7 +1501,11 @@ export function registerTeacherRoutes(app: Express) {
     const configuredSubjects: string[] = meta.subjects || [];
     const presentSubjects = Array.from(new Set(studentsData.flatMap(s => s.subjects)));
     const missingSubjects = configuredSubjects.filter(s => !presentSubjects.includes(s));
-    res.json({ students: studentsData, overrides, missingSubjects, passThreshold: 35 });
+    const rawThreshold = meta.pass_threshold;
+    const passThreshold = (Array.isArray(rawThreshold) && rawThreshold.length > 0)
+      ? (parseInt(rawThreshold[0]) || 35)
+      : 35;
+    res.json({ students: studentsData, overrides, missingSubjects, passThreshold });
   });
 
   app.post("/api/admin/exam/override", async (req, res) => {

@@ -387,7 +387,7 @@ export default function ExamController({ schoolId, classes, sections, examTypes 
 
           {/* Table */}
           <div className="rounded-xl border border-white/10 bg-[#1A2942]">
-            <div className="overflow-x-auto" style={{ maxHeight: "60vh", overflowY: "auto" }}>
+            <div className="overflow-x-auto" style={{ maxHeight: "70vh", overflowY: "auto" }}>
               <table className="text-sm" style={{ minWidth: "700px", width: "100%", tableLayout: "fixed" }}>
                 <colgroup>
                   <col style={{ width: "130px" }} />
