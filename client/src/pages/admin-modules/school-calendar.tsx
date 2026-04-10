@@ -98,7 +98,7 @@ export default function SchoolCalendar() {
 
   const seedMutation = useMutation({
     mutationFn: () => apiRequest("POST", "/api/admin/calendar/seed-holidays", {}),
-    onSuccess: async (res: any) => {
+    onSuccess: async (res: Response) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/calendar"] });
       const json = await res.json();
       toast({ title: "Holidays seeded", description: json.message });

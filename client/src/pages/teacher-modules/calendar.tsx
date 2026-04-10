@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -108,12 +108,23 @@ function EventChip({ ev }: { ev: CalendarEvent }) {
   );
 }
 
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 1024);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 1024);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+  return isMobile;
+}
+
 export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth());
   const [year, setYear] = useState(now.getFullYear());
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [bottomSheetOpen, setBottomSheetOpen] = useState(false);
+  const isMobile = useIsMobile();
 
   const { data: events = [], isLoading, isError, refetch, isFetching } = useQuery<CalendarEvent[]>({
     queryKey: ["/api/teacher/calendar", month + 1, year],
@@ -163,6 +174,25 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
 
   const selectedEvents = selectedDay ? (eventsByDate[selectedDay] || []) : [];
 
+  const holidayCount = events.filter(e => e.eventType === "holiday").length;
+
+  const sortedMonthEvents = useMemo(() =>
+    events.slice().sort((a, b) => a.date.localeCompare(b.date)),
+    [events]
+  );
+
+  const groupedByDate = useMemo(() => {
+    const map: Record<string, CalendarEvent[]> = {};
+    sortedMonthEvents.forEach(ev => {
+      const k = ev.date.split("T")[0];
+      if (!map[k]) map[k] = [];
+      map[k].push(ev);
+    });
+    return map;
+  }, [sortedMonthEvents]);
+
+  const agendaDates = useMemo(() => Object.keys(groupedByDate).sort(), [groupedByDate]);
+
   if (isLoading) {
     return (
       <div className="flex justify-center py-12">
@@ -179,41 +209,102 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     );
   }
 
-  const holidayCount = events.filter(e => e.eventType === "holiday").length;
+  const navBar = (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h2 className="text-lg font-bold text-white" data-testid="heading-teacher-calendar">School Calendar</h2>
+        <p className="text-white/40 text-sm">{events.length} events · {holidayCount} holidays this month</p>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          data-testid="button-sync-now"
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white/50 text-sm hover:text-white hover:border-white/20 transition-colors disabled:opacity-60"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
+          Sync Now
+        </button>
+        <button onClick={prevMonth} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition-colors" data-testid="button-prev-month">
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+        <span className="text-white font-semibold min-w-[140px] text-center" data-testid="text-calendar-title">{MONTHS[month]} {year}</span>
+        <button onClick={nextMonth} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition-colors" data-testid="button-next-month">
+          <ChevronRight className="w-4 h-4" />
+        </button>
+        <button
+          onClick={() => { setMonth(now.getMonth()); setYear(now.getFullYear()); setSelectedDay(null); }}
+          className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white text-sm transition-colors"
+          data-testid="button-today"
+        >
+          Today
+        </button>
+      </div>
+    </div>
+  );
+
+  if (isMobile) {
+    return (
+      <div className="space-y-4" data-testid="teacher-calendar-mobile">
+        {navBar}
+        {isLoading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="w-6 h-6 animate-spin text-white/40" />
+          </div>
+        ) : agendaDates.length === 0 ? (
+          <div className="text-center py-12 rounded-xl bg-white/5 border border-white/10">
+            <Calendar className="w-10 h-10 text-white/10 mx-auto mb-3" />
+            <p className="text-white/30">No events in {MONTHS[month]} {year}</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {agendaDates.map(dateKey => {
+              const d = new Date(dateKey + "T00:00:00");
+              const isToday = dateKey === buildKey(now.getFullYear(), now.getMonth(), now.getDate());
+              const dayEvs = groupedByDate[dateKey];
+              return (
+                <div key={dateKey} data-testid={`agenda-group-${dateKey}`}>
+                  <div className={`flex items-center gap-2 mb-2 px-1 ${isToday ? "text-emerald-400" : "text-white/40"}`}>
+                    <span className={`text-xs font-bold uppercase tracking-widest`}>
+                      {d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
+                    </span>
+                    <span className="text-xs">{DAYS_FULL[d.getDay()]}</span>
+                    {isToday && <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full">Today</span>}
+                  </div>
+                  <div className="space-y-2">
+                    {dayEvs.map(ev => {
+                      const color = getColor(ev);
+                      return (
+                        <div
+                          key={ev.id}
+                          className="p-3 rounded-xl border border-white/5"
+                          style={{ borderLeftColor: color, borderLeftWidth: 3, background: `${color}10` }}
+                          data-testid={`mobile-event-detail-${ev.id}`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm font-semibold text-white">{ev.title}</p>
+                            {ev.isRecurring && <Repeat className="w-3.5 h-3.5 text-white/30 mt-0.5 shrink-0" />}
+                          </div>
+                          <p className="text-xs mt-1 capitalize" style={{ color }}>
+                            <EventTypeLabel eventType={ev.eventType} />
+                          </p>
+                          {ev.description && <p className="text-xs text-white/40 mt-1">{ev.description}</p>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-bold text-white" data-testid="heading-teacher-calendar">School Calendar</h2>
-          <p className="text-white/40 text-sm">{events.length} events · {holidayCount} holidays this month</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={() => refetch()}
-            disabled={isFetching}
-            data-testid="button-sync-now"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white/50 text-sm hover:text-white hover:border-white/20 transition-colors disabled:opacity-60"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
-            Sync Now
-          </button>
-          <button onClick={prevMonth} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition-colors" data-testid="button-prev-month">
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <span className="text-white font-semibold min-w-[140px] text-center" data-testid="text-calendar-title">{MONTHS[month]} {year}</span>
-          <button onClick={nextMonth} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition-colors" data-testid="button-next-month">
-            <ChevronRight className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => { setMonth(now.getMonth()); setYear(now.getFullYear()); setSelectedDay(null); }}
-            className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white text-sm transition-colors"
-            data-testid="button-today"
-          >
-            Today
-          </button>
-        </div>
-      </div>
+      {navBar}
 
       <div className="flex items-center gap-4 flex-wrap">
         {EVENT_TYPES.map(t => (

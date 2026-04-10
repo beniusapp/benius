@@ -1219,7 +1219,9 @@ export async function registerRoutes(
     }
 
     if (isRecurring) {
-      const extraYears = 9;
+      const CALENDAR_HORIZON = 2126;
+      const startYear = new Date(startDate + "T00:00:00").getFullYear();
+      const extraYears = Math.max(0, CALENDAR_HORIZON - startYear);
       const baseEntries = [...entries];
       for (let yearOffset = 1; yearOffset <= extraYears; yearOffset++) {
         baseEntries.forEach(e => {
@@ -1361,6 +1363,15 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
+    const monthParam = req.query.month ? parseInt(req.query.month as string) : null;
+    const yearParam = req.query.year ? parseInt(req.query.year as string) : null;
+    if (monthParam !== null && yearParam !== null) {
+      const firstDay = new Date(yearParam, monthParam, 1);
+      const lastDay = new Date(yearParam, monthParam + 1, 0);
+      const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const events = await storage.getCalendarEventsByRange(student.schoolId, fmt(firstDay), fmt(lastDay));
+      return res.json(events);
+    }
     const events = await storage.getCalendarEvents(student.schoolId);
     res.json(events);
   });
