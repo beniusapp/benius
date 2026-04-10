@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Lock, FileText, Shield, CheckCircle, Loader2, Search,
@@ -427,8 +427,8 @@ export default function ExamController({ schoolId, classes, sections, examTypes 
                           const nextCls = getNextClassForStudent(s);
                           const nextSec = getNextSectionForStudent(s);
                           return (
-                            <>
-                              <tr key={s.studentId}
+                            <React.Fragment key={s.studentId}>
+                              <tr
                                 className={`border-b border-white/5 hover:bg-white/5 transition-colors ${rowIdx % 2 === 1 ? "bg-white/[0.025]" : ""}`}
                                 data-testid={`row-result-${s.studentId}`}>
                                 <td className="py-3 px-3 font-mono text-[#D4AF37] text-xs overflow-hidden text-ellipsis">{s.dsid}</td>
@@ -441,7 +441,7 @@ export default function ExamController({ schoolId, classes, sections, examTypes 
                                 </td>
                                 <td className="py-3 px-2 whitespace-nowrap">
                                   <Button variant="ghost" size="icon"
-                                    className="h-9 w-9 text-[#10b981] hover:bg-[#10b981]/10"
+                                    className="h-11 w-11 min-w-[44px] text-[#10b981] hover:bg-[#10b981]/10"
                                     onClick={() => isOverrideOpen ? setOpenOverrideFor(null) : openOverride(s)}
                                     data-testid={`button-override-${s.studentId}`}
                                     title="Override status">
@@ -490,12 +490,12 @@ export default function ExamController({ schoolId, classes, sections, examTypes 
                                       )}
                                       <Button size="sm" onClick={() => saveOverride(s.studentId)}
                                         disabled={overrideMutation.isPending}
-                                        className="h-9 bg-[#10b981] hover:bg-emerald-600 text-white text-xs font-semibold"
+                                        className="h-11 min-h-[44px] bg-[#10b981] hover:bg-emerald-600 text-white text-xs font-semibold"
                                         data-testid={`button-save-override-${s.studentId}`}>
                                         {overrideMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Save"}
                                       </Button>
                                       <Button variant="ghost" size="sm" onClick={() => setOpenOverrideFor(null)}
-                                        className="h-9 text-white/40 hover:text-white text-xs"
+                                        className="h-11 min-h-[44px] text-white/40 hover:text-white text-xs"
                                         data-testid={`button-cancel-override-${s.studentId}`}>
                                         Cancel
                                       </Button>
@@ -503,7 +503,7 @@ export default function ExamController({ schoolId, classes, sections, examTypes 
                                   </td>
                                 </tr>
                               )}
-                            </>
+                            </React.Fragment>
                           );
                         })
                   }
