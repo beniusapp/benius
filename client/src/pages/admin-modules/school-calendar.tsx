@@ -32,13 +32,11 @@ const EVENT_TYPES = [
   { value: "event", label: "Event", color: "#10b981", icon: Star },
 ];
 
-function getEventStyle(ev: CalendarEvent) {
-  const color = ev.colorCode || EVENT_TYPES.find(t => t.value === ev.eventType)?.color || "#D4AF37";
-  return color;
-}
+const YEAR_START = 2026;
+const YEAR_END = 2126;
 
-function dateKey(dateStr: string) {
-  return dateStr.split("T")[0];
+function getEventColor(ev: CalendarEvent) {
+  return ev.colorCode || EVENT_TYPES.find(t => t.value === ev.eventType)?.color || "#D4AF37";
 }
 
 function buildKey(y: number, m: number, d: number) {
@@ -67,13 +65,14 @@ export default function SchoolCalendar() {
     colorCode: "",
   });
 
-  const { data: events = [], isLoading } = useQuery<CalendarEvent[]>({
+  const { data: events = [], isLoading, refetch, isFetching } = useQuery<CalendarEvent[]>({
     queryKey: ["/api/admin/calendar", month + 1, year],
     queryFn: async () => {
       const r = await fetch(`/api/admin/calendar?month=${month + 1}&year=${year}`, { credentials: "include" });
       if (!r.ok) throw new Error("Failed to load events");
       return r.json();
     },
+    staleTime: 30000,
   });
 
   const addMutation = useMutation({
@@ -119,7 +118,7 @@ export default function SchoolCalendar() {
   const eventsByDate = useMemo(() => {
     const map: Record<string, CalendarEvent[]> = {};
     events.forEach(e => {
-      const k = dateKey(e.date);
+      const k = e.date.split("T")[0];
       if (!map[k]) map[k] = [];
       map[k].push(e);
     });
@@ -129,12 +128,12 @@ export default function SchoolCalendar() {
   const selectedDayEvents = selectedDay ? (eventsByDate[selectedDay] || []) : [];
 
   function prevMonth() {
-    if (month === 0) { setMonth(11); setYear(y => y - 1); }
+    if (month === 0) { setMonth(11); setYear(y => y > YEAR_START ? y - 1 : y); }
     else setMonth(m => m - 1);
     setSelectedDay(null);
   }
   function nextMonth() {
-    if (month === 11) { setMonth(0); setYear(y => y + 1); }
+    if (month === 11) { setMonth(0); setYear(y => y < YEAR_END ? y + 1 : y); }
     else setMonth(m => m + 1);
     setSelectedDay(null);
   }
@@ -164,12 +163,22 @@ export default function SchoolCalendar() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button
+            onClick={() => refetch()}
+            disabled={isFetching}
+            data-testid="button-sync-now"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white/50 text-sm hover:text-white hover:border-white/20 transition-colors disabled:opacity-60"
+            title="Sync Now"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
+            Sync
+          </button>
+          <button
             onClick={() => seedMutation.mutate()}
             disabled={seedMutation.isPending}
             data-testid="button-seed-holidays"
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-500/15 border border-red-500/30 text-red-400 text-sm font-medium hover:bg-red-500/25 transition-colors disabled:opacity-60"
           >
-            {seedMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            {seedMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Flame className="w-3.5 h-3.5" />}
             Seed Indian Holidays
           </button>
           <button
@@ -190,12 +199,37 @@ export default function SchoolCalendar() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="lg:col-span-2">
           <div className="bg-[#1A2942] rounded-xl border border-white/10 overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 gap-2">
               <button onClick={prevMonth} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-white/60 hover:text-white" data-testid="button-prev-month">
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              <div className="flex items-center gap-3">
-                <h3 className="text-base font-semibold text-white" data-testid="text-calendar-month">{MONTHS[month]} {year}</h3>
+              <div className="flex items-center gap-2 flex-wrap justify-center">
+                <select
+                  value={month}
+                  onChange={e => { setMonth(parseInt(e.target.value)); setSelectedDay(null); }}
+                  className="bg-[#0A1628] border border-white/10 rounded-lg px-2 py-1 text-sm text-white focus:outline-none focus:border-[#D4AF37]/50 cursor-pointer"
+                  data-testid="select-month"
+                >
+                  {MONTHS.map((m, i) => (
+                    <option key={m} value={i}>{m}</option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  value={year}
+                  min={YEAR_START}
+                  max={YEAR_END}
+                  onChange={e => {
+                    const v = parseInt(e.target.value);
+                    if (!isNaN(v) && v >= YEAR_START && v <= YEAR_END) {
+                      setYear(v);
+                      setSelectedDay(null);
+                    }
+                  }}
+                  className="bg-[#0A1628] border border-white/10 rounded-lg px-2 py-1 text-sm text-white focus:outline-none focus:border-[#D4AF37]/50 w-20 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  data-testid="input-year"
+                  aria-label="Year (2026–2126)"
+                />
                 <button onClick={goToday} className="text-[10px] px-2 py-0.5 rounded border border-[#D4AF37]/40 text-[#D4AF37]/70 hover:text-[#D4AF37] hover:border-[#D4AF37] transition-colors" data-testid="button-today">
                   Today
                 </button>
@@ -204,65 +238,63 @@ export default function SchoolCalendar() {
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
+            <p className="text-center text-white/50 text-sm py-1 border-b border-white/5 font-medium" data-testid="text-calendar-month">{MONTHS[month]} {year}</p>
 
             <div className="grid grid-cols-7">
               {DAYS.map(d => (
                 <div key={d} className="py-2 text-center text-[11px] font-medium text-white/30 border-b border-white/5">{d}</div>
               ))}
-              {calendarDays.map((day, i) => {
-                if (day === null) {
-                  return <div key={`empty-${i}`} className="min-h-[72px] border-b border-r border-white/5 bg-white/[0.01]" />;
-                }
-                const key = buildKey(year, month, day);
-                const dayEvs = eventsByDate[key] || [];
-                const today = isToday(day);
-                const isSelected = selectedDay === key;
-                const hasHoliday = dayEvs.some(e => e.eventType === "holiday");
+              {isLoading ? (
+                <div className="col-span-7 flex justify-center py-12">
+                  <Loader2 className="w-6 h-6 animate-spin text-white/40" />
+                </div>
+              ) : (
+                calendarDays.map((day, i) => {
+                  if (day === null) {
+                    return <div key={`empty-${i}`} className="min-h-[72px] border-b border-r border-white/5 bg-white/[0.01]" />;
+                  }
+                  const key = buildKey(year, month, day);
+                  const dayEvs = eventsByDate[key] || [];
+                  const today = isToday(day);
+                  const isSelected = selectedDay === key;
+                  const hasHoliday = dayEvs.some(e => e.eventType === "holiday");
 
-                return (
-                  <div
-                    key={key}
-                    onClick={() => setSelectedDay(isSelected ? null : key)}
-                    data-testid={`cell-day-${day}`}
-                    className={`min-h-[72px] border-b border-r border-white/5 p-1.5 cursor-pointer transition-colors
-                      ${hasHoliday ? "bg-red-500/5" : ""}
-                      ${isSelected ? "bg-[#D4AF37]/10 border-[#D4AF37]/30" : "hover:bg-white/5"}
-                    `}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className={`text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full
-                        ${today ? "bg-[#D4AF37] text-[#0A1628] font-bold" : "text-white/60"}
-                      `} data-testid={`text-day-${day}`}>
-                        {day}
-                      </span>
-                      {dayEvs.length > 0 && (
-                        <button
-                          onClick={e => { e.stopPropagation(); openAddForDay(key); }}
-                          className="opacity-0 group-hover:opacity-100 hover:opacity-100 p-0.5 rounded hover:bg-white/10"
-                          data-testid={`button-add-day-${day}`}
-                        >
-                          <Plus className="w-3 h-3 text-white/40" />
-                        </button>
-                      )}
+                  return (
+                    <div
+                      key={key}
+                      onClick={() => setSelectedDay(isSelected ? null : key)}
+                      data-testid={`cell-day-${day}`}
+                      className={`min-h-[72px] border-b border-r border-white/5 p-1.5 cursor-pointer transition-colors
+                        ${hasHoliday ? "bg-red-500/5" : ""}
+                        ${isSelected ? "bg-[#D4AF37]/10" : "hover:bg-white/5"}
+                      `}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className={`text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full
+                          ${today ? "bg-[#D4AF37] text-[#0A1628] font-bold" : "text-white/60"}
+                        `} data-testid={`text-day-${day}`}>
+                          {day}
+                        </span>
+                      </div>
+                      <div className="space-y-0.5">
+                        {dayEvs.slice(0, 2).map(ev => (
+                          <div
+                            key={ev.id}
+                            className="px-1 py-0.5 rounded text-[10px] truncate font-medium"
+                            style={{ backgroundColor: `${getEventColor(ev)}25`, color: getEventColor(ev) }}
+                            data-testid={`event-chip-${ev.id}`}
+                          >
+                            {ev.title}
+                          </div>
+                        ))}
+                        {dayEvs.length > 2 && (
+                          <div className="text-[9px] text-white/30 pl-1">+{dayEvs.length - 2} more</div>
+                        )}
+                      </div>
                     </div>
-                    <div className="space-y-0.5">
-                      {dayEvs.slice(0, 2).map(ev => (
-                        <div
-                          key={ev.id}
-                          className="px-1 py-0.5 rounded text-[10px] truncate font-medium"
-                          style={{ backgroundColor: `${getEventStyle(ev)}25`, color: getEventStyle(ev) }}
-                          data-testid={`event-chip-${ev.id}`}
-                        >
-                          {ev.title}
-                        </div>
-                      ))}
-                      {dayEvs.length > 2 && (
-                        <div className="text-[9px] text-white/30 pl-1">+{dayEvs.length - 2} more</div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
@@ -282,7 +314,7 @@ export default function SchoolCalendar() {
                   </div>
                 ))}
                 <div className="mt-3 pt-3 border-t border-white/10 text-xs text-white/30">
-                  Click a day to view events. Click + Add Event to create.
+                  Click a day to view events. Use dropdowns to jump to any month/year (2026–2126).
                 </div>
               </div>
             ) : selectedDayEvents.length === 0 ? (
@@ -300,7 +332,7 @@ export default function SchoolCalendar() {
               <div className="space-y-2">
                 {selectedDayEvents.map(ev => (
                   <div key={ev.id} className="group flex items-start gap-2 p-2 rounded-lg border border-white/5 hover:border-white/10 transition-colors" data-testid={`event-card-${ev.id}`}>
-                    <span className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: getEventStyle(ev) }} />
+                    <span className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: getEventColor(ev) }} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-white truncate" data-testid={`text-event-title-${ev.id}`}>{ev.title}</p>
                       <p className="text-[11px] text-white/40 capitalize">{ev.eventType}{ev.isRecurring ? " · recurring" : ""}</p>
@@ -329,9 +361,7 @@ export default function SchoolCalendar() {
 
           <div className="bg-[#1A2942] rounded-xl border border-white/10 p-4">
             <h4 className="text-sm font-semibold text-white/70 mb-3">This Month</h4>
-            {isLoading ? (
-              <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-white/40" /></div>
-            ) : events.length === 0 ? (
+            {events.length === 0 ? (
               <p className="text-white/30 text-sm text-center py-2">No events yet</p>
             ) : (
               <div className="space-y-1.5 max-h-48 overflow-y-auto">
@@ -340,7 +370,7 @@ export default function SchoolCalendar() {
                   .sort((a, b) => a.date.localeCompare(b.date))
                   .map(ev => (
                     <div key={ev.id} className="flex items-center gap-2 group" data-testid={`sidebar-event-${ev.id}`}>
-                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getEventStyle(ev) }} />
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getEventColor(ev) }} />
                       <span className="text-xs text-white/50 shrink-0">{new Date(ev.date + "T00:00:00").getDate()}</span>
                       <span className="text-xs text-white/70 truncate flex-1">{ev.title}</span>
                       {ev.isRecurring && <Repeat className="w-3 h-3 text-white/20 shrink-0" />}

@@ -1,6 +1,10 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Loader2, Calendar, CalendarDays, Flame, BookOpen, Award, Star, Repeat } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  ChevronLeft, ChevronRight, Loader2, Calendar, CalendarDays,
+  Flame, BookOpen, Award, Star, Repeat, RefreshCw, X,
+} from "lucide-react";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
 
 interface CalendarEvent {
@@ -18,6 +22,7 @@ const MONTHS = [
   "July","August","September","October","November","December",
 ];
 const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const DAYS_FULL = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
 const EVENT_TYPES = [
   { value: "holiday", label: "Holiday", color: "#ef4444", icon: Flame },
@@ -44,19 +49,80 @@ function formatDate(s: string) {
   return d.toLocaleDateString("en-GB", { day:"2-digit", month:"short", year:"numeric" });
 }
 
+function EventTypeLabel({ eventType }: { eventType: string }) {
+  const et = EVENT_TYPES.find(t => t.value === eventType);
+  return <span>{et?.label || eventType}</span>;
+}
+
+function HoverEventPopover({ ev, onClose }: { ev: CalendarEvent; onClose: () => void }) {
+  const color = getColor(ev);
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.9, y: 4 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.9, y: 4 }}
+      transition={{ duration: 0.15 }}
+      className="absolute z-30 bottom-full left-0 mb-1 w-52 rounded-xl border border-white/10 shadow-xl p-3 text-left"
+      style={{ background: "#1a2942" }}
+      onMouseLeave={onClose}
+    >
+      <div className="flex items-center gap-1.5 mb-2">
+        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+        <p className="text-xs font-semibold text-white leading-tight">{ev.title}</p>
+      </div>
+      <p className="text-[10px] mb-1" style={{ color }}>
+        <EventTypeLabel eventType={ev.eventType} />
+      </p>
+      <p className="text-[10px] text-white/40">{formatDate(ev.date)}</p>
+      {ev.isRecurring && (
+        <div className="flex items-center gap-1 mt-1">
+          <Repeat className="w-2.5 h-2.5 text-white/30" />
+          <span className="text-[9px] text-white/30">Recurring annually</span>
+        </div>
+      )}
+      {ev.description && (
+        <p className="text-[10px] text-white/40 mt-1 border-t border-white/10 pt-1">{ev.description}</p>
+      )}
+    </motion.div>
+  );
+}
+
+function EventChip({ ev }: { ev: CalendarEvent }) {
+  const [hovered, setHovered] = useState(false);
+  const color = getColor(ev);
+  return (
+    <div className="relative">
+      <div
+        className="px-1 py-0.5 rounded text-[9px] truncate font-medium cursor-pointer"
+        style={{ backgroundColor: `${color}22`, color }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        data-testid={`event-chip-${ev.id}`}
+      >
+        {ev.title}
+      </div>
+      <AnimatePresence>
+        {hovered && <HoverEventPopover ev={ev} onClose={() => setHovered(false)} />}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth());
   const [year, setYear] = useState(now.getFullYear());
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [bottomSheetOpen, setBottomSheetOpen] = useState(false);
 
-  const { data: events = [], isLoading, isError } = useQuery<CalendarEvent[]>({
+  const { data: events = [], isLoading, isError, refetch, isFetching } = useQuery<CalendarEvent[]>({
     queryKey: ["/api/teacher/calendar", month + 1, year],
     queryFn: async () => {
       const r = await fetch(`/api/teacher/calendar?month=${month + 1}&year=${year}`, { credentials:"include" });
       if (!r.ok) throw new Error("Failed to load");
       return r.json();
     },
+    staleTime: 30000,
   });
 
   const calendarDays = useMemo(() => {
@@ -89,6 +155,12 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     setSelectedDay(null);
   }
 
+  function handleDayClick(key: string) {
+    const isMobile = window.innerWidth < 1024;
+    setSelectedDay(key);
+    if (isMobile) setBottomSheetOpen(true);
+  }
+
   const selectedEvents = selectedDay ? (eventsByDate[selectedDay] || []) : [];
 
   if (isLoading) {
@@ -116,7 +188,16 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
           <h2 className="text-lg font-bold text-white" data-testid="heading-teacher-calendar">School Calendar</h2>
           <p className="text-white/40 text-sm">{events.length} events · {holidayCount} holidays this month</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => refetch()}
+            disabled={isFetching}
+            data-testid="button-sync-now"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white/50 text-sm hover:text-white hover:border-white/20 transition-colors disabled:opacity-60"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
+            Sync Now
+          </button>
           <button onClick={prevMonth} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition-colors" data-testid="button-prev-month">
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -162,11 +243,11 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
               return (
                 <div
                   key={key}
-                  onClick={() => setSelectedDay(isSelected ? null : key)}
+                  onClick={() => handleDayClick(key)}
                   data-testid={`cell-day-${day}`}
                   className={`min-h-[68px] border-b border-r border-white/5 p-1.5 cursor-pointer transition-colors
                     ${hasHoliday ? "bg-red-500/5" : ""}
-                    ${isSelected ? "bg-emerald-500/10 border-emerald-500/20" : "hover:bg-white/5"}
+                    ${isSelected ? "bg-emerald-500/10" : "hover:bg-white/5"}
                   `}
                 >
                   <span className={`text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full mb-1
@@ -176,14 +257,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
                   </span>
                   <div className="space-y-0.5">
                     {dayEvs.slice(0, 2).map(ev => (
-                      <div
-                        key={ev.id}
-                        className="px-1 py-0.5 rounded text-[9px] truncate font-medium"
-                        style={{ backgroundColor: `${getColor(ev)}22`, color: getColor(ev) }}
-                        data-testid={`event-chip-${ev.id}`}
-                      >
-                        {ev.title}
-                      </div>
+                      <EventChip key={ev.id} ev={ev} />
                     ))}
                     {dayEvs.length > 2 && (
                       <div className="text-[9px] text-white/30 pl-1">+{dayEvs.length - 2}</div>
@@ -195,7 +269,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
           </div>
         </div>
 
-        <div className="bg-[#1A2942] rounded-xl border border-white/10 p-4">
+        <div className="hidden lg:block bg-[#1A2942] rounded-xl border border-white/10 p-4">
           <h4 className="text-sm font-semibold text-white/70 mb-3 flex items-center gap-2">
             <CalendarDays className="w-4 h-4 text-emerald-400" />
             {selectedDay ? formatDate(selectedDay) : "Click a day to view"}
@@ -229,23 +303,100 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
           ) : (
             <div className="space-y-2.5">
               {selectedEvents.map(ev => (
-                <div key={ev.id} className="p-3 rounded-lg border border-white/5" style={{ borderLeftColor: getColor(ev), borderLeftWidth: 3 }} data-testid={`event-detail-${ev.id}`}>
+                <motion.div
+                  key={ev.id}
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="p-3 rounded-lg bg-white/5 border border-white/5"
+                  style={{ borderLeftColor: getColor(ev), borderLeftWidth: 3 }}
+                  data-testid={`event-detail-${ev.id}`}
+                >
                   <div className="flex items-start justify-between gap-2">
                     <p className="text-sm font-semibold text-white" data-testid={`text-event-title-${ev.id}`}>{ev.title}</p>
                     {ev.isRecurring && <Repeat className="w-3.5 h-3.5 text-white/30 shrink-0 mt-0.5" />}
                   </div>
                   <p className="text-[11px] mt-1 capitalize" style={{ color: getColor(ev) }}>
-                    {EVENT_TYPES.find(t => t.value === ev.eventType)?.label || ev.eventType}
+                    <EventTypeLabel eventType={ev.eventType} />
                   </p>
                   {ev.description && (
                     <p className="text-[11px] text-white/40 mt-1">{ev.description}</p>
                   )}
-                </div>
+                </motion.div>
               ))}
             </div>
           )}
         </div>
       </div>
+
+      <AnimatePresence>
+        {bottomSheetOpen && selectedDay && (
+          <motion.div
+            className="fixed inset-0 z-50 flex flex-col justify-end lg:hidden"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <div
+              className="absolute inset-0"
+              style={{ background: "rgba(0,0,0,0.6)" }}
+              onClick={() => setBottomSheetOpen(false)}
+            />
+            <motion.div
+              className="relative rounded-t-2xl border-t border-white/10 shadow-2xl max-h-[70vh] overflow-y-auto"
+              style={{ background: "#1A2942" }}
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 30, stiffness: 300 }}
+            >
+              <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 sticky top-0 bg-[#1A2942]">
+                <div>
+                  <p className="text-base font-bold text-white">{formatDate(selectedDay)}</p>
+                  <p className="text-xs text-white/40">
+                    {DAYS_FULL[new Date(selectedDay + "T00:00:00").getDay()]}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setBottomSheetOpen(false)}
+                  className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
+                  data-testid="button-close-bottom-sheet"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="px-5 py-4 space-y-3">
+                {selectedEvents.length === 0 ? (
+                  <div className="text-center py-8">
+                    <Calendar className="w-10 h-10 text-white/10 mx-auto mb-3" />
+                    <p className="text-white/30">No events on this day</p>
+                  </div>
+                ) : (
+                  selectedEvents.map(ev => (
+                    <div
+                      key={ev.id}
+                      className="p-3 rounded-xl border border-white/5"
+                      style={{ borderLeftColor: getColor(ev), borderLeftWidth: 3, background: `${getColor(ev)}10` }}
+                      data-testid={`mobile-event-detail-${ev.id}`}
+                    >
+                      <div className="flex items-start justify-between">
+                        <p className="text-sm font-semibold text-white">{ev.title}</p>
+                        {ev.isRecurring && <Repeat className="w-3.5 h-3.5 text-white/30 mt-0.5" />}
+                      </div>
+                      <p className="text-xs mt-1" style={{ color: getColor(ev) }}>
+                        <EventTypeLabel eventType={ev.eventType} />
+                      </p>
+                      {ev.description && (
+                        <p className="text-xs text-white/40 mt-1">{ev.description}</p>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

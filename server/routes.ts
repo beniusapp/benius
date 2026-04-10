@@ -1237,10 +1237,11 @@ export async function registerRoutes(
 
   app.delete("/api/admin/calendar/:id", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
-    const ok = await storage.deleteCalendarEvent(id);
-    if (!ok) return res.status(404).json({ message: "Event not found" });
+    const ok = await storage.deleteCalendarEventBySchool(id, schoolId);
+    if (!ok) return res.status(404).json({ message: "Event not found or access denied" });
     res.json({ message: "Deleted" });
   });
 
@@ -1311,6 +1312,17 @@ export async function registerRoutes(
         { month: 8, day: 8, title: "Janmashtami" },
         { month: 9, day: 27, title: "Dussehra" },
         { month: 10, day: 9, title: "Diwali" },
+      ],
+      2031: [
+        { month: 3, day: 5, title: "Maha Shivaratri" },
+        { month: 3, day: 10, title: "Holi" },
+        { month: 4, day: 4, title: "Eid ul-Fitr" },
+        { month: 4, day: 14, title: "Dr. Ambedkar Jayanti" },
+        { month: 6, day: 12, title: "Eid ul-Adha" },
+        { month: 8, day: 27, title: "Janmashtami" },
+        { month: 10, day: 5, title: "Dussehra" },
+        { month: 10, day: 25, title: "Diwali" },
+        { month: 11, day: 1, title: "Guru Nanak Jayanti" },
       ],
     };
 

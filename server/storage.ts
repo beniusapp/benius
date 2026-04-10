@@ -923,6 +923,13 @@ export class DatabaseStorage {
     return result.length > 0;
   }
 
+  async deleteCalendarEventBySchool(id: number, schoolId: number): Promise<boolean> {
+    const result = await db.delete(calendarEvents).where(
+      and(eq(calendarEvents.id, id), eq(calendarEvents.schoolId, schoolId))
+    ).returning();
+    return result.length > 0;
+  }
+
   // ===== LIBRARY METHODS =====
   async createLibraryBook(data: InsertLibraryBook): Promise<LibraryBook> {
     const [book] = await db.insert(libraryBooks).values(data).returning();
