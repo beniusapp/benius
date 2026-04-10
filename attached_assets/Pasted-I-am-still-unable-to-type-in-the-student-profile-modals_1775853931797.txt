@@ -1,0 +1,38 @@
+I am still unable to type in the /student-profile modals. The fields appear unlocked visually but I cannot get a cursor or a keyboard. Apply this Absolute Force-Unlock fix:
+
+1. CSS POINTER-EVENT STRIP:
+
+In the Modal CSS, explicitly set pointer-events: auto !important; to all <input> and <textarea> elements.
+
+Ensure the Modal Overlay (backdrop) has pointer-events: none; on its internal padding areas so it doesn't 'steal' clicks meant for the form.
+
+2. REACT REF-FOCUS (The 'Force Cursor' Logic):
+
+Use a useEffect hook so that when the Modal opens, it uses a React Ref to physically force focus onto the first input: inputRef.current.focus(). This usually forces the Android/Motorola keyboard to pop up.
+
+3. REMOVE CONTROLLED STATE TEMPORARILY:
+
+As a test to fix the 'No Cursor' issue, change the inputs from Controlled (value={...}) to Uncontrolled (defaultValue={...}) or ensure the onChange is a simple (e) => setFormData({...}).
+
+Note: If React is stuck in a render loop, it will kill the cursor before you can see it.
+
+4. Z-INDEX HIERARCHY:
+
+Set the Modal's z-index to 9999 and the actual input fields to z-index: 10000.
+
+Add position: relative; to the inputs to ensure the z-index is respected.
+
+5. EVENT BUBBLING:
+
+Add onClick={(e) => e.stopPropagation()} to the Modal Content container. This prevents the click from 'bubbling up' and being cancelled by the background overlay.
+
+6. HTML CLEANUP:
+
+Physically remove any readOnly or disabled attributes from the code for these specific modals until they work."
+
+🛠️ Alternative Solution: "The Simple Form"
+If the Modal continues to fail on your Motorola device, it might be an issue with how the mobile browser handles "fixed" overlays.
+
+Ask Replit this if the above doesn't work:
+
+"If the Modal is still blocked, refactor the 'Submit for Verification' and 'Security' features to not use a Modal. Instead, replace the entire Profile Card with a Full-Page Form View when the user clicks 'Edit'. This will eliminate all Z-index and Overlay issues.
