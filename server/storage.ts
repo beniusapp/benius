@@ -5,7 +5,7 @@ import {
   libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata,
   studentLeaveRequests, auditLogs, visitorLogs, studentProfiles, teacherAllocations,
   promotionOverrides, gradingTiers, gradingRules, academicHistory,
-  schoolAssets, assetLogs,
+  schoolAssets, assetLogs, verificationLogs,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
@@ -2425,6 +2425,28 @@ export class DatabaseStorage {
       gradePoint: matchedRule?.gradePoint ?? null,
       remarks: matchedRule?.remarks ?? null,
     };
+  }
+
+  async logVerificationRequest(schoolId: number, studentId: number): Promise<void> {
+    await db.insert(verificationLogs).values({ schoolId, studentId });
+  }
+
+  async countMonthlyVerifications(schoolId: number, studentId: number): Promise<number> {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const rows = await db
+      .select({ id: verificationLogs.id })
+      .from(verificationLogs)
+      .where(
+        and(
+          eq(verificationLogs.schoolId, schoolId),
+          eq(verificationLogs.studentId, studentId),
+          gte(verificationLogs.submittedAt, startOfMonth),
+          lte(verificationLogs.submittedAt, endOfMonth),
+        ),
+      );
+    return rows.length;
   }
 }
 

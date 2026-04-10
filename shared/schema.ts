@@ -562,3 +562,14 @@ export const academicHistory = pgTable("academic_history", {
 export const insertAcademicHistorySchema = createInsertSchema(academicHistory).omit({ id: true, archivedAt: true });
 export type InsertAcademicHistory = z.infer<typeof insertAcademicHistorySchema>;
 export type AcademicHistory = typeof academicHistory.$inferSelect;
+
+export const verificationLogs = pgTable("verification_logs", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  submittedAt: timestamp("submitted_at").notNull().defaultNow(),
+});
+
+export const insertVerificationLogSchema = createInsertSchema(verificationLogs).omit({ id: true, submittedAt: true });
+export type InsertVerificationLog = z.infer<typeof insertVerificationLogSchema>;
+export type VerificationLog = typeof verificationLogs.$inferSelect;

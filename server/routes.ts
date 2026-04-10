@@ -843,8 +843,27 @@ export async function registerRoutes(
     res.json(profile);
   });
 
+  app.get("/api/student/verification-limit", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const allowed = 3;
+    const used = await storage.countMonthlyVerifications(student.schoolId, req.session.studentId);
+    const remaining = Math.max(0, allowed - used);
+    res.json({ used, remaining, allowed });
+  });
+
   app.post("/api/student/profile/submit", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    const allowed = 3;
+    const used = await storage.countMonthlyVerifications(student.schoolId, req.session.studentId);
+    if (used >= allowed) {
+      return res.status(429).json({ message: `You have used all ${allowed} verification submissions for this month. Please try again next month.` });
+    }
 
     const existing = await storage.getStudentProfile(req.session.studentId);
     if (!existing) return res.status(400).json({ message: "Please save a draft before submitting" });
@@ -855,6 +874,7 @@ export async function registerRoutes(
       return res.status(400).json({ message: "Please fill in all required fields: Full Name, Father's Name, Mother's Name, and Present Address" });
     }
 
+    await storage.logVerificationRequest(student.schoolId, req.session.studentId);
     const profile = await storage.submitStudentProfile(req.session.studentId);
     res.json(profile);
   });
