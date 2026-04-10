@@ -175,6 +175,8 @@ export default function StudentProfile() {
   const [, setLocation] = useLocation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const fullNameRef = useRef<HTMLInputElement>(null);
+  const currentPasswordRef = useRef<HTMLInputElement>(null);
 
   const [isEditing, setIsEditing] = useState(false);
   const [securityOpen, setSecurityOpen] = useState(false);
@@ -252,6 +254,24 @@ export default function StudentProfile() {
     document.addEventListener("pointerdown", handleOutside);
     return () => document.removeEventListener("pointerdown", handleOutside);
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (isEditing) {
+      const timer = setTimeout(() => {
+        fullNameRef.current?.focus();
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [isEditing]);
+
+  useEffect(() => {
+    if (securityOpen) {
+      const timer = setTimeout(() => {
+        currentPasswordRef.current?.focus();
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [securityOpen]);
 
   const submitMutation = useMutation({
     mutationFn: async () => {
@@ -354,6 +374,7 @@ export default function StudentProfile() {
   function handleStartEditing() {
     originalFormRef.current = { ...form };
     setIsEditing(true);
+    setSecurityOpen(false);
     setMenuOpen(false);
   }
 
@@ -386,10 +407,24 @@ export default function StudentProfile() {
     passwordMutation.mutate();
   }
 
+  function handleOpenSecurity() {
+    setSecurityOpen(true);
+    setIsEditing(false);
+    setMenuOpen(false);
+  }
+
   const inputBase = "w-full px-3 py-2.5 rounded-xl bg-white/6 border text-white placeholder:text-white/25 text-sm focus:outline-none focus:ring-2 focus:ring-offset-0 transition-colors";
   const editingBorder = "border-[#10b981]/50 focus:ring-[#10b981] focus:border-[#10b981]";
   const defaultBorder = "border-white/12 focus:ring-[#10b981] focus:border-[#10b981]";
-  const inputStyle: React.CSSProperties = { pointerEvents: 'auto', touchAction: 'manipulation', WebkitUserSelect: 'text' };
+  const inputStyle: React.CSSProperties = {
+    pointerEvents: 'auto',
+    touchAction: 'manipulation',
+    WebkitUserSelect: 'text',
+    position: 'relative',
+    zIndex: 10000,
+  };
+
+  const isAnyFormOpen = isEditing || securityOpen;
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-[#0a1628] via-[#0a1e2a] to-[#061410]">
@@ -398,10 +433,19 @@ export default function StudentProfile() {
       <header className="sticky top-0 z-40 bg-[#10b981]/90 backdrop-blur-md shadow-lg shadow-emerald-900/20">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
 
-          {/* Left: Back (read-only) or Cancel (editing) */}
+          {/* Left: Back / Cancel */}
           {isEditing ? (
             <button
               onClick={handleCancel}
+              className="flex items-center justify-center gap-1.5 h-10 px-3 rounded-xl bg-white/15 hover:bg-white/25 text-white transition-colors flex-shrink-0 text-sm font-medium"
+              data-testid="button-back"
+            >
+              <X className="w-4 h-4" />
+              Cancel
+            </button>
+          ) : securityOpen ? (
+            <button
+              onClick={() => setSecurityOpen(false)}
               className="flex items-center justify-center gap-1.5 h-10 px-3 rounded-xl bg-white/15 hover:bg-white/25 text-white transition-colors flex-shrink-0 text-sm font-medium"
               data-testid="button-back"
             >
@@ -422,14 +466,14 @@ export default function StudentProfile() {
             <GraduationCap className="w-5 h-5 text-white/80 flex-shrink-0" />
             <div className="min-w-0">
               <p className="text-white font-bold text-sm leading-tight truncate">
-                {isEditing ? "Verification Details" : "My Profile"}
+                {isEditing ? "Verification Details" : securityOpen ? "Security" : "My Profile"}
               </p>
               <p className="text-emerald-100/70 text-[11px] truncate">{student.schoolName}</p>
             </div>
           </div>
 
           {/* Right: ⋮ menu (read-only mode only) */}
-          {!isEditing ? (
+          {!isAnyFormOpen ? (
             <div className="relative" ref={menuRef}>
               <button
                 onClick={() => setMenuOpen((v) => !v)}
@@ -491,7 +535,7 @@ export default function StudentProfile() {
 
                     {/* Security */}
                     <button
-                      onClick={() => { setSecurityOpen(true); setMenuOpen(false); }}
+                      onClick={handleOpenSecurity}
                       className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-white/8 transition-colors"
                       data-testid="menu-security"
                     >
@@ -517,12 +561,12 @@ export default function StudentProfile() {
         <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
 
           {/* ══ READ-ONLY VIEW ══ */}
-          {!isEditing && (
+          {!isEditing && !securityOpen && (
             <>
               <StatusBadge status={status} profile={profile} />
 
               {/* Identity Card */}
-              <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm overflow-hidden shadow-xl">
+              <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden shadow-xl">
                 <div className="px-5 py-6 flex items-center gap-5">
                   <div className="relative flex-shrink-0">
                     {photoToShow ? (
@@ -632,7 +676,7 @@ export default function StudentProfile() {
             </>
           )}
 
-          {/* ══ EDIT / INLINE MODE ══ */}
+          {/* ══ EDIT / INLINE MODE — VERIFICATION DETAILS ══ */}
           {isEditing && (
             <>
               {/* Verification limit banner */}
@@ -721,8 +765,11 @@ export default function StudentProfile() {
                 )}
               </div>
 
-              {/* Form fields card */}
-              <div className="rounded-2xl border border-[#10b981]/25 bg-white/5 overflow-hidden">
+              {/* Form fields card — no overflow-hidden to prevent Android keyboard clipping */}
+              <div
+                className="rounded-2xl border border-[#10b981]/25 bg-white/5"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <div className="px-5 py-4 border-b border-white/8 flex items-center gap-2">
                   <User className="w-4 h-4 text-[#10b981]" />
                   <h2 className="text-sm font-bold text-white">Verification Details</h2>
@@ -742,13 +789,13 @@ export default function StudentProfile() {
                         Full Name <span className="text-red-400">*</span>
                       </label>
                       <input
+                        ref={fullNameRef}
                         type="text"
                         value={form.fullName}
                         onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
                         placeholder="Full name as in certificate"
                         className={`${inputBase} ${editingBorder}`}
                         style={inputStyle}
-                        autoFocus
                         data-testid="input-full-name"
                       />
                     </div>
@@ -888,149 +935,140 @@ export default function StudentProfile() {
             </>
           )}
 
+          {/* ══ SECURITY / CHANGE PASSWORD — INLINE FULL-PAGE VIEW ══ */}
+          {securityOpen && (
+            <div
+              className="rounded-2xl border border-white/10 bg-[#0f2a1e]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header row */}
+              <div className="px-5 py-4 border-b border-white/8 flex items-center gap-3">
+                <Shield className="w-5 h-5 text-blue-400 flex-shrink-0" />
+                <h2 className="text-sm font-bold text-white">Change Password</h2>
+              </div>
+
+              <div className="p-5 space-y-4">
+                {/* Current Password */}
+                <div>
+                  <label className="text-xs font-medium text-white/50 uppercase tracking-wide mb-1.5 block">Current Password</label>
+                  <div className="relative">
+                    <input
+                      ref={currentPasswordRef}
+                      type={showCurrentPw ? "text" : "password"}
+                      value={passwordForm.currentPassword}
+                      onChange={(e) => setPasswordForm((f) => ({ ...f, currentPassword: e.target.value }))}
+                      placeholder="Enter current password"
+                      autoComplete="current-password"
+                      className={`${inputBase} ${defaultBorder} pr-10`}
+                      style={inputStyle}
+                      data-testid="input-current-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowCurrentPw((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 min-w-[44px] min-h-[44px] flex items-center justify-center"
+                      style={{ zIndex: 10001 }}
+                    >
+                      {showCurrentPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* New Password */}
+                <div>
+                  <label className="text-xs font-medium text-white/50 uppercase tracking-wide mb-1.5 block">New Password</label>
+                  <div className="relative">
+                    <input
+                      type={showNewPw ? "text" : "password"}
+                      value={passwordForm.newPassword}
+                      onChange={(e) => setPasswordForm((f) => ({ ...f, newPassword: e.target.value }))}
+                      placeholder="At least 6 characters"
+                      autoComplete="new-password"
+                      className={`${inputBase} pr-10 ${
+                        passwordForm.newPassword && passwordForm.newPassword.length < 6
+                          ? "border-red-400/40 focus:ring-red-400 focus:border-red-400"
+                          : defaultBorder
+                      }`}
+                      style={inputStyle}
+                      data-testid="input-new-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPw((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 min-w-[44px] min-h-[44px] flex items-center justify-center"
+                      style={{ zIndex: 10001 }}
+                    >
+                      {showNewPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  {passwordForm.newPassword && passwordForm.newPassword.length < 6 && (
+                    <p className="text-xs text-red-400 mt-1">Minimum 6 characters</p>
+                  )}
+                </div>
+
+                {/* Confirm Password */}
+                <div>
+                  <label className="text-xs font-medium text-white/50 uppercase tracking-wide mb-1.5 block">Confirm New Password</label>
+                  <div className="relative">
+                    <input
+                      type={showConfirmPw ? "text" : "password"}
+                      value={passwordForm.confirmPassword}
+                      onChange={(e) => setPasswordForm((f) => ({ ...f, confirmPassword: e.target.value }))}
+                      placeholder="Repeat new password"
+                      autoComplete="new-password"
+                      className={`${inputBase} pr-10 ${
+                        passwordForm.confirmPassword && passwordForm.confirmPassword !== passwordForm.newPassword
+                          ? "border-red-400/40 focus:ring-red-400 focus:border-red-400"
+                          : passwordForm.confirmPassword && passwordForm.confirmPassword === passwordForm.newPassword
+                          ? "border-[#10b981] focus:ring-[#10b981] focus:border-[#10b981]"
+                          : defaultBorder
+                      }`}
+                      style={inputStyle}
+                      data-testid="input-confirm-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPw((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 min-w-[44px] min-h-[44px] flex items-center justify-center"
+                      style={{ zIndex: 10001 }}
+                    >
+                      {showConfirmPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  {passwordForm.confirmPassword && passwordForm.confirmPassword !== passwordForm.newPassword && (
+                    <p className="text-xs text-red-400 mt-1">Passwords do not match</p>
+                  )}
+                  {passwordForm.confirmPassword && passwordForm.confirmPassword === passwordForm.newPassword && passwordForm.newPassword.length >= 6 && (
+                    <p className="text-xs text-[#10b981] mt-1 flex items-center gap-1">
+                      <CheckCircle className="w-3 h-3" /> Passwords match
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                  <button
+                    onClick={() => setSecurityOpen(false)}
+                    className="flex-1 flex items-center justify-center py-3 px-4 rounded-xl border border-white/15 text-white/60 text-sm font-medium hover:bg-white/8 transition-colors"
+                    data-testid="button-cancel-security"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleChangePassword}
+                    disabled={passwordMutation.isPending}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-[#10b981] hover:bg-emerald-600 text-white text-sm font-semibold transition-colors disabled:opacity-50 shadow-lg shadow-emerald-900/30"
+                    data-testid="button-change-password"
+                  >
+                    {passwordMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+                    Update Password
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
         </div>
       </main>
-
-      {/* ══ SECURITY MODAL (inline fixed, no Radix portal) ══ */}
-      {securityOpen && (
-        <div className="fixed inset-0 z-[1000] flex items-end sm:items-center justify-center p-4">
-          <div
-            className="absolute inset-0 bg-black/70"
-            onPointerDown={() => setSecurityOpen(false)}
-          />
-          <div
-            className="relative z-[1001] w-full max-w-md bg-[#0f2a1e] border border-white/10 rounded-2xl shadow-2xl overflow-hidden"
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="px-6 pt-6 pb-4 border-b border-white/8 flex items-center gap-3">
-              <Shield className="w-5 h-5 text-blue-400 flex-shrink-0" />
-              <h2 className="text-base font-semibold text-white">Change Password</h2>
-              <button
-                onClick={() => setSecurityOpen(false)}
-                className="ml-auto text-white/40 hover:text-white/70 transition-colors p-1 rounded-lg hover:bg-white/8"
-                data-testid="button-close-security-modal"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-          <div className="space-y-4 px-6 pb-6 pt-4">
-            {/* Current Password */}
-            <div>
-              <label className="text-xs font-medium text-white/50 uppercase tracking-wide mb-1.5 block">Current Password</label>
-              <div className="relative">
-                <input
-                  type={showCurrentPw ? "text" : "password"}
-                  value={passwordForm.currentPassword}
-                  onChange={(e) => setPasswordForm((f) => ({ ...f, currentPassword: e.target.value }))}
-                  placeholder="Enter current password"
-                  autoComplete="current-password"
-                  autoFocus
-                  className={`${inputBase} ${defaultBorder} pr-10`}
-                  style={inputStyle}
-                  data-testid="input-current-password"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowCurrentPw((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 min-w-[44px] min-h-[44px] flex items-center justify-center"
-                >
-                  {showCurrentPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
-            {/* New Password */}
-            <div>
-              <label className="text-xs font-medium text-white/50 uppercase tracking-wide mb-1.5 block">New Password</label>
-              <div className="relative">
-                <input
-                  type={showNewPw ? "text" : "password"}
-                  value={passwordForm.newPassword}
-                  onChange={(e) => setPasswordForm((f) => ({ ...f, newPassword: e.target.value }))}
-                  placeholder="At least 6 characters"
-                  autoComplete="new-password"
-                  className={`${inputBase} pr-10 ${
-                    passwordForm.newPassword && passwordForm.newPassword.length < 6
-                      ? "border-red-400/40 focus:ring-red-400 focus:border-red-400"
-                      : defaultBorder
-                  }`}
-                  style={inputStyle}
-                  data-testid="input-new-password"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowNewPw((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 min-w-[44px] min-h-[44px] flex items-center justify-center"
-                >
-                  {showNewPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              {passwordForm.newPassword && passwordForm.newPassword.length < 6 && (
-                <p className="text-xs text-red-400 mt-1">Minimum 6 characters</p>
-              )}
-            </div>
-
-            {/* Confirm Password */}
-            <div>
-              <label className="text-xs font-medium text-white/50 uppercase tracking-wide mb-1.5 block">Confirm New Password</label>
-              <div className="relative">
-                <input
-                  type={showConfirmPw ? "text" : "password"}
-                  value={passwordForm.confirmPassword}
-                  onChange={(e) => setPasswordForm((f) => ({ ...f, confirmPassword: e.target.value }))}
-                  placeholder="Repeat new password"
-                  autoComplete="new-password"
-                  className={`${inputBase} pr-10 ${
-                    passwordForm.confirmPassword && passwordForm.confirmPassword !== passwordForm.newPassword
-                      ? "border-red-400/40 focus:ring-red-400 focus:border-red-400"
-                      : passwordForm.confirmPassword && passwordForm.confirmPassword === passwordForm.newPassword
-                      ? "border-[#10b981] focus:ring-[#10b981] focus:border-[#10b981]"
-                      : defaultBorder
-                  }`}
-                  style={inputStyle}
-                  data-testid="input-confirm-password"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmPw((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 min-w-[44px] min-h-[44px] flex items-center justify-center"
-                >
-                  {showConfirmPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              {passwordForm.confirmPassword && passwordForm.confirmPassword !== passwordForm.newPassword && (
-                <p className="text-xs text-red-400 mt-1">Passwords do not match</p>
-              )}
-              {passwordForm.confirmPassword && passwordForm.confirmPassword === passwordForm.newPassword && passwordForm.newPassword.length >= 6 && (
-                <p className="text-xs text-[#10b981] mt-1 flex items-center gap-1">
-                  <CheckCircle className="w-3 h-3" /> Passwords match
-                </p>
-              )}
-            </div>
-
-            <div className="flex flex-col sm:flex-row gap-3 pt-2">
-              <button
-                onClick={() => setSecurityOpen(false)}
-                className="flex-1 flex items-center justify-center py-3 px-4 rounded-xl border border-white/15 text-white/60 text-sm font-medium hover:bg-white/8 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleChangePassword}
-                disabled={passwordMutation.isPending}
-                className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-[#10b981] hover:bg-emerald-600 text-white text-sm font-semibold transition-colors disabled:opacity-50 shadow-lg shadow-emerald-900/30"
-                data-testid="button-change-password"
-              >
-                {passwordMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
-                Update Password
-              </button>
-            </div>
-          </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
