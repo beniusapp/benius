@@ -236,21 +236,15 @@ type TableProps = {
   students: AStudent[];
   subjectList: string[];
   sliceFilter: SliceFilter;
-  search: string;
   passThreshold: number;
   onStudentClick: (s: AStudent) => void;
 };
 
-const HeatmapTable = memo(function HeatmapTable({ students, subjectList, sliceFilter, search, passThreshold, onStudentClick }: TableProps) {
+const HeatmapTable = memo(function HeatmapTable({ students, subjectList, sliceFilter, passThreshold, onStudentClick }: TableProps) {
   const rows = useMemo(() => {
-    let list = students;
-    if (sliceFilter) list = list.filter(s => s.passStatus === sliceFilter);
-    if (search) {
-      const q = search.toLowerCase();
-      list = list.filter(s => s.name.toLowerCase().includes(q) || s.dsid.toLowerCase().includes(q));
-    }
-    return list;
-  }, [students, sliceFilter, search]);
+    if (sliceFilter) return students.filter(s => s.passStatus === sliceFilter);
+    return students;
+  }, [students, sliceFilter]);
 
   const cols = 3 + subjectList.length + 2;
 
@@ -396,20 +390,44 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
   });
 
   const students = analyticsData?.students ?? [];
-  const subjectAverages = analyticsData?.subjectAverages ?? [];
+  const apiSubjectAverages = analyticsData?.subjectAverages ?? [];
   const subjectList = analyticsData?.subjectList ?? [];
   const passThreshold = analyticsData?.passThreshold ?? 35;
 
+  const searchFilteredStudents = useMemo(() => {
+    if (!search) return students;
+    const q = search.toLowerCase();
+    return students.filter(s => s.name.toLowerCase().includes(q) || s.dsid.toLowerCase().includes(q));
+  }, [students, search]);
+
+  const subjectAverages = useMemo(() => {
+    if (!search) return apiSubjectAverages;
+    const sums: Record<string, { sum: number; cnt: number }> = {};
+    for (const s of searchFilteredStudents) {
+      for (const [subj, score] of Object.entries(s.subjectScores)) {
+        if (!score.isAbsent && score.totalMarks > 0) {
+          if (!sums[subj]) sums[subj] = { sum: 0, cnt: 0 };
+          sums[subj].sum += (score.marks / score.totalMarks) * 100;
+          sums[subj].cnt += 1;
+        }
+      }
+    }
+    return Object.entries(sums).map(([subject, v]) => ({
+      subject,
+      average: parseFloat((v.sum / v.cnt).toFixed(1)),
+    }));
+  }, [search, apiSubjectAverages, searchFilteredStudents]);
+
   const kpi = useMemo(() => {
-    const filtered = sliceFilter ? students.filter(s => s.passStatus === sliceFilter) : students;
-    const pass = students.filter(s => s.passStatus === "PASS").length;
-    const fail = students.filter(s => s.passStatus === "FAIL").length;
-    const grace = students.filter(s => s.passStatus === "GRACE_PASS").length;
-    const avg = students.length > 0
-      ? (students.reduce((s, r) => s + r.percentage, 0) / students.length).toFixed(1)
+    const base = searchFilteredStudents;
+    const pass = base.filter(s => s.passStatus === "PASS").length;
+    const fail = base.filter(s => s.passStatus === "FAIL").length;
+    const grace = base.filter(s => s.passStatus === "GRACE_PASS").length;
+    const avg = base.length > 0
+      ? (base.reduce((acc, r) => acc + r.percentage, 0) / base.length).toFixed(1)
       : "0";
-    return { total: students.length, pass, fail, grace, avg, filteredCount: filtered.length };
-  }, [students, sliceFilter]);
+    return { total: base.length, pass, fail, grace, avg };
+  }, [searchFilteredStudents]);
 
   const noData = !filterClass;
   const hasData = !!analyticsData && students.length > 0;
@@ -572,7 +590,8 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
                   <div>
                     <h3 className="font-semibold text-white text-sm">Performance Heatmap</h3>
                     <p className="text-white/40 text-xs">
-                      {sliceFilter ? `Showing ${kpi.filteredCount} ${sliceFilter.replace("_"," ")} student(s)` : `${kpi.total} students`}
+                      {`${kpi.total} student(s)`}
+                      {sliceFilter ? ` · ${sliceFilter.replace("_"," ")} only` : ""}
                       {search ? ` · filtered by "${search}"` : ""}
                       {" · Click a name to see their journey"}
                     </p>
@@ -585,10 +604,9 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
                 </div>
                 <div className="p-0">
                   <HeatmapTable
-                    students={students}
+                    students={searchFilteredStudents}
                     subjectList={subjectList}
                     sliceFilter={sliceFilter}
-                    search={search}
                     passThreshold={passThreshold}
                     onStudentClick={setSelectedStudent}
                   />

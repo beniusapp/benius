@@ -2306,10 +2306,13 @@ export class DatabaseStorage {
       const percentage = d.total > 0 ? parseFloat(((d.obtained / d.total) * 100).toFixed(2)) : 0;
       const grade = await this.resolveGrade(schoolId, cls, percentage);
       const overrideStatus = overrideMap[studentId] || null;
-      let passStatus: "PASS" | "FAIL" | "GRACE_PASS" = percentage >= grade.passPercentage ? "PASS" : "FAIL";
+      let passStatus: "PASS" | "FAIL" | "GRACE_PASS";
       if (overrideStatus === "GRACE_PASS") passStatus = "GRACE_PASS";
       else if (overrideStatus === "PASS") passStatus = "PASS";
       else if (overrideStatus === "FAIL" || overrideStatus === "REPEAT") passStatus = "FAIL";
+      else if (percentage >= grade.passPercentage) passStatus = "PASS";
+      else if (percentage >= grade.passPercentage - 5) passStatus = "GRACE_PASS";
+      else passStatus = "FAIL";
       return {
         studentId, dsid: d.dsid, name: d.name, subjectScores: d.subjectScores,
         totalObtained: d.obtained, totalMax: d.total, percentage,
@@ -2318,6 +2321,9 @@ export class DatabaseStorage {
       };
     }));
 
+    if (!opts.examType) {
+      for (const s of studentList) s.subjectScores = {};
+    }
     if (opts.subject) studentList = studentList.filter(s => opts.subject! in s.subjectScores);
     if (opts.search) {
       const q = opts.search.toLowerCase();
