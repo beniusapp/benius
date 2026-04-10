@@ -1,0 +1,49 @@
+Refactor the /admin-dashboard/performance-analytics module into a high-end, interactive Academic Intelligence Dashboard with real-time cross-filtering capabilities.
+
+1. THE MULTI-DIMENSIONAL FILTER CONSOLE:
+
+Implement a dynamic, horizontal filter bar at the top with 'Chain-Linked' dropdowns:
+
+Class Selection: Automatically updates the 'Section' list.
+
+Section Selection: Narrow down to 6A, 6B, etc.
+
+Subject & Exam Selector: Filter by Physics, Math, Midterm, or Finals.
+
+Direct Student Search: A searchable input for Student Name or DSID to pull a single-student deep-dive.
+
+2. INTERACTIVE DATA VISUALIZATION (Chart.js / Recharts):
+
+The Performance Pie: A vibrant chart showing the ratio of Pass (Emerald), Fail (Rose), and Grace Pass (Amber) students.
+
+CROSS-FILTERING LOGIC (Crucial): Clicking on a specific 'slice' of the Pie Chart (e.g., clicking the 'Fail' slice) must instantly filter the student table below to show only those specific students.
+
+Subject Mastery Bar Graph: A comparison chart showing average marks across all subjects for the selected class/section.
+
+3. THE PERFORMANCE HEATMAP (Enhanced Table):
+
+Columns: DSID, Name, Subject-wise Marks, Total Percentage, and Grade.
+
+Visual Markers: Apply conditional formatting to the 'Percentage' column:
+
+80%+: Emerald Green text with a 'High Performer' badge.
+
+35-40%: Amber warning text.
+
+Below 35%: Bold Rose Red text for immediate attention.
+
+Sticky Interaction: Keep headers fixed while scrolling through large class lists (up to 5,000 students).
+
+4. STUDENT ANALYTICS MODAL:
+
+When a student's name is clicked in the table, open a professional Modal showing their 'Progress Journey': A line graph showing their performance trend from the first exam to the current one.
+
+5. UI/UX & TECHNICAL STANDARDS:
+
+Theme: Benius Deep Navy background with Glassmorphic card containers. Primary actions in Emerald Green (#10b981).
+
+Performance: Use memoization for the table and charts to ensure zero lag on the Motorola 60 Fusion.
+
+Security: Every API call and SQL query must be strictly scoped with WHERE school_id = ?.
+
+Export: Add a 'Download Analytics' button to export the current filtered view as a professional PDF report.
