@@ -162,11 +162,14 @@ function InfoRow({ label, value, mono }: { label: string; value: string; mono?: 
   );
 }
 
-function ReadOnlyField({ label, value }: { label: string; value: string }) {
+function ReadOnlyField({ label, value, testId }: { label: string; value: string; testId?: string }) {
   return (
     <div>
       <label className="text-xs font-medium text-white/40 mb-1.5 block">{label}</label>
-      <div className="w-full px-3 py-2.5 rounded-xl bg-white/4 border border-white/8 text-white/50 text-sm flex items-center gap-2">
+      <div
+        className="w-full px-3 py-2.5 rounded-xl bg-white/4 border border-white/8 text-white/50 text-sm flex items-center gap-2"
+        data-testid={testId}
+      >
         <Lock className="w-3 h-3 text-white/25 flex-shrink-0" />
         <span>{value || "—"}</span>
       </div>
@@ -406,7 +409,7 @@ export default function StudentProfile() {
             <button
               onClick={handleCancel}
               className="flex items-center justify-center gap-1.5 h-10 px-3 rounded-xl bg-white/15 hover:bg-white/25 text-white transition-colors flex-shrink-0 text-sm font-medium"
-              data-testid="button-cancel"
+              data-testid="button-back"
             >
               <X className="w-4 h-4" />
               Cancel
@@ -794,10 +797,10 @@ export default function StudentProfile() {
                     </div>
 
                     {/* Class — read-only (system-assigned) */}
-                    <ReadOnlyField label="Class (System-assigned)" value={`Class ${student.class}`} />
+                    <ReadOnlyField label="Class (System-assigned)" value={`Class ${student.class}`} testId="select-class" />
 
                     {/* Section — read-only (system-assigned) */}
-                    <ReadOnlyField label="Section (System-assigned)" value={`Section ${student.section}`} />
+                    <ReadOnlyField label="Section (System-assigned)" value={`Section ${student.section}`} testId="select-section" />
 
                     {/* Father's Name — editable */}
                     <div>
@@ -871,36 +874,42 @@ export default function StudentProfile() {
                   Cancel
                 </button>
 
-                {canSubmit && !isVerificationLocked && (
+                <div className="flex-1 flex flex-col gap-1">
                   <button
                     onClick={handleSubmit}
-                    disabled={submitMutation.isPending}
-                    className="flex-1 flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl bg-[#10b981] text-white text-sm font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-50 shadow-lg shadow-emerald-900/30"
+                    disabled={!canSubmit || isVerificationLocked || submitMutation.isPending}
+                    className={`w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl text-sm font-semibold transition-colors disabled:cursor-not-allowed ${
+                      !canSubmit
+                        ? "bg-yellow-400/15 border border-yellow-400/30 text-yellow-300 opacity-80"
+                        : isVerificationLocked
+                        ? "bg-red-400/15 border border-red-400/25 text-red-300 opacity-80"
+                        : "bg-[#10b981] hover:bg-emerald-600 text-white shadow-lg shadow-emerald-900/30"
+                    }`}
                     data-testid="button-submit"
                   >
-                    {submitMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-                    Submit for Approval
-                  </button>
-                )}
-
-                {!canSubmit && (
-                  <div className="flex-1 flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl border border-yellow-400/30 bg-yellow-400/8 text-yellow-300 text-sm font-semibold">
-                    <Clock className="w-4 h-4" />
-                    Awaiting Review
-                  </div>
-                )}
-
-                {isVerificationLocked && canSubmit && (
-                  <div className="flex-1 flex flex-col items-center justify-center gap-1 py-3 px-4 rounded-xl border border-red-400/25 bg-red-400/8 text-red-300 text-sm font-semibold">
-                    <div className="flex items-center gap-2">
+                    {submitMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : !canSubmit ? (
+                      <Clock className="w-4 h-4" />
+                    ) : isVerificationLocked ? (
                       <Lock className="w-4 h-4" />
-                      Monthly Limit Reached
-                    </div>
-                    <p className="text-[10px] font-normal text-red-400/70 text-center">
-                      Please contact Admin to resubmit
+                    ) : (
+                      <FileText className="w-4 h-4" />
+                    )}
+                    {!canSubmit
+                      ? "Awaiting Review"
+                      : isVerificationLocked
+                      ? "Monthly limit (3) reached"
+                      : submitMutation.isPending
+                      ? "Submitting…"
+                      : "Submit for Approval"}
+                  </button>
+                  {isVerificationLocked && canSubmit && (
+                    <p className="text-[10px] text-red-400/70 text-center">
+                      Monthly limit (3) reached. Please contact Admin.
                     </p>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </>
           )}
