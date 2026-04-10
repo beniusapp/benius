@@ -472,7 +472,9 @@ export const promotionOverrides = pgTable("promotion_overrides", {
   nextClass: text("next_class").notNull(),
   nextSection: text("next_section").notNull(),
   overriddenAt: timestamp("overridden_at").notNull().defaultNow(),
-});
+}, (table) => [
+  uniqueIndex("promotion_override_unique").on(table.schoolId, table.studentId, table.examType, table.class, table.section),
+]);
 
 export const insertPromotionOverrideSchema = createInsertSchema(promotionOverrides).omit({ id: true, overriddenAt: true });
 export type InsertPromotionOverride = z.infer<typeof insertPromotionOverrideSchema>;

@@ -2064,7 +2064,7 @@ export class DatabaseStorage {
     totalObtained: number; totalMax: number; percentage: number; subjects: string[];
   }[]> {
     const rows = await db.select().from(examScores)
-      .innerJoin(students, eq(examScores.studentId, students.id))
+      .innerJoin(students, and(eq(examScores.studentId, students.id), eq(students.schoolId, schoolId)))
       .where(and(
         eq(examScores.schoolId, schoolId),
         eq(examScores.class, cls),
@@ -2096,20 +2096,11 @@ export class DatabaseStorage {
     schoolId: number; studentId: number; examType: string; class: string; section: string;
     overrideStatus: string; nextClass: string; nextSection: string;
   }): Promise<void> {
-    const existing = await db.select().from(promotionOverrides).where(and(
-      eq(promotionOverrides.schoolId, data.schoolId),
-      eq(promotionOverrides.studentId, data.studentId),
-      eq(promotionOverrides.examType, data.examType),
-      eq(promotionOverrides.class, data.class),
-      eq(promotionOverrides.section, data.section),
-    ));
-    if (existing.length > 0) {
-      await db.update(promotionOverrides)
-        .set({ overrideStatus: data.overrideStatus, nextClass: data.nextClass, nextSection: data.nextSection, overriddenAt: new Date() })
-        .where(eq(promotionOverrides.id, existing[0].id));
-    } else {
-      await db.insert(promotionOverrides).values(data);
-    }
+    await db.insert(promotionOverrides).values(data)
+      .onConflictDoUpdate({
+        target: [promotionOverrides.schoolId, promotionOverrides.studentId, promotionOverrides.examType, promotionOverrides.class, promotionOverrides.section],
+        set: { overrideStatus: data.overrideStatus, nextClass: data.nextClass, nextSection: data.nextSection, overriddenAt: new Date() },
+      });
   }
 
   async getPromotionOverrides(schoolId: number, cls: string, section: string, examType: string): Promise<PromotionOverride[]> {
