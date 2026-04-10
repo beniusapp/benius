@@ -1,0 +1,43 @@
+Perform a high-end refactor of the Teacher Profile and Student Profile modules to implement a professional Identity Management System with strict administrative controls and modern UI/UX.
+
+1. THE TEACHER COMMAND CENTER (/teacher-dashboard/profile):
+
+Visual Identity: Create a premium avatar upload section. Include a Crop & Save interface (using react-easy-crop) to ensure the teacher’s photo is centered and professional.
+
+Global Reflection: Once saved, the image must update the staff table and reflect everywhere Bubai appears (Navbar, Attendance registers, Admin staff list).
+
+Security Section (Bottom): Add a 'Security & Credentials' card.
+
+Password Logic: Fields for Current Password, New Password, and Confirm New Password.
+
+Validation: Ensure the new password matches the confirmation and the current password is correct before saving.
+
+2. THE STUDENT 'GATED' PROFILE (/student-profile):
+
+Main Dashboard: Design a Read-Only main profile view. The student can see their details (Name, Class, DSID, etc.) but cannot edit anything directly here.
+
+The Action Menu (Right-Side 'Hamburger' ⋮): Add a three-line menu icon that opens two professional options:
+
+A. Submit for Verification:
+
+On click, open an 'Edit Mode' where the student can update their details and upload an image.
+
+Verification Limit: Implement logic to track verification_requests_this_month. The student is only allowed 3 submissions per month. Show a counter: 'You have 2 attempts remaining this month.'
+
+The Image Gate: The student's photo must remain 'Pending' and only reflect globally (ID cards, teacher lists) AFTER a teacher/admin clicks 'Verify' in their portal.
+
+B. Security: Opens the Password Update form (Current/New/Confirm).
+
+3. DATABASE & LOGIC (Multi-Tenancy):
+
+Audit Table: Create a verification_logs table to track when Virat (Student) submits a request, ensuring the 3-per-month limit is strictly enforced using school_id and dsid.
+
+Global Sync: Use a centralized state or re-fetch logic so that once Bubai (Teacher) or Virat (Student - after verification) updates a photo, it is instantly visible school-wide.
+
+4. MODERN PROFESSIONAL UI/UX:
+
+Theme: Benius Emerald Green (#10b981) and Deep Slate. Use Glassmorphism for cards and smooth Framer Motion transitions for the menu and modals.
+
+Identity Styling: Use high-quality circular avatars with a 'Verified' checkmark badge for students whose photos have passed approval.
+
+Device Focus: Optimized for Motorola 60 Fusion with touch-friendly menu buttons and a responsive cropping tool.
