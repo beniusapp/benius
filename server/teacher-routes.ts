@@ -1942,7 +1942,7 @@ export function registerTeacherRoutes(app: Express) {
         userId: req.session.userId!,
         action: "edit",
         snapshot: JSON.stringify({ before, after: updated }),
-      }).catch(() => {});
+      }).catch((logErr: Error) => console.warn(`[asset-log] Failed to log edit for asset ${id}:`, logErr.message));
 
       res.json(updated);
     } catch (error: any) {
@@ -1969,7 +1969,7 @@ export function registerTeacherRoutes(app: Express) {
         userId: req.session.userId!,
         action: "delete",
         snapshot: JSON.stringify({ before }),
-      }).catch(() => {});
+      }).catch((logErr: Error) => console.warn(`[asset-log] Failed to log delete for asset ${id}:`, logErr.message));
 
       res.json({ message: "Asset deleted" });
     } catch (error: any) {

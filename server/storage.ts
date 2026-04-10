@@ -2192,9 +2192,13 @@ export class DatabaseStorage {
 
   // ===== ASSET LIFECYCLE MANAGER =====
 
-  async getAssets(schoolId: number): Promise<SchoolAsset[]> {
+  async getAssets(schoolId: number, filters?: { condition?: string; location?: string; search?: string }): Promise<SchoolAsset[]> {
+    const conditions: SQL<unknown>[] = [eq(schoolAssets.schoolId, schoolId)];
+    if (filters?.condition) conditions.push(eq(schoolAssets.condition, filters.condition));
+    if (filters?.location) conditions.push(eq(schoolAssets.location, filters.location));
+    if (filters?.search) conditions.push(or(ilike(schoolAssets.name, `%${filters.search}%`), ilike(schoolAssets.category, `%${filters.search}%`))!);
     return await db.select().from(schoolAssets)
-      .where(eq(schoolAssets.schoolId, schoolId))
+      .where(and(...conditions))
       .orderBy(desc(schoolAssets.createdAt));
   }
 
