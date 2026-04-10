@@ -5,6 +5,7 @@ import {
   libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata,
   studentLeaveRequests, auditLogs, visitorLogs, studentProfiles, teacherAllocations,
   promotionOverrides, gradingTiers, gradingRules, academicHistory,
+  schoolAssets, assetLogs,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
@@ -26,6 +27,8 @@ import {
   type GradingTier, type InsertGradingTier,
   type GradingRule,
   type InsertAcademicHistory,
+  type SchoolAsset, type InsertSchoolAsset,
+  type InsertAssetLog,
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
@@ -1609,11 +1612,6 @@ export class DatabaseStorage {
     return { total, present, absent, leave, percentage };
   }
 
-  // ===== COMPLAINTS BY SCHOOL (Admin) =====
-  async getComplaintsBySchool(schoolId: number): Promise<Complaint[]> {
-    return db.select().from(complaints).where(eq(complaints.schoolId, schoolId)).orderBy(desc(complaints.createdAt));
-  }
-
   // ===== AUDIT LOGS READER =====
   async getAuditLogsBySchool(schoolId: number, limit = 100): Promise<AuditLog[]> {
     return db.select().from(auditLogs).where(eq(auditLogs.schoolId, schoolId)).orderBy(desc(auditLogs.createdAt)).limit(limit);
@@ -2190,6 +2188,46 @@ export class DatabaseStorage {
     return await db.select().from(academicHistory)
       .where(conditions)
       .orderBy(desc(academicHistory.archivedAt));
+  }
+
+  // ===== ASSET LIFECYCLE MANAGER =====
+
+  async getAssets(schoolId: number): Promise<SchoolAsset[]> {
+    return await db.select().from(schoolAssets)
+      .where(eq(schoolAssets.schoolId, schoolId))
+      .orderBy(desc(schoolAssets.createdAt));
+  }
+
+  async createAsset(data: InsertSchoolAsset): Promise<SchoolAsset> {
+    const [asset] = await db.insert(schoolAssets).values(data).returning();
+    const code = `AST-${String(asset.id).padStart(4, "0")}`;
+    const [updated] = await db.update(schoolAssets).set({ assetCode: code }).where(eq(schoolAssets.id, asset.id)).returning();
+    return updated;
+  }
+
+  async updateAsset(id: number, schoolId: number, data: { quantity?: number; condition?: string; location?: string }): Promise<SchoolAsset | null> {
+    const [updated] = await db.update(schoolAssets)
+      .set({ ...data, updatedAt: new Date() })
+      .where(and(eq(schoolAssets.id, id), eq(schoolAssets.schoolId, schoolId)))
+      .returning();
+    return updated || null;
+  }
+
+  async deleteAsset(id: number, schoolId: number): Promise<boolean> {
+    const result = await db.delete(schoolAssets)
+      .where(and(eq(schoolAssets.id, id), eq(schoolAssets.schoolId, schoolId)))
+      .returning();
+    return result.length > 0;
+  }
+
+  async getAssetById(id: number, schoolId: number): Promise<SchoolAsset | null> {
+    const [asset] = await db.select().from(schoolAssets)
+      .where(and(eq(schoolAssets.id, id), eq(schoolAssets.schoolId, schoolId)));
+    return asset || null;
+  }
+
+  async logAssetActivity(entry: InsertAssetLog): Promise<void> {
+    await db.insert(assetLogs).values(entry);
   }
 
   // ===== TIER-AWARE GRADING HELPER =====

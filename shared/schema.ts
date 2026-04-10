@@ -510,6 +510,37 @@ export const insertGradingRuleSchema = createInsertSchema(gradingRules).omit({ i
 export type InsertGradingRule = z.infer<typeof insertGradingRuleSchema>;
 export type GradingRule = typeof gradingRules.$inferSelect;
 
+export const schoolAssets = pgTable("school_assets", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  assetCode: varchar("asset_code", { length: 20 }).notNull().default(""),
+  name: text("name").notNull(),
+  category: text("category").notNull(),
+  quantity: integer("quantity").notNull().default(0),
+  condition: text("condition").notNull().default("Good"),
+  location: text("location").notNull().default(""),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertSchoolAssetSchema = createInsertSchema(schoolAssets).omit({ id: true, assetCode: true, createdAt: true, updatedAt: true });
+export type InsertSchoolAsset = z.infer<typeof insertSchoolAssetSchema>;
+export type SchoolAsset = typeof schoolAssets.$inferSelect;
+
+export const assetLogs = pgTable("asset_logs", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  assetId: integer("asset_id").notNull(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  action: text("action").notNull(),
+  snapshot: text("snapshot"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertAssetLogSchema = createInsertSchema(assetLogs).omit({ id: true, createdAt: true });
+export type InsertAssetLog = z.infer<typeof insertAssetLogSchema>;
+export type AssetLog = typeof assetLogs.$inferSelect;
+
 export const academicHistory = pgTable("academic_history", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),

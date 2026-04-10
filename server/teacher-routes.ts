@@ -1879,4 +1879,101 @@ export function registerTeacherRoutes(app: Express) {
     if (!profile) return res.status(500).json({ message: "Failed to reject profile" });
     res.json(profile);
   });
+
+  // ===== ASSET LIFECYCLE MANAGER =====
+
+  const createAssetSchema = z.object({
+    name: z.string().min(1),
+    category: z.string().min(1),
+    quantity: z.number().int().min(0),
+    condition: z.enum(["New", "Good", "Fair", "Poor", "Broken"]),
+    location: z.string().min(1),
+  });
+
+  const updateAssetSchema = z.object({
+    quantity: z.number().int().min(0).optional(),
+    condition: z.enum(["New", "Good", "Fair", "Poor", "Broken"]).optional(),
+    location: z.string().min(1).optional(),
+  });
+
+  app.get("/api/admin/assets", async (req, res) => {
+    try {
+      if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+      const schoolId = req.session.schoolId!;
+      const assets = await storage.getAssets(schoolId);
+      res.json(assets);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to fetch assets" });
+    }
+  });
+
+  app.post("/api/admin/assets", async (req, res) => {
+    try {
+      if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+      const schoolId = req.session.schoolId!;
+      const parsed = createAssetSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+      const asset = await storage.createAsset({ ...parsed.data, schoolId });
+      res.status(201).json(asset);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to create asset" });
+    }
+  });
+
+  app.patch("/api/admin/assets/:id", async (req, res) => {
+    try {
+      if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+      const schoolId = req.session.schoolId!;
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid asset ID" });
+
+      const parsed = updateAssetSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+      const before = await storage.getAssetById(id, schoolId);
+      if (!before) return res.status(404).json({ message: "Asset not found" });
+
+      const updated = await storage.updateAsset(id, schoolId, parsed.data);
+      if (!updated) return res.status(404).json({ message: "Asset not found" });
+
+      await storage.logAssetActivity({
+        schoolId,
+        assetId: id,
+        userId: req.session.userId!,
+        action: "edit",
+        snapshot: JSON.stringify({ before, after: updated }),
+      }).catch(() => {});
+
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to update asset" });
+    }
+  });
+
+  app.delete("/api/admin/assets/:id", async (req, res) => {
+    try {
+      if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+      const schoolId = req.session.schoolId!;
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid asset ID" });
+
+      const before = await storage.getAssetById(id, schoolId);
+      if (!before) return res.status(404).json({ message: "Asset not found" });
+
+      const deleted = await storage.deleteAsset(id, schoolId);
+      if (!deleted) return res.status(404).json({ message: "Asset not found" });
+
+      await storage.logAssetActivity({
+        schoolId,
+        assetId: id,
+        userId: req.session.userId!,
+        action: "delete",
+        snapshot: JSON.stringify({ before }),
+      }).catch(() => {});
+
+      res.json({ message: "Asset deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to delete asset" });
+    }
+  });
 }
