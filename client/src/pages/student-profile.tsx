@@ -386,9 +386,10 @@ export default function StudentProfile() {
     passwordMutation.mutate();
   }
 
-  const inputBase = "w-full px-3 py-2.5 rounded-xl bg-white/6 border text-white placeholder:text-white/25 text-sm focus:outline-none focus:ring-2 transition-colors";
-  const editingBorder = "border-[#10b981]/50 focus:ring-[#10b981]/40";
-  const defaultBorder = "border-white/12 focus:ring-[#10b981]/30";
+  const inputBase = "w-full px-3 py-2.5 rounded-xl bg-white/6 border text-white placeholder:text-white/25 text-sm focus:outline-none focus:ring-2 focus:ring-offset-0 transition-colors";
+  const editingBorder = "border-[#10b981]/50 focus:ring-[#10b981] focus:border-[#10b981]";
+  const defaultBorder = "border-white/12 focus:ring-[#10b981] focus:border-[#10b981]";
+  const inputStyle: React.CSSProperties = { pointerEvents: 'auto', touchAction: 'manipulation', WebkitUserSelect: 'text' };
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-[#0a1628] via-[#0a1e2a] to-[#061410]">
@@ -746,6 +747,8 @@ export default function StudentProfile() {
                         onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
                         placeholder="Full name as in certificate"
                         className={`${inputBase} ${editingBorder}`}
+                        style={inputStyle}
+                        autoFocus
                         data-testid="input-full-name"
                       />
                     </div>
@@ -759,6 +762,7 @@ export default function StudentProfile() {
                         onChange={(e) => setForm((f) => ({ ...f, rollNo: e.target.value }))}
                         placeholder="e.g. 01"
                         className={`${inputBase} ${editingBorder}`}
+                        style={inputStyle}
                         data-testid="input-roll-no"
                       />
                     </div>
@@ -780,6 +784,7 @@ export default function StudentProfile() {
                         onChange={(e) => setForm((f) => ({ ...f, fatherName: e.target.value }))}
                         placeholder="Father's full name"
                         className={`${inputBase} ${editingBorder}`}
+                        style={inputStyle}
                         data-testid="input-father-name"
                       />
                     </div>
@@ -795,6 +800,7 @@ export default function StudentProfile() {
                         onChange={(e) => setForm((f) => ({ ...f, motherName: e.target.value }))}
                         placeholder="Mother's full name"
                         className={`${inputBase} ${editingBorder}`}
+                        style={inputStyle}
                         data-testid="input-mother-name"
                       />
                     </div>
@@ -811,6 +817,7 @@ export default function StudentProfile() {
                       placeholder="Full residential address"
                       rows={3}
                       className={`${inputBase} ${editingBorder} resize-none`}
+                      style={inputStyle}
                       data-testid="input-address"
                     />
                   </div>
@@ -886,12 +893,15 @@ export default function StudentProfile() {
 
       {/* ══ SECURITY MODAL (inline fixed, no Radix portal) ══ */}
       {securityOpen && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+        <div className="fixed inset-0 z-[1000] flex items-end sm:items-center justify-center p-4">
           <div
             className="absolute inset-0 bg-black/70"
-            onClick={() => setSecurityOpen(false)}
+            onPointerDown={() => setSecurityOpen(false)}
           />
-          <div className="relative z-10 w-full max-w-md bg-[#0f2a1e] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+          <div
+            className="relative z-[1001] w-full max-w-md bg-[#0f2a1e] border border-white/10 rounded-2xl shadow-2xl overflow-hidden"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
             {/* Header */}
             <div className="px-6 pt-6 pb-4 border-b border-white/8 flex items-center gap-3">
               <Shield className="w-5 h-5 text-blue-400 flex-shrink-0" />
@@ -916,7 +926,9 @@ export default function StudentProfile() {
                   onChange={(e) => setPasswordForm((f) => ({ ...f, currentPassword: e.target.value }))}
                   placeholder="Enter current password"
                   autoComplete="current-password"
+                  autoFocus
                   className={`${inputBase} ${defaultBorder} pr-10`}
+                  style={inputStyle}
                   data-testid="input-current-password"
                 />
                 <button
@@ -941,9 +953,10 @@ export default function StudentProfile() {
                   autoComplete="new-password"
                   className={`${inputBase} pr-10 ${
                     passwordForm.newPassword && passwordForm.newPassword.length < 6
-                      ? "border-red-400/40 focus:ring-red-400/30"
+                      ? "border-red-400/40 focus:ring-red-400 focus:border-red-400"
                       : defaultBorder
                   }`}
+                  style={inputStyle}
                   data-testid="input-new-password"
                 />
                 <button
@@ -971,11 +984,12 @@ export default function StudentProfile() {
                   autoComplete="new-password"
                   className={`${inputBase} pr-10 ${
                     passwordForm.confirmPassword && passwordForm.confirmPassword !== passwordForm.newPassword
-                      ? "border-red-400/40 focus:ring-red-400/30"
+                      ? "border-red-400/40 focus:ring-red-400 focus:border-red-400"
                       : passwordForm.confirmPassword && passwordForm.confirmPassword === passwordForm.newPassword
-                      ? "border-[#10b981]/40 focus:ring-[#10b981]/30"
+                      ? "border-[#10b981] focus:ring-[#10b981] focus:border-[#10b981]"
                       : defaultBorder
                   }`}
+                  style={inputStyle}
                   data-testid="input-confirm-password"
                 />
                 <button
