@@ -4,6 +4,7 @@ import {
   complaints, complaintNotes, examScores, galleryItems, calendarEvents,
   libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata,
   studentLeaveRequests, auditLogs, visitorLogs, studentProfiles, teacherAllocations,
+  promotionOverrides,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
@@ -21,6 +22,7 @@ import {
   type AuditLog, type InsertAuditLog,
   type VisitorLog, type InsertVisitorLog,
   type StudentProfile, type InsertStudentProfile,
+  type PromotionOverride,
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
@@ -2053,6 +2055,82 @@ export class DatabaseStorage {
     const overallPercent = workingDays > 0 ? Math.round((effectivePresent / workingDays) * 1000) / 10 : 0;
 
     return { overallPercent, workingDays, totalPresent, totalAbsent, totalHalfDay, totalLeave };
+  }
+
+  // ===== ACADEMIC ADVANCEMENT WIZARD =====
+
+  async getExamAggregated(schoolId: number, cls: string, section: string, examType: string): Promise<{
+    studentId: number; dsid: string; name: string;
+    totalObtained: number; totalMax: number; percentage: number; subjects: string[];
+  }[]> {
+    const rows = await db.select().from(examScores)
+      .innerJoin(students, eq(examScores.studentId, students.id))
+      .where(and(
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.class, cls),
+        eq(examScores.section, section),
+        eq(examScores.examType, examType),
+      ));
+
+    const byStudent: Record<number, { dsid: string; name: string; obtained: number; total: number; subjects: string[] }> = {};
+    for (const r of rows) {
+      const sid = r.exam_scores.studentId;
+      if (!byStudent[sid]) byStudent[sid] = { dsid: r.students.digitalStudentId, name: r.students.name, obtained: 0, total: 0, subjects: [] };
+      if (!r.exam_scores.isAbsent) byStudent[sid].obtained += r.exam_scores.marks;
+      byStudent[sid].total += r.exam_scores.totalMarks;
+      if (!byStudent[sid].subjects.includes(r.exam_scores.subject)) byStudent[sid].subjects.push(r.exam_scores.subject);
+    }
+
+    return Object.entries(byStudent).map(([id, d]) => ({
+      studentId: parseInt(id),
+      dsid: d.dsid,
+      name: d.name,
+      totalObtained: d.obtained,
+      totalMax: d.total,
+      percentage: d.total > 0 ? parseFloat(((d.obtained / d.total) * 100).toFixed(2)) : 0,
+      subjects: d.subjects,
+    })).sort((a, b) => a.dsid.localeCompare(b.dsid));
+  }
+
+  async upsertPromotionOverride(data: {
+    schoolId: number; studentId: number; examType: string; class: string; section: string;
+    overrideStatus: string; nextClass: string; nextSection: string;
+  }): Promise<void> {
+    const existing = await db.select().from(promotionOverrides).where(and(
+      eq(promotionOverrides.schoolId, data.schoolId),
+      eq(promotionOverrides.studentId, data.studentId),
+      eq(promotionOverrides.examType, data.examType),
+      eq(promotionOverrides.class, data.class),
+      eq(promotionOverrides.section, data.section),
+    ));
+    if (existing.length > 0) {
+      await db.update(promotionOverrides)
+        .set({ overrideStatus: data.overrideStatus, nextClass: data.nextClass, nextSection: data.nextSection, overriddenAt: new Date() })
+        .where(eq(promotionOverrides.id, existing[0].id));
+    } else {
+      await db.insert(promotionOverrides).values(data);
+    }
+  }
+
+  async getPromotionOverrides(schoolId: number, cls: string, section: string, examType: string): Promise<PromotionOverride[]> {
+    return await db.select().from(promotionOverrides).where(and(
+      eq(promotionOverrides.schoolId, schoolId),
+      eq(promotionOverrides.class, cls),
+      eq(promotionOverrides.section, section),
+      eq(promotionOverrides.examType, examType),
+    ));
+  }
+
+  async bulkPromoteStudents(schoolId: number, items: { studentId: number; nextClass: string; nextSection: string }[]): Promise<number> {
+    let promoted = 0;
+    for (const item of items) {
+      const updated = await db.update(students)
+        .set({ class: item.nextClass, section: item.nextSection })
+        .where(and(eq(students.id, item.studentId), eq(students.schoolId, schoolId)))
+        .returning();
+      if (updated.length > 0) promoted++;
+    }
+    return promoted;
   }
 }
 

@@ -1484,6 +1484,60 @@ export function registerTeacherRoutes(app: Express) {
     res.json(updated);
   });
 
+  // ===== ACADEMIC ADVANCEMENT WIZARD =====
+
+  app.get("/api/admin/exam/aggregated", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const { class: cls, section, examType } = req.query as Record<string, string>;
+    if (!cls || !section || !examType)
+      return res.status(400).json({ message: "class, section, and examType are required" });
+    const schoolId = req.session.schoolId!;
+    const [studentsData, overrides, meta] = await Promise.all([
+      storage.getExamAggregated(schoolId, cls, section, examType),
+      storage.getPromotionOverrides(schoolId, cls, section, examType),
+      storage.getAllSchoolMetadata(schoolId),
+    ]);
+    const configuredSubjects: string[] = meta.subjects || [];
+    const presentSubjects = Array.from(new Set(studentsData.flatMap(s => s.subjects)));
+    const missingSubjects = configuredSubjects.filter(s => !presentSubjects.includes(s));
+    res.json({ students: studentsData, overrides, missingSubjects, passThreshold: 35 });
+  });
+
+  app.post("/api/admin/exam/override", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const overrideSchema = z.object({
+      studentId: z.number().int().positive(),
+      examType: z.string().min(1),
+      class: z.string().min(1),
+      section: z.string().min(1),
+      overrideStatus: z.enum(["PASS", "FAIL", "GRACE_PASS", "REPEAT"]),
+      nextClass: z.string().min(1),
+      nextSection: z.string().min(1),
+    });
+    const parsed = overrideSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    await storage.upsertPromotionOverride({ ...parsed.data, schoolId: req.session.schoolId! });
+    res.json({ message: "Override saved" });
+  });
+
+  app.post("/api/admin/promote", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const promoteSchema = z.object({
+      items: z.array(z.object({
+        studentId: z.number().int().positive(),
+        nextClass: z.string().min(1),
+        nextSection: z.string().min(1),
+      })).min(1),
+    });
+    const parsed = promoteSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const promoted = await storage.bulkPromoteStudents(req.session.schoolId!, parsed.data.items);
+    res.json({ promoted });
+  });
+
   // ===== PAGINATED TEACHERS (Big Data) =====
   app.get("/api/schools/:schoolId/teachers/paginated", async (req, res) => {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });

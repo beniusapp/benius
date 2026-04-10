@@ -460,3 +460,20 @@ export type StudentProfile = typeof studentProfiles.$inferSelect;
 export const insertHomeworkSubmissionSchema = createInsertSchema(homeworkSubmissions).omit({ id: true, submittedAt: true });
 export type InsertHomeworkSubmission = z.infer<typeof insertHomeworkSubmissionSchema>;
 export type HomeworkSubmission = typeof homeworkSubmissions.$inferSelect;
+
+export const promotionOverrides = pgTable("promotion_overrides", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  examType: text("exam_type").notNull(),
+  class: text("class").notNull(),
+  section: text("section").notNull(),
+  overrideStatus: text("override_status").notNull(),
+  nextClass: text("next_class").notNull(),
+  nextSection: text("next_section").notNull(),
+  overriddenAt: timestamp("overridden_at").notNull().defaultNow(),
+});
+
+export const insertPromotionOverrideSchema = createInsertSchema(promotionOverrides).omit({ id: true, overriddenAt: true });
+export type InsertPromotionOverride = z.infer<typeof insertPromotionOverrideSchema>;
+export type PromotionOverride = typeof promotionOverrides.$inferSelect;
