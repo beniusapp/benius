@@ -161,9 +161,29 @@ export default function TeacherDashboard() {
             </div>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
-            <div className="text-right hidden sm:block">
-              <p className="text-sm font-medium" data-testid="text-teacher-name">{teacher.fullName}</p>
-              <p className="text-xs text-muted-foreground">{teacher.subject}</p>
+            <div className="flex items-center gap-2.5">
+              {/* Avatar — updates instantly when photo is changed */}
+              {teacher.profileImageUrl ? (
+                <img
+                  src={teacher.profileImageUrl}
+                  alt={teacher.fullName}
+                  className="w-9 h-9 rounded-full object-cover border-2 border-[#10b981]/50 flex-shrink-0"
+                  data-testid="img-navbar-avatar"
+                />
+              ) : (
+                <div
+                  className="w-9 h-9 rounded-full bg-gradient-to-br from-[#10b981]/30 to-emerald-700/40 border-2 border-[#10b981]/40 flex items-center justify-center flex-shrink-0"
+                  data-testid="div-navbar-initials"
+                >
+                  <span className="text-xs font-bold text-[#10b981]">
+                    {teacher.fullName.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                  </span>
+                </div>
+              )}
+              <div className="text-right hidden sm:block">
+                <p className="text-sm font-medium" data-testid="text-teacher-name">{teacher.fullName}</p>
+                <p className="text-xs text-muted-foreground">{teacher.subject}</p>
+              </div>
             </div>
             <Button
               variant="secondary"
