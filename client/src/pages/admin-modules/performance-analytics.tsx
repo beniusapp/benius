@@ -220,18 +220,6 @@ function pctColor(pct: number, threshold: number) {
   return "text-white";
 }
 
-function SkeletonRow({ cols }: { cols: number }) {
-  return (
-    <tr className="border-b border-white/5">
-      {Array.from({ length: cols }).map((_, i) => (
-        <td key={i} className="px-3 py-2.5">
-          <div className="h-3.5 rounded bg-white/10 animate-pulse" style={{ width: `${50 + (i * 17) % 50}%` }} />
-        </td>
-      ))}
-    </tr>
-  );
-}
-
 type TableProps = {
   students: AStudent[];
   subjectList: string[];
@@ -246,7 +234,7 @@ const HeatmapTable = memo(function HeatmapTable({ students, subjectList, sliceFi
     return students;
   }, [students, sliceFilter]);
 
-  const cols = 3 + subjectList.length + 2;
+  const cols = 3 + subjectList.length + 3;
 
   return (
     <div className="overflow-auto max-h-[520px] rounded-xl border border-white/10" id="analytics-table">
@@ -324,8 +312,14 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
   const [filterExam, setFilterExam] = useState("");
   const [filterSubject, setFilterSubject] = useState("");
   const [search, setSearch] = useState("");
+  const [searchDebounced, setSearchDebounced] = useState("");
   const [sliceFilter, setSliceFilter] = useState<SliceFilter>(null);
   const [selectedStudent, setSelectedStudent] = useState<AStudent | null>(null);
+
+  useEffect(() => {
+    const t = setTimeout(() => setSearchDebounced(search), 400);
+    return () => clearTimeout(t);
+  }, [search]);
 
   useEffect(() => {
     const style = document.getElementById("benius-print-css") || document.createElement("style");
@@ -369,9 +363,10 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
   if (effectiveSection) params.set("section", effectiveSection);
   if (effectiveExam) params.set("examType", effectiveExam);
   if (effectiveSubject) params.set("subject", effectiveSubject);
+  if (searchDebounced) params.set("search", searchDebounced);
 
   const { data: analyticsData, isLoading: loadingData } = useQuery<AnalyticsData>({
-    queryKey: ["/api/admin/analytics/performance", filterClass, effectiveSection, effectiveExam, effectiveSubject],
+    queryKey: ["/api/admin/analytics/performance", filterClass, effectiveSection, effectiveExam, effectiveSubject, searchDebounced],
     queryFn: async () => {
       const r = await fetch(`/api/admin/analytics/performance?${params}`, { credentials: "include" });
       return r.ok ? r.json() : { students: [], subjectAverages: [], subjectList: [], passThreshold: 35 };
