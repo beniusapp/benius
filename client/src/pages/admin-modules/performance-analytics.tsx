@@ -1,8 +1,10 @@
 import { useState, useMemo, useCallback, memo, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { motion } from "framer-motion";
 import {
   TrendingUp, Loader2, Download, Search, X, Users,
   CheckCircle, XCircle, AlertCircle, BarChart2, BookOpen,
+  RotateCcw, RefreshCw, Clock,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
@@ -213,6 +215,14 @@ function JourneyChart({ data }: { data: JourneyData }) {
   );
 }
 
+function fmtAge(d: Date): string {
+  const s = Math.round((Date.now() - d.getTime()) / 1000);
+  if (s < 10) return "just now";
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  return `${Math.floor(s / 3600)}h ago`;
+}
+
 function pctColor(pct: number, threshold: number) {
   if (pct >= 80) return "text-emerald-400";
   if (pct < threshold) return "text-rose-400 font-bold";
@@ -307,6 +317,7 @@ const HeatmapTable = memo(function HeatmapTable({ students, subjectList, sliceFi
 });
 
 export default function PerformanceAnalytics({ schoolId, classes, sections: configSections, subjects, examTypes }: Props) {
+  const queryClient = useQueryClient();
   const [filterClass, setFilterClass] = useState("");
   const [filterSection, setFilterSection] = useState("");
   const [filterExam, setFilterExam] = useState("");
@@ -315,6 +326,9 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
   const [searchDebounced, setSearchDebounced] = useState("");
   const [sliceFilter, setSliceFilter] = useState<SliceFilter>(null);
   const [selectedStudent, setSelectedStudent] = useState<AStudent | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [resetKey, setResetKey] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setSearchDebounced(search), 400);
@@ -340,7 +354,26 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
     setFilterClass(cls);
     setFilterSection("");
     setSliceFilter(null);
+    setResetKey(k => k + 1);
   }, []);
+
+  const handleReset = useCallback(() => {
+    setFilterClass("");
+    setFilterSection("");
+    setFilterExam("");
+    setFilterSubject("");
+    setSearch("");
+    setSearchDebounced("");
+    setSliceFilter(null);
+    setResetKey(k => k + 1);
+  }, []);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await queryClient.invalidateQueries({ queryKey: ["/api/admin/analytics/performance"] });
+    setRefreshing(false);
+    setLastUpdated(new Date());
+  }, [queryClient]);
 
   const { data: availSections = [] } = useQuery<string[]>({
     queryKey: ["/api/admin/analytics/sections", filterClass],
@@ -384,6 +417,10 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
     enabled: !!selectedStudent,
   });
 
+  useEffect(() => {
+    if (analyticsData) setLastUpdated(new Date());
+  }, [analyticsData]);
+
   const students = analyticsData?.students ?? [];
   const apiSubjectAverages = analyticsData?.subjectAverages ?? [];
   const subjectList = analyticsData?.subjectList ?? [];
@@ -426,6 +463,7 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
 
   const noData = !filterClass;
   const hasData = !!analyticsData && students.length > 0;
+  const isFiltered = !!(filterClass || (filterSection && filterSection !== "all") || (filterExam && filterExam !== "all") || (filterSubject && filterSubject !== "all") || search || sliceFilter);
 
   return (
     <div className="space-y-5" id="analytics-root">
@@ -510,6 +548,35 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
             </button>
           )}
         </div>
+
+        {/* Reset + Refresh cluster — right-aligned, wraps to full row on mobile */}
+        <div className="flex items-center gap-2 ml-auto w-full sm:w-auto justify-end">
+          {lastUpdated && filterClass && (
+            <div className="flex items-center gap-1.5 text-white/30 text-xs">
+              <Clock className="w-3 h-3 shrink-0" />
+              <span data-testid="text-last-updated">{fmtAge(lastUpdated)}</span>
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing || loadingData}
+                className="ml-0.5 p-1 rounded hover:text-[#10b981] transition-colors disabled:opacity-40"
+                title="Refresh data from server"
+                data-testid="btn-refresh-analytics"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+          )}
+          {isFiltered && (
+            <button
+              onClick={handleReset}
+              className="flex items-center gap-1.5 h-9 px-3 rounded-md border border-slate-600/60 bg-transparent text-white/60 hover:text-[#10b981] hover:border-[#10b981]/50 text-xs font-medium transition-colors whitespace-nowrap"
+              data-testid="btn-reset-analytics-filters"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Reset
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ===== EMPTY STATE ===== */}
@@ -533,7 +600,13 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
       {!noData && !loadingData && (
         <>
           {/* KPI Strip */}
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <motion.div
+            key={`kpi-${resetKey}`}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="grid grid-cols-2 sm:grid-cols-5 gap-3"
+          >
             {[
               { icon: Users, label: "Total Students", value: kpi.total, color: "text-[#D4AF37]", bg: "bg-[#D4AF37]/10" },
               { icon: CheckCircle, label: "Passed", value: kpi.pass, color: "text-emerald-400", bg: "bg-emerald-500/10" },
@@ -551,7 +624,7 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
                 </div>
               </div>
             ))}
-          </div>
+          </motion.div>
 
           {students.length === 0 ? (
             <div className="rounded-xl border border-white/10 bg-[#1A2942] py-14 text-center">
@@ -562,7 +635,13 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
           ) : (
             <>
               {/* Charts row */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <motion.div
+                key={`charts-${resetKey}`}
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.25, ease: "easeOut" }}
+                className="grid grid-cols-1 md:grid-cols-2 gap-4"
+              >
                 <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5">
                   <h3 className="font-semibold text-white text-sm mb-1">Outcome Distribution</h3>
                   <p className="text-white/40 text-xs mb-4">Click a slice to cross-filter the table</p>
@@ -577,7 +656,7 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
                   <p className="text-white/40 text-xs mb-4">Average marks per subject for current selection</p>
                   <SubjectMasteryChart data={subjectAverages} />
                 </div>
-              </div>
+              </motion.div>
 
               {/* Heatmap Table */}
               <div className="rounded-xl border border-white/10 bg-[#1A2942] overflow-hidden">
