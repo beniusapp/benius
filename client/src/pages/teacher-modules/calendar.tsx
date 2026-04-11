@@ -343,11 +343,11 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     );
   }
 
-  /* View switcher */
+  /* View switcher — solid backgrounds, white text, visible border on every tab */
   const viewSwitcher = (
     <div
-      className="flex items-center gap-0.5 rounded-xl p-1"
-      style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)" }}
+      className="flex items-center gap-1 rounded-xl p-1"
+      style={{ background: "#1e293b", border: "1px solid #334155" }}
       data-testid="view-switcher"
     >
       {(["month", "week", "year"] as View[]).map(v => (
@@ -355,10 +355,12 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
           key={v}
           onClick={() => switchView(v)}
           data-testid={`button-view-${v}`}
-          className="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all capitalize"
+          className="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all capitalize"
           style={{
-            backgroundColor: view === v ? "#10b981" : "transparent",
-            color: view === v ? "#ffffff" : "rgba(255,255,255,0.7)",
+            backgroundColor: view === v ? "#10b981" : "#1e293b",
+            color: "#ffffff",
+            border: view === v ? "1px solid #10b981" : "1px solid #334155",
+            textShadow: "1px 1px 2px rgba(0,0,0,0.8)",
           }}
         >
           {v === "year" ? "Agenda" : v}
@@ -414,15 +416,33 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
   );
 
   /* Nav bar */
+  const btnBase: React.CSSProperties = {
+    background: "#1e293b",
+    border: "1px solid #334155",
+    color: "#ffffff",
+    textShadow: "1px 1px 2px rgba(0,0,0,0.8)",
+  };
+
   const navBar = (
     <div className="space-y-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-bold flex items-center gap-2" style={{ color: "#ffffff" }} data-testid="heading-teacher-calendar">
+          {/* "School Calendar" title — white + text-shadow + emerald bottom border */}
+          <h2
+            className="text-lg font-bold flex items-center gap-2 pb-1"
+            style={{
+              color: "#ffffff",
+              textShadow: "1px 1px 2px rgba(0,0,0,0.8)",
+              borderBottom: "2px solid #10b981",
+              display: "inline-flex",
+            }}
+            data-testid="heading-teacher-calendar"
+          >
             <CalendarDays className="w-5 h-5" style={{ color: "#10b981" }} />
             School Calendar
           </h2>
-          <p className="text-sm mt-0.5" style={{ color: "rgba(255,255,255,0.65)" }}>
+          {/* Event count subtitle */}
+          <p className="text-sm mt-1.5" style={{ color: "#ffffff", textShadow: "1px 1px 2px rgba(0,0,0,0.8)" }}>
             {view === "month"
               ? `${events.length} events · ${holidayCount} holidays in ${MONTHS[month]}`
               : view === "week"
@@ -432,20 +452,22 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {viewSwitcher}
+          {/* Live badge — solid, always readable */}
           <div
-            className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-semibold"
-            style={{ background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.3)", color: "#10b981" }}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold"
+            style={{ background: "#064e3b", border: "1px solid #10b981", color: "#6ee7b7", textShadow: "1px 1px 2px rgba(0,0,0,0.8)" }}
             title="Auto-refreshes every 60 seconds"
           >
             <Zap className="w-2.5 h-2.5" />
             Live
           </div>
+          {/* Sync button */}
           <button
             onClick={refetch}
             disabled={isFetching}
             data-testid="button-sync-now"
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-60"
-            style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.8)" }}
+            style={btnBase}
             title="Sync now"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
@@ -456,29 +478,37 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
       <div className="flex items-center gap-2 flex-wrap">
         {quickJump}
         <div className="flex items-center gap-1 ml-auto">
+          {/* Previous */}
           <button
             onClick={view === "week" ? prevWeek : view === "year" ? () => { setYear(y => Math.max(2020, y - 1)); setSelectedDay(null); } : prevMonth}
             className="p-2 rounded-lg transition-colors"
-            style={{ background: "rgba(255,255,255,0.06)", color: "#ffffff" }}
+            style={btnBase}
             data-testid={view === "week" ? "button-prev-week" : view === "year" ? "button-prev-year" : "button-prev-month"}
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
-          <span className="font-semibold min-w-[140px] text-center text-sm" style={{ color: "#ffffff" }} data-testid="text-calendar-title">
+          {/* Nav title — "April 2026" / "Apr 5–11, 2026" */}
+          <span
+            className="font-bold min-w-[140px] text-center text-sm"
+            style={{ color: "#ffffff", textShadow: "1px 1px 2px rgba(0,0,0,0.8)" }}
+            data-testid="text-calendar-title"
+          >
             {navTitle()}
           </span>
+          {/* Next */}
           <button
             onClick={view === "week" ? nextWeek : view === "year" ? () => { setYear(y => Math.min(2120, y + 1)); setSelectedDay(null); } : nextMonth}
             className="p-2 rounded-lg transition-colors"
-            style={{ background: "rgba(255,255,255,0.06)", color: "#ffffff" }}
+            style={btnBase}
             data-testid={view === "week" ? "button-next-week" : view === "year" ? "button-next-year" : "button-next-month"}
           >
             <ChevronRight className="w-4 h-4" />
           </button>
+          {/* Today */}
           <button
             onClick={goToday}
-            className="px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors"
-            style={{ background: "rgba(16,185,129,0.2)", border: "1px solid rgba(16,185,129,0.4)", color: "#10b981" }}
+            className="px-3 py-1.5 rounded-lg text-sm font-bold transition-colors"
+            style={{ background: "#064e3b", border: "1px solid #10b981", color: "#6ee7b7", textShadow: "1px 1px 2px rgba(0,0,0,0.8)" }}
             data-testid="button-today"
           >
             Today
@@ -488,14 +518,29 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     </div>
   );
 
-  /* Legend */
+  /* Legend — colored pill/badge for each event type */
+  const LEGEND_PILLS = [
+    { value: "holiday",     label: "Holiday",     bg: "#dc2626", color: "#ffffff" },
+    { value: "academic",    label: "Academic",    bg: "#2563eb", color: "#ffffff" },
+    { value: "examination", label: "Examination", bg: "#ca8a04", color: "#000000" },
+    { value: "event",       label: "Event",       bg: "#10b981", color: "#ffffff" },
+  ];
+
   const legend = (
-    <div className="flex items-center gap-4 flex-wrap" data-testid="calendar-legend">
-      {EVENT_TYPES.map(t => (
-        <div key={t.value} className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: t.color }} />
-          <span className="text-xs font-medium" style={{ color: "#ffffff" }}>{t.label}</span>
-        </div>
+    <div className="flex items-center gap-2 flex-wrap" data-testid="calendar-legend">
+      {LEGEND_PILLS.map(p => (
+        <span
+          key={p.value}
+          className="text-xs font-bold px-3 py-1 rounded-full"
+          style={{
+            backgroundColor: p.bg,
+            color: p.color,
+            textShadow: p.color === "#ffffff" ? "1px 1px 2px rgba(0,0,0,0.6)" : "none",
+            border: "1px solid rgba(255,255,255,0.15)",
+          }}
+        >
+          {p.label}
+        </span>
       ))}
     </div>
   );
