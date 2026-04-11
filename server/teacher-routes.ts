@@ -1447,8 +1447,20 @@ export function registerTeacherRoutes(app: Express) {
 
   // ===== TIMETABLE STRUCTURE (Period Bell Schedule) =====
   app.get("/api/timetable/structure", async (req, res) => {
-    if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const schoolId = req.session.schoolId!;
+    // Allow admin, teacher, and student sessions
+    let schoolId: number | undefined;
+    if (req.session.userId) {
+      schoolId = req.session.schoolId;
+    } else if (req.session.teacherId) {
+      schoolId = req.session.schoolId;
+    } else if (req.session.studentId) {
+      const student = await storage.getStudentById(req.session.studentId);
+      if (!student) return res.status(401).json({ message: "Student not found" });
+      schoolId = student.schoolId;
+    } else {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    if (!schoolId) return res.status(401).json({ message: "School not found" });
     const cls = req.query.class as string;
     if (!cls) return res.status(400).json({ message: "class query param required" });
     const rows = await storage.getTimetableStructure(schoolId, cls);
@@ -1472,6 +1484,16 @@ export function registerTeacherRoutes(app: Express) {
     if (!cls || !Array.isArray(rows)) return res.status(400).json({ message: "class and rows required" });
     const saved = await storage.saveTimetableStructure(schoolId, cls, rows);
     res.json({ saved });
+  });
+
+  app.delete("/api/timetable/structure/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+    const deleted = await storage.deleteTimetableStructureById(id, schoolId);
+    if (!deleted) return res.status(404).json({ message: "Structure row not found" });
+    res.json({ deleted: true });
   });
 
   // ===== FACULTY INFO =====

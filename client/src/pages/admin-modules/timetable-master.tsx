@@ -88,6 +88,16 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
     enabled: !!selectedClass && !!selectedSection,
   });
 
+  // Fetch structure for schedule grid (when class is selected)
+  const { data: gridStructure = [] } = useQuery<StructureRow[]>({
+    queryKey: ["/api/timetable/structure", selectedClass],
+    queryFn: async () => {
+      const r = await fetch(`/api/timetable/structure?class=${encodeURIComponent(selectedClass)}`, { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!selectedClass,
+  });
+
   // ── Structure query ──
   const { data: savedStructure = [], isLoading: structLoading } = useQuery<StructureRow[]>({
     queryKey: ["/api/timetable/structure", structClass],
@@ -363,9 +373,35 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
                   </tr>
                 </thead>
                 <tbody>
-                  {PERIODS.map(p => (
-                    <tr key={p}>
-                      <td className="border-b border-r border-white/10 p-2 text-center text-xs font-bold text-white/40 bg-[#0F1E35]/50">{p}</td>
+                  {(gridStructure.length > 0 ? gridStructure : PERIODS.map(n => ({ periodNumber: n, label: `Period ${n}`, startTime: "", endTime: "", isBreak: false, sortOrder: n - 1 }))).map((srow, sIdx) => {
+                    const isBreakRow = srow.isBreak;
+                    const p = srow.periodNumber;
+                    return isBreakRow ? (
+                      <tr key={sIdx}>
+                        <td className="border-b border-r border-white/10 p-2 text-center text-xs bg-amber-900/10">
+                          <div className="flex flex-col items-center gap-0.5">
+                            <Coffee className="w-3 h-3 text-amber-400" />
+                            <span className="font-semibold text-amber-300 text-[10px]">{srow.label || "Break"}</span>
+                          </div>
+                        </td>
+                        {DAY_NAMES.map((_, di) => (
+                          <td key={di} className="border-b border-r border-white/10 bg-amber-900/5 p-1">
+                            <div className="rounded-lg min-h-[48px] flex items-center justify-center">
+                              <span className="text-[10px] text-amber-300/25">{srow.label || "Break"}</span>
+                            </div>
+                          </td>
+                        ))}
+                      </tr>
+                    ) : (
+                    <tr key={sIdx}>
+                      <td className="border-b border-r border-white/10 p-2 text-center text-xs font-bold text-white/40 bg-[#0F1E35]/50">
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className="font-bold text-white/60">P{p}</span>
+                          {srow.startTime && srow.endTime && (
+                            <span className="text-[8px] text-[#10b981]/60">{srow.startTime}–{srow.endTime}</span>
+                          )}
+                        </div>
+                      </td>
                       {DAY_NAMES.map((_, dayIdx) => {
                         const slot = getEffectiveSlot(dayIdx, p);
                         const key = `${dayIdx}-${p}`;
@@ -427,7 +463,8 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
                         );
                       })}
                     </tr>
-                  ))}
+                  );
+                })}
                 </tbody>
               </table>
             </div>

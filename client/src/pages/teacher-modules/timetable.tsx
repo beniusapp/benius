@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
-  Loader2, Save, X, AlertTriangle, Search, BookOpen, Calendar, Pencil, Trash2, Plus, Settings, Clock, Coffee,
+  Loader2, Save, X, AlertTriangle, Search, BookOpen, Calendar, Pencil, Trash2, Plus, Settings, Clock, Coffee, Info,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -315,6 +315,19 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
           <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-900/20 border border-amber-500/30">
             <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
             <p className="text-xs text-amber-300 font-medium">{Object.keys(draftMap).length} unsaved change(s) — click "Save Changes" to commit</p>
+          </div>
+        )}
+
+        {structure.length === 0 && (
+          <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-blue-900/20 border border-blue-500/30" data-testid="banner-no-structure">
+            <Info className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-semibold text-blue-300">No bell schedule configured</p>
+              <p className="text-[11px] text-blue-200/60 mt-0.5">
+                Your school admin has not yet set up the bell schedule for Class {teacher.assignedClass}. Showing default periods 1–8.
+                Contact your admin to configure the timetable structure.
+              </p>
+            </div>
           </div>
         )}
 

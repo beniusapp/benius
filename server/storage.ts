@@ -2510,6 +2510,13 @@ export class DatabaseStorage {
     }));
     return await db.insert(timetableStructure).values(toInsert).returning();
   }
+
+  async deleteTimetableStructureById(id: number, schoolId: number): Promise<boolean> {
+    const result = await db.delete(timetableStructure)
+      .where(and(eq(timetableStructure.id, id), eq(timetableStructure.schoolId, schoolId)))
+      .returning();
+    return result.length > 0;
+  }
 }
 
 export const storage = new DatabaseStorage();

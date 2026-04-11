@@ -321,16 +321,16 @@ export default function StudentTimetable() {
                     style={{
                       background: "#1A2942",
                       border: isActive
-                        ? `1px solid ${subjectColor}`
+                        ? "1px solid #10b981"
                         : "1px solid rgba(255,255,255,0.07)",
                       opacity: isPast && !isActive ? 0.55 : 1,
-                      boxShadow: isActive ? `0 0 20px ${subjectColor}22` : "none",
+                      boxShadow: isActive ? "0 0 20px rgba(16,185,129,0.22)" : "none",
                     }}
                     data-testid={entry ? `period-card-${entry.id}` : `period-empty-${idx}`}
                   >
                     {/* Active glow bar */}
                     {isActive && (
-                      <span className="absolute left-0 top-0 bottom-0 w-1" style={{ background: subjectColor }} />
+                      <span className="absolute left-0 top-0 bottom-0 w-1" style={{ background: "#10b981" }} />
                     )}
 
                     <div className="px-4 py-3.5 flex items-center gap-4">
@@ -349,7 +349,7 @@ export default function StudentTimetable() {
                               <p className="text-xs truncate mt-0.5" style={{ color: "rgba(255,255,255,0.45)" }}>{entry.teacherName}</p>
                             )}
                             {hasTime ? (
-                              <p className="text-xs mt-0.5 font-medium" style={{ color: isActive ? subjectColor : "rgba(255,255,255,0.30)" }}>
+                              <p className="text-xs mt-0.5 font-medium" style={{ color: isActive ? "#10b981" : "rgba(255,255,255,0.30)" }}>
                                 {formatTime(timeStart)} – {formatTime(timeEnd)}
                               </p>
                             ) : srow.label && srow.label !== `Period ${srow.periodNumber}` ? (
@@ -370,7 +370,7 @@ export default function StudentTimetable() {
 
                       {isActive && (
                         <span className="flex-shrink-0 px-2.5 py-1 rounded-full text-[10px] font-black"
-                          style={{ background: `${subjectColor}20`, color: subjectColor, border: `1px solid ${subjectColor}40` }}>
+                          style={{ background: "rgba(16,185,129,0.20)", color: "#10b981", border: "1px solid rgba(16,185,129,0.40)" }}>
                           NOW
                         </span>
                       )}
@@ -396,13 +396,13 @@ export default function StudentTimetable() {
                     className="relative rounded-2xl overflow-hidden transition-all"
                     style={{
                       background: "#1A2942",
-                      border: isActive ? `1px solid ${subjectColor}` : "1px solid rgba(255,255,255,0.07)",
+                      border: isActive ? "1px solid #10b981" : "1px solid rgba(255,255,255,0.07)",
                       opacity: isPast && !isActive ? 0.55 : 1,
-                      boxShadow: isActive ? `0 0 20px ${subjectColor}22` : "none",
+                      boxShadow: isActive ? "0 0 20px rgba(16,185,129,0.22)" : "none",
                     }}
                     data-testid={`period-card-${entry.id}`}
                   >
-                    {isActive && <span className="absolute left-0 top-0 bottom-0 w-1" style={{ background: subjectColor }} />}
+                    {isActive && <span className="absolute left-0 top-0 bottom-0 w-1" style={{ background: "#10b981" }} />}
                     <div className="px-4 py-3.5 flex items-center gap-4">
                       <div className="flex-shrink-0 w-12 h-12 rounded-xl flex flex-col items-center justify-center"
                         style={{ background: `${subjectColor}18` }}>
@@ -410,19 +410,19 @@ export default function StudentTimetable() {
                         <span className="text-base font-black leading-none" style={{ color: subjectColor }}>{entry.period}</span>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-bold text-sm truncate" style={{ color: "#fff" }}>{entry.subject}</p>
+                        <p className="font-bold text-sm" style={{ color: "#fff" }}>{entry.subject}</p>
                         {entry.teacherName && (
-                          <p className="text-xs truncate mt-0.5" style={{ color: "rgba(255,255,255,0.45)" }}>{entry.teacherName}</p>
+                          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.45)" }}>{entry.teacherName}</p>
                         )}
                         {hasTime && (
-                          <p className="text-xs mt-0.5 font-medium" style={{ color: isActive ? subjectColor : "rgba(255,255,255,0.30)" }}>
+                          <p className="text-xs mt-0.5 font-medium" style={{ color: isActive ? "#10b981" : "rgba(255,255,255,0.30)" }}>
                             {formatTime(entry.startTime)} – {formatTime(entry.endTime)}
                           </p>
                         )}
                       </div>
                       {isActive && (
                         <span className="flex-shrink-0 px-2.5 py-1 rounded-full text-[10px] font-black"
-                          style={{ background: `${subjectColor}20`, color: subjectColor, border: `1px solid ${subjectColor}40` }}>
+                          style={{ background: "rgba(16,185,129,0.20)", color: "#10b981", border: "1px solid rgba(16,185,129,0.40)" }}>
                           NOW
                         </span>
                       )}
