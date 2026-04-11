@@ -78,7 +78,7 @@ function EventTypeLabel({ eventType }: { eventType: string }) {
   return <span>{et?.label || eventType}</span>;
 }
 
-/* ══ GLASSMORPHIC HOVER POPOVER ══ */
+/* Glassmorphic hover popover */
 function HoverEventPopover({ ev, onClose }: { ev: CalendarEvent; onClose: () => void }) {
   const color = getColor(ev);
   const typeLabel = EVENT_TYPES.find(t => t.value === ev.eventType)?.label || ev.eventType;
@@ -129,7 +129,7 @@ function HoverEventPopover({ ev, onClose }: { ev: CalendarEvent; onClose: () => 
   );
 }
 
-/* ══ EVENT PILL — solid opaque, white text ══ */
+/* EVENT PILL — solid opaque, white text, glassmorphic hover tooltip */
 function EventPill({
   ev,
   size = "sm",
@@ -154,6 +154,30 @@ function EventPill({
         data-testid={`event-chip-${ev.id}`}
       >
         {ev.title}
+      </div>
+      <AnimatePresence>
+        {hovered && <HoverEventPopover ev={ev} onClose={() => setHovered(false)} />}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/* AGENDA EVENT ROW — year/agenda view pill with hover popover */
+function AgendaEventPill({ ev, onClick }: { ev: CalendarEvent; onClick: () => void }) {
+  const [hovered, setHovered] = useState(false);
+  const color = getColor(ev);
+  return (
+    <div className="relative flex-1 min-w-0">
+      <div
+        className="flex items-center gap-2 px-3 py-2 rounded-xl font-semibold text-white text-xs min-w-0 truncate cursor-pointer hover:opacity-90 transition-opacity"
+        style={{ backgroundColor: color }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        onClick={onClick}
+        data-testid={`event-chip-${ev.id}`}
+      >
+        <span className="truncate">{ev.title}</span>
+        {ev.isRecurring && <Repeat className="w-3 h-3 text-white/60 shrink-0" />}
       </div>
       <AnimatePresence>
         {hovered && <HoverEventPopover ev={ev} onClose={() => setHovered(false)} />}
@@ -331,11 +355,9 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     );
   }
 
-  /* ══════════════════════════════════════════════
-     VIEW SWITCHER
-  ══════════════════════════════════════════════ */
+  /* VIEW SWITCHER */
   const viewSwitcher = (
-    <div className="flex items-center gap-0.5 bg-white/5 rounded-xl p-1 border border-white/8" data-testid="view-switcher">
+    <div className="flex items-center gap-0.5 bg-white/5 rounded-xl p-1 border border-white/10" data-testid="view-switcher">
       {(["month","week","year"] as View[]).map(v => (
         <button
           key={v}
@@ -353,9 +375,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     </div>
   );
 
-  /* ══════════════════════════════════════════════
-     QUICK-JUMP SELECTORS
-  ══════════════════════════════════════════════ */
+  /* QUICK-JUMP SELECTORS */
   const selectClass = "bg-[#0A1628] border border-white/15 rounded-lg px-2.5 py-1.5 text-sm text-white/80 focus:outline-none focus:border-emerald-500/60 cursor-pointer appearance-none pr-6 hover:border-white/30 transition-colors";
 
   const quickJump = (
@@ -391,9 +411,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     </div>
   );
 
-  /* ══════════════════════════════════════════════
-     NAV BAR
-  ══════════════════════════════════════════════ */
+  /* NAV BAR */
   const navBar = (
     <div className="space-y-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -465,9 +483,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     </div>
   );
 
-  /* ══════════════════════════════════════════════
-     LEGEND — solid pill swatches
-  ══════════════════════════════════════════════ */
+  /* LEGEND — solid pill swatches */
   const legend = (
     <div className="flex items-center gap-3 flex-wrap" data-testid="calendar-legend">
       {EVENT_TYPES.filter((t, i, a) => a.findIndex(x => x.color === t.color && x.label === t.label) === i || t.value === "examination").map(t => (
@@ -479,9 +495,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     </div>
   );
 
-  /* ══════════════════════════════════════════════
-     BOTTOM SHEET (works for all views on mobile)
-  ══════════════════════════════════════════════ */
+  /* BOTTOM SHEET (works for all views on mobile) */
   const bottomSheet = (
     <AnimatePresence>
       {bottomSheetOpen && selectedDay && (
@@ -536,7 +550,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
                     data-testid={`bottom-sheet-event-${ev.id}`}
                   >
                     <div className="h-1.5 w-full" style={{ backgroundColor: color }} />
-                    <div className="p-4 border border-t-0 border-white/8 rounded-b-2xl" style={{ background: `${color}12` }}>
+                    <div className="p-4 border border-t-0 border-white/10 rounded-b-2xl" style={{ background: `${color}12` }}>
                       <div className="flex items-start justify-between gap-2">
                         <p className="text-sm font-bold text-white leading-snug">{ev.title}</p>
                         {ev.isRecurring && <Repeat className="w-3.5 h-3.5 text-white/30 mt-0.5 shrink-0" />}
@@ -561,9 +575,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     </AnimatePresence>
   );
 
-  /* ══════════════════════════════════════════════
-     MONTH VIEW
-  ══════════════════════════════════════════════ */
+  /* MONTH VIEW */
   const monthView = (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
       <div className="lg:col-span-2 bg-[#0F1F35] rounded-2xl border border-white/10 overflow-hidden shadow-xl">
@@ -589,7 +601,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
           <div className="grid grid-cols-7">
             {calendarDays.map((day, i) => {
               if (day === null) {
-                return <div key={`e-${i}`} className="min-h-[72px] border-b border-r border-white/8 bg-black/10" />;
+                return <div key={`e-${i}`} className="min-h-[72px] border-b border-r border-white/10 bg-black/10" />;
               }
               const key = buildKey(year, month, day);
               const dayEvs = eventsByDate[key] || [];
@@ -602,10 +614,10 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
                   key={key}
                   onClick={() => handleDayClick(key)}
                   data-testid={`cell-day-${day}`}
-                  className={`min-h-[72px] border-b border-r border-white/8 p-1.5 cursor-pointer transition-all ${
+                  className={`min-h-[72px] border-b border-r border-white/10 p-1.5 cursor-pointer transition-all ${
                     isSelected ? "bg-emerald-500/12" : "hover:bg-white/4"
                   }`}
-                  style={today ? { boxShadow: "inset 0 0 0 1.5px rgba(16,185,129,0.5)" } : {}}
+                  style={today ? { boxShadow: "0 0 0 2px rgba(16,185,129,0.55), 0 0 18px rgba(16,185,129,0.25)" } : {}}
                 >
                   <div className="flex justify-end mb-1">
                     <span
@@ -692,7 +704,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
                   data-testid={`event-detail-${ev.id}`}
                 >
                   <div className="h-1 w-full" style={{ backgroundColor: color }} />
-                  <div className="p-3 border border-t-0 border-white/8 rounded-b-xl" style={{ background: `${color}12` }}>
+                  <div className="p-3 border border-t-0 border-white/10 rounded-b-xl" style={{ background: `${color}12` }}>
                     <div className="flex items-start justify-between gap-2 mb-1.5">
                       <p className="text-sm font-bold text-white leading-snug" data-testid={`text-event-title-${ev.id}`}>{ev.title}</p>
                       {ev.isRecurring && <Repeat className="w-3.5 h-3.5 text-white/30 shrink-0 mt-0.5" />}
@@ -714,9 +726,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     </div>
   );
 
-  /* ══════════════════════════════════════════════
-     WEEK VIEW
-  ══════════════════════════════════════════════ */
+  /* WEEK VIEW */
   const weekView = (
     <div className="space-y-3">
       {isLoading ? (
@@ -737,12 +747,12 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
               return (
                 <div
                   key={key}
-                  className={`flex flex-col border-r border-white/8 last:border-0 ${isSelected ? "bg-emerald-500/8" : ""}`}
-                  style={today ? { boxShadow: "inset 0 0 0 1.5px rgba(16,185,129,0.5)" } : {}}
+                  className={`flex flex-col border-r border-white/10 last:border-0 ${isSelected ? "bg-emerald-500/8" : ""}`}
+                  style={today ? { boxShadow: "0 0 0 2px rgba(16,185,129,0.55), 0 0 18px rgba(16,185,129,0.25)" } : {}}
                 >
                   {/* Day header */}
                   <div
-                    className={`py-3 px-2 text-center border-b border-white/8 cursor-pointer hover:bg-white/5 transition-colors ${today ? "bg-emerald-500/8" : ""}`}
+                    className={`py-3 px-2 text-center border-b border-white/10 cursor-pointer hover:bg-white/5 transition-colors ${today ? "bg-emerald-500/8" : ""}`}
                     onClick={() => handleDayClick(key)}
                     data-testid={`week-day-header-${key}`}
                   >
@@ -788,9 +798,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     </div>
   );
 
-  /* ══════════════════════════════════════════════
-     YEAR / AGENDA VIEW
-  ══════════════════════════════════════════════ */
+  /* YEAR / AGENDA VIEW */
   const yearView = (
     <div className="space-y-6" data-testid="year-agenda">
       {isLoading ? (
@@ -840,14 +848,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
                           {d.getDate()}
                         </p>
                       </div>
-                      {/* Solid pill */}
-                      <div
-                        className="flex-1 flex items-center gap-2 px-3 py-2 rounded-xl font-semibold text-white text-xs min-w-0 truncate"
-                        style={{ backgroundColor: color }}
-                      >
-                        <span className="truncate">{ev.title}</span>
-                        {ev.isRecurring && <Repeat className="w-3 h-3 text-white/60 shrink-0" />}
-                      </div>
+                      <AgendaEventPill ev={ev} onClick={() => handleDayClick(ev.date.split("T")[0])} />
                       {ev.description && (
                         <p className="text-[10px] text-white/30 truncate max-w-[120px] hidden lg:block">{ev.description}</p>
                       )}
@@ -862,9 +863,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     </div>
   );
 
-  /* ══════════════════════════════════════════════
-     MOBILE MONTH — agenda list with solid pills
-  ══════════════════════════════════════════════ */
+  /* MOBILE MONTH — agenda list with solid pills */
   if (isMobile && view === "month") {
     return (
       <div className="space-y-4" data-testid="teacher-calendar-mobile">
@@ -873,7 +872,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
         {isLoading ? (
           <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-emerald-400/60" /></div>
         ) : agendaDates.length === 0 ? (
-          <div className="text-center py-12 rounded-2xl bg-white/3 border border-white/8">
+          <div className="text-center py-12 rounded-2xl bg-white/3 border border-white/10">
             <Calendar className="w-10 h-10 text-white/10 mx-auto mb-3" />
             <p className="text-white/30">No events in {MONTHS[month]} {year}</p>
           </div>
@@ -926,9 +925,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     );
   }
 
-  /* ══════════════════════════════════════════════
-     MAIN (Desktop + Week/Year mobile)
-  ══════════════════════════════════════════════ */
+  /* MAIN (Desktop + Week/Year mobile) */
   return (
     <div className="space-y-5" data-testid="teacher-calendar-desktop">
       {navBar}
