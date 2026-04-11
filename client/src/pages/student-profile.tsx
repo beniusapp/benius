@@ -413,15 +413,16 @@ export default function StudentProfile() {
     setMenuOpen(false);
   }
 
-  const inputBase = "w-full px-3 py-2.5 rounded-xl bg-white/6 border text-white placeholder:text-white/25 text-sm focus:outline-none focus:ring-2 focus:ring-offset-0 transition-colors";
-  const editingBorder = "border-[#10b981]/50 focus:ring-[#10b981] focus:border-[#10b981]";
-  const defaultBorder = "border-white/12 focus:ring-[#10b981] focus:border-[#10b981]";
+  const inputBase = "w-full px-3 py-2.5 rounded-xl bg-white border text-[#1a1a1a] placeholder:text-gray-400 text-base focus:outline-none focus:ring-2 focus:ring-offset-0 transition-colors";
+  const editingBorder = "border-gray-300 focus:ring-[#10b981] focus:border-[#10b981]";
+  const defaultBorder = "border-gray-300 focus:ring-[#10b981] focus:border-[#10b981]";
   const inputStyle: React.CSSProperties = {
     pointerEvents: 'auto',
     touchAction: 'manipulation',
     WebkitUserSelect: 'text',
     position: 'relative',
     zIndex: 10000,
+    caretColor: '#10b981',
   };
 
   const isAnyFormOpen = isEditing || securityOpen;
@@ -1002,7 +1003,7 @@ export default function StudentProfile() {
                     </button>
                   </div>
                   {passwordForm.newPassword && passwordForm.newPassword.length < 6 && (
-                    <p className="text-xs text-red-400 mt-1">Minimum 6 characters</p>
+                    <p className="text-xs text-red-600 mt-1 font-medium">Minimum 6 characters</p>
                   )}
                 </div>
 
@@ -1036,7 +1037,7 @@ export default function StudentProfile() {
                     </button>
                   </div>
                   {passwordForm.confirmPassword && passwordForm.confirmPassword !== passwordForm.newPassword && (
-                    <p className="text-xs text-red-400 mt-1">Passwords do not match</p>
+                    <p className="text-xs text-red-600 mt-1 font-medium">Passwords do not match</p>
                   )}
                   {passwordForm.confirmPassword && passwordForm.confirmPassword === passwordForm.newPassword && passwordForm.newPassword.length >= 6 && (
                     <p className="text-xs text-[#10b981] mt-1 flex items-center gap-1">
