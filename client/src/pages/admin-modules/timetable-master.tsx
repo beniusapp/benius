@@ -46,7 +46,7 @@ interface StructureRow {
   sortOrder: number;
 }
 
-type TabType = "schedule" | "structure";
+type TabType = "schedule" | "structure" | "publish";
 
 export default function TimetableMaster({ schoolId, classes, sections, subjects }: Props) {
   const { toast } = useToast();
@@ -284,6 +284,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
         {([
           { id: "schedule", label: "Schedule Grid", icon: <Grid3x3 className="w-3.5 h-3.5" /> },
           { id: "structure", label: "Bell Structure", icon: <Clock className="w-3.5 h-3.5" /> },
+          { id: "publish", label: "Publish", icon: <Lock className="w-3.5 h-3.5" /> },
         ] as const).map(tab => (
           <button
             key={tab.id}
@@ -626,6 +627,99 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
           )}
         </div>
       )}
+
+      {activeTab === "publish" && (
+        <PublishTab schoolId={schoolId} />
+      )}
+    </div>
+  );
+}
+
+function PublishTab({ schoolId }: { schoolId: number }) {
+  const { toast } = useToast();
+
+  const { data: statuses = [], isLoading, refetch } = useQuery<{ class: string; section: string; totalCount: number; draftCount: number; publishedCount: number }[]>({
+    queryKey: ["/api/timetable/class-status"],
+    queryFn: async () => {
+      const r = await fetch("/api/timetable/class-status", { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+  });
+
+  const publishMutation = useMutation({
+    mutationFn: async ({ cls, section }: { cls: string; section: string }) => {
+      const r = await fetch("/api/timetable/publish", {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ class: cls, section }),
+      });
+      if (!r.ok) throw new Error("Failed to publish");
+      return r.json();
+    },
+    onSuccess: (data) => {
+      toast({ title: "Published", description: data.message, className: "border-emerald-500 bg-emerald-900/30 text-emerald-100" });
+      refetch();
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to publish timetable", variant: "destructive" });
+    },
+  });
+
+  if (isLoading) return <div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-[#D4AF37]" /></div>;
+
+  if (statuses.length === 0) {
+    return (
+      <div className="rounded-xl border border-white/10 bg-[#1A2942] p-12 text-center">
+        <Lock className="w-8 h-8 text-white/20 mx-auto mb-3" />
+        <p className="text-white/40 text-sm">No timetable entries found. Add periods in the Schedule Grid tab first.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-base font-bold text-white">Publish Timetable</h3>
+          <p className="text-xs text-white/40 mt-0.5">Publish draft entries so teachers and students can view them</p>
+        </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {statuses.map(s => {
+          const isFullyPublished = s.draftCount === 0 && s.publishedCount > 0;
+          const hasUnpublished = s.draftCount > 0;
+          return (
+            <div key={`${s.class}-${s.section}`} className="rounded-xl border p-4 space-y-3"
+              style={{ background: "#1A2942", borderColor: isFullyPublished ? "rgba(16,185,129,0.30)" : "rgba(255,255,255,0.08)" }}>
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="font-bold text-white text-sm">Class {s.class} – {s.section}</p>
+                  <p className="text-xs text-white/40 mt-0.5">{s.totalCount} total · {s.publishedCount} published · {s.draftCount} draft</p>
+                </div>
+                {isFullyPublished && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-900/30 text-emerald-400 border border-emerald-500/30">Live</span>
+                )}
+              </div>
+              <div className="w-full bg-white/10 rounded-full h-1.5">
+                <div className="bg-[#10b981] h-1.5 rounded-full transition-all"
+                  style={{ width: s.totalCount > 0 ? `${Math.round((s.publishedCount / s.totalCount) * 100)}%` : "0%" }} />
+              </div>
+              {hasUnpublished && (
+                <button
+                  onClick={() => publishMutation.mutate({ cls: s.class, section: s.section })}
+                  disabled={publishMutation.isPending}
+                  className="w-full h-10 rounded-lg bg-[#D4AF37] hover:bg-[#c9a632] disabled:opacity-60 text-[#0A1628] font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
+                  data-testid={`button-publish-${s.class}-${s.section}`}
+                >
+                  {publishMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
+                  Publish {s.draftCount} Draft{s.draftCount !== 1 ? "s" : ""}
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

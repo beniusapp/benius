@@ -344,21 +344,21 @@ export default function StudentTimetable() {
                           <>
                             <p className="font-bold text-sm truncate" style={{ color: "#fff" }}>{entry.subject}</p>
                             {entry.teacherName && (
-                              <p className="text-xs truncate mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>{entry.teacherName}</p>
+                              <p className="text-xs truncate mt-0.5 font-medium" style={{ color: "#fff" }}>{entry.teacherName}</p>
                             )}
                             {hasTime ? (
-                              <p className="text-xs mt-0.5 font-semibold" style={{ color: isActive ? "#10b981" : "rgba(255,255,255,0.50)" }}>
+                              <p className="text-xs mt-0.5 font-bold" style={{ color: isActive ? "#10b981" : "#fff" }}>
                                 {formatTime(timeStart)} – {formatTime(timeEnd)}
                               </p>
                             ) : srow.label && srow.label !== `Period ${srow.periodNumber}` ? (
-                              <p className="text-xs mt-0.5 font-medium" style={{ color: "rgba(255,255,255,0.50)" }}>{srow.label}</p>
+                              <p className="text-xs mt-0.5 font-bold" style={{ color: "#fff" }}>{srow.label}</p>
                             ) : null}
                           </>
                         ) : (
                           <>
-                            <p className="font-semibold text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>Free Period</p>
+                            <p className="font-bold text-sm" style={{ color: "#fff" }}>Free Period</p>
                             {hasTime && (
-                              <p className="text-xs mt-0.5 font-medium" style={{ color: "rgba(255,255,255,0.35)" }}>
+                              <p className="text-xs mt-0.5 font-bold" style={{ color: "#fff" }}>
                                 {formatTime(timeStart)} – {formatTime(timeEnd)}
                               </p>
                             )}
@@ -410,10 +410,10 @@ export default function StudentTimetable() {
                       <div className="flex-1 min-w-0">
                         <p className="font-bold text-sm" style={{ color: "#fff" }}>{entry.subject}</p>
                         {entry.teacherName && (
-                          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>{entry.teacherName}</p>
+                          <p className="text-xs mt-0.5 font-medium" style={{ color: "#fff" }}>{entry.teacherName}</p>
                         )}
                         {hasTime && (
-                          <p className="text-xs mt-0.5 font-semibold" style={{ color: isActive ? "#10b981" : "rgba(255,255,255,0.50)" }}>
+                          <p className="text-xs mt-0.5 font-bold" style={{ color: isActive ? "#10b981" : "#fff" }}>
                             {formatTime(entry.startTime)} – {formatTime(entry.endTime)}
                           </p>
                         )}

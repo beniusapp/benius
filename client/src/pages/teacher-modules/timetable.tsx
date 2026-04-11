@@ -555,28 +555,60 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {FALLBACK_PERIODS.map(p => (
-                    <tr key={p}>
-                      <td className="border-b border-r border-white/10 p-2 text-center text-xs font-bold text-white/40 bg-[#0F1E35]/50">{p}</td>
-                      {DAY_NAMES.map((_, dayIdx) => {
-                        const entry = explorerEntries.find(e => e.dayOfWeek === dayIdx && e.period === p);
-                        return (
-                          <td key={dayIdx} className="border-b border-r border-white/10 p-1 min-w-[100px]" data-testid={`explorer-cell-${dayIdx}-${p}`}>
-                            {entry ? (
-                              <div className="rounded-lg p-2 min-h-[48px] flex flex-col justify-center bg-[#10b981]/10 border border-[#10b981]/30">
-                                <p className="text-[11px] font-bold leading-tight truncate" style={{ color: "#ffffff" }}>{entry.subject}</p>
-                                <p className="text-[10px] truncate mt-0.5" style={{ color: "rgba(255,255,255,0.50)" }}>{entry.teacherName || "—"}</p>
-                              </div>
-                            ) : (
-                              <div className="rounded-lg p-2 min-h-[48px] flex items-center justify-center">
-                                <span className="text-xs" style={{ color: "rgba(255,255,255,0.15)" }}>—</span>
-                              </div>
-                            )}
+                  {(explorerData?.structure?.length
+                    ? explorerData.structure
+                    : FALLBACK_PERIODS.map(n => ({ periodNumber: n, label: `Period ${n}`, startTime: "", endTime: "", isBreak: false, sortOrder: n - 1 }))
+                  ).map((srow, sIdx) => {
+                    if (srow.isBreak) {
+                      return (
+                        <tr key={sIdx}>
+                          <td className="border-b border-r border-white/10 p-2 text-center text-xs bg-amber-900/10">
+                            <div className="flex flex-col items-center gap-0.5">
+                              <Coffee className="w-3 h-3 text-amber-400" />
+                              <span className="text-[10px] font-semibold text-amber-300">{srow.label || "Break"}</span>
+                            </div>
                           </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
+                          {DAY_NAMES.map((_, di) => (
+                            <td key={di} className="border-b border-r border-white/10 bg-amber-900/5 p-1">
+                              <div className="rounded-lg min-h-[48px] flex items-center justify-center">
+                                <span className="text-[10px] text-amber-300/25">{srow.label || "Break"}</span>
+                              </div>
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    }
+                    const p = srow.periodNumber;
+                    return (
+                      <tr key={sIdx}>
+                        <td className="border-b border-r border-white/10 p-2 text-center text-xs font-bold text-white/40 bg-[#0F1E35]/50">
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="font-bold text-white/60">P{p}</span>
+                            {srow.startTime && srow.endTime && (
+                              <span className="text-[8px] text-[#10b981]/60">{srow.startTime}–{srow.endTime}</span>
+                            )}
+                          </div>
+                        </td>
+                        {DAY_NAMES.map((_, dayIdx) => {
+                          const entry = explorerEntries.find(e => e.dayOfWeek === dayIdx && e.period === p);
+                          return (
+                            <td key={dayIdx} className="border-b border-r border-white/10 p-1 min-w-[100px]" data-testid={`explorer-cell-${dayIdx}-${p}`}>
+                              {entry ? (
+                                <div className="rounded-lg p-2 min-h-[48px] flex flex-col justify-center bg-[#10b981]/10 border border-[#10b981]/30">
+                                  <p className="text-[11px] font-bold leading-tight truncate" style={{ color: "#ffffff" }}>{entry.subject}</p>
+                                  <p className="text-[10px] truncate mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>{entry.teacherName || "—"}</p>
+                                </div>
+                              ) : (
+                                <div className="rounded-lg p-2 min-h-[48px] flex items-center justify-center">
+                                  <span className="text-xs" style={{ color: "rgba(255,255,255,0.15)" }}>—</span>
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
