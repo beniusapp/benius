@@ -967,7 +967,7 @@ export default function StudentProfile() {
                     <button
                       type="button"
                       onClick={() => setShowCurrentPw((v) => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 min-w-[44px] min-h-[44px] flex items-center justify-center"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 min-w-[44px] min-h-[44px] flex items-center justify-center"
                       style={{ zIndex: 10001 }}
                     >
                       {showCurrentPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -996,7 +996,7 @@ export default function StudentProfile() {
                     <button
                       type="button"
                       onClick={() => setShowNewPw((v) => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 min-w-[44px] min-h-[44px] flex items-center justify-center"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 min-w-[44px] min-h-[44px] flex items-center justify-center"
                       style={{ zIndex: 10001 }}
                     >
                       {showNewPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -1030,7 +1030,7 @@ export default function StudentProfile() {
                     <button
                       type="button"
                       onClick={() => setShowConfirmPw((v) => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 min-w-[44px] min-h-[44px] flex items-center justify-center"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 min-w-[44px] min-h-[44px] flex items-center justify-center"
                       style={{ zIndex: 10001 }}
                     >
                       {showConfirmPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
