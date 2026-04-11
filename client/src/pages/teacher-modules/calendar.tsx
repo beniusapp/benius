@@ -486,7 +486,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
   /* LEGEND — solid pill swatches */
   const legend = (
     <div className="flex items-center gap-3 flex-wrap" data-testid="calendar-legend">
-      {EVENT_TYPES.filter((t, i, a) => a.findIndex(x => x.color === t.color && x.label === t.label) === i || t.value === "examination").map(t => (
+      {EVENT_TYPES.map(t => (
         <div key={t.value} className="flex items-center gap-1.5">
           <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: t.color }} />
           <span className="text-xs text-white/50 font-medium">{t.label}</span>
