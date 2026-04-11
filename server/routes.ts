@@ -1408,7 +1408,8 @@ export async function registerRoutes(
     const entries = all.filter(e =>
       e.class === student.class && e.section === student.section && e.status === "published"
     );
-    res.json(entries);
+    const structure = await storage.getTimetableStructure(student.schoolId, student.class || "");
+    res.json({ entries, structure });
   });
 
   // ===== STUDENT LEAVE ROUTES =====

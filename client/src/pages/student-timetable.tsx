@@ -130,19 +130,17 @@ export default function StudentTimetable() {
     if (!studentLoading && !student) setLocation("/student-login");
   }, [studentLoading, student, setLocation]);
 
-  const { data: entries = [], isLoading: ttLoading } = useQuery<TimetableEntry[]>({
+  const { data: ttData, isLoading: ttLoading } = useQuery<{ entries: TimetableEntry[]; structure: StructureRow[] }>({
     queryKey: ["/api/student/timetable"],
+    queryFn: async () => {
+      const r = await fetch("/api/student/timetable", { credentials: "include" });
+      if (!r.ok) return { entries: [], structure: [] };
+      return r.json();
+    },
     enabled: !!student,
   });
-
-  const { data: structure = [] } = useQuery<StructureRow[]>({
-    queryKey: ["/api/timetable/structure", student?.class],
-    queryFn: async () => {
-      const r = await fetch(`/api/timetable/structure?class=${encodeURIComponent(student!.class)}`, { credentials: "include" });
-      return r.ok ? r.json() : [];
-    },
-    enabled: !!student?.class,
-  });
+  const entries: TimetableEntry[] = ttData?.entries ?? [];
+  const structure: StructureRow[] = ttData?.structure ?? [];
 
   const { data: calEvents = [] } = useQuery<CalendarEvent[]>({
     queryKey: ["/api/student/calendar"],
@@ -263,20 +261,20 @@ export default function StudentTimetable() {
           </div>
         )}
 
-        {/* ── Empty Timetable ── */}
-        {!ttLoading && !isHolidayDay && dayEntries.length === 0 && (
+        {/* ── Empty Timetable (no structure, no entries) ── */}
+        {!ttLoading && !isHolidayDay && structureForDay.length === 0 && dayEntries.length === 0 && (
           <div className="rounded-2xl border p-8 flex flex-col items-center text-center gap-3 mt-2"
             style={{ background: "#1A2942", borderColor: "rgba(255,255,255,0.08)" }}>
             <Clock className="w-12 h-12" style={{ color: "rgba(16,185,129,0.20)" }} />
             <div>
-              <h3 className="text-base font-bold" style={{ color: "rgba(255,255,255,0.70)" }}>No periods scheduled</h3>
-              <p className="text-sm mt-1" style={{ color: "rgba(255,255,255,0.35)" }}>No timetable set for {DAY_LABELS[selectedDay]}.</p>
+              <h3 className="text-base font-bold" style={{ color: "#fff" }}>No periods scheduled</h3>
+              <p className="text-sm mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>No timetable set for {DAY_LABELS[selectedDay]}.</p>
             </div>
           </div>
         )}
 
         {/* ── Full Schedule with Breaks ── */}
-        {!ttLoading && !isHolidayDay && dayEntries.length > 0 && (
+        {!ttLoading && !isHolidayDay && (structureForDay.length > 0 || dayEntries.length > 0) && (
           <div className="space-y-2 pt-1">
             {/* If structure exists, merge breaks with periods */}
             {structureForDay.length > 0 ? (
@@ -346,21 +344,21 @@ export default function StudentTimetable() {
                           <>
                             <p className="font-bold text-sm truncate" style={{ color: "#fff" }}>{entry.subject}</p>
                             {entry.teacherName && (
-                              <p className="text-xs truncate mt-0.5" style={{ color: "rgba(255,255,255,0.45)" }}>{entry.teacherName}</p>
+                              <p className="text-xs truncate mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>{entry.teacherName}</p>
                             )}
                             {hasTime ? (
-                              <p className="text-xs mt-0.5 font-medium" style={{ color: isActive ? "#10b981" : "rgba(255,255,255,0.30)" }}>
+                              <p className="text-xs mt-0.5 font-semibold" style={{ color: isActive ? "#10b981" : "rgba(255,255,255,0.50)" }}>
                                 {formatTime(timeStart)} – {formatTime(timeEnd)}
                               </p>
                             ) : srow.label && srow.label !== `Period ${srow.periodNumber}` ? (
-                              <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.30)" }}>{srow.label}</p>
+                              <p className="text-xs mt-0.5 font-medium" style={{ color: "rgba(255,255,255,0.50)" }}>{srow.label}</p>
                             ) : null}
                           </>
                         ) : (
                           <>
-                            <p className="font-semibold text-sm" style={{ color: "rgba(255,255,255,0.25)" }}>Free Period</p>
+                            <p className="font-semibold text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>Free Period</p>
                             {hasTime && (
-                              <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.20)" }}>
+                              <p className="text-xs mt-0.5 font-medium" style={{ color: "rgba(255,255,255,0.35)" }}>
                                 {formatTime(timeStart)} – {formatTime(timeEnd)}
                               </p>
                             )}
@@ -412,10 +410,10 @@ export default function StudentTimetable() {
                       <div className="flex-1 min-w-0">
                         <p className="font-bold text-sm" style={{ color: "#fff" }}>{entry.subject}</p>
                         {entry.teacherName && (
-                          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.45)" }}>{entry.teacherName}</p>
+                          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>{entry.teacherName}</p>
                         )}
                         {hasTime && (
-                          <p className="text-xs mt-0.5 font-medium" style={{ color: isActive ? "#10b981" : "rgba(255,255,255,0.30)" }}>
+                          <p className="text-xs mt-0.5 font-semibold" style={{ color: isActive ? "#10b981" : "rgba(255,255,255,0.50)" }}>
                             {formatTime(entry.startTime)} – {formatTime(entry.endTime)}
                           </p>
                         )}

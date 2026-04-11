@@ -1335,7 +1335,8 @@ export function registerTeacherRoutes(app: Express) {
       schoolId = req.session.schoolId!;
     }
     const list = await storage.getTimetableByClassSection(schoolId, cls, section);
-    res.json(list);
+    const structure = await storage.getTimetableStructure(schoolId, cls);
+    res.json({ entries: list, structure });
   });
 
   // ===== SLOT CHECK: real-time collision check for teacher popover =====

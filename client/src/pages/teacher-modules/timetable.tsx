@@ -116,14 +116,16 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
     enabled: !!teacher.assignedClass,
   });
 
-  const { data: explorerEntries = [], isLoading: explorerLoading } = useQuery<TimetableEntry[]>({
+  const { data: explorerData, isLoading: explorerLoading } = useQuery<{ entries: TimetableEntry[]; structure: StructureRow[] }>({
     queryKey: ["/api/timetable/class-view", explorerClass, explorerSection],
     queryFn: async () => {
       const r = await fetch(`/api/timetable/class-view?class=${explorerClass}&section=${explorerSection}`, { credentials: "include" });
-      return r.ok ? r.json() : [];
+      if (!r.ok) return { entries: [], structure: [] };
+      return r.json();
     },
     enabled: !!explorerClass && !!explorerSection,
   });
+  const explorerEntries: TimetableEntry[] = explorerData?.entries ?? [];
 
   const { data: collisionData, isFetching: collisionChecking } = useQuery<SlotCheckResult>({
     queryKey: ["/api/timetable/slot-check", popClass, popSection, popover?.day, popover?.period],

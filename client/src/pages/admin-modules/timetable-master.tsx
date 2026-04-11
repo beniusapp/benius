@@ -79,24 +79,17 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
     enabled: !!schoolId,
   });
 
-  const { data: gridEntries = [], isLoading: gridLoading } = useQuery<SlotEntry[]>({
+  const { data: classViewData, isLoading: gridLoading } = useQuery<{ entries: SlotEntry[]; structure: StructureRow[] }>({
     queryKey: ["/api/timetable/class-view", selectedClass, selectedSection],
     queryFn: async () => {
       const r = await fetch(`/api/timetable/class-view?class=${selectedClass}&section=${selectedSection}`, { credentials: "include" });
-      return r.ok ? r.json() : [];
+      if (!r.ok) return { entries: [], structure: [] };
+      return r.json();
     },
     enabled: !!selectedClass && !!selectedSection,
   });
-
-  // Fetch structure for schedule grid (when class is selected)
-  const { data: gridStructure = [] } = useQuery<StructureRow[]>({
-    queryKey: ["/api/timetable/structure", selectedClass],
-    queryFn: async () => {
-      const r = await fetch(`/api/timetable/structure?class=${encodeURIComponent(selectedClass)}`, { credentials: "include" });
-      return r.ok ? r.json() : [];
-    },
-    enabled: !!selectedClass,
-  });
+  const gridEntries: SlotEntry[] = classViewData?.entries ?? [];
+  const gridStructure: StructureRow[] = classViewData?.structure ?? [];
 
   // ── Structure query ──
   const { data: savedStructure = [], isLoading: structLoading } = useQuery<StructureRow[]>({
@@ -361,6 +354,16 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
             </div>
           ) : gridLoading ? (
             <div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-[#D4AF37]" /></div>
+          ) : gridStructure.length === 0 ? (
+            <div className="rounded-xl border border-blue-500/20 bg-blue-900/10 p-10 text-center space-y-3">
+              <Settings className="w-8 h-8 text-blue-400/50 mx-auto" />
+              <div>
+                <p className="text-sm font-semibold text-blue-300">Bell schedule not configured</p>
+                <p className="text-xs text-blue-200/50 mt-1 max-w-xs mx-auto">
+                  Go to the "Bell Structure" tab to set up the period structure for Class {selectedClass} before assigning subjects.
+                </p>
+              </div>
+            </div>
           ) : (
             <div className="relative overflow-x-auto rounded-xl border border-white/10">
               <table className="w-full border-collapse text-sm min-w-[480px]">
@@ -373,7 +376,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
                   </tr>
                 </thead>
                 <tbody>
-                  {(gridStructure.length > 0 ? gridStructure : PERIODS.map(n => ({ periodNumber: n, label: `Period ${n}`, startTime: "", endTime: "", isBreak: false, sortOrder: n - 1 }))).map((srow, sIdx) => {
+                  {gridStructure.map((srow, sIdx) => {
                     const isBreakRow = srow.isBreak;
                     const p = srow.periodNumber;
                     return isBreakRow ? (
