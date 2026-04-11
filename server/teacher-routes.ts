@@ -1445,6 +1445,35 @@ export function registerTeacherRoutes(app: Express) {
     res.json({ saved, conflicts });
   });
 
+  // ===== TIMETABLE STRUCTURE (Period Bell Schedule) =====
+  app.get("/api/timetable/structure", async (req, res) => {
+    if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = req.session.schoolId!;
+    const cls = req.query.class as string;
+    if (!cls) return res.status(400).json({ message: "class query param required" });
+    const rows = await storage.getTimetableStructure(schoolId, cls);
+    res.json(rows);
+  });
+
+  app.post("/api/timetable/structure", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const { class: cls, rows } = req.body as {
+      class: string;
+      rows: Array<{
+        periodNumber: number;
+        label: string;
+        startTime: string;
+        endTime: string;
+        isBreak: boolean;
+        sortOrder?: number;
+      }>;
+    };
+    if (!cls || !Array.isArray(rows)) return res.status(400).json({ message: "class and rows required" });
+    const saved = await storage.saveTimetableStructure(schoolId, cls, rows);
+    res.json({ saved });
+  });
+
   // ===== FACULTY INFO =====
   app.get("/api/faculty/:schoolId", async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });

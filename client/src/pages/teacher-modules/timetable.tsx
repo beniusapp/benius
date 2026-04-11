@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
-  Loader2, Save, X, AlertTriangle, Search, BookOpen, Calendar, Pencil, Trash2, Plus, Settings,
+  Loader2, Save, X, AlertTriangle, Search, BookOpen, Calendar, Pencil, Trash2, Plus, Settings, Clock, Coffee,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -19,15 +19,23 @@ interface TimetableEntry {
   teacherName?: string;
 }
 
+interface StructureRow {
+  id?: number;
+  periodNumber: number;
+  label: string;
+  startTime: string;
+  endTime: string;
+  isBreak: boolean;
+  sortOrder: number;
+}
+
 interface SlotDraft {
   class: string;
   section: string;
   subject: string;
 }
 
-type DraftMap = Record<string, SlotDraft | null>; // key: `${day}-${period}`, null = delete
-
-// Fields that are invalid (not filled) in draft — key is `${day}-${period}`
+type DraftMap = Record<string, SlotDraft | null>;
 type ValidationErrors = Record<string, { class?: boolean; section?: boolean; subject?: boolean }>;
 
 interface ConflictInfo {
@@ -50,12 +58,19 @@ interface PopoverState {
 }
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const PERIODS = [1, 2, 3, 4, 5, 6, 7, 8];
+const FALLBACK_PERIODS = [1, 2, 3, 4, 5, 6, 7, 8];
+
+function formatTime(t: string): string {
+  if (!t) return "";
+  const [h, m] = t.split(":").map(Number);
+  const ampm = h >= 12 ? "PM" : "AM";
+  const hr = h % 12 || 12;
+  return `${hr}:${String(m || 0).padStart(2, "0")} ${ampm}`;
+}
 
 export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
 
-  // ── School-scoped config — STRICT: no hardcoded fallbacks ──
   const {
     classes: CLASS_LIST,
     sections: SECTION_LIST,
@@ -67,7 +82,6 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
     isFullyConfigured,
   } = useSchoolConfigStrict(teacher.schoolId);
 
-  // ── My Schedule state ──
   const [draftMap, setDraftMap] = useState<DraftMap>({});
   const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
   const [popover, setPopover] = useState<PopoverState | null>(null);
@@ -80,11 +94,9 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
   const [popSubjectError, setPopSubjectError] = useState(false);
   const [conflicts, setConflicts] = useState<ConflictInfo[]>([]);
 
-  // ── Class Explorer state ──
   const [explorerClass, setExplorerClass] = useState("");
   const [explorerSection, setExplorerSection] = useState("");
 
-  // ── My Schedule query ──
   const { data: myEntries = [], isLoading } = useQuery<TimetableEntry[]>({
     queryKey: ["/api/timetable/teacher", teacher.id],
     queryFn: async () => {
@@ -94,7 +106,16 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
     },
   });
 
-  // ── Class Explorer query ──
+  // Fetch structure for teacher's assigned class
+  const { data: structure = [] } = useQuery<StructureRow[]>({
+    queryKey: ["/api/timetable/structure", teacher.assignedClass],
+    queryFn: async () => {
+      const r = await fetch(`/api/timetable/structure?class=${encodeURIComponent(teacher.assignedClass)}`, { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!teacher.assignedClass,
+  });
+
   const { data: explorerEntries = [], isLoading: explorerLoading } = useQuery<TimetableEntry[]>({
     queryKey: ["/api/timetable/class-view", explorerClass, explorerSection],
     queryFn: async () => {
@@ -104,7 +125,6 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
     enabled: !!explorerClass && !!explorerSection,
   });
 
-  // ── Inline collision check when class+section changes in popover ──
   const { data: collisionData, isFetching: collisionChecking } = useQuery<SlotCheckResult>({
     queryKey: ["/api/timetable/slot-check", popClass, popSection, popover?.day, popover?.period],
     queryFn: async () => {
@@ -119,17 +139,18 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
     staleTime: 0,
   });
 
-  // Keep local collision state in sync
-  useEffect(() => {
-    setPopCollision(collisionData ?? null);
-  }, [collisionData]);
-
-  // Reset collision when popover closes
-  useEffect(() => {
-    if (!popover) setPopCollision(null);
-  }, [popover]);
+  useEffect(() => { setPopCollision(collisionData ?? null); }, [collisionData]);
+  useEffect(() => { if (!popover) setPopCollision(null); }, [popover]);
 
   const hasDraft = Object.keys(draftMap).length > 0;
+
+  // Use structure periods or fallback 1–8
+  const periodRows = structure.length > 0
+    ? structure.filter(r => !r.isBreak)
+    : FALLBACK_PERIODS.map(n => ({ periodNumber: n, label: `Period ${n}`, startTime: "", endTime: "", isBreak: false, sortOrder: n - 1 }));
+
+  // Include breaks in ordered display
+  const allStructureRows = structure.length > 0 ? structure : periodRows;
 
   const getEffectiveSlot = useCallback((day: number, period: number): { class: string; section: string; subject: string; isDraft: boolean; isDelete: boolean } | null => {
     const key = `${day}-${period}`;
@@ -147,21 +168,13 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
     const key = `${day}-${period}`;
     const existing = myEntries.find(e => e.dayOfWeek === day && e.period === period) ?? null;
     const draft = draftMap[key];
-    setPopClassError(false);
-    setPopSectionError(false);
-    setPopSubjectError(false);
+    setPopClassError(false); setPopSectionError(false); setPopSubjectError(false);
     if (draft !== undefined && draft !== null) {
-      setPopClass(draft.class);
-      setPopSection(draft.section);
-      setPopSubject(draft.subject);
+      setPopClass(draft.class); setPopSection(draft.section); setPopSubject(draft.subject);
     } else if (existing) {
-      setPopClass(existing.class);
-      setPopSection(existing.section);
-      setPopSubject(existing.subject);
+      setPopClass(existing.class); setPopSection(existing.section); setPopSubject(existing.subject);
     } else {
-      setPopClass("");
-      setPopSection("");
-      setPopSubject("");
+      setPopClass(""); setPopSection(""); setPopSubject("");
     }
     setPopover({ day, period, existing });
   }
@@ -175,13 +188,8 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
       setPopover(null);
       return;
     }
-    // Validate fields
-    const classErr = !popClass;
-    const sectionErr = !popSection;
-    const subjectErr = !popSubject;
-    setPopClassError(classErr);
-    setPopSectionError(sectionErr);
-    setPopSubjectError(subjectErr);
+    const classErr = !popClass; const sectionErr = !popSection; const subjectErr = !popSubject;
+    setPopClassError(classErr); setPopSectionError(sectionErr); setPopSubjectError(subjectErr);
     if (classErr || sectionErr || subjectErr) return;
     setDraftMap(prev => ({ ...prev, [key]: { class: popClass, section: popSection, subject: popSubject } }));
     setValidationErrors(prev => { const n = { ...prev }; delete n[key]; return n; });
@@ -192,7 +200,7 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
     const errors: ValidationErrors = {};
     let hasErrors = false;
     for (const [key, draft] of Object.entries(draftMap)) {
-      if (draft === null) continue; // deletes are fine
+      if (draft === null) continue;
       const err: { class?: boolean; section?: boolean; subject?: boolean } = {};
       if (!draft.class) { err.class = true; hasErrors = true; }
       if (!draft.section) { err.section = true; hasErrors = true; }
@@ -206,14 +214,12 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!validateAllDrafts()) {
-        toast({ title: "Incomplete fields", description: "Fill in all required fields (Class, Section, Subject) before saving.", variant: "destructive" });
+        toast({ title: "Incomplete fields", description: "Fill in all required fields before saving.", variant: "destructive" });
         throw new Error("Validation failed");
       }
       const changes = Object.entries(draftMap).map(([key, draft]) => {
         const [day, period] = key.split("-").map(Number);
-        if (draft === null) {
-          return { dayOfWeek: day, period, class: "", section: "", subject: "", _delete: true };
-        }
+        if (draft === null) return { dayOfWeek: day, period, class: "", section: "", subject: "", _delete: true };
         return { dayOfWeek: day, period, class: draft.class, section: draft.section, subject: draft.subject };
       });
       const res = await apiRequest("POST", "/api/timetable/teacher/save-batch", { changes });
@@ -224,21 +230,12 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
       const newConflicts = data.conflicts ?? [];
       setConflicts(newConflicts);
       if (newConflicts.length > 0 && saved.length === 0) {
-        toast({
-          title: "Conflicts detected",
-          description: `${newConflicts.length} slot(s) could not be saved. See conflict details below.`,
-          variant: "destructive",
-        });
+        toast({ title: "Conflicts detected", description: `${newConflicts.length} slot(s) could not be saved.`, variant: "destructive" });
       } else if (newConflicts.length > 0) {
-        toast({
-          title: `${saved.length} saved, ${newConflicts.length} conflict(s)`,
-          description: "Some slots were skipped — see conflict banner below.",
-          className: "border-amber-500 bg-amber-900/30 text-amber-100",
-        });
+        toast({ title: `${saved.length} saved, ${newConflicts.length} conflict(s)`, description: "Some slots were skipped.", className: "border-amber-500 bg-amber-900/30 text-amber-100" });
       } else {
         toast({ title: "Schedule saved", description: `${saved.length} slot(s) updated.`, className: "border-emerald-500 bg-emerald-900/30 text-emerald-100" });
       }
-      // Keep only conflicted drafts
       const conflictKeys = new Set(newConflicts.map(c => `${c.dayOfWeek}-${c.period}`));
       setDraftMap(prev => {
         const next: DraftMap = {};
@@ -251,28 +248,16 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
       queryClient.invalidateQueries({ queryKey: ["/api/timetable/teacher", teacher.id] });
     },
     onError: (e: Error) => {
-      if (e.message !== "Validation failed") {
-        toast({ title: "Save failed", description: e.message, variant: "destructive" });
-      }
+      if (e.message !== "Validation failed") toast({ title: "Save failed", description: e.message, variant: "destructive" });
     },
   });
 
-  function discardDrafts() {
-    setDraftMap({});
-    setConflicts([]);
-    setValidationErrors({});
-    setPopover(null);
-  }
+  function discardDrafts() { setDraftMap({}); setConflicts([]); setValidationErrors({}); setPopover(null); }
 
   if (isLoading || configLoading) {
-    return (
-      <div className="flex justify-center items-center py-16">
-        <Loader2 className="w-7 h-7 animate-spin text-[#10b981]" />
-      </div>
-    );
+    return <div className="flex justify-center items-center py-16"><Loader2 className="w-7 h-7 animate-spin text-[#10b981]" /></div>;
   }
 
-  // If school has not configured classes, sections, or subjects — block timetable UI
   if (!isFullyConfigured) {
     const missing: string[] = [];
     if (!hasClasses) missing.push("classes");
@@ -280,19 +265,17 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
     if (!hasSubjects) missing.push("subjects");
     return (
       <div className="space-y-4">
-        <h3 className="text-base font-bold flex items-center gap-2">
+        <h3 className="text-base font-bold flex items-center gap-2" style={{ color: "#fff" }}>
           <Calendar className="w-4 h-4 text-[#10b981]" /> My Schedule
         </h3>
-        <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-900/15 p-8 flex flex-col items-center gap-4 text-center" data-testid="timetable-config-warning">
-          <div className="w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-500/20 flex items-center justify-center">
-            <Settings className="w-6 h-6 text-amber-500" />
+        <div className="rounded-xl border border-amber-500/30 bg-amber-900/15 p-8 flex flex-col items-center gap-4 text-center" data-testid="timetable-config-warning">
+          <div className="w-12 h-12 rounded-full bg-amber-500/20 flex items-center justify-center">
+            <Settings className="w-6 h-6 text-amber-400" />
           </div>
           <div>
-            <p className="font-semibold text-amber-700 dark:text-amber-300 text-sm mb-1">Timetable configuration required</p>
-            <p className="text-amber-600/80 dark:text-amber-200/70 text-xs max-w-xs">
-              Your school admin has not yet defined{" "}
-              <strong>{missing.join(", ")}</strong> in School Settings.
-              Once they configure classes, sections, and subjects you can start building your schedule.
+            <p className="font-semibold text-amber-300 text-sm mb-1">Timetable configuration required</p>
+            <p className="text-amber-200/70 text-xs max-w-xs">
+              Your school admin has not yet defined <strong>{missing.join(", ")}</strong>. Once configured you can build your schedule.
             </p>
           </div>
         </div>
@@ -307,29 +290,20 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
       <div className="space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <h3 className="text-base font-bold text-gray-900 dark:text-white flex items-center gap-2" data-testid="text-timetable-title">
-              <Calendar className="w-4 h-4 text-[#10b981]" />
-              My Schedule
+            <h3 className="text-base font-bold flex items-center gap-2" style={{ color: "#ffffff" }} data-testid="text-timetable-title">
+              <Calendar className="w-4 h-4 text-[#10b981]" /> My Schedule
             </h3>
-            <p className="text-xs text-muted-foreground mt-0.5">
+            <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.5)" }}>
               {myEntries.length} period(s) assigned · Click any cell to add or edit
+              {structure.length > 0 && ` · Bell schedule loaded for Class ${teacher.assignedClass}`}
             </p>
           </div>
           {hasDraft && (
             <div className="flex items-center gap-2">
-              <button
-                onClick={discardDrafts}
-                className="h-11 px-3 rounded-xl border border-border text-muted-foreground hover:bg-muted text-sm font-medium flex items-center gap-1.5 transition-colors"
-                data-testid="button-discard"
-              >
+              <button onClick={discardDrafts} className="h-11 px-3 rounded-xl border border-white/20 text-white/60 hover:bg-white/5 text-sm font-medium flex items-center gap-1.5 transition-colors" data-testid="button-discard">
                 <X className="w-3.5 h-3.5" /> Discard
               </button>
-              <button
-                onClick={() => saveMutation.mutate()}
-                disabled={saveMutation.isPending}
-                className="h-11 px-4 rounded-xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-semibold text-sm flex items-center gap-1.5 transition-colors min-w-[130px] justify-center"
-                data-testid="button-save-schedule"
-              >
+              <button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="h-11 px-4 rounded-xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-semibold text-sm flex items-center gap-1.5 transition-colors min-w-[130px] justify-center" data-testid="button-save-schedule">
                 {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                 Save Changes
               </button>
@@ -337,211 +311,187 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
           )}
         </div>
 
-        {/* Draft indicator */}
         {hasDraft && (
-          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-500/30">
-            <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-            <p className="text-xs text-amber-700 dark:text-amber-300 font-medium">
-              {Object.keys(draftMap).length} unsaved change(s) — click "Save Changes" to commit
-            </p>
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-900/20 border border-amber-500/30">
+            <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            <p className="text-xs text-amber-300 font-medium">{Object.keys(draftMap).length} unsaved change(s) — click "Save Changes" to commit</p>
           </div>
         )}
 
-        {/* Conflict banners */}
         {conflicts.length > 0 && (
-          <div className="rounded-xl border border-red-200 dark:border-red-700/40 bg-red-50 dark:bg-red-900/15 p-4 space-y-2" data-testid="conflict-banner">
+          <div className="rounded-xl border border-red-700/40 bg-red-900/15 p-4 space-y-2" data-testid="conflict-banner">
             <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
-              <p className="text-sm font-semibold text-red-700 dark:text-red-400">Slot conflicts detected</p>
+              <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
+              <p className="text-sm font-semibold text-red-400">Slot conflicts detected</p>
             </div>
             {conflicts.map((c, i) => (
-              <p key={i} className="text-xs text-red-600 dark:text-red-400 pl-6" data-testid={`conflict-item-${i}`}>
+              <p key={i} className="text-xs text-red-400/80 pl-6" data-testid={`conflict-item-${i}`}>
                 {DAY_NAMES[c.dayOfWeek]} P{c.period}: already booked by <strong>{c.teacherName}</strong> for <strong>{c.subject}</strong>
               </p>
             ))}
           </div>
         )}
 
-        {/* My Schedule grid */}
-        <div className="overflow-x-auto rounded-xl border border-border">
+        {/* My Schedule grid — structure-driven rows */}
+        <div className="overflow-x-auto rounded-xl border border-white/10">
           <table className="w-full border-collapse text-sm min-w-[540px]">
             <thead>
               <tr>
-                <th className="border-b border-r border-border p-2.5 bg-muted text-xs font-semibold text-muted-foreground text-center w-12">P</th>
+                <th className="border-b border-r border-white/10 p-2.5 bg-[#0F1E35] text-xs font-semibold text-white/40 text-center w-[130px]">Period</th>
                 {DAY_NAMES.map((d, i) => (
-                  <th key={i} className="border-b border-r border-border p-2.5 bg-muted text-xs font-semibold text-muted-foreground text-center">
-                    {d}
-                  </th>
+                  <th key={i} className="border-b border-r border-white/10 p-2.5 bg-[#0F1E35] text-xs font-semibold text-white/60 text-center">{d}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {PERIODS.map(p => (
-                <tr key={p}>
-                  <td className="border-b border-r border-border p-2 text-center text-xs font-bold text-muted-foreground bg-muted/40">
-                    {p}
-                  </td>
-                  {DAY_NAMES.map((_, dayIdx) => {
-                    const slot = getEffectiveSlot(dayIdx, p);
-                    const key = `${dayIdx}-${p}`;
-                    const isConflict = conflicts.some(c => c.dayOfWeek === dayIdx && c.period === p);
-                    const hasValErr = !!validationErrors[key];
-                    const isPopoverOpen = popover?.day === dayIdx && popover?.period === p;
-                    return (
-                      <td
-                        key={dayIdx}
-                        className="border-b border-r border-border relative p-1 min-w-[100px]"
-                        onClick={e => { e.stopPropagation(); openPopover(dayIdx, p); }}
-                      >
-                        <div
-                          className={`rounded-lg p-2 min-h-[54px] flex flex-col justify-center cursor-pointer transition-colors ${
-                            hasValErr
-                              ? "bg-red-50 dark:bg-red-900/20 border border-red-400 dark:border-red-500"
-                              : isConflict
-                              ? "bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-700/50"
-                              : slot?.isDelete
-                              ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700/30"
-                              : slot?.isDraft
-                              ? "bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40"
-                              : slot
-                              ? "bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/30"
-                              : "border border-transparent hover:border-border hover:bg-muted/50 group"
-                          }`}
-                          data-testid={`cell-${dayIdx}-${p}`}
-                        >
-                          {hasValErr ? (
-                            <p className="text-[10px] text-red-500 italic text-center">Required fields missing</p>
-                          ) : slot && !slot.isDelete ? (
-                            <>
-                              <p className="text-[11px] font-bold text-gray-800 dark:text-white leading-tight truncate">{slot.subject}</p>
-                              <p className="text-[10px] text-muted-foreground truncate mt-0.5">{slot.class}-{slot.section}</p>
-                              {slot.isDraft && <span className="text-[9px] text-amber-500 font-semibold mt-0.5">unsaved</span>}
-                              {isConflict && <span className="text-[9px] text-red-500 font-semibold mt-0.5">conflict</span>}
-                            </>
-                          ) : slot?.isDelete ? (
-                            <p className="text-[10px] text-red-400 italic text-center">will delete</p>
-                          ) : (
-                            <Plus className="w-3.5 h-3.5 text-muted-foreground/30 mx-auto group-hover:text-[#10b981] transition-colors" />
+              {allStructureRows.map((srow, sIdx) => {
+                const isBreakRow = srow.isBreak;
+                return (
+                  <tr key={sIdx}>
+                    {/* Period label cell */}
+                    <td className={`border-b border-r border-white/10 p-2 text-center text-xs bg-[#0F1E35]/50 ${isBreakRow ? "bg-amber-900/10" : ""}`}>
+                      {isBreakRow ? (
+                        <div className="flex flex-col items-center gap-0.5">
+                          <Coffee className="w-3 h-3 text-amber-400" />
+                          <span className="font-semibold text-amber-300">{srow.label || "Break"}</span>
+                          {srow.startTime && srow.endTime && (
+                            <span className="text-[9px] text-amber-300/60">{formatTime(srow.startTime)}–{formatTime(srow.endTime)}</span>
                           )}
                         </div>
+                      ) : (
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className="font-bold text-white/70">P{srow.periodNumber}</span>
+                          {srow.label && srow.label !== `Period ${srow.periodNumber}` && (
+                            <span className="text-[9px] text-white/40">{srow.label}</span>
+                          )}
+                          {srow.startTime && srow.endTime && (
+                            <span className="text-[9px] text-[#10b981]/70">{formatTime(srow.startTime)}–{formatTime(srow.endTime)}</span>
+                          )}
+                        </div>
+                      )}
+                    </td>
 
-                        {/* Inline Popover */}
-                        {isPopoverOpen && (
-                          <div
-                            className="absolute left-0 top-full z-50 w-72 bg-white dark:bg-slate-900 border border-border rounded-xl shadow-2xl p-4 space-y-3"
-                            onClick={e => e.stopPropagation()}
-                          >
-                            <div className="flex items-center justify-between">
-                              <p className="text-xs font-bold text-gray-900 dark:text-white">{DAY_NAMES[dayIdx]} · Period {p}</p>
-                              <button onClick={() => setPopover(null)} className="text-muted-foreground hover:text-foreground">
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-
-                            {/* Inline collision warning */}
-                            {collisionChecking && popClass && popSection && (
-                              <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-muted text-xs text-muted-foreground">
-                                <Loader2 className="w-3 h-3 animate-spin" /> Checking availability…
-                              </div>
-                            )}
-                            {!collisionChecking && popCollision?.taken && (
-                              <div className="flex items-start gap-2 px-2 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700/40" data-testid="inline-collision-warning">
-                                <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
-                                <p className="text-xs text-red-600 dark:text-red-400">
-                                  This slot is already booked by <strong>{popCollision.teacherName}</strong> for <strong>{popCollision.subject}</strong>
-                                </p>
-                              </div>
-                            )}
-
-                            {/* Class (school-defined only) */}
-                            <div>
-                              <label className="block text-xs font-semibold text-muted-foreground mb-1">
-                                Class <span className="text-muted-foreground/50 font-normal">(school-defined)</span>
-                                {popClassError && <span className="ml-1 text-red-500">*</span>}
-                              </label>
-                              <select
-                                value={popClass}
-                                onChange={e => { setPopClass(e.target.value); setPopClassError(false); }}
-                                className={`w-full h-11 px-2 rounded-lg border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] ${popClassError ? "border-red-500 bg-red-50 dark:bg-red-900/10" : "border-border"}`}
-                                data-testid={`select-pop-class-${dayIdx}-${p}`}
-                              >
-                                <option value="">Select class</option>
-                                {CLASS_LIST.map(c => <option key={c} value={c}>Class {c}</option>)}
-                              </select>
-                            </div>
-
-                            {/* Section (school-defined only) */}
-                            <div>
-                              <label className="block text-xs font-semibold text-muted-foreground mb-1">
-                                Section <span className="text-muted-foreground/50 font-normal">(school-defined)</span>
-                                {popSectionError && <span className="ml-1 text-red-500">*</span>}
-                              </label>
-                              <select
-                                value={popSection}
-                                onChange={e => { setPopSection(e.target.value); setPopSectionError(false); }}
-                                className={`w-full h-11 px-2 rounded-lg border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] ${popSectionError ? "border-red-500 bg-red-50 dark:bg-red-900/10" : "border-border"}`}
-                                data-testid={`select-pop-section-${dayIdx}-${p}`}
-                              >
-                                <option value="">Select section</option>
-                                {SECTION_LIST.map(s => <option key={s} value={s}>{s}</option>)}
-                              </select>
-                            </div>
-
-                            {/* Subject (school-defined only) */}
-                            <div>
-                              <label className="block text-xs font-semibold text-muted-foreground mb-1">
-                                Subject <span className="text-muted-foreground/50 font-normal">(school-defined)</span>
-                                {popSubjectError && <span className="ml-1 text-red-500">*</span>}
-                              </label>
-                              <select
-                                value={popSubject}
-                                onChange={e => { setPopSubject(e.target.value); setPopSubjectError(false); }}
-                                className={`w-full h-11 px-2 rounded-lg border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] ${popSubjectError ? "border-red-500 bg-red-50 dark:bg-red-900/10" : "border-border"}`}
-                                data-testid={`select-pop-subject-${dayIdx}-${p}`}
-                              >
-                                <option value="">Select subject</option>
-                                {SUBJECT_LIST.map(s => <option key={s} value={s}>{s}</option>)}
-                              </select>
-                            </div>
-
-                            <div className="flex gap-2 pt-1">
-                              {(slot || (key in draftMap && draftMap[key] !== null)) && (
-                                <button
-                                  onClick={() => applyPopoverChange(true)}
-                                  className="h-11 px-3 rounded-lg border border-red-200 dark:border-red-700/40 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 text-xs font-semibold flex items-center gap-1"
-                                  data-testid={`button-pop-delete-${dayIdx}-${p}`}
-                                >
-                                  <Trash2 className="w-3 h-3" /> Remove
-                                </button>
-                              )}
-                              <button
-                                onClick={() => applyPopoverChange(false)}
-                                className="flex-1 h-11 rounded-lg bg-[#10b981] hover:bg-[#059669] text-white text-xs font-semibold flex items-center justify-center gap-1"
-                                data-testid={`button-pop-apply-${dayIdx}-${p}`}
-                              >
-                                <Pencil className="w-3 h-3" /> Apply
-                              </button>
-                            </div>
+                    {/* Break row spans all days — shaded, non-interactive */}
+                    {isBreakRow ? (
+                      DAY_NAMES.map((_, di) => (
+                        <td key={di} className="border-b border-r border-white/10 bg-amber-900/5 p-1">
+                          <div className="rounded-lg min-h-[48px] flex items-center justify-center">
+                            <span className="text-[10px] text-amber-300/30 font-medium">{srow.label || "Break"}</span>
                           </div>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
+                        </td>
+                      ))
+                    ) : (
+                      DAY_NAMES.map((_, dayIdx) => {
+                        const p = srow.periodNumber;
+                        const slot = getEffectiveSlot(dayIdx, p);
+                        const key = `${dayIdx}-${p}`;
+                        const isConflict = conflicts.some(c => c.dayOfWeek === dayIdx && c.period === p);
+                        const hasValErr = !!validationErrors[key];
+                        const isPopoverOpen = popover?.day === dayIdx && popover?.period === p;
+                        return (
+                          <td key={dayIdx} className="border-b border-r border-white/10 relative p-1 min-w-[100px]" onClick={e => { e.stopPropagation(); openPopover(dayIdx, p); }}>
+                            <div className={`rounded-lg p-2 min-h-[54px] flex flex-col justify-center cursor-pointer transition-colors ${
+                              hasValErr ? "bg-red-900/20 border border-red-500"
+                              : isConflict ? "bg-red-900/20 border border-red-700/50"
+                              : slot?.isDelete ? "bg-red-900/20 border border-red-700/30"
+                              : slot?.isDraft ? "bg-amber-900/20 border border-amber-500/40"
+                              : slot ? "bg-[#10b981]/10 border border-[#10b981]/30 hover:bg-[#10b981]/15"
+                              : "border border-transparent hover:border-white/15 hover:bg-white/5 group"
+                            }`} data-testid={`cell-${dayIdx}-${p}`}>
+                              {hasValErr ? (
+                                <p className="text-[10px] text-red-400 italic text-center">Fields missing</p>
+                              ) : slot && !slot.isDelete ? (
+                                <>
+                                  <p className="text-[11px] font-bold leading-tight truncate" style={{ color: "#ffffff" }}>{slot.subject}</p>
+                                  <p className="text-[10px] truncate mt-0.5" style={{ color: "rgba(255,255,255,0.50)" }}>{slot.class}-{slot.section}</p>
+                                  {slot.isDraft && <span className="text-[9px] text-amber-400 font-semibold mt-0.5">unsaved</span>}
+                                  {isConflict && <span className="text-[9px] text-red-400 font-semibold mt-0.5">conflict</span>}
+                                </>
+                              ) : slot?.isDelete ? (
+                                <p className="text-[10px] text-red-400 italic text-center">will delete</p>
+                              ) : (
+                                <Plus className="w-3.5 h-3.5 text-white/20 mx-auto group-hover:text-[#10b981] transition-colors" />
+                              )}
+                            </div>
+
+                            {/* Inline popover */}
+                            {isPopoverOpen && (
+                              <div className="absolute left-0 top-full z-50 w-72 bg-[#1A2942] border border-white/20 rounded-xl shadow-2xl p-4 space-y-3" onClick={e => e.stopPropagation()}>
+                                <div className="flex items-center justify-between">
+                                  <p className="text-xs font-bold text-white">{DAY_NAMES[dayIdx]} · Period {p}</p>
+                                  <button onClick={() => setPopover(null)} className="text-white/40 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+                                </div>
+
+                                {collisionChecking && popClass && popSection && (
+                                  <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-white/5 text-xs text-white/50">
+                                    <Loader2 className="w-3 h-3 animate-spin" /> Checking availability…
+                                  </div>
+                                )}
+                                {!collisionChecking && popCollision?.taken && (
+                                  <div className="flex items-start gap-2 px-2 py-2 rounded-lg bg-red-900/20 border border-red-700/40" data-testid="inline-collision-warning">
+                                    <AlertTriangle className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
+                                    <p className="text-xs text-red-400">
+                                      Slot taken by <strong>{popCollision.teacherName}</strong> for <strong>{popCollision.subject}</strong>
+                                    </p>
+                                  </div>
+                                )}
+
+                                <div>
+                                  <label className="block text-xs font-semibold text-white/50 mb-1">
+                                    Class {popClassError && <span className="ml-1 text-red-400">*</span>}
+                                  </label>
+                                  <select value={popClass} onChange={e => { setPopClass(e.target.value); setPopClassError(false); }} className={`w-full h-11 px-2 rounded-lg border text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] bg-[#0A1628] ${popClassError ? "border-red-500" : "border-white/20"}`} data-testid={`select-pop-class-${dayIdx}-${p}`}>
+                                    <option value="">Select class</option>
+                                    {CLASS_LIST.map(c => <option key={c} value={c}>Class {c}</option>)}
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="block text-xs font-semibold text-white/50 mb-1">
+                                    Section {popSectionError && <span className="ml-1 text-red-400">*</span>}
+                                  </label>
+                                  <select value={popSection} onChange={e => { setPopSection(e.target.value); setPopSectionError(false); }} className={`w-full h-11 px-2 rounded-lg border text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] bg-[#0A1628] ${popSectionError ? "border-red-500" : "border-white/20"}`} data-testid={`select-pop-section-${dayIdx}-${p}`}>
+                                    <option value="">Select section</option>
+                                    {SECTION_LIST.map(s => <option key={s} value={s}>{s}</option>)}
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="block text-xs font-semibold text-white/50 mb-1">
+                                    Subject {popSubjectError && <span className="ml-1 text-red-400">*</span>}
+                                  </label>
+                                  <select value={popSubject} onChange={e => { setPopSubject(e.target.value); setPopSubjectError(false); }} className={`w-full h-11 px-2 rounded-lg border text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] bg-[#0A1628] ${popSubjectError ? "border-red-500" : "border-white/20"}`} data-testid={`select-pop-subject-${dayIdx}-${p}`}>
+                                    <option value="">Select subject</option>
+                                    {SUBJECT_LIST.map(s => <option key={s} value={s}>{s}</option>)}
+                                  </select>
+                                </div>
+
+                                <div className="flex gap-2 pt-1">
+                                  {(slot || (key in draftMap && draftMap[key] !== null)) && (
+                                    <button onClick={() => applyPopoverChange(true)} className="h-11 px-3 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-900/20 text-xs font-semibold flex items-center gap-1" data-testid={`button-pop-delete-${dayIdx}-${p}`}>
+                                      <Trash2 className="w-3 h-3" /> Remove
+                                    </button>
+                                  )}
+                                  <button onClick={() => applyPopoverChange(false)} className="flex-1 h-11 rounded-lg bg-[#10b981] hover:bg-[#059669] text-white text-xs font-semibold flex items-center justify-center gap-1" data-testid={`button-pop-apply-${dayIdx}-${p}`}>
+                                    <Pencil className="w-3 h-3" /> Apply
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })
+                    )}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
 
-        {/* Sticky Save button at bottom for mobile */}
         {hasDraft && (
           <div className="sticky bottom-4 flex justify-end">
-            <button
-              onClick={() => saveMutation.mutate()}
-              disabled={saveMutation.isPending}
-              className="h-12 px-6 rounded-2xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-bold text-sm flex items-center gap-2 shadow-lg transition-colors"
-              data-testid="button-save-bottom"
-            >
+            <button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="h-12 px-6 rounded-2xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-bold text-sm flex items-center gap-2 shadow-lg transition-colors" data-testid="button-save-bottom">
               {saveMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
               Save Changes
             </button>
@@ -550,36 +500,25 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
       </div>
 
       {/* ── Section 2: Class Explorer ── */}
-      <div className="space-y-4 pt-2 border-t border-border">
+      <div className="space-y-4 pt-4 border-t border-white/10">
         <div>
-          <h3 className="text-base font-bold text-gray-900 dark:text-white flex items-center gap-2">
-            <Search className="w-4 h-4 text-[#10b981]" />
-            Class Explorer
+          <h3 className="text-base font-bold flex items-center gap-2" style={{ color: "#ffffff" }}>
+            <Search className="w-4 h-4 text-[#10b981]" /> Class Explorer
           </h3>
-          <p className="text-xs text-muted-foreground mt-0.5">View any class's full timetable (read-only)</p>
+          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.45)" }}>View any class's full timetable (read-only)</p>
         </div>
 
         <div className="flex flex-wrap gap-3">
           <div className="flex-1 min-w-[130px]">
-            <label className="block text-xs font-semibold text-muted-foreground mb-1">Class</label>
-            <select
-              value={explorerClass}
-              onChange={e => setExplorerClass(e.target.value)}
-              className="w-full h-11 px-3 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981]"
-              data-testid="select-explorer-class"
-            >
+            <label className="block text-xs font-semibold text-white/50 mb-1">Class</label>
+            <select value={explorerClass} onChange={e => setExplorerClass(e.target.value)} className="w-full h-11 px-3 rounded-xl border border-white/20 bg-[#0A1628] text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981]" data-testid="select-explorer-class">
               <option value="">Select class</option>
               {CLASS_LIST.map(c => <option key={c} value={c}>Class {c}</option>)}
             </select>
           </div>
           <div className="flex-1 min-w-[110px]">
-            <label className="block text-xs font-semibold text-muted-foreground mb-1">Section</label>
-            <select
-              value={explorerSection}
-              onChange={e => setExplorerSection(e.target.value)}
-              className="w-full h-11 px-3 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981]"
-              data-testid="select-explorer-section"
-            >
+            <label className="block text-xs font-semibold text-white/50 mb-1">Section</label>
+            <select value={explorerSection} onChange={e => setExplorerSection(e.target.value)} className="w-full h-11 px-3 rounded-xl border border-white/20 bg-[#0A1628] text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981]" data-testid="select-explorer-section">
               <option value="">Select section</option>
               {SECTION_LIST.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
@@ -590,36 +529,32 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
           explorerLoading ? (
             <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-[#10b981]" /></div>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-border">
+            <div className="overflow-x-auto rounded-xl border border-white/10">
               <table className="w-full border-collapse text-sm min-w-[540px]">
                 <thead>
                   <tr>
-                    <th className="border-b border-r border-border p-2.5 bg-muted text-xs font-semibold text-muted-foreground text-center w-12">P</th>
+                    <th className="border-b border-r border-white/10 p-2.5 bg-[#0F1E35] text-xs font-semibold text-white/40 text-center w-12">P</th>
                     {DAY_NAMES.map((d, i) => (
-                      <th key={i} className="border-b border-r border-border p-2.5 bg-muted text-xs font-semibold text-muted-foreground text-center">
-                        {d}
-                      </th>
+                      <th key={i} className="border-b border-r border-white/10 p-2.5 bg-[#0F1E35] text-xs font-semibold text-white/60 text-center">{d}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {PERIODS.map(p => (
+                  {FALLBACK_PERIODS.map(p => (
                     <tr key={p}>
-                      <td className="border-b border-r border-border p-2 text-center text-xs font-bold text-muted-foreground bg-muted/40">
-                        {p}
-                      </td>
+                      <td className="border-b border-r border-white/10 p-2 text-center text-xs font-bold text-white/40 bg-[#0F1E35]/50">{p}</td>
                       {DAY_NAMES.map((_, dayIdx) => {
                         const entry = explorerEntries.find(e => e.dayOfWeek === dayIdx && e.period === p);
                         return (
-                          <td key={dayIdx} className="border-b border-r border-border p-1 min-w-[100px]" data-testid={`explorer-cell-${dayIdx}-${p}`}>
+                          <td key={dayIdx} className="border-b border-r border-white/10 p-1 min-w-[100px]" data-testid={`explorer-cell-${dayIdx}-${p}`}>
                             {entry ? (
-                              <div className="rounded-lg p-2 min-h-[48px] flex flex-col justify-center bg-emerald-50 dark:bg-emerald-900/15 border border-emerald-200 dark:border-emerald-700/30">
-                                <p className="text-[11px] font-bold text-gray-800 dark:text-white leading-tight truncate">{entry.subject}</p>
-                                <p className="text-[10px] text-muted-foreground truncate mt-0.5">{entry.teacherName || "—"}</p>
+                              <div className="rounded-lg p-2 min-h-[48px] flex flex-col justify-center bg-[#10b981]/10 border border-[#10b981]/30">
+                                <p className="text-[11px] font-bold leading-tight truncate" style={{ color: "#ffffff" }}>{entry.subject}</p>
+                                <p className="text-[10px] truncate mt-0.5" style={{ color: "rgba(255,255,255,0.50)" }}>{entry.teacherName || "—"}</p>
                               </div>
                             ) : (
                               <div className="rounded-lg p-2 min-h-[48px] flex items-center justify-center">
-                                <span className="text-xs text-muted-foreground/30">—</span>
+                                <span className="text-xs" style={{ color: "rgba(255,255,255,0.15)" }}>—</span>
                               </div>
                             )}
                           </td>
@@ -634,9 +569,9 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
         )}
 
         {!explorerClass && !explorerSection && (
-          <div className="rounded-xl border border-border bg-muted/20 p-10 text-center">
-            <BookOpen className="w-7 h-7 text-muted-foreground/30 mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">Select a class and section to view their timetable</p>
+          <div className="rounded-xl border border-white/10 bg-white/3 p-10 text-center">
+            <BookOpen className="w-7 h-7 text-white/15 mx-auto mb-2" />
+            <p className="text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>Select a class and section to view their timetable</p>
           </div>
         )}
       </div>

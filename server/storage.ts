@@ -5,7 +5,7 @@ import {
   libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata,
   studentLeaveRequests, auditLogs, visitorLogs, studentProfiles, teacherAllocations,
   promotionOverrides, gradingTiers, gradingRules, academicHistory,
-  schoolAssets, assetLogs, verificationLogs,
+  schoolAssets, assetLogs, verificationLogs, timetableStructure,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
@@ -29,6 +29,7 @@ import {
   type InsertAcademicHistory,
   type SchoolAsset, type InsertSchoolAsset,
   type InsertAssetLog,
+  type TimetableStructure, type InsertTimetableStructure,
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
@@ -2485,6 +2486,29 @@ export class DatabaseStorage {
         ),
       );
     return rows.length;
+  }
+
+  // ===== TIMETABLE STRUCTURE METHODS =====
+  async getTimetableStructure(schoolId: number, cls: string): Promise<TimetableStructure[]> {
+    return await db
+      .select()
+      .from(timetableStructure)
+      .where(and(eq(timetableStructure.schoolId, schoolId), eq(timetableStructure.class, cls)))
+      .orderBy(timetableStructure.sortOrder, timetableStructure.periodNumber);
+  }
+
+  async saveTimetableStructure(schoolId: number, cls: string, rows: Omit<InsertTimetableStructure, "schoolId" | "class">[]): Promise<TimetableStructure[]> {
+    await db.delete(timetableStructure).where(
+      and(eq(timetableStructure.schoolId, schoolId), eq(timetableStructure.class, cls))
+    );
+    if (rows.length === 0) return [];
+    const toInsert = rows.map((r, idx) => ({
+      ...r,
+      schoolId,
+      class: cls,
+      sortOrder: r.sortOrder ?? idx,
+    }));
+    return await db.insert(timetableStructure).values(toInsert).returning();
   }
 }
 

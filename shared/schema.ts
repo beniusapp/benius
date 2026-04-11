@@ -575,3 +575,19 @@ export const verificationLogs = pgTable("verification_logs", {
 export const insertVerificationLogSchema = createInsertSchema(verificationLogs).omit({ id: true, submittedAt: true });
 export type InsertVerificationLog = z.infer<typeof insertVerificationLogSchema>;
 export type VerificationLog = typeof verificationLogs.$inferSelect;
+
+export const timetableStructure = pgTable("timetable_structure", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  class: varchar("class", { length: 20 }).notNull(),
+  periodNumber: integer("period_number").notNull(),
+  label: text("label").notNull().default(""),
+  startTime: text("start_time").notNull().default(""),
+  endTime: text("end_time").notNull().default(""),
+  isBreak: boolean("is_break").notNull().default(false),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+export const insertTimetableStructureSchema = createInsertSchema(timetableStructure).omit({ id: true });
+export type InsertTimetableStructure = z.infer<typeof insertTimetableStructureSchema>;
+export type TimetableStructure = typeof timetableStructure.$inferSelect;

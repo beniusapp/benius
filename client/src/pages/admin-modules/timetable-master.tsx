@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
-  Save, Loader2, Lock, Grid3x3, X, Pencil, Trash2, AlertTriangle, Settings,
+  Save, Loader2, Lock, Grid3x3, X, Pencil, Trash2, Settings, Plus, Clock, Coffee,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
@@ -28,7 +28,7 @@ interface SlotDraft {
   subject: string;
 }
 
-type DraftMap = Record<string, SlotDraft | null>; // key: `${day}-${period}`, null = delete
+type DraftMap = Record<string, SlotDraft | null>;
 
 interface PopoverState {
   day: number;
@@ -36,22 +36,39 @@ interface PopoverState {
   existing: SlotEntry | null;
 }
 
+interface StructureRow {
+  id?: number;
+  periodNumber: number;
+  label: string;
+  startTime: string;
+  endTime: string;
+  isBreak: boolean;
+  sortOrder: number;
+}
+
+type TabType = "schedule" | "structure";
+
 export default function TimetableMaster({ schoolId, classes, sections, subjects }: Props) {
   const { toast } = useToast();
-
-  // Strictly use only what the admin has configured — no hardcoded fallbacks
   const CLASS_LIST = classes;
   const SECTION_LIST = sections;
   const SUBJECT_LIST = subjects;
-
   const hasConfig = CLASS_LIST.length > 0 && SUBJECT_LIST.length > 0;
 
+  const [activeTab, setActiveTab] = useState<TabType>("schedule");
+
+  // ── Schedule tab state ──
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedSection, setSelectedSection] = useState("");
   const [draftMap, setDraftMap] = useState<DraftMap>({});
   const [popover, setPopover] = useState<PopoverState | null>(null);
   const [popTeacher, setPopTeacher] = useState<string>("");
   const [popSubject, setPopSubject] = useState<string>("");
+
+  // ── Structure tab state ──
+  const [structClass, setStructClass] = useState("");
+  const [structRows, setStructRows] = useState<StructureRow[]>([]);
+  const [structDirty, setStructDirty] = useState(false);
 
   const { data: teachers = [] } = useQuery<{ id: number; fullName: string }[]>({
     queryKey: ["/api/schools", schoolId, "teachers"],
@@ -71,6 +88,85 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
     enabled: !!selectedClass && !!selectedSection,
   });
 
+  // ── Structure query ──
+  const { data: savedStructure = [], isLoading: structLoading } = useQuery<StructureRow[]>({
+    queryKey: ["/api/timetable/structure", structClass],
+    queryFn: async () => {
+      const r = await fetch(`/api/timetable/structure?class=${encodeURIComponent(structClass)}`, { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!structClass,
+    select: (data) => data.map((d: StructureRow, i: number) => ({ ...d, sortOrder: d.sortOrder ?? i })),
+  });
+
+  // When class changes in Structure tab, reset rows to saved structure
+  const handleStructClassChange = (cls: string) => {
+    setStructClass(cls);
+    setStructDirty(false);
+  };
+
+  // Sync structRows when savedStructure loads
+  const displayStructRows = structDirty ? structRows : savedStructure;
+
+  function addRow(isBreak: boolean) {
+    const existing = displayStructRows;
+    const nextPeriod = isBreak ? 0 : (Math.max(0, ...existing.filter(r => !r.isBreak).map(r => r.periodNumber)) + 1);
+    const newRow: StructureRow = {
+      periodNumber: nextPeriod,
+      label: isBreak ? "Break" : `Period ${nextPeriod}`,
+      startTime: "",
+      endTime: "",
+      isBreak,
+      sortOrder: existing.length,
+    };
+    setStructRows([...existing, newRow]);
+    setStructDirty(true);
+  }
+
+  function removeRow(idx: number) {
+    const updated = displayStructRows.filter((_, i) => i !== idx).map((r, i) => ({ ...r, sortOrder: i }));
+    setStructRows(updated);
+    setStructDirty(true);
+  }
+
+  function updateRow(idx: number, field: keyof StructureRow, value: string | number | boolean) {
+    const updated = [...displayStructRows];
+    updated[idx] = { ...updated[idx], [field]: value };
+    setStructRows(updated);
+    setStructDirty(true);
+  }
+
+  function moveRow(idx: number, dir: -1 | 1) {
+    const arr = [...displayStructRows];
+    const target = idx + dir;
+    if (target < 0 || target >= arr.length) return;
+    [arr[idx], arr[target]] = [arr[target], arr[idx]];
+    setStructRows(arr.map((r, i) => ({ ...r, sortOrder: i })));
+    setStructDirty(true);
+  }
+
+  const saveStructMutation = useMutation({
+    mutationFn: async () => {
+      const rows = displayStructRows.map((r, i) => ({
+        periodNumber: r.periodNumber,
+        label: r.label,
+        startTime: r.startTime,
+        endTime: r.endTime,
+        isBreak: r.isBreak,
+        sortOrder: i,
+      }));
+      const res = await apiRequest("POST", "/api/timetable/structure", { class: structClass, rows });
+      return (res as Response).json();
+    },
+    onSuccess: () => {
+      toast({ title: "Structure saved", description: `Bell schedule for Class ${structClass} has been saved.`, className: "border-emerald-500 bg-emerald-900/30 text-emerald-100" });
+      setStructDirty(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/timetable/structure", structClass] });
+    },
+    onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+  });
+
+  // ── Schedule tab logic ──
   const hasDraft = Object.keys(draftMap).length > 0;
 
   const getEffectiveSlot = useCallback((day: number, period: number): { teacherName: string; subject: string; isDraft: boolean; isDelete: boolean } | null => {
@@ -120,18 +216,9 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
       const changes = Object.entries(draftMap).map(([key, draft]) => {
         const [day, period] = key.split("-").map(Number);
         if (draft === null) {
-          return {
-            dayOfWeek: day, period,
-            class: selectedClass, section: selectedSection,
-            teacherId: null, subject: null,
-            _delete: true,
-          };
+          return { dayOfWeek: day, period, class: selectedClass, section: selectedSection, teacherId: null, subject: null, _delete: true };
         }
-        return {
-          dayOfWeek: day, period,
-          class: selectedClass, section: selectedSection,
-          teacherId: draft.teacherId, subject: draft.subject,
-        };
+        return { dayOfWeek: day, period, class: selectedClass, section: selectedSection, teacherId: draft.teacherId, subject: draft.subject };
       });
       const res = await apiRequest("POST", "/api/timetable/admin/save-batch", { changes });
       return (res as Response).json();
@@ -148,24 +235,10 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
     onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
 
-  function discardDrafts() {
-    setDraftMap({});
-    setPopover(null);
-  }
+  function discardDrafts() { setDraftMap({}); setPopover(null); }
+  function handleClassChange(val: string) { setSelectedClass(val); setDraftMap({}); setPopover(null); }
+  function handleSectionChange(val: string) { setSelectedSection(val); setDraftMap({}); setPopover(null); }
 
-  function handleClassChange(val: string) {
-    setSelectedClass(val);
-    setDraftMap({});
-    setPopover(null);
-  }
-
-  function handleSectionChange(val: string) {
-    setSelectedSection(val);
-    setDraftMap({});
-    setPopover(null);
-  }
-
-  // If school has not configured classes or subjects, show a config-required notice
   if (!hasConfig) {
     return (
       <div className="space-y-5">
@@ -183,8 +256,8 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
           <div>
             <p className="text-amber-300 font-semibold text-base mb-1">School configuration required</p>
             <p className="text-amber-200/70 text-sm max-w-sm">
-              No classes or subjects have been defined for this school yet.<br />
-              Please configure them in <strong>School Settings → Metadata</strong> before editing the timetable.
+              No classes or subjects have been defined yet.<br />
+              Please configure them in <strong>School Settings → Metadata</strong> first.
             </p>
           </div>
         </div>
@@ -200,206 +273,317 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
           <Lock className="w-4 h-4 text-[#D4AF37]" />
           <h2 className="text-xl font-bold text-white">Timetable Master</h2>
         </div>
-        <p className="text-white/50 text-sm">School-isolated · Mon–Sat grid · Click any cell to edit</p>
+        <p className="text-white/50 text-sm">School-isolated · Mon–Sat grid · Period Structure Builder</p>
       </div>
 
-      {/* Class/Section selector + Save bar */}
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="flex-1 min-w-[140px]">
-          <label className="block text-xs text-white/60 mb-1">Class</label>
-          <Select value={selectedClass} onValueChange={handleClassChange}>
-            <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-11" data-testid="select-view-class">
-              <SelectValue placeholder="Select class" />
-            </SelectTrigger>
-            <SelectContent>
-              {CLASS_LIST.map(c => <SelectItem key={c} value={c}>Class {c}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex-1 min-w-[120px]">
-          <label className="block text-xs text-white/60 mb-1">Section</label>
-          <Select value={selectedSection} onValueChange={handleSectionChange}>
-            <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-11" data-testid="select-view-section">
-              <SelectValue placeholder="Section" />
-            </SelectTrigger>
-            <SelectContent>
-              {SECTION_LIST.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        {hasDraft && (
-          <div className="flex gap-2 ml-auto">
-            <button
-              onClick={discardDrafts}
-              className="h-11 px-4 rounded-xl border border-white/20 text-white/70 hover:bg-white/5 text-sm font-medium flex items-center gap-2 transition-colors"
-              data-testid="button-discard-changes"
-            >
-              <X className="w-4 h-4" /> Discard
-            </button>
-            <button
-              onClick={() => saveMutation.mutate()}
-              disabled={saveMutation.isPending}
-              className="h-11 px-5 rounded-xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-semibold text-sm flex items-center gap-2 transition-colors min-w-[130px] justify-center"
-              data-testid="button-save-changes"
-            >
-              {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              Save Changes
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Draft indicator */}
-      {hasDraft && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-900/20 border border-amber-500/30">
-          <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-          <p className="text-xs text-amber-300 font-medium">{Object.keys(draftMap).length} unsaved change(s) — click "Save Changes" to commit</p>
-        </div>
-      )}
-
-      {/* Grid */}
-      {!selectedClass || !selectedSection ? (
-        <div className="rounded-xl border border-white/10 bg-[#1A2942] p-12 text-center">
-          <Grid3x3 className="w-8 h-8 text-white/20 mx-auto mb-3" />
-          <p className="text-white/40 text-sm">Select a Class and Section above to view and edit the timetable</p>
-        </div>
-      ) : gridLoading ? (
-        <div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-[#D4AF37]" /></div>
-      ) : (
-        <div className="relative overflow-x-auto rounded-xl border border-white/10">
-          <table className="w-full border-collapse text-sm min-w-[480px]">
-            <thead>
-              <tr>
-                <th className="border-b border-r border-white/10 p-3 bg-[#0F1E35] text-xs font-semibold text-white/40 text-center w-12">P</th>
-                {DAY_NAMES.map((d, i) => (
-                  <th key={i} className="border-b border-r border-white/10 p-3 bg-[#0F1E35] text-xs font-semibold text-white/60 text-center">
-                    {d}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {PERIODS.map(p => (
-                <tr key={p}>
-                  <td className="border-b border-r border-white/10 p-2 text-center text-xs font-bold text-white/40 bg-[#0F1E35]/50">
-                    {p}
-                  </td>
-                  {DAY_NAMES.map((_, dayIdx) => {
-                    const slot = getEffectiveSlot(dayIdx, p);
-                    const key = `${dayIdx}-${p}`;
-                    const isPopoverOpen = popover?.day === dayIdx && popover?.period === p;
-                    return (
-                      <td
-                        key={dayIdx}
-                        className="border-b border-r border-white/10 relative p-1 min-w-[110px]"
-                        onClick={e => { e.stopPropagation(); openPopover(dayIdx, p); }}
-                      >
-                        <div
-                          className={`rounded-lg p-2 min-h-[54px] flex flex-col justify-center cursor-pointer transition-colors ${
-                            slot?.isDelete
-                              ? "bg-red-900/20 border border-red-500/30"
-                              : slot?.isDraft
-                              ? "bg-amber-900/20 border border-amber-500/40"
-                              : slot
-                              ? "bg-[#10b981]/10 border border-[#10b981]/30 hover:bg-[#10b981]/15"
-                              : "bg-white/3 border border-transparent hover:border-white/15 hover:bg-white/5"
-                          }`}
-                          data-testid={`cell-${dayIdx}-${p}`}
-                        >
-                          {slot && !slot.isDelete ? (
-                            <>
-                              <p className="text-[11px] font-bold text-white leading-tight truncate">{slot.subject}</p>
-                              <p className="text-[10px] text-white/50 truncate mt-0.5">{slot.teacherName}</p>
-                              {slot.isDraft && <span className="text-[9px] text-amber-400 font-semibold mt-0.5">unsaved</span>}
-                            </>
-                          ) : slot?.isDelete ? (
-                            <p className="text-[10px] text-red-400 italic text-center">will delete</p>
-                          ) : (
-                            <span className="text-xs text-white/20 text-center block">—</span>
-                          )}
-                        </div>
-
-                        {/* Popover — strict school-defined lists only */}
-                        {isPopoverOpen && (
-                          <div
-                            className="absolute left-0 top-full z-50 w-64 bg-[#1A2942] border border-white/20 rounded-xl shadow-2xl p-4 space-y-3"
-                            onClick={e => e.stopPropagation()}
-                          >
-                            <div className="flex items-center justify-between">
-                              <p className="text-xs font-bold text-white">{DAY_NAMES[dayIdx]} · Period {p}</p>
-                              <button onClick={() => setPopover(null)} className="text-white/40 hover:text-white">
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                            <div>
-                              <label className="block text-xs text-white/50 mb-1">Teacher</label>
-                              <select
-                                value={popTeacher}
-                                onChange={e => setPopTeacher(e.target.value)}
-                                className="w-full h-11 px-2 rounded-lg bg-[#0A1628] border border-white/20 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#10b981]"
-                                data-testid={`select-pop-teacher-${dayIdx}-${p}`}
-                              >
-                                <option value="">Select teacher</option>
-                                {teachers.map(t => <option key={t.id} value={t.id}>{t.fullName}</option>)}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="block text-xs text-white/50 mb-1">
-                                Subject <span className="text-white/30 font-normal">(school-defined)</span>
-                              </label>
-                              <select
-                                value={popSubject}
-                                onChange={e => setPopSubject(e.target.value)}
-                                className="w-full h-11 px-2 rounded-lg bg-[#0A1628] border border-white/20 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#10b981]"
-                                data-testid={`select-pop-subject-${dayIdx}-${p}`}
-                              >
-                                <option value="">Select subject</option>
-                                {SUBJECT_LIST.map(s => <option key={s} value={s}>{s}</option>)}
-                              </select>
-                            </div>
-                            <div className="flex gap-2 pt-1">
-                              {(slot || (key in draftMap && draftMap[key] !== null)) && (
-                                <button
-                                  onClick={() => applyPopoverChange(true)}
-                                  className="h-11 px-3 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-900/20 text-xs font-semibold flex items-center gap-1"
-                                  data-testid={`button-pop-delete-${dayIdx}-${p}`}
-                                >
-                                  <Trash2 className="w-3 h-3" /> Clear
-                                </button>
-                              )}
-                              <button
-                                onClick={() => applyPopoverChange(false)}
-                                disabled={!popTeacher || !popSubject}
-                                className="flex-1 h-11 rounded-lg bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 text-white text-xs font-semibold flex items-center justify-center gap-1"
-                                data-testid={`button-pop-apply-${dayIdx}-${p}`}
-                              >
-                                <Pencil className="w-3 h-3" /> Apply
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Bottom save bar for easy mobile access */}
-      {hasDraft && selectedClass && selectedSection && (
-        <div className="sticky bottom-4 flex justify-end">
+      {/* Tabs */}
+      <div className="flex gap-1 p-1 rounded-xl bg-[#0F1E35] border border-white/10 w-fit">
+        {([
+          { id: "schedule", label: "Schedule Grid", icon: <Grid3x3 className="w-3.5 h-3.5" /> },
+          { id: "structure", label: "Bell Structure", icon: <Clock className="w-3.5 h-3.5" /> },
+        ] as const).map(tab => (
           <button
-            onClick={() => saveMutation.mutate()}
-            disabled={saveMutation.isPending}
-            className="h-12 px-6 rounded-2xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-bold text-sm flex items-center gap-2 shadow-lg transition-colors"
-            data-testid="button-save-changes-bottom"
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            data-testid={`tab-${tab.id}`}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+              activeTab === tab.id
+                ? "bg-[#D4AF37] text-[#0A1628] shadow-sm"
+                : "text-white/50 hover:text-white hover:bg-white/5"
+            }`}
           >
-            {saveMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-            Save Changes
+            {tab.icon} {tab.label}
           </button>
+        ))}
+      </div>
+
+      {/* ── TAB: Schedule Grid ── */}
+      {activeTab === "schedule" && (
+        <div className="space-y-4">
+          {/* Class/Section selector + Save bar */}
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex-1 min-w-[140px]">
+              <label className="block text-xs text-white/60 mb-1">Class</label>
+              <Select value={selectedClass} onValueChange={handleClassChange}>
+                <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-11" data-testid="select-view-class">
+                  <SelectValue placeholder="Select class" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CLASS_LIST.map(c => <SelectItem key={c} value={c}>Class {c}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex-1 min-w-[120px]">
+              <label className="block text-xs text-white/60 mb-1">Section</label>
+              <Select value={selectedSection} onValueChange={handleSectionChange}>
+                <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-11" data-testid="select-view-section">
+                  <SelectValue placeholder="Section" />
+                </SelectTrigger>
+                <SelectContent>
+                  {SECTION_LIST.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            {hasDraft && (
+              <div className="flex gap-2 ml-auto">
+                <button onClick={discardDrafts} className="h-11 px-4 rounded-xl border border-white/20 text-white/70 hover:bg-white/5 text-sm font-medium flex items-center gap-2 transition-colors" data-testid="button-discard-changes">
+                  <X className="w-4 h-4" /> Discard
+                </button>
+                <button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="h-11 px-5 rounded-xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-semibold text-sm flex items-center gap-2 transition-colors min-w-[130px] justify-center" data-testid="button-save-changes">
+                  {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Save Changes
+                </button>
+              </div>
+            )}
+          </div>
+
+          {hasDraft && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-900/20 border border-amber-500/30">
+              <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              <p className="text-xs text-amber-300 font-medium">{Object.keys(draftMap).length} unsaved change(s) — click "Save Changes" to commit</p>
+            </div>
+          )}
+
+          {!selectedClass || !selectedSection ? (
+            <div className="rounded-xl border border-white/10 bg-[#1A2942] p-12 text-center">
+              <Grid3x3 className="w-8 h-8 text-white/20 mx-auto mb-3" />
+              <p className="text-white/40 text-sm">Select a Class and Section above to view and edit the timetable</p>
+            </div>
+          ) : gridLoading ? (
+            <div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-[#D4AF37]" /></div>
+          ) : (
+            <div className="relative overflow-x-auto rounded-xl border border-white/10">
+              <table className="w-full border-collapse text-sm min-w-[480px]">
+                <thead>
+                  <tr>
+                    <th className="border-b border-r border-white/10 p-3 bg-[#0F1E35] text-xs font-semibold text-white/40 text-center w-12">P</th>
+                    {DAY_NAMES.map((d, i) => (
+                      <th key={i} className="border-b border-r border-white/10 p-3 bg-[#0F1E35] text-xs font-semibold text-white/60 text-center">{d}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {PERIODS.map(p => (
+                    <tr key={p}>
+                      <td className="border-b border-r border-white/10 p-2 text-center text-xs font-bold text-white/40 bg-[#0F1E35]/50">{p}</td>
+                      {DAY_NAMES.map((_, dayIdx) => {
+                        const slot = getEffectiveSlot(dayIdx, p);
+                        const key = `${dayIdx}-${p}`;
+                        const isPopoverOpen = popover?.day === dayIdx && popover?.period === p;
+                        return (
+                          <td key={dayIdx} className="border-b border-r border-white/10 relative p-1 min-w-[110px]" onClick={e => { e.stopPropagation(); openPopover(dayIdx, p); }}>
+                            <div className={`rounded-lg p-2 min-h-[54px] flex flex-col justify-center cursor-pointer transition-colors ${
+                              slot?.isDelete ? "bg-red-900/20 border border-red-500/30"
+                              : slot?.isDraft ? "bg-amber-900/20 border border-amber-500/40"
+                              : slot ? "bg-[#10b981]/10 border border-[#10b981]/30 hover:bg-[#10b981]/15"
+                              : "bg-white/3 border border-transparent hover:border-white/15 hover:bg-white/5"
+                            }`} data-testid={`cell-${dayIdx}-${p}`}>
+                              {slot && !slot.isDelete ? (
+                                <>
+                                  <p className="text-[11px] font-bold text-white leading-tight truncate">{slot.subject}</p>
+                                  <p className="text-[10px] text-white/50 truncate mt-0.5">{slot.teacherName}</p>
+                                  {slot.isDraft && <span className="text-[9px] text-amber-400 font-semibold mt-0.5">unsaved</span>}
+                                </>
+                              ) : slot?.isDelete ? (
+                                <p className="text-[10px] text-red-400 italic text-center">will delete</p>
+                              ) : (
+                                <span className="text-xs text-white/20 text-center block">—</span>
+                              )}
+                            </div>
+
+                            {isPopoverOpen && (
+                              <div className="absolute left-0 top-full z-50 w-64 bg-[#1A2942] border border-white/20 rounded-xl shadow-2xl p-4 space-y-3" onClick={e => e.stopPropagation()}>
+                                <div className="flex items-center justify-between">
+                                  <p className="text-xs font-bold text-white">{DAY_NAMES[dayIdx]} · Period {p}</p>
+                                  <button onClick={() => setPopover(null)} className="text-white/40 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-white/50 mb-1">Teacher</label>
+                                  <select value={popTeacher} onChange={e => setPopTeacher(e.target.value)} className="w-full h-11 px-2 rounded-lg bg-[#0A1628] border border-white/20 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#10b981]" data-testid={`select-pop-teacher-${dayIdx}-${p}`}>
+                                    <option value="">Select teacher</option>
+                                    {teachers.map(t => <option key={t.id} value={t.id}>{t.fullName}</option>)}
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-white/50 mb-1">Subject</label>
+                                  <select value={popSubject} onChange={e => setPopSubject(e.target.value)} className="w-full h-11 px-2 rounded-lg bg-[#0A1628] border border-white/20 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#10b981]" data-testid={`select-pop-subject-${dayIdx}-${p}`}>
+                                    <option value="">Select subject</option>
+                                    {SUBJECT_LIST.map(s => <option key={s} value={s}>{s}</option>)}
+                                  </select>
+                                </div>
+                                <div className="flex gap-2 pt-1">
+                                  {(slot || (key in draftMap && draftMap[key] !== null)) && (
+                                    <button onClick={() => applyPopoverChange(true)} className="h-11 px-3 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-900/20 text-xs font-semibold flex items-center gap-1" data-testid={`button-pop-delete-${dayIdx}-${p}`}>
+                                      <Trash2 className="w-3 h-3" /> Clear
+                                    </button>
+                                  )}
+                                  <button onClick={() => applyPopoverChange(false)} disabled={!popTeacher || !popSubject} className="flex-1 h-11 rounded-lg bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 text-white text-xs font-semibold flex items-center justify-center gap-1" data-testid={`button-pop-apply-${dayIdx}-${p}`}>
+                                    <Pencil className="w-3 h-3" /> Apply
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {hasDraft && selectedClass && selectedSection && (
+            <div className="sticky bottom-4 flex justify-end">
+              <button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="h-12 px-6 rounded-2xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-bold text-sm flex items-center gap-2 shadow-lg transition-colors" data-testid="button-save-changes-bottom">
+                {saveMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                Save Changes
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── TAB: Bell Structure ── */}
+      {activeTab === "structure" && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex-1 min-w-[160px] max-w-[240px]">
+              <label className="block text-xs text-white/60 mb-1">Class</label>
+              <Select value={structClass} onValueChange={handleStructClassChange}>
+                <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-11" data-testid="select-struct-class">
+                  <SelectValue placeholder="Select class" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CLASS_LIST.map(c => <SelectItem key={c} value={c}>Class {c}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            {structClass && structDirty && (
+              <div className="flex gap-2 ml-auto">
+                <button onClick={() => { setStructRows(savedStructure); setStructDirty(false); }} className="h-11 px-4 rounded-xl border border-white/20 text-white/70 hover:bg-white/5 text-sm font-medium flex items-center gap-2 transition-colors" data-testid="button-struct-discard">
+                  <X className="w-4 h-4" /> Discard
+                </button>
+                <button onClick={() => saveStructMutation.mutate()} disabled={saveStructMutation.isPending} className="h-11 px-5 rounded-xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-semibold text-sm flex items-center gap-2 transition-colors min-w-[130px] justify-center" data-testid="button-struct-save">
+                  {saveStructMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Save Structure
+                </button>
+              </div>
+            )}
+          </div>
+
+          {!structClass ? (
+            <div className="rounded-xl border border-white/10 bg-[#1A2942] p-12 text-center">
+              <Clock className="w-8 h-8 text-white/20 mx-auto mb-3" />
+              <p className="text-white/40 text-sm">Select a class to configure its daily period structure</p>
+            </div>
+          ) : structLoading ? (
+            <div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-[#D4AF37]" /></div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-xs text-white/40">Define the daily period schedule for Class {structClass} — teachers and students will see these times in their timetable view.</p>
+
+              {/* Row list */}
+              {displayStructRows.length === 0 && (
+                <div className="rounded-xl border border-white/10 bg-[#1A2942] p-8 text-center">
+                  <Clock className="w-7 h-7 text-white/20 mx-auto mb-2" />
+                  <p className="text-white/40 text-sm">No periods defined yet. Add periods or breaks below.</p>
+                </div>
+              )}
+
+              {displayStructRows.map((row, idx) => (
+                <div key={idx} className={`rounded-xl border p-4 flex flex-wrap items-center gap-3 ${row.isBreak ? "bg-amber-900/10 border-amber-500/20" : "bg-[#1A2942] border-white/10"}`} data-testid={`struct-row-${idx}`}>
+                  {/* Drag order buttons */}
+                  <div className="flex flex-col gap-0.5">
+                    <button onClick={() => moveRow(idx, -1)} disabled={idx === 0} className="w-6 h-6 rounded text-white/30 hover:text-white disabled:opacity-20 text-xs flex items-center justify-center bg-white/5">▲</button>
+                    <button onClick={() => moveRow(idx, 1)} disabled={idx === displayStructRows.length - 1} className="w-6 h-6 rounded text-white/30 hover:text-white disabled:opacity-20 text-xs flex items-center justify-center bg-white/5">▼</button>
+                  </div>
+
+                  {/* Break/Period badge */}
+                  <div className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold ${row.isBreak ? "bg-amber-500/20 text-amber-300" : "bg-[#10b981]/20 text-[#10b981]"}`}>
+                    {row.isBreak ? <Coffee className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
+                    {row.isBreak ? "Break" : `P${row.periodNumber}`}
+                  </div>
+
+                  {/* Label */}
+                  <div className="flex-1 min-w-[120px]">
+                    <label className="block text-[10px] text-white/40 mb-0.5">Label</label>
+                    <input
+                      value={row.label}
+                      onChange={e => updateRow(idx, "label", e.target.value)}
+                      placeholder={row.isBreak ? "Lunch Break" : `Period ${row.periodNumber}`}
+                      className="w-full h-9 px-2.5 rounded-lg bg-[#0A1628] border border-white/15 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#10b981] placeholder:text-white/25"
+                      data-testid={`input-struct-label-${idx}`}
+                    />
+                  </div>
+
+                  {/* Start Time */}
+                  <div className="min-w-[100px]">
+                    <label className="block text-[10px] text-white/40 mb-0.5">Start</label>
+                    <input
+                      type="time"
+                      value={row.startTime}
+                      onChange={e => updateRow(idx, "startTime", e.target.value)}
+                      className="w-full h-9 px-2 rounded-lg bg-[#0A1628] border border-white/15 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#10b981]"
+                      data-testid={`input-struct-start-${idx}`}
+                    />
+                  </div>
+
+                  {/* End Time */}
+                  <div className="min-w-[100px]">
+                    <label className="block text-[10px] text-white/40 mb-0.5">End</label>
+                    <input
+                      type="time"
+                      value={row.endTime}
+                      onChange={e => updateRow(idx, "endTime", e.target.value)}
+                      className="w-full h-9 px-2 rounded-lg bg-[#0A1628] border border-white/15 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#10b981]"
+                      data-testid={`input-struct-end-${idx}`}
+                    />
+                  </div>
+
+                  {/* If not break, period number */}
+                  {!row.isBreak && (
+                    <div className="min-w-[70px]">
+                      <label className="block text-[10px] text-white/40 mb-0.5">Period #</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={row.periodNumber}
+                        onChange={e => updateRow(idx, "periodNumber", parseInt(e.target.value) || 1)}
+                        className="w-full h-9 px-2 rounded-lg bg-[#0A1628] border border-white/15 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#10b981]"
+                        data-testid={`input-struct-period-${idx}`}
+                      />
+                    </div>
+                  )}
+
+                  {/* Delete */}
+                  <button onClick={() => removeRow(idx)} className="ml-auto flex-shrink-0 w-9 h-9 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-900/20 flex items-center justify-center transition-colors" data-testid={`button-struct-delete-${idx}`}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+
+              {/* Add buttons */}
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => addRow(false)} className="h-11 px-4 rounded-xl border border-[#10b981]/40 text-[#10b981] hover:bg-[#10b981]/10 text-sm font-medium flex items-center gap-2 transition-colors" data-testid="button-add-period">
+                  <Plus className="w-4 h-4" /> Add Period
+                </button>
+                <button onClick={() => addRow(true)} className="h-11 px-4 rounded-xl border border-amber-500/40 text-amber-400 hover:bg-amber-900/15 text-sm font-medium flex items-center gap-2 transition-colors" data-testid="button-add-break">
+                  <Coffee className="w-4 h-4" /> Add Break
+                </button>
+              </div>
+
+              {/* Sticky save */}
+              {structDirty && (
+                <div className="sticky bottom-4 flex justify-end pt-2">
+                  <button onClick={() => saveStructMutation.mutate()} disabled={saveStructMutation.isPending} className="h-12 px-6 rounded-2xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-bold text-sm flex items-center gap-2 shadow-lg transition-colors" data-testid="button-struct-save-bottom">
+                    {saveStructMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                    Save Structure
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
