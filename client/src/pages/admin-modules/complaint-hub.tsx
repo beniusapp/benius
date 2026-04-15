@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   MessageSquare, CheckCircle, Loader2, Lock, Shield, ArrowUpCircle,
-  AlertTriangle, ChevronDown, ChevronUp, Clock, Users
+  AlertTriangle, ChevronDown, ChevronUp, Clock
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -274,62 +274,68 @@ export default function ComplaintHub({ schoolId }: Props) {
         </div>
       )}
 
-      {/* ── Section 1: Private Teacher Messages ── */}
-      {privateTeacher.length > 0 && (
-        <section className="space-y-3" data-testid="section-private-teacher">
-          <SectionHeader
-            icon={Lock}
-            title="Private Teacher Messages"
-            subtitle="Direct messages from teachers — not visible to students"
-            count={privateTeacher.length}
-            color="border-amber-500/30 bg-amber-900/10"
-          />
-          {privateTeacher.map(c => (
+      {/* ── Section 1: Private Teacher Messages ── always visible ── */}
+      <section className="space-y-3" data-testid="section-private-teacher">
+        <SectionHeader
+          icon={Lock}
+          title="Private Teacher Messages"
+          subtitle="Direct messages from teachers — not visible to students"
+          count={privateTeacher.length}
+          color="border-amber-500/30 bg-amber-900/10"
+        />
+        {privateTeacher.length === 0 ? (
+          <div className="rounded-xl border border-white/10 bg-[#1A2942]/60 py-6 text-center" data-testid="empty-private-teacher">
+            <Lock className="w-6 h-6 mx-auto mb-1.5 text-white/20" />
+            <p className="text-white/30 text-xs font-semibold">No teacher messages filed</p>
+          </div>
+        ) : (
+          privateTeacher.map(c => (
             <ComplaintCard key={c.id} c={c} schoolId={schoolId} />
-          ))}
-        </section>
-      )}
+          ))
+        )}
+      </section>
 
-      {/* ── Section 2: Student Staff Grievances ── */}
-      {studentGrievances.length > 0 && (
-        <section className="space-y-3" data-testid="section-student-grievances">
-          <SectionHeader
-            icon={Shield}
-            title="Student Staff Grievances"
-            subtitle="Filed directly by students — bypassed the staff member entirely"
-            count={studentGrievances.length}
-            color="border-blue-500/30 bg-blue-900/10"
-          />
-          {studentGrievances.map(c => (
+      {/* ── Section 2: Student Staff Grievances ── always visible ── */}
+      <section className="space-y-3" data-testid="section-student-grievances">
+        <SectionHeader
+          icon={Shield}
+          title="Student Staff Grievances"
+          subtitle="Filed directly by students — bypassed the staff member entirely"
+          count={studentGrievances.length}
+          color="border-blue-500/30 bg-blue-900/10"
+        />
+        {studentGrievances.length === 0 ? (
+          <div className="rounded-xl border border-white/10 bg-[#1A2942]/60 py-6 text-center" data-testid="empty-student-grievances">
+            <Shield className="w-6 h-6 mx-auto mb-1.5 text-white/20" />
+            <p className="text-white/30 text-xs font-semibold">No student grievances filed</p>
+          </div>
+        ) : (
+          studentGrievances.map(c => (
             <ComplaintCard key={c.id} c={c} schoolId={schoolId} />
-          ))}
-        </section>
-      )}
+          ))
+        )}
+      </section>
 
-      {/* ── Section 3: Escalated Reports ── */}
-      {escalated.length > 0 && (
-        <section className="space-y-3" data-testid="section-escalated">
-          <SectionHeader
-            icon={ArrowUpCircle}
-            title="Escalated Reports"
-            subtitle="Peer reports escalated by class teachers · Teacher complaints flagged for Admin"
-            count={escalated.length}
-            color="border-red-500/30 bg-red-900/10"
-          />
-          {escalated.map(c => (
+      {/* ── Section 3: Escalated Reports ── always visible ── */}
+      <section className="space-y-3" data-testid="section-escalated">
+        <SectionHeader
+          icon={ArrowUpCircle}
+          title="Escalated Reports"
+          subtitle="Peer reports escalated by class teachers · Teacher complaints flagged for Admin"
+          count={escalated.length}
+          color="border-red-500/30 bg-red-900/10"
+        />
+        {escalated.length === 0 ? (
+          <div className="rounded-xl border border-white/10 bg-[#1A2942]/60 py-6 text-center" data-testid="empty-escalated">
+            <ArrowUpCircle className="w-6 h-6 mx-auto mb-1.5 text-white/20" />
+            <p className="text-white/30 text-xs font-semibold">No escalated reports</p>
+          </div>
+        ) : (
+          escalated.map(c => (
             <ComplaintCard key={c.id} c={c} schoolId={schoolId} showRemarksInput />
-          ))}
-        </section>
-      )}
-
-      {/* Fallback empty-state banner when there are complaints but none in any section */}
-      {all.length > 0 && privateTeacher.length === 0 && studentGrievances.length === 0 && escalated.length === 0 && (
-        <div className="rounded-xl border border-white/10 bg-[#1A2942] py-10 text-center">
-          <Users className="w-8 h-8 mx-auto mb-2 text-white/20" />
-          <p className="text-white/40 text-sm font-semibold">No complaints in the monitored categories</p>
-          <p className="text-white/25 text-xs mt-1">Teacher-to-student complaints without admin notification are handled directly</p>
-        </div>
-      )}
+          ))
+        )}
+      </section>
     </div>
   );
 }

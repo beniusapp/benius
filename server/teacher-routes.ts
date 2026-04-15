@@ -587,6 +587,8 @@ export function registerTeacherRoutes(app: Express) {
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
       const c = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
       if (!c) return res.status(404).json({ message: "Complaint not found" });
+      // Verify ownership — teachers can only update their own complaints
+      if (c.teacherId !== teacher.id) return res.status(403).json({ message: "Not authorized: not your complaint" });
       if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
         return res.status(403).json({ message: "Access denied" });
       }
