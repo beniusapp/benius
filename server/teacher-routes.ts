@@ -1423,6 +1423,7 @@ export function registerTeacherRoutes(app: Express) {
         class: string;
         section: string;
         subject: string;
+        room?: string;
         _delete?: boolean;
       }>;
     };
@@ -1430,7 +1431,7 @@ export function registerTeacherRoutes(app: Express) {
     const saved: unknown[] = [];
     const conflicts: Array<{ dayOfWeek: number; period: number; teacherName: string; subject: string }> = [];
     for (const change of changes) {
-      const { dayOfWeek, period, class: cls, section, subject } = change;
+      const { dayOfWeek, period, class: cls, section, subject, room } = change;
       if (change._delete) {
         await storage.deleteTeacherTimetableSlot(teacher.schoolId, teacher.id, dayOfWeek, period);
         continue;
@@ -1440,7 +1441,7 @@ export function registerTeacherRoutes(app: Express) {
         conflicts.push({ dayOfWeek, period, teacherName: occupancy.teacherName, subject: occupancy.subject });
         continue;
       }
-      const entry = await storage.upsertTeacherTimetableSlot(teacher.schoolId, teacher.id, { dayOfWeek, period, class: cls, section, subject });
+      const entry = await storage.upsertTeacherTimetableSlot(teacher.schoolId, teacher.id, { dayOfWeek, period, class: cls, section, subject, room: room || null });
       saved.push(entry);
     }
     res.json({ saved, conflicts });

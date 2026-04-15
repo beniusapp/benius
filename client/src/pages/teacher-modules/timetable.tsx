@@ -121,7 +121,7 @@ function todayDayIndex(): number {
 /* ─────────────────── Slot Assignment Modal ─────────────────── */
 function SlotModal({
   modal, structure, explorerClass, explorerSection,
-  subjectList, teacherName, teacherId,
+  subjectList, teacherName, teacherId, myEntries,
   onClose, onSaved,
 }: {
   modal: ModalState;
@@ -131,6 +131,7 @@ function SlotModal({
   subjectList: string[];
   teacherName: string;
   teacherId: number;
+  myEntries: TimetableEntry[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -142,7 +143,14 @@ function SlotModal({
   const structureRow = structure.find(r => !r.isBreak && r.periodNumber === modal.period);
   const dayLabel = DAY_NAMES[modal.day];
 
-  /* collision check — runs when class+section+day+period are known */
+  /* ── Self-collision: teacher already assigned to a DIFFERENT class at this time ── */
+  const selfConflict = myEntries.find(
+    e => e.dayOfWeek === modal.day &&
+         e.period === modal.period &&
+         !(e.class === explorerClass && e.section === explorerSection)
+  ) ?? null;
+
+  /* ── Slot-occupancy collision: another teacher already has this class/section slot ── */
   const { data: collision, isFetching: collisionChecking } = useQuery<SlotCheckResult>({
     queryKey: ["/api/timetable/slot-check", explorerClass, explorerSection, modal.day, modal.period, modal.existing?.id],
     queryFn: async () => {
@@ -156,7 +164,9 @@ function SlotModal({
     staleTime: 0,
   });
 
-  const isBlocked = !modal.existing && collision?.taken;
+  const isSlotTaken = !modal.existing && collision?.taken;
+  /* Block save if: slot is taken by another teacher OR teacher already teaches elsewhere this period */
+  const isBlocked = isSlotTaken || !!selfConflict;
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -251,20 +261,34 @@ function SlotModal({
           </button>
         </div>
 
-        {/* Collision warning */}
+        {/* Self-collision warning — teacher already booked elsewhere at this time */}
+        {selfConflict && (
+          <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl border border-amber-600/40" style={{ backgroundColor: "rgba(245,158,11,0.1)" }} data-testid="modal-self-collision-warning">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#f59e0b" }} />
+            <div>
+              <p className="text-xs font-bold" style={{ color: "#f59e0b" }}>You have a scheduling conflict</p>
+              <p className="text-xs mt-0.5" style={{ color: "rgba(245,158,11,0.85)" }}>
+                You are already teaching <strong>{selfConflict.subject}</strong> in{" "}
+                Class {selfConflict.class}–{selfConflict.section} at this time. Saving will overwrite that assignment.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Slot-occupancy collision — another teacher holds this class/section slot */}
         {collisionChecking && (
           <div className="flex items-center gap-2 px-3 py-2 rounded-xl" style={{ backgroundColor: "rgba(255,255,255,0.05)" }}>
             <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: "rgba(255,255,255,0.4)" }} />
             <span className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>Checking slot availability…</span>
           </div>
         )}
-        {isBlocked && !collisionChecking && (
+        {isSlotTaken && !collisionChecking && (
           <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl border border-red-700/40" style={{ backgroundColor: "rgba(239,68,68,0.1)" }} data-testid="modal-collision-warning">
             <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#ef4444" }} />
             <div>
               <p className="text-xs font-bold" style={{ color: "#ef4444" }}>Slot already taken</p>
               <p className="text-xs mt-0.5" style={{ color: "rgba(239,68,68,0.8)" }}>
-                {collision?.teacherName} is teaching <strong>{collision?.subject}</strong> at this time.
+                {collision?.teacherName} is teaching <strong>{collision?.subject}</strong> here. Saving is blocked.
               </p>
             </div>
           </div>
@@ -552,6 +576,7 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
           subjectList={SUBJECT_LIST}
           teacherName={teacher.fullName}
           teacherId={teacher.id}
+          myEntries={myEntries}
           onClose={() => setModal(null)}
           onSaved={() => setModal(null)}
         />
@@ -727,7 +752,8 @@ function ClassExplorerTab({
                       {/* Day cells */}
                       {DAY_NAMES.map((_, dayIdx) => {
                         const entry = explorerEntries.find(e => e.dayOfWeek === dayIdx && e.period === p);
-                        const isActive = isPeriodActive;
+                        /* Only highlight as active if this is today's column AND current time falls in this period */
+                        const isActive = isPeriodActive && dayIdx === todayDayIndex();
                         const col = entry ? getSubjectColor(entry.subject) : null;
 
                         return (
@@ -883,7 +909,8 @@ function MyScheduleTab({
         <div className="space-y-3">
           {dayEntries.map((entry, idx) => {
             const srow = scheduleStructure.find(r => !r.isBreak && r.periodNumber === entry.period);
-            const active = srow ? isCurrentPeriod(srow) : false;
+            /* Active only when viewing today AND the current system time is within this period */
+            const active = selectedDay === todayDayIndex() && (srow ? isCurrentPeriod(srow) : false);
             const col = getSubjectColor(entry.subject);
 
             return (

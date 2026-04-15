@@ -1261,7 +1261,7 @@ export class DatabaseStorage {
   async upsertTeacherTimetableSlot(
     schoolId: number,
     teacherId: number,
-    opts: { dayOfWeek: number; period: number; class: string; section: string; subject: string }
+    opts: { dayOfWeek: number; period: number; class: string; section: string; subject: string; room?: string | null }
   ): Promise<TimetableEntry> {
     const existing = await db.select().from(timetableEntries).where(
       and(
@@ -1273,7 +1273,7 @@ export class DatabaseStorage {
     );
     if (existing.length > 0) {
       const [updated] = await db.update(timetableEntries)
-        .set({ class: opts.class, section: opts.section, subject: opts.subject, status: "draft" })
+        .set({ class: opts.class, section: opts.section, subject: opts.subject, room: opts.room ?? null, status: "draft" })
         .where(and(eq(timetableEntries.id, existing[0].id), eq(timetableEntries.schoolId, schoolId)))
         .returning();
       return updated;
@@ -1286,6 +1286,7 @@ export class DatabaseStorage {
       class: opts.class,
       section: opts.section,
       subject: opts.subject,
+      room: opts.room ?? null,
       status: "draft",
     }).returning();
     return created;
