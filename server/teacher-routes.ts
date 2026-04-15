@@ -508,12 +508,13 @@ export function registerTeacherRoutes(app: Express) {
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
-    const { studentId, content, complaintType, reportedStudentName } = req.body;
+    const { studentId, content, complaintType, reportedStudentName, notifyAdmin } = req.body;
     if (!content) return res.status(400).json({ message: "Content required" });
     if (complaintType !== "teacher-to-admin" && !studentId) return res.status(400).json({ message: "Student required for this complaint type" });
 
     const ticketId = await storage.getNextTicketId(teacher.schoolId);
     const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
+    const shouldNotifyAdmin = notifyAdmin === "true" || notifyAdmin === true;
 
     const complaint = await storage.createComplaint({
       ticketId,
@@ -524,6 +525,8 @@ export function registerTeacherRoutes(app: Express) {
       content,
       reportedStudentName: reportedStudentName || null,
       fileUrl,
+      escalatedToPrincipal: shouldNotifyAdmin,
+      status: shouldNotifyAdmin ? "Escalated" : "Pending",
     });
     res.status(201).json(complaint);
   });
@@ -596,9 +599,9 @@ export function registerTeacherRoutes(app: Express) {
     if (!adminSchoolId) return res.status(403).json({ message: "Admin school context missing" });
     const c = await storage.getComplaintByIdForSchool(id, adminSchoolId);
     if (!c) return res.status(404).json({ message: "Complaint not found" });
-    const { status } = req.body;
-    if (!["Pending", "Investigating", "Resolved"].includes(status)) return res.status(400).json({ message: "Invalid status" });
-    const updated = await storage.updateComplaintStatus(id, adminSchoolId, status);
+    const { status, resolutionRemarks } = req.body;
+    if (!["Pending", "Investigating", "Resolved", "Escalated"].includes(status)) return res.status(400).json({ message: "Invalid status" });
+    const updated = await storage.updateComplaintStatus(id, adminSchoolId, status, resolutionRemarks?.trim() || undefined);
     res.json(updated);
   });
 
@@ -688,8 +691,12 @@ export function registerTeacherRoutes(app: Express) {
     const complaint = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
     if (!complaint) return res.status(404).json({ message: "Complaint not found" });
     if (complaint.complaintType !== "student-peer-report") return res.status(403).json({ message: "Access denied" });
-    if (complaint.complainantClass !== teacher.assignedClass || complaint.complainantSection !== teacher.assignedSection) {
-      return res.status(403).json({ message: "Not authorized: complaint does not belong to your class" });
+    // Authorize by checking the TARGET student's class (not complainant's class)
+    if (complaint.studentId) {
+      const targetStudent = await storage.getStudentById(complaint.studentId);
+      if (!targetStudent || targetStudent.class !== teacher.assignedClass || targetStudent.section !== teacher.assignedSection) {
+        return res.status(403).json({ message: "Not authorized: target student not in your class" });
+      }
     }
     const updated = await storage.resolveComplaint(id, teacher.schoolId, resolutionRemarks.trim());
     if (!updated) return res.status(404).json({ message: "Complaint not found" });
@@ -704,8 +711,12 @@ export function registerTeacherRoutes(app: Express) {
     const complaint = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
     if (!complaint) return res.status(404).json({ message: "Complaint not found" });
     if (complaint.complaintType !== "student-peer-report") return res.status(403).json({ message: "Access denied" });
-    if (complaint.complainantClass !== teacher.assignedClass || complaint.complainantSection !== teacher.assignedSection) {
-      return res.status(403).json({ message: "Not authorized: complaint does not belong to your class" });
+    // Authorize by checking the TARGET student's class (not complainant's class)
+    if (complaint.studentId) {
+      const targetStudent = await storage.getStudentById(complaint.studentId);
+      if (!targetStudent || targetStudent.class !== teacher.assignedClass || targetStudent.section !== teacher.assignedSection) {
+        return res.status(403).json({ message: "Not authorized: target student not in your class" });
+      }
     }
     const updated = await storage.escalateComplaint(id, teacher.schoolId);
     if (!updated) return res.status(404).json({ message: "Complaint not found" });

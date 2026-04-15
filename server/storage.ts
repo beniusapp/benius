@@ -532,8 +532,10 @@ export class DatabaseStorage {
     await db.update(complaints).set({ isDeleted: true }).where(and(eq(complaints.id, id), eq(complaints.schoolId, schoolId)));
   }
 
-  async updateComplaintStatus(id: number, schoolId: number, status: string): Promise<Complaint> {
-    const [c] = await db.update(complaints).set({ status }).where(and(eq(complaints.id, id), eq(complaints.schoolId, schoolId))).returning();
+  async updateComplaintStatus(id: number, schoolId: number, status: string, resolutionRemarks?: string): Promise<Complaint> {
+    const updateData: Record<string, unknown> = { status };
+    if (resolutionRemarks !== undefined) updateData.resolutionRemarks = resolutionRemarks;
+    const [c] = await db.update(complaints).set(updateData).where(and(eq(complaints.id, id), eq(complaints.schoolId, schoolId))).returning();
     return c;
   }
 
@@ -636,13 +638,24 @@ export class DatabaseStorage {
   }
 
   async getClassFeedComplaints(schoolId: number, cls: string, section: string): Promise<(Complaint & { complainantStudentName: string | null })[]> {
+    // Step 1: find IDs of TARGET students in this class/section
+    const targetStudentRows = await db.select({ id: students.id })
+      .from(students)
+      .where(and(
+        eq(students.schoolId, schoolId),
+        eq(students.class, cls),
+        eq(students.section, section),
+      ));
+    const targetIds = targetStudentRows.map(s => s.id);
+    if (targetIds.length === 0) return [];
+
+    // Step 2: fetch peer-reports where studentId (the TARGET) is in those IDs
     const result = await db.select().from(complaints)
       .leftJoin(students, eq(complaints.complainantStudentId, students.id))
       .where(and(
         eq(complaints.schoolId, schoolId),
         eq(complaints.complaintType, "student-peer-report"),
-        eq(complaints.complainantClass, cls),
-        eq(complaints.complainantSection, section),
+        inArray(complaints.studentId, targetIds),
         eq(complaints.isDeleted, false),
       ))
       .orderBy(desc(complaints.createdAt));

@@ -404,13 +404,16 @@ function ClassFeedDrawer({
           </div>
           {entry.resolutionRemarks && (
             <div className="p-3 bg-green-50 dark:bg-green-950/20 rounded-xl border border-green-200">
-              <p className="text-xs font-semibold text-green-700">Resolution Remarks</p>
-              <p className="text-xs text-green-600 mt-0.5">{entry.resolutionRemarks}</p>
+              <p className="text-xs font-bold text-green-800">
+                {entry.escalatedToPrincipal ? "Principal's Remarks" : "Resolution Remarks"}
+              </p>
+              <p className="text-xs font-semibold text-green-700 mt-0.5">{entry.resolutionRemarks}</p>
             </div>
           )}
           {entry.escalatedToPrincipal && (
-            <div className="flex items-center gap-1.5 text-xs text-red-600 font-medium">
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 font-bold">
               <AlertTriangle className="w-3.5 h-3.5" /> Escalated to Principal
+              {!entry.resolutionRemarks && <span className="font-normal ml-1 text-red-500">— awaiting response</span>}
             </div>
           )}
         </div>
@@ -560,6 +563,8 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [notifyAdmin, setNotifyAdmin] = useState(false);
+
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editContent, setEditContent] = useState("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
@@ -603,6 +608,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
       fd.append("complaintType", complaintType);
       if (complaintType !== "teacher-to-admin" && selectedStudent) fd.append("studentId", String(selectedStudent.id));
       if (selectedFile) fd.append("file", selectedFile);
+      if (notifyAdmin && complaintType === "teacher-to-student") fd.append("notifyAdmin", "true");
       const res = await fetch("/api/complaints", { method: "POST", body: fd, credentials: "include" });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
       return res.json();
@@ -611,6 +617,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
       toast({ title: "Complaint Filed", description: "A unique ticket ID has been generated." });
       setContent("");
       setSelectedStudent(null);
+      setNotifyAdmin(false);
       clearFile();
       queryClient.invalidateQueries({ queryKey: ["/api/complaints/teacher", teacher.id] });
     },
@@ -698,7 +705,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
               ]).map(opt => (
                 <button
                   key={opt.key}
-                  onClick={() => { setComplaintType(opt.key); setSelectedStudent(null); }}
+                  onClick={() => { setComplaintType(opt.key); setSelectedStudent(null); setNotifyAdmin(false); }}
                   className={`flex-1 px-2 py-2 rounded-lg text-xs font-semibold transition-all ${
                     complaintType === opt.key
                       ? "bg-white dark:bg-gray-900 shadow-sm text-foreground"
@@ -713,13 +720,28 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
           </div>
 
           {complaintType !== "teacher-to-admin" && (
-            <StudentSearchInput
-              schoolId={teacher.schoolId}
-              label="Student *"
-              onSelect={(s) => setSelectedStudent(s)}
-              selectedStudent={selectedStudent}
-              onClear={() => setSelectedStudent(null)}
-            />
+            <>
+              <StudentSearchInput
+                schoolId={teacher.schoolId}
+                label="Student *"
+                onSelect={(s) => setSelectedStudent(s)}
+                selectedStudent={selectedStudent}
+                onClear={() => setSelectedStudent(null)}
+              />
+              <label className="flex items-center gap-3 cursor-pointer p-3 rounded-xl border border-amber-200 bg-amber-50 hover:bg-amber-100 transition-colors" data-testid="label-notify-admin">
+                <input
+                  type="checkbox"
+                  checked={notifyAdmin}
+                  onChange={e => setNotifyAdmin(e.target.checked)}
+                  className="w-4 h-4 accent-amber-600 cursor-pointer"
+                  data-testid="checkbox-notify-admin"
+                />
+                <div>
+                  <p className="text-xs font-bold text-amber-800">Also Notify Principal / Admin</p>
+                  <p className="text-[11px] text-amber-700">Sends a copy to the Admin Complaint Hub for visibility.</p>
+                </div>
+              </label>
+            </>
           )}
 
           <div className="space-y-1">
