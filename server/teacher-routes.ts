@@ -935,7 +935,9 @@ export function registerTeacherRoutes(app: Express) {
 
   app.patch("/api/gallery/:id/approve", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
-    const item = await storage.approveGalleryItem(parseInt(req.params.id));
+    const existing = await storage.getGalleryItemById(parseInt(req.params.id));
+    if (!existing || existing.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const item = await storage.approveGalleryItem(existing.id);
     await storage.createAuditLog({
       schoolId: item.schoolId, actionType: "approve", entityType: "gallery", entityId: item.id,
       actionBy: req.session.userId!, actionByRole: "admin",
@@ -1012,7 +1014,9 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
     const { status } = req.body;
     if (!["approved", "rejected"].includes(status)) return res.status(400).json({ message: "Invalid status" });
-    const book = await storage.updateBookVerificationStatus(parseInt(req.params.id), status);
+    const existing = await storage.getLibraryBookById(parseInt(req.params.id));
+    if (!existing || existing.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const book = await storage.updateBookVerificationStatus(existing.id, status);
     await storage.createAuditLog({
       schoolId: book.schoolId, actionType: "verify", entityType: "ebook", entityId: book.id,
       actionBy: req.session.userId!, actionByRole: "admin",
@@ -1073,6 +1077,7 @@ export function registerTeacherRoutes(app: Express) {
 
   app.get("/api/leave/school/:schoolId", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
     const list = await storage.getLeaveRequestsBySchool(parseInt(req.params.schoolId));
     res.json(list);
   });
@@ -1081,7 +1086,9 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
     const { status } = req.body;
     if (!["approved", "rejected"].includes(status)) return res.status(400).json({ message: "Invalid status" });
-    const updated = await storage.updateLeaveStatusWithApprover(parseInt(req.params.id), status, req.session.userId!);
+    const leave = await storage.getLeaveRequestById(parseInt(req.params.id));
+    if (!leave || leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const updated = await storage.updateLeaveStatusWithApprover(leave.id, status, req.session.userId!);
     await storage.createAuditLog({
       schoolId: updated.schoolId, actionType: status, entityType: "teacher_leave", entityId: updated.id,
       actionBy: req.session.userId!, actionByRole: "admin",
@@ -1788,11 +1795,17 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.patch("/api/student-leaves/:id/admin-approve", async (req, res) => {
-    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
     if (!leave || leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
     const updated = await storage.updateStudentLeaveStatus(leave.id, "approved", req.session.userId!, "admin");
-    await storage.markAttendanceAsLeave(leave.studentId, req.session.userId!, leave.schoolId, leave.startDate, leave.endDate);
+    // Look up student's class teacher to use as the FK-valid teacherId for attendance records.
+    // If no teacher found for that class/section, pass null — existing records are updated, new ones skipped.
+    const student = await storage.getStudentById(leave.studentId);
+    const classTeacher = student
+      ? await storage.getTeacherByClassSection(leave.schoolId, student.class, student.section)
+      : null;
+    await storage.markAttendanceAsLeave(leave.studentId, classTeacher?.id ?? null, leave.schoolId, leave.startDate, leave.endDate);
     await storage.createAuditLog({
       schoolId: leave.schoolId, actionType: "approve", entityType: "student_leave", entityId: leave.id,
       actionBy: req.session.userId!, actionByRole: "admin",

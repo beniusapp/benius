@@ -873,6 +873,11 @@ export class DatabaseStorage {
     return await db.select().from(galleryItems).where(and(...conditions)).orderBy(desc(galleryItems.createdAt));
   }
 
+  async getGalleryItemById(id: number): Promise<GalleryItem | null> {
+    const [item] = await db.select().from(galleryItems).where(eq(galleryItems.id, id));
+    return item || null;
+  }
+
   async approveGalleryItem(id: number): Promise<GalleryItem> {
     const [item] = await db.update(galleryItems).set({ approved: true }).where(eq(galleryItems.id, id)).returning();
     return item;
@@ -1013,6 +1018,11 @@ export class DatabaseStorage {
 
   async getLeaveRequestsByTeacher(teacherId: number): Promise<LeaveRequest[]> {
     return await db.select().from(leaveRequests).where(eq(leaveRequests.teacherId, teacherId)).orderBy(desc(leaveRequests.createdAt));
+  }
+
+  async getLeaveRequestById(id: number): Promise<LeaveRequest | null> {
+    const [req] = await db.select().from(leaveRequests).where(eq(leaveRequests.id, id));
+    return req || null;
   }
 
   async getLeaveRequestsBySchool(schoolId: number): Promise<(LeaveRequest & { teacherName: string })[]> {
@@ -1488,7 +1498,7 @@ export class DatabaseStorage {
     return req || null;
   }
 
-  async markAttendanceAsLeave(studentId: number, teacherId: number, schoolId: number, startDate: string, endDate: string): Promise<void> {
+  async markAttendanceAsLeave(studentId: number, teacherId: number | null, schoolId: number, startDate: string, endDate: string): Promise<void> {
     const start = new Date(startDate);
     const end = new Date(endDate);
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
@@ -1500,13 +1510,21 @@ export class DatabaseStorage {
         await db.update(attendanceRecords)
           .set({ status: "leave", markedBy: "System (Leave Approved)", markedAt: new Date() })
           .where(eq(attendanceRecords.id, existing[0].id));
-      } else {
+      } else if (teacherId !== null) {
         await db.insert(attendanceRecords).values({
           studentId, teacherId, schoolId, date: dateStr,
           status: "leave", editCount: 0, markedBy: "System (Leave Approved)", markedAt: new Date(),
         });
       }
+      // If teacherId is null (admin path) and no existing record, skip INSERT to avoid FK violation.
+      // The leave request itself is the source of truth for the leave.
     }
+  }
+
+  async getTeacherByClassSection(schoolId: number, cls: string, section: string): Promise<Teacher | null> {
+    const [teacher] = await db.select().from(teachers)
+      .where(and(eq(teachers.schoolId, schoolId), eq(teachers.assignedClass, cls), eq(teachers.assignedSection, section)));
+    return teacher || null;
   }
 
   // ===== AUDIT LOGS =====
@@ -1523,6 +1541,11 @@ export class DatabaseStorage {
   }
 
   // ===== ENHANCED LIBRARY =====
+  async getLibraryBookById(id: number): Promise<LibraryBook | null> {
+    const [book] = await db.select().from(libraryBooks).where(eq(libraryBooks.id, id));
+    return book || null;
+  }
+
   async updateBookVerificationStatus(id: number, status: string): Promise<LibraryBook> {
     const [book] = await db.update(libraryBooks)
       .set({ verificationStatus: status })
