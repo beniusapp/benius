@@ -1,10 +1,12 @@
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronLeft, ChevronRight, Loader2, Calendar, CalendarDays,
-  Flame, BookOpen, Award, Star, Repeat, RefreshCw, X, Zap,
+  RefreshCw, X, Repeat,
 } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
 
 interface CalendarEvent {
@@ -28,18 +30,13 @@ const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const DAYS_FULL = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
 const EVENT_TYPES = [
-  { value: "holiday",     label: "Holiday",     color: "#dc2626", icon: Flame    },
-  { value: "academic",    label: "Academic",    color: "#2563eb", icon: BookOpen },
-  { value: "examination", label: "Examination", color: "#2563eb", icon: Award    },
-  { value: "event",       label: "Event",       color: "#10b981", icon: Star     },
+  { value: "holiday",     label: "Holiday",     color: "#dc2626" },
+  { value: "academic",    label: "Academic",    color: "#2563eb" },
+  { value: "examination", label: "Examination", color: "#ca8a04" },
+  { value: "event",       label: "Event",       color: "#10b981" },
 ];
 
 const YEAR_OPTIONS = Array.from({ length: 101 }, (_, i) => 2020 + i);
-
-/* Deep navy backgrounds */
-const BG_MAIN  = "#0f172a";
-const BG_CARD  = "#0f172a";
-const BG_CELL  = "#0c1526";
 
 function getColor(ev: CalendarEvent) {
   if (ev.colorCode) return ev.colorCode;
@@ -82,71 +79,52 @@ function EventTypeLabel({ eventType }: { eventType: string }) {
   return <span>{et?.label || eventType}</span>;
 }
 
-/* Glassmorphic hover popover */
-function HoverEventPopover({ ev, onClose }: { ev: CalendarEvent; onClose: () => void }) {
+/* Simple light tooltip popover */
+function EventTooltip({ ev, onClose }: { ev: CalendarEvent; onClose: () => void }) {
   const color = getColor(ev);
   const typeLabel = EVENT_TYPES.find(t => t.value === ev.eventType)?.label || ev.eventType;
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.92, y: 6 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.92, y: 6 }}
-      transition={{ duration: 0.13, ease: "easeOut" }}
-      className="absolute z-50 bottom-full left-0 mb-2 w-60 rounded-2xl shadow-2xl text-left overflow-hidden"
-      style={{
-        background: "rgba(10,22,40,0.95)",
-        backdropFilter: "blur(16px)",
-        WebkitBackdropFilter: "blur(16px)",
-        border: "1px solid rgba(255,255,255,0.15)",
-        boxShadow: "0 8px 32px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.08)",
-      }}
+    <div
+      className="absolute z-50 bottom-full left-0 mb-2 w-56 rounded-xl shadow-lg bg-white border border-gray-200 text-left overflow-hidden"
       onMouseLeave={onClose}
     >
       <div className="h-1 w-full" style={{ backgroundColor: color }} />
-      <div className="p-3.5">
-        <p className="text-sm font-bold leading-snug mb-2" style={{ color: "#fff" }}>{ev.title}</p>
-        <div className="flex items-center gap-2 mb-2">
-          <span
-            className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
-            style={{ backgroundColor: `${color}33`, color }}
-          >
+      <div className="p-3">
+        <p className="text-sm font-bold text-gray-900 leading-snug mb-1.5">{ev.title}</p>
+        <div className="flex items-center gap-2 mb-1.5">
+          <span className="text-xs font-semibold px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: color }}>
             {typeLabel}
           </span>
           {ev.isRecurring && (
-            <span className="flex items-center gap-0.5 text-[10px]" style={{ color: "rgba(255,255,255,0.6)" }}>
-              <Repeat className="w-2.5 h-2.5" />
-              Recurring
+            <span className="flex items-center gap-0.5 text-xs text-gray-500">
+              <Repeat className="w-3 h-3" /> Recurring
             </span>
           )}
         </div>
-        <p className="text-[11px]" style={{ color: "rgba(255,255,255,0.7)" }}>{formatDate(ev.date)}</p>
+        <p className="text-xs text-gray-500">{formatDate(ev.date)}</p>
         {ev.description && (
-          <p className="text-[11px] mt-2 pt-2 leading-relaxed" style={{ color: "rgba(255,255,255,0.65)", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+          <p className="text-xs text-gray-600 mt-1.5 pt-1.5 border-t border-gray-100 leading-relaxed">
             {ev.description}
           </p>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 }
 
-/* Event Pill — solid opaque color, pure white text */
+/* Event Pill — solid opaque colored pill */
 function EventPill({
-  ev,
-  size = "sm",
-  onClick,
+  ev, size = "sm", onClick,
 }: {
-  ev: CalendarEvent;
-  size?: "xs" | "sm";
-  onClick?: (e: React.MouseEvent) => void;
+  ev: CalendarEvent; size?: "xs" | "sm"; onClick?: (e: React.MouseEvent) => void;
 }) {
   const [hovered, setHovered] = useState(false);
   const color = getColor(ev);
   return (
     <div className="relative">
       <div
-        className={`rounded-full truncate font-semibold cursor-pointer transition-opacity hover:opacity-90 ${
-          size === "xs" ? "px-1.5 py-px text-[9px]" : "px-2 py-0.5 text-[10px]"
+        className={`rounded-full truncate font-semibold cursor-pointer transition-opacity hover:opacity-85 ${
+          size === "xs" ? "px-1.5 py-px text-[10px]" : "px-2 py-0.5 text-xs"
         }`}
         style={{ backgroundColor: color, color: "#ffffff" }}
         onMouseEnter={() => setHovered(true)}
@@ -156,33 +134,7 @@ function EventPill({
       >
         {ev.title}
       </div>
-      <AnimatePresence>
-        {hovered && <HoverEventPopover ev={ev} onClose={() => setHovered(false)} />}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-/* Agenda Event Pill — for year/agenda view rows, with hover popover */
-function AgendaEventPill({ ev, onClick }: { ev: CalendarEvent; onClick: () => void }) {
-  const [hovered, setHovered] = useState(false);
-  const color = getColor(ev);
-  return (
-    <div className="relative flex-1 min-w-0">
-      <div
-        className="flex items-center gap-2 px-3 py-2 rounded-xl font-semibold text-xs min-w-0 truncate cursor-pointer hover:opacity-90 transition-opacity"
-        style={{ backgroundColor: color, color: "#ffffff" }}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        onClick={onClick}
-        data-testid={`event-chip-${ev.id}`}
-      >
-        <span className="truncate">{ev.title}</span>
-        {ev.isRecurring && <Repeat className="w-3 h-3 shrink-0" style={{ color: "rgba(255,255,255,0.7)" }} />}
-      </div>
-      <AnimatePresence>
-        {hovered && <HoverEventPopover ev={ev} onClose={() => setHovered(false)} />}
-      </AnimatePresence>
+      {hovered && <EventTooltip ev={ev} onClose={() => setHovered(false)} />}
     </div>
   );
 }
@@ -267,18 +219,6 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     return map;
   }, [events]);
 
-  const sortedMonthEvents = useMemo(() => events.slice().sort((a, b) => a.date.localeCompare(b.date)), [events]);
-  const groupedByDate = useMemo(() => {
-    const map: Record<string, CalendarEvent[]> = {};
-    sortedMonthEvents.forEach(ev => {
-      const k = ev.date.split("T")[0];
-      if (!map[k]) map[k] = [];
-      map[k].push(ev);
-    });
-    return map;
-  }, [sortedMonthEvents]);
-  const agendaDates = useMemo(() => Object.keys(groupedByDate).sort(), [groupedByDate]);
-
   const selectedEvents = selectedDay ? (eventsByDate[selectedDay] ?? []) : [];
   const holidayCount = view === "month" ? events.filter(e => e.eventType === "holiday").length : 0;
 
@@ -313,15 +253,6 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     setMonth(n.getMonth()); setYear(n.getFullYear());
     setWeekStart(getWeekStart(n)); setSelectedDay(null);
   }
-  function handleMonthJump(m: number) { setMonth(m); setSelectedDay(null); }
-  function handleYearJump(y: number) {
-    setYear(y);
-    if (view === "week") {
-      const ws = new Date(weekStart); ws.setFullYear(y);
-      setWeekStart(getWeekStart(ws));
-    }
-    setSelectedDay(null);
-  }
 
   function navTitle() {
     if (view === "month") return `${MONTHS[month]} ${year}`;
@@ -337,31 +268,25 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
 
   if (isError) {
     return (
-      <div className="text-center py-12" style={{ color: "#f87171" }} data-testid="text-calendar-error">
+      <div className="text-center py-12 text-red-500" data-testid="text-calendar-error">
         Failed to load calendar. Please try again.
       </div>
     );
   }
 
-  /* View switcher — solid backgrounds, white text, visible border on every tab */
+  /* ── View Tab Switcher (underline style like timetable) ── */
   const viewSwitcher = (
-    <div
-      className="flex items-center gap-1 rounded-xl p-1"
-      style={{ background: "#1e293b", border: "1px solid #334155" }}
-      data-testid="view-switcher"
-    >
+    <div className="flex gap-0 border-b border-gray-200" data-testid="view-switcher">
       {(["month", "week", "year"] as View[]).map(v => (
         <button
           key={v}
           onClick={() => switchView(v)}
           data-testid={`button-view-${v}`}
-          className="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all capitalize"
-          style={{
-            backgroundColor: view === v ? "#10b981" : "#1e293b",
-            color: "#ffffff",
-            border: view === v ? "1px solid #10b981" : "1px solid #334155",
-            textShadow: "1px 1px 2px rgba(0,0,0,0.8)",
-          }}
+          className={`px-4 py-2 text-sm font-semibold border-b-2 capitalize transition-colors ${
+            view === v
+              ? "border-emerald-600 text-emerald-700"
+              : "border-transparent text-gray-500 hover:text-gray-700"
+          }`}
         >
           {v === "year" ? "Agenda" : v}
         </button>
@@ -369,80 +294,32 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     </div>
   );
 
-  /* Quick-jump selectors */
-  const selectStyle: React.CSSProperties = {
-    background: "#0f172a",
-    border: "1px solid rgba(255,255,255,0.2)",
-    borderRadius: "8px",
-    padding: "6px 28px 6px 10px",
-    fontSize: "14px",
-    color: "#ffffff",
-    cursor: "pointer",
-    outline: "none",
-    appearance: "none" as const,
-    WebkitAppearance: "none" as const,
-    backgroundImage: "none",
-  };
-
-  const quickJump = (
-    <div className="flex items-center gap-1.5">
-      {view === "month" && (
-        <div className="relative">
-          <select
-            value={month}
-            onChange={e => handleMonthJump(parseInt(e.target.value))}
-            style={selectStyle}
-            data-testid="select-month-jump"
-            aria-label="Jump to month"
-          >
-            {MONTHS.map((m, i) => <option key={m} value={i}>{m}</option>)}
-          </select>
-          <ChevronRight className="w-3 h-3 absolute right-1.5 top-1/2 -translate-y-1/2 rotate-90 pointer-events-none" style={{ color: "#ffffff" }} />
-        </div>
-      )}
-      <div className="relative">
-        <select
-          value={year}
-          onChange={e => handleYearJump(parseInt(e.target.value))}
-          style={selectStyle}
-          data-testid="select-year-jump"
-          aria-label="Jump to year"
+  /* ── Legend ── */
+  const legend = (
+    <div className="flex items-center gap-2 flex-wrap" data-testid="calendar-legend">
+      {EVENT_TYPES.map(et => (
+        <span
+          key={et.value}
+          className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-white"
+          style={{ backgroundColor: et.color }}
         >
-          {YEAR_OPTIONS.map(y => <option key={y} value={y}>{y}</option>)}
-        </select>
-        <ChevronRight className="w-3 h-3 absolute right-1.5 top-1/2 -translate-y-1/2 rotate-90 pointer-events-none" style={{ color: "#ffffff" }} />
-      </div>
+          {et.label}
+        </span>
+      ))}
     </div>
   );
 
-  /* Nav bar */
-  const btnBase: React.CSSProperties = {
-    background: "#1e293b",
-    border: "1px solid #334155",
-    color: "#ffffff",
-    textShadow: "1px 1px 2px rgba(0,0,0,0.8)",
-  };
-
+  /* ── Nav Bar ── */
   const navBar = (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      {/* Title row */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          {/* "School Calendar" title — white + text-shadow + emerald bottom border */}
-          <h2
-            className="text-lg font-bold flex items-center gap-2 pb-1"
-            style={{
-              color: "#ffffff",
-              textShadow: "1px 1px 2px rgba(0,0,0,0.8)",
-              borderBottom: "2px solid #10b981",
-              display: "inline-flex",
-            }}
-            data-testid="heading-teacher-calendar"
-          >
-            <CalendarDays className="w-5 h-5" style={{ color: "#10b981" }} />
+          <h2 className="text-xl font-bold tracking-tight flex items-center gap-2" data-testid="heading-teacher-calendar">
+            <CalendarDays className="w-5 h-5 text-emerald-600" />
             School Calendar
           </h2>
-          {/* Event count subtitle */}
-          <p className="text-sm mt-1.5" style={{ color: "#ffffff", textShadow: "1px 1px 2px rgba(0,0,0,0.8)" }}>
+          <p className="text-sm text-gray-500 mt-0.5">
             {view === "month"
               ? `${events.length} events · ${holidayCount} holidays in ${MONTHS[month]}`
               : view === "week"
@@ -450,65 +327,77 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
               : `${events.length} events in ${year}`}
           </p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {viewSwitcher}
-          {/* Live badge — solid, always readable */}
-          <div
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold"
-            style={{ background: "#064e3b", border: "1px solid #10b981", color: "#6ee7b7", textShadow: "1px 1px 2px rgba(0,0,0,0.8)" }}
-            title="Auto-refreshes every 60 seconds"
-          >
-            <Zap className="w-2.5 h-2.5" />
-            Live
-          </div>
-          {/* Sync button */}
-          <button
-            onClick={refetch}
-            disabled={isFetching}
-            data-testid="button-sync-now"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-60"
-            style={btnBase}
-            title="Sync now"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
-          </button>
-        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={refetch}
+          disabled={isFetching}
+          data-testid="button-sync-now"
+          className="h-9"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isFetching ? "animate-spin" : ""}`} />
+          Sync
+        </Button>
       </div>
 
-      <div className="flex items-center gap-2 flex-wrap">
-        {quickJump}
+      {/* Nav controls row */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Quick-jump month selector (month view only) */}
+        {view === "month" && (
+          <select
+            value={month}
+            onChange={e => { setMonth(parseInt(e.target.value)); setSelectedDay(null); }}
+            className="h-9 px-3 rounded-lg border border-gray-300 bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            data-testid="select-month-jump"
+            aria-label="Jump to month"
+          >
+            {MONTHS.map((m, i) => <option key={m} value={i}>{m}</option>)}
+          </select>
+        )}
+        {/* Year selector */}
+        <select
+          value={year}
+          onChange={e => {
+            const y = parseInt(e.target.value);
+            setYear(y);
+            if (view === "week") {
+              const ws = new Date(weekStart); ws.setFullYear(y);
+              setWeekStart(getWeekStart(ws));
+            }
+            setSelectedDay(null);
+          }}
+          className="h-9 px-3 rounded-lg border border-gray-300 bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          data-testid="select-year-jump"
+          aria-label="Jump to year"
+        >
+          {YEAR_OPTIONS.map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
+
+        {/* Prev / Title / Next / Today */}
         <div className="flex items-center gap-1 ml-auto">
-          {/* Previous */}
           <button
             onClick={view === "week" ? prevWeek : view === "year" ? () => { setYear(y => Math.max(2020, y - 1)); setSelectedDay(null); } : prevMonth}
-            className="p-2 rounded-lg transition-colors"
-            style={btnBase}
+            className="p-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
             data-testid={view === "week" ? "button-prev-week" : view === "year" ? "button-prev-year" : "button-prev-month"}
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
-          {/* Nav title — "April 2026" / "Apr 5–11, 2026" */}
           <span
-            className="font-bold min-w-[140px] text-center text-sm"
-            style={{ color: "#ffffff", textShadow: "1px 1px 2px rgba(0,0,0,0.8)" }}
+            className="font-bold min-w-[150px] text-center text-sm text-gray-900"
             data-testid="text-calendar-title"
           >
             {navTitle()}
           </span>
-          {/* Next */}
           <button
             onClick={view === "week" ? nextWeek : view === "year" ? () => { setYear(y => Math.min(2120, y + 1)); setSelectedDay(null); } : nextMonth}
-            className="p-2 rounded-lg transition-colors"
-            style={btnBase}
+            className="p-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
             data-testid={view === "week" ? "button-next-week" : view === "year" ? "button-next-year" : "button-next-month"}
           >
             <ChevronRight className="w-4 h-4" />
           </button>
-          {/* Today */}
           <button
             onClick={goToday}
-            className="px-3 py-1.5 rounded-lg text-sm font-bold transition-colors"
-            style={{ background: "#064e3b", border: "1px solid #10b981", color: "#6ee7b7", textShadow: "1px 1px 2px rgba(0,0,0,0.8)" }}
+            className="px-3 py-1.5 rounded-lg text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
             data-testid="button-today"
           >
             Today
@@ -518,123 +407,78 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     </div>
   );
 
-  /* Legend — colored pill/badge for each event type */
-  const LEGEND_PILLS = [
-    { value: "holiday",     label: "Holiday",     bg: "#dc2626", color: "#ffffff" },
-    { value: "academic",    label: "Academic",    bg: "#2563eb", color: "#ffffff" },
-    { value: "examination", label: "Examination", bg: "#ca8a04", color: "#000000" },
-    { value: "event",       label: "Event",       bg: "#10b981", color: "#ffffff" },
-  ];
-
-  const legend = (
-    <div className="flex items-center gap-2 flex-wrap" data-testid="calendar-legend">
-      {LEGEND_PILLS.map(p => (
-        <span
-          key={p.value}
-          className="text-xs font-bold px-3 py-1 rounded-full"
-          style={{
-            backgroundColor: p.bg,
-            color: p.color,
-            textShadow: p.color === "#ffffff" ? "1px 1px 2px rgba(0,0,0,0.6)" : "none",
-            border: "1px solid rgba(255,255,255,0.15)",
-          }}
-        >
-          {p.label}
-        </span>
-      ))}
+  /* ── Bottom Sheet (mobile) ── */
+  const bottomSheet = bottomSheetOpen && selectedDay && (
+    <div
+      className="fixed inset-0 z-50 flex flex-col justify-end"
+      onClick={() => setBottomSheetOpen(false)}
+    >
+      <div className="absolute inset-0 bg-black/40" />
+      <div
+        className="relative rounded-t-3xl bg-white max-h-[75vh] overflow-y-auto shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex justify-center pt-3 pb-1">
+          <div className="w-10 h-1 rounded-full bg-gray-300" />
+        </div>
+        <div className="flex items-center justify-between px-5 py-3 sticky top-0 bg-white border-b border-gray-100">
+          <div>
+            <p className="text-base font-bold text-gray-900">{formatDate(selectedDay)}</p>
+            <p className="text-xs text-gray-500 mt-0.5">{DAYS_FULL[new Date(selectedDay + "T00:00:00").getDay()]}</p>
+          </div>
+          <button
+            onClick={() => setBottomSheetOpen(false)}
+            className="p-2 rounded-xl hover:bg-gray-100 text-gray-500 transition-colors"
+            data-testid="button-close-bottom-sheet"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="px-5 py-4 space-y-3 pb-8">
+          {selectedEvents.length === 0 ? (
+            <div className="text-center py-10">
+              <Calendar className="w-10 h-10 mx-auto mb-3 text-gray-200" />
+              <p className="text-sm text-gray-400">No events on this day</p>
+            </div>
+          ) : selectedEvents.map(ev => {
+            const color = getColor(ev);
+            return (
+              <div key={ev.id} className="rounded-2xl overflow-hidden border border-gray-200" data-testid={`bottom-sheet-event-${ev.id}`}>
+                <div className="h-1.5 w-full" style={{ backgroundColor: color }} />
+                <div className="p-4 bg-white">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-bold text-gray-900 leading-snug">{ev.title}</p>
+                    {ev.isRecurring && <Repeat className="w-3.5 h-3.5 mt-0.5 shrink-0 text-gray-400" />}
+                  </div>
+                  <span
+                    className="inline-block mt-2 text-xs font-semibold px-2.5 py-0.5 rounded-full text-white"
+                    style={{ backgroundColor: color }}
+                  >
+                    <EventTypeLabel eventType={ev.eventType} />
+                  </span>
+                  {ev.description && (
+                    <p className="text-xs text-gray-600 mt-2 leading-relaxed">{ev.description}</p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 
-  /* Bottom sheet */
-  const bottomSheet = (
-    <AnimatePresence>
-      {bottomSheetOpen && selectedDay && (
-        <motion.div
-          className="fixed inset-0 z-50 flex flex-col justify-end"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-        >
-          <div
-            className="absolute inset-0"
-            style={{ background: "rgba(0,0,0,0.7)" }}
-            onClick={() => setBottomSheetOpen(false)}
-          />
-          <motion.div
-            className="relative rounded-t-3xl max-h-[75vh] overflow-y-auto"
-            style={{ background: BG_MAIN, borderTop: "1px solid rgba(255,255,255,0.12)" }}
-            initial={{ y: "100%" }}
-            animate={{ y: 0 }}
-            exit={{ y: "100%" }}
-            transition={{ type: "spring", damping: 32, stiffness: 320 }}
-          >
-            <div className="flex justify-center pt-3 pb-1">
-              <div className="w-10 h-1 rounded-full" style={{ background: "rgba(255,255,255,0.25)" }} />
-            </div>
-            <div
-              className="flex items-center justify-between px-5 py-3 sticky top-0"
-              style={{ background: BG_MAIN, borderBottom: "1px solid rgba(255,255,255,0.1)" }}
-            >
-              <div>
-                <p className="text-base font-bold" style={{ color: "#ffffff" }}>{formatDate(selectedDay)}</p>
-                <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.6)" }}>{DAYS_FULL[new Date(selectedDay + "T00:00:00").getDay()]}</p>
-              </div>
-              <button
-                onClick={() => setBottomSheetOpen(false)}
-                className="p-2 rounded-xl transition-colors"
-                style={{ color: "rgba(255,255,255,0.7)" }}
-                data-testid="button-close-bottom-sheet"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="px-5 py-4 space-y-3 pb-8">
-              {selectedEvents.length === 0 ? (
-                <div className="text-center py-10">
-                  <Calendar className="w-10 h-10 mx-auto mb-3" style={{ color: "rgba(255,255,255,0.15)" }} />
-                  <p className="text-sm" style={{ color: "rgba(255,255,255,0.5)" }}>No events on this day</p>
-                </div>
-              ) : selectedEvents.map(ev => {
-                const color = getColor(ev);
-                return (
-                  <div key={ev.id} className="rounded-2xl overflow-hidden" data-testid={`bottom-sheet-event-${ev.id}`}>
-                    <div className="h-1.5 w-full" style={{ backgroundColor: color }} />
-                    <div className="p-4" style={{ background: `${color}1a`, border: "1px solid rgba(255,255,255,0.08)", borderTop: "none", borderBottomLeftRadius: "16px", borderBottomRightRadius: "16px" }}>
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-sm font-bold leading-snug" style={{ color: "#ffffff" }}>{ev.title}</p>
-                        {ev.isRecurring && <Repeat className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: "rgba(255,255,255,0.5)" }} />}
-                      </div>
-                      <span
-                        className="inline-block mt-2 text-[10px] font-semibold px-2.5 py-0.5 rounded-full"
-                        style={{ backgroundColor: `${color}33`, color }}
-                      >
-                        <EventTypeLabel eventType={ev.eventType} />
-                      </span>
-                      {ev.description && (
-                        <p className="text-xs mt-2 leading-relaxed" style={{ color: "rgba(255,255,255,0.65)" }}>{ev.description}</p>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-
-  /* Month view — 7-column grid, date top-right, event pills inside cells */
+  /* ── Month View ── */
   const monthView = (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-      <div className="lg:col-span-2 rounded-2xl overflow-hidden shadow-xl" style={{ background: BG_CARD, border: "1px solid rgba(255,255,255,0.12)" }}>
-        {/* Day name headers — Sun to Sat */}
-        <div className="grid grid-cols-7" style={{ borderBottom: "1px solid rgba(255,255,255,0.12)" }}>
+      {/* Calendar grid */}
+      <Card className="lg:col-span-2 overflow-hidden">
+        {/* Day name headers */}
+        <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
           {DAYS.map((d, i) => (
             <div
               key={d}
-              className="py-2.5 text-center text-[11px] font-bold uppercase tracking-wide"
-              style={{ color: i === 0 || i === 6 ? "#f87171" : "#ffffff" }}
+              className={`py-2.5 text-center text-xs font-bold uppercase tracking-wide ${i === 0 || i === 6 ? "text-red-500" : "text-gray-600"}`}
             >
               {d}
             </div>
@@ -644,13 +488,18 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
         {/* Calendar cells */}
         {isLoading ? (
           <div className="flex justify-center py-16">
-            <Loader2 className="w-6 h-6 animate-spin" style={{ color: "#10b981" }} />
+            <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
           </div>
         ) : (
           <div className="grid grid-cols-7">
             {calendarDays.map((day, i) => {
               if (day === null) {
-                return <div key={`e-${i}`} className="min-h-[80px]" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)", borderRight: "1px solid rgba(255,255,255,0.08)", background: BG_CELL }} />;
+                return (
+                  <div
+                    key={`e-${i}`}
+                    className="min-h-[80px] bg-gray-50 border-b border-r border-gray-200"
+                  />
+                );
               }
               const key = buildKey(year, month, day);
               const dayEvs = eventsByDate[key] || [];
@@ -663,25 +512,20 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
                   key={key}
                   onClick={() => handleDayClick(key)}
                   data-testid={`cell-day-${day}`}
-                  className="min-h-[80px] p-1.5 cursor-pointer transition-all"
-                  style={{
-                    background: isSelected ? "rgba(16,185,129,0.15)" : BG_CARD,
-                    borderBottom: "1px solid rgba(255,255,255,0.08)",
-                    borderRight: "1px solid rgba(255,255,255,0.08)",
-                    boxShadow: today
-                      ? "0 0 0 2px rgba(16,185,129,0.6), 0 0 16px rgba(16,185,129,0.2)"
-                      : "none",
-                  }}
+                  className={`min-h-[80px] p-1.5 cursor-pointer transition-colors border-b border-r border-gray-200 hover:bg-gray-50 ${
+                    isSelected ? "bg-emerald-50" : "bg-white"
+                  } ${today ? "ring-2 ring-emerald-500 ring-inset" : ""}`}
                 >
-                  {/* Date number — top right */}
+                  {/* Date number */}
                   <div className="flex justify-end mb-1">
                     <span
-                      className="text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full"
-                      style={
+                      className={`text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full ${
                         today
-                          ? { background: "#10b981", color: "#ffffff", boxShadow: "0 0 0 3px rgba(16,185,129,0.3), 0 0 12px rgba(16,185,129,0.4)" }
-                          : { color: isWeekend ? "#f87171" : "#ffffff" }
-                      }
+                          ? "bg-emerald-600 text-white"
+                          : isWeekend
+                          ? "text-red-500"
+                          : "text-gray-700"
+                      }`}
                       data-testid={`text-day-${day}`}
                     >
                       {day}
@@ -698,7 +542,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
                       />
                     ))}
                     {dayEvs.length > 2 && (
-                      <div className="text-[9px] pl-1 font-semibold" style={{ color: "rgba(255,255,255,0.7)" }}>
+                      <div className="text-[10px] pl-1 font-semibold text-gray-500">
                         +{dayEvs.length - 2} more
                       </div>
                     )}
@@ -708,192 +552,205 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
             })}
           </div>
         )}
-      </div>
+      </Card>
 
       {/* Desktop sidebar */}
-      <div className="hidden lg:flex flex-col rounded-2xl shadow-xl p-4" style={{ background: BG_CARD, border: "1px solid rgba(255,255,255,0.12)" }}>
-        <h4 className="text-sm font-semibold mb-3 flex items-center gap-2" style={{ color: "#ffffff" }}>
-          <CalendarDays className="w-4 h-4" style={{ color: "#10b981" }} />
-          {selectedDay ? formatDate(selectedDay) : "Events this month"}
-        </h4>
-        {!selectedDay ? (
-          <div className="flex-1 overflow-y-auto space-y-2">
-            {events.length === 0 ? (
-              <p className="text-sm text-center py-6" style={{ color: "rgba(255,255,255,0.5)" }}>No events this month</p>
-            ) : events.slice().sort((a, b) => a.date.localeCompare(b.date)).map(ev => (
-              <div
-                key={ev.id}
-                className="flex items-center gap-2.5 p-2 rounded-xl cursor-pointer transition-colors"
-                style={{ color: "#ffffff" }}
-                data-testid={`sidebar-event-${ev.id}`}
-                onClick={() => handleDayClick(ev.date.split("T")[0])}
-              >
-                <span className="w-2 h-6 rounded-full shrink-0" style={{ backgroundColor: getColor(ev) }} />
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold truncate" style={{ color: "#ffffff" }}>{ev.title}</p>
-                  <p className="text-[10px]" style={{ color: "rgba(255,255,255,0.6)" }}>
-                    {new Date(ev.date + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
-                  </p>
-                </div>
-                {ev.isRecurring && <Repeat className="w-3 h-3 shrink-0 ml-auto" style={{ color: "rgba(255,255,255,0.4)" }} />}
-              </div>
-            ))}
-          </div>
-        ) : selectedEvents.length === 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center">
-            <Calendar className="w-10 h-10 mb-3" style={{ color: "rgba(255,255,255,0.15)" }} />
-            <p className="text-sm" style={{ color: "rgba(255,255,255,0.5)" }}>No events on this day</p>
-          </div>
-        ) : (
-          <div className="flex-1 overflow-y-auto space-y-3">
-            {selectedEvents.map(ev => {
-              const color = getColor(ev);
-              return (
-                <motion.div
+      <Card className="hidden lg:flex flex-col shadow-none">
+        <CardContent className="pt-4 flex-1 flex flex-col min-h-0">
+          <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-emerald-600" />
+            {selectedDay ? formatDate(selectedDay) : "Events this month"}
+          </h4>
+          {!selectedDay ? (
+            <div className="flex-1 overflow-y-auto space-y-1.5">
+              {events.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-6">No events this month</p>
+              ) : events.slice().sort((a, b) => a.date.localeCompare(b.date)).map(ev => (
+                <div
                   key={ev.id}
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className="rounded-xl overflow-hidden"
-                  data-testid={`event-detail-${ev.id}`}
+                  className="flex items-center gap-2.5 p-2 rounded-xl cursor-pointer hover:bg-gray-50 transition-colors"
+                  data-testid={`sidebar-event-${ev.id}`}
+                  onClick={() => handleDayClick(ev.date.split("T")[0])}
                 >
-                  <div className="h-1 w-full" style={{ backgroundColor: color }} />
-                  <div className="p-3" style={{ background: `${color}1a`, border: "1px solid rgba(255,255,255,0.08)", borderTop: "none", borderBottomLeftRadius: "12px", borderBottomRightRadius: "12px" }}>
-                    <div className="flex items-start justify-between gap-2 mb-1.5">
-                      <p className="text-sm font-bold leading-snug" style={{ color: "#ffffff" }} data-testid={`text-event-title-${ev.id}`}>{ev.title}</p>
-                      {ev.isRecurring && <Repeat className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: "rgba(255,255,255,0.5)" }} />}
-                    </div>
-                    <span
-                      className="inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full"
-                      style={{ backgroundColor: `${color}33`, color }}
-                    >
-                      <EventTypeLabel eventType={ev.eventType} />
-                    </span>
-                    {ev.description && (
-                      <p className="text-xs mt-2 leading-relaxed" style={{ color: "rgba(255,255,255,0.65)" }}>{ev.description}</p>
-                    )}
+                  <span className="w-2 h-6 rounded-full shrink-0" style={{ backgroundColor: getColor(ev) }} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-gray-800 truncate">{ev.title}</p>
+                    <p className="text-[10px] text-gray-500">
+                      {new Date(ev.date + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
+                    </p>
                   </div>
-                </motion.div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                  {ev.isRecurring && <Repeat className="w-3 h-3 shrink-0 text-gray-400" />}
+                </div>
+              ))}
+            </div>
+          ) : selectedEvents.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center">
+              <Calendar className="w-10 h-10 mb-3 text-gray-200" />
+              <p className="text-sm text-gray-400">No events on this day</p>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto space-y-3">
+              {selectedEvents.map(ev => {
+                const color = getColor(ev);
+                return (
+                  <div
+                    key={ev.id}
+                    className="rounded-xl overflow-hidden border border-gray-200"
+                    data-testid={`event-detail-${ev.id}`}
+                  >
+                    <div className="h-1 w-full" style={{ backgroundColor: color }} />
+                    <div className="p-3 bg-white">
+                      <div className="flex items-start justify-between gap-2 mb-1.5">
+                        <p className="text-sm font-bold text-gray-900 leading-snug" data-testid={`text-event-title-${ev.id}`}>{ev.title}</p>
+                        {ev.isRecurring && <Repeat className="w-3.5 h-3.5 shrink-0 mt-0.5 text-gray-400" />}
+                      </div>
+                      <span
+                        className="inline-block text-xs font-semibold px-2 py-0.5 rounded-full text-white"
+                        style={{ backgroundColor: color }}
+                      >
+                        <EventTypeLabel eventType={ev.eventType} />
+                      </span>
+                      {ev.description && (
+                        <p className="text-xs text-gray-600 mt-2 leading-relaxed">{ev.description}</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 
-  /* Week view — 7-column grid with solid pills */
+  /* ── Week View ── */
   const weekView = (
-    <div className="space-y-3">
+    <div>
       {isLoading ? (
-        <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin" style={{ color: "#10b981" }} /></div>
-      ) : (
-        <div
-          className="rounded-2xl overflow-x-auto shadow-xl"
-          style={{ background: BG_CARD, border: "1px solid rgba(255,255,255,0.12)" }}
-          data-testid="week-grid"
-        >
-          <div className="grid grid-cols-7 min-w-[560px]">
-            {weekDays.map(day => {
-              const key = buildKey(day.getFullYear(), day.getMonth(), day.getDate());
-              const dayEvs = eventsByDate[key] || [];
-              const today = isTodayFn(day.getFullYear(), day.getMonth(), day.getDate());
-              const isSelected = selectedDay === key;
-              const isWeekend = day.getDay() === 0 || day.getDay() === 6;
-
-              return (
-                <div
-                  key={key}
-                  className="flex flex-col last:border-r-0"
-                  style={{
-                    borderRight: "1px solid rgba(255,255,255,0.08)",
-                    background: isSelected ? "rgba(16,185,129,0.1)" : BG_CARD,
-                    boxShadow: today ? "0 0 0 2px rgba(16,185,129,0.6), 0 0 16px rgba(16,185,129,0.2)" : "none",
-                  }}
-                >
-                  <div
-                    className="py-3 px-2 text-center cursor-pointer transition-colors"
-                    style={{ borderBottom: "1px solid rgba(255,255,255,0.08)", background: today ? "rgba(16,185,129,0.08)" : "transparent" }}
-                    onClick={() => handleDayClick(key)}
-                    data-testid={`week-day-header-${key}`}
-                  >
-                    <p className="text-[10px] font-bold uppercase tracking-wide mb-1" style={{ color: isWeekend ? "#f87171" : "#ffffff" }}>
-                      {DAYS[day.getDay()]}
-                    </p>
-                    <span
-                      className="w-8 h-8 flex items-center justify-center mx-auto rounded-full text-sm font-bold"
-                      style={
-                        today
-                          ? { background: "#10b981", color: "#ffffff", boxShadow: "0 0 0 3px rgba(16,185,129,0.3), 0 0 12px rgba(16,185,129,0.4)" }
-                          : { color: isWeekend ? "#f87171" : "#ffffff" }
-                      }
-                      data-testid={`week-day-${key}`}
-                    >
-                      {day.getDate()}
-                    </span>
-                    <p className="text-[9px] mt-1" style={{ color: "rgba(255,255,255,0.6)" }}>{MONTHS_SHORT[day.getMonth()]}</p>
-                  </div>
-                  <div
-                    className="flex-1 p-1.5 space-y-1 min-h-[120px] cursor-pointer"
-                    onClick={() => handleDayClick(key)}
-                  >
-                    {dayEvs.map(ev => (
-                      <EventPill
-                        key={ev.id}
-                        ev={ev}
-                        size="xs"
-                        onClick={e => { e.stopPropagation(); handleDayClick(key); }}
-                      />
-                    ))}
-                    {dayEvs.length === 0 && (
-                      <div className="flex items-center justify-center h-full pt-6">
-                        <span className="text-[9px]" style={{ color: "rgba(255,255,255,0.2)" }}>—</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+        <div className="flex justify-center py-16">
+          <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
         </div>
+      ) : (
+        <Card className="overflow-hidden" data-testid="week-grid">
+          <div className="overflow-x-auto">
+            <div className="grid grid-cols-7 min-w-[560px]">
+              {weekDays.map(day => {
+                const key = buildKey(day.getFullYear(), day.getMonth(), day.getDate());
+                const dayEvs = eventsByDate[key] || [];
+                const today = isTodayFn(day.getFullYear(), day.getMonth(), day.getDate());
+                const isSelected = selectedDay === key;
+                const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+
+                return (
+                  <div
+                    key={key}
+                    className={`flex flex-col border-r border-gray-200 last:border-r-0 ${
+                      isSelected ? "bg-emerald-50" : "bg-white"
+                    } ${today ? "ring-2 ring-emerald-500 ring-inset" : ""}`}
+                  >
+                    {/* Day header */}
+                    <div
+                      className={`py-3 px-2 text-center cursor-pointer border-b border-gray-200 hover:bg-gray-50 transition-colors ${today ? "bg-emerald-50" : ""}`}
+                      onClick={() => handleDayClick(key)}
+                      data-testid={`week-day-header-${key}`}
+                    >
+                      <p className={`text-[10px] font-bold uppercase tracking-wide mb-1 ${isWeekend ? "text-red-500" : "text-gray-500"}`}>
+                        {DAYS[day.getDay()]}
+                      </p>
+                      <span
+                        className={`w-8 h-8 flex items-center justify-center mx-auto rounded-full text-sm font-bold ${
+                          today ? "bg-emerald-600 text-white" : isWeekend ? "text-red-500" : "text-gray-800"
+                        }`}
+                        data-testid={`week-day-${key}`}
+                      >
+                        {day.getDate()}
+                      </span>
+                      <p className="text-[9px] text-gray-400 mt-0.5">{MONTHS_SHORT[day.getMonth()]}</p>
+                    </div>
+                    {/* Events */}
+                    <div
+                      className="flex-1 p-1.5 space-y-1 min-h-[120px] cursor-pointer"
+                      onClick={() => handleDayClick(key)}
+                    >
+                      {dayEvs.map(ev => (
+                        <EventPill
+                          key={ev.id}
+                          ev={ev}
+                          size="xs"
+                          onClick={e => { e.stopPropagation(); handleDayClick(key); }}
+                        />
+                      ))}
+                      {dayEvs.length === 0 && (
+                        <div className="flex items-center justify-center h-full pt-6">
+                          <span className="text-xs text-gray-300">—</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Selected day events (week view below grid) */}
+      {selectedDay && selectedEvents.length > 0 && (
+        <Card className="mt-4">
+          <CardContent className="pt-4 pb-4">
+            <p className="text-sm font-bold text-gray-800 mb-3">{formatDate(selectedDay)}</p>
+            <div className="space-y-2">
+              {selectedEvents.map(ev => {
+                const color = getColor(ev);
+                return (
+                  <div key={ev.id} className="flex items-center gap-3 p-2 rounded-xl border border-gray-200">
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-gray-900">{ev.title}</p>
+                      <p className="text-xs font-medium" style={{ color }}><EventTypeLabel eventType={ev.eventType} /></p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
 
-  /* Year / Agenda view */
+  /* ── Year / Agenda View ── */
   const yearView = (
-    <div className="space-y-6" data-testid="year-agenda">
+    <div className="space-y-5" data-testid="year-agenda">
       {isLoading ? (
-        <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin" style={{ color: "#10b981" }} /></div>
+        <div className="flex justify-center py-16">
+          <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
+        </div>
       ) : MONTHS.map((monthName, mi) => {
         const monthEvs = (yearGroupedByMonth[mi] || []).slice().sort((a, b) => a.date.localeCompare(b.date));
         const isCurrentMonth = mi === now.getMonth() && year === now.getFullYear();
         return (
           <div key={mi} data-testid={`year-month-section-${mi}`}>
+            {/* Month header */}
             <div
-              className="sticky top-0 z-10 flex items-center gap-3 py-2.5 px-3 mb-3 rounded-t-xl"
-              style={{
-                background: "rgba(10,22,40,0.97)",
-                backdropFilter: "blur(8px)",
-                borderBottom: "1px solid rgba(255,255,255,0.12)",
-              }}
+              className={`sticky top-0 z-10 flex items-center gap-3 py-2.5 px-3 mb-2 border-b bg-white ${isCurrentMonth ? "border-emerald-300" : "border-gray-200"}`}
               data-testid={`year-month-header-${mi}`}
             >
-              <span className="text-sm font-bold" style={{ color: isCurrentMonth ? "#10b981" : "#ffffff" }}>
+              <span className={`text-sm font-bold ${isCurrentMonth ? "text-emerald-700" : "text-gray-800"}`}>
                 {monthName}
               </span>
-              <span className="text-xs" style={{ color: "rgba(255,255,255,0.65)" }}>{year}</span>
+              <span className="text-xs text-gray-400">{year}</span>
               {isCurrentMonth && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold" style={{ background: "rgba(16,185,129,0.2)", color: "#10b981" }}>
-                  Current month
-                </span>
+                <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 text-xs">Current month</Badge>
               )}
-              <span className="ml-auto text-[10px] font-medium" style={{ color: "rgba(255,255,255,0.65)" }}>
+              <span className="ml-auto text-xs text-gray-500">
                 {monthEvs.length} event{monthEvs.length !== 1 ? "s" : ""}
               </span>
             </div>
+
             {monthEvs.length === 0 ? (
-              <p className="text-xs px-3 py-2" style={{ color: "rgba(255,255,255,0.4)" }}>No events scheduled</p>
+              <p className="text-xs text-gray-400 px-3 py-2">No events scheduled</p>
             ) : (
               <div className="space-y-2">
                 {monthEvs.map(ev => {
@@ -903,22 +760,26 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
                   return (
                     <div
                       key={ev.id}
-                      className="flex items-center gap-3 p-2.5 rounded-xl cursor-pointer transition-colors"
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer hover:bg-gray-50 transition-colors border border-transparent hover:border-gray-200"
                       onClick={() => handleDayClick(ev.date.split("T")[0])}
                       data-testid={`year-event-${ev.id}`}
                     >
                       <div className="w-10 text-center shrink-0">
-                        <p className="text-[9px] uppercase font-bold" style={{ color: "rgba(255,255,255,0.7)" }}>{DAYS[d.getDay()]}</p>
-                        <p
-                          className="text-lg font-black leading-tight"
-                          style={{ color: isCurrentDay ? "#10b981" : "#ffffff", textShadow: isCurrentDay ? "0 0 10px rgba(16,185,129,0.5)" : "none" }}
-                        >
+                        <p className="text-[9px] uppercase font-bold text-gray-400">{DAYS[d.getDay()]}</p>
+                        <p className={`text-lg font-black leading-tight ${isCurrentDay ? "text-emerald-700" : "text-gray-800"}`}>
                           {d.getDate()}
                         </p>
                       </div>
-                      <AgendaEventPill ev={ev} onClick={() => handleDayClick(ev.date.split("T")[0])} />
+                      <div
+                        className="flex items-center gap-2 flex-1 min-w-0 px-3 py-2 rounded-xl text-white text-sm font-semibold"
+                        style={{ backgroundColor: color }}
+                        data-testid={`event-chip-${ev.id}`}
+                      >
+                        <span className="truncate">{ev.title}</span>
+                        {ev.isRecurring && <Repeat className="w-3 h-3 shrink-0 opacity-70" />}
+                      </div>
                       {ev.description && (
-                        <p className="text-[10px] truncate max-w-[120px] hidden lg:block" style={{ color: "rgba(255,255,255,0.6)" }}>{ev.description}</p>
+                        <p className="text-xs text-gray-500 truncate max-w-[120px] hidden lg:block">{ev.description}</p>
                       )}
                     </div>
                   );
@@ -931,20 +792,23 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
     </div>
   );
 
-  /* Mobile month — 7-column compact grid (not agenda list) */
+  /* ── Mobile Month View ── */
   if (isMobile && view === "month") {
     return (
       <div className="space-y-4" data-testid="teacher-calendar-mobile">
         {navBar}
+        {viewSwitcher}
         {legend}
         {isLoading ? (
-          <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin" style={{ color: "#10b981" }} /></div>
+          <div className="flex justify-center py-16">
+            <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
+          </div>
         ) : (
-          <div className="rounded-2xl overflow-hidden shadow-xl" style={{ background: BG_CARD, border: "1px solid rgba(255,255,255,0.12)" }}>
+          <Card className="overflow-hidden">
             {/* Day headers */}
-            <div className="grid grid-cols-7" style={{ borderBottom: "1px solid rgba(255,255,255,0.12)" }}>
+            <div className="grid grid-cols-7 bg-gray-50 border-b border-gray-200">
               {DAYS.map((d, i) => (
-                <div key={d} className="py-2 text-center text-[10px] font-bold uppercase" style={{ color: i === 0 || i === 6 ? "#f87171" : "#ffffff" }}>
+                <div key={d} className={`py-2 text-center text-[10px] font-bold uppercase ${i === 0 || i === 6 ? "text-red-500" : "text-gray-600"}`}>
                   {d}
                 </div>
               ))}
@@ -953,7 +817,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
             <div className="grid grid-cols-7">
               {calendarDays.map((day, i) => {
                 if (day === null) {
-                  return <div key={`e-${i}`} className="min-h-[48px]" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)", borderRight: "1px solid rgba(255,255,255,0.08)", background: BG_CELL }} />;
+                  return <div key={`e-${i}`} className="min-h-[48px] bg-gray-50 border-b border-r border-gray-200" />;
                 }
                 const key = buildKey(year, month, day);
                 const dayEvs = eventsByDate[key] || [];
@@ -965,18 +829,15 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
                     key={key}
                     onClick={() => handleDayClick(key)}
                     data-testid={`mobile-cell-day-${day}`}
-                    className="min-h-[48px] p-1 cursor-pointer"
-                    style={{
-                      borderBottom: "1px solid rgba(255,255,255,0.08)",
-                      borderRight: "1px solid rgba(255,255,255,0.08)",
-                      background: isSelected ? "rgba(16,185,129,0.15)" : BG_CARD,
-                      boxShadow: today ? "0 0 0 2px rgba(16,185,129,0.6)" : "none",
-                    }}
+                    className={`min-h-[48px] p-1 cursor-pointer border-b border-r border-gray-200 ${
+                      isSelected ? "bg-emerald-50" : "bg-white"
+                    } ${today ? "ring-2 ring-emerald-500 ring-inset" : ""}`}
                   >
                     <div className="flex justify-end">
                       <span
-                        className="text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full"
-                        style={today ? { background: "#10b981", color: "#ffffff" } : { color: isWeekend ? "#f87171" : "#ffffff" }}
+                        className={`text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full ${
+                          today ? "bg-emerald-600 text-white" : isWeekend ? "text-red-500" : "text-gray-700"
+                        }`}
                         data-testid={`text-day-${day}`}
                       >
                         {day}
@@ -984,51 +845,51 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
                     </div>
                     <div className="space-y-px mt-0.5">
                       {dayEvs.slice(0, 1).map(ev => (
-                        <div
-                          key={ev.id}
-                          className="w-full h-1.5 rounded-full"
-                          style={{ backgroundColor: getColor(ev) }}
-                        />
+                        <div key={ev.id} className="w-full h-1.5 rounded-full" style={{ backgroundColor: getColor(ev) }} />
                       ))}
                       {dayEvs.length > 1 && (
-                        <div className="w-full h-1.5 rounded-full" style={{ backgroundColor: "rgba(255,255,255,0.3)" }} />
+                        <div className="w-full h-1.5 rounded-full bg-gray-300" />
                       )}
                     </div>
                   </div>
                 );
               })}
             </div>
-          </div>
+          </Card>
         )}
-        {/* Event list for selected day (below the grid) */}
+
+        {/* Selected day details */}
         {selectedDay && (
-          <div className="rounded-2xl p-4" style={{ background: BG_CARD, border: "1px solid rgba(255,255,255,0.12)" }}>
-            <p className="text-sm font-bold mb-3" style={{ color: "#ffffff" }}>{formatDate(selectedDay)}</p>
-            {selectedEvents.length === 0 ? (
-              <p className="text-sm" style={{ color: "rgba(255,255,255,0.5)" }}>No events on this day</p>
-            ) : selectedEvents.map(ev => {
-              const color = getColor(ev);
-              return (
-                <div key={ev.id} className="flex items-center gap-3 py-2" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }} data-testid={`mobile-event-detail-${ev.id}`}>
-                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold" style={{ color: "#ffffff" }}>{ev.title}</p>
-                    <p className="text-[11px]" style={{ color }}><EventTypeLabel eventType={ev.eventType} /></p>
+          <Card>
+            <CardContent className="pt-4 pb-4">
+              <p className="text-sm font-bold text-gray-800 mb-3">{formatDate(selectedDay)}</p>
+              {selectedEvents.length === 0 ? (
+                <p className="text-sm text-gray-400">No events on this day</p>
+              ) : selectedEvents.map(ev => {
+                const color = getColor(ev);
+                return (
+                  <div key={ev.id} className="flex items-center gap-3 py-2.5 border-b border-gray-100 last:border-b-0" data-testid={`mobile-event-detail-${ev.id}`}>
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900">{ev.title}</p>
+                      <p className="text-xs font-medium" style={{ color }}><EventTypeLabel eventType={ev.eventType} /></p>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </CardContent>
+          </Card>
         )}
         {bottomSheet}
       </div>
     );
   }
 
-  /* Main render — desktop + non-month mobile views */
+  /* ── Main Render (desktop + non-month mobile views) ── */
   return (
-    <div className="space-y-5" data-testid="teacher-calendar-desktop">
+    <div className="space-y-4" data-testid="teacher-calendar-desktop">
       {navBar}
+      {viewSwitcher}
       {legend}
       {view === "month" && monthView}
       {view === "week" && weekView}
