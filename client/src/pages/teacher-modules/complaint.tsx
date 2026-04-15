@@ -308,14 +308,14 @@ function StudentSearchInput({
 
 function feedStatusBadge(status: string) {
   const cfg: Record<string, { label: string; cls: string; Icon: typeof CheckCircle }> = {
-    Pending:   { label: "Pending",   cls: "bg-amber-100 text-amber-700 border-amber-300",   Icon: Clock         },
-    Resolved:  { label: "Resolved",  cls: "bg-green-100 text-green-700 border-green-300",   Icon: CheckCircle   },
-    Escalated: { label: "Escalated", cls: "bg-red-100   text-red-700   border-red-300",     Icon: AlertTriangle },
+    Pending:   { label: "Pending",   cls: "bg-amber-400 text-black border-amber-500",   Icon: Clock         },
+    Resolved:  { label: "Resolved",  cls: "bg-emerald-400 text-black border-emerald-500", Icon: CheckCircle },
+    Escalated: { label: "Escalated", cls: "bg-red-400 text-black border-red-500",         Icon: AlertTriangle },
   };
-  const s = cfg[status] ?? { label: status, cls: "bg-gray-100 text-gray-600 border-gray-200", Icon: Clock };
+  const s = cfg[status] ?? { label: status, cls: "bg-gray-300 text-black border-gray-400", Icon: Clock };
   const Icon = s.Icon;
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold ${s.cls}`}>
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold ${s.cls}`}>
       <Icon className="w-3 h-3" /> {s.label}
     </span>
   );
@@ -439,7 +439,7 @@ function ClassFeedDrawer({
                     size="sm"
                     onClick={() => resolveMutation.mutate()}
                     disabled={!resolveRemarks.trim() || resolveMutation.isPending}
-                    className="rounded-xl bg-green-600 hover:bg-green-700 text-white flex-1"
+                    className="rounded-xl bg-emerald-400 hover:bg-emerald-500 text-black font-bold flex-1"
                     data-testid="button-confirm-resolve"
                   >
                     {resolveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4 mr-1" />}
@@ -455,7 +455,7 @@ function ClassFeedDrawer({
                 <Button
                   size="sm"
                   onClick={() => setShowResolveBox(true)}
-                  className="rounded-xl bg-green-600 hover:bg-green-700 text-white font-bold flex-1"
+                  className="rounded-xl bg-emerald-400 hover:bg-emerald-500 text-black font-bold flex-1"
                   data-testid="button-resolve"
                 >
                   <CheckCircle className="w-4 h-4 mr-1" /> Mark as Solved
@@ -464,7 +464,7 @@ function ClassFeedDrawer({
                   size="sm"
                   onClick={() => escalateMutation.mutate()}
                   disabled={escalateMutation.isPending || !!entry.escalatedToPrincipal}
-                  className="rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold flex-1"
+                  className="rounded-xl bg-amber-400 hover:bg-amber-500 text-black font-bold flex-1"
                   data-testid="button-escalate"
                 >
                   {escalateMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUpCircle className="w-4 h-4 mr-1" />}

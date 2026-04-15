@@ -32,14 +32,14 @@ function fmtDate(iso: string) {
 
 function StatusChip({ status }: { status: string }) {
   const map: Record<string, string> = {
-    Pending:       "bg-amber-100 text-amber-800 border-amber-300",
-    Investigating: "bg-blue-100 text-blue-800 border-blue-300",
-    Resolved:      "bg-green-100 text-green-800 border-green-300",
-    Escalated:     "bg-red-100 text-red-800 border-red-300",
+    Pending:       "bg-amber-400 text-black border-amber-500",
+    Investigating: "bg-blue-400 text-black border-blue-500",
+    Resolved:      "bg-emerald-400 text-black border-emerald-500",
+    Escalated:     "bg-red-400 text-black border-red-500",
   };
   const Icon = status === "Resolved" ? CheckCircle : status === "Escalated" ? ArrowUpCircle : Clock;
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-bold ${map[status] ?? "bg-gray-100 text-gray-700 border-gray-300"}`}>
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-bold ${map[status] ?? "bg-gray-300 text-black border-gray-400"}`}>
       <Icon className="w-3 h-3" />{status}
     </span>
   );
@@ -136,7 +136,7 @@ function ComplaintCard({
             size="sm"
             onClick={() => resolveMutation.mutate({ status: "Resolved" })}
             disabled={resolveMutation.isPending}
-            className="h-8 px-3 rounded-lg bg-green-600 hover:bg-green-500 text-white font-bold text-xs"
+            className="h-8 px-3 rounded-lg bg-emerald-400 hover:bg-emerald-500 text-black font-bold text-xs"
             data-testid={`button-resolve-${c.id}`}
           >
             {resolveMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3 mr-1" />}
@@ -147,7 +147,7 @@ function ComplaintCard({
               size="sm"
               onClick={() => resolveMutation.mutate({ status: "Investigating" })}
               disabled={resolveMutation.isPending}
-              className="h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs"
+              className="h-8 px-3 rounded-lg bg-blue-400 hover:bg-blue-500 text-black font-bold text-xs"
               data-testid={`button-investigating-${c.id}`}
             >
               <Clock className="w-3 h-3 mr-1" /> Mark Investigating
