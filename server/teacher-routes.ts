@@ -526,6 +526,7 @@ export function registerTeacherRoutes(app: Express) {
       reportedStudentName: reportedStudentName || null,
       fileUrl,
       escalatedToPrincipal: shouldNotifyAdmin,
+      notifyAdmin: shouldNotifyAdmin,
       status: shouldNotifyAdmin ? "Escalated" : "Pending",
     });
     res.status(201).json(complaint);
@@ -691,12 +692,11 @@ export function registerTeacherRoutes(app: Express) {
     const complaint = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
     if (!complaint) return res.status(404).json({ message: "Complaint not found" });
     if (complaint.complaintType !== "student-peer-report") return res.status(403).json({ message: "Access denied" });
-    // Authorize by checking the TARGET student's class (not complainant's class)
-    if (complaint.studentId) {
-      const targetStudent = await storage.getStudentById(complaint.studentId);
-      if (!targetStudent || targetStudent.class !== teacher.assignedClass || targetStudent.section !== teacher.assignedSection) {
-        return res.status(403).json({ message: "Not authorized: target student not in your class" });
-      }
+    // Hard-fail if no target studentId — peer reports must always have one
+    if (!complaint.studentId) return res.status(403).json({ message: "Complaint has no target student" });
+    const targetStudent = await storage.getStudentById(complaint.studentId);
+    if (!targetStudent || targetStudent.class !== teacher.assignedClass || targetStudent.section !== teacher.assignedSection) {
+      return res.status(403).json({ message: "Not authorized: target student not in your class" });
     }
     const updated = await storage.resolveComplaint(id, teacher.schoolId, resolutionRemarks.trim());
     if (!updated) return res.status(404).json({ message: "Complaint not found" });
@@ -711,12 +711,11 @@ export function registerTeacherRoutes(app: Express) {
     const complaint = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
     if (!complaint) return res.status(404).json({ message: "Complaint not found" });
     if (complaint.complaintType !== "student-peer-report") return res.status(403).json({ message: "Access denied" });
-    // Authorize by checking the TARGET student's class (not complainant's class)
-    if (complaint.studentId) {
-      const targetStudent = await storage.getStudentById(complaint.studentId);
-      if (!targetStudent || targetStudent.class !== teacher.assignedClass || targetStudent.section !== teacher.assignedSection) {
-        return res.status(403).json({ message: "Not authorized: target student not in your class" });
-      }
+    // Hard-fail if no target studentId — peer reports must always have one
+    if (!complaint.studentId) return res.status(403).json({ message: "Complaint has no target student" });
+    const targetStudent = await storage.getStudentById(complaint.studentId);
+    if (!targetStudent || targetStudent.class !== teacher.assignedClass || targetStudent.section !== teacher.assignedSection) {
+      return res.status(403).json({ message: "Not authorized: target student not in your class" });
     }
     const updated = await storage.escalateComplaint(id, teacher.schoolId);
     if (!updated) return res.status(404).json({ message: "Complaint not found" });

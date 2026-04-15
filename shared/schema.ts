@@ -145,6 +145,7 @@ export const complaints = pgTable("complaints", {
   complainantSection: varchar("complainant_section", { length: 10 }),
   resolutionRemarks: text("resolution_remarks"),
   escalatedToPrincipal: boolean("escalated_to_principal").notNull().default(false),
+  notifyAdmin: boolean("notify_admin").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

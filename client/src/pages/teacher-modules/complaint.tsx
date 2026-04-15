@@ -34,6 +34,9 @@ interface ComplaintEntry {
   studentName: string | null;
   fileUrl: string | null;
   createdAt: string;
+  resolutionRemarks: string | null;
+  escalatedToPrincipal: boolean;
+  notifyAdmin: boolean;
 }
 interface ComplaintNote {
   id: number;
@@ -452,21 +455,20 @@ function ClassFeedDrawer({
                 <Button
                   size="sm"
                   onClick={() => setShowResolveBox(true)}
-                  className="rounded-xl bg-green-600 hover:bg-green-700 text-white flex-1"
+                  className="rounded-xl bg-green-600 hover:bg-green-700 text-white font-bold flex-1"
                   data-testid="button-resolve"
                 >
-                  <CheckCircle className="w-4 h-4 mr-1" /> Resolve
+                  <CheckCircle className="w-4 h-4 mr-1" /> Mark as Solved
                 </Button>
                 <Button
                   size="sm"
-                  variant="outline"
                   onClick={() => escalateMutation.mutate()}
                   disabled={escalateMutation.isPending || !!entry.escalatedToPrincipal}
-                  className="rounded-xl border-red-200 text-red-600 hover:bg-red-50 flex-1"
+                  className="rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold flex-1"
                   data-testid="button-escalate"
                 >
                   {escalateMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUpCircle className="w-4 h-4 mr-1" />}
-                  Escalate
+                  Escalate to Principal
                 </Button>
               </div>
             )}
@@ -913,6 +915,23 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
                         data-testid={`link-evidence-${c.id}`}>
                         <FileDown className="w-3.5 h-3.5" /> View Evidence
                       </a>
+                    )}
+
+                    {/* Principal's Remarks for escalated teacher→student complaints */}
+                    {c.escalatedToPrincipal && c.complaintType === "teacher-to-student" && (
+                      <div className={`mt-3 px-3 py-2 rounded-lg border text-xs ${c.resolutionRemarks ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200"}`}
+                        data-testid={`remarks-block-${c.id}`}>
+                        <p className={`font-bold ${c.resolutionRemarks ? "text-green-800" : "text-amber-700"}`}>
+                          Principal's Remarks
+                        </p>
+                        {c.resolutionRemarks ? (
+                          <p className="font-semibold text-green-700 mt-0.5" data-testid={`text-principal-remarks-${c.id}`}>
+                            {c.resolutionRemarks}
+                          </p>
+                        ) : (
+                          <p className="text-amber-600 italic mt-0.5">— awaiting principal's response</p>
+                        )}
+                      </div>
                     )}
 
                     <div className="flex items-center justify-between mt-3 pt-3 border-t">

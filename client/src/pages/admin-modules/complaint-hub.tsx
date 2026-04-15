@@ -19,6 +19,7 @@ interface AdminComplaint {
   reportedStudentName: string | null;
   resolutionRemarks: string | null;
   escalatedToPrincipal: boolean;
+  notifyAdmin: boolean;
   createdAt: string;
   studentName: string | null;
   teacherName: string | null;
@@ -144,10 +145,9 @@ function ComplaintCard({
           {c.status !== "Investigating" && (
             <Button
               size="sm"
-              variant="outline"
               onClick={() => resolveMutation.mutate({ status: "Investigating" })}
               disabled={resolveMutation.isPending}
-              className="h-8 px-3 rounded-lg border-white/20 text-white/80 hover:bg-white/10 font-bold text-xs"
+              className="h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs"
               data-testid={`button-investigating-${c.id}`}
             >
               <Clock className="w-3 h-3 mr-1" /> Mark Investigating
@@ -237,11 +237,11 @@ export default function ComplaintHub({ schoolId }: Props) {
   const studentGrievances = all.filter(c => c.complaintType === "student-to-staff");
 
   // ── Section 3: Escalated Reports ──
-  //   a) Peer reports escalated by class teacher
-  //   b) Teacher-to-student flagged with "Notify Admin"
+  //   a) Peer reports escalated by class teacher (escalatedToPrincipal=true)
+  //   b) Teacher-to-student flagged with "Notify Admin" (dedicated notifyAdmin=true column)
   const escalated = all.filter(c =>
     (c.complaintType === "student-peer-report" && c.escalatedToPrincipal) ||
-    (c.complaintType === "teacher-to-student" && c.escalatedToPrincipal)
+    (c.complaintType === "teacher-to-student" && c.notifyAdmin)
   );
 
   if (isLoading) {
