@@ -1492,11 +1492,22 @@ export async function registerRoutes(
     res.status(201).json(complaint);
   });
 
+  // Student peer-search (student-session only, excludes self)
+  app.get("/api/student/search-peers", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const q = (req.query.q as string) || "";
+    if (q.length < 2) return res.json([]);
+    const results = await storage.searchStudents(student.schoolId, q);
+    res.json(results.filter(s => s.id !== req.session.studentId));
+  });
+
   app.post("/api/student/complaints/peer-report", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    const { reportedStudentName, incidentDate, content } = req.body;
+    const { reportedStudentName, reportedStudentId, incidentDate, content } = req.body;
     if (!reportedStudentName?.trim() || !content?.trim()) {
       return res.status(400).json({ message: "Reported student name and description are required" });
     }
@@ -1504,6 +1515,7 @@ export async function registerRoutes(
     const complaint = await storage.createStudentComplaint({
       ticketId,
       complainantStudentId: student.id,
+      studentId: reportedStudentId ? parseInt(reportedStudentId) : null,
       schoolId: student.schoolId,
       complaintType: "student-peer-report",
       content: content.trim(),

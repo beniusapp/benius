@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   ArrowLeft, Mail, ShieldAlert, UserX, Loader2,
   AlertTriangle, CheckCircle, Clock, Plus, Lock, ChevronDown, ChevronUp,
+  Search, X,
 } from "lucide-react";
 import { getQueryFn, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -17,12 +18,22 @@ interface StudentMe {
   phone: string;
   schoolName: string;
   schoolCode: string;
+  schoolId: number;
 }
 
 interface TeacherOption {
   id: number;
   name: string;
   subject: string;
+}
+
+interface PeerStudent {
+  id: number;
+  name: string;
+  digitalStudentId: string;
+  class: string;
+  section: string;
+  photoUrl: string | null;
 }
 
 interface ComplaintRecord {
@@ -45,10 +56,10 @@ type TabId = "inbox" | "staff" | "peer";
 
 function StatusBadge({ status }: { status: string }) {
   const cfg: Record<string, { label: string; cls: string; icon: typeof CheckCircle }> = {
-    "Pending":        { label: "Pending",            cls: "bg-amber-50   text-amber-700   border-amber-200",   icon: Clock         },
-    "Investigating":  { label: "Investigating",       cls: "bg-blue-50    text-blue-700    border-blue-200",    icon: Clock         },
-    "Resolved":       { label: "Resolved",            cls: "bg-emerald-50 text-emerald-700 border-emerald-200", icon: CheckCircle   },
-    "Escalated":      { label: "Escalated",           cls: "bg-red-50     text-red-700     border-red-200",     icon: AlertTriangle },
+    "Pending":       { label: "Pending",       cls: "bg-amber-50   text-amber-700   border-amber-200",   icon: Clock         },
+    "Investigating": { label: "Investigating", cls: "bg-blue-50    text-blue-700    border-blue-200",    icon: Clock         },
+    "Resolved":      { label: "Resolved",      cls: "bg-emerald-50 text-emerald-700 border-emerald-200", icon: CheckCircle   },
+    "Escalated":     { label: "Escalated",     cls: "bg-red-50     text-red-700     border-red-200",     icon: AlertTriangle },
   };
   const s = cfg[status] ?? { label: status, cls: "bg-gray-50 text-gray-600 border-gray-200", icon: Clock };
   const Icon = s.icon;
@@ -60,9 +71,16 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function formatDate(iso: string): string {
+function formatDateTime(iso: string): string {
   const d = new Date(iso);
-  return `${d.toLocaleDateString("en-GB")} ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+  const date = d.toLocaleDateString("en-GB"); // dd/mm/yyyy
+  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }); // 2:30 PM
+  return `${date} ${time}`;
+}
+
+function formatDateOnly(iso: string): string {
+  const d = new Date(iso + (iso.includes("T") ? "" : "T00:00:00"));
+  return d.toLocaleDateString("en-GB"); // dd/mm/yyyy
 }
 
 function InboxCard({ c }: { c: ComplaintRecord & { teacherName: string } }) {
@@ -76,7 +94,7 @@ function InboxCard({ c }: { c: ComplaintRecord & { teacherName: string } }) {
         <div className="flex items-start justify-between gap-2 flex-wrap">
           <div>
             <p className="text-sm font-bold text-gray-800">{c.teacherName}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{formatDate(c.createdAt)} · #{c.ticketId}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{formatDateTime(c.createdAt)} · #{c.ticketId}</p>
           </div>
           <StatusBadge status={c.status} />
         </div>
@@ -100,12 +118,17 @@ function FiledCard({ c }: { c: ComplaintRecord }) {
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4" data-testid={`card-filed-${c.id}`}>
       <div className="flex items-start justify-between gap-2 flex-wrap">
         <div>
-          <p className="text-xs text-gray-400">#{c.ticketId} · {formatDate(c.createdAt)}</p>
+          <p className="text-xs text-gray-400">#{c.ticketId} · {formatDateTime(c.createdAt)}</p>
           {c.complaintType === "student-to-staff" && c.teacherName && (
             <p className="text-sm font-semibold text-gray-700 mt-0.5">Against: {c.teacherName}</p>
           )}
           {c.complaintType === "student-peer-report" && c.reportedStudentName && (
             <p className="text-sm font-semibold text-gray-700 mt-0.5">Reported: {c.reportedStudentName}</p>
+          )}
+          {c.complaintType === "student-peer-report" && c.incidentDate && (
+            <p className="text-xs text-gray-500 mt-0.5">
+              Incident: {formatDateOnly(c.incidentDate)}
+            </p>
           )}
         </div>
         <StatusBadge status={c.status} />
@@ -127,6 +150,135 @@ function FiledCard({ c }: { c: ComplaintRecord }) {
   );
 }
 
+/* ── Peer Student Autocomplete Search ── */
+function PeerStudentSearch({
+  onSelect,
+  selectedStudent,
+  onClear,
+}: {
+  onSelect: (s: PeerStudent) => void;
+  selectedStudent: PeerStudent | null;
+  onClear: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [showDropdown, setShowDropdown] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounce
+  const handleQueryChange = useCallback((val: string) => {
+    setQuery(val);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setDebouncedQuery(val), 300);
+    setShowDropdown(true);
+  }, []);
+
+  const { data: results = [], isFetching } = useQuery<PeerStudent[]>({
+    queryKey: ["/api/student/search-peers", debouncedQuery],
+    queryFn: async () => {
+      const res = await fetch(`/api/student/search-peers?q=${encodeURIComponent(debouncedQuery)}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+    enabled: debouncedQuery.length >= 2,
+    staleTime: 10000,
+  });
+
+  // Click outside to close
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  // If a student is already selected, show their chip
+  if (selectedStudent) {
+    return (
+      <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-[#10b981] bg-emerald-50" data-testid="peer-selected-chip">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold text-gray-900 truncate">{selectedStudent.name}</p>
+          <p className="text-xs text-gray-600">{selectedStudent.digitalStudentId} · Class {selectedStudent.class}-{selectedStudent.section}</p>
+        </div>
+        <button
+          type="button"
+          onClick={onClear}
+          className="w-7 h-7 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-500 hover:text-red-500 transition-colors flex-shrink-0"
+          data-testid="button-clear-peer"
+          aria-label="Clear selected student"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+        <input
+          type="text"
+          value={query}
+          onChange={e => handleQueryChange(e.target.value)}
+          onFocus={() => query.length >= 2 && setShowDropdown(true)}
+          placeholder="Type a name or ID (min 2 characters)…"
+          className="w-full pl-9 pr-4 h-11 rounded-xl border border-gray-200 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
+          data-testid="input-peer-search"
+          autoComplete="off"
+        />
+        {isFetching && (
+          <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-[#10b981]" />
+        )}
+      </div>
+
+      {/* Dropdown */}
+      {showDropdown && debouncedQuery.length >= 2 && (
+        <div
+          className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-56 overflow-y-auto"
+          data-testid="peer-search-dropdown"
+        >
+          {!isFetching && results.length === 0 ? (
+            <div className="p-3 text-center text-sm font-semibold text-gray-500">
+              No students found
+            </div>
+          ) : (
+            results.map(s => (
+              <button
+                key={s.id}
+                type="button"
+                onMouseDown={e => {
+                  e.preventDefault(); // prevent blur first
+                  onSelect(s);
+                  setQuery("");
+                  setDebouncedQuery("");
+                  setShowDropdown(false);
+                }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-emerald-50 transition-colors border-b border-gray-100 last:border-b-0"
+                data-testid={`peer-option-${s.id}`}
+              >
+                <div className="w-9 h-9 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                  <span className="text-xs font-bold text-emerald-700">
+                    {s.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
+                  </span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-gray-900 truncate">{s.name}</p>
+                  <p className="text-xs font-semibold text-gray-600">{s.digitalStudentId} · Class {s.class}-{s.section}</p>
+                </div>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function StudentComplaints() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -138,7 +290,8 @@ export default function StudentComplaints() {
   const [staffContact, setStaffContact] = useState<string | null>(null);
   const [staffSuggestions, setStaffSuggestions] = useState("");
 
-  const [peerName, setPeerName] = useState("");
+  // Peer report state
+  const [peerSelectedStudent, setPeerSelectedStudent] = useState<PeerStudent | null>(null);
   const [peerIncidentDate, setPeerIncidentDate] = useState("");
   const [peerContent, setPeerContent] = useState("");
 
@@ -177,7 +330,7 @@ export default function StudentComplaints() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/student/complaints/filed"] });
       toast({ title: "Report submitted", description: "Your peer report has been filed." });
-      setPeerName(""); setPeerIncidentDate(""); setPeerContent("");
+      setPeerSelectedStudent(null); setPeerIncidentDate(""); setPeerContent("");
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -215,12 +368,13 @@ export default function StudentComplaints() {
 
   const handlePeerSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!peerName.trim() || !peerContent.trim()) {
-      toast({ title: "Missing fields", description: "Please fill in the required fields.", variant: "destructive" });
+    if (!peerSelectedStudent || !peerContent.trim()) {
+      toast({ title: "Missing fields", description: "Please select a student and describe the incident.", variant: "destructive" });
       return;
     }
     peerMutation.mutate({
-      reportedStudentName: peerName,
+      reportedStudentName: peerSelectedStudent.name,
+      reportedStudentId: peerSelectedStudent.id,
       incidentDate: peerIncidentDate || null,
       content: peerContent,
     });
@@ -304,7 +458,6 @@ export default function StudentComplaints() {
         {/* ── Tab: Staff Grievance ── */}
         {activeTab === "staff" && (
           <div className="space-y-4">
-            {/* Confidentiality notice */}
             <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 flex items-start gap-3">
               <Lock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
               <div>
@@ -313,7 +466,6 @@ export default function StudentComplaints() {
               </div>
             </div>
 
-            {/* Submission form */}
             <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-5" data-testid="form-staff-grievance">
               <h2 className="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2">
                 <ShieldAlert className="w-4 h-4 text-[#10b981]" /> File a Staff Grievance
@@ -384,7 +536,6 @@ export default function StudentComplaints() {
               </form>
             </div>
 
-            {/* History */}
             {filedLoading ? (
               <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-[#10b981]" /></div>
             ) : staffGrievances.length > 0 && (
@@ -404,30 +555,40 @@ export default function StudentComplaints() {
                 <UserX className="w-4 h-4 text-[#10b981]" /> Report Peer Misconduct
               </h2>
               <form onSubmit={handlePeerSubmit} className="space-y-4">
+
+                {/* ── Student Autocomplete Search ── */}
                 <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">Target Student Name / ID *</label>
-                  <input
-                    type="text"
-                    value={peerName}
-                    onChange={e => setPeerName(e.target.value)}
-                    placeholder="Enter student name or school ID"
-                    className="w-full px-3 h-11 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
-                    data-testid="input-peer-name"
-                    required
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                    Target Student * <span className="font-normal text-gray-400">(search by name or ID)</span>
+                  </label>
+                  <PeerStudentSearch
+                    onSelect={setPeerSelectedStudent}
+                    selectedStudent={peerSelectedStudent}
+                    onClear={() => setPeerSelectedStudent(null)}
                   />
                 </div>
 
+                {/* ── Incident Date & Time ── */}
                 <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">Incident Date & Time</label>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                    Incident Date &amp; Time <span className="font-normal text-gray-400">(DD/MM/YYYY)</span>
+                  </label>
                   <input
                     type="datetime-local"
                     value={peerIncidentDate}
                     onChange={e => setPeerIncidentDate(e.target.value)}
-                    className="w-full px-3 h-11 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
+                    className="w-full px-3 h-11 rounded-xl border border-gray-200 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
                     data-testid="input-peer-incident-date"
                   />
+                  {/* Show formatted preview once a date is picked */}
+                  {peerIncidentDate && (
+                    <p className="text-xs text-gray-500 mt-1 pl-1">
+                      {formatDateTime(peerIncidentDate)}
+                    </p>
+                  )}
                 </div>
 
+                {/* ── Description ── */}
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1.5">Description of Incident *</label>
                   <textarea
@@ -443,7 +604,7 @@ export default function StudentComplaints() {
 
                 <button
                   type="submit"
-                  disabled={peerMutation.isPending}
+                  disabled={peerMutation.isPending || !peerSelectedStudent}
                   className="w-full flex items-center justify-center gap-2 h-11 rounded-xl bg-[#10b981] hover:bg-[#059669] text-white text-sm font-semibold transition-colors disabled:opacity-60"
                   data-testid="button-submit-peer"
                 >
