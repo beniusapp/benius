@@ -630,6 +630,10 @@ export function registerTeacherRoutes(app: Express) {
       if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
         return res.status(403).json({ message: "Access denied" });
       }
+      // Private teacher-to-admin complaints: only the filing teacher may access notes
+      if (c.complaintType === "teacher-to-admin" && c.teacherId !== teacher.id) {
+        return res.status(403).json({ message: "Access denied: not your private complaint" });
+      }
     }
 
     const { content } = req.body;
@@ -666,8 +670,14 @@ export function registerTeacherRoutes(app: Express) {
     if (!c) return res.status(404).json({ message: "Complaint not found" });
 
     if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
       if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
         return res.status(403).json({ message: "Access denied" });
+      }
+      // Private teacher-to-admin complaints: only the filing teacher may read notes
+      if (c.complaintType === "teacher-to-admin" && c.teacherId !== teacher.id) {
+        return res.status(403).json({ message: "Access denied: not your private complaint" });
       }
     }
 
