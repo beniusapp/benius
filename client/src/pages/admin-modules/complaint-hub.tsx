@@ -168,16 +168,26 @@ function ComplaintCard({
             className="w-full px-3 py-2 rounded-xl bg-[#0A1628] border border-white/20 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-[#D4AF37] resize-none font-medium"
             data-testid={`input-remarks-${c.id}`}
           />
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              onClick={() => resolveMutation.mutate({ status: c.status, resolutionRemarks: remarks.trim() })}
+              disabled={!remarks.trim() || resolveMutation.isPending}
+              className="h-8 px-3 rounded-lg bg-[#D4AF37] hover:bg-[#b8962e] text-black font-bold text-xs"
+              data-testid={`button-post-only-remarks-${c.id}`}
+            >
+              {resolveMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <MessageSquare className="w-3 h-3 mr-1" />}
+              Post Remarks
+            </Button>
             <Button
               size="sm"
               onClick={() => resolveMutation.mutate({ status: "Resolved", resolutionRemarks: remarks.trim() })}
               disabled={!remarks.trim() || resolveMutation.isPending}
-              className="h-8 px-3 rounded-lg bg-[#D4AF37] hover:bg-[#b8962e] text-black font-bold text-xs"
+              className="h-8 px-3 rounded-lg bg-emerald-400 hover:bg-emerald-500 text-black font-bold text-xs"
               data-testid={`button-submit-remarks-${c.id}`}
             >
               {resolveMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3 mr-1" />}
-              Submit & Resolve
+              Post & Resolve
             </Button>
             <Button
               size="sm"

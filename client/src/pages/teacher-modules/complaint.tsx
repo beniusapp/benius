@@ -382,7 +382,7 @@ function ClassFeedDrawer({
           <div>
             <p className="font-bold text-sm">Peer Report #{entry.ticketId}</p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {new Date(entry.createdAt).toLocaleDateString("en-GB")} · Class {entry.complainantClass}-{entry.complainantSection}
+              {new Date(entry.createdAt).toLocaleDateString("en-GB")} · Complainant from Class {entry.complainantClass}-{entry.complainantSection}
             </p>
           </div>
           {feedStatusBadge(entry.status)}
