@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -121,7 +121,7 @@ function todayDayIndex(): number {
 /* ─────────────────── Slot Assignment Modal ─────────────────── */
 function SlotModal({
   modal, structure, explorerClass, explorerSection,
-  subjectList, teacherName, teacherId, myEntries,
+  subjectList, teacherId, myEntries,
   onClose, onSaved,
 }: {
   modal: ModalState;
@@ -129,7 +129,6 @@ function SlotModal({
   explorerClass: string;
   explorerSection: string;
   subjectList: string[];
-  teacherName: string;
   teacherId: number;
   myEntries: TimetableEntry[];
   onClose: () => void;
@@ -553,7 +552,6 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
                 modal={modal}
                 setModal={setModal}
                 subjectList={SUBJECT_LIST}
-                teacherName={teacher.fullName}
                 teacherId={teacher.id}
               />
             </motion.div>
@@ -587,7 +585,6 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
           explorerClass={explorerClass}
           explorerSection={explorerSection}
           subjectList={SUBJECT_LIST}
-          teacherName={teacher.fullName}
           teacherId={teacher.id}
           myEntries={myEntries}
           onClose={() => setModal(null)}
@@ -603,7 +600,7 @@ function ClassExplorerTab({
   explorerClass, explorerSection, setExplorerClass, setExplorerSection,
   explorerEntries, explorerStructure, explorerLoading,
   classList, sectionList, modal, setModal,
-  subjectList, teacherName, teacherId,
+  subjectList, teacherId,
 }: {
   explorerClass: string; explorerSection: string;
   setExplorerClass: (v: string) => void; setExplorerSection: (v: string) => void;
@@ -611,7 +608,7 @@ function ClassExplorerTab({
   explorerLoading: boolean;
   classList: string[]; sectionList: string[];
   modal: ModalState | null; setModal: (m: ModalState | null) => void;
-  subjectList: string[]; teacherName: string; teacherId: number;
+  subjectList: string[]; teacherId: number;
 }) {
   const selectorRef = useRef<HTMLDivElement>(null);
   const hasSelection = !!explorerClass && !!explorerSection;

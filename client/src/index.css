@@ -286,3 +286,18 @@
     inset: -1px;
   }
 }
+
+/* ── Teacher timetable active-slot pulse animation ── */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(16, 185, 129, 0.25); }
+  50%       { box-shadow: 0 0 22px rgba(16, 185, 129, 0.55); }
+}
+
+@keyframes pulse-border {
+  0%, 100% { border-color: #10b981; box-shadow: 0 0 6px rgba(16, 185, 129, 0.2); }
+  50%       { border-color: #34d399; box-shadow: 0 0 18px rgba(16, 185, 129, 0.5); }
+}
+
+.animate-pulse-border {
+  animation: pulse-border 2s ease-in-out infinite;
+}
