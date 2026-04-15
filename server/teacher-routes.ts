@@ -514,7 +514,9 @@ export function registerTeacherRoutes(app: Express) {
 
     const ticketId = await storage.getNextTicketId(teacher.schoolId);
     const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
-    const shouldNotifyAdmin = notifyAdmin === "true" || notifyAdmin === true;
+    // notifyAdmin/escalatedToPrincipal only applies to teacher-to-student complaints
+    const isTeacherToStudent = (complaintType || "teacher-to-student") === "teacher-to-student";
+    const shouldNotifyAdmin = isTeacherToStudent && (notifyAdmin === "true" || notifyAdmin === true);
 
     const complaint = await storage.createComplaint({
       ticketId,

@@ -721,7 +721,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
             </div>
           </div>
 
-          {complaintType !== "teacher-to-admin" && (
+          {complaintType === "teacher-to-student" && (
             <>
               <StudentSearchInput
                 schoolId={teacher.schoolId}
