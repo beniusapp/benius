@@ -152,7 +152,7 @@ function SlotModal({
 
   /* ── Slot-occupancy collision: another teacher already has this class/section slot ── */
   const { data: collision, isFetching: collisionChecking } = useQuery<SlotCheckResult>({
-    queryKey: ["/api/timetable/slot-check", explorerClass, explorerSection, modal.day, modal.period, modal.existing?.id],
+    queryKey: ["/api/timetable/slot-check", explorerClass, explorerSection, modal.day, modal.period],
     queryFn: async () => {
       const r = await fetch(
         `/api/timetable/slot-check?class=${encodeURIComponent(explorerClass)}&section=${encodeURIComponent(explorerSection)}&dayOfWeek=${modal.day}&period=${modal.period}`,
@@ -160,11 +160,14 @@ function SlotModal({
       );
       return r.ok ? r.json() : { taken: false };
     },
-    enabled: !!explorerClass && !!explorerSection && !modal.existing,
+    /* Always check slot-check — even for edit path. The API excludes the current teacher's own
+       entries via excludeTeacherId, so editing your own slot returns taken:false (correct).
+       Editing another teacher's slot returns taken:true → save is blocked. */
+    enabled: !!explorerClass && !!explorerSection,
     staleTime: 0,
   });
 
-  const isSlotTaken = !modal.existing && collision?.taken;
+  const isSlotTaken = collision?.taken === true;
   /* Block save if: slot is taken by another teacher OR teacher already teaches elsewhere this period */
   const isBlocked = isSlotTaken || !!selfConflict;
 
@@ -180,9 +183,19 @@ function SlotModal({
           room: room || undefined,
         }],
       });
-      return (res as Response).json();
+      return (res as Response).json() as Promise<{ saved: unknown[]; conflicts: Array<{ teacherName: string; subject: string }> }>;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      /* Backend returns { saved:[], conflicts:[...] } on conflict — must check explicitly */
+      if (data.conflicts?.length > 0 && data.saved?.length === 0) {
+        const c = data.conflicts[0];
+        toast({
+          title: "Slot conflict — not saved",
+          description: `${c.teacherName} is already teaching ${c.subject} in this slot.`,
+          variant: "destructive",
+        });
+        return; // keep modal open so teacher can see the issue
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/timetable/teacher", teacherId] });
       queryClient.invalidateQueries({ queryKey: ["/api/timetable/class-view", explorerClass, explorerSection] });
       queryClient.invalidateQueries({ queryKey: ["/api/student/timetable"] });
@@ -764,26 +777,42 @@ function ClassExplorerTab({
                             data-testid={`explorer-cell-${dayIdx}-${p}`}
                           >
                             {entry ? (
-                              /* Filled slot */
-                              <div
-                                className={`rounded-xl p-2.5 min-h-[54px] flex flex-col justify-between cursor-pointer transition-all group relative ${isActive ? "animate-pulse-border" : ""}`}
-                                style={{
-                                  backgroundColor: col?.bg,
-                                  border: `1.5px solid ${isActive ? "#10b981" : col?.border}`,
-                                  boxShadow: isActive ? "0 0 12px rgba(16,185,129,0.3)" : "none",
-                                }}
-                                onClick={() => setModal({ day: dayIdx, period: p, existing: entry })}
-                              >
-                                <div>
-                                  <p className="text-[11px] font-bold leading-tight" style={{ color: "#ffffff" }}>{entry.subject}</p>
-                                  <p className="text-[10px] mt-0.5" style={{ color: "rgba(255,255,255,0.6)" }}>{entry.teacherName || "—"}</p>
-                                </div>
-                                <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <div className="w-5 h-5 rounded-md flex items-center justify-center" style={{ backgroundColor: "rgba(0,0,0,0.4)" }}>
-                                    <ChevronRight className="w-3 h-3" style={{ color: "#ffffff" }} />
+                              /* Filled slot — own slot is editable; another teacher's slot is read-only */
+                              entry.teacherId === teacherId ? (
+                                <div
+                                  className={`rounded-xl p-2.5 min-h-[54px] flex flex-col justify-between cursor-pointer transition-all group relative ${isActive ? "animate-pulse-border" : ""}`}
+                                  style={{
+                                    backgroundColor: col?.bg,
+                                    border: `1.5px solid ${isActive ? "#10b981" : col?.border}`,
+                                    boxShadow: isActive ? "0 0 12px rgba(16,185,129,0.3)" : "none",
+                                  }}
+                                  onClick={() => setModal({ day: dayIdx, period: p, existing: entry })}
+                                  data-testid={`slot-own-${dayIdx}-${p}`}
+                                >
+                                  <div>
+                                    <p className="text-[11px] font-bold leading-tight" style={{ color: "#ffffff" }}>{entry.subject}</p>
+                                    <p className="text-[10px] mt-0.5" style={{ color: "rgba(255,255,255,0.6)" }}>{entry.teacherName || "—"}</p>
+                                  </div>
+                                  <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <div className="w-5 h-5 rounded-md flex items-center justify-center" style={{ backgroundColor: "rgba(0,0,0,0.4)" }}>
+                                      <ChevronRight className="w-3 h-3" style={{ color: "#ffffff" }} />
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
+                              ) : (
+                                /* Read-only: another teacher's slot — not editable */
+                                <div
+                                  className="rounded-xl p-2.5 min-h-[54px] flex flex-col justify-center"
+                                  style={{
+                                    backgroundColor: "rgba(100,116,139,0.12)",
+                                    border: "1.5px solid rgba(100,116,139,0.3)",
+                                  }}
+                                  data-testid={`slot-other-${dayIdx}-${p}`}
+                                >
+                                  <p className="text-[11px] font-bold leading-tight" style={{ color: "rgba(255,255,255,0.7)" }}>{entry.subject}</p>
+                                  <p className="text-[10px] mt-0.5" style={{ color: "rgba(255,255,255,0.4)" }}>{entry.teacherName || "—"}</p>
+                                </div>
+                              )
                             ) : (
                               /* Empty slot */
                               <button
