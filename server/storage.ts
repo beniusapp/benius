@@ -665,9 +665,9 @@ export class DatabaseStorage {
     }));
   }
 
-  async resolveComplaint(id: number, schoolId: number, remarks: string): Promise<Complaint | null> {
+  async resolveComplaint(id: number, schoolId: number, remarks: string | null): Promise<Complaint | null> {
     const [c] = await db.update(complaints)
-      .set({ status: "Resolved", resolutionRemarks: remarks })
+      .set({ status: "Resolved", ...(remarks != null ? { resolutionRemarks: remarks } : {}) })
       .where(and(eq(complaints.id, id), eq(complaints.schoolId, schoolId)))
       .returning();
     return c || null;

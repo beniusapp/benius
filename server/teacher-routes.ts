@@ -717,6 +717,22 @@ export function registerTeacherRoutes(app: Express) {
     res.json(updated);
   });
 
+  // Teacher self-resolves their own teacher-to-student complaint
+  app.patch("/api/teacher/complaints/:id/self-resolve", async (req, res) => {
+    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const id = parseInt(req.params.id);
+    const complaint = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
+    if (!complaint) return res.status(404).json({ message: "Complaint not found" });
+    if (complaint.complaintType !== "teacher-to-student") return res.status(403).json({ message: "Only teacher-to-student complaints can be self-resolved" });
+    if (complaint.teacherId !== teacher.id) return res.status(403).json({ message: "Not authorized: not your complaint" });
+    if (complaint.status === "Resolved") return res.status(409).json({ message: "Already resolved" });
+    const updated = await storage.resolveComplaint(id, teacher.schoolId, null);
+    if (!updated) return res.status(404).json({ message: "Complaint not found" });
+    res.json(updated);
+  });
+
   app.patch("/api/complaints/:id/escalate", async (req, res) => {
     if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
     const teacher = await storage.getTeacherById(req.session.teacherId);

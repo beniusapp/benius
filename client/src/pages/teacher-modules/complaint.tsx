@@ -664,6 +664,21 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
     },
   });
 
+  const selfResolveMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/teacher/complaints/${id}/self-resolve`, { method: "PATCH", credentials: "include" });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Complaint Resolved", description: "Marked as resolved successfully." });
+      queryClient.invalidateQueries({ queryKey: ["/api/complaints/teacher", teacher.id] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
   return (
     <div className="space-y-6">
       {/* Tab switcher */}
@@ -935,41 +950,57 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
                       </div>
                     )}
 
-                    <div className="flex items-center justify-between mt-3 pt-3 border-t">
+                    <div className="flex items-center justify-between mt-3 pt-3 border-t gap-2 flex-wrap">
                       <span className="text-xs text-muted-foreground">
                         Filed by {teacher.fullName}
                       </span>
-                      {isOwner && isPending && !isEditing && (
-                        <div className="flex items-center gap-1">
-                          {isDeleting ? (
-                            <>
-                              <span className="text-xs text-destructive mr-1">Delete?</span>
-                              <Button size="sm" variant="destructive" className="h-7 px-2 rounded-lg text-xs"
-                                onClick={() => deleteMutation.mutate(c.id)} disabled={deleteMutation.isPending}
-                                data-testid={`button-confirm-delete-${c.id}`}>
-                                {deleteMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Yes"}
-                              </Button>
-                              <Button size="sm" variant="outline" className="h-7 px-2 rounded-lg text-xs"
-                                onClick={() => setDeleteConfirmId(null)} data-testid={`button-cancel-delete-${c.id}`}>
-                                No
-                              </Button>
-                            </>
-                          ) : (
-                            <>
-                              <button onClick={() => { setEditingId(c.id); setEditContent(c.content); }}
-                                className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
-                                data-testid={`button-edit-${c.id}`}>
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-                              <button onClick={() => setDeleteConfirmId(c.id)}
-                                className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
-                                data-testid={`button-delete-${c.id}`}>
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      )}
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {/* Mark as Resolved — only for teacher-to-student, not yet resolved */}
+                        {isOwner && !isEditing && c.complaintType === "teacher-to-student" && c.status !== "Resolved" && (
+                          <Button
+                            size="sm"
+                            onClick={() => selfResolveMutation.mutate(c.id)}
+                            disabled={selfResolveMutation.isPending}
+                            className="h-7 px-3 rounded-lg bg-emerald-400 hover:bg-emerald-500 text-black font-bold text-xs"
+                            data-testid={`button-self-resolve-${c.id}`}
+                          >
+                            {selfResolveMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <CheckCircle className="w-3 h-3 mr-1" />}
+                            Mark as Resolved
+                          </Button>
+                        )}
+                        {/* Edit / Delete — only while pending */}
+                        {isOwner && isPending && !isEditing && (
+                          <>
+                            {isDeleting ? (
+                              <>
+                                <span className="text-xs text-destructive mr-1">Delete?</span>
+                                <Button size="sm" variant="destructive" className="h-7 px-2 rounded-lg text-xs"
+                                  onClick={() => deleteMutation.mutate(c.id)} disabled={deleteMutation.isPending}
+                                  data-testid={`button-confirm-delete-${c.id}`}>
+                                  {deleteMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Yes"}
+                                </Button>
+                                <Button size="sm" variant="outline" className="h-7 px-2 rounded-lg text-xs"
+                                  onClick={() => setDeleteConfirmId(null)} data-testid={`button-cancel-delete-${c.id}`}>
+                                  No
+                                </Button>
+                              </>
+                            ) : (
+                              <>
+                                <button onClick={() => { setEditingId(c.id); setEditContent(c.content); }}
+                                  className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                                  data-testid={`button-edit-${c.id}`}>
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button onClick={() => setDeleteConfirmId(c.id)}
+                                  className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                                  data-testid={`button-delete-${c.id}`}>
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </div>
 
                     <ResolutionThread complaintId={c.id} teacherId={teacher.id} />
