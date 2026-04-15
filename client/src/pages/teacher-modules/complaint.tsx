@@ -64,9 +64,10 @@ interface ClassFeedEntry {
 type ComplaintType = "teacher-to-student" | "teacher-to-admin";
 
 const STATUS_STYLES: Record<string, string> = {
-  Pending: "bg-red-100 text-red-700 border-red-300",
-  Investigating: "bg-orange-100 text-orange-700 border-orange-300",
-  Resolved: "bg-green-100 text-green-700 border-green-300",
+  Pending:       "bg-amber-400 text-black border-amber-500",
+  Investigating: "bg-blue-400 text-black border-blue-500",
+  Resolved:      "bg-emerald-400 text-black border-emerald-500",
+  Escalated:     "bg-red-400 text-black border-red-500",
 };
 
 const TYPE_LABELS: Record<string, string> = {
