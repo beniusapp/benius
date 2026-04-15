@@ -58,7 +58,7 @@ interface ClassFeedEntry {
   createdAt: string;
 }
 
-type ComplaintType = "teacher-to-student" | "student-to-student" | "teacher-to-admin";
+type ComplaintType = "teacher-to-student" | "teacher-to-admin";
 
 const STATUS_STYLES: Record<string, string> = {
   Pending: "bg-red-100 text-red-700 border-red-300",
@@ -68,13 +68,11 @@ const STATUS_STYLES: Record<string, string> = {
 
 const TYPE_LABELS: Record<string, string> = {
   "teacher-to-student": "Teacher → Student",
-  "student-to-student": "Student → Student",
   "teacher-to-admin": "Teacher → Admin (Private)",
 };
 
 const TYPE_PILLS: Record<string, string> = {
   "teacher-to-student": "bg-blue-100 text-blue-700",
-  "student-to-student": "bg-purple-100 text-purple-700",
   "teacher-to-admin": "bg-amber-100 text-amber-700",
 };
 
@@ -557,7 +555,6 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
 
   const [complaintType, setComplaintType] = useState<ComplaintType>("teacher-to-student");
   const [selectedStudent, setSelectedStudent] = useState<SearchResult | null>(null);
-  const [reportedStudentName, setReportedStudentName] = useState("");
   const [content, setContent] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
@@ -605,7 +602,6 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
       fd.append("content", content);
       fd.append("complaintType", complaintType);
       if (complaintType !== "teacher-to-admin" && selectedStudent) fd.append("studentId", String(selectedStudent.id));
-      if (complaintType === "student-to-student" && reportedStudentName) fd.append("reportedStudentName", reportedStudentName);
       if (selectedFile) fd.append("file", selectedFile);
       const res = await fetch("/api/complaints", { method: "POST", body: fd, credentials: "include" });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
@@ -615,7 +611,6 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
       toast({ title: "Complaint Filed", description: "A unique ticket ID has been generated." });
       setContent("");
       setSelectedStudent(null);
-      setReportedStudentName("");
       clearFile();
       queryClient.invalidateQueries({ queryKey: ["/api/complaints/teacher", teacher.id] });
     },
@@ -699,12 +694,11 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
             <div className="flex gap-1 p-1 bg-muted/50 rounded-xl" data-testid="complaint-type-toggle">
               {([
                 { key: "teacher-to-student" as ComplaintType, label: "Teacher → Student" },
-                { key: "student-to-student" as ComplaintType, label: "Student → Student" },
                 { key: "teacher-to-admin" as ComplaintType, label: "To Admin (Private)" },
               ]).map(opt => (
                 <button
                   key={opt.key}
-                  onClick={() => { setComplaintType(opt.key); setSelectedStudent(null); setReportedStudentName(""); }}
+                  onClick={() => { setComplaintType(opt.key); setSelectedStudent(null); }}
                   className={`flex-1 px-2 py-2 rounded-lg text-xs font-semibold transition-all ${
                     complaintType === opt.key
                       ? "bg-white dark:bg-gray-900 shadow-sm text-foreground"
@@ -719,27 +713,13 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
           </div>
 
           {complaintType !== "teacher-to-admin" && (
-            <div className="space-y-3">
-              <StudentSearchInput
-                schoolId={teacher.schoolId}
-                label={complaintType === "student-to-student" ? "Complainant Student *" : "Student *"}
-                onSelect={(s) => setSelectedStudent(s)}
-                selectedStudent={selectedStudent}
-                onClear={() => setSelectedStudent(null)}
-              />
-              {complaintType === "student-to-student" && (
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">Reported Student Name</label>
-                  <Input
-                    value={reportedStudentName}
-                    onChange={(e) => setReportedStudentName(e.target.value)}
-                    placeholder="Name of student being reported"
-                    className="rounded-xl"
-                    data-testid="input-reported-student"
-                  />
-                </div>
-              )}
-            </div>
+            <StudentSearchInput
+              schoolId={teacher.schoolId}
+              label="Student *"
+              onSelect={(s) => setSelectedStudent(s)}
+              selectedStudent={selectedStudent}
+              onClear={() => setSelectedStudent(null)}
+            />
           )}
 
           <div className="space-y-1">
@@ -873,9 +853,6 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
                     {c.studentName && (
                       <p className="text-xs text-muted-foreground mb-1">
                         <span className="font-semibold text-foreground">{c.studentName}</span>
-                        {c.complaintType === "student-to-student" && c.reportedStudentName && (
-                          <span> → against <span className="font-semibold text-foreground">{c.reportedStudentName}</span></span>
-                        )}
                       </p>
                     )}
 
