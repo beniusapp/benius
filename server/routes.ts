@@ -196,6 +196,7 @@ export async function registerRoutes(
 
     const userData = await storage.getUserWithSchool(user.id);
     req.session.userId = user.id;
+    req.session.teacherId = undefined;
     if (userData) {
       req.session.schoolId = userData.school.id;
       req.session.userRole = userData.user.role;

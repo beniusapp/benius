@@ -1749,8 +1749,7 @@ export function registerTeacherRoutes(app: Express) {
 
   // ===== COMPLAINTS BY SCHOOL (Admin only — teachers excluded) =====
   app.get("/api/complaints/school/:schoolId", async (req, res) => {
-    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
-    if (req.session.teacherId) return res.status(403).json({ message: "Admin access required" });
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
     const list = await storage.getComplaintsBySchool(parseInt(req.params.schoolId));
     res.json(list);
