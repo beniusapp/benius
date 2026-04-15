@@ -1,13 +1,16 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { AnimatePresence, motion } from "framer-motion";
 import {
-  Loader2, Save, X, AlertTriangle, Search, BookOpen, Calendar, Pencil, Trash2, Plus, Settings, Clock, Coffee, Info,
+  Loader2, X, AlertTriangle, BookOpen, Calendar, Trash2, Plus,
+  Clock, Coffee, Info, ChevronRight, DoorOpen, Search,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 
+/* ─────────────────── Types ─────────────────── */
 interface TimetableEntry {
   id: number;
   dayOfWeek: number;
@@ -15,6 +18,7 @@ interface TimetableEntry {
   class: string;
   section: string;
   subject: string;
+  room?: string;
   teacherId: number;
   teacherName?: string;
 }
@@ -29,20 +33,10 @@ interface StructureRow {
   sortOrder: number;
 }
 
-interface SlotDraft {
-  class: string;
-  section: string;
-  subject: string;
-}
-
-type DraftMap = Record<string, SlotDraft | null>;
-type ValidationErrors = Record<string, { class?: boolean; section?: boolean; subject?: boolean }>;
-
-interface ConflictInfo {
-  dayOfWeek: number;
+interface ModalState {
+  day: number;
   period: number;
-  teacherName: string;
-  subject: string;
+  existing: TimetableEntry | null;
 }
 
 interface SlotCheckResult {
@@ -51,14 +45,51 @@ interface SlotCheckResult {
   subject?: string;
 }
 
-interface PopoverState {
-  day: number;
-  period: number;
-  existing: TimetableEntry | null;
-}
-
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const FALLBACK_PERIODS = [1, 2, 3, 4, 5, 6, 7, 8];
+const DAY_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const FALLBACK_PERIODS: StructureRow[] = [1, 2, 3, 4, 5, 6, 7, 8].map(n => ({
+  periodNumber: n, label: `Period ${n}`, startTime: "", endTime: "", isBreak: false, sortOrder: n - 1,
+}));
+
+/* ─────────────────── Subject colour map ─────────────────── */
+const SUBJECT_COLORS: Record<string, { bg: string; border: string; text: string; dot: string }> = {
+  default:     { bg: "rgba(100,116,139,0.18)", border: "#64748b",  text: "#ffffff", dot: "#64748b"  },
+  math:        { bg: "rgba(59,130,246,0.18)",  border: "#3b82f6",  text: "#ffffff", dot: "#3b82f6"  },
+  science:     { bg: "rgba(16,185,129,0.18)",  border: "#10b981",  text: "#ffffff", dot: "#10b981"  },
+  english:     { bg: "rgba(139,92,246,0.18)",  border: "#8b5cf6",  text: "#ffffff", dot: "#8b5cf6"  },
+  history:     { bg: "rgba(245,158,11,0.18)",  border: "#f59e0b",  text: "#ffffff", dot: "#f59e0b"  },
+  geography:   { bg: "rgba(20,184,166,0.18)",  border: "#14b8a6",  text: "#ffffff", dot: "#14b8a6"  },
+  physics:     { bg: "rgba(6,182,212,0.18)",   border: "#06b6d4",  text: "#ffffff", dot: "#06b6d4"  },
+  chemistry:   { bg: "rgba(249,115,22,0.18)",  border: "#f97316",  text: "#ffffff", dot: "#f97316"  },
+  biology:     { bg: "rgba(34,197,94,0.18)",   border: "#22c55e",  text: "#ffffff", dot: "#22c55e"  },
+  computer:    { bg: "rgba(99,102,241,0.18)",  border: "#6366f1",  text: "#ffffff", dot: "#6366f1"  },
+  art:         { bg: "rgba(236,72,153,0.18)",  border: "#ec4899",  text: "#ffffff", dot: "#ec4899"  },
+  music:       { bg: "rgba(168,85,247,0.18)",  border: "#a855f7",  text: "#ffffff", dot: "#a855f7"  },
+  pe:          { bg: "rgba(239,68,68,0.18)",   border: "#ef4444",  text: "#ffffff", dot: "#ef4444"  },
+  social:      { bg: "rgba(234,179,8,0.18)",   border: "#eab308",  text: "#ffffff", dot: "#eab308"  },
+  hindi:       { bg: "rgba(244,63,94,0.18)",   border: "#f43f5e",  text: "#ffffff", dot: "#f43f5e"  },
+  economics:   { bg: "rgba(251,191,36,0.18)",  border: "#fbbf24",  text: "#ffffff", dot: "#fbbf24"  },
+};
+
+function getSubjectColor(subject: string) {
+  const s = subject.toLowerCase();
+  if (s.includes("math"))       return SUBJECT_COLORS.math;
+  if (s.includes("science"))    return SUBJECT_COLORS.science;
+  if (s.includes("english"))    return SUBJECT_COLORS.english;
+  if (s.includes("history"))    return SUBJECT_COLORS.history;
+  if (s.includes("geography") || s.includes("geo")) return SUBJECT_COLORS.geography;
+  if (s.includes("physics"))    return SUBJECT_COLORS.physics;
+  if (s.includes("chemistry") || s.includes("chem")) return SUBJECT_COLORS.chemistry;
+  if (s.includes("biology") || s.includes("bio"))    return SUBJECT_COLORS.biology;
+  if (s.includes("computer") || s.includes("it") || s.includes("cs")) return SUBJECT_COLORS.computer;
+  if (s.includes("art") || s.includes("drawing"))    return SUBJECT_COLORS.art;
+  if (s.includes("music"))      return SUBJECT_COLORS.music;
+  if (s.includes("pe") || s.includes("physical") || s.includes("sport")) return SUBJECT_COLORS.pe;
+  if (s.includes("social") || s.includes("sst"))     return SUBJECT_COLORS.social;
+  if (s.includes("hindi") || s.includes("sanskrit"))  return SUBJECT_COLORS.hindi;
+  if (s.includes("economics") || s.includes("eco"))  return SUBJECT_COLORS.economics;
+  return SUBJECT_COLORS.default;
+}
 
 function formatTime(t: string): string {
   if (!t) return "";
@@ -68,52 +99,283 @@ function formatTime(t: string): string {
   return `${hr}:${String(m || 0).padStart(2, "0")} ${ampm}`;
 }
 
+function timeToMinutes(t: string): number {
+  if (!t) return -1;
+  const [h, m] = t.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function isCurrentPeriod(row: StructureRow): boolean {
+  if (!row.startTime || !row.endTime) return false;
+  const now = new Date();
+  const cur = now.getHours() * 60 + now.getMinutes();
+  return cur >= timeToMinutes(row.startTime) && cur < timeToMinutes(row.endTime);
+}
+
+function todayDayIndex(): number {
+  const d = new Date().getDay(); // 0=Sun,1=Mon,...,6=Sat
+  if (d === 0) return 0; // Sunday → show Mon
+  return d - 1; // Mon=0, Tue=1, ... Sat=5
+}
+
+/* ─────────────────── Slot Assignment Modal ─────────────────── */
+function SlotModal({
+  modal, structure, explorerClass, explorerSection,
+  subjectList, teacherName, teacherId,
+  onClose, onSaved,
+}: {
+  modal: ModalState;
+  structure: StructureRow[];
+  explorerClass: string;
+  explorerSection: string;
+  subjectList: string[];
+  teacherName: string;
+  teacherId: number;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [subject, setSubject] = useState(modal.existing?.subject ?? "");
+  const [room, setRoom] = useState(modal.existing?.room ?? "");
+  const [subjectErr, setSubjectErr] = useState(false);
+
+  const structureRow = structure.find(r => !r.isBreak && r.periodNumber === modal.period);
+  const dayLabel = DAY_NAMES[modal.day];
+
+  /* collision check — runs when class+section+day+period are known */
+  const { data: collision, isFetching: collisionChecking } = useQuery<SlotCheckResult>({
+    queryKey: ["/api/timetable/slot-check", explorerClass, explorerSection, modal.day, modal.period, modal.existing?.id],
+    queryFn: async () => {
+      const r = await fetch(
+        `/api/timetable/slot-check?class=${encodeURIComponent(explorerClass)}&section=${encodeURIComponent(explorerSection)}&dayOfWeek=${modal.day}&period=${modal.period}`,
+        { credentials: "include" }
+      );
+      return r.ok ? r.json() : { taken: false };
+    },
+    enabled: !!explorerClass && !!explorerSection && !modal.existing,
+    staleTime: 0,
+  });
+
+  const isBlocked = !modal.existing && collision?.taken;
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/timetable/teacher/save-batch", {
+        changes: [{
+          dayOfWeek: modal.day,
+          period: modal.period,
+          class: explorerClass,
+          section: explorerSection,
+          subject,
+          room: room || undefined,
+        }],
+      });
+      return (res as Response).json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/timetable/teacher", teacherId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/timetable/class-view", explorerClass, explorerSection] });
+      queryClient.invalidateQueries({ queryKey: ["/api/student/timetable"] });
+      toast({ title: "Slot saved", description: `${dayLabel} P${modal.period} → ${subject}`, className: "border-[#10b981] bg-[#10b981]/10 text-white" });
+      onSaved();
+    },
+    onError: (e: Error) => {
+      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/timetable/teacher/save-batch", {
+        changes: [{
+          dayOfWeek: modal.day,
+          period: modal.period,
+          class: explorerClass,
+          section: explorerSection,
+          subject: "",
+          _delete: true,
+        }],
+      });
+      return (res as Response).json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/timetable/teacher", teacherId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/timetable/class-view", explorerClass, explorerSection] });
+      queryClient.invalidateQueries({ queryKey: ["/api/student/timetable"] });
+      toast({ title: "Slot cleared", className: "border-amber-500 bg-amber-900/10 text-white" });
+      onSaved();
+    },
+    onError: (e: Error) => {
+      toast({ title: "Delete failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  function handleSave() {
+    if (!subject) { setSubjectErr(true); return; }
+    if (isBlocked) return;
+    saveMutation.mutate();
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ backgroundColor: "rgba(0,0,0,0.75)" }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl border border-white/15 p-6 space-y-5"
+        style={{ backgroundColor: "#0A1628" }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-base font-bold" style={{ color: "#ffffff" }}>
+              {modal.existing ? "Edit Slot" : "Assign Subject"}
+            </p>
+            <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.5)" }}>
+              {dayLabel} · Period {modal.period}
+              {structureRow?.startTime && ` · ${formatTime(structureRow.startTime)}–${formatTime(structureRow.endTime)}`}
+            </p>
+            <p className="text-xs mt-0.5 font-semibold" style={{ color: "#10b981" }}>
+              Class {explorerClass} – {explorerSection}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center rounded-full"
+            style={{ backgroundColor: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.6)" }}
+            data-testid="button-modal-close"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Collision warning */}
+        {collisionChecking && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl" style={{ backgroundColor: "rgba(255,255,255,0.05)" }}>
+            <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: "rgba(255,255,255,0.4)" }} />
+            <span className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>Checking slot availability…</span>
+          </div>
+        )}
+        {isBlocked && !collisionChecking && (
+          <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl border border-red-700/40" style={{ backgroundColor: "rgba(239,68,68,0.1)" }} data-testid="modal-collision-warning">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#ef4444" }} />
+            <div>
+              <p className="text-xs font-bold" style={{ color: "#ef4444" }}>Slot already taken</p>
+              <p className="text-xs mt-0.5" style={{ color: "rgba(239,68,68,0.8)" }}>
+                {collision?.teacherName} is teaching <strong>{collision?.subject}</strong> at this time.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Subject */}
+        <div>
+          <label className="block text-xs font-bold mb-1.5" style={{ color: subjectErr ? "#ef4444" : "rgba(255,255,255,0.6)" }}>
+            Subject {subjectErr && <span style={{ color: "#ef4444" }}>*</span>}
+          </label>
+          <select
+            value={subject}
+            onChange={e => { setSubject(e.target.value); setSubjectErr(false); }}
+            className="w-full h-11 px-3 rounded-xl text-sm font-medium focus:outline-none focus:ring-2"
+            style={{
+              backgroundColor: "#1A2942",
+              color: "#ffffff",
+              border: subjectErr ? "1px solid #ef4444" : "1px solid rgba(255,255,255,0.2)",
+            }}
+            data-testid="select-modal-subject"
+          >
+            <option value="">Choose a subject…</option>
+            {subjectList.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+
+        {/* Room (optional) */}
+        <div>
+          <label className="block text-xs font-bold mb-1.5" style={{ color: "rgba(255,255,255,0.6)" }}>
+            Room <span style={{ color: "rgba(255,255,255,0.3)" }}>(optional)</span>
+          </label>
+          <input
+            type="text"
+            value={room}
+            onChange={e => setRoom(e.target.value)}
+            placeholder="e.g. Lab 2, Room 104"
+            className="w-full h-11 px-3 rounded-xl text-sm font-medium focus:outline-none focus:ring-2"
+            style={{
+              backgroundColor: "#1A2942",
+              color: "#ffffff",
+              border: "1px solid rgba(255,255,255,0.2)",
+            }}
+            data-testid="input-modal-room"
+          />
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-2 pt-1">
+          {modal.existing && (
+            <button
+              onClick={() => deleteMutation.mutate()}
+              disabled={deleteMutation.isPending}
+              className="h-11 px-4 rounded-xl border text-sm font-semibold flex items-center gap-1.5 transition-colors"
+              style={{ borderColor: "rgba(239,68,68,0.4)", color: "#ef4444", backgroundColor: "transparent" }}
+              data-testid="button-modal-delete"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Remove
+            </button>
+          )}
+          <button
+            onClick={handleSave}
+            disabled={saveMutation.isPending || isBlocked || collisionChecking}
+            className="flex-1 h-11 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+            style={{ backgroundColor: "#10b981", color: "#ffffff" }}
+            data-testid="button-modal-save"
+          >
+            {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            {modal.existing ? "Update" : "Assign Slot"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────── Main Component ─────────────────── */
 export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
+  const [activeTab, setActiveTab] = useState<"explorer" | "schedule">("explorer");
+  const [tabDirection, setTabDirection] = useState(1);
 
   const {
     classes: CLASS_LIST,
     sections: SECTION_LIST,
     subjects: SUBJECT_LIST,
     isLoading: configLoading,
-    hasClasses,
-    hasSections,
-    hasSubjects,
-    isFullyConfigured,
+    hasClasses, hasSections, hasSubjects, isFullyConfigured,
   } = useSchoolConfigStrict(teacher.schoolId);
 
-  const [draftMap, setDraftMap] = useState<DraftMap>({});
-  const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
-  const [popover, setPopover] = useState<PopoverState | null>(null);
-  const [popClass, setPopClass] = useState("");
-  const [popSection, setPopSection] = useState("");
-  const [popSubject, setPopSubject] = useState("");
-  const [popCollision, setPopCollision] = useState<SlotCheckResult | null>(null);
-  const [popClassError, setPopClassError] = useState(false);
-  const [popSectionError, setPopSectionError] = useState(false);
-  const [popSubjectError, setPopSubjectError] = useState(false);
-  const [conflicts, setConflicts] = useState<ConflictInfo[]>([]);
-
+  /* ── Explorer state ── */
   const [explorerClass, setExplorerClass] = useState("");
   const [explorerSection, setExplorerSection] = useState("");
+  const [modal, setModal] = useState<ModalState | null>(null);
 
-  const { data: myEntries = [], isLoading } = useQuery<TimetableEntry[]>({
+  /* ── My Schedule state ── */
+  const [selectedDay, setSelectedDay] = useState<number>(todayDayIndex());
+
+  function switchTab(tab: "explorer" | "schedule") {
+    setTabDirection(tab === "schedule" ? 1 : -1);
+    setActiveTab(tab);
+  }
+
+  /* ── Queries ── */
+  const { data: myEntries = [], isLoading: myEntriesLoading } = useQuery<TimetableEntry[]>({
     queryKey: ["/api/timetable/teacher", teacher.id],
     queryFn: async () => {
       const r = await fetch(`/api/timetable/teacher/${teacher.id}`, { credentials: "include" });
       if (!r.ok) throw new Error("Failed");
       return r.json();
     },
-  });
-
-  // Fetch structure for teacher's assigned class
-  const { data: structure = [] } = useQuery<StructureRow[]>({
-    queryKey: ["/api/timetable/structure", teacher.assignedClass],
-    queryFn: async () => {
-      const r = await fetch(`/api/timetable/structure?class=${encodeURIComponent(teacher.assignedClass)}`, { credentials: "include" });
-      return r.ok ? r.json() : [];
-    },
-    enabled: !!teacher.assignedClass,
   });
 
   const { data: explorerData, isLoading: explorerLoading } = useQuery<{ entries: TimetableEntry[]; structure: StructureRow[] }>({
@@ -125,139 +387,30 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
     },
     enabled: !!explorerClass && !!explorerSection,
   });
-  const explorerEntries: TimetableEntry[] = explorerData?.entries ?? [];
 
-  const { data: collisionData, isFetching: collisionChecking } = useQuery<SlotCheckResult>({
-    queryKey: ["/api/timetable/slot-check", popClass, popSection, popover?.day, popover?.period],
+  /* Structure for "My Schedule" time-range display — use teacher's assigned class or first entry class */
+  const scheduleClass = teacher.assignedClass || (myEntries[0]?.class ?? "");
+  const { data: scheduleStructure = [] } = useQuery<StructureRow[]>({
+    queryKey: ["/api/timetable/structure", scheduleClass],
     queryFn: async () => {
-      if (!popover || !popClass || !popSection) return { taken: false };
-      const r = await fetch(
-        `/api/timetable/slot-check?class=${encodeURIComponent(popClass)}&section=${encodeURIComponent(popSection)}&dayOfWeek=${popover.day}&period=${popover.period}`,
-        { credentials: "include" }
-      );
-      return r.ok ? r.json() : { taken: false };
+      const r = await fetch(`/api/timetable/structure?class=${encodeURIComponent(scheduleClass)}`, { credentials: "include" });
+      return r.ok ? r.json() : [];
     },
-    enabled: !!popover && !!popClass && !!popSection,
-    staleTime: 0,
+    enabled: !!scheduleClass,
   });
 
-  useEffect(() => { setPopCollision(collisionData ?? null); }, [collisionData]);
-  useEffect(() => { if (!popover) setPopCollision(null); }, [popover]);
+  const explorerEntries: TimetableEntry[] = explorerData?.entries ?? [];
+  const explorerStructure: StructureRow[] = explorerData?.structure?.length ? explorerData.structure : FALLBACK_PERIODS;
 
-  const hasDraft = Object.keys(draftMap).length > 0;
+  const isLoading = myEntriesLoading || configLoading;
 
-  // Use structure periods or fallback 1–8
-  const periodRows = structure.length > 0
-    ? structure.filter(r => !r.isBreak)
-    : FALLBACK_PERIODS.map(n => ({ periodNumber: n, label: `Period ${n}`, startTime: "", endTime: "", isBreak: false, sortOrder: n - 1 }));
-
-  // Include breaks in ordered display
-  const allStructureRows = structure.length > 0 ? structure : periodRows;
-
-  const getEffectiveSlot = useCallback((day: number, period: number): { class: string; section: string; subject: string; isDraft: boolean; isDelete: boolean } | null => {
-    const key = `${day}-${period}`;
-    if (key in draftMap) {
-      const draft = draftMap[key];
-      if (draft === null) return { class: "", section: "", subject: "", isDraft: true, isDelete: true };
-      return { ...draft, isDraft: true, isDelete: false };
-    }
-    const entry = myEntries.find(e => e.dayOfWeek === day && e.period === period);
-    if (!entry) return null;
-    return { class: entry.class, section: entry.section, subject: entry.subject, isDraft: false, isDelete: false };
-  }, [draftMap, myEntries]);
-
-  function openPopover(day: number, period: number) {
-    const key = `${day}-${period}`;
-    const existing = myEntries.find(e => e.dayOfWeek === day && e.period === period) ?? null;
-    const draft = draftMap[key];
-    setPopClassError(false); setPopSectionError(false); setPopSubjectError(false);
-    if (draft !== undefined && draft !== null) {
-      setPopClass(draft.class); setPopSection(draft.section); setPopSubject(draft.subject);
-    } else if (existing) {
-      setPopClass(existing.class); setPopSection(existing.section); setPopSubject(existing.subject);
-    } else {
-      setPopClass(""); setPopSection(""); setPopSubject("");
-    }
-    setPopover({ day, period, existing });
-  }
-
-  function applyPopoverChange(isDelete: boolean) {
-    if (!popover) return;
-    const key = `${popover.day}-${popover.period}`;
-    if (isDelete) {
-      setDraftMap(prev => ({ ...prev, [key]: null }));
-      setValidationErrors(prev => { const n = { ...prev }; delete n[key]; return n; });
-      setPopover(null);
-      return;
-    }
-    const classErr = !popClass; const sectionErr = !popSection; const subjectErr = !popSubject;
-    setPopClassError(classErr); setPopSectionError(sectionErr); setPopSubjectError(subjectErr);
-    if (classErr || sectionErr || subjectErr) return;
-    setDraftMap(prev => ({ ...prev, [key]: { class: popClass, section: popSection, subject: popSubject } }));
-    setValidationErrors(prev => { const n = { ...prev }; delete n[key]; return n; });
-    setPopover(null);
-  }
-
-  function validateAllDrafts(): boolean {
-    const errors: ValidationErrors = {};
-    let hasErrors = false;
-    for (const [key, draft] of Object.entries(draftMap)) {
-      if (draft === null) continue;
-      const err: { class?: boolean; section?: boolean; subject?: boolean } = {};
-      if (!draft.class) { err.class = true; hasErrors = true; }
-      if (!draft.section) { err.section = true; hasErrors = true; }
-      if (!draft.subject) { err.subject = true; hasErrors = true; }
-      if (Object.keys(err).length > 0) errors[key] = err;
-    }
-    setValidationErrors(errors);
-    return !hasErrors;
-  }
-
-  const saveMutation = useMutation({
-    mutationFn: async () => {
-      if (!validateAllDrafts()) {
-        toast({ title: "Incomplete fields", description: "Fill in all required fields before saving.", variant: "destructive" });
-        throw new Error("Validation failed");
-      }
-      const changes = Object.entries(draftMap).map(([key, draft]) => {
-        const [day, period] = key.split("-").map(Number);
-        if (draft === null) return { dayOfWeek: day, period, class: "", section: "", subject: "", _delete: true };
-        return { dayOfWeek: day, period, class: draft.class, section: draft.section, subject: draft.subject };
-      });
-      const res = await apiRequest("POST", "/api/timetable/teacher/save-batch", { changes });
-      return (res as Response).json() as Promise<{ saved: unknown[]; conflicts: ConflictInfo[] }>;
-    },
-    onSuccess: (data) => {
-      const saved = data.saved ?? [];
-      const newConflicts = data.conflicts ?? [];
-      setConflicts(newConflicts);
-      if (newConflicts.length > 0 && saved.length === 0) {
-        toast({ title: "Conflicts detected", description: `${newConflicts.length} slot(s) could not be saved.`, variant: "destructive" });
-      } else if (newConflicts.length > 0) {
-        toast({ title: `${saved.length} saved, ${newConflicts.length} conflict(s)`, description: "Some slots were skipped.", className: "border-amber-500 bg-amber-900/30 text-amber-100" });
-      } else {
-        toast({ title: "Schedule saved", description: `${saved.length} slot(s) updated.`, className: "border-emerald-500 bg-emerald-900/30 text-emerald-100" });
-      }
-      const conflictKeys = new Set(newConflicts.map(c => `${c.dayOfWeek}-${c.period}`));
-      setDraftMap(prev => {
-        const next: DraftMap = {};
-        for (const [key, val] of Object.entries(prev)) {
-          if (conflictKeys.has(key)) next[key] = val;
-        }
-        return next;
-      });
-      setValidationErrors({});
-      queryClient.invalidateQueries({ queryKey: ["/api/timetable/teacher", teacher.id] });
-    },
-    onError: (e: Error) => {
-      if (e.message !== "Validation failed") toast({ title: "Save failed", description: e.message, variant: "destructive" });
-    },
-  });
-
-  function discardDrafts() { setDraftMap({}); setConflicts([]); setValidationErrors({}); setPopover(null); }
-
-  if (isLoading || configLoading) {
-    return <div className="flex justify-center items-center py-16"><Loader2 className="w-7 h-7 animate-spin text-[#10b981]" /></div>;
+  /* ── Loading / not configured ── */
+  if (isLoading) {
+    return (
+      <div className="flex justify-center items-center py-16">
+        <Loader2 className="w-7 h-7 animate-spin" style={{ color: "#10b981" }} />
+      </div>
+    );
   }
 
   if (!isFullyConfigured) {
@@ -267,17 +420,13 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
     if (!hasSubjects) missing.push("subjects");
     return (
       <div className="space-y-4">
-        <h3 className="text-base font-bold flex items-center gap-2" style={{ color: "#fff" }}>
-          <Calendar className="w-4 h-4 text-[#10b981]" /> My Schedule
-        </h3>
-        <div className="rounded-xl border border-amber-500/30 bg-amber-900/15 p-8 flex flex-col items-center gap-4 text-center" data-testid="timetable-config-warning">
-          <div className="w-12 h-12 rounded-full bg-amber-500/20 flex items-center justify-center">
-            <Settings className="w-6 h-6 text-amber-400" />
-          </div>
+        <h3 className="text-base font-bold" style={{ color: "#ffffff" }}>My Timetable</h3>
+        <div className="rounded-2xl border border-amber-500/30 p-8 flex flex-col items-center gap-4 text-center" style={{ backgroundColor: "rgba(245,158,11,0.08)" }} data-testid="timetable-config-warning">
+          <Info className="w-8 h-8" style={{ color: "#f59e0b" }} />
           <div>
-            <p className="font-semibold text-amber-300 text-sm mb-1">Timetable configuration required</p>
-            <p className="text-amber-200/70 text-xs max-w-xs">
-              Your school admin has not yet defined <strong>{missing.join(", ")}</strong>. Once configured you can build your schedule.
+            <p className="font-bold text-sm mb-1" style={{ color: "#fbbf24" }}>Timetable configuration required</p>
+            <p className="text-xs max-w-xs" style={{ color: "rgba(251,191,36,0.7)" }}>
+              Admin has not yet defined <strong>{missing.join(", ")}</strong>. Once configured you can allocate subjects.
             </p>
           </div>
         </div>
@@ -285,343 +434,531 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
     );
   }
 
-  return (
-    <div className="space-y-6" onClick={() => popover && setPopover(null)}>
+  /* ── My Schedule: day entries ── */
+  const dayEntries = myEntries
+    .filter(e => e.dayOfWeek === selectedDay)
+    .sort((a, b) => {
+      const aRow = scheduleStructure.find(r => !r.isBreak && r.periodNumber === a.period);
+      const bRow = scheduleStructure.find(r => !r.isBreak && r.periodNumber === b.period);
+      const aMin = aRow?.startTime ? timeToMinutes(aRow.startTime) : a.period * 100;
+      const bMin = bRow?.startTime ? timeToMinutes(bRow.startTime) : b.period * 100;
+      return aMin - bMin;
+    });
 
-      {/* ── Section 1: My Schedule ── */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <h3 className="text-base font-bold flex items-center gap-2" style={{ color: "#ffffff" }} data-testid="text-timetable-title">
-              <Calendar className="w-4 h-4 text-[#10b981]" /> My Schedule
-            </h3>
-            <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.5)" }}>
-              {myEntries.length} period(s) assigned · Click any cell to add or edit
-              {structure.length > 0 && ` · Bell schedule loaded for Class ${teacher.assignedClass}`}
-            </p>
+  /* ── Variant config for Framer Motion ── */
+  const variants = {
+    enter: (dir: number) => ({ x: dir > 0 ? 40 : -40, opacity: 0 }),
+    center: { x: 0, opacity: 1 },
+    exit: (dir: number) => ({ x: dir > 0 ? -40 : 40, opacity: 0 }),
+  };
+
+  return (
+    <div className="space-y-0">
+      {/* ── Tab Bar ── */}
+      <div className="flex gap-1 p-1 rounded-2xl mb-5" style={{ backgroundColor: "rgba(255,255,255,0.06)" }}>
+        <button
+          onClick={() => switchTab("explorer")}
+          className="flex-1 h-10 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all"
+          style={{
+            backgroundColor: activeTab === "explorer" ? "#10b981" : "transparent",
+            color: activeTab === "explorer" ? "#ffffff" : "rgba(255,255,255,0.5)",
+          }}
+          data-testid="tab-class-explorer"
+        >
+          <Search className="w-4 h-4" />
+          Class Explorer
+        </button>
+        <button
+          onClick={() => switchTab("schedule")}
+          className="flex-1 h-10 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all"
+          style={{
+            backgroundColor: activeTab === "schedule" ? "#10b981" : "transparent",
+            color: activeTab === "schedule" ? "#ffffff" : "rgba(255,255,255,0.5)",
+          }}
+          data-testid="tab-my-schedule"
+        >
+          <Calendar className="w-4 h-4" />
+          My Schedule
+          {myEntries.length > 0 && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{
+              backgroundColor: activeTab === "schedule" ? "rgba(255,255,255,0.25)" : "rgba(16,185,129,0.25)",
+              color: activeTab === "schedule" ? "#ffffff" : "#10b981",
+            }}>
+              {myEntries.length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* ── Animated Tab Content ── */}
+      <div className="overflow-hidden">
+        <AnimatePresence mode="wait" custom={tabDirection} initial={false}>
+          {activeTab === "explorer" ? (
+            <motion.div
+              key="explorer"
+              custom={tabDirection}
+              variants={variants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: 0.22, ease: "easeInOut" }}
+            >
+              <ClassExplorerTab
+                explorerClass={explorerClass}
+                explorerSection={explorerSection}
+                setExplorerClass={setExplorerClass}
+                setExplorerSection={setExplorerSection}
+                explorerEntries={explorerEntries}
+                explorerStructure={explorerStructure}
+                explorerLoading={explorerLoading}
+                classList={CLASS_LIST}
+                sectionList={SECTION_LIST}
+                modal={modal}
+                setModal={setModal}
+                subjectList={SUBJECT_LIST}
+                teacherName={teacher.fullName}
+                teacherId={teacher.id}
+              />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="schedule"
+              custom={tabDirection}
+              variants={variants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: 0.22, ease: "easeInOut" }}
+            >
+              <MyScheduleTab
+                myEntries={myEntries}
+                dayEntries={dayEntries}
+                scheduleStructure={scheduleStructure}
+                selectedDay={selectedDay}
+                setSelectedDay={setSelectedDay}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* ── Slot Assignment Modal ── */}
+      {modal && (
+        <SlotModal
+          modal={modal}
+          structure={explorerStructure}
+          explorerClass={explorerClass}
+          explorerSection={explorerSection}
+          subjectList={SUBJECT_LIST}
+          teacherName={teacher.fullName}
+          teacherId={teacher.id}
+          onClose={() => setModal(null)}
+          onSaved={() => setModal(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────── Class Explorer Tab ─────────────────── */
+function ClassExplorerTab({
+  explorerClass, explorerSection, setExplorerClass, setExplorerSection,
+  explorerEntries, explorerStructure, explorerLoading,
+  classList, sectionList, modal, setModal,
+  subjectList, teacherName, teacherId,
+}: {
+  explorerClass: string; explorerSection: string;
+  setExplorerClass: (v: string) => void; setExplorerSection: (v: string) => void;
+  explorerEntries: TimetableEntry[]; explorerStructure: StructureRow[];
+  explorerLoading: boolean;
+  classList: string[]; sectionList: string[];
+  modal: ModalState | null; setModal: (m: ModalState | null) => void;
+  subjectList: string[]; teacherName: string; teacherId: number;
+}) {
+  const selectorRef = useRef<HTMLDivElement>(null);
+  const hasSelection = !!explorerClass && !!explorerSection;
+
+  return (
+    <div className="space-y-4">
+      {/* Sticky selector */}
+      <div
+        ref={selectorRef}
+        className="sticky top-0 z-20 pb-3 pt-1"
+        style={{ backgroundColor: "#0A1628" }}
+      >
+        <div className="flex items-center gap-2 mb-2">
+          <Search className="w-4 h-4" style={{ color: "#10b981" }} />
+          <h3 className="text-sm font-bold" style={{ color: "#ffffff" }}>Class Explorer</h3>
+          <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ backgroundColor: "rgba(16,185,129,0.15)", color: "#10b981" }}>
+            Allocation Mode
+          </span>
+        </div>
+        <div className="flex gap-3">
+          <div className="flex-1">
+            <select
+              value={explorerClass}
+              onChange={e => setExplorerClass(e.target.value)}
+              className="w-full h-11 px-3 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2"
+              style={{
+                backgroundColor: "#1A2942",
+                color: explorerClass ? "#ffffff" : "rgba(255,255,255,0.4)",
+                border: "1px solid rgba(255,255,255,0.15)",
+              }}
+              data-testid="select-explorer-class"
+            >
+              <option value="">Select Class</option>
+              {classList.map(c => <option key={c} value={c}>Class {c}</option>)}
+            </select>
           </div>
-          {hasDraft && (
-            <div className="flex items-center gap-2">
-              <button onClick={discardDrafts} className="h-11 px-3 rounded-xl border border-white/20 text-white/60 hover:bg-white/5 text-sm font-medium flex items-center gap-1.5 transition-colors" data-testid="button-discard">
-                <X className="w-3.5 h-3.5" /> Discard
-              </button>
-              <button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="h-11 px-4 rounded-xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-semibold text-sm flex items-center gap-1.5 transition-colors min-w-[130px] justify-center" data-testid="button-save-schedule">
-                {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                Save Changes
-              </button>
+          <div className="flex-1">
+            <select
+              value={explorerSection}
+              onChange={e => setExplorerSection(e.target.value)}
+              className="w-full h-11 px-3 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2"
+              style={{
+                backgroundColor: "#1A2942",
+                color: explorerSection ? "#ffffff" : "rgba(255,255,255,0.4)",
+                border: "1px solid rgba(255,255,255,0.15)",
+              }}
+              data-testid="select-explorer-section"
+            >
+              <option value="">Section</option>
+              {sectionList.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Empty state — no class selected */}
+      {!hasSelection && (
+        <div className="rounded-2xl border p-12 flex flex-col items-center gap-3 text-center" style={{ borderColor: "rgba(255,255,255,0.08)", borderStyle: "dashed", backgroundColor: "rgba(255,255,255,0.02)" }}>
+          <BookOpen className="w-8 h-8" style={{ color: "rgba(255,255,255,0.2)" }} />
+          <p className="text-sm font-semibold" style={{ color: "rgba(255,255,255,0.35)" }}>Select a class and section above</p>
+          <p className="text-xs" style={{ color: "rgba(255,255,255,0.2)" }}>Then click any empty period to assign your subjects</p>
+        </div>
+      )}
+
+      {/* Loading */}
+      {hasSelection && explorerLoading && (
+        <div className="flex justify-center py-12">
+          <Loader2 className="w-6 h-6 animate-spin" style={{ color: "#10b981" }} />
+        </div>
+      )}
+
+      {/* Timetable grid */}
+      {hasSelection && !explorerLoading && (
+        <>
+          {/* No structure banner */}
+          {explorerStructure === null || (explorerData_structureIsDefault(explorerStructure)) && (
+            <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-blue-500/20" style={{ backgroundColor: "rgba(59,130,246,0.08)" }} data-testid="banner-no-structure">
+              <Info className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#60a5fa" }} />
+              <p className="text-xs" style={{ color: "rgba(96,165,250,0.85)" }}>
+                No bell schedule configured for Class {explorerClass}. Admin can set one under Timetable Master → Bell Structure.
+              </p>
             </div>
           )}
-        </div>
 
-        {hasDraft && (
-          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-900/20 border border-amber-500/30">
-            <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-            <p className="text-xs text-amber-300 font-medium">{Object.keys(draftMap).length} unsaved change(s) — click "Save Changes" to commit</p>
-          </div>
-        )}
-
-        {structure.length === 0 && (
-          <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-blue-900/20 border border-blue-500/30" data-testid="banner-no-structure">
-            <Info className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-xs font-semibold text-blue-300">No bell schedule configured</p>
-              <p className="text-[11px] text-blue-200/60 mt-0.5">
-                Your school admin has not yet set up the bell schedule for Class {teacher.assignedClass}. Showing default periods 1–8.
-                Contact your admin to configure the timetable structure.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {conflicts.length > 0 && (
-          <div className="rounded-xl border border-red-700/40 bg-red-900/15 p-4 space-y-2" data-testid="conflict-banner">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
-              <p className="text-sm font-semibold text-red-400">Slot conflicts detected</p>
-            </div>
-            {conflicts.map((c, i) => (
-              <p key={i} className="text-xs text-red-400/80 pl-6" data-testid={`conflict-item-${i}`}>
-                {DAY_NAMES[c.dayOfWeek]} P{c.period}: already booked by <strong>{c.teacherName}</strong> for <strong>{c.subject}</strong>
-              </p>
-            ))}
-          </div>
-        )}
-
-        {/* My Schedule grid — structure-driven rows */}
-        <div className="overflow-x-auto rounded-xl border border-white/10">
-          <table className="w-full border-collapse text-sm min-w-[540px]">
-            <thead>
-              <tr>
-                <th className="border-b border-r border-white/10 p-2.5 bg-[#0F1E35] text-xs font-semibold text-white/40 text-center w-[130px]">Period</th>
-                {DAY_NAMES.map((d, i) => (
-                  <th key={i} className="border-b border-r border-white/10 p-2.5 bg-[#0F1E35] text-xs font-semibold text-white/60 text-center">{d}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {allStructureRows.map((srow, sIdx) => {
-                const isBreakRow = srow.isBreak;
-                return (
-                  <tr key={sIdx}>
-                    {/* Period label cell */}
-                    <td className={`border-b border-r border-white/10 p-2 text-center text-xs bg-[#0F1E35]/50 ${isBreakRow ? "bg-amber-900/10" : ""}`}>
-                      {isBreakRow ? (
-                        <div className="flex flex-col items-center gap-0.5">
-                          <Coffee className="w-3 h-3 text-amber-400" />
-                          <span className="font-semibold text-amber-300">{srow.label || "Break"}</span>
-                          {srow.startTime && srow.endTime && (
-                            <span className="text-[9px] text-amber-300/60">{formatTime(srow.startTime)}–{formatTime(srow.endTime)}</span>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center gap-0.5">
-                          <span className="font-bold text-white/70">P{srow.periodNumber}</span>
-                          {srow.label && srow.label !== `Period ${srow.periodNumber}` && (
-                            <span className="text-[9px] text-white/40">{srow.label}</span>
-                          )}
-                          {srow.startTime && srow.endTime && (
-                            <span className="text-[9px] text-[#10b981]/70">{formatTime(srow.startTime)}–{formatTime(srow.endTime)}</span>
-                          )}
-                        </div>
-                      )}
-                    </td>
-
-                    {/* Break row spans all days — shaded, non-interactive */}
-                    {isBreakRow ? (
-                      DAY_NAMES.map((_, di) => (
-                        <td key={di} className="border-b border-r border-white/10 bg-amber-900/5 p-1">
-                          <div className="rounded-lg min-h-[48px] flex items-center justify-center">
-                            <span className="text-[10px] text-amber-300/30 font-medium">{srow.label || "Break"}</span>
+          {/* Grid */}
+          <div className="overflow-x-auto rounded-2xl border" style={{ borderColor: "rgba(255,255,255,0.1)" }}>
+            <table className="w-full border-collapse text-sm min-w-[520px]">
+              <thead>
+                <tr>
+                  <th className="border-b border-r p-2.5 text-center w-[110px]" style={{ borderColor: "rgba(255,255,255,0.08)", backgroundColor: "#0F1E35" }}>
+                    <span className="text-[11px] font-bold" style={{ color: "rgba(255,255,255,0.4)" }}>Period</span>
+                  </th>
+                  {DAY_NAMES.map((d, i) => (
+                    <th key={i} className="border-b border-r p-2.5 text-center" style={{ borderColor: "rgba(255,255,255,0.08)", backgroundColor: "#0F1E35" }}>
+                      <span className="text-[11px] font-bold" style={{ color: "rgba(255,255,255,0.6)" }}>{d}</span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {explorerStructure.map((srow, sIdx) => {
+                  if (srow.isBreak) {
+                    return (
+                      <tr key={sIdx}>
+                        <td className="border-b border-r p-2 text-center" style={{ borderColor: "rgba(255,255,255,0.06)", backgroundColor: "rgba(245,158,11,0.06)" }}>
+                          <div className="flex flex-col items-center gap-0.5">
+                            <Coffee className="w-3 h-3" style={{ color: "#f59e0b" }} />
+                            <span className="text-[10px] font-bold" style={{ color: "#f59e0b" }}>{srow.label || "Break"}</span>
+                            {srow.startTime && (
+                              <span className="text-[9px]" style={{ color: "rgba(245,158,11,0.6)" }}>
+                                {formatTime(srow.startTime)}–{formatTime(srow.endTime)}
+                              </span>
+                            )}
                           </div>
                         </td>
-                      ))
-                    ) : (
-                      DAY_NAMES.map((_, dayIdx) => {
-                        const p = srow.periodNumber;
-                        const slot = getEffectiveSlot(dayIdx, p);
-                        const key = `${dayIdx}-${p}`;
-                        const isConflict = conflicts.some(c => c.dayOfWeek === dayIdx && c.period === p);
-                        const hasValErr = !!validationErrors[key];
-                        const isPopoverOpen = popover?.day === dayIdx && popover?.period === p;
-                        return (
-                          <td key={dayIdx} className="border-b border-r border-white/10 relative p-1 min-w-[100px]" onClick={e => { e.stopPropagation(); openPopover(dayIdx, p); }}>
-                            <div className={`rounded-lg p-2 min-h-[54px] flex flex-col justify-center cursor-pointer transition-colors ${
-                              hasValErr ? "bg-red-900/20 border border-red-500"
-                              : isConflict ? "bg-red-900/20 border border-red-700/50"
-                              : slot?.isDelete ? "bg-red-900/20 border border-red-700/30"
-                              : slot?.isDraft ? "bg-amber-900/20 border border-amber-500/40"
-                              : slot ? "bg-[#10b981]/10 border border-[#10b981]/30 hover:bg-[#10b981]/15"
-                              : "border border-transparent hover:border-white/15 hover:bg-white/5 group"
-                            }`} data-testid={`cell-${dayIdx}-${p}`}>
-                              {hasValErr ? (
-                                <p className="text-[10px] text-red-400 italic text-center">Fields missing</p>
-                              ) : slot && !slot.isDelete ? (
-                                <>
-                                  <p className="text-[11px] font-bold leading-tight truncate" style={{ color: "#ffffff" }}>{slot.subject}</p>
-                                  <p className="text-[10px] truncate mt-0.5" style={{ color: "rgba(255,255,255,0.50)" }}>{slot.class}-{slot.section}</p>
-                                  {slot.isDraft && <span className="text-[9px] text-amber-400 font-semibold mt-0.5">unsaved</span>}
-                                  {isConflict && <span className="text-[9px] text-red-400 font-semibold mt-0.5">conflict</span>}
-                                </>
-                              ) : slot?.isDelete ? (
-                                <p className="text-[10px] text-red-400 italic text-center">will delete</p>
-                              ) : (
-                                <Plus className="w-3.5 h-3.5 text-white/20 mx-auto group-hover:text-[#10b981] transition-colors" />
-                              )}
+                        {DAY_NAMES.map((_, di) => (
+                          <td key={di} className="border-b border-r p-1" style={{ borderColor: "rgba(255,255,255,0.06)", backgroundColor: "rgba(245,158,11,0.03)" }}>
+                            <div className="min-h-[44px] flex items-center justify-center">
+                              <span className="text-[10px] font-medium" style={{ color: "rgba(245,158,11,0.25)" }}>{srow.label || "Break"}</span>
                             </div>
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  }
 
-                            {/* Inline popover */}
-                            {isPopoverOpen && (
-                              <div className="absolute left-0 top-full z-50 w-72 bg-[#1A2942] border border-white/20 rounded-xl shadow-2xl p-4 space-y-3" onClick={e => e.stopPropagation()}>
-                                <div className="flex items-center justify-between">
-                                  <p className="text-xs font-bold text-white">{DAY_NAMES[dayIdx]} · Period {p}</p>
-                                  <button onClick={() => setPopover(null)} className="text-white/40 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+                  const p = srow.periodNumber;
+                  const isPeriodActive = isCurrentPeriod(srow);
+
+                  return (
+                    <tr key={sIdx}>
+                      {/* Period label */}
+                      <td className="border-b border-r p-2 text-center" style={{ borderColor: "rgba(255,255,255,0.06)", backgroundColor: "rgba(15,30,53,0.5)" }}>
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className="text-[11px] font-bold" style={{ color: isPeriodActive ? "#10b981" : "rgba(255,255,255,0.8)" }}>
+                            P{p}
+                          </span>
+                          {srow.startTime && (
+                            <span className="text-[9px] font-semibold" style={{ color: isPeriodActive ? "#10b981" : "rgba(255,255,255,0.35)" }}>
+                              {formatTime(srow.startTime)}
+                            </span>
+                          )}
+                          {srow.endTime && (
+                            <span className="text-[9px]" style={{ color: "rgba(255,255,255,0.25)" }}>
+                              {formatTime(srow.endTime)}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Day cells */}
+                      {DAY_NAMES.map((_, dayIdx) => {
+                        const entry = explorerEntries.find(e => e.dayOfWeek === dayIdx && e.period === p);
+                        const isActive = isPeriodActive;
+                        const col = entry ? getSubjectColor(entry.subject) : null;
+
+                        return (
+                          <td
+                            key={dayIdx}
+                            className="border-b border-r p-1.5 min-w-[90px]"
+                            style={{ borderColor: "rgba(255,255,255,0.06)" }}
+                            data-testid={`explorer-cell-${dayIdx}-${p}`}
+                          >
+                            {entry ? (
+                              /* Filled slot */
+                              <div
+                                className={`rounded-xl p-2.5 min-h-[54px] flex flex-col justify-between cursor-pointer transition-all group relative ${isActive ? "animate-pulse-border" : ""}`}
+                                style={{
+                                  backgroundColor: col?.bg,
+                                  border: `1.5px solid ${isActive ? "#10b981" : col?.border}`,
+                                  boxShadow: isActive ? "0 0 12px rgba(16,185,129,0.3)" : "none",
+                                }}
+                                onClick={() => setModal({ day: dayIdx, period: p, existing: entry })}
+                              >
+                                <div>
+                                  <p className="text-[11px] font-bold leading-tight" style={{ color: "#ffffff" }}>{entry.subject}</p>
+                                  <p className="text-[10px] mt-0.5" style={{ color: "rgba(255,255,255,0.6)" }}>{entry.teacherName || "—"}</p>
                                 </div>
-
-                                {collisionChecking && popClass && popSection && (
-                                  <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-white/5 text-xs text-white/50">
-                                    <Loader2 className="w-3 h-3 animate-spin" /> Checking availability…
+                                <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <div className="w-5 h-5 rounded-md flex items-center justify-center" style={{ backgroundColor: "rgba(0,0,0,0.4)" }}>
+                                    <ChevronRight className="w-3 h-3" style={{ color: "#ffffff" }} />
                                   </div>
-                                )}
-                                {!collisionChecking && popCollision?.taken && (
-                                  <div className="flex items-start gap-2 px-2 py-2 rounded-lg bg-red-900/20 border border-red-700/40" data-testid="inline-collision-warning">
-                                    <AlertTriangle className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
-                                    <p className="text-xs text-red-400">
-                                      Slot taken by <strong>{popCollision.teacherName}</strong> for <strong>{popCollision.subject}</strong>
-                                    </p>
-                                  </div>
-                                )}
-
-                                <div>
-                                  <label className="block text-xs font-semibold text-white/50 mb-1">
-                                    Class {popClassError && <span className="ml-1 text-red-400">*</span>}
-                                  </label>
-                                  <select value={popClass} onChange={e => { setPopClass(e.target.value); setPopClassError(false); }} className={`w-full h-11 px-2 rounded-lg border text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] bg-[#0A1628] ${popClassError ? "border-red-500" : "border-white/20"}`} data-testid={`select-pop-class-${dayIdx}-${p}`}>
-                                    <option value="">Select class</option>
-                                    {CLASS_LIST.map(c => <option key={c} value={c}>Class {c}</option>)}
-                                  </select>
-                                </div>
-
-                                <div>
-                                  <label className="block text-xs font-semibold text-white/50 mb-1">
-                                    Section {popSectionError && <span className="ml-1 text-red-400">*</span>}
-                                  </label>
-                                  <select value={popSection} onChange={e => { setPopSection(e.target.value); setPopSectionError(false); }} className={`w-full h-11 px-2 rounded-lg border text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] bg-[#0A1628] ${popSectionError ? "border-red-500" : "border-white/20"}`} data-testid={`select-pop-section-${dayIdx}-${p}`}>
-                                    <option value="">Select section</option>
-                                    {SECTION_LIST.map(s => <option key={s} value={s}>{s}</option>)}
-                                  </select>
-                                </div>
-
-                                <div>
-                                  <label className="block text-xs font-semibold text-white/50 mb-1">
-                                    Subject {popSubjectError && <span className="ml-1 text-red-400">*</span>}
-                                  </label>
-                                  <select value={popSubject} onChange={e => { setPopSubject(e.target.value); setPopSubjectError(false); }} className={`w-full h-11 px-2 rounded-lg border text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] bg-[#0A1628] ${popSubjectError ? "border-red-500" : "border-white/20"}`} data-testid={`select-pop-subject-${dayIdx}-${p}`}>
-                                    <option value="">Select subject</option>
-                                    {SUBJECT_LIST.map(s => <option key={s} value={s}>{s}</option>)}
-                                  </select>
-                                </div>
-
-                                <div className="flex gap-2 pt-1">
-                                  {(slot || (key in draftMap && draftMap[key] !== null)) && (
-                                    <button onClick={() => applyPopoverChange(true)} className="h-11 px-3 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-900/20 text-xs font-semibold flex items-center gap-1" data-testid={`button-pop-delete-${dayIdx}-${p}`}>
-                                      <Trash2 className="w-3 h-3" /> Remove
-                                    </button>
-                                  )}
-                                  <button onClick={() => applyPopoverChange(false)} className="flex-1 h-11 rounded-lg bg-[#10b981] hover:bg-[#059669] text-white text-xs font-semibold flex items-center justify-center gap-1" data-testid={`button-pop-apply-${dayIdx}-${p}`}>
-                                    <Pencil className="w-3 h-3" /> Apply
-                                  </button>
                                 </div>
                               </div>
+                            ) : (
+                              /* Empty slot */
+                              <button
+                                className="w-full min-h-[54px] rounded-xl flex items-center justify-center transition-all group"
+                                style={{
+                                  border: "1.5px dashed rgba(255,255,255,0.15)",
+                                  backgroundColor: "transparent",
+                                }}
+                                onMouseEnter={e => {
+                                  (e.currentTarget as HTMLElement).style.borderColor = "#10b981";
+                                  (e.currentTarget as HTMLElement).style.backgroundColor = "rgba(16,185,129,0.06)";
+                                }}
+                                onMouseLeave={e => {
+                                  (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.15)";
+                                  (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
+                                }}
+                                onClick={() => setModal({ day: dayIdx, period: p, existing: null })}
+                                data-testid={`button-add-slot-${dayIdx}-${p}`}
+                              >
+                                <Plus className="w-4 h-4 transition-colors" style={{ color: "rgba(255,255,255,0.2)" }} />
+                              </button>
                             )}
                           </td>
                         );
-                      })
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
 
-        {hasDraft && (
-          <div className="sticky bottom-4 flex justify-end">
-            <button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="h-12 px-6 rounded-2xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-bold text-sm flex items-center gap-2 shadow-lg transition-colors" data-testid="button-save-bottom">
-              {saveMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-              Save Changes
+          {/* Legend */}
+          <div className="flex flex-wrap gap-3 pt-1">
+            {Object.entries(SUBJECT_COLORS).filter(([k]) => k !== "default").slice(0, 6).map(([name, col]) => (
+              <div key={name} className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: col.dot }} />
+                <span className="text-[10px] font-medium capitalize" style={{ color: "rgba(255,255,255,0.4)" }}>{name}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* helper: detect if structure is the fallback (no IDs) */
+function explorerData_structureIsDefault(rows: StructureRow[]) {
+  return rows.every(r => !r.id);
+}
+
+/* ─────────────────── My Schedule Tab ─────────────────── */
+function MyScheduleTab({
+  myEntries, dayEntries, scheduleStructure, selectedDay, setSelectedDay,
+}: {
+  myEntries: TimetableEntry[];
+  dayEntries: TimetableEntry[];
+  scheduleStructure: StructureRow[];
+  selectedDay: number;
+  setSelectedDay: (d: number) => void;
+}) {
+  const today = todayDayIndex();
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center gap-2">
+        <Calendar className="w-4 h-4" style={{ color: "#10b981" }} />
+        <h3 className="text-sm font-bold" style={{ color: "#ffffff" }}>My Schedule</h3>
+        <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ backgroundColor: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.5)" }}>
+          Read-only
+        </span>
+      </div>
+
+      {/* Day picker */}
+      <div className="flex gap-1.5 overflow-x-auto pb-1">
+        {DAY_NAMES.map((d, i) => {
+          const isToday = i === today;
+          const isSelected = i === selectedDay;
+          const dayCount = myEntries.filter(e => e.dayOfWeek === i).length;
+          return (
+            <button
+              key={i}
+              onClick={() => setSelectedDay(i)}
+              className="flex-shrink-0 flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl min-w-[50px] transition-all"
+              style={{
+                backgroundColor: isSelected ? "#10b981" : isToday ? "rgba(16,185,129,0.12)" : "rgba(255,255,255,0.05)",
+                border: isToday && !isSelected ? "1px solid rgba(16,185,129,0.4)" : "1px solid transparent",
+              }}
+              data-testid={`day-btn-${i}`}
+            >
+              <span className="text-[10px] font-bold" style={{ color: isSelected ? "#ffffff" : "rgba(255,255,255,0.5)" }}>{d}</span>
+              {dayCount > 0 && (
+                <span className="text-[9px] font-bold px-1 rounded-full" style={{
+                  backgroundColor: isSelected ? "rgba(255,255,255,0.2)" : "rgba(16,185,129,0.2)",
+                  color: isSelected ? "#ffffff" : "#10b981",
+                }}>
+                  {dayCount}
+                </span>
+              )}
             </button>
-          </div>
+          );
+        })}
+      </div>
+
+      {/* Day label */}
+      <div className="flex items-center gap-2">
+        <p className="text-xs font-bold" style={{ color: "rgba(255,255,255,0.6)" }}>{DAY_FULL[selectedDay]}</p>
+        {selectedDay === today && (
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: "rgba(16,185,129,0.2)", color: "#10b981" }}>Today</span>
         )}
       </div>
 
-      {/* ── Section 2: Class Explorer ── */}
-      <div className="space-y-4 pt-4 border-t border-white/10">
-        <div>
-          <h3 className="text-base font-bold flex items-center gap-2" style={{ color: "#ffffff" }}>
-            <Search className="w-4 h-4 text-[#10b981]" /> Class Explorer
-          </h3>
-          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.45)" }}>View any class's full timetable (read-only)</p>
+      {/* Timeline */}
+      {dayEntries.length === 0 ? (
+        <div className="rounded-2xl border p-12 flex flex-col items-center gap-3 text-center" style={{ borderColor: "rgba(255,255,255,0.08)", borderStyle: "dashed", backgroundColor: "rgba(255,255,255,0.02)" }}>
+          <Clock className="w-8 h-8" style={{ color: "rgba(255,255,255,0.15)" }} />
+          <p className="text-sm font-semibold" style={{ color: "rgba(255,255,255,0.3)" }}>No classes on {DAY_NAMES[selectedDay]}</p>
+          <p className="text-xs" style={{ color: "rgba(255,255,255,0.18)" }}>Assign yourself to periods in Class Explorer</p>
         </div>
+      ) : (
+        <div className="space-y-3">
+          {dayEntries.map((entry, idx) => {
+            const srow = scheduleStructure.find(r => !r.isBreak && r.periodNumber === entry.period);
+            const active = srow ? isCurrentPeriod(srow) : false;
+            const col = getSubjectColor(entry.subject);
 
-        <div className="flex flex-wrap gap-3">
-          <div className="flex-1 min-w-[130px]">
-            <label className="block text-xs font-semibold text-white/50 mb-1">Class</label>
-            <select value={explorerClass} onChange={e => setExplorerClass(e.target.value)} className="w-full h-11 px-3 rounded-xl border border-white/20 bg-[#0A1628] text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981]" data-testid="select-explorer-class">
-              <option value="">Select class</option>
-              {CLASS_LIST.map(c => <option key={c} value={c}>Class {c}</option>)}
-            </select>
-          </div>
-          <div className="flex-1 min-w-[110px]">
-            <label className="block text-xs font-semibold text-white/50 mb-1">Section</label>
-            <select value={explorerSection} onChange={e => setExplorerSection(e.target.value)} className="w-full h-11 px-3 rounded-xl border border-white/20 bg-[#0A1628] text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981]" data-testid="select-explorer-section">
-              <option value="">Select section</option>
-              {SECTION_LIST.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
+            return (
+              <div
+                key={entry.id ?? idx}
+                className="flex gap-0 overflow-hidden rounded-2xl transition-all"
+                style={{
+                  border: `1.5px solid ${active ? "#10b981" : col.border}`,
+                  boxShadow: active ? "0 0 16px rgba(16,185,129,0.25)" : "none",
+                  animation: active ? "pulse-glow 2s ease-in-out infinite" : "none",
+                }}
+                data-testid={`schedule-card-${entry.id ?? idx}`}
+              >
+                {/* Colored left bar */}
+                <div className="w-1 flex-shrink-0 rounded-l-2xl" style={{ backgroundColor: col.dot }} />
+
+                {/* Card body */}
+                <div className="flex-1 p-4" style={{ backgroundColor: col.bg }}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1 flex-1">
+                      {/* Subject */}
+                      <p className="text-sm font-bold leading-tight" style={{ color: "#ffffff" }}>{entry.subject}</p>
+                      {/* Class + Section */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: "rgba(255,255,255,0.1)", color: "#ffffff" }}>
+                          Class {entry.class} – {entry.section}
+                        </span>
+                        {entry.room && (
+                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1" style={{ backgroundColor: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.7)" }}>
+                            <DoorOpen className="w-3 h-3" />
+                            {entry.room}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Time + Period */}
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-[11px] font-bold" style={{ color: active ? "#10b981" : "rgba(255,255,255,0.6)" }}>
+                        P{entry.period}
+                      </p>
+                      {srow?.startTime && (
+                        <p className="text-[10px] font-semibold mt-0.5" style={{ color: active ? "#10b981" : "rgba(255,255,255,0.45)" }}>
+                          {formatTime(srow.startTime)}
+                        </p>
+                      )}
+                      {srow?.endTime && (
+                        <p className="text-[10px]" style={{ color: "rgba(255,255,255,0.25)" }}>
+                          {formatTime(srow.endTime)}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Active NOW badge */}
+                  {active && (
+                    <div className="mt-2 flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-full" style={{ backgroundColor: "#10b981", animation: "ping 1.5s cubic-bezier(0,0,0.2,1) infinite" }} />
+                      <span className="text-[10px] font-bold" style={{ color: "#10b981" }}>You should be here NOW</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
+      )}
 
-        {explorerClass && explorerSection && (
-          explorerLoading ? (
-            <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-[#10b981]" /></div>
-          ) : (
-            <div className="overflow-x-auto rounded-xl border border-white/10">
-              <table className="w-full border-collapse text-sm min-w-[540px]">
-                <thead>
-                  <tr>
-                    <th className="border-b border-r border-white/10 p-2.5 bg-[#0F1E35] text-xs font-semibold text-white/40 text-center w-12">P</th>
-                    {DAY_NAMES.map((d, i) => (
-                      <th key={i} className="border-b border-r border-white/10 p-2.5 bg-[#0F1E35] text-xs font-semibold text-white/60 text-center">{d}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(explorerData?.structure?.length
-                    ? explorerData.structure
-                    : FALLBACK_PERIODS.map(n => ({ periodNumber: n, label: `Period ${n}`, startTime: "", endTime: "", isBreak: false, sortOrder: n - 1 }))
-                  ).map((srow, sIdx) => {
-                    if (srow.isBreak) {
-                      return (
-                        <tr key={sIdx}>
-                          <td className="border-b border-r border-white/10 p-2 text-center text-xs bg-amber-900/10">
-                            <div className="flex flex-col items-center gap-0.5">
-                              <Coffee className="w-3 h-3 text-amber-400" />
-                              <span className="text-[10px] font-semibold text-amber-300">{srow.label || "Break"}</span>
-                            </div>
-                          </td>
-                          {DAY_NAMES.map((_, di) => (
-                            <td key={di} className="border-b border-r border-white/10 bg-amber-900/5 p-1">
-                              <div className="rounded-lg min-h-[48px] flex items-center justify-center">
-                                <span className="text-[10px] text-amber-300/25">{srow.label || "Break"}</span>
-                              </div>
-                            </td>
-                          ))}
-                        </tr>
-                      );
-                    }
-                    const p = srow.periodNumber;
-                    return (
-                      <tr key={sIdx}>
-                        <td className="border-b border-r border-white/10 p-2 text-center text-xs font-bold text-white/40 bg-[#0F1E35]/50">
-                          <div className="flex flex-col items-center gap-0.5">
-                            <span className="font-bold text-white/60">P{p}</span>
-                            {srow.startTime && srow.endTime && (
-                              <span className="text-[8px] text-[#10b981]/60">{srow.startTime}–{srow.endTime}</span>
-                            )}
-                          </div>
-                        </td>
-                        {DAY_NAMES.map((_, dayIdx) => {
-                          const entry = explorerEntries.find(e => e.dayOfWeek === dayIdx && e.period === p);
-                          return (
-                            <td key={dayIdx} className="border-b border-r border-white/10 p-1 min-w-[100px]" data-testid={`explorer-cell-${dayIdx}-${p}`}>
-                              {entry ? (
-                                <div className="rounded-lg p-2 min-h-[48px] flex flex-col justify-center bg-[#10b981]/10 border border-[#10b981]/30">
-                                  <p className="text-[11px] font-bold leading-tight truncate" style={{ color: "#ffffff" }}>{entry.subject}</p>
-                                  <p className="text-[10px] truncate mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>{entry.teacherName || "—"}</p>
-                                </div>
-                              ) : (
-                                <div className="rounded-lg p-2 min-h-[48px] flex items-center justify-center">
-                                  <span className="text-xs" style={{ color: "rgba(255,255,255,0.15)" }}>—</span>
-                                </div>
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )
-        )}
-
-        {!explorerClass && !explorerSection && (
-          <div className="rounded-xl border border-white/10 bg-white/3 p-10 text-center">
-            <BookOpen className="w-7 h-7 text-white/15 mx-auto mb-2" />
-            <p className="text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>Select a class and section to view their timetable</p>
-          </div>
-        )}
-      </div>
+      {/* Total summary */}
+      {myEntries.length > 0 && (
+        <div className="flex items-center justify-between px-4 py-3 rounded-xl mt-2" style={{ backgroundColor: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+          <span className="text-xs font-semibold" style={{ color: "rgba(255,255,255,0.5)" }}>Total assigned periods (week)</span>
+          <span className="text-sm font-bold" style={{ color: "#10b981" }}>{myEntries.length}</span>
+        </div>
+      )}
     </div>
   );
 }
