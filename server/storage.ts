@@ -1719,7 +1719,7 @@ export class DatabaseStorage {
       const effectiveLimit = policy.annualLimit + carryForward;
       const remaining = Math.max(0, effectiveLimit - used);
 
-      result.push({ policyId: policy.id, name: policy.name, annualLimit: policy.annualLimit, carryForward, used, remaining, validUntil: periodEnd });
+      result.push({ policyId: policy.id, name: policy.name, annualLimit: policy.annualLimit, carryForward, used, remaining, periodStart, validUntil: periodEnd });
     }
 
     return result;

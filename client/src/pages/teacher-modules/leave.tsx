@@ -28,6 +28,7 @@ interface LeaveBalanceItem {
   carryForward: number;
   used: number;
   remaining: number;
+  periodStart: string;
   validUntil: string;
 }
 
@@ -258,7 +259,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                     </p>
                     <p className="text-xs text-gray-400 mt-0.5">
                       <Clock className="w-3 h-3 inline mr-0.5" />
-                      Valid until {formatDate(b.validUntil)}
+                      {formatDate(b.periodStart)} – {formatDate(b.validUntil)}
                     </p>
                   </CardContent>
                 </Card>
