@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
@@ -30,14 +30,46 @@ type ForgotForm = z.infer<typeof forgotSchema>;
 type ResetForm = z.infer<typeof resetSchema>;
 
 function PinKeypad({ value, onChange, onSubmit, submitLabel = "✓" }: { value: string; onChange: (v: string) => void; onSubmit?: () => void; submitLabel?: string }) {
+  const inputRef = useRef<HTMLInputElement>(null);
   const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", submitLabel];
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
   function handleKey(k: string) {
-    if (k === "⌫") { onChange(value.slice(0, -1)); return; }
+    if (k === "⌫") { onChange(value.slice(0, -1)); inputRef.current?.focus(); return; }
     if (k === submitLabel) { if (value.length === 6 && onSubmit) onSubmit(); return; }
-    if (value.length < 6) onChange(value + k);
+    if (value.length < 6) { onChange(value + k); inputRef.current?.focus(); }
   }
+
+  function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const v = e.target.value.replace(/\D/g, "").slice(0, 6);
+    onChange(v);
+    if (v.length === 6 && onSubmit) onSubmit();
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" && value.length === 6 && onSubmit) onSubmit();
+    if (e.key === "Backspace") { onChange(value.slice(0, -1)); e.preventDefault(); }
+  }
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" onClick={() => inputRef.current?.focus()}>
+      <input
+        ref={inputRef}
+        type="tel"
+        inputMode="numeric"
+        pattern="[0-9]*"
+        autoFocus
+        value={value}
+        onChange={handleInputChange}
+        onKeyDown={handleKeyDown}
+        maxLength={6}
+        data-testid="pin-hidden-input"
+        className="absolute opacity-0 w-px h-px pointer-events-none"
+        aria-label="Enter your 6-digit PIN"
+      />
       <div className="flex justify-center gap-3">
         {Array.from({ length: 6 }).map((_, i) => (
           <div key={i} className={`w-10 h-10 rounded-lg border-2 flex items-center justify-center text-xl font-bold transition-all

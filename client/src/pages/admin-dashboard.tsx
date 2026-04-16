@@ -219,7 +219,7 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
-      <div className="w-full max-w-sm h-full bg-white shadow-2xl flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+      <div className="w-full max-w-sm h-full bg-white shadow-2xl flex flex-col overflow-hidden text-gray-900" onClick={e => e.stopPropagation()}>
         <div className="border-b px-5 py-4 flex items-center justify-between bg-white">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
