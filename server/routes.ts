@@ -268,12 +268,12 @@ export async function registerRoutes(
     const pendingPinUserId = req.session.pendingPinUserId;
     if (!pendingPinUserId) return res.status(401).json({ message: "No pending PIN session" });
 
-    const schema = z.object({ pin: z.string().length(6), tempToken: z.string().optional() });
+    const schema = z.object({ pin: z.string().length(6), tempToken: z.string().min(1) });
     const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: "Invalid PIN format" });
+    if (!parsed.success) return res.status(400).json({ message: "Invalid request" });
 
-    if (parsed.data.tempToken && req.session.pendingPinToken && parsed.data.tempToken !== req.session.pendingPinToken) {
-      return res.status(401).json({ message: "Invalid challenge token" });
+    if (!req.session.pendingPinToken || parsed.data.tempToken !== req.session.pendingPinToken) {
+      return res.status(401).json({ message: "Invalid or expired challenge token" });
     }
 
     const user = await storage.getUserById(pendingPinUserId);
@@ -339,8 +339,12 @@ export async function registerRoutes(
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const valid = await storage.verifyAndConsumeAdminOtp(user.id, parsed.data.otp);
-    if (!valid) return res.status(400).json({ message: "Invalid or expired OTP" });
+    if (!valid) {
+      await storage.logSecurityEvent(user.id, user.schoolId, "otp_failed", false, req.ip || null, req.headers["user-agent"] || null);
+      return res.status(400).json({ message: "Invalid or expired OTP" });
+    }
 
+    await storage.logSecurityEvent(user.id, user.schoolId, "otp_verified", true, req.ip || null, req.headers["user-agent"] || null);
     req.session.pendingForgotUserId = undefined;
     req.session.pendingResetUserId = user.id;
     const hasPinSetup = !!user.pinHash;
@@ -368,6 +372,7 @@ export async function registerRoutes(
       return res.status(401).json({ message: "Incorrect PIN" });
     }
 
+    await storage.logSecurityEvent(pendingResetUserId, user?.schoolId ?? null, "reset_pin_verified", true, req.ip || null, req.headers["user-agent"] || null);
     const updatedUser = await storage.getUserById(pendingResetUserId);
     res.json({ message: "PIN verified", resetToken: updatedUser?.resetToken });
   });
