@@ -105,7 +105,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
     },
   });
 
-  const { data: balanceItems = [], isLoading: balanceLoading } = useQuery<LeaveBalanceItem[]>({
+  const { data: rawBalance, isLoading: balanceLoading } = useQuery({
     queryKey: ["/api/leave/balance", teacher.id],
     queryFn: async () => {
       const res = await fetch(`/api/leave/balance/${teacher.id}`, { credentials: "include" });
@@ -113,6 +113,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
       return res.json();
     },
   });
+  const balanceItems: LeaveBalanceItem[] = Array.isArray(rawBalance) ? rawBalance : [];
 
   const { data: policies = [] } = useQuery<LeavePolicy[]>({
     queryKey: ["/api/leave/policies", teacher.schoolId],
