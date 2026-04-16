@@ -615,3 +615,20 @@ export const timetableStructure = pgTable("timetable_structure", {
 export const insertTimetableStructureSchema = createInsertSchema(timetableStructure).omit({ id: true });
 export type InsertTimetableStructure = z.infer<typeof insertTimetableStructureSchema>;
 export type TimetableStructure = typeof timetableStructure.$inferSelect;
+
+export const leavePolicies = pgTable("leave_policies", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  annualLimit: integer("annual_limit").notNull().default(12),
+  targetRoles: text("target_roles").notNull().default("all"),
+  renewalMonth: integer("renewal_month").notNull().default(1),
+  renewalDay: integer("renewal_day").notNull().default(1),
+  expiryBehavior: text("expiry_behavior").notNull().default("expire"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertLeavePolicySchema = createInsertSchema(leavePolicies).omit({ id: true, createdAt: true });
+export type InsertLeavePolicy = z.infer<typeof insertLeavePolicySchema>;
+export type LeavePolicy = typeof leavePolicies.$inferSelect;

@@ -1101,8 +1101,73 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const tid = parseInt(req.params.teacherId);
     if (tid !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
-    const balance = await storage.getTeacherLeaveBalance(tid);
+    const teacher = await storage.getTeacherById(tid);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const balance = await storage.getTeacherLeaveBalanceByPolicies(tid, teacher.schoolId);
     res.json(balance);
+  });
+
+  app.get("/api/leave/policies/:schoolId", async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (isNaN(schoolId)) return res.status(400).json({ message: "Invalid school ID" });
+    const policies = await storage.getActiveLeavePoliciesBySchool(schoolId);
+    res.json(policies);
+  });
+
+  app.get("/api/admin/leave-policies", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(400).json({ message: "No school context" });
+    const policies = await storage.getLeavePoliciesBySchool(schoolId);
+    res.json(policies);
+  });
+
+  app.post("/api/admin/leave-policies", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(400).json({ message: "No school context" });
+    const { name, annualLimit, targetRoles, renewalMonth, renewalDay, expiryBehavior, isActive } = req.body;
+    if (!name || !annualLimit) return res.status(400).json({ message: "Name and annual limit are required" });
+    const policy = await storage.createLeavePolicy({
+      schoolId, name: name.trim(),
+      annualLimit: parseInt(annualLimit) || 12,
+      targetRoles: targetRoles || "all",
+      renewalMonth: parseInt(renewalMonth) || 1,
+      renewalDay: parseInt(renewalDay) || 1,
+      expiryBehavior: expiryBehavior || "expire",
+      isActive: isActive !== undefined ? Boolean(isActive) : true,
+    });
+    res.status(201).json(policy);
+  });
+
+  app.patch("/api/admin/leave-policies/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const existing = await storage.getLeavePolicyById(id);
+    if (!existing || existing.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const { name, annualLimit, targetRoles, renewalMonth, renewalDay, expiryBehavior, isActive } = req.body;
+    const updated = await storage.updateLeavePolicy(id, {
+      ...(name !== undefined && { name: name.trim() }),
+      ...(annualLimit !== undefined && { annualLimit: parseInt(annualLimit) }),
+      ...(targetRoles !== undefined && { targetRoles }),
+      ...(renewalMonth !== undefined && { renewalMonth: parseInt(renewalMonth) }),
+      ...(renewalDay !== undefined && { renewalDay: parseInt(renewalDay) }),
+      ...(expiryBehavior !== undefined && { expiryBehavior }),
+      ...(isActive !== undefined && { isActive: Boolean(isActive) }),
+    });
+    res.json(updated);
+  });
+
+  app.delete("/api/admin/leave-policies/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const existing = await storage.getLeavePolicyById(id);
+    if (!existing || existing.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    await storage.deleteLeavePolicy(id);
+    res.json({ message: "Policy deleted" });
   });
 
   // ===== STUDENT LEAVE REQUESTS =====

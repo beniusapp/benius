@@ -223,6 +223,26 @@ app.use((req, res, next) => {
     ALTER TABLE security_audit ALTER COLUMN action SET NOT NULL;
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS leave_policies (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      annual_limit INTEGER NOT NULL DEFAULT 12,
+      target_roles TEXT NOT NULL DEFAULT 'all',
+      renewal_month INTEGER NOT NULL DEFAULT 1,
+      renewal_day INTEGER NOT NULL DEFAULT 1,
+      expiry_behavior TEXT NOT NULL DEFAULT 'expire',
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO leave_policies (school_id, name, annual_limit, target_roles, renewal_month, renewal_day, expiry_behavior, is_active)
+    SELECT s.id, v.name, v.annual_limit, 'all', 1, 1, 'expire', TRUE
+    FROM schools s
+    CROSS JOIN (VALUES ('Sick Leave', 12), ('Casual Leave', 12), ('Earned Leave', 12)) AS v(name, annual_limit)
+    WHERE NOT EXISTS (SELECT 1 FROM leave_policies lp WHERE lp.school_id = s.id);
+  `);
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

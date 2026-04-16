@@ -5,7 +5,7 @@ import {
   libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata,
   studentLeaveRequests, auditLogs, visitorLogs, studentProfiles, teacherAllocations,
   promotionOverrides, gradingTiers, gradingRules, academicHistory,
-  schoolAssets, assetLogs, verificationLogs, timetableStructure, securityAudit,
+  schoolAssets, assetLogs, verificationLogs, timetableStructure, securityAudit, leavePolicies,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
@@ -30,6 +30,7 @@ import {
   type SchoolAsset, type InsertSchoolAsset,
   type InsertAssetLog,
   type TimetableStructure, type InsertTimetableStructure,
+  type LeavePolicy, type InsertLeavePolicy,
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
@@ -1574,20 +1575,50 @@ export class DatabaseStorage {
     );
   }
 
-  // ===== TEACHER LEAVE BALANCE =====
+  // ===== LEAVE POLICIES =====
+  async getLeavePoliciesBySchool(schoolId: number): Promise<LeavePolicy[]> {
+    return await db.select().from(leavePolicies)
+      .where(eq(leavePolicies.schoolId, schoolId))
+      .orderBy(leavePolicies.createdAt);
+  }
+
+  async getActiveLeavePoliciesBySchool(schoolId: number): Promise<LeavePolicy[]> {
+    return await db.select().from(leavePolicies)
+      .where(and(eq(leavePolicies.schoolId, schoolId), eq(leavePolicies.isActive, true)))
+      .orderBy(leavePolicies.createdAt);
+  }
+
+  async createLeavePolicy(data: InsertLeavePolicy): Promise<LeavePolicy> {
+    const [policy] = await db.insert(leavePolicies).values(data).returning();
+    return policy;
+  }
+
+  async updateLeavePolicy(id: number, data: Partial<InsertLeavePolicy>): Promise<LeavePolicy> {
+    const [policy] = await db.update(leavePolicies).set(data).where(eq(leavePolicies.id, id)).returning();
+    return policy;
+  }
+
+  async deleteLeavePolicy(id: number): Promise<void> {
+    await db.delete(leavePolicies).where(eq(leavePolicies.id, id));
+  }
+
+  async getLeavePolicyById(id: number): Promise<LeavePolicy | null> {
+    const [policy] = await db.select().from(leavePolicies).where(eq(leavePolicies.id, id));
+    return policy ?? null;
+  }
+
+  // ===== TEACHER LEAVE BALANCE (policy-driven) =====
   async getTeacherLeaveBalance(teacherId: number): Promise<{ sick: number; casual: number; earned: number }> {
     const year = new Date().getFullYear();
     const startOfYear = `${year}-01-01`;
     const endOfYear = `${year}-12-31`;
     const approved = await db.select().from(leaveRequests)
-      .where(
-        and(
-          eq(leaveRequests.teacherId, teacherId),
-          eq(leaveRequests.status, "approved"),
-          gte(leaveRequests.startDate, startOfYear),
-          lte(leaveRequests.endDate, endOfYear)
-        )
-      );
+      .where(and(
+        eq(leaveRequests.teacherId, teacherId),
+        eq(leaveRequests.status, "approved"),
+        gte(leaveRequests.startDate, startOfYear),
+        lte(leaveRequests.endDate, endOfYear)
+      ));
     let sick = 0, casual = 0, earned = 0;
     for (const r of approved) {
       const start = new Date(r.startDate);
@@ -1599,6 +1630,93 @@ export class DatabaseStorage {
       else earned += days;
     }
     return { sick, casual, earned };
+  }
+
+  async getTeacherLeaveBalanceByPolicies(teacherId: number, schoolId: number): Promise<{
+    policyId: number;
+    name: string;
+    annualLimit: number;
+    carryForward: number;
+    used: number;
+    remaining: number;
+    validUntil: string;
+  }[]> {
+    const policies = await this.getActiveLeavePoliciesBySchool(schoolId);
+    if (policies.length === 0) return [];
+
+    const today = new Date();
+    const todayStr = today.toISOString().split("T")[0];
+    const result = [];
+
+    for (const policy of policies) {
+      const mm = String(policy.renewalMonth).padStart(2, "0");
+      const dd = String(policy.renewalDay).padStart(2, "0");
+      const renewalThisYear = `${today.getFullYear()}-${mm}-${dd}`;
+      const renewalNextYear = `${today.getFullYear() + 1}-${mm}-${dd}`;
+      const renewalLastYear = `${today.getFullYear() - 1}-${mm}-${dd}`;
+
+      let periodStart: string;
+      let periodEnd: string;
+      if (todayStr >= renewalThisYear) {
+        periodStart = renewalThisYear;
+        const nextDate = new Date(renewalNextYear);
+        nextDate.setDate(nextDate.getDate() - 1);
+        periodEnd = nextDate.toISOString().split("T")[0];
+      } else {
+        periodStart = renewalLastYear;
+        const nextDate = new Date(renewalThisYear);
+        nextDate.setDate(nextDate.getDate() - 1);
+        periodEnd = nextDate.toISOString().split("T")[0];
+      }
+
+      const currentApproved = await db.select().from(leaveRequests)
+        .where(and(
+          eq(leaveRequests.teacherId, teacherId),
+          eq(leaveRequests.status, "approved"),
+          eq(leaveRequests.leaveType, policy.name),
+          gte(leaveRequests.startDate, periodStart),
+          lte(leaveRequests.startDate, periodEnd)
+        ));
+
+      let used = 0;
+      for (const r of currentApproved) {
+        const start = new Date(r.startDate);
+        const end = new Date(r.endDate);
+        used += Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      }
+
+      let carryForward = 0;
+      if (policy.expiryBehavior === "carry_forward") {
+        const prevPeriodStart = `${parseInt(periodStart.slice(0, 4)) - 1}${periodStart.slice(4)}`;
+        const prevEndDate = new Date(periodStart);
+        prevEndDate.setDate(prevEndDate.getDate() - 1);
+        const prevPeriodEnd = prevEndDate.toISOString().split("T")[0];
+
+        const prevApproved = await db.select().from(leaveRequests)
+          .where(and(
+            eq(leaveRequests.teacherId, teacherId),
+            eq(leaveRequests.status, "approved"),
+            eq(leaveRequests.leaveType, policy.name),
+            gte(leaveRequests.startDate, prevPeriodStart),
+            lte(leaveRequests.startDate, prevPeriodEnd)
+          ));
+
+        let prevUsed = 0;
+        for (const r of prevApproved) {
+          const start = new Date(r.startDate);
+          const end = new Date(r.endDate);
+          prevUsed += Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+        }
+        carryForward = Math.max(0, policy.annualLimit - prevUsed);
+      }
+
+      const effectiveLimit = policy.annualLimit + carryForward;
+      const remaining = Math.max(0, effectiveLimit - used);
+
+      result.push({ policyId: policy.id, name: policy.name, annualLimit: policy.annualLimit, carryForward, used, remaining, validUntil: periodEnd });
+    }
+
+    return result;
   }
 
   async updateLeaveStatusWithApprover(id: number, status: string, approvedBy: number): Promise<LeaveRequest> {
