@@ -1720,6 +1720,19 @@ export async function registerRoutes(
     res.json(leaves);
   });
 
+  app.delete("/api/student/leave/:id", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const result = await storage.deleteStudentLeaveRequest(id, req.session.studentId);
+    if (!result.success) {
+      if (result.reason === "not_found") return res.status(404).json({ message: "Leave request not found" });
+      if (result.reason === "forbidden") return res.status(403).json({ message: "Not authorized" });
+      if (result.reason === "not_pending") return res.status(400).json({ message: "Only pending leave requests can be deleted" });
+    }
+    res.json({ message: "Leave request deleted" });
+  });
+
   // ===== STUDENT COMPLAINT ROUTES =====
 
   app.get("/api/student/complaints/inbox", async (req, res) => {

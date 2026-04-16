@@ -1129,6 +1129,19 @@ export function registerTeacherRoutes(app: Express) {
     res.json(balance);
   });
 
+  app.delete("/api/leave/:id", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const result = await storage.deleteLeaveRequest(id, req.session.teacherId);
+    if (!result.success) {
+      if (result.reason === "not_found") return res.status(404).json({ message: "Leave request not found" });
+      if (result.reason === "forbidden") return res.status(403).json({ message: "Not authorized" });
+      if (result.reason === "not_pending") return res.status(400).json({ message: "Only pending leave requests can be deleted" });
+    }
+    res.json({ message: "Leave request deleted" });
+  });
+
   app.get("/api/leave/policies/:schoolId", async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const schoolId = parseInt(req.params.schoolId);

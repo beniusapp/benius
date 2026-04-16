@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   ArrowLeft, FileText, PlusCircle, X, Loader2, Clock, CheckCircle2, XCircle, Forward,
-  CalendarDays,
+  CalendarDays, Trash2,
 } from "lucide-react";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -101,6 +101,23 @@ export default function StudentLeave() {
       setEndDate("");
       setReason("");
       setAttachmentUrl("");
+      queryClient.invalidateQueries({ queryKey: ["/api/student/leave"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const deleteLeaveMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("DELETE", `/api/student/leave/${id}`, undefined);
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.message || "Failed to delete");
+      }
+    },
+    onSuccess: () => {
+      toast({ title: "Leave application deleted", description: "Your balance has been restored." });
       queryClient.invalidateQueries({ queryKey: ["/api/student/leave"] });
     },
     onError: (error: Error) => {
@@ -222,10 +239,27 @@ export default function StudentLeave() {
                         {" "}· {days} day{days !== 1 ? "s" : ""}
                       </p>
                     </div>
-                    <span className={`flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border ${cfg.color}`}>
-                      <Icon className="w-3 h-3" />
-                      {cfg.label}
-                    </span>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border ${cfg.color}`}>
+                        <Icon className="w-3 h-3" />
+                        {cfg.label}
+                      </span>
+                      {leave.status === "pending" && (
+                        <button
+                          onClick={() => deleteLeaveMutation.mutate(leave.id)}
+                          disabled={deleteLeaveMutation.isPending}
+                          className="flex items-center justify-center w-8 h-8 rounded-xl text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+                          title="Delete pending request"
+                          data-testid={`button-delete-leave-${leave.id}`}
+                        >
+                          {deleteLeaveMutation.isPending ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-4 h-4" />
+                          )}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <p className="text-sm text-gray-600 leading-relaxed">{leave.reason}</p>
                   {leave.rejectionReason && (

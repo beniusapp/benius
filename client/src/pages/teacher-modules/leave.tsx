@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Loader2, Send, CheckCircle, Forward, Calendar, Clock, XCircle, AlertCircle } from "lucide-react";
+import { Loader2, Send, CheckCircle, Forward, Calendar, Clock, XCircle, AlertCircle, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -184,6 +184,24 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
     },
   });
 
+  const deleteMyLeaveMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("DELETE", `/api/leave/${id}`, undefined);
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.message || "Failed to delete");
+      }
+    },
+    onSuccess: () => {
+      toast({ title: "Leave request deleted", description: "Your balance has been restored." });
+      queryClient.invalidateQueries({ queryKey: ["/api/leave/teacher", teacher.id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leave/balance", teacher.id] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
   const rejectMutation = useMutation({
     mutationFn: async ({ id, reason }: { id: number; reason: string }) => {
       await apiRequest("PATCH", `/api/student-leaves/${id}/reject`, { rejectionReason: reason });
@@ -353,10 +371,27 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
               ) : (
                 <div className="space-y-3">
                   {leaves.map((l) => (
-                    <div key={l.id} className="p-3 rounded-md border border-gray-100 bg-gray-50" data-testid={`card-leave-${l.id}`}>
+                    <div key={l.id} className="p-3 rounded-md border border-gray-100 bg-white" data-testid={`card-leave-${l.id}`}>
                       <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
-                        <span className="font-medium text-sm text-gray-900">{l.leaveType}</span>
-                        <StatusBadge status={l.status} />
+                        <span className="font-bold text-sm text-gray-900">{l.leaveType}</span>
+                        <div className="flex items-center gap-2">
+                          <StatusBadge status={l.status} />
+                          {l.status === "pending" && (
+                            <button
+                              onClick={() => deleteMyLeaveMutation.mutate(l.id)}
+                              disabled={deleteMyLeaveMutation.isPending}
+                              className="flex items-center justify-center w-7 h-7 rounded-md text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+                              title="Delete this pending request"
+                              data-testid={`button-delete-leave-${l.id}`}
+                            >
+                              {deleteMyLeaveMutation.isPending ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="w-4 h-4" />
+                              )}
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <p className="text-xs text-gray-500">
                         {formatDate(l.startDate)} to {formatDate(l.endDate)}

@@ -1507,6 +1507,24 @@ export class DatabaseStorage {
     return req || null;
   }
 
+  async deleteStudentLeaveRequest(id: number, studentId: number): Promise<{ success: boolean; reason?: string }> {
+    const leave = await this.getStudentLeaveById(id);
+    if (!leave) return { success: false, reason: "not_found" };
+    if (leave.studentId !== studentId) return { success: false, reason: "forbidden" };
+    if (leave.status !== "pending") return { success: false, reason: "not_pending" };
+    await db.delete(studentLeaveRequests).where(eq(studentLeaveRequests.id, id));
+    return { success: true };
+  }
+
+  async deleteLeaveRequest(id: number, teacherId: number): Promise<{ success: boolean; reason?: string }> {
+    const leave = await this.getLeaveRequestById(id);
+    if (!leave) return { success: false, reason: "not_found" };
+    if (leave.teacherId !== teacherId) return { success: false, reason: "forbidden" };
+    if (leave.status !== "pending") return { success: false, reason: "not_pending" };
+    await db.delete(leaveRequests).where(eq(leaveRequests.id, id));
+    return { success: true };
+  }
+
   async markAttendanceAsLeave(studentId: number, teacherId: number | null, schoolId: number, startDate: string, endDate: string): Promise<void> {
     const start = new Date(startDate);
     const end = new Date(endDate);
