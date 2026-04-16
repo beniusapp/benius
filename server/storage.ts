@@ -73,6 +73,13 @@ export class DatabaseStorage {
     return user || undefined;
   }
 
+  async getUserByRecoveryEmail(recoveryEmail: string, schoolId: number): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(
+      and(eq(users.recoveryEmail, recoveryEmail), eq(users.schoolId, schoolId))
+    );
+    return user || undefined;
+  }
+
   async getUserWithSchool(userId: number): Promise<{ user: User; school: School } | undefined> {
     const result = await db
       .select()
@@ -2625,8 +2632,8 @@ export class DatabaseStorage {
     return true;
   }
 
-  async logSecurityEvent(userId: number, schoolId: number, eventType: string, success: boolean, ipAddress: string | null, userAgent: string | null): Promise<void> {
-    await db.insert(securityAudit).values({ userId, schoolId, eventType, success, ipAddress, userAgent });
+  async logSecurityEvent(userId: number | null, schoolId: number | null, action: string, success: boolean, ipAddress: string | null, userAgent: string | null): Promise<void> {
+    await db.insert(securityAudit).values({ userId: userId ?? undefined, schoolId: schoolId ?? undefined, action, success, ipAddress, userAgent });
   }
 
   async getSecurityAuditLog(userId: number, limit = 20): Promise<import("@shared/schema").SecurityAudit[]> {

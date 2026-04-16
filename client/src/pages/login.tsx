@@ -17,7 +17,7 @@ const credSchema = z.object({
   email: z.string().email("Enter a valid email address"),
   password: z.string().min(1, "Password is required"),
 });
-const forgotSchema = z.object({ email: z.string().email(), schoolCode: z.string().min(1, "School code required") });
+const forgotSchema = z.object({ recoveryEmail: z.string().email("Enter your registered recovery email"), schoolCode: z.string().min(1, "School code required") });
 const otpSchema = z.object({ otp: z.string().length(6, "Enter all 6 digits") });
 const resetSchema = z.object({
   newPassword: z.string().min(6, "Minimum 6 characters"),
@@ -73,14 +73,13 @@ export default function Login() {
   const [pin, setPin] = useState("");
   const [resetPin, setResetPin] = useState("");
   const [newPin, setNewPin] = useState("");
-  const [savedEmail, setSavedEmail] = useState("");
   const [otpDisplay, setOtpDisplay] = useState("");
   const [maskedRecoveryEmail, setMaskedRecoveryEmail] = useState("");
   const [resetToken, setResetToken] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
   const credForm = useForm<CredForm>({ resolver: zodResolver(credSchema), defaultValues: { email: "", password: "" } });
-  const forgotForm = useForm<ForgotForm>({ resolver: zodResolver(forgotSchema), defaultValues: { email: "", schoolCode: "" } });
+  const forgotForm = useForm<ForgotForm>({ resolver: zodResolver(forgotSchema), defaultValues: { recoveryEmail: "", schoolCode: "" } });
   const otpForm = useForm<z.infer<typeof otpSchema>>({ resolver: zodResolver(otpSchema), defaultValues: { otp: "" } });
   const resetForm = useForm<ResetForm>({ resolver: zodResolver(resetSchema), defaultValues: { newPassword: "", confirmPassword: "", newPin: "" } });
 
@@ -117,7 +116,6 @@ export default function Login() {
     },
     onSuccess: (data) => {
       setErrorMessage("");
-      setSavedEmail(forgotForm.getValues("email"));
       setOtpDisplay(data.otp);
       setMaskedRecoveryEmail(data.recoveryEmail || "");
       setStep("forgot-otp");
@@ -127,7 +125,7 @@ export default function Login() {
 
   const verifyOtpMutation = useMutation({
     mutationFn: async (data: z.infer<typeof otpSchema>) => {
-      const res = await apiRequest("POST", "/api/admin/verify-otp", { email: savedEmail, otp: data.otp });
+      const res = await apiRequest("POST", "/api/admin/verify-otp", { otp: data.otp });
       return res.json();
     },
     onSuccess: (data) => {
@@ -159,7 +157,6 @@ export default function Login() {
   const resetMutation = useMutation({
     mutationFn: async (data: ResetForm) => {
       const res = await apiRequest("POST", "/api/admin/reset-password", {
-        email: savedEmail,
         resetToken,
         newPassword: data.newPassword,
         newPin: data.newPin || undefined,
@@ -282,7 +279,7 @@ export default function Login() {
                 <CardTitle className="flex items-center justify-center gap-2 text-xl">
                   <Mail className="w-5 h-5" /> Forgot Password
                 </CardTitle>
-                <CardDescription>Enter your admin email and school code to receive a recovery OTP</CardDescription>
+                <CardDescription>Enter your recovery email and school code to get a one-time password</CardDescription>
               </CardHeader>
               <CardContent>
                 <Form {...forgotForm}>
@@ -292,10 +289,11 @@ export default function Login() {
                         <AlertCircle className="w-4 h-4 shrink-0" /> {errorMessage}
                       </div>
                     )}
-                    <FormField control={forgotForm.control} name="email" render={({ field }) => (
+                    <FormField control={forgotForm.control} name="recoveryEmail" render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Admin Email</FormLabel>
-                        <FormControl><Input type="email" placeholder="principal@school.com" data-testid="input-forgot-email" {...field} /></FormControl>
+                        <FormLabel>Recovery Email</FormLabel>
+                        <FormControl><Input type="email" placeholder="backup@gmail.com" data-testid="input-forgot-email" {...field} /></FormControl>
+                        <p className="text-xs text-muted-foreground">The recovery email you set up when you first initialized your account.</p>
                         <FormMessage />
                       </FormItem>
                     )} />
@@ -330,7 +328,7 @@ export default function Login() {
               <CardContent className="space-y-4">
                 {otpDisplay && (
                   <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-center">
-                    <p className="text-xs text-amber-600 font-medium mb-1">Your OTP (valid 15 min)</p>
+                    <p className="text-xs text-amber-600 font-medium mb-1">Your OTP (valid 10 min)</p>
                     <p className="text-3xl font-mono font-bold tracking-widest text-amber-700" data-testid="text-otp-display">{otpDisplay}</p>
                     {maskedRecoveryEmail && (
                       <p className="text-xs text-amber-600 mt-2">Would be sent to: <span className="font-semibold">{maskedRecoveryEmail}</span></p>

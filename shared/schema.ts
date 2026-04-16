@@ -382,9 +382,9 @@ export type User = typeof users.$inferSelect;
 
 export const securityAudit = pgTable("security_audit", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  schoolId: integer("school_id").notNull(),
-  eventType: varchar("event_type", { length: 50 }).notNull(),
+  userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id"),
+  action: varchar("action", { length: 50 }).notNull(),
   success: boolean("success").notNull().default(true),
   ipAddress: text("ip_address"),
   userAgent: text("user_agent"),

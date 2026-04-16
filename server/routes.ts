@@ -19,6 +19,7 @@ declare module "express-session" {
     studentId?: number;
     teacherId?: number;
     pendingUserId?: number;
+    pendingForgotUserId?: number;
     pendingResetUserId?: number;
   }
 }
@@ -184,10 +185,12 @@ export async function registerRoutes(
 
     const user = await storage.getUserByEmail(parsed.data.email);
     if (!user) {
+      await storage.logSecurityEvent(null, null, "login_unknown_email", false, req.ip || null, req.headers["user-agent"] || null);
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
     if (!user.isActive) {
+      await storage.logSecurityEvent(user.id, user.schoolId, "login_deactivated", false, req.ip || null, req.headers["user-agent"] || null);
       return res.status(403).json({ message: "This account has been deactivated. Please contact your administrator." });
     }
 
@@ -199,14 +202,14 @@ export async function registerRoutes(
 
     if (!user.isInitialized) {
       req.session.pendingUserId = user.id;
-      delete (req.session as any).userId;
-      delete (req.session as any).teacherId;
+      req.session.userId = undefined;
+      req.session.teacherId = undefined;
       return res.json({ requiresInit: true });
     }
 
     req.session.pendingUserId = user.id;
-    delete (req.session as any).userId;
-    delete (req.session as any).teacherId;
+    req.session.userId = undefined;
+    req.session.teacherId = undefined;
     return res.json({ requiresPinStep: true });
   });
 
@@ -238,14 +241,14 @@ export async function registerRoutes(
     );
 
     const userData = await storage.getUserWithSchool(pendingUserId);
-    delete (req.session as any).pendingUserId;
+    req.session.pendingUserId = undefined;
     req.session.userId = pendingUserId;
-    delete (req.session as any).teacherId;
+    req.session.teacherId = undefined;
     if (userData) {
       req.session.schoolId = userData.school.id;
       req.session.userRole = userData.user.role;
     }
-    await storage.logSecurityEvent(pendingUserId, req.session.schoolId ?? 0, "init_complete", true, req.ip || null, req.headers["user-agent"] || null);
+    await storage.logSecurityEvent(pendingUserId, req.session.schoolId ?? null, "init_complete", true, req.ip || null, req.headers["user-agent"] || null);
     res.json({ message: "Account initialized" });
   });
 
@@ -258,7 +261,7 @@ export async function registerRoutes(
     if (!parsed.success) return res.status(400).json({ message: "Invalid PIN format" });
 
     const user = await storage.getUserById(pendingUserId);
-    const schoolId = user?.schoolId ?? 0;
+    const schoolId = user?.schoolId ?? null;
 
     const valid = await storage.verifyAdminPin(pendingUserId, parsed.data.pin);
     if (!valid) {
@@ -267,50 +270,55 @@ export async function registerRoutes(
     }
 
     const userData = await storage.getUserWithSchool(pendingUserId);
-    delete (req.session as any).pendingUserId;
+    req.session.pendingUserId = undefined;
     req.session.userId = pendingUserId;
-    delete (req.session as any).teacherId;
+    req.session.teacherId = undefined;
     if (userData) {
       req.session.schoolId = userData.school.id;
       req.session.userRole = userData.user.role;
     }
-    await storage.logSecurityEvent(pendingUserId, req.session.schoolId ?? 0, "login_success", true, req.ip || null, req.headers["user-agent"] || null);
+    await storage.logSecurityEvent(pendingUserId, req.session.schoolId ?? null, "login_success", true, req.ip || null, req.headers["user-agent"] || null);
     res.json({ message: "Login successful" });
   });
 
   app.post("/api/admin/forgot-password", async (req, res) => {
-    const schema = z.object({ email: z.string().email(), schoolCode: z.string().min(1) });
+    const schema = z.object({ recoveryEmail: z.string().email(), schoolCode: z.string().min(1) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid request" });
 
     const school = await storage.getSchoolByCode(parsed.data.schoolCode.toUpperCase());
     if (!school) return res.status(404).json({ message: "School code not found" });
 
-    const user = await storage.getUserByEmail(parsed.data.email);
-    if (!user || user.schoolId !== school.id) {
-      return res.status(404).json({ message: "No account found with those details" });
+    const user = await storage.getUserByRecoveryEmail(parsed.data.recoveryEmail, school.id);
+    if (!user) {
+      return res.status(404).json({ message: "No account found with that recovery email and school code" });
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
     await storage.setAdminOtp(user.id, otp, expiresAt);
+    req.session.pendingForgotUserId = user.id;
     const recoveryEmailMasked = user.recoveryEmail
       ? user.recoveryEmail.replace(/(.{2}).*(@.*)/, "$1***$2")
       : null;
-    res.json({ message: "OTP generated", otp, expiresIn: 15, recoveryEmail: recoveryEmailMasked });
+    res.json({ message: "OTP generated", otp, expiresIn: 10, recoveryEmail: recoveryEmailMasked });
   });
 
   app.post("/api/admin/verify-otp", async (req, res) => {
-    const schema = z.object({ email: z.string().email(), otp: z.string().length(6) });
+    const pendingForgotUserId = req.session.pendingForgotUserId;
+    if (!pendingForgotUserId) return res.status(401).json({ message: "No pending forgot-password session" });
+
+    const schema = z.object({ otp: z.string().length(6) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid request" });
 
-    const user = await storage.getUserByEmail(parsed.data.email);
+    const user = await storage.getUserById(pendingForgotUserId);
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const valid = await storage.verifyAndConsumeAdminOtp(user.id, parsed.data.otp);
     if (!valid) return res.status(400).json({ message: "Invalid or expired OTP" });
 
+    req.session.pendingForgotUserId = undefined;
     req.session.pendingResetUserId = user.id;
     const hasPinSetup = !!user.pinHash;
     res.json({ message: "OTP verified", requiresPinStep: hasPinSetup });
@@ -324,9 +332,10 @@ export async function registerRoutes(
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid PIN format" });
 
+    const user = await storage.getUserById(pendingResetUserId);
     const valid = await storage.verifyAdminPin(pendingResetUserId, parsed.data.pin);
     if (!valid) {
-      await storage.logSecurityEvent(pendingResetUserId, 0, "pin_failed", false, req.ip || null, req.headers["user-agent"] || null);
+      await storage.logSecurityEvent(pendingResetUserId, user?.schoolId ?? null, "pin_failed", false, req.ip || null, req.headers["user-agent"] || null);
       return res.status(401).json({ message: "Incorrect PIN" });
     }
 
@@ -335,8 +344,10 @@ export async function registerRoutes(
   });
 
   app.post("/api/admin/reset-password", async (req, res) => {
+    const pendingResetUserId = req.session.pendingResetUserId;
+    if (!pendingResetUserId) return res.status(401).json({ message: "No pending reset session" });
+
     const schema = z.object({
-      email: z.string().email(),
       resetToken: z.string().min(1),
       newPassword: z.string().min(6),
       newPin: z.string().length(6).regex(/^\d{6}$/).optional(),
@@ -344,11 +355,15 @@ export async function registerRoutes(
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid data" });
 
+    const user = await storage.getUserById(pendingResetUserId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
     const newPasswordHash = await bcrypt.hash(parsed.data.newPassword, 10);
     const newPinHash = parsed.data.newPin ? await bcrypt.hash(parsed.data.newPin, 12) : undefined;
-    const ok = await storage.resetAdminPasswordWithToken(parsed.data.email, parsed.data.resetToken, newPasswordHash, newPinHash);
+    const ok = await storage.resetAdminPasswordWithToken(user.email, parsed.data.resetToken, newPasswordHash, newPinHash);
     if (!ok) return res.status(400).json({ message: "Invalid or expired reset token" });
-    delete (req.session as any).pendingResetUserId;
+    req.session.pendingResetUserId = undefined;
+    await storage.logSecurityEvent(user.id, user.schoolId, "password_reset", true, req.ip || null, req.headers["user-agent"] || null);
     res.json({ message: "Password reset successful" });
   });
 

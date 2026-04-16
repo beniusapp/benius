@@ -200,15 +200,24 @@ app.use((req, res, next) => {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires_at TIMESTAMP;
     CREATE TABLE IF NOT EXISTS security_audit (
       id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      school_id INTEGER NOT NULL,
-      event_type VARCHAR(50) NOT NULL,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      school_id INTEGER,
+      action VARCHAR(50) NOT NULL DEFAULT 'unknown',
       success BOOLEAN NOT NULL DEFAULT TRUE,
       ip_address TEXT,
       user_agent TEXT,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
     ALTER TABLE security_audit ADD COLUMN IF NOT EXISTS success BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE security_audit ADD COLUMN IF NOT EXISTS action VARCHAR(50);
+    ALTER TABLE security_audit ALTER COLUMN user_id DROP NOT NULL;
+    ALTER TABLE security_audit ALTER COLUMN school_id DROP NOT NULL;
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='security_audit' AND column_name='event_type') THEN
+        UPDATE security_audit SET action = event_type WHERE action IS NULL;
+      END IF;
+    END $$;
+    UPDATE security_audit SET action = 'unknown' WHERE action IS NULL;
   `);
 
   await registerRoutes(httpServer, app);

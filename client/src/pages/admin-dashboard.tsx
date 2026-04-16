@@ -186,10 +186,14 @@ function AdminProfilePanel({ me, onClose }: { me: any; onClose: () => void }) {
   const EVENT_LABELS: Record<string, string> = {
     login_success: "Login successful",
     login_failed: "Login attempt failed",
-    pin_verified: "PIN verified",
+    login_unknown_email: "Unknown email login attempt",
+    login_deactivated: "Deactivated account login attempt",
     pin_failed: "PIN attempt failed",
     password_changed: "Password changed",
+    password_change_failed: "Password change failed",
+    password_reset: "Password reset via OTP",
     pin_changed: "PIN changed",
+    pin_change_failed: "PIN change failed",
     init_complete: "Account initialized",
   };
 
@@ -349,8 +353,8 @@ function AdminProfilePanel({ me, onClose }: { me: any; onClose: () => void }) {
                 secLog.map((ev: any) => (
                   <div key={ev.id} className="p-3 rounded-lg border bg-gray-50 space-y-1">
                     <div className="flex items-center justify-between">
-                      <span className={`text-xs font-semibold ${ev.eventType.includes("failed") ? "text-red-600" : "text-emerald-600"}`}>
-                        {EVENT_LABELS[ev.eventType] ?? ev.eventType}
+                      <span className={`text-xs font-semibold ${(ev.action || "").includes("failed") || (ev.action || "").includes("unknown") || (ev.action || "").includes("deactivated") ? "text-red-600" : "text-emerald-600"}`}>
+                        {EVENT_LABELS[ev.action] ?? ev.action}
                       </span>
                       <span className="text-[10px] text-gray-400">
                         {new Date(ev.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })} {new Date(ev.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}
