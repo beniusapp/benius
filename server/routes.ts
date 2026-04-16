@@ -273,6 +273,7 @@ export async function registerRoutes(
     if (!parsed.success) return res.status(400).json({ message: "Invalid request" });
 
     if (!req.session.pendingPinToken || parsed.data.tempToken !== req.session.pendingPinToken) {
+      await storage.logSecurityEvent(pendingPinUserId, null, "invalid_challenge_token", false, req.ip || null, req.headers["user-agent"] || null);
       return res.status(401).json({ message: "Invalid or expired challenge token" });
     }
 
