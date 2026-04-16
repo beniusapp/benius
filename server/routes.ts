@@ -213,7 +213,7 @@ export async function registerRoutes(
     req.session.pendingInitUserId = undefined;
     req.session.userId = undefined;
     req.session.teacherId = undefined;
-    return res.json({ requiresPinStep: true });
+    return res.json({ requiresPin: true });
   });
 
   app.post("/api/admin/initialize", async (req, res) => {
@@ -334,10 +334,10 @@ export async function registerRoutes(
 
     if (!hasPinSetup) {
       const updatedUser = await storage.getUserById(user.id);
-      return res.json({ message: "OTP verified", requiresPinStep: false, resetToken: updatedUser?.resetToken });
+      return res.json({ message: "OTP verified", requiresPin: false, resetToken: updatedUser?.resetToken });
     }
 
-    res.json({ message: "OTP verified", requiresPinStep: true });
+    res.json({ message: "OTP verified", requiresPin: true });
   });
 
   app.post("/api/admin/verify-reset-pin", async (req, res) => {

@@ -91,7 +91,7 @@ export default function Login() {
     onSuccess: (data) => {
       setErrorMessage("");
       if (data.requiresInit) { setLocation("/admin-setup"); return; }
-      if (data.requiresPinStep) { setPin(""); setStep("pin"); }
+      if (data.requiresPin) { setPin(""); setStep("pin"); }
     },
     onError: (e: Error) => setErrorMessage(e.message || "Invalid credentials"),
   });
@@ -131,7 +131,7 @@ export default function Login() {
     onSuccess: (data) => {
       setErrorMessage("");
       setResetPin("");
-      if (data.requiresPinStep) {
+      if (data.requiresPin) {
         setStep("forgot-pin");
       } else {
         setResetToken(data.resetToken || "");
