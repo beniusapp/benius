@@ -260,7 +260,7 @@ export default function AdminSetup() {
                     )} />
                     <FormField control={form.control} name="recoveryPhone" render={({ field }) => (
                       <FormItem>
-                        <FormLabel className="text-xs text-gray-600">Recovery Phone <span className="text-gray-400">(optional)</span></FormLabel>
+                        <FormLabel className="text-xs text-gray-600">Recovery Phone</FormLabel>
                         <FormControl>
                           <Input type="tel" placeholder="+91 98765 43210" data-testid="input-recovery-phone" {...field} />
                         </FormControl>
