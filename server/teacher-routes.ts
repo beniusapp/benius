@@ -1063,6 +1063,21 @@ export function registerTeacherRoutes(app: Express) {
     const { leaveType, startDate, endDate, reason } = req.body;
     if (!leaveType || !startDate || !endDate || !reason) return res.status(400).json({ message: "All fields required" });
 
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) {
+      return res.status(400).json({ message: "Invalid date range" });
+    }
+    const daysRequested = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+
+    const balances = await storage.getTeacherLeaveBalanceByPolicies(teacher.id, teacher.schoolId);
+    const matchedBalance = balances.find(b => b.name.toLowerCase() === leaveType.toLowerCase());
+    if (matchedBalance !== undefined && matchedBalance.remaining < daysRequested) {
+      return res.status(400).json({
+        message: `Insufficient ${leaveType} balance. ${matchedBalance.remaining} day(s) remaining, ${daysRequested} day(s) requested.`,
+      });
+    }
+
     const leave = await storage.createLeaveRequest({
       teacherId: teacher.id, schoolId: teacher.schoolId, leaveType, startDate, endDate, reason, status: "pending",
     });
@@ -1111,7 +1126,9 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const schoolId = parseInt(req.params.schoolId);
     if (isNaN(schoolId)) return res.status(400).json({ message: "Invalid school ID" });
-    const policies = await storage.getActiveLeavePoliciesBySchool(schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const isAdmin = !!req.session.userId && req.session.userRole !== "teacher";
+    const policies = await storage.getActiveLeavePoliciesBySchool(schoolId, isAdmin ? undefined : "teacher");
     res.json(policies);
   });
 

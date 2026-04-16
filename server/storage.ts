@@ -1582,10 +1582,12 @@ export class DatabaseStorage {
       .orderBy(leavePolicies.createdAt);
   }
 
-  async getActiveLeavePoliciesBySchool(schoolId: number): Promise<LeavePolicy[]> {
-    return await db.select().from(leavePolicies)
+  async getActiveLeavePoliciesBySchool(schoolId: number, requesterRole?: "teacher" | "non_teaching"): Promise<LeavePolicy[]> {
+    const all = await db.select().from(leavePolicies)
       .where(and(eq(leavePolicies.schoolId, schoolId), eq(leavePolicies.isActive, true)))
       .orderBy(leavePolicies.createdAt);
+    if (!requesterRole) return all;
+    return all.filter(p => p.targetRoles === "all" || p.targetRoles === requesterRole);
   }
 
   async createLeavePolicy(data: InsertLeavePolicy): Promise<LeavePolicy> {
@@ -1641,7 +1643,7 @@ export class DatabaseStorage {
     remaining: number;
     validUntil: string;
   }[]> {
-    const policies = await this.getActiveLeavePoliciesBySchool(schoolId);
+    const policies = await this.getActiveLeavePoliciesBySchool(schoolId, "teacher");
     if (policies.length === 0) return [];
 
     const today = new Date();

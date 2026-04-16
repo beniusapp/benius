@@ -24,6 +24,17 @@ interface LeavePolicyLocal {
   editing: boolean;
 }
 
+interface LeavePolicyServerData {
+  id: number;
+  name: string;
+  annualLimit: number;
+  targetRoles: string;
+  renewalMonth: number;
+  renewalDay: number;
+  expiryBehavior: string;
+  isActive: boolean;
+}
+
 function emptyPolicy(): LeavePolicyLocal {
   return { name: "", annualLimit: "12", targetRoles: "all", renewalMonth: "1", renewalDay: "1", expiryBehavior: "expire", isActive: true, editing: true };
 }
@@ -317,7 +328,7 @@ export default function SchoolSetup({ schoolId }: Props) {
     enabled: !!schoolId,
   });
 
-  const { data: leavePolicyData } = useQuery({
+  const { data: leavePolicyData } = useQuery<LeavePolicyServerData[]>({
     queryKey: ["/api/admin/leave-policies"],
     queryFn: async () => {
       const r = await fetch("/api/admin/leave-policies", { credentials: "include" });
@@ -338,7 +349,7 @@ export default function SchoolSetup({ schoolId }: Props) {
 
   useEffect(() => {
     if (leavePolicyData && !leavePoliciesLoaded) {
-      setLeavePolicies((leavePolicyData as any[]).map((p: any) => ({
+      setLeavePolicies(leavePolicyData.map((p: LeavePolicyServerData) => ({
         id: p.id, name: p.name, annualLimit: String(p.annualLimit),
         targetRoles: p.targetRoles, renewalMonth: String(p.renewalMonth),
         renewalDay: String(p.renewalDay), expiryBehavior: p.expiryBehavior,
@@ -434,8 +445,8 @@ export default function SchoolSetup({ schoolId }: Props) {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/grading-tiers"] });
       setPolicyLoaded(false);
       toast({ title: "Tier saved", description: `"${tier.name}" updated successfully.` });
-    } catch (e: any) {
-      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    } catch (e) {
+      toast({ title: "Save failed", description: e instanceof Error ? e.message : "An error occurred", variant: "destructive" });
     } finally {
       setSavingTierId(null);
     }
@@ -541,29 +552,29 @@ export default function SchoolSetup({ schoolId }: Props) {
         </div>
 
         {leavePolicies.length === 0 && (
-          <div className="rounded-xl border border-dashed border-white/10 p-8 text-center">
-            <CalendarClock className="w-8 h-8 mx-auto mb-2 text-white/20" />
-            <p className="text-white/30 text-sm">No leave types configured yet.</p>
-            <p className="text-white/20 text-xs mt-1">Click "Add Leave Type" to create your first leave policy (e.g. Sick Leave, 12 days).</p>
+          <div className="rounded-xl border border-dashed border-gray-200 p-8 text-center">
+            <CalendarClock className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+            <p className="text-gray-500 text-sm">No leave types configured yet.</p>
+            <p className="text-gray-400 text-xs mt-1">Click "Add Leave Type" to create your first leave policy (e.g. Sick Leave, 12 days).</p>
           </div>
         )}
 
         <div className="space-y-3">
           {leavePolicies.map((policy, idx) => (
-            <div key={idx} className="rounded-xl border border-white/10 bg-[#1A2942] overflow-hidden" data-testid={`leave-policy-card-${idx}`}>
+            <div key={idx} className="rounded-xl border border-gray-200 bg-white overflow-hidden" data-testid={`leave-policy-card-${idx}`}>
               {!policy.editing ? (
                 <div className="flex items-center gap-3 px-5 py-4">
-                  <div className="p-1.5 rounded-lg bg-[#D4AF37]/20">
+                  <div className="p-1.5 rounded-lg bg-[#D4AF37]/10">
                     <CalendarClock className="w-4 h-4 text-[#D4AF37]" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-white text-sm">{policy.name}</p>
-                    <p className="text-white/40 text-xs">
+                    <p className="font-semibold text-gray-900 text-sm">{policy.name}</p>
+                    <p className="text-gray-500 text-xs">
                       {policy.annualLimit} days/year · Renews {MONTHS[parseInt(policy.renewalMonth) - 1]} {policy.renewalDay} · {policy.expiryBehavior === "carry_forward" ? "Carry forward" : "Expires"} · {policy.isActive ? "Active" : "Inactive"}
                     </p>
                   </div>
                   <Button size="sm" variant="ghost" onClick={() => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, editing: true } : p))}
-                    className="text-white/50 hover:text-white h-8 text-xs" data-testid={`btn-edit-leave-policy-${idx}`}>
+                    className="text-gray-500 hover:text-gray-900 h-8 text-xs" data-testid={`btn-edit-leave-policy-${idx}`}>
                     Edit
                   </Button>
                   <Button size="sm" variant="ghost" onClick={async () => {
@@ -578,7 +589,7 @@ export default function SchoolSetup({ schoolId }: Props) {
                       }
                     }
                     setLeavePolicies(prev => prev.filter((_, i) => i !== idx));
-                  }} className="text-red-400/60 hover:text-red-400 h-8" data-testid={`btn-delete-leave-policy-${idx}`}>
+                  }} className="text-red-400 hover:text-red-600 h-8" data-testid={`btn-delete-leave-policy-${idx}`}>
                     <Trash2 className="w-3.5 h-3.5" />
                   </Button>
                 </div>
@@ -586,49 +597,49 @@ export default function SchoolSetup({ schoolId }: Props) {
                 <div className="p-5 space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="text-xs text-white/50 mb-1 block">Leave Type Name</label>
+                      <label className="text-xs font-medium text-gray-700 mb-1 block">Leave Type Name</label>
                       <Input value={policy.name} onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, name: e.target.value } : p))}
-                        placeholder="e.g. Sick Leave" className="bg-[#0A1628] border-white/20 text-white text-sm h-9"
+                        placeholder="e.g. Sick Leave" className="bg-white border-gray-300 text-gray-900 text-sm h-9"
                         data-testid={`input-leave-name-${idx}`} />
                     </div>
                     <div>
-                      <label className="text-xs text-white/50 mb-1 block">Annual Limit (days)</label>
+                      <label className="text-xs font-medium text-gray-700 mb-1 block">Annual Limit (days)</label>
                       <Input type="number" min={1} max={365} value={policy.annualLimit}
                         onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, annualLimit: e.target.value } : p))}
-                        placeholder="12" className="bg-[#0A1628] border-white/20 text-white text-sm h-9"
+                        placeholder="12" className="bg-white border-gray-300 text-gray-900 text-sm h-9"
                         data-testid={`input-leave-limit-${idx}`} />
                     </div>
                     <div>
-                      <label className="text-xs text-white/50 mb-1 block">Renewal Month</label>
+                      <label className="text-xs font-medium text-gray-700 mb-1 block">Renewal Month</label>
                       <select value={policy.renewalMonth}
                         onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, renewalMonth: e.target.value } : p))}
-                        className="w-full h-9 rounded-md bg-[#0A1628] border border-white/20 text-white text-sm px-3"
+                        className="w-full h-9 rounded-md bg-white border border-gray-300 text-gray-900 text-sm px-3"
                         data-testid={`select-renewal-month-${idx}`}>
                         {MONTHS.map((m, mi) => <option key={mi} value={mi + 1}>{m}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="text-xs text-white/50 mb-1 block">Renewal Day</label>
+                      <label className="text-xs font-medium text-gray-700 mb-1 block">Renewal Day</label>
                       <Input type="number" min={1} max={28} value={policy.renewalDay}
                         onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, renewalDay: e.target.value } : p))}
-                        placeholder="1" className="bg-[#0A1628] border-white/20 text-white text-sm h-9"
+                        placeholder="1" className="bg-white border-gray-300 text-gray-900 text-sm h-9"
                         data-testid={`input-renewal-day-${idx}`} />
                     </div>
                     <div>
-                      <label className="text-xs text-white/50 mb-1 block">Expiry Behaviour</label>
+                      <label className="text-xs font-medium text-gray-700 mb-1 block">Expiry Behaviour</label>
                       <select value={policy.expiryBehavior}
                         onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, expiryBehavior: e.target.value } : p))}
-                        className="w-full h-9 rounded-md bg-[#0A1628] border border-white/20 text-white text-sm px-3"
+                        className="w-full h-9 rounded-md bg-white border border-gray-300 text-gray-900 text-sm px-3"
                         data-testid={`select-expiry-${idx}`}>
                         <option value="expire">Expire unused days</option>
                         <option value="carry_forward">Carry forward unused days</option>
                       </select>
                     </div>
                     <div>
-                      <label className="text-xs text-white/50 mb-1 block">Target Roles</label>
+                      <label className="text-xs font-medium text-gray-700 mb-1 block">Target Roles</label>
                       <select value={policy.targetRoles}
                         onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, targetRoles: e.target.value } : p))}
-                        className="w-full h-9 rounded-md bg-[#0A1628] border border-white/20 text-white text-sm px-3"
+                        className="w-full h-9 rounded-md bg-white border border-gray-300 text-gray-900 text-sm px-3"
                         data-testid={`select-target-roles-${idx}`}>
                         <option value="all">All Staff</option>
                         <option value="teacher">Teaching Staff</option>
@@ -641,7 +652,7 @@ export default function SchoolSetup({ schoolId }: Props) {
                       <input type="checkbox" checked={policy.isActive}
                         onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, isActive: e.target.checked } : p))}
                         className="rounded" data-testid={`checkbox-active-${idx}`} />
-                      <span className="text-xs text-white/60">Active</span>
+                      <span className="text-xs text-gray-600 font-medium">Active</span>
                     </label>
                   </div>
                   <div className="flex gap-2">
@@ -670,8 +681,8 @@ export default function SchoolSetup({ schoolId }: Props) {
                           setLeavePoliciesLoaded(false);
                           toast({ title: "Leave policy saved", description: `"${policy.name.trim()}" updated.` });
                           setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, editing: false } : p));
-                        } catch (e: any) {
-                          toast({ title: "Save failed", description: e.message, variant: "destructive" });
+                        } catch (e) {
+                          toast({ title: "Save failed", description: e instanceof Error ? e.message : "An error occurred", variant: "destructive" });
                         } finally {
                           setSavingPolicyIdx(null);
                         }
@@ -680,14 +691,14 @@ export default function SchoolSetup({ schoolId }: Props) {
                     </Button>
                     {policy.id && (
                       <Button size="sm" variant="ghost"
-                        className="text-white/40 hover:text-white/70 h-9"
+                        className="text-gray-500 hover:text-gray-700 h-9"
                         onClick={() => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, editing: false } : p))}>
                         Cancel
                       </Button>
                     )}
                     {!policy.id && (
                       <Button size="sm" variant="ghost"
-                        className="text-red-400/60 hover:text-red-400 h-9"
+                        className="text-red-400 hover:text-red-600 h-9"
                         onClick={() => setLeavePolicies(prev => prev.filter((_, i) => i !== idx))}>
                         <Trash2 className="w-3.5 h-3.5 mr-1" /> Remove
                       </Button>
