@@ -1070,8 +1070,14 @@ export function registerTeacherRoutes(app: Express) {
     }
     const daysRequested = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
+    const eligiblePolicies = await storage.getActiveLeavePoliciesBySchool(teacher.schoolId, "teacher");
+    const matchedPolicy = eligiblePolicies.find(p => p.name.toLowerCase() === leaveType.toLowerCase());
+    if (!matchedPolicy) {
+      return res.status(400).json({ message: `"${leaveType}" is not an active leave type for your school.` });
+    }
+
     const balances = await storage.getTeacherLeaveBalanceByPolicies(teacher.id, teacher.schoolId);
-    const matchedBalance = balances.find(b => b.name.toLowerCase() === leaveType.toLowerCase());
+    const matchedBalance = balances.find(b => b.policyId === matchedPolicy.id);
     if (matchedBalance !== undefined && matchedBalance.remaining < daysRequested) {
       return res.status(400).json({
         message: `Insufficient ${leaveType} balance. ${matchedBalance.remaining} day(s) remaining, ${daysRequested} day(s) requested.`,
