@@ -10,6 +10,7 @@ import * as XLSX from "xlsx";
 import { registerTeacherRoutes } from "./teacher-routes";
 import { db } from "./db";
 import { eq, and, sql, inArray } from "drizzle-orm";
+import { randomBytes } from "node:crypto";
 
 declare module "express-session" {
   interface SessionData {
@@ -20,6 +21,7 @@ declare module "express-session" {
     teacherId?: number;
     pendingInitUserId?: number;
     pendingPinUserId?: number;
+    pendingPinToken?: string;
     pendingForgotUserId?: number;
     pendingResetUserId?: number;
   }
@@ -210,12 +212,14 @@ export async function registerRoutes(
       return res.json({ requiresInit: true });
     }
 
+    const tempToken = randomBytes(32).toString("hex");
     req.session.pendingPinUserId = user.id;
+    req.session.pendingPinToken = tempToken;
     req.session.pendingInitUserId = undefined;
     req.session.userId = undefined;
     req.session.teacherId = undefined;
     await storage.logSecurityEvent(user.id, user.schoolId, "pin_required", true, req.ip || null, req.headers["user-agent"] || null);
-    return res.json({ requiresPin: true });
+    return res.json({ requiresPin: true, tempToken });
   });
 
   app.post("/api/admin/initialize", async (req, res) => {
@@ -264,9 +268,13 @@ export async function registerRoutes(
     const pendingPinUserId = req.session.pendingPinUserId;
     if (!pendingPinUserId) return res.status(401).json({ message: "No pending PIN session" });
 
-    const schema = z.object({ pin: z.string().length(6) });
+    const schema = z.object({ pin: z.string().length(6), tempToken: z.string().optional() });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid PIN format" });
+
+    if (parsed.data.tempToken && req.session.pendingPinToken && parsed.data.tempToken !== req.session.pendingPinToken) {
+      return res.status(401).json({ message: "Invalid challenge token" });
+    }
 
     const user = await storage.getUserById(pendingPinUserId);
     const schoolId = user?.schoolId ?? null;
@@ -279,6 +287,7 @@ export async function registerRoutes(
 
     const userData = await storage.getUserWithSchool(pendingPinUserId);
     req.session.pendingPinUserId = undefined;
+    req.session.pendingPinToken = undefined;
     req.session.userId = pendingPinUserId;
     req.session.teacherId = undefined;
     if (userData) {
@@ -405,7 +414,7 @@ export async function registerRoutes(
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
     const schema = z.object({
       recoveryEmail: z.string().email().optional().or(z.literal("")),
-      recoveryPhone: z.string().min(7, "Enter a valid phone number").max(20),
+      recoveryPhone: z.string().min(7, "Enter a valid phone number").max(20).optional().or(z.literal("")),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid data" });

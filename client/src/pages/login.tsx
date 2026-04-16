@@ -76,6 +76,7 @@ export default function Login() {
   const [otpDisplay, setOtpDisplay] = useState("");
   const [maskedRecoveryEmail, setMaskedRecoveryEmail] = useState("");
   const [resetToken, setResetToken] = useState("");
+  const [tempToken, setTempToken] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
   const credForm = useForm<CredForm>({ resolver: zodResolver(credSchema), defaultValues: { email: "", password: "" } });
@@ -91,14 +92,14 @@ export default function Login() {
     onSuccess: (data) => {
       setErrorMessage("");
       if (data.requiresInit) { setLocation("/admin-setup"); return; }
-      if (data.requiresPin) { setPin(""); setStep("pin"); }
+      if (data.requiresPin) { setPin(""); setTempToken(data.tempToken || ""); setStep("pin"); }
     },
     onError: (e: Error) => setErrorMessage(e.message || "Invalid credentials"),
   });
 
   const verifyPinMutation = useMutation({
     mutationFn: async (p: string) => {
-      const res = await apiRequest("POST", "/api/admin/verify-pin", { pin: p });
+      const res = await apiRequest("POST", "/api/admin/verify-pin", { pin: p, ...(tempToken ? { tempToken } : {}) });
       return res.json();
     },
     onSuccess: () => {

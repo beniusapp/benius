@@ -34,6 +34,7 @@ import {
 import { db } from "./db";
 import { pool } from "./db";
 import { eq, sql, like, count, and, desc, gte, lte, or, ilike, isNull, inArray, type SQL } from "drizzle-orm";
+import { randomBytes } from "node:crypto";
 
 export class DatabaseStorage {
   async getSchools(): Promise<School[]> {
@@ -2607,7 +2608,7 @@ export class DatabaseStorage {
     if (!user || !user.otpCode || !user.otpExpiresAt) return false;
     if (new Date() > user.otpExpiresAt) return false;
     if (user.otpCode !== otp) return false;
-    const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const token = randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
     await db.update(users).set({ otpCode: null, otpExpiresAt: null, resetToken: token, resetTokenExpiresAt: expiresAt }).where(eq(users.id, userId));
     return true;
