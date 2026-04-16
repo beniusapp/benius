@@ -267,6 +267,7 @@ export async function registerRoutes(
       req.session.userRole = userData.user.role;
     }
     await storage.logSecurityEvent(pendingInitUserId, req.session.schoolId ?? null, "init_complete", true, req.ip || null, req.headers["user-agent"] || null);
+    await storage.logSecurityEvent(pendingInitUserId, req.session.schoolId ?? null, "login_success", true, req.ip || null, req.headers["user-agent"] || null);
     res.json({ message: "Account initialized" });
   });
 
