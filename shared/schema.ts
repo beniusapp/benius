@@ -238,6 +238,7 @@ export const leaveRequests = pgTable("leave_requests", {
   id: serial("id").primaryKey(),
   teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  policyId: integer("policy_id").references(() => leavePolicies.id, { onDelete: "set null" }),
   leaveType: text("leave_type").notNull(),
   startDate: date("start_date").notNull(),
   endDate: date("end_date").notNull(),

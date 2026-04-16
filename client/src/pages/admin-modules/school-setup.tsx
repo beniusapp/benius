@@ -307,7 +307,6 @@ export default function SchoolSetup({ schoolId }: Props) {
   const [savingTierId, setSavingTierId] = useState<string | null>(null);
   const [policyErrors, setPolicyErrors] = useState<string[]>([]);
   const [leavePolicies, setLeavePolicies] = useState<LeavePolicyLocal[]>([]);
-  const [leavePoliciesLoaded, setLeavePoliciesLoaded] = useState(false);
   const [savingPolicyIdx, setSavingPolicyIdx] = useState<number | null>(null);
 
   const { data: meta } = useQuery({
@@ -348,16 +347,22 @@ export default function SchoolSetup({ schoolId }: Props) {
   }, [meta, loaded]);
 
   useEffect(() => {
-    if (leavePolicyData && !leavePoliciesLoaded) {
-      setLeavePolicies(leavePolicyData.map((p: LeavePolicyServerData) => ({
-        id: p.id, name: p.name, annualLimit: String(p.annualLimit),
-        targetRoles: p.targetRoles, renewalMonth: String(p.renewalMonth),
-        renewalDay: String(p.renewalDay), expiryBehavior: p.expiryBehavior,
-        isActive: p.isActive, editing: false,
-      })));
-      setLeavePoliciesLoaded(true);
-    }
-  }, [leavePolicyData, leavePoliciesLoaded]);
+    if (!leavePolicyData) return;
+    setLeavePolicies(prev => {
+      const editingIds = new Set(prev.filter(p => p.editing && p.id).map(p => p.id));
+      const unsavedNew = prev.filter(p => p.editing && !p.id);
+      const fromServer = leavePolicyData
+        .filter(p => !editingIds.has(p.id))
+        .map((p: LeavePolicyServerData) => ({
+          id: p.id, name: p.name, annualLimit: String(p.annualLimit),
+          targetRoles: p.targetRoles, renewalMonth: String(p.renewalMonth),
+          renewalDay: String(p.renewalDay), expiryBehavior: p.expiryBehavior,
+          isActive: p.isActive, editing: false,
+        }));
+      const editingExisting = prev.filter(p => p.editing && p.id && editingIds.has(p.id));
+      return [...fromServer, ...editingExisting, ...unsavedNew];
+    });
+  }, [leavePolicyData]);
 
   useEffect(() => {
     if (policyData && !policyLoaded) {
@@ -674,13 +679,19 @@ export default function SchoolSetup({ schoolId }: Props) {
                           };
                           if (policy.id) {
                             await apiRequest("PATCH", `/api/admin/leave-policies/${policy.id}`, payload);
+                            setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, editing: false } : p));
                           } else {
-                            await apiRequest("POST", "/api/admin/leave-policies", payload);
+                            const res = await apiRequest("POST", "/api/admin/leave-policies", payload);
+                            const created: LeavePolicyServerData = await res.json();
+                            setLeavePolicies(prev => prev.map((p, i) => i === idx ? {
+                              id: created.id, name: created.name, annualLimit: String(created.annualLimit),
+                              targetRoles: created.targetRoles, renewalMonth: String(created.renewalMonth),
+                              renewalDay: String(created.renewalDay), expiryBehavior: created.expiryBehavior,
+                              isActive: created.isActive, editing: false,
+                            } : p));
                           }
                           queryClient.invalidateQueries({ queryKey: ["/api/admin/leave-policies"] });
-                          setLeavePoliciesLoaded(false);
                           toast({ title: "Leave policy saved", description: `"${policy.name.trim()}" updated.` });
-                          setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, editing: false } : p));
                         } catch (e) {
                           toast({ title: "Save failed", description: e instanceof Error ? e.message : "An error occurred", variant: "destructive" });
                         } finally {

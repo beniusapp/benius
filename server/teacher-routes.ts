@@ -1085,7 +1085,8 @@ export function registerTeacherRoutes(app: Express) {
     }
 
     const leave = await storage.createLeaveRequest({
-      teacherId: teacher.id, schoolId: teacher.schoolId, leaveType, startDate, endDate, reason, status: "pending",
+      teacherId: teacher.id, schoolId: teacher.schoolId, policyId: matchedPolicy.id,
+      leaveType, startDate, endDate, reason, status: "pending",
     });
     res.status(201).json(leave);
   });

@@ -1675,7 +1675,7 @@ export class DatabaseStorage {
         .where(and(
           eq(leaveRequests.teacherId, teacherId),
           eq(leaveRequests.status, "approved"),
-          eq(leaveRequests.leaveType, policy.name),
+          or(eq(leaveRequests.policyId, policy.id), and(sql`${leaveRequests.policyId} IS NULL`, eq(leaveRequests.leaveType, policy.name))),
           gte(leaveRequests.startDate, periodStart),
           lte(leaveRequests.startDate, periodEnd)
         ));
@@ -1698,7 +1698,7 @@ export class DatabaseStorage {
           .where(and(
             eq(leaveRequests.teacherId, teacherId),
             eq(leaveRequests.status, "approved"),
-            eq(leaveRequests.leaveType, policy.name),
+            or(eq(leaveRequests.policyId, policy.id), and(sql`${leaveRequests.policyId} IS NULL`, eq(leaveRequests.leaveType, policy.name))),
             gte(leaveRequests.startDate, prevPeriodStart),
             lte(leaveRequests.startDate, prevPeriodEnd)
           ));
