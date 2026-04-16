@@ -29,11 +29,11 @@ type CredForm = z.infer<typeof credSchema>;
 type ForgotForm = z.infer<typeof forgotSchema>;
 type ResetForm = z.infer<typeof resetSchema>;
 
-function PinKeypad({ value, onChange, submitLabel = "✓" }: { value: string; onChange: (v: string) => void; submitLabel?: string }) {
+function PinKeypad({ value, onChange, onSubmit, submitLabel = "✓" }: { value: string; onChange: (v: string) => void; onSubmit?: () => void; submitLabel?: string }) {
   const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", submitLabel];
   function handleKey(k: string) {
     if (k === "⌫") { onChange(value.slice(0, -1)); return; }
-    if (k === submitLabel) return;
+    if (k === submitLabel) { if (value.length === 6 && onSubmit) onSubmit(); return; }
     if (value.length < 6) onChange(value + k);
   }
   return (
@@ -263,7 +263,7 @@ export default function Login() {
                 <PinKeypad value={pin} onChange={(v) => {
                   setPin(v);
                   if (v.length === 6) { setErrorMessage(""); verifyPinMutation.mutate(v); }
-                }} />
+                }} onSubmit={() => { if (pin.length === 6) { setErrorMessage(""); verifyPinMutation.mutate(pin); } }} />
                 {verifyPinMutation.isPending && (
                   <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="w-4 h-4 animate-spin" /> Verifying…
@@ -381,7 +381,7 @@ export default function Login() {
                 <PinKeypad value={resetPin} onChange={(v) => {
                   setResetPin(v);
                   if (v.length === 6) { setErrorMessage(""); verifyResetPinMutation.mutate(v); }
-                }} />
+                }} onSubmit={() => { if (resetPin.length === 6) { setErrorMessage(""); verifyResetPinMutation.mutate(resetPin); } }} />
                 {verifyResetPinMutation.isPending && (
                   <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="w-4 h-4 animate-spin" /> Verifying PIN…
