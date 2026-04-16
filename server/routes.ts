@@ -18,7 +18,8 @@ declare module "express-session" {
     userRole?: string;
     studentId?: number;
     teacherId?: number;
-    pendingUserId?: number;
+    pendingInitUserId?: number;
+    pendingPinUserId?: number;
     pendingForgotUserId?: number;
     pendingResetUserId?: number;
   }
@@ -201,21 +202,26 @@ export async function registerRoutes(
     }
 
     if (!user.isInitialized) {
-      req.session.pendingUserId = user.id;
+      req.session.pendingInitUserId = user.id;
+      req.session.pendingPinUserId = undefined;
       req.session.userId = undefined;
       req.session.teacherId = undefined;
       return res.json({ requiresInit: true });
     }
 
-    req.session.pendingUserId = user.id;
+    req.session.pendingPinUserId = user.id;
+    req.session.pendingInitUserId = undefined;
     req.session.userId = undefined;
     req.session.teacherId = undefined;
     return res.json({ requiresPinStep: true });
   });
 
   app.post("/api/admin/initialize", async (req, res) => {
-    const pendingUserId = req.session.pendingUserId;
-    if (!pendingUserId) return res.status(401).json({ message: "No pending session" });
+    const pendingInitUserId = req.session.pendingInitUserId;
+    if (!pendingInitUserId) return res.status(401).json({ message: "No pending init session" });
+
+    const userCheck = await storage.getUserById(pendingInitUserId);
+    if (!userCheck || userCheck.isInitialized) return res.status(403).json({ message: "Account already initialized or not found" });
 
     const schema = z.object({
       newPassword: z.string().min(6, "New password must be at least 6 characters"),
@@ -232,52 +238,52 @@ export async function registerRoutes(
 
     const newPasswordHash = await bcrypt.hash(parsed.data.newPassword, 10);
     const pinHash = await bcrypt.hash(parsed.data.pin, 12);
-    await storage.updateAdminPassword(pendingUserId, newPasswordHash);
+    await storage.updateAdminPassword(pendingInitUserId, newPasswordHash);
     await storage.initializeAdmin(
-      pendingUserId,
+      pendingInitUserId,
       pinHash,
       parsed.data.recoveryEmail,
       parsed.data.recoveryPhone || null,
     );
 
-    const userData = await storage.getUserWithSchool(pendingUserId);
-    req.session.pendingUserId = undefined;
-    req.session.userId = pendingUserId;
+    const userData = await storage.getUserWithSchool(pendingInitUserId);
+    req.session.pendingInitUserId = undefined;
+    req.session.userId = pendingInitUserId;
     req.session.teacherId = undefined;
     if (userData) {
       req.session.schoolId = userData.school.id;
       req.session.userRole = userData.user.role;
     }
-    await storage.logSecurityEvent(pendingUserId, req.session.schoolId ?? null, "init_complete", true, req.ip || null, req.headers["user-agent"] || null);
+    await storage.logSecurityEvent(pendingInitUserId, req.session.schoolId ?? null, "init_complete", true, req.ip || null, req.headers["user-agent"] || null);
     res.json({ message: "Account initialized" });
   });
 
   app.post("/api/admin/verify-pin", async (req, res) => {
-    const pendingUserId = req.session.pendingUserId;
-    if (!pendingUserId) return res.status(401).json({ message: "No pending session" });
+    const pendingPinUserId = req.session.pendingPinUserId;
+    if (!pendingPinUserId) return res.status(401).json({ message: "No pending PIN session" });
 
     const schema = z.object({ pin: z.string().length(6) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid PIN format" });
 
-    const user = await storage.getUserById(pendingUserId);
+    const user = await storage.getUserById(pendingPinUserId);
     const schoolId = user?.schoolId ?? null;
 
-    const valid = await storage.verifyAdminPin(pendingUserId, parsed.data.pin);
+    const valid = await storage.verifyAdminPin(pendingPinUserId, parsed.data.pin);
     if (!valid) {
-      await storage.logSecurityEvent(pendingUserId, schoolId, "pin_failed", false, req.ip || null, req.headers["user-agent"] || null);
+      await storage.logSecurityEvent(pendingPinUserId, schoolId, "pin_failed", false, req.ip || null, req.headers["user-agent"] || null);
       return res.status(401).json({ message: "Incorrect PIN" });
     }
 
-    const userData = await storage.getUserWithSchool(pendingUserId);
-    req.session.pendingUserId = undefined;
-    req.session.userId = pendingUserId;
+    const userData = await storage.getUserWithSchool(pendingPinUserId);
+    req.session.pendingPinUserId = undefined;
+    req.session.userId = pendingPinUserId;
     req.session.teacherId = undefined;
     if (userData) {
       req.session.schoolId = userData.school.id;
       req.session.userRole = userData.user.role;
     }
-    await storage.logSecurityEvent(pendingUserId, req.session.schoolId ?? null, "login_success", true, req.ip || null, req.headers["user-agent"] || null);
+    await storage.logSecurityEvent(pendingPinUserId, req.session.schoolId ?? null, "login_success", true, req.ip || null, req.headers["user-agent"] || null);
     res.json({ message: "Login successful" });
   });
 
@@ -305,7 +311,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/admin/pending-session", (req, res) => {
-    res.json({ pending: !!req.session.pendingUserId });
+    res.json({ pending: !!req.session.pendingInitUserId });
   });
 
   app.post("/api/admin/verify-otp", async (req, res) => {

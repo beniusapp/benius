@@ -226,7 +226,8 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
               <UserCircle2 className="w-6 h-6 text-blue-600" />
             </div>
             <div>
-              <p className="font-bold text-gray-900 text-sm">{me.email}</p>
+              <p className="font-bold text-gray-900 text-sm capitalize">{me.email.split("@")[0].replace(/[._]/g, " ")}</p>
+              <p className="text-xs text-gray-500">{me.email}</p>
               <p className="text-xs text-gray-400">{me.schoolName} · {me.schoolCode}</p>
             </div>
           </div>
@@ -258,6 +259,12 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
                   <p className="text-xs text-gray-500">Admin Email</p>
                   <p className="font-semibold text-gray-800 text-sm">{me.email}</p>
                 </div>
+                {profile?.recoveryPhone && (
+                  <div className="p-3 rounded-lg bg-gray-50 border space-y-1">
+                    <p className="text-xs text-gray-500">Phone</p>
+                    <p className="font-semibold text-gray-800 text-sm">{profile.recoveryPhone}</p>
+                  </div>
+                )}
                 <div className="p-3 rounded-lg bg-blue-50 border border-blue-100">
                   <div className="flex items-center gap-2 text-xs text-blue-700 font-medium mb-1">
                     <CheckCircle2 className="w-3.5 h-3.5" />
