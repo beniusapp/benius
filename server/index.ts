@@ -243,6 +243,10 @@ app.use((req, res, next) => {
     WHERE NOT EXISTS (SELECT 1 FROM leave_policies lp WHERE lp.school_id = s.id);
   `);
 
+  await pool.query(`
+    ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS policy_id INTEGER REFERENCES leave_policies(id) ON DELETE SET NULL;
+  `);
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
