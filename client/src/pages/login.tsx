@@ -117,9 +117,7 @@ export default function Login() {
     onSuccess: (data) => {
       setErrorMessage("");
       if (data.otp === null) {
-        setStep("forgot-otp");
-        setOtpDisplay(null);
-        setMaskedRecoveryEmail("");
+        setErrorMessage("If those details match, an OTP has been sent to your recovery email. Please check and try again.");
       } else {
         setOtpDisplay(data.otp);
         setMaskedRecoveryEmail(data.recoveryEmail || "");
