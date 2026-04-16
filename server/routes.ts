@@ -203,6 +203,11 @@ export async function registerRoutes(
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
+    if (user.role !== "admin") {
+      await storage.logSecurityEvent(user.id, user.schoolId, "login_wrong_role", false, req.ip || null, req.headers["user-agent"] || null);
+      return res.status(403).json({ message: "This login is for school administrators only." });
+    }
+
     if (!user.isInitialized) {
       req.session.pendingInitUserId = user.id;
       req.session.pendingPinUserId = undefined;
@@ -227,7 +232,8 @@ export async function registerRoutes(
     if (!pendingInitUserId) return res.status(401).json({ message: "No pending init session" });
 
     const userCheck = await storage.getUserById(pendingInitUserId);
-    if (!userCheck || userCheck.isInitialized) return res.status(403).json({ message: "Account already initialized or not found" });
+    if (!userCheck || userCheck.role !== "admin") return res.status(403).json({ message: "Not authorized" });
+    if (userCheck.isInitialized) return res.status(403).json({ message: "Account already initialized" });
 
     const schema = z.object({
       newPassword: z.string().min(6, "New password must be at least 6 characters"),
@@ -278,7 +284,8 @@ export async function registerRoutes(
     }
 
     const user = await storage.getUserById(pendingPinUserId);
-    const schoolId = user?.schoolId ?? null;
+    if (!user || user.role !== "admin") return res.status(403).json({ message: "Not authorized" });
+    const schoolId = user.schoolId ?? null;
 
     const valid = await storage.verifyAdminPin(pendingPinUserId, parsed.data.pin);
     if (!valid) {
