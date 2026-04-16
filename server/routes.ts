@@ -13,12 +13,13 @@ import { eq, and, sql, inArray } from "drizzle-orm";
 
 declare module "express-session" {
   interface SessionData {
-    userId: number;
-    schoolId: number;
-    userRole: string;
-    studentId: number;
-    teacherId: number;
-    pendingUserId: number;
+    userId?: number;
+    schoolId?: number;
+    userRole?: string;
+    studentId?: number;
+    teacherId?: number;
+    pendingUserId?: number;
+    pendingResetUserId?: number;
   }
 }
 
@@ -192,20 +193,20 @@ export async function registerRoutes(
 
     const valid = await bcrypt.compare(parsed.data.password, user.passwordHash);
     if (!valid) {
-      await storage.logSecurityEvent(user.id, user.schoolId, "login_failed", req.ip || null, req.headers["user-agent"] || null);
+      await storage.logSecurityEvent(user.id, user.schoolId, "login_failed", false, req.ip || null, req.headers["user-agent"] || null);
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
     if (!user.isInitialized) {
       req.session.pendingUserId = user.id;
-      req.session.userId = undefined as any;
-      req.session.teacherId = undefined as any;
+      delete (req.session as any).userId;
+      delete (req.session as any).teacherId;
       return res.json({ requiresInit: true });
     }
 
     req.session.pendingUserId = user.id;
-    req.session.userId = undefined as any;
-    req.session.teacherId = undefined as any;
+    delete (req.session as any).userId;
+    delete (req.session as any).teacherId;
     return res.json({ requiresPinStep: true });
   });
 
@@ -214,32 +215,37 @@ export async function registerRoutes(
     if (!pendingUserId) return res.status(401).json({ message: "No pending session" });
 
     const schema = z.object({
+      newPassword: z.string().min(6, "New password must be at least 6 characters"),
+      confirmPassword: z.string().min(6),
       pin: z.string().length(6).regex(/^\d{6}$/, "PIN must be 6 digits"),
       confirmPin: z.string().length(6),
-      recoveryEmail: z.string().email().optional().or(z.literal("")),
+      recoveryEmail: z.string().email("Enter a valid recovery email"),
       recoveryPhone: z.string().max(20).optional().or(z.literal("")),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid data" });
+    if (parsed.data.newPassword !== parsed.data.confirmPassword) return res.status(400).json({ message: "Passwords do not match" });
     if (parsed.data.pin !== parsed.data.confirmPin) return res.status(400).json({ message: "PINs do not match" });
 
+    const newPasswordHash = await bcrypt.hash(parsed.data.newPassword, 10);
     const pinHash = await bcrypt.hash(parsed.data.pin, 12);
+    await storage.updateAdminPassword(pendingUserId, newPasswordHash);
     await storage.initializeAdmin(
       pendingUserId,
       pinHash,
-      parsed.data.recoveryEmail || null,
+      parsed.data.recoveryEmail,
       parsed.data.recoveryPhone || null,
     );
 
     const userData = await storage.getUserWithSchool(pendingUserId);
-    req.session.pendingUserId = undefined as any;
+    delete (req.session as any).pendingUserId;
     req.session.userId = pendingUserId;
-    req.session.teacherId = undefined as any;
+    delete (req.session as any).teacherId;
     if (userData) {
       req.session.schoolId = userData.school.id;
       req.session.userRole = userData.user.role;
     }
-    await storage.logSecurityEvent(pendingUserId, req.session.schoolId!, "init_complete", req.ip || null, req.headers["user-agent"] || null);
+    await storage.logSecurityEvent(pendingUserId, req.session.schoolId ?? 0, "init_complete", true, req.ip || null, req.headers["user-agent"] || null);
     res.json({ message: "Account initialized" });
   });
 
@@ -251,21 +257,24 @@ export async function registerRoutes(
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid PIN format" });
 
+    const user = await storage.getUserById(pendingUserId);
+    const schoolId = user?.schoolId ?? 0;
+
     const valid = await storage.verifyAdminPin(pendingUserId, parsed.data.pin);
     if (!valid) {
-      await storage.logSecurityEvent(pendingUserId, 0, "pin_failed", req.ip || null, req.headers["user-agent"] || null);
+      await storage.logSecurityEvent(pendingUserId, schoolId, "pin_failed", false, req.ip || null, req.headers["user-agent"] || null);
       return res.status(401).json({ message: "Incorrect PIN" });
     }
 
     const userData = await storage.getUserWithSchool(pendingUserId);
-    req.session.pendingUserId = undefined as any;
+    delete (req.session as any).pendingUserId;
     req.session.userId = pendingUserId;
-    req.session.teacherId = undefined as any;
+    delete (req.session as any).teacherId;
     if (userData) {
       req.session.schoolId = userData.school.id;
       req.session.userRole = userData.user.role;
     }
-    await storage.logSecurityEvent(pendingUserId, req.session.schoolId!, "login_success", req.ip || null, req.headers["user-agent"] || null);
+    await storage.logSecurityEvent(pendingUserId, req.session.schoolId ?? 0, "login_success", true, req.ip || null, req.headers["user-agent"] || null);
     res.json({ message: "Login successful" });
   });
 
@@ -285,7 +294,10 @@ export async function registerRoutes(
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
     await storage.setAdminOtp(user.id, otp, expiresAt);
-    res.json({ message: "OTP generated", otp, expiresIn: 15 });
+    const recoveryEmailMasked = user.recoveryEmail
+      ? user.recoveryEmail.replace(/(.{2}).*(@.*)/, "$1***$2")
+      : null;
+    res.json({ message: "OTP generated", otp, expiresIn: 15, recoveryEmail: recoveryEmailMasked });
   });
 
   app.post("/api/admin/verify-otp", async (req, res) => {
@@ -299,8 +311,27 @@ export async function registerRoutes(
     const valid = await storage.verifyAndConsumeAdminOtp(user.id, parsed.data.otp);
     if (!valid) return res.status(400).json({ message: "Invalid or expired OTP" });
 
-    const updatedUser = await storage.getUserById(user.id);
-    res.json({ message: "OTP verified", resetToken: updatedUser?.resetToken });
+    req.session.pendingResetUserId = user.id;
+    const hasPinSetup = !!user.pinHash;
+    res.json({ message: "OTP verified", requiresPinStep: hasPinSetup });
+  });
+
+  app.post("/api/admin/verify-reset-pin", async (req, res) => {
+    const pendingResetUserId = req.session.pendingResetUserId;
+    if (!pendingResetUserId) return res.status(401).json({ message: "No pending reset session" });
+
+    const schema = z.object({ pin: z.string().length(6) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid PIN format" });
+
+    const valid = await storage.verifyAdminPin(pendingResetUserId, parsed.data.pin);
+    if (!valid) {
+      await storage.logSecurityEvent(pendingResetUserId, 0, "pin_failed", false, req.ip || null, req.headers["user-agent"] || null);
+      return res.status(401).json({ message: "Incorrect PIN" });
+    }
+
+    const updatedUser = await storage.getUserById(pendingResetUserId);
+    res.json({ message: "PIN verified", resetToken: updatedUser?.resetToken });
   });
 
   app.post("/api/admin/reset-password", async (req, res) => {
@@ -317,6 +348,7 @@ export async function registerRoutes(
     const newPinHash = parsed.data.newPin ? await bcrypt.hash(parsed.data.newPin, 12) : undefined;
     const ok = await storage.resetAdminPasswordWithToken(parsed.data.email, parsed.data.resetToken, newPasswordHash, newPinHash);
     if (!ok) return res.status(400).json({ message: "Invalid or expired reset token" });
+    delete (req.session as any).pendingResetUserId;
     res.json({ message: "Password reset successful" });
   });
 
@@ -358,10 +390,13 @@ export async function registerRoutes(
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid data" });
     const ok = await storage.verifyAdminPassword(req.session.userId, parsed.data.currentPassword);
-    if (!ok) return res.status(401).json({ message: "Current password is incorrect" });
+    if (!ok) {
+      await storage.logSecurityEvent(req.session.userId, req.session.schoolId ?? 0, "password_change_failed", false, req.ip || null, req.headers["user-agent"] || null);
+      return res.status(401).json({ message: "Current password is incorrect" });
+    }
     const hash = await bcrypt.hash(parsed.data.newPassword, 10);
     await storage.updateAdminPassword(req.session.userId, hash);
-    await storage.logSecurityEvent(req.session.userId, req.session.schoolId!, "password_changed", req.ip || null, req.headers["user-agent"] || null);
+    await storage.logSecurityEvent(req.session.userId, req.session.schoolId ?? 0, "password_changed", true, req.ip || null, req.headers["user-agent"] || null);
     res.json({ message: "Password changed successfully" });
   });
 
@@ -376,10 +411,13 @@ export async function registerRoutes(
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid data" });
     if (parsed.data.newPin !== parsed.data.confirmPin) return res.status(400).json({ message: "New PINs do not match" });
     const ok = await storage.verifyAdminPin(req.session.userId, parsed.data.currentPin);
-    if (!ok) return res.status(401).json({ message: "Current PIN is incorrect" });
+    if (!ok) {
+      await storage.logSecurityEvent(req.session.userId, req.session.schoolId ?? 0, "pin_change_failed", false, req.ip || null, req.headers["user-agent"] || null);
+      return res.status(401).json({ message: "Current PIN is incorrect" });
+    }
     const hash = await bcrypt.hash(parsed.data.newPin, 12);
     await storage.updateAdminPin(req.session.userId, hash);
-    await storage.logSecurityEvent(req.session.userId, req.session.schoolId!, "pin_changed", req.ip || null, req.headers["user-agent"] || null);
+    await storage.logSecurityEvent(req.session.userId, req.session.schoolId ?? 0, "pin_changed", true, req.ip || null, req.headers["user-agent"] || null);
     res.json({ message: "PIN changed successfully" });
   });
 

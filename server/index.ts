@@ -203,10 +203,12 @@ app.use((req, res, next) => {
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       school_id INTEGER NOT NULL,
       event_type VARCHAR(50) NOT NULL,
+      success BOOLEAN NOT NULL DEFAULT TRUE,
       ip_address TEXT,
       user_agent TEXT,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE security_audit ADD COLUMN IF NOT EXISTS success BOOLEAN NOT NULL DEFAULT TRUE;
   `);
 
   await registerRoutes(httpServer, app);

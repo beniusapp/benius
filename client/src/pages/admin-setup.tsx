@@ -4,19 +4,22 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { z } from "zod";
-import { GraduationCap, ShieldCheck, Loader2, AlertCircle, CheckCircle2, ArrowRight } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { GraduationCap, ShieldCheck, Loader2, AlertCircle, CheckCircle2, Eye, EyeOff } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
 const setupSchema = z.object({
+  newPassword: z.string().min(6, "New password must be at least 6 characters"),
+  confirmPassword: z.string().min(6, "Please confirm your password"),
   pin: z.string().length(6, "PIN must be exactly 6 digits").regex(/^\d{6}$/, "PIN must be numeric"),
   confirmPin: z.string().length(6),
-  recoveryEmail: z.string().email("Enter a valid email").optional().or(z.literal("")),
+  recoveryEmail: z.string().email("Enter a valid recovery email address"),
   recoveryPhone: z.string().max(20).optional().or(z.literal("")),
-}).refine(d => d.pin === d.confirmPin, { message: "PINs do not match", path: ["confirmPin"] });
+}).refine(d => d.newPassword === d.confirmPassword, { message: "Passwords do not match", path: ["confirmPassword"] })
+  .refine(d => d.pin === d.confirmPin, { message: "PINs do not match", path: ["confirmPin"] });
 
 type SetupForm = z.infer<typeof setupSchema>;
 
@@ -47,10 +50,12 @@ export default function AdminSetup() {
   const [pinValue, setPinValue] = useState("");
   const [confirmPinValue, setConfirmPinValue] = useState("");
   const [activeField, setActiveField] = useState<"pin" | "confirm">("pin");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const form = useForm<SetupForm>({
     resolver: zodResolver(setupSchema),
-    defaultValues: { pin: "", confirmPin: "", recoveryEmail: "", recoveryPhone: "" },
+    defaultValues: { newPassword: "", confirmPassword: "", pin: "", confirmPin: "", recoveryEmail: "", recoveryPhone: "" },
   });
 
   const setupMutation = useMutation({
@@ -103,7 +108,7 @@ export default function AdminSetup() {
               <ShieldCheck className="w-8 h-8 text-blue-600" />
             </div>
             <h2 className="text-2xl font-bold text-gray-900">Secure Your Account</h2>
-            <p className="text-gray-500 mt-1 text-sm">Set up a 6-digit PIN and recovery options. This is done only once.</p>
+            <p className="text-gray-500 mt-1 text-sm">Set your permanent password, 6-digit PIN, and recovery email. This is done only once.</p>
           </div>
 
           <Card className="bg-white shadow-md border-0">
@@ -119,59 +124,117 @@ export default function AdminSetup() {
                     </div>
                   )}
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <div onClick={() => setActiveField("pin")}>
-                      <PinDots value={pinValue} label="Create PIN" active={activeField === "pin"} />
-                      {form.formState.errors.pin && <p className="text-xs text-red-500 mt-1">{form.formState.errors.pin.message}</p>}
-                    </div>
-                    <div onClick={() => setActiveField("confirm")}>
-                      <PinDots value={confirmPinValue} label="Confirm PIN" active={activeField === "confirm"} />
-                      {form.formState.errors.confirmPin && <p className="text-xs text-red-500 mt-1">{form.formState.errors.confirmPin.message}</p>}
-                    </div>
+                  <div className="space-y-3">
+                    <p className="text-xs font-semibold text-gray-700">Step 1: Set Your Permanent Password</p>
+                    <p className="text-xs text-gray-400">Your temporary password assigned by Super Master will be replaced.</p>
+                    <FormField control={form.control} name="newPassword" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs text-gray-600">New Password</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <Input
+                              type={showPassword ? "text" : "password"}
+                              placeholder="At least 6 characters"
+                              data-testid="input-new-password"
+                              {...field}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowPassword(p => !p)}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                              data-testid="toggle-new-password"
+                            >
+                              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </button>
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={form.control} name="confirmPassword" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs text-gray-600">Confirm Password</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <Input
+                              type={showConfirmPassword ? "text" : "password"}
+                              placeholder="Repeat your new password"
+                              data-testid="input-confirm-password"
+                              {...field}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowConfirmPassword(p => !p)}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                              data-testid="toggle-confirm-password"
+                            >
+                              {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </button>
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
                   </div>
 
-                  <div className="p-1">
-                    <p className="text-xs text-center text-gray-400 mb-3">
-                      {activeField === "pin" ? "Entering: Create PIN" : "Entering: Confirm PIN"} — tap a number below
-                    </p>
-                    <div className="grid grid-cols-3 gap-2">
-                      {KEYS.map(k => (
-                        <button
-                          key={k}
-                          type="button"
-                          onClick={() => {
-                            if (k === "C") {
-                              if (activeField === "pin") { setPinValue(""); form.setValue("pin", ""); }
-                              else { setConfirmPinValue(""); form.setValue("confirmPin", ""); }
-                            } else {
-                              handleKeyPress(k);
-                            }
-                          }}
-                          data-testid={`setup-key-${k}`}
-                          className={`h-14 text-lg font-bold rounded-xl border transition-all select-none active:scale-95
-                            ${k === "⌫" || k === "C" ? "bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200" :
-                              "bg-white text-gray-900 border-gray-200 hover:bg-gray-50 shadow-sm"}`}
-                        >
-                          {k}
-                        </button>
-                      ))}
+                  <div className="border-t pt-4 space-y-3">
+                    <p className="text-xs font-semibold text-gray-700">Step 2: Create Your 6-Digit PIN</p>
+                    <p className="text-xs text-gray-400">You will enter this PIN every time you log in.</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div onClick={() => setActiveField("pin")}>
+                        <PinDots value={pinValue} label="Create PIN" active={activeField === "pin"} />
+                        {form.formState.errors.pin && <p className="text-xs text-red-500 mt-1">{form.formState.errors.pin.message}</p>}
+                      </div>
+                      <div onClick={() => setActiveField("confirm")}>
+                        <PinDots value={confirmPinValue} label="Confirm PIN" active={activeField === "confirm"} />
+                        {form.formState.errors.confirmPin && <p className="text-xs text-red-500 mt-1">{form.formState.errors.confirmPin.message}</p>}
+                      </div>
+                    </div>
+
+                    <div className="p-1">
+                      <p className="text-xs text-center text-gray-400 mb-3">
+                        {activeField === "pin" ? "Entering: Create PIN" : "Entering: Confirm PIN"} — tap a number below
+                      </p>
+                      <div className="grid grid-cols-3 gap-2">
+                        {KEYS.map(k => (
+                          <button
+                            key={k}
+                            type="button"
+                            onClick={() => {
+                              if (k === "C") {
+                                if (activeField === "pin") { setPinValue(""); form.setValue("pin", ""); }
+                                else { setConfirmPinValue(""); form.setValue("confirmPin", ""); }
+                              } else {
+                                handleKeyPress(k);
+                              }
+                            }}
+                            data-testid={`setup-key-${k}`}
+                            className={`h-14 text-lg font-bold rounded-xl border transition-all select-none active:scale-95
+                              ${k === "⌫" || k === "C" ? "bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200" :
+                                "bg-white text-gray-900 border-gray-200 hover:bg-gray-50 shadow-sm"}`}
+                          >
+                            {k}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
 
                   <div className="border-t pt-4 space-y-3">
-                    <p className="text-xs font-semibold text-gray-600">Recovery Options <span className="font-normal text-gray-400">(optional)</span></p>
+                    <p className="text-xs font-semibold text-gray-700">Step 3: Recovery Options</p>
                     <FormField control={form.control} name="recoveryEmail" render={({ field }) => (
                       <FormItem>
-                        <FormLabel className="text-xs text-gray-600">Recovery Email</FormLabel>
+                        <FormLabel className="text-xs text-gray-600">Recovery Email <span className="text-red-500">*</span></FormLabel>
                         <FormControl>
-                          <Input type="email" placeholder="backup@example.com" data-testid="input-recovery-email" {...field} />
+                          <Input type="email" placeholder="backup@gmail.com" data-testid="input-recovery-email" {...field} />
                         </FormControl>
+                        <p className="text-xs text-gray-400">Used to verify your identity if you need to reset your password.</p>
                         <FormMessage />
                       </FormItem>
                     )} />
                     <FormField control={form.control} name="recoveryPhone" render={({ field }) => (
                       <FormItem>
-                        <FormLabel className="text-xs text-gray-600">Recovery Phone</FormLabel>
+                        <FormLabel className="text-xs text-gray-600">Recovery Phone <span className="text-gray-400">(optional)</span></FormLabel>
                         <FormControl>
                           <Input type="tel" placeholder="+91 98765 43210" data-testid="input-recovery-phone" {...field} />
                         </FormControl>

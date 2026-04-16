@@ -2625,8 +2625,8 @@ export class DatabaseStorage {
     return true;
   }
 
-  async logSecurityEvent(userId: number, schoolId: number, eventType: string, ipAddress: string | null, userAgent: string | null): Promise<void> {
-    await db.insert(securityAudit).values({ userId, schoolId, eventType, ipAddress, userAgent });
+  async logSecurityEvent(userId: number, schoolId: number, eventType: string, success: boolean, ipAddress: string | null, userAgent: string | null): Promise<void> {
+    await db.insert(securityAudit).values({ userId, schoolId, eventType, success, ipAddress, userAgent });
   }
 
   async getSecurityAuditLog(userId: number, limit = 20): Promise<import("@shared/schema").SecurityAudit[]> {

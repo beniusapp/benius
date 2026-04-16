@@ -4,14 +4,14 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { z } from "zod";
-import { GraduationCap, Loader2, LogIn, AlertCircle, KeyRound, ArrowLeft, Mail, Eye, EyeOff } from "lucide-react";
+import { GraduationCap, Loader2, LogIn, AlertCircle, KeyRound, ArrowLeft, Mail, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-type LoginStep = "credentials" | "pin" | "forgot-request" | "forgot-otp" | "forgot-reset";
+type LoginStep = "credentials" | "pin" | "forgot-request" | "forgot-otp" | "forgot-pin" | "forgot-reset";
 
 const credSchema = z.object({
   email: z.string().email("Enter a valid email address"),
@@ -29,11 +29,11 @@ type CredForm = z.infer<typeof credSchema>;
 type ForgotForm = z.infer<typeof forgotSchema>;
 type ResetForm = z.infer<typeof resetSchema>;
 
-function PinKeypad({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "✓"];
+function PinKeypad({ value, onChange, submitLabel = "✓" }: { value: string; onChange: (v: string) => void; submitLabel?: string }) {
+  const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", submitLabel];
   function handleKey(k: string) {
     if (k === "⌫") { onChange(value.slice(0, -1)); return; }
-    if (k === "✓") return;
+    if (k === submitLabel) return;
     if (value.length < 6) onChange(value + k);
   }
   return (
@@ -54,7 +54,7 @@ function PinKeypad({ value, onChange }: { value: string; onChange: (v: string) =
             onClick={() => handleKey(k)}
             data-testid={`pin-key-${k}`}
             className={`h-16 text-xl font-bold rounded-xl border transition-all select-none active:scale-95
-              ${k === "✓" ? "bg-primary text-primary-foreground border-primary" :
+              ${k === submitLabel ? "bg-primary text-primary-foreground border-primary" :
                 k === "⌫" ? "bg-muted text-foreground border-border hover:bg-muted/80" :
                 "bg-white dark:bg-gray-800 text-foreground border-border hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm"}`}
           >
@@ -71,9 +71,11 @@ export default function Login() {
   const [step, setStep] = useState<LoginStep>("credentials");
   const [errorMessage, setErrorMessage] = useState("");
   const [pin, setPin] = useState("");
+  const [resetPin, setResetPin] = useState("");
   const [newPin, setNewPin] = useState("");
   const [savedEmail, setSavedEmail] = useState("");
   const [otpDisplay, setOtpDisplay] = useState("");
+  const [maskedRecoveryEmail, setMaskedRecoveryEmail] = useState("");
   const [resetToken, setResetToken] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
@@ -117,6 +119,7 @@ export default function Login() {
       setErrorMessage("");
       setSavedEmail(forgotForm.getValues("email"));
       setOtpDisplay(data.otp);
+      setMaskedRecoveryEmail(data.recoveryEmail || "");
       setStep("forgot-otp");
     },
     onError: (e: Error) => setErrorMessage(e.message || "Could not find account"),
@@ -129,10 +132,28 @@ export default function Login() {
     },
     onSuccess: (data) => {
       setErrorMessage("");
+      setResetPin("");
+      if (data.requiresPinStep) {
+        setStep("forgot-pin");
+      } else {
+        setResetToken(data.resetToken || "");
+        setStep("forgot-reset");
+      }
+    },
+    onError: (e: Error) => setErrorMessage(e.message || "Invalid OTP"),
+  });
+
+  const verifyResetPinMutation = useMutation({
+    mutationFn: async (p: string) => {
+      const res = await apiRequest("POST", "/api/admin/verify-reset-pin", { pin: p });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setErrorMessage("");
       setResetToken(data.resetToken);
       setStep("forgot-reset");
     },
-    onError: (e: Error) => setErrorMessage(e.message || "Invalid OTP"),
+    onError: (e: Error) => { setErrorMessage(e.message || "Incorrect PIN"); setResetPin(""); },
   });
 
   const resetMutation = useMutation({
@@ -200,7 +221,7 @@ export default function Login() {
                         <FormControl>
                           <div className="relative">
                             <Input type={showPassword ? "text" : "password"} placeholder="Enter your password" data-testid="input-login-password" {...field} />
-                            <button type="button" onClick={() => setShowPassword(p => !p)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                            <button type="button" onClick={() => setShowPassword(p => !p)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" data-testid="toggle-login-password">
                               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </button>
                           </div>
@@ -261,7 +282,7 @@ export default function Login() {
                 <CardTitle className="flex items-center justify-center gap-2 text-xl">
                   <Mail className="w-5 h-5" /> Forgot Password
                 </CardTitle>
-                <CardDescription>Enter your email and school code to receive a recovery OTP</CardDescription>
+                <CardDescription>Enter your admin email and school code to receive a recovery OTP</CardDescription>
               </CardHeader>
               <CardContent>
                 <Form {...forgotForm}>
@@ -311,6 +332,9 @@ export default function Login() {
                   <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-center">
                     <p className="text-xs text-amber-600 font-medium mb-1">Your OTP (valid 15 min)</p>
                     <p className="text-3xl font-mono font-bold tracking-widest text-amber-700" data-testid="text-otp-display">{otpDisplay}</p>
+                    {maskedRecoveryEmail && (
+                      <p className="text-xs text-amber-600 mt-2">Would be sent to: <span className="font-semibold">{maskedRecoveryEmail}</span></p>
+                    )}
                   </div>
                 )}
                 {errorMessage && (
@@ -337,6 +361,36 @@ export default function Login() {
             </>
           )}
 
+          {step === "forgot-pin" && (
+            <>
+              <CardHeader className="text-center">
+                <CardTitle className="flex items-center justify-center gap-2 text-xl">
+                  <ShieldCheck className="w-5 h-5" /> Verify Your PIN
+                </CardTitle>
+                <CardDescription>Enter your current 6-digit PIN to confirm your identity before resetting your password</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                {errorMessage && (
+                  <div className="flex items-center gap-2 p-3 rounded-md bg-destructive/10 text-destructive text-sm" data-testid="text-reset-pin-error">
+                    <AlertCircle className="w-4 h-4 shrink-0" /> {errorMessage}
+                  </div>
+                )}
+                <PinKeypad value={resetPin} onChange={(v) => {
+                  setResetPin(v);
+                  if (v.length === 6) { setErrorMessage(""); verifyResetPinMutation.mutate(v); }
+                }} />
+                {verifyResetPinMutation.isPending && (
+                  <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Verifying PIN…
+                  </div>
+                )}
+                <p className="text-center text-xs text-muted-foreground">
+                  This extra step ensures only you can reset your password.
+                </p>
+              </CardContent>
+            </>
+          )}
+
           {step === "forgot-reset" && (
             <>
               <CardHeader className="text-center">
@@ -352,21 +406,21 @@ export default function Login() {
                       </div>
                     )}
                     {resetMutation.isSuccess && (
-                      <div className="p-3 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-medium text-center">
+                      <div className="p-3 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-medium text-center" data-testid="text-reset-success">
                         Password reset! Please log in again.
                       </div>
                     )}
                     <FormField control={resetForm.control} name="newPassword" render={({ field }) => (
                       <FormItem>
                         <FormLabel>New Password</FormLabel>
-                        <FormControl><Input type="password" placeholder="Min 6 characters" data-testid="input-new-password" {...field} /></FormControl>
+                        <FormControl><Input type="password" placeholder="Min 6 characters" data-testid="input-reset-password" {...field} /></FormControl>
                         <FormMessage />
                       </FormItem>
                     )} />
                     <FormField control={resetForm.control} name="confirmPassword" render={({ field }) => (
                       <FormItem>
                         <FormLabel>Confirm Password</FormLabel>
-                        <FormControl><Input type="password" placeholder="Repeat password" data-testid="input-confirm-password" {...field} /></FormControl>
+                        <FormControl><Input type="password" placeholder="Repeat password" data-testid="input-reset-confirm-password" {...field} /></FormControl>
                         <FormMessage />
                       </FormItem>
                     )} />
