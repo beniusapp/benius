@@ -206,6 +206,7 @@ export async function registerRoutes(
       req.session.pendingPinUserId = undefined;
       req.session.userId = undefined;
       req.session.teacherId = undefined;
+      await storage.logSecurityEvent(user.id, user.schoolId, "init_required", true, req.ip || null, req.headers["user-agent"] || null);
       return res.json({ requiresInit: true });
     }
 
@@ -213,6 +214,7 @@ export async function registerRoutes(
     req.session.pendingInitUserId = undefined;
     req.session.userId = undefined;
     req.session.teacherId = undefined;
+    await storage.logSecurityEvent(user.id, user.schoolId, "pin_required", true, req.ip || null, req.headers["user-agent"] || null);
     return res.json({ requiresPin: true });
   });
 
@@ -422,12 +424,12 @@ export async function registerRoutes(
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid data" });
     const ok = await storage.verifyAdminPassword(req.session.userId, parsed.data.currentPassword);
     if (!ok) {
-      await storage.logSecurityEvent(req.session.userId, req.session.schoolId ?? 0, "password_change_failed", false, req.ip || null, req.headers["user-agent"] || null);
+      await storage.logSecurityEvent(req.session.userId, req.session.schoolId ?? null, "password_change_failed", false, req.ip || null, req.headers["user-agent"] || null);
       return res.status(401).json({ message: "Current password is incorrect" });
     }
     const hash = await bcrypt.hash(parsed.data.newPassword, 10);
     await storage.updateAdminPassword(req.session.userId, hash);
-    await storage.logSecurityEvent(req.session.userId, req.session.schoolId ?? 0, "password_changed", true, req.ip || null, req.headers["user-agent"] || null);
+    await storage.logSecurityEvent(req.session.userId, req.session.schoolId ?? null, "password_changed", true, req.ip || null, req.headers["user-agent"] || null);
     res.json({ message: "Password changed successfully" });
   });
 
@@ -443,12 +445,12 @@ export async function registerRoutes(
     if (parsed.data.newPin !== parsed.data.confirmPin) return res.status(400).json({ message: "New PINs do not match" });
     const ok = await storage.verifyAdminPin(req.session.userId, parsed.data.currentPin);
     if (!ok) {
-      await storage.logSecurityEvent(req.session.userId, req.session.schoolId ?? 0, "pin_change_failed", false, req.ip || null, req.headers["user-agent"] || null);
+      await storage.logSecurityEvent(req.session.userId, req.session.schoolId ?? null, "pin_change_failed", false, req.ip || null, req.headers["user-agent"] || null);
       return res.status(401).json({ message: "Current PIN is incorrect" });
     }
     const hash = await bcrypt.hash(parsed.data.newPin, 12);
     await storage.updateAdminPin(req.session.userId, hash);
-    await storage.logSecurityEvent(req.session.userId, req.session.schoolId ?? 0, "pin_changed", true, req.ip || null, req.headers["user-agent"] || null);
+    await storage.logSecurityEvent(req.session.userId, req.session.schoolId ?? null, "pin_changed", true, req.ip || null, req.headers["user-agent"] || null);
     res.json({ message: "PIN changed successfully" });
   });
 
