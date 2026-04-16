@@ -1676,14 +1676,16 @@ export class DatabaseStorage {
           eq(leaveRequests.teacherId, teacherId),
           eq(leaveRequests.status, "approved"),
           or(eq(leaveRequests.policyId, policy.id), and(sql`${leaveRequests.policyId} IS NULL`, eq(leaveRequests.leaveType, policy.name))),
-          gte(leaveRequests.startDate, periodStart),
-          lte(leaveRequests.startDate, periodEnd)
+          lte(leaveRequests.startDate, periodEnd),
+          gte(leaveRequests.endDate, periodStart)
         ));
 
       let used = 0;
+      const periodStartDate = new Date(periodStart);
+      const periodEndDate = new Date(periodEnd);
       for (const r of currentApproved) {
-        const start = new Date(r.startDate);
-        const end = new Date(r.endDate);
+        const start = new Date(Math.max(new Date(r.startDate).getTime(), periodStartDate.getTime()));
+        const end = new Date(Math.min(new Date(r.endDate).getTime(), periodEndDate.getTime()));
         used += Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
       }
 
@@ -1699,14 +1701,16 @@ export class DatabaseStorage {
             eq(leaveRequests.teacherId, teacherId),
             eq(leaveRequests.status, "approved"),
             or(eq(leaveRequests.policyId, policy.id), and(sql`${leaveRequests.policyId} IS NULL`, eq(leaveRequests.leaveType, policy.name))),
-            gte(leaveRequests.startDate, prevPeriodStart),
-            lte(leaveRequests.startDate, prevPeriodEnd)
+            lte(leaveRequests.startDate, prevPeriodEnd),
+            gte(leaveRequests.endDate, prevPeriodStart)
           ));
 
         let prevUsed = 0;
+        const prevPeriodStartDate = new Date(prevPeriodStart);
+        const prevPeriodEndDate = new Date(prevPeriodEnd);
         for (const r of prevApproved) {
-          const start = new Date(r.startDate);
-          const end = new Date(r.endDate);
+          const start = new Date(Math.max(new Date(r.startDate).getTime(), prevPeriodStartDate.getTime()));
+          const end = new Date(Math.min(new Date(r.endDate).getTime(), prevPeriodEndDate.getTime()));
           prevUsed += Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
         }
         carryForward = Math.max(0, policy.annualLimit - prevUsed);

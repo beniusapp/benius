@@ -1153,6 +1153,20 @@ export function registerTeacherRoutes(app: Express) {
     if (!schoolId) return res.status(400).json({ message: "No school context" });
     const { name, annualLimit, targetRoles, renewalMonth, renewalDay, expiryBehavior, isActive } = req.body;
     if (!name || !annualLimit) return res.status(400).json({ message: "Name and annual limit are required" });
+    const parsedLimit = parseInt(annualLimit);
+    if (isNaN(parsedLimit) || parsedLimit < 1) return res.status(400).json({ message: "Annual limit must be a positive number" });
+    const validRoles = ["all", "teacher", "non_teaching"];
+    if (targetRoles && !validRoles.includes(targetRoles)) return res.status(400).json({ message: "Invalid target roles" });
+    const validExpiry = ["expire", "carry_forward"];
+    if (expiryBehavior && !validExpiry.includes(expiryBehavior)) return res.status(400).json({ message: "Invalid expiry behavior" });
+    const parsedMonth = parseInt(renewalMonth) || 1;
+    const parsedDay = parseInt(renewalDay) || 1;
+    if (parsedMonth < 1 || parsedMonth > 12) return res.status(400).json({ message: "Renewal month must be 1–12" });
+    if (parsedDay < 1 || parsedDay > 31) return res.status(400).json({ message: "Renewal day must be 1–31" });
+    const existing = await storage.getLeavePoliciesBySchool(schoolId);
+    if (existing.some(p => p.name.toLowerCase() === name.trim().toLowerCase())) {
+      return res.status(409).json({ message: `A leave policy named "${name.trim()}" already exists for this school.` });
+    }
     const policy = await storage.createLeavePolicy({
       schoolId, name: name.trim(),
       annualLimit: parseInt(annualLimit) || 12,
@@ -1172,6 +1186,18 @@ export function registerTeacherRoutes(app: Express) {
     const existing = await storage.getLeavePolicyById(id);
     if (!existing || existing.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
     const { name, annualLimit, targetRoles, renewalMonth, renewalDay, expiryBehavior, isActive } = req.body;
+    if (name !== undefined) {
+      const validRoles = ["all", "teacher", "non_teaching"];
+      const validExpiry = ["expire", "carry_forward"];
+      if (targetRoles && !validRoles.includes(targetRoles)) return res.status(400).json({ message: "Invalid target roles" });
+      if (expiryBehavior && !validExpiry.includes(expiryBehavior)) return res.status(400).json({ message: "Invalid expiry behavior" });
+      if (renewalMonth && (parseInt(renewalMonth) < 1 || parseInt(renewalMonth) > 12)) return res.status(400).json({ message: "Renewal month must be 1–12" });
+      if (renewalDay && (parseInt(renewalDay) < 1 || parseInt(renewalDay) > 31)) return res.status(400).json({ message: "Renewal day must be 1–31" });
+      const allPolicies = await storage.getLeavePoliciesBySchool(req.session.schoolId!);
+      if (allPolicies.some(p => p.id !== id && p.name.toLowerCase() === name.trim().toLowerCase())) {
+        return res.status(409).json({ message: `A leave policy named "${name.trim()}" already exists for this school.` });
+      }
+    }
     const updated = await storage.updateLeavePolicy(id, {
       ...(name !== undefined && { name: name.trim() }),
       ...(annualLimit !== undefined && { annualLimit: parseInt(annualLimit) }),

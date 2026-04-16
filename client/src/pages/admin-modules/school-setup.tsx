@@ -624,8 +624,8 @@ export default function SchoolSetup({ schoolId }: Props) {
                       </select>
                     </div>
                     <div>
-                      <label className="text-xs font-medium text-gray-700 mb-1 block">Renewal Day</label>
-                      <Input type="number" min={1} max={28} value={policy.renewalDay}
+                      <label className="text-xs font-medium text-gray-700 mb-1 block">Renewal Day (1–28 for all months)</label>
+                      <Input type="number" min={1} max={31} value={policy.renewalDay}
                         onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, renewalDay: e.target.value } : p))}
                         placeholder="1" className="bg-white border-gray-300 text-gray-900 text-sm h-9"
                         data-testid={`input-renewal-day-${idx}`} />
