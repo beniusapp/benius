@@ -18,6 +18,7 @@ declare module "express-session" {
     userRole: string;
     studentId: number;
     teacherId: number;
+    pendingUserId: number;
   }
 }
 
@@ -191,17 +192,201 @@ export async function registerRoutes(
 
     const valid = await bcrypt.compare(parsed.data.password, user.passwordHash);
     if (!valid) {
+      await storage.logSecurityEvent(user.id, user.schoolId, "login_failed", req.ip || null, req.headers["user-agent"] || null);
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
-    const userData = await storage.getUserWithSchool(user.id);
-    req.session.userId = user.id;
-    req.session.teacherId = undefined;
+    if (!user.isInitialized) {
+      req.session.pendingUserId = user.id;
+      req.session.userId = undefined as any;
+      req.session.teacherId = undefined as any;
+      return res.json({ requiresInit: true });
+    }
+
+    req.session.pendingUserId = user.id;
+    req.session.userId = undefined as any;
+    req.session.teacherId = undefined as any;
+    return res.json({ requiresPinStep: true });
+  });
+
+  app.post("/api/admin/initialize", async (req, res) => {
+    const pendingUserId = req.session.pendingUserId;
+    if (!pendingUserId) return res.status(401).json({ message: "No pending session" });
+
+    const schema = z.object({
+      pin: z.string().length(6).regex(/^\d{6}$/, "PIN must be 6 digits"),
+      confirmPin: z.string().length(6),
+      recoveryEmail: z.string().email().optional().or(z.literal("")),
+      recoveryPhone: z.string().max(20).optional().or(z.literal("")),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid data" });
+    if (parsed.data.pin !== parsed.data.confirmPin) return res.status(400).json({ message: "PINs do not match" });
+
+    const pinHash = await bcrypt.hash(parsed.data.pin, 12);
+    await storage.initializeAdmin(
+      pendingUserId,
+      pinHash,
+      parsed.data.recoveryEmail || null,
+      parsed.data.recoveryPhone || null,
+    );
+
+    const userData = await storage.getUserWithSchool(pendingUserId);
+    req.session.pendingUserId = undefined as any;
+    req.session.userId = pendingUserId;
+    req.session.teacherId = undefined as any;
     if (userData) {
       req.session.schoolId = userData.school.id;
       req.session.userRole = userData.user.role;
     }
+    await storage.logSecurityEvent(pendingUserId, req.session.schoolId!, "init_complete", req.ip || null, req.headers["user-agent"] || null);
+    res.json({ message: "Account initialized" });
+  });
+
+  app.post("/api/admin/verify-pin", async (req, res) => {
+    const pendingUserId = req.session.pendingUserId;
+    if (!pendingUserId) return res.status(401).json({ message: "No pending session" });
+
+    const schema = z.object({ pin: z.string().length(6) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid PIN format" });
+
+    const valid = await storage.verifyAdminPin(pendingUserId, parsed.data.pin);
+    if (!valid) {
+      await storage.logSecurityEvent(pendingUserId, 0, "pin_failed", req.ip || null, req.headers["user-agent"] || null);
+      return res.status(401).json({ message: "Incorrect PIN" });
+    }
+
+    const userData = await storage.getUserWithSchool(pendingUserId);
+    req.session.pendingUserId = undefined as any;
+    req.session.userId = pendingUserId;
+    req.session.teacherId = undefined as any;
+    if (userData) {
+      req.session.schoolId = userData.school.id;
+      req.session.userRole = userData.user.role;
+    }
+    await storage.logSecurityEvent(pendingUserId, req.session.schoolId!, "login_success", req.ip || null, req.headers["user-agent"] || null);
     res.json({ message: "Login successful" });
+  });
+
+  app.post("/api/admin/forgot-password", async (req, res) => {
+    const schema = z.object({ email: z.string().email(), schoolCode: z.string().min(1) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid request" });
+
+    const school = await storage.getSchoolByCode(parsed.data.schoolCode.toUpperCase());
+    if (!school) return res.status(404).json({ message: "School code not found" });
+
+    const user = await storage.getUserByEmail(parsed.data.email);
+    if (!user || user.schoolId !== school.id) {
+      return res.status(404).json({ message: "No account found with those details" });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    await storage.setAdminOtp(user.id, otp, expiresAt);
+    res.json({ message: "OTP generated", otp, expiresIn: 15 });
+  });
+
+  app.post("/api/admin/verify-otp", async (req, res) => {
+    const schema = z.object({ email: z.string().email(), otp: z.string().length(6) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid request" });
+
+    const user = await storage.getUserByEmail(parsed.data.email);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const valid = await storage.verifyAndConsumeAdminOtp(user.id, parsed.data.otp);
+    if (!valid) return res.status(400).json({ message: "Invalid or expired OTP" });
+
+    const updatedUser = await storage.getUserById(user.id);
+    res.json({ message: "OTP verified", resetToken: updatedUser?.resetToken });
+  });
+
+  app.post("/api/admin/reset-password", async (req, res) => {
+    const schema = z.object({
+      email: z.string().email(),
+      resetToken: z.string().min(1),
+      newPassword: z.string().min(6),
+      newPin: z.string().length(6).regex(/^\d{6}$/).optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid data" });
+
+    const newPasswordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+    const newPinHash = parsed.data.newPin ? await bcrypt.hash(parsed.data.newPin, 12) : undefined;
+    const ok = await storage.resetAdminPasswordWithToken(parsed.data.email, parsed.data.resetToken, newPasswordHash, newPinHash);
+    if (!ok) return res.status(400).json({ message: "Invalid or expired reset token" });
+    res.json({ message: "Password reset successful" });
+  });
+
+  app.get("/api/admin/profile", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const user = await storage.getUserById(req.session.userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json({
+      id: user.id,
+      email: user.email,
+      recoveryEmail: user.recoveryEmail,
+      recoveryPhone: user.recoveryPhone,
+      isInitialized: user.isInitialized,
+      hasPin: !!user.pinHash,
+    });
+  });
+
+  app.patch("/api/admin/profile", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({
+      recoveryEmail: z.string().email().optional().or(z.literal("")),
+      recoveryPhone: z.string().max(20).optional().or(z.literal("")),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid data" });
+    await storage.updateAdminProfile(req.session.userId, {
+      recoveryEmail: parsed.data.recoveryEmail || null,
+      recoveryPhone: parsed.data.recoveryPhone || null,
+    });
+    res.json({ message: "Profile updated" });
+  });
+
+  app.post("/api/admin/change-password", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({
+      currentPassword: z.string().min(1),
+      newPassword: z.string().min(6),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid data" });
+    const ok = await storage.verifyAdminPassword(req.session.userId, parsed.data.currentPassword);
+    if (!ok) return res.status(401).json({ message: "Current password is incorrect" });
+    const hash = await bcrypt.hash(parsed.data.newPassword, 10);
+    await storage.updateAdminPassword(req.session.userId, hash);
+    await storage.logSecurityEvent(req.session.userId, req.session.schoolId!, "password_changed", req.ip || null, req.headers["user-agent"] || null);
+    res.json({ message: "Password changed successfully" });
+  });
+
+  app.post("/api/admin/change-pin", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({
+      currentPin: z.string().length(6),
+      newPin: z.string().length(6).regex(/^\d{6}$/, "New PIN must be 6 digits"),
+      confirmPin: z.string().length(6),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid data" });
+    if (parsed.data.newPin !== parsed.data.confirmPin) return res.status(400).json({ message: "New PINs do not match" });
+    const ok = await storage.verifyAdminPin(req.session.userId, parsed.data.currentPin);
+    if (!ok) return res.status(401).json({ message: "Current PIN is incorrect" });
+    const hash = await bcrypt.hash(parsed.data.newPin, 12);
+    await storage.updateAdminPin(req.session.userId, hash);
+    await storage.logSecurityEvent(req.session.userId, req.session.schoolId!, "pin_changed", req.ip || null, req.headers["user-agent"] || null);
+    res.json({ message: "PIN changed successfully" });
+  });
+
+  app.get("/api/admin/security-log", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const logs = await storage.getSecurityAuditLog(req.session.userId, 20);
+    res.json(logs);
   });
 
   app.get("/api/me", async (req, res) => {

@@ -5,7 +5,7 @@ import {
   libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata,
   studentLeaveRequests, auditLogs, visitorLogs, studentProfiles, teacherAllocations,
   promotionOverrides, gradingTiers, gradingRules, academicHistory,
-  schoolAssets, assetLogs, verificationLogs, timetableStructure,
+  schoolAssets, assetLogs, verificationLogs, timetableStructure, securityAudit,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
@@ -2553,6 +2553,87 @@ export class DatabaseStorage {
       .where(and(eq(timetableStructure.id, id), eq(timetableStructure.schoolId, schoolId)))
       .returning();
     return result.length > 0;
+  }
+
+  // ===== ADMIN AUTH & PROFILE =====
+  async getUserById(id: number): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user || undefined;
+  }
+
+  async initializeAdmin(userId: number, pinHash: string, recoveryEmail: string | null, recoveryPhone: string | null): Promise<void> {
+    await db.update(users).set({
+      pinHash,
+      recoveryEmail,
+      recoveryPhone,
+      isInitialized: true,
+      otpCode: null,
+      otpExpiresAt: null,
+    }).where(eq(users.id, userId));
+  }
+
+  async verifyAdminPin(userId: number, pin: string): Promise<boolean> {
+    const [user] = await db.select().from(users).where(eq(users.id, userId));
+    if (!user || !user.pinHash) return false;
+    const bcryptLib = await import("bcryptjs");
+    return bcryptLib.compare(pin, user.pinHash);
+  }
+
+  async updateAdminPin(userId: number, pinHash: string): Promise<void> {
+    await db.update(users).set({ pinHash }).where(eq(users.id, userId));
+  }
+
+  async updateAdminPassword(userId: number, passwordHash: string): Promise<void> {
+    await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+  }
+
+  async updateAdminProfile(userId: number, data: { recoveryEmail?: string | null; recoveryPhone?: string | null }): Promise<void> {
+    await db.update(users).set(data).where(eq(users.id, userId));
+  }
+
+  async setAdminOtp(userId: number, otpCode: string, expiresAt: Date): Promise<void> {
+    await db.update(users).set({ otpCode, otpExpiresAt: expiresAt }).where(eq(users.id, userId));
+  }
+
+  async verifyAndConsumeAdminOtp(userId: number, otp: string): Promise<boolean> {
+    const [user] = await db.select().from(users).where(eq(users.id, userId));
+    if (!user || !user.otpCode || !user.otpExpiresAt) return false;
+    if (new Date() > user.otpExpiresAt) return false;
+    if (user.otpCode !== otp) return false;
+    const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    await db.update(users).set({ otpCode: null, otpExpiresAt: null, resetToken: token, resetTokenExpiresAt: expiresAt }).where(eq(users.id, userId));
+    return true;
+  }
+
+  async setAdminResetToken(userId: number, token: string, expiresAt: Date): Promise<void> {
+    await db.update(users).set({ resetToken: token, resetTokenExpiresAt: expiresAt, otpCode: null, otpExpiresAt: null }).where(eq(users.id, userId));
+  }
+
+  async resetAdminPasswordWithToken(email: string, token: string, newPasswordHash: string, newPinHash?: string): Promise<boolean> {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    if (!user || !user.resetToken || !user.resetTokenExpiresAt) return false;
+    if (new Date() > user.resetTokenExpiresAt) return false;
+    if (user.resetToken !== token) return false;
+    const updates: Partial<typeof users.$inferInsert> = {
+      passwordHash: newPasswordHash,
+      resetToken: null,
+      resetTokenExpiresAt: null,
+    };
+    if (newPinHash) updates.pinHash = newPinHash;
+    await db.update(users).set(updates).where(eq(users.id, user.id));
+    return true;
+  }
+
+  async logSecurityEvent(userId: number, schoolId: number, eventType: string, ipAddress: string | null, userAgent: string | null): Promise<void> {
+    await db.insert(securityAudit).values({ userId, schoolId, eventType, ipAddress, userAgent });
+  }
+
+  async getSecurityAuditLog(userId: number, limit = 20): Promise<import("@shared/schema").SecurityAudit[]> {
+    return await db.select().from(securityAudit)
+      .where(eq(securityAudit.userId, userId))
+      .orderBy(desc(securityAudit.createdAt))
+      .limit(limit);
   }
 }
 

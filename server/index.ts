@@ -189,6 +189,26 @@ app.use((req, res, next) => {
     );
   `);
 
+  await pool.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_hash TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS recovery_email TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS recovery_phone VARCHAR(20);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS is_initialized BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_code VARCHAR(10);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMP;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires_at TIMESTAMP;
+    CREATE TABLE IF NOT EXISTS security_audit (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      school_id INTEGER NOT NULL,
+      event_type VARCHAR(50) NOT NULL,
+      ip_address TEXT,
+      user_agent TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `);
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

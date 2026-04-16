@@ -1,13 +1,19 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import {
   GraduationCap, LogOut, Users, UserCheck, Settings, BookOpen, Clock,
   Bell, Image, BarChart2, Shield, UserSquare, CreditCard, Package,
   TrendingUp, MessageSquare, CalendarDays, ChevronLeft, Loader2,
-  ArrowRight, AlertTriangle,
+  ArrowRight, AlertTriangle, UserCircle2, X, KeyRound, Lock, Phone, Mail,
+  CheckCircle2, History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 
@@ -74,10 +80,299 @@ const GROUP_COLORS: Record<string, string> = {
 
 const GROUP_ORDER = ["Foundation", "Oversight", "Management", "Enterprise"];
 
+const changePwSchema = z.object({
+  currentPassword: z.string().min(1, "Required"),
+  newPassword: z.string().min(6, "Minimum 6 characters"),
+  confirmPassword: z.string().min(6),
+}).refine(d => d.newPassword === d.confirmPassword, { message: "Passwords do not match", path: ["confirmPassword"] });
+
+const changePinSchema = z.object({
+  currentPin: z.string().length(6, "6 digits required"),
+  newPin: z.string().length(6).regex(/^\d{6}$/, "6 digits required"),
+  confirmPin: z.string().length(6),
+}).refine(d => d.newPin === d.confirmPin, { message: "PINs do not match", path: ["confirmPin"] });
+
+const profileSchema = z.object({
+  recoveryEmail: z.string().email("Valid email").optional().or(z.literal("")),
+  recoveryPhone: z.string().max(20).optional().or(z.literal("")),
+});
+
+function PinInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <Input
+      type="password"
+      inputMode="numeric"
+      pattern="[0-9]*"
+      maxLength={6}
+      placeholder={placeholder ?? "••••••"}
+      value={value}
+      onChange={e => {
+        const v = e.target.value.replace(/\D/g, "").slice(0, 6);
+        onChange(v);
+      }}
+      className="tracking-widest text-center font-mono text-lg"
+    />
+  );
+}
+
+function AdminProfilePanel({ me, onClose }: { me: any; onClose: () => void }) {
+  const { toast } = useToast();
+  const [tab, setTab] = useState<"info" | "password" | "pin" | "log">("info");
+  const [currentPin, setCurrentPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+
+  const { data: profile } = useQuery<any>({
+    queryKey: ["/api/admin/profile"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/profile", { credentials: "include" });
+      return r.ok ? r.json() : null;
+    },
+  });
+
+  const { data: secLog = [] } = useQuery<any[]>({
+    queryKey: ["/api/admin/security-log"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/security-log", { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+    enabled: tab === "log",
+  });
+
+  const pwForm = useForm<z.infer<typeof changePwSchema>>({
+    resolver: zodResolver(changePwSchema),
+    defaultValues: { currentPassword: "", newPassword: "", confirmPassword: "" },
+  });
+
+  const profileForm = useForm<z.infer<typeof profileSchema>>({
+    resolver: zodResolver(profileSchema),
+    defaultValues: { recoveryEmail: profile?.recoveryEmail ?? "", recoveryPhone: profile?.recoveryPhone ?? "" },
+    values: { recoveryEmail: profile?.recoveryEmail ?? "", recoveryPhone: profile?.recoveryPhone ?? "" },
+  });
+
+  const changePwMutation = useMutation({
+    mutationFn: async (data: z.infer<typeof changePwSchema>) => {
+      const res = await apiRequest("POST", "/api/admin/change-password", data);
+      return res.json();
+    },
+    onSuccess: () => { toast({ title: "Password changed" }); pwForm.reset(); },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const changePinMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/change-pin", { currentPin, newPin, confirmPin });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "PIN changed" });
+      setCurrentPin(""); setNewPin(""); setConfirmPin("");
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const profileMutation = useMutation({
+    mutationFn: async (data: z.infer<typeof profileSchema>) => {
+      const res = await apiRequest("PATCH", "/api/admin/profile", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Profile updated" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/profile"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const EVENT_LABELS: Record<string, string> = {
+    login_success: "Login successful",
+    login_failed: "Login attempt failed",
+    pin_verified: "PIN verified",
+    pin_failed: "PIN attempt failed",
+    password_changed: "Password changed",
+    pin_changed: "PIN changed",
+    init_complete: "Account initialized",
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
+      <div className="w-full max-w-sm h-full bg-white shadow-2xl flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="border-b px-5 py-4 flex items-center justify-between bg-white">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+              <UserCircle2 className="w-6 h-6 text-blue-600" />
+            </div>
+            <div>
+              <p className="font-bold text-gray-900 text-sm">{me.email}</p>
+              <p className="text-xs text-gray-400">{me.schoolName} · {me.schoolCode}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors" data-testid="button-close-profile">
+            <X className="w-5 h-5 text-gray-500" />
+          </button>
+        </div>
+
+        <div className="flex border-b bg-gray-50">
+          {(["info", "password", "pin", "log"] as const).map(t => (
+            <button key={t} onClick={() => setTab(t)}
+              data-testid={`profile-tab-${t}`}
+              className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${tab === t ? "border-b-2 border-blue-600 text-blue-600 bg-white" : "text-gray-500 hover:text-gray-700"}`}>
+              {t === "info" ? "Profile" : t === "password" ? "Password" : t === "pin" ? "PIN" : "Log"}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {tab === "info" && (
+            <Form {...profileForm}>
+              <form onSubmit={profileForm.handleSubmit(d => profileMutation.mutate(d))} className="space-y-4">
+                <div className="p-3 rounded-lg bg-gray-50 border space-y-1">
+                  <p className="text-xs text-gray-500">School</p>
+                  <p className="font-semibold text-gray-800 text-sm">{me.schoolName}</p>
+                  <p className="text-xs text-gray-400 font-mono">{me.schoolCode}</p>
+                </div>
+                <div className="p-3 rounded-lg bg-gray-50 border space-y-1">
+                  <p className="text-xs text-gray-500">Admin Email</p>
+                  <p className="font-semibold text-gray-800 text-sm">{me.email}</p>
+                </div>
+                <div className="p-3 rounded-lg bg-blue-50 border border-blue-100">
+                  <div className="flex items-center gap-2 text-xs text-blue-700 font-medium mb-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    {profile?.isInitialized ? "Account initialized & secured" : "Account not yet initialized"}
+                  </div>
+                  <p className="text-xs text-blue-500">PIN protection: {profile?.hasPin ? "Enabled" : "Not set"}</p>
+                </div>
+                <div className="space-y-3">
+                  <p className="text-xs font-bold text-gray-600 uppercase tracking-wide">Recovery Options</p>
+                  <FormField control={profileForm.control} name="recoveryEmail" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">Recovery Email</FormLabel>
+                      <FormControl>
+                        <div className="relative">
+                          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                          <Input className="pl-8 text-sm" placeholder="backup@email.com" data-testid="input-profile-recovery-email" {...field} />
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                  <FormField control={profileForm.control} name="recoveryPhone" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">Recovery Phone</FormLabel>
+                      <FormControl>
+                        <div className="relative">
+                          <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                          <Input className="pl-8 text-sm" placeholder="+91 98765 43210" data-testid="input-profile-recovery-phone" {...field} />
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                </div>
+                <Button type="submit" className="w-full" disabled={profileMutation.isPending} data-testid="button-save-profile">
+                  {profileMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                  Save Changes
+                </Button>
+              </form>
+            </Form>
+          )}
+
+          {tab === "password" && (
+            <Form {...pwForm}>
+              <form onSubmit={pwForm.handleSubmit(d => changePwMutation.mutate(d))} className="space-y-4">
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-50 border border-amber-100 text-amber-700 text-xs">
+                  <Lock className="w-3.5 h-3.5 shrink-0" />
+                  Use a strong password with letters, numbers and symbols.
+                </div>
+                <FormField control={pwForm.control} name="currentPassword" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs">Current Password</FormLabel>
+                    <FormControl><Input type="password" placeholder="••••••••" data-testid="input-current-password" {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <FormField control={pwForm.control} name="newPassword" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs">New Password</FormLabel>
+                    <FormControl><Input type="password" placeholder="Min 6 characters" data-testid="input-new-password" {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <FormField control={pwForm.control} name="confirmPassword" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs">Confirm New Password</FormLabel>
+                    <FormControl><Input type="password" placeholder="Repeat password" data-testid="input-confirm-password" {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <Button type="submit" className="w-full" disabled={changePwMutation.isPending} data-testid="button-change-password">
+                  {changePwMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                  Change Password
+                </Button>
+              </form>
+            </Form>
+          )}
+
+          {tab === "pin" && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-blue-50 border border-blue-100 text-blue-700 text-xs">
+                <KeyRound className="w-3.5 h-3.5 shrink-0" />
+                Your PIN is required every time you log in as a second security step.
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">Current PIN</label>
+                  <PinInput value={currentPin} onChange={setCurrentPin} placeholder="Enter current PIN" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">New PIN</label>
+                  <PinInput value={newPin} onChange={setNewPin} placeholder="Enter new PIN" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">Confirm New PIN</label>
+                  <PinInput value={confirmPin} onChange={setConfirmPin} placeholder="Repeat new PIN" />
+                </div>
+              </div>
+              <Button className="w-full" disabled={changePinMutation.isPending || currentPin.length < 6 || newPin.length < 6 || confirmPin.length < 6}
+                onClick={() => changePinMutation.mutate()} data-testid="button-change-pin">
+                {changePinMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                Change PIN
+              </Button>
+            </div>
+          )}
+
+          {tab === "log" && (
+            <div className="space-y-3">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Recent Security Events</p>
+              {secLog.length === 0 ? (
+                <div className="text-center py-8 text-gray-400 text-sm">No events recorded yet</div>
+              ) : (
+                secLog.map((ev: any) => (
+                  <div key={ev.id} className="p-3 rounded-lg border bg-gray-50 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className={`text-xs font-semibold ${ev.eventType.includes("failed") ? "text-red-600" : "text-emerald-600"}`}>
+                        {EVENT_LABELS[ev.eventType] ?? ev.eventType}
+                      </span>
+                      <span className="text-[10px] text-gray-400">
+                        {new Date(ev.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })} {new Date(ev.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}
+                      </span>
+                    </div>
+                    {ev.ipAddress && <p className="text-[10px] text-gray-400 font-mono">IP: {ev.ipAddress}</p>}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [activeModule, setActiveModule] = useState<ActiveModule>("grid");
+  const [showProfile, setShowProfile] = useState(false);
 
   const { data: me, isLoading, isError } = useQuery<MeResponse | null>({
     queryKey: ["/api/me"],
@@ -231,8 +526,12 @@ export default function AdminDashboard() {
               <p className="text-[10px] text-white/40 leading-none" data-testid="text-school-name">{me.schoolName}</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <span className="hidden sm:block text-sm text-white/40" data-testid="text-user-email">{me.email}</span>
+            <Button variant="ghost" size="sm" onClick={() => setShowProfile(true)}
+              className="text-white/60 hover:text-white hover:bg-white/10" data-testid="button-open-profile">
+              <UserCircle2 className="w-4 h-4 mr-1" /> Profile
+            </Button>
             <Button variant="ghost" size="sm" onClick={() => logoutMutation.mutate()} disabled={logoutMutation.isPending}
               className="text-white/60 hover:text-white hover:bg-white/10" data-testid="button-logout">
               <LogOut className="w-4 h-4 mr-1" /> Logout
@@ -353,6 +652,8 @@ export default function AdminDashboard() {
       <footer className="border-t border-white/5 py-4 text-center">
         <p className="text-white/20 text-xs">BENIUS School Management Platform · {me.schoolName} · School Code: <span className="font-mono text-[#D4AF37]/50">{me.schoolCode}</span></p>
       </footer>
+
+      {showProfile && <AdminProfilePanel me={me} onClose={() => setShowProfile(false)} />}
     </div>
   );
 }

@@ -9,6 +9,7 @@ import SuperMaster from "@/pages/super-master";
 import Login from "@/pages/login";
 import AdminDashboard from "@/pages/admin-dashboard";
 import Register from "@/pages/register";
+import AdminSetup from "@/pages/admin-setup";
 import StudentLogin from "@/pages/student-login";
 import StudentDashboard from "@/pages/student-dashboard";
 import TeacherLogin from "@/pages/teacher-login";
@@ -31,6 +32,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/super-master" component={SuperMaster} />
       <Route path="/login" component={Login} />
+      <Route path="/admin-setup" component={AdminSetup} />
       <Route path="/admin-dashboard" component={AdminDashboard} />
       <Route path="/register" component={Register} />
       <Route path="/student-login" component={StudentLogin} />

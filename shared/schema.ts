@@ -16,6 +16,14 @@ export const users = pgTable("users", {
   role: text("role").notNull().default("admin"),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
   isActive: boolean("is_active").notNull().default(true),
+  pinHash: text("pin_hash"),
+  recoveryEmail: text("recovery_email"),
+  recoveryPhone: varchar("recovery_phone", { length: 20 }),
+  isInitialized: boolean("is_initialized").notNull().default(false),
+  otpCode: varchar("otp_code", { length: 10 }),
+  otpExpiresAt: timestamp("otp_expires_at"),
+  resetToken: text("reset_token"),
+  resetTokenExpiresAt: timestamp("reset_token_expires_at"),
 });
 
 export const students = pgTable("students", {
@@ -371,6 +379,20 @@ export type School = typeof schools.$inferSelect;
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
+
+export const securityAudit = pgTable("security_audit", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull(),
+  eventType: varchar("event_type", { length: 50 }).notNull(),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertSecurityAuditSchema = createInsertSchema(securityAudit).omit({ id: true, createdAt: true });
+export type InsertSecurityAudit = z.infer<typeof insertSecurityAuditSchema>;
+export type SecurityAudit = typeof securityAudit.$inferSelect;
 
 export const insertStudentSchema = createInsertSchema(students).omit({ id: true });
 export type InsertStudent = z.infer<typeof insertStudentSchema>;
