@@ -17,7 +17,7 @@ const setupSchema = z.object({
   pin: z.string().length(6, "PIN must be exactly 6 digits").regex(/^\d{6}$/, "PIN must be numeric"),
   confirmPin: z.string().length(6),
   recoveryEmail: z.string().email("Enter a valid recovery email address"),
-  recoveryPhone: z.string().max(20).optional().or(z.literal("")),
+  recoveryPhone: z.string().min(7, "Enter a valid phone number").max(20),
 }).refine(d => d.newPassword === d.confirmPassword, { message: "Passwords do not match", path: ["confirmPassword"] })
   .refine(d => d.pin === d.confirmPin, { message: "PINs do not match", path: ["confirmPin"] });
 

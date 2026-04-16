@@ -116,9 +116,15 @@ export default function Login() {
     },
     onSuccess: (data) => {
       setErrorMessage("");
-      setOtpDisplay(data.otp);
-      setMaskedRecoveryEmail(data.recoveryEmail || "");
-      setStep("forgot-otp");
+      if (data.otp === null) {
+        setStep("forgot-otp");
+        setOtpDisplay(null);
+        setMaskedRecoveryEmail("");
+      } else {
+        setOtpDisplay(data.otp);
+        setMaskedRecoveryEmail(data.recoveryEmail || "");
+        setStep("forgot-otp");
+      }
     },
     onError: (e: Error) => setErrorMessage(e.message || "Could not find account"),
   });

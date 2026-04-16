@@ -231,7 +231,7 @@ export async function registerRoutes(
       pin: z.string().length(6).regex(/^\d{6}$/, "PIN must be 6 digits"),
       confirmPin: z.string().length(6),
       recoveryEmail: z.string().email("Enter a valid recovery email"),
-      recoveryPhone: z.string().max(20).optional().or(z.literal("")),
+      recoveryPhone: z.string().min(7, "Enter a valid phone number").max(20),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid data" });
@@ -295,11 +295,13 @@ export async function registerRoutes(
     if (!parsed.success) return res.status(400).json({ message: "Invalid request" });
 
     const school = await storage.getSchoolByCode(parsed.data.schoolCode.toUpperCase());
-    if (!school) return res.status(404).json({ message: "School code not found" });
+    if (!school) {
+      return res.json({ message: "If those details match, an OTP has been sent to your recovery email.", otp: null, expiresIn: 10, recoveryEmail: null });
+    }
 
     const user = await storage.getUserByRecoveryEmail(parsed.data.recoveryEmail, school.id);
     if (!user) {
-      return res.status(404).json({ message: "No account found with that recovery email and school code" });
+      return res.json({ message: "If those details match, an OTP has been sent to your recovery email.", otp: null, expiresIn: 10, recoveryEmail: null });
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -403,7 +405,7 @@ export async function registerRoutes(
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
     const schema = z.object({
       recoveryEmail: z.string().email().optional().or(z.literal("")),
-      recoveryPhone: z.string().max(20).optional().or(z.literal("")),
+      recoveryPhone: z.string().min(7, "Enter a valid phone number").max(20),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid data" });
