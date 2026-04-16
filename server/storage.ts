@@ -1714,24 +1714,30 @@ export class DatabaseStorage {
         prevEndDate.setDate(prevEndDate.getDate() - 1);
         const prevPeriodEnd = prevEndDate.toISOString().split("T")[0];
 
-        const prevApproved = await db.select().from(leaveRequests)
-          .where(and(
-            eq(leaveRequests.teacherId, teacherId),
-            eq(leaveRequests.status, "approved"),
-            or(eq(leaveRequests.policyId, policy.id), and(sql`${leaveRequests.policyId} IS NULL`, eq(leaveRequests.leaveType, policy.name))),
-            lte(leaveRequests.startDate, prevPeriodEnd),
-            gte(leaveRequests.endDate, prevPeriodStart)
-          ));
+        // Only carry forward if the policy existed before the current period started.
+        // A policy created within the current period has no real previous-period history,
+        // so carry-forward would inflate the balance with phantom days.
+        const policyCreatedStr = policy.createdAt.toISOString().split("T")[0];
+        if (policyCreatedStr < periodStart) {
+          const prevApproved = await db.select().from(leaveRequests)
+            .where(and(
+              eq(leaveRequests.teacherId, teacherId),
+              eq(leaveRequests.status, "approved"),
+              or(eq(leaveRequests.policyId, policy.id), and(sql`${leaveRequests.policyId} IS NULL`, eq(leaveRequests.leaveType, policy.name))),
+              lte(leaveRequests.startDate, prevPeriodEnd),
+              gte(leaveRequests.endDate, prevPeriodStart)
+            ));
 
-        let prevUsed = 0;
-        const prevPeriodStartDate = new Date(prevPeriodStart);
-        const prevPeriodEndDate = new Date(prevPeriodEnd);
-        for (const r of prevApproved) {
-          const start = new Date(Math.max(new Date(r.startDate).getTime(), prevPeriodStartDate.getTime()));
-          const end = new Date(Math.min(new Date(r.endDate).getTime(), prevPeriodEndDate.getTime()));
-          prevUsed += Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+          let prevUsed = 0;
+          const prevPeriodStartDate = new Date(prevPeriodStart);
+          const prevPeriodEndDate = new Date(prevPeriodEnd);
+          for (const r of prevApproved) {
+            const start = new Date(Math.max(new Date(r.startDate).getTime(), prevPeriodStartDate.getTime()));
+            const end = new Date(Math.min(new Date(r.endDate).getTime(), prevPeriodEndDate.getTime()));
+            prevUsed += Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+          }
+          carryForward = Math.max(0, policy.annualLimit - prevUsed);
         }
-        carryForward = Math.max(0, policy.annualLimit - prevUsed);
       }
 
       const effectiveLimit = policy.annualLimit + carryForward;

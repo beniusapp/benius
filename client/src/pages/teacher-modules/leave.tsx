@@ -248,37 +248,59 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
               balanceItems.map((b) => (
                 <Card key={b.policyId} className="bg-white border border-gray-200 shadow-sm">
                   <CardContent className="p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Calendar className="w-4 h-4 text-gray-500" />
-                      <span className="text-sm font-semibold text-gray-900" data-testid={`text-balance-label-${b.policyId}`}>
-                        {b.name}
-                      </span>
+                    {/* Header: name + period */}
+                    <div className="flex items-start justify-between gap-1 mb-3">
+                      <div>
+                        <span className="text-sm font-bold text-gray-900 block" data-testid={`text-balance-label-${b.policyId}`}>
+                          {b.name}
+                        </span>
+                        <span className="text-[10px] text-gray-400 flex items-center gap-0.5 mt-0.5">
+                          <Clock className="w-3 h-3" />
+                          {formatDate(b.periodStart)} – {formatDate(b.validUntil)}
+                        </span>
+                      </div>
                       {b.remaining === 0 && (
-                        <span className="ml-auto text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-600 font-medium">Full</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-600 font-bold flex-shrink-0">
+                          Exhausted
+                        </span>
                       )}
                     </div>
-                    <div className="flex items-baseline gap-1 mb-1">
-                      <span className="text-2xl font-bold text-gray-900" data-testid={`text-balance-remaining-${b.policyId}`}>
-                        {b.remaining}
-                      </span>
-                      <span className="text-xs text-gray-400">
-                        / {b.annualLimit + b.carryForward} remaining
-                      </span>
+
+                    {/* Breakdown rows */}
+                    <div className="space-y-1.5 mb-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-gray-500">Current Year</span>
+                        <span className="text-xs font-bold text-gray-900">{b.annualLimit} days</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-gray-500">Carried Over</span>
+                        <span className={`text-xs font-bold ${b.carryForward > 0 ? "text-emerald-600" : "text-gray-400"}`}
+                          data-testid={`text-balance-carry-${b.policyId}`}>
+                          {b.carryForward > 0 ? `+${b.carryForward} days` : "0 days"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-gray-500">Used</span>
+                        <span className="text-xs font-bold text-gray-900" data-testid={`text-balance-used-${b.policyId}`}>
+                          {b.used} days
+                        </span>
+                      </div>
+                      <div className="h-px bg-gray-100 my-1" />
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-gray-700">Net Available</span>
+                        <span className="text-sm font-bold text-gray-900" data-testid={`text-balance-remaining-${b.policyId}`}>
+                          {b.remaining} days
+                        </span>
+                      </div>
                     </div>
-                    <div className="w-full bg-gray-100 rounded-full h-1.5 mb-1">
+
+                    {/* Progress bar */}
+                    <div className="w-full bg-gray-100 rounded-full h-1.5">
                       <div
                         className="h-1.5 rounded-full bg-emerald-500 transition-all"
-                        style={{ width: `${Math.min((b.used / (b.annualLimit + b.carryForward)) * 100, 100)}%` }}
+                        style={{ width: `${(b.annualLimit + b.carryForward) > 0 ? Math.min((b.used / (b.annualLimit + b.carryForward)) * 100, 100) : 0}%` }}
                       />
                     </div>
-                    <p className="text-xs text-gray-400" data-testid={`text-balance-used-${b.policyId}`}>
-                      {b.used} used
-                      {b.carryForward > 0 && <span className="ml-1 text-emerald-600">· +{b.carryForward} carried over</span>}
-                    </p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      <Clock className="w-3 h-3 inline mr-0.5" />
-                      {formatDate(b.periodStart)} – {formatDate(b.validUntil)}
-                    </p>
                   </CardContent>
                 </Card>
               ))
