@@ -304,6 +304,10 @@ export async function registerRoutes(
     res.json({ message: "OTP generated", otp, expiresIn: 10, recoveryEmail: recoveryEmailMasked });
   });
 
+  app.get("/api/admin/pending-session", (req, res) => {
+    res.json({ pending: !!req.session.pendingUserId });
+  });
+
   app.post("/api/admin/verify-otp", async (req, res) => {
     const pendingForgotUserId = req.session.pendingForgotUserId;
     if (!pendingForgotUserId) return res.status(401).json({ message: "No pending forgot-password session" });
@@ -321,7 +325,13 @@ export async function registerRoutes(
     req.session.pendingForgotUserId = undefined;
     req.session.pendingResetUserId = user.id;
     const hasPinSetup = !!user.pinHash;
-    res.json({ message: "OTP verified", requiresPinStep: hasPinSetup });
+
+    if (!hasPinSetup) {
+      const updatedUser = await storage.getUserById(user.id);
+      return res.json({ message: "OTP verified", requiresPinStep: false, resetToken: updatedUser?.resetToken });
+    }
+
+    res.json({ message: "OTP verified", requiresPinStep: true });
   });
 
   app.post("/api/admin/verify-reset-pin", async (req, res) => {

@@ -38,6 +38,26 @@ interface MeResponse {
   schoolId: number; schoolName: string; schoolCode: string; studentCount: number;
 }
 
+interface AdminProfileResponse {
+  id: number;
+  email: string;
+  recoveryEmail: string | null;
+  recoveryPhone: string | null;
+  isInitialized: boolean;
+  hasPin: boolean;
+}
+
+interface SecurityAuditEntry {
+  id: number;
+  userId: number | null;
+  schoolId: number | null;
+  action: string;
+  success: boolean;
+  ipAddress: string | null;
+  userAgent: string | null;
+  createdAt: string;
+}
+
 type ActiveModule =
   | "grid" | "school-setup" | "timetable" | "attendance" | "exam-controller"
   | "complaint-hub" | "noticeboard" | "approval-center" | "faculty-mapping"
@@ -115,14 +135,14 @@ function PinInput({ value, onChange, placeholder }: { value: string; onChange: (
   );
 }
 
-function AdminProfilePanel({ me, onClose }: { me: any; onClose: () => void }) {
+function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => void }) {
   const { toast } = useToast();
   const [tab, setTab] = useState<"info" | "password" | "pin" | "log">("info");
   const [currentPin, setCurrentPin] = useState("");
   const [newPin, setNewPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
 
-  const { data: profile } = useQuery<any>({
+  const { data: profile } = useQuery<AdminProfileResponse>({
     queryKey: ["/api/admin/profile"],
     queryFn: async () => {
       const r = await fetch("/api/admin/profile", { credentials: "include" });
@@ -130,7 +150,7 @@ function AdminProfilePanel({ me, onClose }: { me: any; onClose: () => void }) {
     },
   });
 
-  const { data: secLog = [] } = useQuery<any[]>({
+  const { data: secLog = [] } = useQuery<SecurityAuditEntry[]>({
     queryKey: ["/api/admin/security-log"],
     queryFn: async () => {
       const r = await fetch("/api/admin/security-log", { credentials: "include" });
@@ -350,7 +370,7 @@ function AdminProfilePanel({ me, onClose }: { me: any; onClose: () => void }) {
               {secLog.length === 0 ? (
                 <div className="text-center py-8 text-gray-400 text-sm">No events recorded yet</div>
               ) : (
-                secLog.map((ev: any) => (
+                secLog.map((ev) => (
                   <div key={ev.id} className="p-3 rounded-lg border bg-gray-50 space-y-1">
                     <div className="flex items-center justify-between">
                       <span className={`text-xs font-semibold ${(ev.action || "").includes("failed") || (ev.action || "").includes("unknown") || (ev.action || "").includes("deactivated") ? "text-red-600" : "text-emerald-600"}`}>

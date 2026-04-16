@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { z } from "zod";
 import { GraduationCap, ShieldCheck, Loader2, AlertCircle, CheckCircle2, Eye, EyeOff } from "lucide-react";
@@ -53,6 +53,20 @@ export default function AdminSetup() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
+  const { data: pendingStatus, isLoading: checkingSession } = useQuery<{ pending: boolean }>({
+    queryKey: ["/api/admin/pending-session"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/pending-session", { credentials: "include" });
+      return r.ok ? r.json() : { pending: false };
+    },
+  });
+
+  useEffect(() => {
+    if (!checkingSession && pendingStatus && !pendingStatus.pending) {
+      setLocation("/login");
+    }
+  }, [pendingStatus, checkingSession, setLocation]);
+
   const form = useForm<SetupForm>({
     resolver: zodResolver(setupSchema),
     defaultValues: { newPassword: "", confirmPassword: "", pin: "", confirmPin: "", recoveryEmail: "", recoveryPhone: "" },
@@ -85,6 +99,18 @@ export default function AdminSetup() {
   function onSubmit(data: SetupForm) {
     setErrorMessage("");
     setupMutation.mutate(data);
+  }
+
+  if (checkingSession) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+      </div>
+    );
+  }
+
+  if (!pendingStatus?.pending) {
+    return null;
   }
 
   return (
