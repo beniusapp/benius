@@ -215,9 +215,12 @@ app.use((req, res, next) => {
     DO $$ BEGIN
       IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='security_audit' AND column_name='event_type') THEN
         UPDATE security_audit SET action = event_type WHERE action IS NULL;
+        ALTER TABLE security_audit ALTER COLUMN event_type DROP NOT NULL;
+        ALTER TABLE security_audit DROP COLUMN event_type;
       END IF;
     END $$;
     UPDATE security_audit SET action = 'unknown' WHERE action IS NULL;
+    ALTER TABLE security_audit ALTER COLUMN action SET NOT NULL;
   `);
 
   await registerRoutes(httpServer, app);
