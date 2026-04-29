@@ -2,7 +2,8 @@ import { useState, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Loader2, Plus, FileDown, Upload, X, Megaphone, Calendar,
-  CheckCircle, Bell, AlertTriangle, PartyPopper, GraduationCap, Palmtree
+  CheckCircle, Bell, AlertTriangle, PartyPopper, GraduationCap, Palmtree,
+  Pencil, Trash2, Check,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSchoolConfig } from "@/hooks/use-school-config";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
 
@@ -81,6 +82,8 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editContent, setEditContent] = useState("");
 
   const toggleSection = (s: string) => {
     setSelectedSections(prev =>
@@ -145,6 +148,15 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, [filePreview]);
 
+  const { data: myNotices = [], isLoading: loadingMyNotices } = useQuery<NoticeEntry[]>({
+    queryKey: ["/api/notices/teacher/mine"],
+    queryFn: async () => {
+      const res = await fetch("/api/notices/teacher/mine", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load");
+      return res.json();
+    },
+  });
+
   const postMutation = useMutation({
     mutationFn: async () => {
       const fd = new FormData();
@@ -166,10 +178,39 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
       setContent("");
       clearFile();
       queryClient.invalidateQueries({ queryKey: ["/api/notices", teacher.schoolId, "student"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notices/teacher/mine"] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const r = await apiRequest("DELETE", `/api/notices/${id}`, undefined);
+      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
+    },
+    onSuccess: () => {
+      toast({ title: "Notice Deleted" });
+      queryClient.invalidateQueries({ queryKey: ["/api/notices/teacher/mine"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notices", teacher.schoolId, "student"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const editMutation = useMutation({
+    mutationFn: async ({ id, content }: { id: number; content: string }) => {
+      const r = await apiRequest("PUT", `/api/notices/${id}`, { content });
+      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
+    },
+    onSuccess: () => {
+      toast({ title: "Notice Updated" });
+      setEditingId(null);
+      setEditContent("");
+      queryClient.invalidateQueries({ queryKey: ["/api/notices/teacher/mine"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notices", teacher.schoolId, "student"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const scopeLabel = scope === "specific" ? "Specific Section" : scope === "entire" ? "Entire Class" : scope === "range" ? "Class Range" : "Whole School";
@@ -473,73 +514,130 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
             </CardContent>
           </Card>
 
-          <div>
-            <h3 className="text-base font-bold tracking-tight mb-3" data-testid="text-student-notices-title">
-              Student Notice Feed
-            </h3>
-            {loadingStudent ? (
-              <div className="space-y-3">
-                {[1, 2].map(i => (
-                  <div key={i} className="rounded-xl border bg-card p-5 animate-pulse">
-                    <div className="h-4 bg-muted rounded w-3/4 mb-2" />
-                    <div className="h-4 bg-muted rounded w-1/2" />
-                    <div className="h-3 bg-muted rounded w-24 mt-4" />
-                  </div>
-                ))}
-              </div>
-            ) : studentNotices.length === 0 ? (
-              <div className="text-center py-10 text-muted-foreground text-sm" data-testid="text-no-student-notices">
-                <Megaphone className="w-10 h-10 mx-auto mb-2 opacity-20" />
-                No notices posted to students yet.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {studentNotices.map((n) => {
+          {/* ── My Posted Notices (last 50, scrollable, with edit/delete) ── */}
+          <div className="rounded-2xl border border-border bg-card overflow-hidden">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+              <h3 className="text-sm font-bold tracking-tight flex items-center gap-2" data-testid="text-my-notices-title">
+                <Megaphone className="w-4 h-4 text-amber-500" />
+                My Posted Notices
+                <span className="text-muted-foreground font-normal text-xs">(last 50)</span>
+              </h3>
+              {!loadingMyNotices && (
+                <span className="text-muted-foreground text-xs">{myNotices.length} notice{myNotices.length !== 1 ? "s" : ""}</span>
+              )}
+            </div>
+
+            <div className="overflow-y-auto max-h-[480px] divide-y divide-border" data-testid="my-notices-feed">
+              {loadingMyNotices ? (
+                <div className="flex justify-center py-10">
+                  <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : myNotices.length === 0 ? (
+                <div className="text-center py-10 text-muted-foreground text-sm" data-testid="text-no-my-notices">
+                  <Megaphone className="w-10 h-10 mx-auto mb-2 opacity-20" />
+                  No notices posted yet.
+                </div>
+              ) : (
+                myNotices.map((n) => {
                   const nt = n.noticeType || "Routine";
                   const style = NOTICE_TYPE_STYLES[nt] || NOTICE_TYPE_STYLES.Routine;
+                  const isEditing = editingId === n.id;
                   return (
-                    <div key={n.id}
-                      className={`rounded-xl border-2 ${style.border} ${style.bg} shadow-sm transition-all hover:shadow-md`}
-                      data-testid={`card-student-notice-${n.id}`}
+                    <div
+                      key={n.id}
+                      className="px-4 py-3 hover:bg-muted/30 transition-colors"
+                      data-testid={`card-my-notice-${n.id}`}
                     >
-                      <div className="p-4 sm:p-5">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${style.pill}`}
-                              data-testid={`badge-student-notice-type-${n.id}`}>
-                              {getNoticeIcon(nt)}
-                              {nt}
-                            </span>
-                            <span className="text-xs text-muted-foreground px-2 py-0.5 bg-muted/60 rounded-full">
-                              {getTargetLabel(n)}
-                            </span>
-                          </div>
-                          <span className="text-xs text-muted-foreground flex items-center gap-1 shrink-0">
+                      {/* Header */}
+                      <div className="flex items-start justify-between gap-2 mb-1.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border ${style.pill}`}>
+                            {getNoticeIcon(nt)}
+                            {nt}
+                          </span>
+                          <span className="text-xs text-muted-foreground px-2 py-0.5 bg-muted/60 rounded-full">
+                            {getTargetLabel(n)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <span className="text-xs text-muted-foreground tabular-nums flex items-center gap-1">
                             <Calendar className="w-3 h-3" />
                             {new Date(n.createdAt).toLocaleDateString("en-GB")}
                           </span>
-                        </div>
-                        <p className="text-sm whitespace-pre-wrap leading-relaxed" data-testid={`text-student-notice-content-${n.id}`}>
-                          {n.content}
-                        </p>
-                        {n.fileUrl && (
-                          <a href={n.fileUrl} target="_blank" rel="noopener noreferrer"
-                            className={`inline-flex items-center gap-1.5 mt-3 text-xs ${style.text} font-medium`}
-                            data-testid={`link-student-notice-file-${n.id}`}>
-                            <FileDown className="w-3.5 h-3.5" /> View Attachment
-                          </a>
-                        )}
-                        <div className="flex items-center mt-3 pt-2 border-t border-dashed">
-                          <span className="text-xs text-muted-foreground">
-                            Posted by {n.creatorRole === "teacher" ? "Teacher" : "Admin"}
-                          </span>
+                          {!isEditing && (
+                            <>
+                              <button
+                                onClick={() => { setEditingId(n.id); setEditContent(n.content); }}
+                                className="p-1.5 rounded-lg text-muted-foreground hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
+                                title="Edit notice"
+                                data-testid={`button-edit-my-notice-${n.id}`}
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => deleteMutation.mutate(n.id)}
+                                disabled={deleteMutation.isPending}
+                                className="p-1.5 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-40"
+                                title="Delete notice"
+                                data-testid={`button-delete-my-notice-${n.id}`}
+                              >
+                                {deleteMutation.isPending
+                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  : <Trash2 className="w-3.5 h-3.5" />
+                                }
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
+
+                      {/* Content / inline edit */}
+                      {isEditing ? (
+                        <div className="space-y-2 mt-1">
+                          <Textarea
+                            value={editContent}
+                            onChange={e => setEditContent(e.target.value)}
+                            className="rounded-xl resize-none text-sm min-h-[80px]"
+                            data-testid={`textarea-edit-my-notice-${n.id}`}
+                            autoFocus
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => editMutation.mutate({ id: n.id, content: editContent })}
+                              disabled={!editContent.trim() || editMutation.isPending}
+                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold disabled:opacity-50 transition-colors"
+                              data-testid={`button-save-my-notice-${n.id}`}
+                            >
+                              {editMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                              Save
+                            </button>
+                            <button
+                              onClick={() => { setEditingId(null); setEditContent(""); }}
+                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-muted-foreground text-xs font-semibold transition-colors"
+                              data-testid={`button-cancel-edit-my-notice-${n.id}`}
+                            >
+                              <X className="w-3 h-3" />
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-sm whitespace-pre-wrap leading-relaxed" data-testid={`text-my-notice-content-${n.id}`}>
+                          {n.content}
+                        </p>
+                      )}
+
+                      {n.fileUrl && !isEditing && (
+                        <a href={n.fileUrl} target="_blank" rel="noopener noreferrer"
+                          className={`inline-flex items-center gap-1.5 mt-2 text-xs ${style.text} font-medium`}>
+                          <FileDown className="w-3 h-3" /> View Attachment
+                        </a>
+                      )}
                     </div>
                   );
-                })}
-              </div>
-            )}
+                })
+              )}
+            </div>
           </div>
         </>
       )}

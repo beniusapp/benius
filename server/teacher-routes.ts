@@ -509,20 +509,40 @@ export function registerTeacherRoutes(app: Express) {
     res.json(list);
   });
 
+  app.get("/api/notices/teacher/mine", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const list = await storage.getNoticesByTeacher(req.session.teacherId, 50);
+    res.json(list);
+  });
+
   app.delete("/api/notices/:id", async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    if (req.session.teacherId) {
+      const notice = await storage.getNoticeById(id);
+      if (!notice) return res.status(404).json({ message: "Notice not found" });
+      if (notice.createdById !== req.session.teacherId || notice.creatorRole !== "teacher") {
+        return res.status(403).json({ message: "Not authorized to delete this notice" });
+      }
+    }
     await storage.deleteNotice(id);
     res.json({ message: "Notice deleted" });
   });
 
   app.put("/api/notices/:id", async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
     const { content } = req.body;
     if (!content || !content.trim()) return res.status(400).json({ message: "Content is required" });
+    if (req.session.teacherId) {
+      const notice = await storage.getNoticeById(id);
+      if (!notice) return res.status(404).json({ message: "Notice not found" });
+      if (notice.createdById !== req.session.teacherId || notice.creatorRole !== "teacher") {
+        return res.status(403).json({ message: "Not authorized to edit this notice" });
+      }
+    }
     const updated = await storage.updateNotice(id, content.trim());
     if (!updated) return res.status(404).json({ message: "Notice not found" });
     res.json(updated);

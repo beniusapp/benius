@@ -40,6 +40,7 @@ const TILES = [
   { id: "attendance",       label: "Attendance",       Icon: CalendarCheck },
   { id: "homework",         label: "Homework",         Icon: BookOpen },
   { id: "classwork",        label: "Classwork",        Icon: PenLine },
+  { id: "noticeboard",      label: "Noticeboard",      Icon: Bell },
   { id: "fees",             label: "Fees",             Icon: CreditCard },
   { id: "examination",      label: "Examination",      Icon: ClipboardList },
   { id: "complaints",       label: "Complaints",       Icon: MessageSquareWarning },
@@ -48,7 +49,6 @@ const TILES = [
   { id: "school-calendar",  label: "School Calendar",  Icon: CalendarDays },
   { id: "leave",            label: "Leave",            Icon: FileText },
   { id: "timetable",        label: "Timetable",        Icon: Clock },
-  { id: "noticeboard",      label: "Noticeboard",      Icon: Bell },
 ];
 
 export default function StudentDashboard() {

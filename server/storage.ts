@@ -497,6 +497,18 @@ export class DatabaseStorage {
       .limit(limit);
   }
 
+  async getNoticesByTeacher(teacherId: number, limit = 50): Promise<Notice[]> {
+    return await db.select().from(notices)
+      .where(and(eq(notices.createdById, teacherId), eq(notices.creatorRole, "teacher")))
+      .orderBy(desc(notices.createdAt))
+      .limit(limit);
+  }
+
+  async getNoticeById(id: number): Promise<Notice | null> {
+    const [n] = await db.select().from(notices).where(eq(notices.id, id));
+    return n ?? null;
+  }
+
   async deleteNotice(id: number): Promise<void> {
     await db.delete(notices).where(eq(notices.id, id));
   }
