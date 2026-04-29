@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useLocation } from "wouter";
+import { useLocation, useRoute } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -402,8 +402,16 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
 export default function AdminDashboard() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
-  const [activeModule, setActiveModule] = useState<ActiveModule>("grid");
+  const [matchedModule, moduleParams] = useRoute("/admin-dashboard/:module");
+  const activeModule: ActiveModule = matchedModule && moduleParams?.module
+    ? (moduleParams.module as ActiveModule)
+    : "grid";
   const [showProfile, setShowProfile] = useState(false);
+
+  function goToModule(id: ActiveModule | "grid") {
+    if (id === "grid") setLocation("/admin-dashboard");
+    else setLocation(`/admin-dashboard/${id}`);
+  }
 
   const { data: me, isLoading, isError } = useQuery<MeResponse | null>({
     queryKey: ["/api/me"],
@@ -524,7 +532,7 @@ export default function AdminDashboard() {
       case "approval-center": return <ApprovalCenter schoolId={me.schoolId} />;
       case "audit-logs": return <AuditLogsModule schoolId={me.schoolId} />;
       case "visitor-log": return <VisitorLogModule schoolId={me.schoolId} />;
-      case "attendance": return <AttendanceOverview schoolId={me.schoolId} onViewStudent={() => setActiveModule("student-registry")} />;
+      case "attendance": return <AttendanceOverview schoolId={me.schoolId} onViewStudent={() => goToModule("student-registry")} />;
       case "analytics": return <PerformanceAnalytics schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} examTypes={meta.exam_types} />;
       case "exam-controller": return <ExamController schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} examTypes={meta.exam_types} />;
       case "complaint-hub": return <ComplaintHub schoolId={me.schoolId} />;
@@ -544,7 +552,7 @@ export default function AdminDashboard() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             {activeModule !== "grid" && (
-              <button onClick={() => setActiveModule("grid")}
+              <button onClick={() => goToModule("grid")}
                 className="p-1.5 rounded-lg hover:bg-white/10 transition-colors mr-1" data-testid="button-back-to-grid">
                 <ChevronLeft className="w-5 h-5 text-white/70" />
               </button>
@@ -601,7 +609,7 @@ export default function AdminDashboard() {
               </div>
             </div>
             <div className="w-px h-8 bg-white/10 hidden sm:block" />
-            <div className="flex items-center gap-2 cursor-pointer" onClick={() => setActiveModule("approval-center")} data-testid="stat-action-required">
+            <div className="flex items-center gap-2 cursor-pointer" onClick={() => goToModule("approval-center")} data-testid="stat-action-required">
               <AlertTriangle className={`w-4 h-4 ${totalActionRequired > 0 ? "text-red-400" : "text-white/30"}`} />
               <div>
                 <p className="text-[10px] text-white/40 leading-none">Action Required</p>
@@ -636,7 +644,7 @@ export default function AdminDashboard() {
                       return (
                         <button
                           key={tile.id}
-                          onClick={() => setActiveModule(tile.id)}
+                          onClick={() => goToModule(tile.id)}
                           data-testid={`tile-${tile.id}`}
                           className="group relative text-left rounded-xl border border-white/10 bg-[#1A2942] p-5 hover:bg-[#1E3350] hover:border-[#D4AF37]/40 transition-all duration-200 hover:shadow-lg hover:shadow-[#D4AF37]/5"
                         >
@@ -667,7 +675,7 @@ export default function AdminDashboard() {
         ) : (
           <div>
             <div className="mb-6 flex items-center gap-2">
-              <button onClick={() => setActiveModule("grid")}
+              <button onClick={() => goToModule("grid")}
                 className="text-white/40 hover:text-white text-sm flex items-center gap-1 transition-colors" data-testid="breadcrumb-back">
                 <ChevronLeft className="w-4 h-4" /> Dashboard
               </button>

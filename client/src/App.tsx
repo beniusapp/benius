@@ -35,6 +35,7 @@ function Router() {
       <Route path="/login" component={Login} />
       <Route path="/admin-setup" component={AdminSetup} />
       <Route path="/admin-dashboard" component={AdminDashboard} />
+      <Route path="/admin-dashboard/:module" component={AdminDashboard} />
       <Route path="/register" component={Register} />
       <Route path="/student-login" component={StudentLogin} />
       <Route path="/student-dashboard" component={StudentDashboard} />
