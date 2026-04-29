@@ -133,6 +133,15 @@ export const notices = pgTable("notices", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const noticeReads = pgTable("notice_reads", {
+  id: serial("id").primaryKey(),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  noticeId: integer("notice_id").notNull().references(() => notices.id, { onDelete: "cascade" }),
+  readAt: timestamp("read_at").notNull().defaultNow(),
+});
+
+export type NoticeRead = typeof noticeReads.$inferSelect;
+
 export const complaints = pgTable("complaints", {
   id: serial("id").primaryKey(),
   ticketId: varchar("ticket_id", { length: 30 }).notNull(),

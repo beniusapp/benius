@@ -1733,6 +1733,43 @@ export async function registerRoutes(
     res.json({ message: "Leave request deleted" });
   });
 
+  // ===== STUDENT NOTICEBOARD ROUTES =====
+
+  app.get("/api/student/notices", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const noticesWithRead = await storage.getStudentNotices(
+      student.id,
+      student.schoolId,
+      student.class || "",
+      student.section || ""
+    );
+    res.json(noticesWithRead);
+  });
+
+  app.post("/api/student/notices/mark-read", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const { noticeIds } = req.body;
+    if (!Array.isArray(noticeIds)) return res.status(400).json({ message: "noticeIds must be an array" });
+    const ids = noticeIds.map(Number).filter(n => !isNaN(n));
+    await storage.markNoticesRead(req.session.studentId, ids);
+    res.json({ marked: ids.length });
+  });
+
+  app.get("/api/student/notices/unread-count", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const count = await storage.getUnreadNoticeCount(
+      student.id,
+      student.schoolId,
+      student.class || "",
+      student.section || ""
+    );
+    res.json({ count });
+  });
+
   // ===== STUDENT COMPLAINT ROUTES =====
 
   app.get("/api/student/complaints/inbox", async (req, res) => {

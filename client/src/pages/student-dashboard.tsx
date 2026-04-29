@@ -17,6 +17,7 @@ import {
   CalendarDays,
   FileText,
   Clock,
+  Bell,
 } from "lucide-react";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -47,7 +48,8 @@ const TILES = [
   { id: "school-calendar",  label: "School Calendar",  Icon: CalendarDays },
   { id: "leave",            label: "Leave",            Icon: FileText },
   { id: "timetable",        label: "Timetable",        Icon: Clock },
-] as const;
+  { id: "noticeboard",      label: "Noticeboard",      Icon: Bell },
+];
 
 export default function StudentDashboard() {
   const { toast } = useToast();
@@ -57,6 +59,14 @@ export default function StudentDashboard() {
     queryKey: ["/api/student-me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
+
+  const { data: unreadData } = useQuery<{ count: number }>({
+    queryKey: ["/api/student/notices/unread-count"],
+    enabled: !!student,
+    refetchInterval: 60000,
+  });
+
+  const unreadNoticeCount = unreadData?.count ?? 0;
 
   useEffect(() => {
     if (!isLoading && (isError || !student || !student.schoolId)) {
@@ -247,21 +257,34 @@ export default function StudentDashboard() {
                   setLocation("/student/leave");
                   return;
                 }
+                if (id === "noticeboard") {
+                  setLocation("/student/noticeboard");
+                  return;
+                }
                 toast({
                   title: label,
                   description: `${label} module coming soon.`,
                 });
               }}
             >
-              {/* Icon container */}
-              <div className="
-                flex items-center justify-center
-                w-12 h-12 sm:w-14 sm:h-14
-                rounded-xl bg-emerald-50
-                group-hover:bg-[#10b981]/15
-                transition-colors duration-200
-              ">
-                <Icon className="w-6 h-6 sm:w-7 sm:h-7 text-[#10b981]" strokeWidth={1.75} />
+              {/* Icon container with optional red dot */}
+              <div className="relative">
+                <div className="
+                  flex items-center justify-center
+                  w-12 h-12 sm:w-14 sm:h-14
+                  rounded-xl bg-emerald-50
+                  group-hover:bg-[#10b981]/15
+                  transition-colors duration-200
+                ">
+                  <Icon className="w-6 h-6 sm:w-7 sm:h-7 text-[#10b981]" strokeWidth={1.75} />
+                </div>
+                {id === "noticeboard" && unreadNoticeCount > 0 && (
+                  <span
+                    className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-[#FF0000] border-2 border-white"
+                    data-testid="badge-noticeboard-unread"
+                    aria-label={`${unreadNoticeCount} unread notices`}
+                  />
+                )}
               </div>
 
               {/* Label */}

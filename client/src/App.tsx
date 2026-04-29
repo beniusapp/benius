@@ -25,6 +25,7 @@ import StudentFaculty from "@/pages/student-faculty";
 import StudentCalendar from "@/pages/student-calendar";
 import StudentTimetable from "@/pages/student-timetable";
 import StudentLeave from "@/pages/student-leave";
+import StudentNoticeboard from "@/pages/student-noticeboard";
 
 function Router() {
   return (
@@ -48,6 +49,7 @@ function Router() {
       <Route path="/student/calendar" component={StudentCalendar} />
       <Route path="/student/timetable" component={StudentTimetable} />
       <Route path="/student/leave" component={StudentLeave} />
+      <Route path="/student/noticeboard" component={StudentNoticeboard} />
       <Route path="/teacher-login" component={TeacherLogin} />
       <Route path="/teacher-dashboard" component={TeacherDashboard} />
       <Route path="/teacher-dashboard/:module" component={TeacherDashboard} />

@@ -1,6 +1,6 @@
 import {
   schools, students, users, teachers,
-  attendanceRecords, homework, homeworkViews, homeworkSubmissions, classwork, notices,
+  attendanceRecords, homework, homeworkViews, homeworkSubmissions, classwork, notices, noticeReads,
   complaints, complaintNotes, examScores, galleryItems, calendarEvents,
   libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata,
   studentLeaveRequests, auditLogs, visitorLogs, studentProfiles, teacherAllocations,
@@ -497,6 +497,49 @@ export class DatabaseStorage {
     const conditions = [eq(notices.schoolId, schoolId), typeFilter];
     if (cls) conditions.push(or(eq(notices.targetClass, cls), isNull(notices.targetClass))!);
     return await db.select().from(notices).where(and(...conditions)).orderBy(desc(notices.createdAt));
+  }
+
+  async getStudentNotices(studentId: number, schoolId: number, cls: string, section: string): Promise<(Notice & { isRead: boolean })[]> {
+    const rows = await db.select().from(notices)
+      .where(and(
+        eq(notices.schoolId, schoolId),
+        or(
+          eq(notices.targetType, "whole_school"),
+          and(
+            eq(notices.targetType, "student"),
+            or(isNull(notices.targetClass), eq(notices.targetClass, cls))!
+          )!,
+          and(
+            eq(notices.targetType, "class"),
+            or(isNull(notices.targetClass), eq(notices.targetClass, cls))!
+          )!
+        )!
+      ))
+      .orderBy(desc(notices.createdAt));
+
+    if (rows.length === 0) return [];
+
+    const readRows = await db.select({ noticeId: noticeReads.noticeId })
+      .from(noticeReads)
+      .where(and(
+        eq(noticeReads.studentId, studentId),
+        inArray(noticeReads.noticeId, rows.map(r => r.id))
+      ));
+    const readSet = new Set(readRows.map(r => r.noticeId));
+    return rows.map(n => ({ ...n, isRead: readSet.has(n.id) }));
+  }
+
+  async markNoticesRead(studentId: number, noticeIds: number[]): Promise<void> {
+    if (noticeIds.length === 0) return;
+    await pool.query(
+      `INSERT INTO notice_reads (student_id, notice_id) SELECT $1, unnest($2::int[]) ON CONFLICT (student_id, notice_id) DO NOTHING`,
+      [studentId, noticeIds]
+    );
+  }
+
+  async getUnreadNoticeCount(studentId: number, schoolId: number, cls: string, section: string): Promise<number> {
+    const all = await this.getStudentNotices(studentId, schoolId, cls, section);
+    return all.filter(n => !n.isRead).length;
   }
 
   // ===== COMPLAINT METHODS =====

@@ -247,6 +247,16 @@ app.use((req, res, next) => {
     ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS policy_id INTEGER REFERENCES leave_policies(id) ON DELETE SET NULL;
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS notice_reads (
+      id SERIAL PRIMARY KEY,
+      student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      notice_id INTEGER NOT NULL REFERENCES notices(id) ON DELETE CASCADE,
+      read_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      UNIQUE (student_id, notice_id)
+    );
+  `);
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
