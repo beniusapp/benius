@@ -142,7 +142,9 @@ export async function registerRoutes(
 ): Promise<Server> {
   app.get("/api/schools", async (_req, res) => {
     const schools = await storage.getSchools();
-    res.json(schools);
+    const counts = await storage.getActiveStudentCountsBySchools();
+    const enriched = schools.map(s => ({ ...s, activeStudentCount: counts[s.id] ?? 0 }));
+    res.json(enriched);
   });
 
   app.post("/api/schools", async (req, res) => {

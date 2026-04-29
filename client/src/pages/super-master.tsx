@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { z } from "zod";
-import { GraduationCap, Plus, School, Loader2, Trash2 } from "lucide-react";
+import { GraduationCap, Plus, School, Loader2, Trash2, Users } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,8 @@ import { apiRequest } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
 import type { School as SchoolType } from "@shared/schema";
 
+type EnrichedSchool = SchoolType & { activeStudentCount: number };
+
 const addSchoolSchema = z.object({
   name: z.string().min(2, "School name must be at least 2 characters"),
   code: z.string().min(2, "School code must be at least 2 characters").max(20, "School code must be at most 20 characters").regex(/^[A-Z0-9]+$/, "Code must be uppercase letters and numbers only"),
@@ -36,7 +38,7 @@ export default function SuperMaster() {
   const { toast } = useToast();
   const [deleteTarget, setDeleteTarget] = useState<SchoolType | null>(null);
 
-  const { data: schools = [], isLoading } = useQuery<SchoolType[]>({
+  const { data: schools = [], isLoading } = useQuery<EnrichedSchool[]>({
     queryKey: ["/api/schools"],
   });
 
@@ -222,7 +224,7 @@ export default function SuperMaster() {
                     data-testid={`row-school-${school.id}`}
                   >
                     <div className="flex items-center gap-3">
-                      <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary/10">
+                      <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary/10 flex-shrink-0">
                         <School className="w-4 h-4 text-primary" />
                       </div>
                       <div>
@@ -233,6 +235,13 @@ export default function SuperMaster() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-mono bg-secondary px-2 py-1 rounded-md" data-testid={`text-school-code-${school.id}`}>
                         {school.code}
+                      </span>
+                      <span
+                        className="flex items-center gap-1 text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-md"
+                        data-testid={`text-active-students-${school.id}`}
+                      >
+                        <Users className="w-3 h-3" />
+                        {(school.activeStudentCount ?? 0).toLocaleString()} active students
                       </span>
                       <Button
                         variant="destructive"

@@ -1918,6 +1918,15 @@ export class DatabaseStorage {
     return result?.value ?? 0;
   }
 
+  async getActiveStudentCountsBySchools(): Promise<Record<number, number>> {
+    const rows = await db
+      .select({ schoolId: students.schoolId, value: count() })
+      .from(students)
+      .where(eq(students.isActive, true))
+      .groupBy(students.schoolId);
+    return Object.fromEntries(rows.map(r => [r.schoolId, Number(r.value)]));
+  }
+
   // ===== DAILY ATTENDANCE SUMMARY =====
   async getDailyAttendanceSummary(schoolId: number, date: string): Promise<{ total: number; present: number; absent: number; leave: number; percentage: number }> {
     const records = await db.select().from(attendanceRecords).where(and(eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.date, date)));
