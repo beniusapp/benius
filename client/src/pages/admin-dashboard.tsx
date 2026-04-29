@@ -528,7 +528,7 @@ export default function AdminDashboard() {
       case "analytics": return <PerformanceAnalytics schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} examTypes={meta.exam_types} />;
       case "exam-controller": return <ExamController schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} examTypes={meta.exam_types} />;
       case "complaint-hub": return <ComplaintHub schoolId={me.schoolId} />;
-      case "noticeboard": return <NoticeboardAdmin schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} />;
+      case "noticeboard": return <NoticeboardAdmin schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} adminUserId={me.id} />;
       case "timetable": return <TimetableMaster schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
       case "id-card-gen": return <IdCardGen schoolId={me.schoolId} schoolName={me.schoolName} classes={meta.classes} sections={meta.sections} />;
       case "assets": return <AssetsInventory schoolId={me.schoolId} />;

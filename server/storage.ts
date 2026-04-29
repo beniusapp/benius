@@ -490,6 +490,22 @@ export class DatabaseStorage {
     return n;
   }
 
+  async getAllSchoolNotices(schoolId: number, limit = 50): Promise<Notice[]> {
+    return await db.select().from(notices)
+      .where(eq(notices.schoolId, schoolId))
+      .orderBy(desc(notices.createdAt))
+      .limit(limit);
+  }
+
+  async deleteNotice(id: number): Promise<void> {
+    await db.delete(notices).where(eq(notices.id, id));
+  }
+
+  async updateNotice(id: number, content: string): Promise<Notice | null> {
+    const [n] = await db.update(notices).set({ content }).where(eq(notices.id, id)).returning();
+    return n ?? null;
+  }
+
   async getNoticesByTarget(schoolId: number, targetType: string, cls?: string, section?: string): Promise<Notice[]> {
     const typeFilter = targetType === "student"
       ? or(eq(notices.targetType, "student"), eq(notices.targetType, "whole_school"))!

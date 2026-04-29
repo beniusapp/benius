@@ -502,6 +502,32 @@ export function registerTeacherRoutes(app: Express) {
     res.json(list);
   });
 
+  app.get("/api/notices/:schoolId/all", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const sid = parseInt(req.params.schoolId);
+    const list = await storage.getAllSchoolNotices(sid, 50);
+    res.json(list);
+  });
+
+  app.delete("/api/notices/:id", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    await storage.deleteNotice(id);
+    res.json({ message: "Notice deleted" });
+  });
+
+  app.put("/api/notices/:id", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const { content } = req.body;
+    if (!content || !content.trim()) return res.status(400).json({ message: "Content is required" });
+    const updated = await storage.updateNotice(id, content.trim());
+    if (!updated) return res.status(404).json({ message: "Notice not found" });
+    res.json(updated);
+  });
+
   // ===== COMPLAINTS =====
   app.post("/api/complaints", diskUpload.single("file"), async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
