@@ -140,6 +140,8 @@ export const noticeReads = pgTable("notice_reads", {
   readAt: timestamp("read_at").notNull().defaultNow(),
 });
 
+export const insertNoticeReadSchema = createInsertSchema(noticeReads).omit({ id: true, readAt: true });
+export type InsertNoticeRead = z.infer<typeof insertNoticeReadSchema>;
 export type NoticeRead = typeof noticeReads.$inferSelect;
 
 export const complaints = pgTable("complaints", {

@@ -280,7 +280,7 @@ export default function StudentDashboard() {
                 </div>
                 {id === "noticeboard" && unreadNoticeCount > 0 && (
                   <span
-                    className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-[#FF0000] border-2 border-white"
+                    className="absolute top-0 right-0 w-2.5 h-2.5 rounded-full bg-[#FF0000] border border-white"
                     data-testid="badge-noticeboard-unread"
                     aria-label={`${unreadNoticeCount} unread notices`}
                   />

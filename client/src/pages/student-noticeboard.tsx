@@ -179,7 +179,7 @@ export default function StudentNoticeboard() {
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-gray-800 leading-relaxed">{notice.content}</p>
+                    <p className="text-sm font-bold text-black leading-relaxed">{notice.content}</p>
                     {notice.fileUrl && (
                       <a
                         href={notice.fileUrl}
@@ -189,7 +189,7 @@ export default function StudentNoticeboard() {
                         data-testid={`link-notice-file-${notice.id}`}
                       >
                         <FileText className="w-3 h-3" />
-                        View attachment
+                        View Attachment
                       </a>
                     )}
                     <p className="text-[10px] text-gray-300 mt-2" data-testid={`text-date-${notice.id}`}>
