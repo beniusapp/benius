@@ -519,14 +519,28 @@ export class DatabaseStorage {
 
     if (rows.length === 0) return [];
 
+    // Apply section filtering in application layer:
+    // When targetSection is set, check if student's section is in the comma-separated list.
+    // When targetSection is null/empty, notice applies to all sections.
+    const filtered = rows.filter(n => {
+      if (n.targetType === "whole_school") return true;
+      if (!n.targetClass) return true;
+      if (n.targetClass !== cls) return false;
+      if (!n.targetSection) return true;
+      const sections = n.targetSection.split(",").map(s => s.trim());
+      return sections.includes(section);
+    });
+
+    if (filtered.length === 0) return [];
+
     const readRows = await db.select({ noticeId: noticeReads.noticeId })
       .from(noticeReads)
       .where(and(
         eq(noticeReads.studentId, studentId),
-        inArray(noticeReads.noticeId, rows.map(r => r.id))
+        inArray(noticeReads.noticeId, filtered.map(r => r.id))
       ));
     const readSet = new Set(readRows.map(r => r.noticeId));
-    return rows.map(n => ({ ...n, isRead: readSet.has(n.id) }));
+    return filtered.map(n => ({ ...n, isRead: readSet.has(n.id) }));
   }
 
   async markNoticesRead(studentId: number, noticeIds: number[]): Promise<void> {

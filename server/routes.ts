@@ -1750,9 +1750,21 @@ export async function registerRoutes(
 
   app.post("/api/student/notices/mark-read", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
     const { noticeIds } = req.body;
     if (!Array.isArray(noticeIds)) return res.status(400).json({ message: "noticeIds must be an array" });
-    const ids = noticeIds.map(Number).filter(n => !isNaN(n));
+    const requestedIds = noticeIds.map(Number).filter(n => !isNaN(n));
+    if (requestedIds.length === 0) return res.json({ marked: 0 });
+    // Only allow marking notices that are actually visible to this student
+    const eligibleNotices = await storage.getStudentNotices(
+      student.id,
+      student.schoolId,
+      student.class || "",
+      student.section || ""
+    );
+    const eligibleIds = new Set(eligibleNotices.map(n => n.id));
+    const ids = requestedIds.filter(id => eligibleIds.has(id));
     await storage.markNoticesRead(req.session.studentId, ids);
     res.json({ marked: ids.length });
   });

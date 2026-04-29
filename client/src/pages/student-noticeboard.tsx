@@ -19,6 +19,7 @@ interface StudentNotice {
   id: number;
   content: string;
   noticeType: string | null;
+  creatorRole: string;
   targetType: string;
   targetClass: string | null;
   targetSection: string | null;
@@ -39,14 +40,23 @@ function getTypeConfig(t: string | null) {
   return TYPE_CONFIG[t] || TYPE_CONFIG["Routine"];
 }
 
+function formatSender(role: string): string {
+  if (!role) return "Notice";
+  if (role === "admin") return "From Principal";
+  if (role === "teacher") return "From Teacher";
+  return `From ${role.charAt(0).toUpperCase() + role.slice(1)}`;
+}
+
 function formatDate(s: string): string {
   const d = new Date(s);
   if (isNaN(d.getTime())) return s;
-  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
 }
 
 export default function StudentNoticeboard() {
-  const { toast } = useToast();
   const [, setLocation] = useLocation();
 
   const { data: student, isLoading: studentLoading } = useQuery<StudentMe | null>({
@@ -68,7 +78,11 @@ export default function StudentNoticeboard() {
       if (ids.length === 0) return;
       await apiRequest("POST", "/api/student/notices/mark-read", { noticeIds: ids });
     },
-    onSuccess: () => {
+    onSuccess: (_, ids) => {
+      // Optimistically mark items as read in cache so NEW badges clear immediately
+      queryClient.setQueryData<StudentNotice[]>(["/api/student/notices"], (old) =>
+        old ? old.map(n => (ids as number[]).includes(n.id) ? { ...n, isRead: true } : n) : old
+      );
       queryClient.invalidateQueries({ queryKey: ["/api/student/notices/unread-count"] });
     },
   });
@@ -138,7 +152,7 @@ export default function StudentNoticeboard() {
             return (
               <div
                 key={notice.id}
-                className={`bg-white rounded-2xl border shadow-sm p-4 transition-all ${!notice.isRead ? "border-l-4 border-l-[#FF0000] border-emerald-50" : "border-emerald-50"}`}
+                className={`bg-white rounded-2xl shadow-sm p-4 transition-all border ${!notice.isRead ? "border-l-4 border-l-[#FF0000] border-emerald-50" : "border-emerald-50"}`}
                 data-testid={`notice-card-${notice.id}`}
               >
                 <div className="flex items-start gap-3">
@@ -150,11 +164,17 @@ export default function StudentNoticeboard() {
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${cfg.bg} ${cfg.color}`}>
                         {cfg.label}
                       </span>
+                      <span className="text-xs text-gray-400 font-medium" data-testid={`text-sender-${notice.id}`}>
+                        {formatSender(notice.creatorRole)}
+                      </span>
                       {notice.targetType === "whole_school" && (
-                        <span className="text-xs text-gray-400">School-wide</span>
+                        <span className="text-xs text-gray-300">· School-wide</span>
                       )}
                       {!notice.isRead && (
-                        <span className="text-[10px] font-bold text-white bg-[#FF0000] px-1.5 py-0.5 rounded-full" data-testid={`badge-unread-${notice.id}`}>
+                        <span
+                          className="text-[10px] font-bold text-white bg-[#FF0000] px-1.5 py-0.5 rounded-full"
+                          data-testid={`badge-unread-${notice.id}`}
+                        >
                           NEW
                         </span>
                       )}
@@ -172,7 +192,9 @@ export default function StudentNoticeboard() {
                         View attachment
                       </a>
                     )}
-                    <p className="text-[10px] text-gray-300 mt-2">{formatDate(notice.createdAt)}</p>
+                    <p className="text-[10px] text-gray-300 mt-2" data-testid={`text-date-${notice.id}`}>
+                      {formatDate(notice.createdAt)}
+                    </p>
                   </div>
                 </div>
               </div>
