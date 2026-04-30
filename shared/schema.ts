@@ -522,9 +522,10 @@ export const gradingTiers = pgTable("grading_tiers", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
-  minClass: text("min_class").notNull(),
-  maxClass: text("max_class").notNull(),
+  classes: text("classes").array().notNull().default([]),
   passPercentage: integer("pass_percentage").notNull().default(35),
+  gradingSystem: text("grading_system").notNull().default("percentage"),
+  passingGrades: text("passing_grades").array().notNull().default([]),
   sortOrder: integer("sort_order").notNull().default(0),
 });
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Plus, X, Save, BookOpen, Grid3X3, FileText, ChevronDown, ChevronRight, Trash2, GraduationCap, AlertTriangle, CalendarClock } from "lucide-react";
+import { Plus, X, Save, BookOpen, Grid3X3, FileText, ChevronDown, ChevronRight, Trash2, GraduationCap, AlertTriangle, CalendarClock, Check, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -92,9 +92,10 @@ interface TierLocal {
   id?: number;
   tempId: string;
   name: string;
-  minClass: string;
-  maxClass: string;
+  classes: string[];
   passPercentage: string;
+  gradingSystem: "percentage" | "grade" | "both";
+  passingGrades: string[];
   sortOrder: number;
   expanded: boolean;
   rules: GradeRow[];
@@ -104,12 +105,18 @@ function emptyRule(): GradeRow { return { gradeLabel: "", minPercent: "", maxPer
 
 function validateTiers(tiers: TierLocal[]): string[] {
   const errors: string[] = [];
+  const classTierMap = new Map<string, string>();
+
   for (const t of tiers) {
     if (!t.name.trim()) { errors.push(`A tier is missing a name.`); continue; }
-    const minIdx = CLASS_ORDER.indexOf(t.minClass);
-    const maxIdx = CLASS_ORDER.indexOf(t.maxClass);
-    if (minIdx === -1 || maxIdx === -1) { errors.push(`"${t.name}": Invalid class selection.`); continue; }
-    if (minIdx > maxIdx) { errors.push(`"${t.name}": Min class must be before Max class.`); continue; }
+    if (t.classes.length === 0) { errors.push(`"${t.name || "Unnamed"}": At least one class must be selected.`); }
+    for (const cls of t.classes) {
+      if (classTierMap.has(cls)) {
+        errors.push(`Class "${cls}" is assigned to both "${classTierMap.get(cls)}" and "${t.name}".`);
+      } else {
+        classTierMap.set(cls, t.name || "Unnamed");
+      }
+    }
     for (const r of t.rules) {
       const mn = parseInt(r.minPercent); const mx = parseInt(r.maxPercent);
       if (!r.gradeLabel.trim()) { errors.push(`"${t.name}": Grade label is required for all rows.`); }
@@ -124,16 +131,6 @@ function validateTiers(tiers: TierLocal[]): string[] {
       if (cur > prev + 1) { errors.push(`"${t.name}": Gap between grade ranges (${prev} to ${cur}).`); break; }
     }
   }
-  for (let i = 0; i < tiers.length; i++) {
-    for (let j = i + 1; j < tiers.length; j++) {
-      const a = tiers[i]; const b = tiers[j];
-      const aMin = CLASS_ORDER.indexOf(a.minClass); const aMax = CLASS_ORDER.indexOf(a.maxClass);
-      const bMin = CLASS_ORDER.indexOf(b.minClass); const bMax = CLASS_ORDER.indexOf(b.maxClass);
-      if (aMin <= bMax && bMin <= aMax) {
-        errors.push(`"${a.name}" and "${b.name}" have overlapping class ranges.`);
-      }
-    }
-  }
   return Array.from(new Set(errors));
 }
 
@@ -145,6 +142,8 @@ function TierAccordion({ tier, classesList, onChange, onDelete, onSave, isSaving
   onSave: () => void;
   isSaving: boolean;
 }) {
+  const [showClassPicker, setShowClassPicker] = useState(false);
+
   const setField = (field: keyof TierLocal, val: any) => onChange({ ...tier, [field]: val });
   const setRule = (idx: number, field: keyof GradeRow, val: string) => {
     const newRules = tier.rules.map((r, i) => i === idx ? { ...r, [field]: val } : r);
@@ -153,23 +152,33 @@ function TierAccordion({ tier, classesList, onChange, onDelete, onSave, isSaving
   const addRule = () => onChange({ ...tier, rules: [...tier.rules, emptyRule()] });
   const removeRule = (idx: number) => onChange({ ...tier, rules: tier.rules.filter((_, i) => i !== idx) });
 
-  const minIdx = tier.minClass ? CLASS_ORDER.indexOf(tier.minClass) : -1;
+  const toggleClass = (cls: string) => {
+    const updated = tier.classes.includes(cls)
+      ? tier.classes.filter(c => c !== cls)
+      : [...tier.classes, cls];
+    setField("classes", updated);
+  };
 
-  const validToClasses = classesList.filter(c => {
-    if (minIdx === -1) return true;        // no From Class picked yet — show all
-    const cIdx = CLASS_ORDER.indexOf(c);
-    if (cIdx === -1) return true;          // custom name not in CLASS_ORDER — always include
-    return cIdx >= minIdx;
-  });
+  const usePercentage = tier.gradingSystem === "percentage" || tier.gradingSystem === "both";
+  const useGrade = tier.gradingSystem === "grade" || tier.gradingSystem === "both";
 
-  const handleFromClassChange = (val: string) => {
-    const newMinIdx = CLASS_ORDER.indexOf(val);
-    const currentMaxIdx = CLASS_ORDER.indexOf(tier.maxClass);
-    if (tier.maxClass && currentMaxIdx < newMinIdx) {
-      onChange({ ...tier, minClass: val, maxClass: "" });
+  const handleSystemToggle = (toggled: "percentage" | "grade") => {
+    const isOn = toggled === "percentage" ? usePercentage : useGrade;
+    const otherOn = toggled === "percentage" ? useGrade : usePercentage;
+    if (isOn && !otherOn) return; // keep at least one active
+    if (isOn) {
+      setField("gradingSystem", toggled === "percentage" ? "grade" : "percentage");
     } else {
-      setField("minClass", val);
+      setField("gradingSystem", "both");
     }
+  };
+
+  const gradeLabels = tier.rules.map(r => r.gradeLabel).filter(Boolean);
+  const togglePassingGrade = (grade: string) => {
+    const updated = tier.passingGrades.includes(grade)
+      ? tier.passingGrades.filter(g => g !== grade)
+      : [...tier.passingGrades, grade];
+    setField("passingGrades", updated);
   };
 
   return (
@@ -185,7 +194,9 @@ function TierAccordion({ tier, classesList, onChange, onDelete, onSave, isSaving
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-white text-sm truncate">{tier.name || "Unnamed Tier"}</p>
           <p className="text-white/40 text-xs">
-            {tier.minClass && tier.maxClass ? `Classes ${tier.minClass} – ${tier.maxClass}` : "No range set"} &nbsp;·&nbsp; Pass: {tier.passPercentage || "?"}%
+            {tier.classes.length > 0 ? tier.classes.join(", ") : "No classes selected"}
+            &nbsp;·&nbsp;
+            {tier.gradingSystem === "both" ? `${tier.passPercentage}% + Grade` : tier.gradingSystem === "grade" ? "Grade-based" : `${tier.passPercentage}% pass`}
           </p>
         </div>
         <span className="text-xs text-white/40 mr-2">{tier.rules.length} grade{tier.rules.length !== 1 ? "s" : ""}</span>
@@ -193,55 +204,173 @@ function TierAccordion({ tier, classesList, onChange, onDelete, onSave, isSaving
       </button>
 
       {tier.expanded && (
-        <div className="px-5 pb-5 space-y-4 border-t border-white/10">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-4">
-            <div>
-              <label className="text-xs text-white/50 mb-1 block">Tier Name</label>
-              <Input value={tier.name} onChange={e => setField("name", e.target.value)}
-                placeholder="e.g. Primary" className="bg-[#0A1628] border-white/20 text-white text-sm h-9"
-                data-testid={`input-tier-name-${tier.tempId}`} />
-            </div>
-            <div>
-              <label className="text-xs text-white/50 mb-1 block">Pass Percentage (%)</label>
-              <Input type="number" min={0} max={100} value={tier.passPercentage}
-                onChange={e => setField("passPercentage", e.target.value)}
-                placeholder="35" className="bg-[#0A1628] border-white/20 text-white text-sm h-9"
-                data-testid={`input-tier-pass-${tier.tempId}`} />
-            </div>
-            <div>
-              <label className="text-xs text-white/50 mb-1 block">From Class</label>
-              <select value={tier.minClass} onChange={e => handleFromClassChange(e.target.value)}
-                className="w-full h-9 rounded-md bg-[#0A1628] border border-white/20 text-white text-sm px-3"
-                data-testid={`select-min-class-${tier.tempId}`}>
-                <option value="">Select</option>
-                {classesList.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-              {classesList.length === 0 && (
-                <p className="text-[10px] text-amber-400/70 mt-1">No classes configured yet — add them in the Classes section above.</p>
+        <div className="px-5 pb-5 space-y-5 border-t border-white/10 pt-4">
+
+          {/* ── Name ── */}
+          <div>
+            <label className="text-xs text-white/50 mb-1 block">Tier Name</label>
+            <Input value={tier.name} onChange={e => setField("name", e.target.value)}
+              placeholder="e.g. Primary" className="bg-[#0A1628] border-white/20 text-white text-sm h-9"
+              data-testid={`input-tier-name-${tier.tempId}`} />
+          </div>
+
+          {/* ── For Classes (multi-select) ── */}
+          <div>
+            <label className="text-xs text-white/50 mb-1 block">For Classes</label>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowClassPicker(p => !p)}
+                className="w-full flex items-center justify-between h-9 px-3 rounded-md bg-[#0A1628] border border-white/20 text-sm text-left transition-colors hover:border-white/40"
+                data-testid={`btn-class-picker-${tier.tempId}`}
+              >
+                <span className={tier.classes.length === 0 ? "text-white/30" : "text-white"}>
+                  {tier.classes.length === 0
+                    ? "Select classes…"
+                    : tier.classes.length === 1
+                      ? tier.classes[0]
+                      : `${tier.classes.length} classes selected`}
+                </span>
+                <ChevronsUpDown className="w-3.5 h-3.5 text-white/30 shrink-0" />
+              </button>
+
+              {showClassPicker && (
+                <div className="absolute z-20 top-10 left-0 w-full rounded-md border border-white/20 bg-[#0F1E35] shadow-xl py-1 max-h-52 overflow-y-auto">
+                  {classesList.length === 0 ? (
+                    <p className="text-white/30 text-xs px-3 py-2 italic">No classes configured — add them in the Classes section above.</p>
+                  ) : (
+                    classesList.map(cls => {
+                      const checked = tier.classes.includes(cls);
+                      return (
+                        <button
+                          key={cls}
+                          type="button"
+                          onClick={() => toggleClass(cls)}
+                          className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition-colors ${checked ? "bg-[#10b981]/10 text-[#10b981]" : "text-white/70 hover:bg-white/5"}`}
+                          data-testid={`class-option-${tier.tempId}-${cls}`}
+                        >
+                          <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${checked ? "bg-[#10b981] border-[#10b981]" : "border-white/30"}`}>
+                            {checked && <Check className="w-2.5 h-2.5 text-white" />}
+                          </span>
+                          {cls}
+                        </button>
+                      );
+                    })
+                  )}
+                  {classesList.length > 0 && (
+                    <div className="border-t border-white/10 mt-1 pt-1 px-3 pb-1 flex gap-2">
+                      <button type="button" onClick={() => setField("classes", classesList)}
+                        className="text-[10px] text-[#10b981] hover:underline" data-testid={`btn-select-all-${tier.tempId}`}>
+                        Select all
+                      </button>
+                      <button type="button" onClick={() => setField("classes", [])}
+                        className="text-[10px] text-white/40 hover:underline" data-testid={`btn-clear-all-${tier.tempId}`}>
+                        Clear
+                      </button>
+                      <button type="button" onClick={() => setShowClassPicker(false)}
+                        className="text-[10px] text-white/40 hover:underline ml-auto">
+                        Done
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
-            <div>
-              <label className="text-xs text-white/50 mb-1 block">To Class</label>
-              <select
-                value={tier.maxClass}
-                onChange={e => setField("maxClass", e.target.value)}
-                disabled={!tier.minClass}
-                className={`w-full h-9 rounded-md bg-[#0A1628] border text-sm px-3 ${
-                  !tier.minClass
-                    ? "border-white/10 text-white/30 cursor-not-allowed"
-                    : "border-white/20 text-white"
+            {tier.classes.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {tier.classes.map(cls => (
+                  <span key={cls} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-[#10b981]/15 text-[#10b981] border border-[#10b981]/30">
+                    {cls}
+                    <button onClick={() => toggleClass(cls)} className="hover:text-red-400 transition-colors" data-testid={`remove-class-${tier.tempId}-${cls}`}>
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Grading System ── */}
+          <div>
+            <label className="text-xs text-white/50 mb-2 block">Passing System</label>
+            <div className="flex gap-2 mb-3">
+              <button
+                type="button"
+                onClick={() => handleSystemToggle("percentage")}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
+                  usePercentage
+                    ? "bg-blue-500/20 border-blue-500/50 text-blue-300"
+                    : "bg-white/5 border-white/15 text-white/40 hover:border-white/30"
                 }`}
-                data-testid={`select-max-class-${tier.tempId}`}
+                data-testid={`btn-system-pct-${tier.tempId}`}
               >
-                <option value="">{tier.minClass ? "Select" : "Select From Class first"}</option>
-                {validToClasses.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-              {tier.minClass && validToClasses.length === 0 && (
-                <p className="text-[10px] text-amber-400/70 mt-1">No classes available at or above {tier.minClass}.</p>
+                <span className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 ${usePercentage ? "bg-blue-500 border-blue-500" : "border-white/30"}`}>
+                  {usePercentage && <Check className="w-2.5 h-2.5 text-white" />}
+                </span>
+                Percentage-Based
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSystemToggle("grade")}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
+                  useGrade
+                    ? "bg-purple-500/20 border-purple-500/50 text-purple-300"
+                    : "bg-white/5 border-white/15 text-white/40 hover:border-white/30"
+                }`}
+                data-testid={`btn-system-grade-${tier.tempId}`}
+              >
+                <span className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 ${useGrade ? "bg-purple-500 border-purple-500" : "border-white/30"}`}>
+                  {useGrade && <Check className="w-2.5 h-2.5 text-white" />}
+                </span>
+                Grade-Based
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {usePercentage && (
+                <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3">
+                  <label className="text-[11px] text-blue-300 font-medium mb-1.5 block">Pass Percentage (%)</label>
+                  <Input type="number" min={0} max={100} value={tier.passPercentage}
+                    onChange={e => setField("passPercentage", e.target.value)}
+                    placeholder="35" className="bg-[#0A1628] border-white/20 text-white text-sm h-9"
+                    data-testid={`input-tier-pass-${tier.tempId}`} />
+                  <p className="text-[10px] text-blue-300/50 mt-1">Students must score ≥ {tier.passPercentage || "?"}% to pass.</p>
+                </div>
+              )}
+              {useGrade && (
+                <div className="rounded-lg border border-purple-500/20 bg-purple-500/5 p-3">
+                  <label className="text-[11px] text-purple-300 font-medium mb-1.5 block">Passing Grades</label>
+                  {gradeLabels.length === 0 ? (
+                    <p className="text-[11px] text-white/30 italic">Add grade brackets below first to define passing grades.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {gradeLabels.map(g => {
+                        const isPass = tier.passingGrades.includes(g);
+                        return (
+                          <button key={g} type="button" onClick={() => togglePassingGrade(g)}
+                            className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${
+                              isPass
+                                ? "bg-purple-500/30 border-purple-500/60 text-purple-200"
+                                : "bg-white/5 border-white/20 text-white/40 hover:border-white/40"
+                            }`}
+                            data-testid={`btn-passing-grade-${tier.tempId}-${g}`}>
+                            {g} {isPass ? "✓ Pass" : "Fail"}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-purple-300/50 mt-1.5">
+                    {tier.passingGrades.length > 0
+                      ? `Pass: ${tier.passingGrades.join(", ")}`
+                      : "No passing grades selected."}
+                  </p>
+                </div>
               )}
             </div>
           </div>
 
+          {/* ── Grade Brackets ── */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-semibold text-white/60 uppercase tracking-wide">Grade Brackets</p>
@@ -402,8 +531,11 @@ export default function SchoolSetup({ schoolId }: Props) {
       const { tiers: dbTiers, rules: dbRules } = policyData as { tiers: any[]; rules: any[] };
       setTiers(dbTiers.map((t: any) => ({
         id: t.id, tempId: String(t.id), name: t.name,
-        minClass: t.minClass, maxClass: t.maxClass,
-        passPercentage: String(t.passPercentage), sortOrder: t.sortOrder,
+        classes: t.classes || [],
+        passPercentage: String(t.passPercentage),
+        gradingSystem: (t.gradingSystem as "percentage" | "grade" | "both") || "percentage",
+        passingGrades: t.passingGrades || [],
+        sortOrder: t.sortOrder,
         expanded: false,
         rules: dbRules.filter((r: any) => r.tierId === t.id).map((r: any) => ({
           gradeLabel: r.gradeLabel, minPercent: String(r.minPercent),
@@ -434,7 +566,8 @@ export default function SchoolSetup({ schoolId }: Props) {
   const addTier = () => {
     const tempId = `new-${Date.now()}`;
     setTiers(prev => [...prev, {
-      tempId, name: "", minClass: "", maxClass: "", passPercentage: "35",
+      tempId, name: "", classes: [], passPercentage: "35",
+      gradingSystem: "percentage", passingGrades: [],
       sortOrder: prev.length, expanded: true, rules: [],
     }]);
   };
@@ -467,9 +600,10 @@ export default function SchoolSetup({ schoolId }: Props) {
       const tierRes = await apiRequest("POST", "/api/admin/grading-tiers", {
         id: tier.id,
         name: tier.name.trim(),
-        minClass: tier.minClass,
-        maxClass: tier.maxClass,
+        classes: tier.classes,
         passPercentage: parseInt(tier.passPercentage) || 35,
+        gradingSystem: tier.gradingSystem,
+        passingGrades: tier.passingGrades,
         sortOrder: tier.sortOrder,
       });
       const saved = await tierRes.json();

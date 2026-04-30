@@ -1784,9 +1784,10 @@ export function registerTeacherRoutes(app: Express) {
     const schema = z.object({
       id: z.number().int().positive().optional(),
       name: z.string().min(1),
-      minClass: z.string().min(1),
-      maxClass: z.string().min(1),
-      passPercentage: z.number().int().min(0).max(100),
+      classes: z.array(z.string()).min(1, "At least one class must be selected"),
+      passPercentage: z.number().int().min(0).max(100).default(35),
+      gradingSystem: z.enum(["percentage", "grade", "both"]).default("percentage"),
+      passingGrades: z.array(z.string()).default([]),
       sortOrder: z.number().int().default(0),
     });
     const parsed = schema.safeParse(req.body);
