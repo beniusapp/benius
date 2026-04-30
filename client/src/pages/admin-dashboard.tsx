@@ -9,7 +9,7 @@ import {
   Bell, Image, BarChart2, Shield, UserSquare, CreditCard, Package,
   TrendingUp, MessageSquare, CalendarDays, ChevronLeft, Loader2,
   ArrowRight, AlertTriangle, UserCircle2, X, KeyRound, Lock, Phone, Mail,
-  CheckCircle2, History,
+  CheckCircle2, History, ChevronUp, PanelLeftClose, PanelLeftOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -407,6 +407,14 @@ export default function AdminDashboard() {
     ? (moduleParams.module as ActiveModule)
     : "grid";
   const [showProfile, setShowProfile] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
+    Foundation: true, Oversight: true, Management: true, Enterprise: true,
+  });
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  function toggleGroup(group: string) {
+    setExpandedGroups(prev => ({ ...prev, [group]: !prev[group] }));
+  }
 
   function goToModule(id: ActiveModule | "grid") {
     if (id === "grid") setLocation("/admin-dashboard");
@@ -624,68 +632,170 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* ===== MAIN CONTENT ===== */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6">
-        {activeModule === "grid" ? (
-          <div className="space-y-8">
-            {GROUP_ORDER.map(group => {
-              const groupTiles = TILES.filter(t => t.group === group);
-              return (
-                <div key={group}>
-                  <div className="flex items-center gap-3 mb-4">
-                    <span className={`text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full border ${GROUP_COLORS[group]}`}>
-                      {group}
-                    </span>
-                    <div className="flex-1 h-px bg-white/5" />
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {groupTiles.map(tile => {
-                      const badge = tile.badgeKey ? BADGES[tile.badgeKey] : undefined;
-                      return (
-                        <button
-                          key={tile.id}
-                          onClick={() => goToModule(tile.id)}
-                          data-testid={`tile-${tile.id}`}
-                          className="group relative text-left rounded-xl border border-white/10 bg-[#1A2942] p-5 hover:bg-[#1E3350] hover:border-[#D4AF37]/40 transition-all duration-200 hover:shadow-lg hover:shadow-[#D4AF37]/5"
-                        >
-                          {badge !== undefined && badge > 0 && (
-                            <span className="absolute top-3 right-3 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center" data-testid={`badge-${tile.id}`}>
-                              {badge > 9 ? "9+" : badge}
-                            </span>
-                          )}
-                          <div className="flex items-start gap-3 mb-3">
-                            <div className="p-2.5 rounded-lg bg-[#D4AF37]/15 group-hover:bg-[#D4AF37]/25 transition-colors shrink-0">
-                              <tile.icon className="w-5 h-5 text-[#D4AF37]" />
-                            </div>
-                          </div>
-                          <h3 className="font-semibold text-white text-sm leading-tight mb-1 group-hover:text-[#D4AF37] transition-colors">{tile.label}</h3>
-                          <p className="text-white/40 text-xs leading-relaxed">{tile.desc}</p>
-                          <div className="mt-3 flex items-center gap-1 text-[#D4AF37]/50 text-xs group-hover:text-[#D4AF37] transition-colors">
-                            <span>Open</span>
-                            <ArrowRight className="w-3 h-3" />
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div>
-            <div className="mb-6 flex items-center gap-2">
-              <button onClick={() => goToModule("grid")}
-                className="text-white/40 hover:text-white text-sm flex items-center gap-1 transition-colors" data-testid="breadcrumb-back">
-                <ChevronLeft className="w-4 h-4" /> Dashboard
+      {/* ===== CONTENT ROW: sidebar + main ===== */}
+      <div className="flex flex-1 min-h-0">
+
+        {/* ── Collapsible Sidebar ── */}
+        <aside
+          className={`hidden lg:flex flex-col flex-shrink-0 border-r border-white/10 bg-[#0D1A2F] transition-all duration-300 ease-in-out overflow-hidden ${sidebarOpen ? "w-64" : "w-0"}`}
+          data-testid="admin-sidebar"
+        >
+          <div className="w-64 flex flex-col h-full overflow-y-auto">
+            {/* Sidebar header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+              <span className="text-xs font-bold text-white/40 uppercase tracking-widest">Navigation</span>
+              <button
+                onClick={() => setSidebarOpen(false)}
+                className="p-1 rounded-md text-white/30 hover:text-white hover:bg-white/10 transition-colors"
+                title="Collapse sidebar"
+                data-testid="button-collapse-sidebar"
+              >
+                <PanelLeftClose className="w-4 h-4" />
               </button>
-              <span className="text-white/20">/</span>
-              <span className="text-white/70 text-sm">{TILES.find(t => t.id === activeModule)?.label ?? activeModule}</span>
             </div>
-            {renderModule()}
+
+            {/* Groups */}
+            <nav className="flex-1 py-3 space-y-0.5" data-testid="sidebar-nav">
+              {GROUP_ORDER.map(group => {
+                const isOpen = expandedGroups[group];
+                const groupTiles = TILES.filter(t => t.group === group);
+                const groupTextColor: Record<string, string> = {
+                  Foundation: "text-blue-400",
+                  Oversight: "text-purple-400",
+                  Management: "text-green-400",
+                  Enterprise: "text-[#D4AF37]",
+                };
+                return (
+                  <div key={group}>
+                    {/* Group header */}
+                    <button
+                      onClick={() => toggleGroup(group)}
+                      className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-white/5 transition-colors group"
+                      data-testid={`sidebar-group-${group.toLowerCase()}`}
+                    >
+                      <span className={`text-[11px] font-bold uppercase tracking-widest ${groupTextColor[group]}`}>
+                        {group}
+                      </span>
+                      <ChevronUp
+                        className={`w-3.5 h-3.5 text-white/30 group-hover:text-white/60 transition-all duration-200 ${isOpen ? "rotate-180" : ""}`}
+                      />
+                    </button>
+
+                    {/* Sub-items with smooth expand/collapse */}
+                    <div
+                      className="overflow-hidden transition-all duration-250 ease-in-out"
+                      style={{ maxHeight: isOpen ? `${groupTiles.length * 44}px` : "0px" }}
+                    >
+                      {groupTiles.map(tile => {
+                        const isActive = activeModule === tile.id;
+                        const badge = tile.badgeKey ? BADGES[tile.badgeKey] : undefined;
+                        return (
+                          <button
+                            key={tile.id}
+                            onClick={() => goToModule(tile.id)}
+                            data-testid={`sidebar-item-${tile.id}`}
+                            className={`w-full flex items-center gap-3 px-5 py-2.5 text-sm text-left transition-all duration-150 relative ${
+                              isActive
+                                ? "bg-[#D4AF37]/10 text-[#D4AF37] border-r-2 border-[#D4AF37]"
+                                : "text-white/55 hover:text-white hover:bg-white/5"
+                            }`}
+                          >
+                            <tile.icon className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-[#D4AF37]" : "text-white/40"}`} />
+                            <span className="truncate text-xs font-medium">{tile.label}</span>
+                            {badge !== undefined && badge > 0 && (
+                              <span className="ml-auto flex-shrink-0 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
+                                {badge > 9 ? "9+" : badge}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </nav>
           </div>
-        )}
-      </main>
+        </aside>
+
+        {/* ── Main content ── */}
+        <main className="flex-1 min-w-0 overflow-x-hidden">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+
+            {/* Sidebar toggle (shows when sidebar is collapsed) */}
+            {!sidebarOpen && (
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="hidden lg:flex items-center gap-2 mb-4 text-xs text-white/40 hover:text-white transition-colors"
+                data-testid="button-expand-sidebar"
+              >
+                <PanelLeftOpen className="w-4 h-4" />
+                Show navigation
+              </button>
+            )}
+
+            {activeModule === "grid" ? (
+              <div className="space-y-8">
+                {GROUP_ORDER.map(group => {
+                  const groupTiles = TILES.filter(t => t.group === group);
+                  return (
+                    <div key={group}>
+                      <div className="flex items-center gap-3 mb-4">
+                        <span className={`text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full border ${GROUP_COLORS[group]}`}>
+                          {group}
+                        </span>
+                        <div className="flex-1 h-px bg-white/5" />
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {groupTiles.map(tile => {
+                          const badge = tile.badgeKey ? BADGES[tile.badgeKey] : undefined;
+                          return (
+                            <button
+                              key={tile.id}
+                              onClick={() => goToModule(tile.id)}
+                              data-testid={`tile-${tile.id}`}
+                              className="group relative text-left rounded-xl border border-white/10 bg-[#1A2942] p-5 hover:bg-[#1E3350] hover:border-[#D4AF37]/40 transition-all duration-200 hover:shadow-lg hover:shadow-[#D4AF37]/5"
+                            >
+                              {badge !== undefined && badge > 0 && (
+                                <span className="absolute top-3 right-3 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center" data-testid={`badge-${tile.id}`}>
+                                  {badge > 9 ? "9+" : badge}
+                                </span>
+                              )}
+                              <div className="flex items-start gap-3 mb-3">
+                                <div className="p-2.5 rounded-lg bg-[#D4AF37]/15 group-hover:bg-[#D4AF37]/25 transition-colors shrink-0">
+                                  <tile.icon className="w-5 h-5 text-[#D4AF37]" />
+                                </div>
+                              </div>
+                              <h3 className="font-semibold text-white text-sm leading-tight mb-1 group-hover:text-[#D4AF37] transition-colors">{tile.label}</h3>
+                              <p className="text-white/40 text-xs leading-relaxed">{tile.desc}</p>
+                              <div className="mt-3 flex items-center gap-1 text-[#D4AF37]/50 text-xs group-hover:text-[#D4AF37] transition-colors">
+                                <span>Open</span>
+                                <ArrowRight className="w-3 h-3" />
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div>
+                <div className="mb-6 flex items-center gap-2">
+                  <button onClick={() => goToModule("grid")}
+                    className="text-white/40 hover:text-white text-sm flex items-center gap-1 transition-colors" data-testid="breadcrumb-back">
+                    <ChevronLeft className="w-4 h-4" /> Dashboard
+                  </button>
+                  <span className="text-white/20">/</span>
+                  <span className="text-white/70 text-sm">{TILES.find(t => t.id === activeModule)?.label ?? activeModule}</span>
+                </div>
+                {renderModule()}
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
 
       {/* ===== FOOTER ===== */}
       <footer className="border-t border-white/5 py-4 text-center">
