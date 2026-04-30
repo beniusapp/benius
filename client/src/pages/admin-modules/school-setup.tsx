@@ -153,6 +153,22 @@ function TierAccordion({ tier, classesList, onChange, onDelete, onSave, isSaving
   const addRule = () => onChange({ ...tier, rules: [...tier.rules, emptyRule()] });
   const removeRule = (idx: number) => onChange({ ...tier, rules: tier.rules.filter((_, i) => i !== idx) });
 
+  const minIdx = tier.minClass ? CLASS_ORDER.indexOf(tier.minClass) : -1;
+
+  const validToClasses = classesList.filter(c =>
+    minIdx === -1 || CLASS_ORDER.indexOf(c) >= minIdx
+  );
+
+  const handleFromClassChange = (val: string) => {
+    const newMinIdx = CLASS_ORDER.indexOf(val);
+    const currentMaxIdx = CLASS_ORDER.indexOf(tier.maxClass);
+    if (tier.maxClass && currentMaxIdx < newMinIdx) {
+      onChange({ ...tier, minClass: val, maxClass: "" });
+    } else {
+      setField("minClass", val);
+    }
+  };
+
   return (
     <div className="rounded-xl border border-white/10 bg-[#1A2942] overflow-hidden" data-testid={`tier-card-${tier.tempId}`}>
       <button
@@ -191,21 +207,35 @@ function TierAccordion({ tier, classesList, onChange, onDelete, onSave, isSaving
             </div>
             <div>
               <label className="text-xs text-white/50 mb-1 block">From Class</label>
-              <select value={tier.minClass} onChange={e => setField("minClass", e.target.value)}
+              <select value={tier.minClass} onChange={e => handleFromClassChange(e.target.value)}
                 className="w-full h-9 rounded-md bg-[#0A1628] border border-white/20 text-white text-sm px-3"
                 data-testid={`select-min-class-${tier.tempId}`}>
                 <option value="">Select</option>
                 {classesList.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
+              {classesList.length === 0 && (
+                <p className="text-[10px] text-amber-400/70 mt-1">No classes configured yet — add them in the Classes section above.</p>
+              )}
             </div>
             <div>
               <label className="text-xs text-white/50 mb-1 block">To Class</label>
-              <select value={tier.maxClass} onChange={e => setField("maxClass", e.target.value)}
-                className="w-full h-9 rounded-md bg-[#0A1628] border border-white/20 text-white text-sm px-3"
-                data-testid={`select-max-class-${tier.tempId}`}>
-                <option value="">Select</option>
-                {classesList.map(c => <option key={c} value={c}>{c}</option>)}
+              <select
+                value={tier.maxClass}
+                onChange={e => setField("maxClass", e.target.value)}
+                disabled={!tier.minClass}
+                className={`w-full h-9 rounded-md bg-[#0A1628] border text-sm px-3 ${
+                  !tier.minClass
+                    ? "border-white/10 text-white/30 cursor-not-allowed"
+                    : "border-white/20 text-white"
+                }`}
+                data-testid={`select-max-class-${tier.tempId}`}
+              >
+                <option value="">{tier.minClass ? "Select" : "Select From Class first"}</option>
+                {validToClasses.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
+              {tier.minClass && validToClasses.length === 0 && (
+                <p className="text-[10px] text-amber-400/70 mt-1">No classes available at or above {tier.minClass}.</p>
+              )}
             </div>
           </div>
 
@@ -498,7 +528,9 @@ export default function SchoolSetup({ schoolId }: Props) {
           </div>
           <div>
             <h3 className="font-bold text-white">Academic Policy</h3>
-            <p className="text-white/40 text-xs">Define grading tiers for different class ranges, each with its own pass mark and grade brackets.</p>
+            <p className="text-white/40 text-xs">
+              Define grading tiers for different class ranges. The <span className="text-[#D4AF37]/80 font-medium">From Class</span> and <span className="text-[#D4AF37]/80 font-medium">To Class</span> dropdowns are populated from your saved <span className="text-[#D4AF37]/80 font-medium">Classes</span> configuration above.
+            </p>
           </div>
           <Button size="sm" onClick={addTier}
             className="ml-auto bg-[#10b981] hover:bg-emerald-600 text-white font-semibold h-9"
