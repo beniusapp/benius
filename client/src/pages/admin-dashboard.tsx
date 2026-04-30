@@ -9,7 +9,7 @@ import {
   Bell, Image, BarChart2, Shield, UserSquare, CreditCard, Package,
   TrendingUp, MessageSquare, CalendarDays, ChevronLeft, Loader2,
   ArrowRight, AlertTriangle, UserCircle2, X, KeyRound, Lock, Phone, Mail,
-  CheckCircle2, History, ChevronUp, PanelLeftClose, PanelLeftOpen,
+  CheckCircle2, History, ChevronDown, PanelLeftClose, PanelLeftOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -676,7 +676,7 @@ export default function AdminDashboard() {
                       <span className={`text-[11px] font-bold uppercase tracking-widest ${groupTextColor[group]}`}>
                         {group}
                       </span>
-                      <ChevronUp
+                      <ChevronDown
                         className={`w-3.5 h-3.5 text-white/30 group-hover:text-white/60 transition-all duration-200 ${isOpen ? "rotate-180" : ""}`}
                       />
                     </button>
