@@ -155,9 +155,12 @@ function TierAccordion({ tier, classesList, onChange, onDelete, onSave, isSaving
 
   const minIdx = tier.minClass ? CLASS_ORDER.indexOf(tier.minClass) : -1;
 
-  const validToClasses = classesList.filter(c =>
-    minIdx === -1 || CLASS_ORDER.indexOf(c) >= minIdx
-  );
+  const validToClasses = classesList.filter(c => {
+    if (minIdx === -1) return true;        // no From Class picked yet — show all
+    const cIdx = CLASS_ORDER.indexOf(c);
+    if (cIdx === -1) return true;          // custom name not in CLASS_ORDER — always include
+    return cIdx >= minIdx;
+  });
 
   const handleFromClassChange = (val: string) => {
     const newMinIdx = CLASS_ORDER.indexOf(val);
@@ -487,9 +490,11 @@ export default function SchoolSetup({ schoolId }: Props) {
     }
   };
 
-  const classesList = classes.length > 0
-    ? CLASS_ORDER.filter(c => classes.includes(c))
-    : CLASS_ORDER;
+  // Sort configured classes by CLASS_ORDER position; custom names come after
+  const classesList = [
+    ...CLASS_ORDER.filter(c => classes.includes(c)),
+    ...classes.filter(c => !CLASS_ORDER.includes(c)),
+  ];
 
   return (
     <div className="space-y-6">
