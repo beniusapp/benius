@@ -637,10 +637,10 @@ export default function AdminDashboard() {
 
         {/* ── Collapsible Sidebar ── */}
         <aside
-          className={`hidden lg:flex flex-col flex-shrink-0 border-r border-white/10 bg-[#0D1A2F] transition-all duration-300 ease-in-out overflow-hidden ${sidebarOpen ? "w-64" : "w-0"}`}
+          className={`flex flex-col flex-shrink-0 border-r border-white/10 bg-[#0D1A2F] transition-all duration-300 ease-in-out overflow-hidden ${sidebarOpen ? "w-60" : "w-0"}`}
           data-testid="admin-sidebar"
         >
-          <div className="w-64 flex flex-col h-full overflow-y-auto">
+          <div className="w-60 flex flex-col h-full overflow-y-auto">
             {/* Sidebar header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
               <span className="text-xs font-bold text-white/40 uppercase tracking-widest">Navigation</span>
@@ -726,7 +726,7 @@ export default function AdminDashboard() {
             {!sidebarOpen && (
               <button
                 onClick={() => setSidebarOpen(true)}
-                className="hidden lg:flex items-center gap-2 mb-4 text-xs text-white/40 hover:text-white transition-colors"
+                className="flex items-center gap-2 mb-4 text-xs text-white/40 hover:text-white transition-colors"
                 data-testid="button-expand-sidebar"
               >
                 <PanelLeftOpen className="w-4 h-4" />
