@@ -126,19 +126,27 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
     }
   }, [securityOpen]);
 
+  const maps = teacher.mappings ?? [];
+
   const mappedClassValue = (() => {
-    const maps = teacher.mappings ?? [];
     if (maps.length === 0) {
-      return teacher.assignedClass ? `${teacher.assignedClass} – ${teacher.assignedSection}` : "—";
+      return teacher.assignedClass ? `${teacher.assignedClass}${teacher.assignedSection}` : "—";
     }
-    return maps.map(m => `${m.className}${m.section}${m.subject ? ` · ${m.subject}` : ""}`).join(", ");
+    return maps.map(m => `${m.className}${m.section}`).join(", ");
+  })();
+
+  const mappedSubjectValue = (() => {
+    const subjects = maps.map(m => m.subject).filter((s): s is string => !!s);
+    const unique = Array.from(new Set(subjects));
+    if (unique.length > 0) return unique.join(", ");
+    return teacher.subject || "—";
   })();
 
   const fields = [
     { icon: User, label: "Full Name", value: teacher.fullName },
     { icon: Mail, label: "Email", value: teacher.email },
     { icon: Phone, label: "Phone", value: teacher.phone || "—" },
-    { icon: BookOpen, label: "Subject", value: teacher.subject || "—" },
+    { icon: BookOpen, label: "Subject", value: mappedSubjectValue },
     { icon: GraduationCap, label: "Assigned Classes", value: mappedClassValue },
   ];
 
