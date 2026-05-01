@@ -1866,11 +1866,16 @@ export class DatabaseStorage {
 
   // ===== PAGINATED TEACHERS (Big Data) =====
   async updateTeacherAssignment(teacherId: number, schoolId: number, data: { fullName: string; subject: string; assignedClass: string; assignedSection: string; phone?: string; designation?: string }): Promise<Teacher | undefined> {
-    const setData: Record<string, unknown> = { fullName: data.fullName, subject: data.subject, assignedClass: data.assignedClass, assignedSection: data.assignedSection };
+    const setData: Partial<typeof teachers.$inferInsert> = {
+      fullName: data.fullName,
+      subject: data.subject,
+      assignedClass: data.assignedClass,
+      assignedSection: data.assignedSection,
+    };
     if (data.phone !== undefined) setData.phone = data.phone;
     if (data.designation !== undefined) setData.designation = data.designation;
     const [updated] = await db.update(teachers)
-      .set(setData as any)
+      .set(setData)
       .where(and(eq(teachers.id, teacherId), eq(teachers.schoolId, schoolId)))
       .returning();
     return updated;

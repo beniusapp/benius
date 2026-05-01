@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useForm } from "react-hook-form";
+import { useForm, UseFormReturn } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -131,7 +131,7 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
-  const StaffFormFields = ({ form, isEdit }: { form: any; isEdit?: boolean }) => {
+  const StaffFormFields = ({ form, isEdit }: { form: UseFormReturn<StaffForm>; isEdit?: boolean }) => {
     const isOther = form.watch("designation") === "Other";
     if (isEdit && isOther !== editUseCustom) setEditUseCustom(isOther);
     if (!isEdit && isOther !== useCustom) setUseCustom(isOther);

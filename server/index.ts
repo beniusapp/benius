@@ -255,6 +255,25 @@ app.use((req, res, next) => {
       read_at TIMESTAMP NOT NULL DEFAULT NOW(),
       UNIQUE (student_id, notice_id)
     );
+
+    CREATE TABLE IF NOT EXISTS non_teaching_staff (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      full_name TEXT NOT NULL,
+      email TEXT,
+      phone TEXT,
+      designation TEXT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS faculty_mappings (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+      class_name TEXT NOT NULL,
+      section TEXT NOT NULL,
+      UNIQUE (school_id, teacher_id, class_name, section)
+    );
   `);
 
   await registerRoutes(httpServer, app);
