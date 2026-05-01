@@ -2313,6 +2313,155 @@ export function registerTeacherRoutes(app: Express) {
     }
   });
 
+  // ===== TEACHER REGISTRY (admin CRUD) =====
+  app.get("/api/admin/teacher-registry", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const q = (req.query.q as string) || "";
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const pageSize = 20;
+    try {
+      const result = await storage.getTeachersBySchoolPaginated(schoolId, q, page, pageSize);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch teachers" });
+    }
+  });
+
+  app.delete("/api/admin/teacher-registry/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const teacherId = parseInt(req.params.id);
+    if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
+    try {
+      const teacher = await storage.getTeacherById(teacherId);
+      if (!teacher || teacher.schoolId !== schoolId)
+        return res.status(404).json({ message: "Teacher not found" });
+      await storage.deleteTeacher(teacherId);
+      res.json({ message: "Teacher removed from registry" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to delete teacher" });
+    }
+  });
+
+  // ===== NON-TEACHING STAFF (admin CRUD) =====
+  const ntsCreateSchema = z.object({
+    fullName: z.string().min(2),
+    email: z.string().email().optional().or(z.literal("")),
+    phone: z.string().optional().or(z.literal("")),
+    designation: z.string().min(1),
+  });
+
+  app.get("/api/admin/non-teaching-staff", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    try {
+      const data = await storage.getNonTeachingStaffBySchool(req.session.schoolId!);
+      res.json(data);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch staff" });
+    }
+  });
+
+  app.post("/api/admin/non-teaching-staff", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const parsed = ntsCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      const record = await storage.createNonTeachingStaff({
+        schoolId: req.session.schoolId!,
+        fullName: parsed.data.fullName,
+        email: parsed.data.email || "",
+        phone: parsed.data.phone || "",
+        designation: parsed.data.designation,
+        isActive: true,
+      });
+      res.status(201).json(record);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to create staff" });
+    }
+  });
+
+  app.patch("/api/admin/non-teaching-staff/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const parsed = ntsCreateSchema.partial().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      const updated = await storage.updateNonTeachingStaff(id, req.session.schoolId!, parsed.data);
+      if (!updated) return res.status(404).json({ message: "Staff not found" });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to update staff" });
+    }
+  });
+
+  app.delete("/api/admin/non-teaching-staff/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    try {
+      const deleted = await storage.deleteNonTeachingStaff(id, req.session.schoolId!);
+      if (!deleted) return res.status(404).json({ message: "Staff not found" });
+      res.json({ message: "Staff removed" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to delete staff" });
+    }
+  });
+
+  // ===== FACULTY MAPPINGS (admin) =====
+  app.get("/api/admin/faculty-mappings", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    try {
+      const mappings = await storage.getFacultyMappingsBySchool(req.session.schoolId!);
+      res.json(mappings);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch mappings" });
+    }
+  });
+
+  const facultyMappingSchema = z.object({
+    teacherId: z.number().int().positive(),
+    mappings: z.array(z.object({ className: z.string().min(1), section: z.string().min(1) })),
+  });
+
+  app.post("/api/admin/faculty-mappings", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const parsed = facultyMappingSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const schoolId = req.session.schoolId!;
+    try {
+      const teacher = await storage.getTeacherById(parsed.data.teacherId);
+      if (!teacher || teacher.schoolId !== schoolId)
+        return res.status(404).json({ message: "Teacher not found" });
+      const rows = await storage.replaceFacultyMappings(parsed.data.teacherId, schoolId, parsed.data.mappings);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to save mappings" });
+    }
+  });
+
+  app.delete("/api/admin/faculty-mappings/:teacherId", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const teacherId = parseInt(req.params.teacherId);
+    if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
+    try {
+      await storage.deleteFacultyMappingsByTeacher(teacherId, req.session.schoolId!);
+      res.json({ message: "Mappings cleared" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to delete mappings" });
+    }
+  });
+
   // ===== TEACHER CALENDAR ROUTE =====
   app.get("/api/teacher/calendar", async (req, res) => {
     const teacherId = req.session.teacherId;

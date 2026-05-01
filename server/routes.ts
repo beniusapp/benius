@@ -1881,6 +1881,8 @@ export async function registerRoutes(
     subject: z.string().min(1, "Subject is required"),
     assignedClass: z.string().min(1, "Class is required"),
     assignedSection: z.string().min(1, "Section is required"),
+    phone: z.string().optional(),
+    designation: z.string().optional(),
   });
 
   app.patch("/api/admin/teachers/:id", async (req, res) => {

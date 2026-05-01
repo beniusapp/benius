@@ -5,7 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
-  GraduationCap, LogOut, Users, UserCheck, Settings, BookOpen, Clock,
+  GraduationCap, LogOut, Users, UserCheck, Settings, BookOpen, Clock, UserCog,
   Bell, Image, BarChart2, Shield, UserSquare, CreditCard, Package,
   TrendingUp, MessageSquare, CalendarDays, ChevronLeft, Loader2,
   ArrowRight, AlertTriangle, UserCircle2, X, KeyRound, Lock, Phone, Mail,
@@ -20,6 +20,8 @@ import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import SchoolSetup from "./admin-modules/school-setup";
 import StudentRegistry from "./admin-modules/student-registry";
 import FacultyMapping from "./admin-modules/faculty-mapping";
+import TeacherRegistry from "./admin-modules/teacher-registry";
+import NonTeachingStaff from "./admin-modules/non-teaching-staff";
 import ApprovalCenter from "./admin-modules/approval-center";
 import AuditLogsModule from "./admin-modules/audit-logs";
 import VisitorLogModule from "./admin-modules/visitor-log";
@@ -62,7 +64,8 @@ type ActiveModule =
   | "grid" | "school-setup" | "timetable" | "attendance" | "exam-controller"
   | "complaint-hub" | "noticeboard" | "approval-center" | "faculty-mapping"
   | "student-registry" | "analytics" | "audit-logs" | "visitor-log"
-  | "id-card-gen" | "assets" | "school-calendar";
+  | "id-card-gen" | "assets" | "school-calendar"
+  | "teacher-registry" | "non-teaching-staff";
 
 interface TileConfig {
   id: ActiveModule;
@@ -81,7 +84,9 @@ const TILES: TileConfig[] = [
   { id: "complaint-hub", label: "Complaint Hub", icon: MessageSquare, group: "Oversight", desc: "All teacher complaints in one place", badgeKey: "complaints" },
   { id: "noticeboard", label: "Noticeboard", icon: Bell, group: "Oversight", desc: "Post notices to classes or whole school" },
   { id: "approval-center", label: "Approval Center", icon: UserCheck, group: "Management", desc: "Leaves, gallery, e-books — unified", badgeKey: "approvals" },
-  { id: "faculty-mapping", label: "Faculty Mapping", icon: Users, group: "Management", desc: "Add, search, and manage teachers" },
+  { id: "teacher-registry", label: "Teacher Registry", icon: BookOpen, group: "Management", desc: "Register & manage teaching staff" },
+  { id: "non-teaching-staff", label: "Support Staff", icon: UserSquare, group: "Management", desc: "Admin, security, accounts & more" },
+  { id: "faculty-mapping", label: "Faculty Mapping", icon: Users, group: "Management", desc: "Assign teachers to classes & sections" },
   { id: "student-registry", label: "Student Registry", icon: GraduationCap, group: "Management", desc: "5000+ students with smart pagination" },
   { id: "analytics", label: "Performance Analytics", icon: BarChart2, group: "Enterprise", desc: "Exam scores and class analytics" },
   { id: "audit-logs", label: "Audit Logs", icon: Shield, group: "Enterprise", desc: "Immutable trail of all admin actions" },
@@ -537,6 +542,8 @@ export default function AdminDashboard() {
       case "school-setup": return <SchoolSetup schoolId={me.schoolId} />;
       case "student-registry": return <StudentRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} />;
       case "faculty-mapping": return <FacultyMapping schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
+      case "teacher-registry": return <TeacherRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
+      case "non-teaching-staff": return <NonTeachingStaff schoolId={me.schoolId} />;
       case "approval-center": return <ApprovalCenter schoolId={me.schoolId} />;
       case "audit-logs": return <AuditLogsModule schoolId={me.schoolId} />;
       case "visitor-log": return <VisitorLogModule schoolId={me.schoolId} />;

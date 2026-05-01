@@ -629,6 +629,33 @@ export const insertTimetableStructureSchema = createInsertSchema(timetableStruct
 export type InsertTimetableStructure = z.infer<typeof insertTimetableStructureSchema>;
 export type TimetableStructure = typeof timetableStructure.$inferSelect;
 
+export const nonTeachingStaff = pgTable("non_teaching_staff", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  fullName: text("full_name").notNull(),
+  email: text("email").notNull().default(""),
+  phone: varchar("phone", { length: 20 }).notNull().default(""),
+  designation: text("designation").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertNonTeachingStaffSchema = createInsertSchema(nonTeachingStaff).omit({ id: true, createdAt: true });
+export type InsertNonTeachingStaff = z.infer<typeof insertNonTeachingStaffSchema>;
+export type NonTeachingStaff = typeof nonTeachingStaff.$inferSelect;
+
+export const facultyMappings = pgTable("faculty_mappings", {
+  id: serial("id").primaryKey(),
+  teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  className: varchar("class_name", { length: 20 }).notNull(),
+  section: varchar("section", { length: 10 }).notNull(),
+});
+
+export const insertFacultyMappingSchema = createInsertSchema(facultyMappings).omit({ id: true });
+export type InsertFacultyMapping = z.infer<typeof insertFacultyMappingSchema>;
+export type FacultyMapping = typeof facultyMappings.$inferSelect;
+
 export const leavePolicies = pgTable("leave_policies", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),

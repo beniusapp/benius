@@ -6,6 +6,7 @@ import {
   studentLeaveRequests, auditLogs, visitorLogs, studentProfiles, teacherAllocations,
   promotionOverrides, gradingTiers, gradingRules, academicHistory,
   schoolAssets, assetLogs, verificationLogs, timetableStructure, securityAudit, leavePolicies,
+  nonTeachingStaff, facultyMappings,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
@@ -31,6 +32,8 @@ import {
   type InsertAssetLog,
   type TimetableStructure, type InsertTimetableStructure,
   type LeavePolicy, type InsertLeavePolicy,
+  type NonTeachingStaff, type InsertNonTeachingStaff,
+  type FacultyMapping, type InsertFacultyMapping,
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
@@ -1862,9 +1865,12 @@ export class DatabaseStorage {
   }
 
   // ===== PAGINATED TEACHERS (Big Data) =====
-  async updateTeacherAssignment(teacherId: number, schoolId: number, data: { fullName: string; subject: string; assignedClass: string; assignedSection: string }): Promise<Teacher | undefined> {
+  async updateTeacherAssignment(teacherId: number, schoolId: number, data: { fullName: string; subject: string; assignedClass: string; assignedSection: string; phone?: string; designation?: string }): Promise<Teacher | undefined> {
+    const setData: Record<string, unknown> = { fullName: data.fullName, subject: data.subject, assignedClass: data.assignedClass, assignedSection: data.assignedSection };
+    if (data.phone !== undefined) setData.phone = data.phone;
+    if (data.designation !== undefined) setData.designation = data.designation;
     const [updated] = await db.update(teachers)
-      .set({ fullName: data.fullName, subject: data.subject, assignedClass: data.assignedClass, assignedSection: data.assignedSection })
+      .set(setData as any)
       .where(and(eq(teachers.id, teacherId), eq(teachers.schoolId, schoolId)))
       .returning();
     return updated;
@@ -2884,6 +2890,97 @@ export class DatabaseStorage {
       .where(eq(securityAudit.userId, userId))
       .orderBy(desc(securityAudit.createdAt))
       .limit(limit);
+  }
+
+  // ===== NON-TEACHING STAFF =====
+  async getNonTeachingStaffBySchool(schoolId: number): Promise<NonTeachingStaff[]> {
+    return await db.select().from(nonTeachingStaff)
+      .where(and(eq(nonTeachingStaff.schoolId, schoolId), eq(nonTeachingStaff.isActive, true)))
+      .orderBy(nonTeachingStaff.fullName);
+  }
+
+  async createNonTeachingStaff(data: InsertNonTeachingStaff): Promise<NonTeachingStaff> {
+    const [record] = await db.insert(nonTeachingStaff).values(data).returning();
+    return record;
+  }
+
+  async updateNonTeachingStaff(id: number, schoolId: number, data: Partial<InsertNonTeachingStaff>): Promise<NonTeachingStaff | undefined> {
+    const [record] = await db.update(nonTeachingStaff)
+      .set(data)
+      .where(and(eq(nonTeachingStaff.id, id), eq(nonTeachingStaff.schoolId, schoolId)))
+      .returning();
+    return record;
+  }
+
+  async deleteNonTeachingStaff(id: number, schoolId: number): Promise<boolean> {
+    const result = await db.update(nonTeachingStaff)
+      .set({ isActive: false })
+      .where(and(eq(nonTeachingStaff.id, id), eq(nonTeachingStaff.schoolId, schoolId)))
+      .returning();
+    return result.length > 0;
+  }
+
+  // ===== FACULTY MAPPINGS =====
+  async getFacultyMappingsBySchool(schoolId: number): Promise<(FacultyMapping & { teacherName: string; email: string })[]> {
+    const rows = await db.select({
+      id: facultyMappings.id,
+      teacherId: facultyMappings.teacherId,
+      schoolId: facultyMappings.schoolId,
+      className: facultyMappings.className,
+      section: facultyMappings.section,
+      teacherName: teachers.fullName,
+      email: users.email,
+    }).from(facultyMappings)
+      .innerJoin(teachers, eq(facultyMappings.teacherId, teachers.id))
+      .innerJoin(users, eq(teachers.userId, users.id))
+      .where(eq(facultyMappings.schoolId, schoolId))
+      .orderBy(teachers.fullName, facultyMappings.className, facultyMappings.section);
+    return rows;
+  }
+
+  async replaceFacultyMappings(teacherId: number, schoolId: number, mappings: { className: string; section: string }[]): Promise<FacultyMapping[]> {
+    return await db.transaction(async (tx) => {
+      await tx.delete(facultyMappings).where(
+        and(eq(facultyMappings.teacherId, teacherId), eq(facultyMappings.schoolId, schoolId))
+      );
+      if (mappings.length === 0) return [];
+      const rows = await tx.insert(facultyMappings).values(
+        mappings.map(m => ({ teacherId, schoolId, className: m.className, section: m.section }))
+      ).returning();
+      return rows;
+    });
+  }
+
+  async deleteFacultyMappingsByTeacher(teacherId: number, schoolId: number): Promise<void> {
+    await db.delete(facultyMappings).where(
+      and(eq(facultyMappings.teacherId, teacherId), eq(facultyMappings.schoolId, schoolId))
+    );
+  }
+
+  async getTeachersBySchoolPaginated(schoolId: number, q: string, page: number, pageSize: number): Promise<{ data: (Teacher & { email: string })[]; total: number }> {
+    const baseWhere = eq(teachers.schoolId, schoolId);
+    const searchCondition = q
+      ? and(baseWhere, or(
+          ilike(teachers.fullName, `%${q}%`),
+          ilike(users.email, `%${q}%`),
+        ))
+      : baseWhere;
+
+    const [{ total }] = await db.select({ total: count() }).from(teachers)
+      .innerJoin(users, eq(teachers.userId, users.id))
+      .where(searchCondition ?? baseWhere);
+
+    const data = await db.select().from(teachers)
+      .innerJoin(users, eq(teachers.userId, users.id))
+      .where(searchCondition ?? baseWhere)
+      .orderBy(teachers.fullName)
+      .limit(pageSize)
+      .offset((page - 1) * pageSize);
+
+    return {
+      total,
+      data: data.map(r => ({ ...r.teachers, email: r.users.email })),
+    };
   }
 }
 
