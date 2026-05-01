@@ -260,9 +260,10 @@ app.use((req, res, next) => {
       id SERIAL PRIMARY KEY,
       school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
       full_name TEXT NOT NULL,
-      email TEXT,
-      phone TEXT,
+      email TEXT NOT NULL DEFAULT '',
+      phone VARCHAR(20) NOT NULL DEFAULT '',
       designation TEXT NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
 
@@ -274,6 +275,8 @@ app.use((req, res, next) => {
       section TEXT NOT NULL,
       UNIQUE (school_id, teacher_id, class_name, section)
     );
+
+    ALTER TABLE non_teaching_staff ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
   `);
 
   await registerRoutes(httpServer, app);
