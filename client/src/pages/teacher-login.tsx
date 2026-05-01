@@ -57,7 +57,7 @@ export default function TeacherLogin() {
     },
     onSuccess: () => {
       toast({ title: "Password Changed", description: "Security credentials updated successfully." });
-      setLocation("/teacher-login");
+      setLocation("/teacher-dashboard");
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });

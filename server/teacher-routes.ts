@@ -179,10 +179,7 @@ export function registerTeacherRoutes(app: Express) {
 
     const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
     await storage.updateTeacherPassword(data.user.id, passwordHash, false);
-    req.session.destroy((err) => {
-      if (err) return res.status(500).json({ message: "Password updated but session cleanup failed" });
-      res.json({ message: "Password changed successfully" });
-    });
+    res.json({ message: "Password changed successfully" });
   });
 
   app.post("/api/teacher/profile-picture", diskUpload.single("file"), async (req, res) => {
