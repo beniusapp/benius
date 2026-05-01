@@ -14,7 +14,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
-import { useSchoolConfig } from "@/hooks/use-school-config";
+import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 
 interface ClassworkEntry {
   id: number;
@@ -67,7 +67,14 @@ function getAvatarColor(name: string): string {
 
 export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
-  const { classes: schoolClasses, sections: schoolSections, subjects } = useSchoolConfig(teacher.schoolId);
+  const {
+    classes: schoolClasses,
+    sections: schoolSections,
+    subjects,
+    isLoading: configLoading,
+    hasClasses,
+    hasSections,
+  } = useSchoolConfigStrict(teacher.schoolId);
   const today = new Date().toISOString().split("T")[0];
 
   const mappedCombos = teacher.mappings ?? [];
@@ -75,10 +82,10 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
   const classOpts = hasMappings ? [...new Set(mappedCombos.map(m => m.className))] : schoolClasses;
 
   const [selectedClass, setSelectedClass] = useState(
-    hasMappings ? mappedCombos[0].className : teacher.assignedClass || ""
+    hasMappings ? mappedCombos[0].className : ""
   );
   const [selectedSection, setSelectedSection] = useState(
-    hasMappings ? mappedCombos[0].section : teacher.assignedSection || ""
+    hasMappings ? mappedCombos[0].section : ""
   );
   const [subject, setSubject] = useState(
     hasMappings ? (mappedCombos[0].subject ?? "") : ""
@@ -95,6 +102,8 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
       const combo = mappedCombos.find(m => m.className === cls);
       setSelectedSection(combo?.section ?? "");
       setSubject(combo?.subject ?? "");
+    } else {
+      setSelectedSection("");
     }
   }
 
@@ -117,7 +126,8 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
 
   const classSelected = selectedClass !== "";
   const sectionSelected = selectedSection !== "";
-  const canPost = classSelected && sectionSelected && content.trim().length > 0;
+  const subjectSelected = subject.trim() !== "";
+  const canPost = classSelected && sectionSelected && subjectSelected && content.trim().length > 0;
 
   const { data: entries = [], isLoading } = useQuery<ClassworkEntry[]>({
     queryKey: ["/api/classwork", teacher.schoolId, selectedClass, selectedSection],
@@ -215,6 +225,26 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
     setEditContent(entry.content);
   }
 
+  const notConfigured = !hasMappings && !configLoading && (!hasClasses || !hasSections);
+
+  if (configLoading && !hasMappings) {
+    return (
+      <div className="space-y-4" data-testid="loading-config">
+        {[0,1].map(i => <div key={i} className="h-20 rounded-2xl bg-muted animate-pulse" />)}
+      </div>
+    );
+  }
+
+  if (notConfigured) {
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-6 text-center" data-testid="banner-not-configured">
+        <BookOpen className="w-8 h-8 mx-auto text-amber-500 mb-3" />
+        <p className="text-sm font-medium text-amber-800 dark:text-amber-300">School setup incomplete</p>
+        <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">Ask your admin to configure classes and sections in School Setup before posting class activities.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <Card className="rounded-2xl shadow-lg border-0 bg-white dark:bg-gray-950" data-testid="card-create-classwork">
@@ -230,7 +260,7 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
               <label className="text-xs font-medium text-muted-foreground">Class *</label>
               <Select value={selectedClass} onValueChange={handleClassChange}>
                 <SelectTrigger className="rounded-xl" data-testid="select-class">
-                  <SelectValue placeholder="Select" />
+                  <SelectValue placeholder="Select class" />
                 </SelectTrigger>
                 <SelectContent>
                   {classOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
@@ -239,9 +269,9 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
             </div>
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Section *</label>
-              <Select value={selectedSection} onValueChange={handleSectionChange}>
+              <Select value={selectedSection} onValueChange={handleSectionChange} disabled={!selectedClass}>
                 <SelectTrigger className="rounded-xl" data-testid="select-section">
-                  <SelectValue placeholder="Select" />
+                  <SelectValue placeholder="Select section" />
                 </SelectTrigger>
                 <SelectContent>
                   {sectionOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -249,11 +279,11 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
               </Select>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Subject</label>
+              <label className="text-xs font-medium text-muted-foreground">Subject *</label>
               {subjects.length > 0 ? (
                 <Select value={subject} onValueChange={setSubject}>
                   <SelectTrigger className="rounded-xl" data-testid="select-subject">
-                    <SelectValue placeholder={teacher.subject || "Select"} />
+                    <SelectValue placeholder="Select subject" />
                   </SelectTrigger>
                   <SelectContent>
                     {subjects.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -263,7 +293,7 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
                 <Input
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
-                  placeholder={teacher.subject || "Subject"}
+                  placeholder="Enter subject *"
                   className="rounded-xl"
                   data-testid="input-subject"
                 />

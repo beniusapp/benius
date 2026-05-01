@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useSchoolConfig } from "@/hooks/use-school-config";
+import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
 
 interface StudentAttendance {
@@ -109,34 +109,38 @@ function SkeletonCards() {
 
 export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
-  const { classes: schoolClasses, sections: schoolSections } = useSchoolConfig(teacher.schoolId);
+  const {
+    classes: schoolClasses,
+    sections: schoolSections,
+    isLoading: configLoading,
+    hasClasses,
+    hasSections,
+  } = useSchoolConfigStrict(teacher.schoolId);
   const today = new Date().toISOString().split("T")[0];
 
   const mappedCombos = teacher.mappings ?? [];
   const hasMappings = mappedCombos.length > 0;
+
   const classOpts = hasMappings
     ? [...new Set(mappedCombos.map(m => m.className))]
     : schoolClasses;
 
   const [view, setView] = useState<ViewState>("landing");
   const [selectedClass, setSelectedClass] = useState(
-    hasMappings ? mappedCombos[0].className : teacher.assignedClass || "10"
+    hasMappings ? mappedCombos[0].className : ""
   );
   const [selectedSection, setSelectedSection] = useState(
-    hasMappings ? mappedCombos[0].section : teacher.assignedSection || "A"
+    hasMappings ? mappedCombos[0].section : ""
   );
 
   const sectionOpts = useMemo(() => {
-    if (!hasMappings) return schoolSections;
-    return mappedCombos.filter(m => m.className === selectedClass).map(m => m.section);
+    if (hasMappings) return mappedCombos.filter(m => m.className === selectedClass).map(m => m.section);
+    return schoolSections;
   }, [hasMappings, mappedCombos, selectedClass, schoolSections]);
 
   const handleClassChange = useCallback((cls: string, setter: (v: string) => void) => {
     setter(cls);
-    if (hasMappings) {
-      const firstSec = mappedCombos.find(m => m.className === cls)?.section ?? "";
-      setSelectedSection(firstSec);
-    }
+    setSelectedSection(hasMappings ? (mappedCombos.find(m => m.className === cls)?.section ?? "") : "");
   }, [hasMappings, mappedCombos]);
   const [selectedDate, setSelectedDate] = useState(today);
   const [searchQuery, setSearchQuery] = useState("");
@@ -295,44 +299,93 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
   }
 
   if (view === "class-menu") {
+    const classNotReady = !hasMappings && !configLoading && (!hasClasses || !hasSections);
+    const selectionReady = selectedClass !== "" && selectedSection !== "";
     return (
       <div className="space-y-6" data-testid="view-class-menu">
         <Button variant="ghost" size="sm" onClick={() => navigateTo("landing")} data-testid="button-back">
           <ArrowLeft className="w-4 h-4 mr-1" /> Back
         </Button>
         <h2 className="text-xl font-bold tracking-tight">Class Attendance</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <button
-            onClick={() => navigateTo("mark")}
-            className="group relative overflow-hidden rounded-2xl border bg-gradient-to-br from-sky-50 to-blue-50 dark:from-sky-950/30 dark:to-blue-950/30 p-6 text-left transition-all hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98]"
-            data-testid="card-mark-today"
-          >
-            <div className="flex items-start gap-4">
-              <div className="rounded-xl bg-sky-100 dark:bg-sky-900/50 p-3">
-                <Edit3 className="w-6 h-6 text-sky-600 dark:text-sky-400" />
+
+        {configLoading && !hasMappings ? (
+          <div className="h-24 rounded-2xl bg-muted animate-pulse" />
+        ) : classNotReady ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-5 text-center" data-testid="banner-not-configured">
+            <p className="text-sm font-medium text-amber-800 dark:text-amber-300">School setup incomplete</p>
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">Ask your admin to configure classes and sections in School Setup before marking attendance.</p>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-3 p-4 rounded-2xl border bg-muted/30" data-testid="selector-class-section">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Class *</label>
+                <Select value={selectedClass} onValueChange={(v) => handleClassChange(v, setSelectedClass)}>
+                  <SelectTrigger className="rounded-xl" data-testid="select-class-menu">
+                    <SelectValue placeholder="Select class" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {classOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
-              <div>
-                <h3 className="font-semibold text-base">Mark Attendance</h3>
-                <p className="text-sm text-muted-foreground mt-1">Mark today's or recent attendance</p>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Section *</label>
+                <Select value={selectedSection} onValueChange={setSelectedSection} disabled={!selectedClass}>
+                  <SelectTrigger className="rounded-xl" data-testid="select-section-menu">
+                    <SelectValue placeholder="Select section" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sectionOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
-          </button>
-          <button
-            onClick={() => navigateTo("history")}
-            className="group relative overflow-hidden rounded-2xl border bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 p-6 text-left transition-all hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98]"
-            data-testid="card-history"
-          >
-            <div className="flex items-start gap-4">
-              <div className="rounded-xl bg-amber-100 dark:bg-amber-900/50 p-3">
-                <History className="w-6 h-6 text-amber-600 dark:text-amber-400" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-base">Attendance History</h3>
-                <p className="text-sm text-muted-foreground mt-1">View past attendance records</p>
-              </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <button
+                onClick={() => selectionReady && navigateTo("mark")}
+                disabled={!selectionReady}
+                className={`group relative overflow-hidden rounded-2xl border p-6 text-left transition-all ${
+                  selectionReady
+                    ? "bg-gradient-to-br from-sky-50 to-blue-50 dark:from-sky-950/30 dark:to-blue-950/30 hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98]"
+                    : "bg-muted/40 opacity-60 cursor-not-allowed"
+                }`}
+                data-testid="card-mark-today"
+              >
+                <div className="flex items-start gap-4">
+                  <div className="rounded-xl bg-sky-100 dark:bg-sky-900/50 p-3">
+                    <Edit3 className="w-6 h-6 text-sky-600 dark:text-sky-400" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-base">Mark Attendance</h3>
+                    <p className="text-sm text-muted-foreground mt-1">{selectionReady ? `Class ${selectedClass}-${selectedSection}` : "Select class & section first"}</p>
+                  </div>
+                </div>
+              </button>
+              <button
+                onClick={() => selectionReady && navigateTo("history")}
+                disabled={!selectionReady}
+                className={`group relative overflow-hidden rounded-2xl border p-6 text-left transition-all ${
+                  selectionReady
+                    ? "bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98]"
+                    : "bg-muted/40 opacity-60 cursor-not-allowed"
+                }`}
+                data-testid="card-history"
+              >
+                <div className="flex items-start gap-4">
+                  <div className="rounded-xl bg-amber-100 dark:bg-amber-900/50 p-3">
+                    <History className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-base">Attendance History</h3>
+                    <p className="text-sm text-muted-foreground mt-1">{selectionReady ? `Class ${selectedClass}-${selectedSection}` : "Select class & section first"}</p>
+                  </div>
+                </div>
+              </button>
             </div>
-          </button>
-        </div>
+          </>
+        )}
       </div>
     );
   }

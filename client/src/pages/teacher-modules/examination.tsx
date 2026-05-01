@@ -11,7 +11,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
-import { useSchoolConfig } from "@/hooks/use-school-config";
+import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
@@ -197,7 +197,15 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
 
 export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
-  const { classes: schoolClasses, sections: schoolSections, subjects, examTypes } = useSchoolConfig(teacher.schoolId);
+  const {
+    classes: schoolClasses,
+    sections: schoolSections,
+    subjects,
+    examTypes,
+    isLoading: configLoading,
+    hasClasses,
+    hasSections,
+  } = useSchoolConfigStrict(teacher.schoolId);
   const today = new Date().toISOString().split("T")[0];
   const [tab, setTab] = useState<"add" | "view">("add");
 
@@ -206,13 +214,13 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const classOpts = hasMappings ? [...new Set(mappedCombos.map(m => m.className))] : schoolClasses;
 
   const [selectedClass, setSelectedClass] = useState(
-    hasMappings ? mappedCombos[0].className : teacher.assignedClass || ""
+    hasMappings ? mappedCombos[0].className : ""
   );
   const [selectedSection, setSelectedSection] = useState(
-    hasMappings ? mappedCombos[0].section : teacher.assignedSection || ""
+    hasMappings ? mappedCombos[0].section : ""
   );
   const [subject, setSubject] = useState(
-    hasMappings ? (mappedCombos[0].subject ?? teacher.subject ?? "") : teacher.subject || ""
+    hasMappings ? (mappedCombos[0].subject ?? "") : ""
   );
   const [examType, setExamType] = useState("");
   const [totalMarks, setTotalMarks] = useState("100");
@@ -221,13 +229,13 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const inputRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
   const [viewClass, setViewClass] = useState(
-    hasMappings ? mappedCombos[0].className : teacher.assignedClass || ""
+    hasMappings ? mappedCombos[0].className : ""
   );
   const [viewSection, setViewSection] = useState(
-    hasMappings ? mappedCombos[0].section : teacher.assignedSection || ""
+    hasMappings ? mappedCombos[0].section : ""
   );
   const [viewSubject, setViewSubject] = useState(
-    hasMappings ? (mappedCombos[0].subject ?? teacher.subject ?? "") : teacher.subject || ""
+    hasMappings ? (mappedCombos[0].subject ?? "") : ""
   );
 
   const addSectionOpts = useMemo(
@@ -245,6 +253,8 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
       const combo = mappedCombos.find(m => m.className === cls);
       setSelectedSection(combo?.section ?? "");
       setSubject(combo?.subject ?? "");
+    } else {
+      setSelectedSection("");
     }
   }
   function handleViewClassChange(cls: string) {
@@ -253,6 +263,8 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
       const combo = mappedCombos.find(m => m.className === cls);
       setViewSection(combo?.section ?? "");
       setViewSubject(combo?.subject ?? "");
+    } else {
+      setViewSection("");
     }
   }
   const [viewExamType, setViewExamType] = useState("");
@@ -354,6 +366,26 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
 
   const readyToSave = !!selectedClass && !!selectedSection && !!subject && !!examType && !hasInvalidMarks;
 
+  const notConfigured = !hasMappings && !configLoading && (!hasClasses || !hasSections);
+
+  if (configLoading && !hasMappings) {
+    return (
+      <div className="space-y-4" data-testid="loading-config">
+        {[0,1].map(i => <div key={i} className="h-20 rounded-2xl bg-muted animate-pulse" />)}
+      </div>
+    );
+  }
+
+  if (notConfigured) {
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-6 text-center" data-testid="banner-not-configured">
+        <GraduationCap className="w-8 h-8 mx-auto text-amber-500 mb-3" />
+        <p className="text-sm font-medium text-amber-800 dark:text-amber-300">School setup incomplete</p>
+        <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">Ask your admin to configure classes and sections in School Setup before recording exam scores.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex gap-2 p-1 bg-muted/50 rounded-xl" data-testid="tabs-exam">
@@ -397,9 +429,9 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Section *</label>
-                <Select value={selectedSection} onValueChange={setSelectedSection}>
+                <Select value={selectedSection} onValueChange={setSelectedSection} disabled={!selectedClass}>
                   <SelectTrigger className="rounded-xl" data-testid="select-section">
-                    <SelectValue placeholder="Select" />
+                    <SelectValue placeholder="Select section" />
                   </SelectTrigger>
                   <SelectContent>
                     {addSectionOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -411,7 +443,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                 {subjects.length > 0 ? (
                   <Select value={subject} onValueChange={setSubject}>
                     <SelectTrigger className="rounded-xl" data-testid="select-subject">
-                      <SelectValue placeholder="Select" />
+                      <SelectValue placeholder="Select subject" />
                     </SelectTrigger>
                     <SelectContent>
                       {subjects.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -419,7 +451,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                   </Select>
                 ) : (
                   <Input value={subject} onChange={(e) => setSubject(e.target.value)}
-                    placeholder="Subject" className="rounded-xl" data-testid="input-subject" />
+                    placeholder="Enter subject *" className="rounded-xl" data-testid="input-subject" />
                 )}
               </div>
               <div className="space-y-1">
@@ -568,10 +600,10 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Class</label>
+                <label className="text-xs font-medium text-muted-foreground">Class *</label>
                 <Select value={viewClass} onValueChange={handleViewClassChange}>
                   <SelectTrigger className="rounded-xl" data-testid="select-view-class">
-                    <SelectValue placeholder="Select" />
+                    <SelectValue placeholder="Select class" />
                   </SelectTrigger>
                   <SelectContent>
                     {classOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
@@ -579,10 +611,10 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                 </Select>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Section</label>
-                <Select value={viewSection} onValueChange={setViewSection}>
+                <label className="text-xs font-medium text-muted-foreground">Section *</label>
+                <Select value={viewSection} onValueChange={setViewSection} disabled={!viewClass}>
                   <SelectTrigger className="rounded-xl" data-testid="select-view-section">
-                    <SelectValue placeholder="Select" />
+                    <SelectValue placeholder="Select section" />
                   </SelectTrigger>
                   <SelectContent>
                     {viewSectionOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -590,11 +622,11 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                 </Select>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Subject</label>
+                <label className="text-xs font-medium text-muted-foreground">Subject *</label>
                 {subjects.length > 0 ? (
                   <Select value={viewSubject} onValueChange={setViewSubject}>
                     <SelectTrigger className="rounded-xl" data-testid="select-view-subject">
-                      <SelectValue placeholder="Select" />
+                      <SelectValue placeholder="Select subject" />
                     </SelectTrigger>
                     <SelectContent>
                       {subjects.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -602,14 +634,14 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                   </Select>
                 ) : (
                   <Input value={viewSubject} onChange={(e) => setViewSubject(e.target.value)}
-                    placeholder="Subject" className="rounded-xl" data-testid="input-view-subject" />
+                    placeholder="Enter subject *" className="rounded-xl" data-testid="input-view-subject" />
                 )}
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Exam Type</label>
+                <label className="text-xs font-medium text-muted-foreground">Exam Type *</label>
                 <Select value={viewExamType} onValueChange={setViewExamType}>
                   <SelectTrigger className="rounded-xl" data-testid="select-view-exam-type">
-                    <SelectValue placeholder="Select" />
+                    <SelectValue placeholder="Select exam type" />
                   </SelectTrigger>
                   <SelectContent>
                     {examTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
