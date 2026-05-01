@@ -43,9 +43,6 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
   const [editTarget, setEditTarget] = useState<NonTeachingStaff | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<NonTeachingStaff | null>(null);
   const [searchQ, setSearchQ] = useState("");
-  const [useCustom, setUseCustom] = useState(false);
-  const [editUseCustom, setEditUseCustom] = useState(false);
-
   const { data: staff = [], isLoading } = useQuery<NonTeachingStaff[]>({
     queryKey: ["/api/admin/non-teaching-staff"],
     queryFn: async () => {
@@ -73,7 +70,6 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
   useEffect(() => {
     if (editTarget) {
       const isCustom = !DESIGNATIONS.includes(editTarget.designation);
-      setEditUseCustom(isCustom);
       editForm.reset({
         fullName: editTarget.fullName,
         email: editTarget.email || "",
@@ -95,7 +91,7 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
     },
     onSuccess: () => {
       toast({ title: "Staff Added", description: "Non-teaching staff member registered." });
-      addForm.reset(); setShowForm(false); setUseCustom(false);
+      addForm.reset(); setShowForm(false);
       queryClient.invalidateQueries({ queryKey: ["/api/admin/non-teaching-staff"] });
     },
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
@@ -133,8 +129,6 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
 
   const StaffFormFields = ({ form, isEdit }: { form: UseFormReturn<StaffForm>; isEdit?: boolean }) => {
     const isOther = form.watch("designation") === "Other";
-    if (isEdit && isOther !== editUseCustom) setEditUseCustom(isOther);
-    if (!isEdit && isOther !== useCustom) setUseCustom(isOther);
 
     return (
       <div className="grid grid-cols-2 gap-3">

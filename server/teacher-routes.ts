@@ -30,6 +30,7 @@ const createTeacherSchema = z.object({
   subject: z.string().min(1),
   assignedClass: z.string().min(1),
   assignedSection: z.string().min(1),
+  designation: z.string().optional(),
 });
 
 const teacherLoginSchema = z.object({
@@ -2346,6 +2347,7 @@ export function registerTeacherRoutes(app: Express) {
         subject: parsed.data.subject,
         assignedClass: parsed.data.assignedClass,
         assignedSection: parsed.data.assignedSection,
+        designation: parsed.data.designation,
         mustChangePassword: true,
       }, parsed.data.email, passwordHash);
       res.status(201).json(teacher);
