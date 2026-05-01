@@ -2963,7 +2963,7 @@ export class DatabaseStorage {
     );
   }
 
-  async getTeachersBySchoolPaginated(schoolId: number, q: string, page: number, pageSize: number): Promise<{ data: (Teacher & { email: string })[]; total: number }> {
+  async getTeachersBySchoolPaginated(schoolId: number, q: string, page: number, pageSize: number): Promise<{ data: (Teacher & { email: string; mappings: { className: string; section: string }[] })[]; total: number }> {
     const baseWhere = eq(teachers.schoolId, schoolId);
     const searchCondition = q
       ? and(baseWhere, or(
@@ -2983,9 +2983,33 @@ export class DatabaseStorage {
       .limit(pageSize)
       .offset((page - 1) * pageSize);
 
+    const teacherIds = data.map(r => r.teachers.id);
+    let mappingsByTeacher: Record<number, { className: string; section: string }[]> = {};
+
+    if (teacherIds.length > 0) {
+      const allMappings = await db.select({
+        teacherId: facultyMappings.teacherId,
+        className: facultyMappings.className,
+        section: facultyMappings.section,
+      }).from(facultyMappings)
+        .where(and(
+          eq(facultyMappings.schoolId, schoolId),
+          inArray(facultyMappings.teacherId, teacherIds),
+        ));
+
+      for (const m of allMappings) {
+        if (!mappingsByTeacher[m.teacherId]) mappingsByTeacher[m.teacherId] = [];
+        mappingsByTeacher[m.teacherId].push({ className: m.className, section: m.section });
+      }
+    }
+
     return {
       total,
-      data: data.map(r => ({ ...r.teachers, email: r.users.email })),
+      data: data.map(r => ({
+        ...r.teachers,
+        email: r.users.email,
+        mappings: mappingsByTeacher[r.teachers.id] ?? [],
+      })),
     };
   }
 }

@@ -542,7 +542,7 @@ export default function AdminDashboard() {
       case "school-setup": return <SchoolSetup schoolId={me.schoolId} />;
       case "student-registry": return <StudentRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} />;
       case "faculty-mapping": return <FacultyMapping schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
-      case "teacher-registry": return <TeacherRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
+      case "teacher-registry": return <TeacherRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} onNavigate={(mod) => goToModule(mod as ActiveModule)} />;
       case "non-teaching-staff": return <NonTeachingStaff schoolId={me.schoolId} />;
       case "approval-center": return <ApprovalCenter schoolId={me.schoolId} />;
       case "audit-logs": return <AuditLogsModule schoolId={me.schoolId} />;

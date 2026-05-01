@@ -12,8 +12,8 @@ import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import type { Teacher } from "@shared/schema";
 
-interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[] }
-type TeacherWithEmail = Teacher & { email: string };
+interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[]; onNavigate?: (module: string) => void }
+type TeacherWithEmail = Teacher & { email: string; mappings: { className: string; section: string }[] };
 
 const PAGE_SIZE = 20;
 
@@ -51,7 +51,7 @@ function SkeletonRow() {
   );
 }
 
-export default function TeacherRegistry({ schoolId, classes, sections, subjects }: Props) {
+export default function TeacherRegistry({ schoolId, classes, sections, subjects, onNavigate }: Props) {
   const { toast } = useToast();
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
@@ -289,7 +289,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects 
           <table className="w-full text-sm min-w-[760px]">
             <thead className="sticky top-0 z-10 bg-[#0F1E35]">
               <tr>
-                {["Name","Email","Phone","Subject","Class","Designation","Actions"].map(h => (
+                {["Name","Email","Phone","Subject","Assigned Sections","Designation","Actions"].map(h => (
                   <th key={h} className="text-left py-3 px-4 text-white/60 font-medium text-xs uppercase tracking-wide border-b border-white/10">{h}</th>
                 ))}
               </tr>
@@ -309,7 +309,33 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects 
                       <td className="py-3 px-4 text-white/70 text-xs">{t.email}</td>
                       <td className="py-3 px-4 text-white/70 text-xs">{t.phone}</td>
                       <td className="py-3 px-4 text-[#D4AF37] text-xs">{t.subject}</td>
-                      <td className="py-3 px-4 text-white/70 text-xs">{t.assignedClass} – {t.assignedSection}</td>
+                      <td className="py-3 px-4">
+                        <div className="flex flex-wrap gap-1" data-testid={`cell-sections-${t.id}`}>
+                          {t.mappings.length > 0
+                            ? t.mappings.map((m, idx) => (
+                                <button
+                                  key={idx}
+                                  onClick={() => onNavigate?.("faculty-mapping")}
+                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 hover:bg-[#D4AF37]/30 transition-colors cursor-pointer"
+                                  title="Go to Faculty Mapping"
+                                  data-testid={`badge-section-${t.id}-${idx}`}
+                                >
+                                  {m.className}-{m.section}
+                                </button>
+                              ))
+                            : (
+                                <button
+                                  onClick={() => onNavigate?.("faculty-mapping")}
+                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-white/5 text-white/40 border border-white/10 hover:bg-white/10 transition-colors cursor-pointer"
+                                  title="Go to Faculty Mapping"
+                                  data-testid={`badge-section-primary-${t.id}`}
+                                >
+                                  {t.assignedClass}-{t.assignedSection}
+                                </button>
+                              )
+                          }
+                        </div>
+                      </td>
                       <td className="py-3 px-4 text-white/50 text-xs">{t.designation || "—"}</td>
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-1">
