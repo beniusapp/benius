@@ -1879,11 +1879,8 @@ export async function registerRoutes(
 
   // ===== ADMIN TEACHERS: PATCH (edit assignment — strict session-scoped) =====
   const editTeacherSchema = z.object({
-    fullName: z.string().min(2, "Name must be at least 2 characters"),
-    subject: z.string().min(1, "Subject is required"),
-    assignedClass: z.string().min(1, "Class is required"),
-    assignedSection: z.string().min(1, "Section is required"),
-    phone: z.string().optional(),
+    fullName: z.string().min(2, "Name must be at least 2 characters").optional(),
+    phone: z.string().min(7).optional(),
     designation: z.string().optional(),
   });
 
@@ -1896,8 +1893,16 @@ export async function registerRoutes(
     const parsed = editTeacherSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     try {
-      const updated = await storage.updateTeacherAssignment(teacherId, schoolId, parsed.data);
-      if (!updated) return res.status(404).json({ message: "Teacher not found or does not belong to this school" });
+      const existing = await storage.getTeacherById(teacherId);
+      if (!existing || existing.schoolId !== schoolId) return res.status(404).json({ message: "Teacher not found" });
+      const updated = await storage.updateTeacherAssignment(teacherId, schoolId, {
+        fullName: parsed.data.fullName ?? existing.fullName,
+        subject: existing.subject,
+        assignedClass: existing.assignedClass,
+        assignedSection: existing.assignedSection,
+        phone: parsed.data.phone ?? existing.phone,
+        designation: parsed.data.designation ?? existing.designation ?? "",
+      });
       res.json(updated);
     } catch (err) {
       res.status(500).json({ message: "Failed to update teacher" });
