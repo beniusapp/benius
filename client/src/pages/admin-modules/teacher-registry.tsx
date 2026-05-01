@@ -55,6 +55,8 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
   const { toast } = useToast();
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
+  const [filterClass, setFilterClass] = useState("");
+  const [filterSection, setFilterSection] = useState("");
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [editTarget, setEditTarget] = useState<TeacherWithEmail | null>(null);
@@ -80,12 +82,30 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
     setDebounceTimer(t);
   }, [debounceTimer]);
 
+  const handleFilterClass = (val: string) => {
+    setFilterClass(val === "__all__" ? "" : val);
+    setPage(1);
+  };
+
+  const handleFilterSection = (val: string) => {
+    setFilterSection(val === "__all__" ? "" : val);
+    setPage(1);
+  };
+
+  const hasFilters = debouncedQ || filterClass || filterSection;
+  const clearFilters = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    setQ(""); setDebouncedQ(""); setFilterClass(""); setFilterSection(""); setPage(1);
+  };
+
   const params = new URLSearchParams();
   if (debouncedQ) params.set("q", debouncedQ);
+  if (filterClass) params.set("filterClass", filterClass);
+  if (filterSection) params.set("filterSection", filterSection);
   params.set("page", String(page));
 
   const { data, isLoading } = useQuery<{ data: TeacherWithEmail[]; total: number }>({
-    queryKey: ["/api/admin/teachers", debouncedQ, page],
+    queryKey: ["/api/admin/teachers", debouncedQ, filterClass, filterSection, page],
     queryFn: async () => {
       const r = await fetch(`/api/admin/teachers?${params}`, { credentials: "include" });
       if (!r.ok) throw new Error("Failed");
@@ -271,16 +291,53 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
         </div>
       )}
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40 pointer-events-none" />
-        <Input
-          value={q}
-          onChange={e => handleSearch(e.target.value)}
-          placeholder="Search by name or email…"
-          className="pl-9 bg-[#1A2942] border-white/20 text-white placeholder:text-white/30 h-10"
-          data-testid="input-search-teacher-registry"
-        />
+      {/* Search + Filters */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <div className="relative flex-1 min-w-[180px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40 pointer-events-none" />
+          <Input
+            value={q}
+            onChange={e => handleSearch(e.target.value)}
+            placeholder="Search by name or email…"
+            className="pl-9 bg-[#1A2942] border-white/20 text-white placeholder:text-white/30 h-10"
+            data-testid="input-search-teacher-registry"
+          />
+        </div>
+        <Select value={filterClass || "__all__"} onValueChange={handleFilterClass}>
+          <SelectTrigger
+            className="bg-[#1A2942] border-white/20 text-white h-10 w-[130px]"
+            data-testid="select-filter-class"
+          >
+            <SelectValue placeholder="All Classes" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All Classes</SelectItem>
+            {cfgClasses.map(c => <SelectItem key={c} value={c}>Class {c}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={filterSection || "__all__"} onValueChange={handleFilterSection}>
+          <SelectTrigger
+            className="bg-[#1A2942] border-white/20 text-white h-10 w-[130px]"
+            data-testid="select-filter-section"
+          >
+            <SelectValue placeholder="All Sections" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All Sections</SelectItem>
+            {cfgSections.map(s => <SelectItem key={s} value={s}>Section {s}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        {hasFilters && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={clearFilters}
+            className="text-white/50 hover:text-white hover:bg-white/10 h-10 px-3"
+            data-testid="button-clear-teacher-filters"
+          >
+            <X className="w-4 h-4 mr-1" /> Clear
+          </Button>
+        )}
       </div>
 
       {/* Table */}
@@ -300,7 +357,9 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
                 : !data?.data.length
                   ? (
                     <tr><td colSpan={7} className="py-12 text-center text-white/40">
-                      {debouncedQ ? `No teachers match "${debouncedQ}"` : "No teachers registered yet"}
+                      {hasFilters
+                        ? `No teachers found${filterClass ? ` in Class ${filterClass}` : ""}${filterSection ? ` Section ${filterSection}` : ""}${debouncedQ ? ` matching "${debouncedQ}"` : ""}`
+                        : "No teachers registered yet"}
                     </td></tr>
                   )
                   : data.data.map(t => (

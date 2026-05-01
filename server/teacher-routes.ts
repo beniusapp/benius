@@ -2322,8 +2322,10 @@ export function registerTeacherRoutes(app: Express) {
     const q = (req.query.q as string) || "";
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const pageSize = 20;
+    const filterClass = (req.query.filterClass as string) || undefined;
+    const filterSection = (req.query.filterSection as string) || undefined;
     try {
-      const result = await storage.getTeachersBySchoolPaginated(schoolId, q, page, pageSize);
+      const result = await storage.getTeachersBySchoolPaginated(schoolId, q, page, pageSize, filterClass, filterSection);
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to fetch teachers" });

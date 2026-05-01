@@ -2963,7 +2963,7 @@ export class DatabaseStorage {
     );
   }
 
-  async getTeachersBySchoolPaginated(schoolId: number, q: string, page: number, pageSize: number): Promise<{ data: (Teacher & { email: string; mappings: { className: string; section: string }[] })[]; total: number }> {
+  async getTeachersBySchoolPaginated(schoolId: number, q: string, page: number, pageSize: number, filterClass?: string, filterSection?: string): Promise<{ data: (Teacher & { email: string; mappings: { className: string; section: string }[] })[]; total: number }> {
     const baseWhere = eq(teachers.schoolId, schoolId);
     const searchCondition = q
       ? and(baseWhere, or(
@@ -2972,13 +2972,45 @@ export class DatabaseStorage {
         ))
       : baseWhere;
 
+    // Build class/section filter: match primary assignment OR any facultyMapping row
+    let classFilterCondition: SQL | undefined;
+    if (filterClass || filterSection) {
+      const mappingConds: SQL[] = [eq(facultyMappings.schoolId, schoolId)];
+      if (filterClass) mappingConds.push(eq(facultyMappings.className, filterClass));
+      if (filterSection) mappingConds.push(eq(facultyMappings.section, filterSection));
+
+      const mappedRows = await db.select({ teacherId: facultyMappings.teacherId })
+        .from(facultyMappings)
+        .where(and(...mappingConds));
+      const mappedTeacherIds = mappedRows.map(r => r.teacherId);
+
+      const primaryConds: SQL[] = [];
+      if (filterClass) primaryConds.push(eq(teachers.assignedClass, filterClass));
+      if (filterSection) primaryConds.push(eq(teachers.assignedSection, filterSection));
+      const primaryMatch = primaryConds.length > 0 ? and(...primaryConds) : undefined;
+
+      if (mappedTeacherIds.length > 0 && primaryMatch) {
+        classFilterCondition = or(primaryMatch, inArray(teachers.id, mappedTeacherIds));
+      } else if (mappedTeacherIds.length > 0) {
+        classFilterCondition = inArray(teachers.id, mappedTeacherIds);
+      } else if (primaryMatch) {
+        classFilterCondition = primaryMatch;
+      } else {
+        classFilterCondition = sql`FALSE`;
+      }
+    }
+
+    const finalWhere = classFilterCondition
+      ? and(searchCondition ?? baseWhere, classFilterCondition)
+      : (searchCondition ?? baseWhere);
+
     const [{ total }] = await db.select({ total: count() }).from(teachers)
       .innerJoin(users, eq(teachers.userId, users.id))
-      .where(searchCondition ?? baseWhere);
+      .where(finalWhere);
 
     const data = await db.select().from(teachers)
       .innerJoin(users, eq(teachers.userId, users.id))
-      .where(searchCondition ?? baseWhere)
+      .where(finalWhere)
       .orderBy(teachers.fullName)
       .limit(pageSize)
       .offset((page - 1) * pageSize);
