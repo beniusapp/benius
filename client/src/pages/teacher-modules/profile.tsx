@@ -4,7 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import {
   User, Mail, Phone, BookOpen, GraduationCap,
   Camera, Loader2, Lock, Eye, EyeOff, CheckCircle, X,
-  ZoomIn, ZoomOut, MoreVertical, ShieldCheck, LayoutGrid,
+  ZoomIn, ZoomOut, MoreVertical, ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -126,15 +126,29 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
     }
   }, [securityOpen]);
 
-  const fields = [
+  const mappedSubjects = teacher.mappings?.length
+    ? [...new Set(teacher.mappings.map((m) => m.subject).filter(Boolean) as string[])]
+    : null;
+
+  const mappedClasses = teacher.mappings?.length
+    ? teacher.mappings.map((m) => `Class ${m.className}${m.section}`)
+    : null;
+
+  const fields: { icon: typeof User; label: string; value: string; tags?: string[] }[] = [
     { icon: User, label: "Full Name", value: teacher.fullName },
     { icon: Mail, label: "Email", value: teacher.email },
     { icon: Phone, label: "Phone", value: teacher.phone || "—" },
-    { icon: BookOpen, label: "Subject", value: teacher.subject || "—" },
+    {
+      icon: BookOpen,
+      label: "Subject",
+      value: mappedSubjects ? mappedSubjects.join(", ") : teacher.subject || "—",
+      tags: mappedSubjects ?? undefined,
+    },
     {
       icon: GraduationCap,
       label: "Assigned Class",
-      value: teacher.assignedClass ? `${teacher.assignedClass} – ${teacher.assignedSection}` : "—",
+      value: mappedClasses ? mappedClasses.join(", ") : teacher.assignedClass ? `${teacher.assignedClass} – ${teacher.assignedSection}` : "—",
+      tags: mappedClasses ?? undefined,
     },
   ];
 
@@ -539,54 +553,39 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
           </div>
 
           {/* Info fields */}
-          <div className="px-5 pb-4 space-y-2">
+          <div className="px-5 pb-6 space-y-2">
             {fields.map((f) => {
               const Icon = f.icon;
+              const hasTags = f.tags && f.tags.length > 0;
               return (
                 <div
                   key={f.label}
-                  className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.08] hover:border-white/[0.15] transition-colors"
+                  className="flex items-start gap-3 px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.08] hover:border-white/[0.15] transition-colors"
                   data-testid={`field-${f.label.toLowerCase().replace(/\s/g, "-")}`}
                 >
-                  <Icon className="w-4 h-4 text-[#10b981] flex-shrink-0" />
-                  <div>
+                  <Icon className="w-4 h-4 text-[#10b981] flex-shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1">
                     <p className="text-[10px] text-white/40 uppercase tracking-wide">{f.label}</p>
-                    <p className="text-sm font-medium text-white">{f.value}</p>
+                    {hasTags ? (
+                      <div className="flex flex-wrap gap-1.5 mt-1">
+                        {f.tags!.map((tag, i) => (
+                          <span
+                            key={i}
+                            className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-white/[0.08] text-white/85 border border-white/[0.12]"
+                            data-testid={`tag-${f.label.toLowerCase().replace(/\s/g, "-")}-${i}`}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm font-medium text-white">{f.value}</p>
+                    )}
                   </div>
                 </div>
               );
             })}
           </div>
-
-          {/* Faculty Assignments */}
-          {teacher.mappings && teacher.mappings.length > 0 && (
-            <div className="px-5 pb-6">
-              <div className="flex items-center gap-2 mb-2 px-1">
-                <LayoutGrid className="w-3.5 h-3.5 text-[#10b981]" />
-                <p className="text-[10px] text-white/40 uppercase tracking-wide">Faculty Assignments</p>
-              </div>
-              <div className="flex flex-wrap gap-2" data-testid="div-faculty-assignments">
-                {teacher.mappings.map((m, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#10b981]/10 border border-[#10b981]/20"
-                    data-testid={`badge-assignment-${i}`}
-                  >
-                    <GraduationCap className="w-3 h-3 text-[#10b981]" />
-                    <span className="text-xs font-semibold text-[#10b981]">
-                      Class {m.className}{m.section}
-                    </span>
-                    {m.subject && (
-                      <>
-                        <span className="text-white/20 text-xs">·</span>
-                        <span className="text-xs text-white/60">{m.subject}</span>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
         </motion.div>
       </motion.div>
