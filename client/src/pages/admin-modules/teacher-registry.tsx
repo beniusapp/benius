@@ -103,7 +103,6 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects 
   const addMutation = useMutation({
     mutationFn: async (d: AddForm) => {
       const r = await apiRequest("POST", "/api/admin/teachers", d);
-      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
       return r.json();
     },
     onSuccess: () => {
@@ -136,7 +135,6 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects 
   const editMutation = useMutation({
     mutationFn: async (d: EditForm) => {
       const r = await apiRequest("PATCH", `/api/admin/teachers/${editTarget!.id}`, d);
-      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
       return r.json();
     },
     onSuccess: () => {
@@ -150,8 +148,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects 
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
-      const r = await apiRequest("DELETE", `/api/admin/teachers/${id}`);
-      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
+      await apiRequest("DELETE", `/api/admin/teachers/${id}`);
     },
     onSuccess: () => {
       toast({ title: "Teacher Removed", description: `${deleteTarget?.fullName} has been removed from the registry.` });

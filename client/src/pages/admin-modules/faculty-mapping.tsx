@@ -175,7 +175,6 @@ export default function FacultyMapping({ schoolId, classes, sections }: Props) {
         teacherId: selectedTeacher.id,
         mappings,
       });
-      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
       return r.json();
     },
     onSuccess: () => {
@@ -191,8 +190,7 @@ export default function FacultyMapping({ schoolId, classes, sections }: Props) {
 
   const clearMutation = useMutation({
     mutationFn: async (teacherId: number) => {
-      const r = await apiRequest("DELETE", `/api/admin/faculty-mappings/${teacherId}`);
-      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
+      await apiRequest("DELETE", `/api/admin/faculty-mappings/${teacherId}`);
     },
     onSuccess: () => {
       toast({ title: "Mappings Cleared" });

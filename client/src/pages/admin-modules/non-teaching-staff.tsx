@@ -86,7 +86,6 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
       const r = await apiRequest("POST", "/api/admin/non-teaching-staff", {
         fullName: d.fullName, email: d.email || "", phone: d.phone || "", designation,
       });
-      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
       return r.json();
     },
     onSuccess: () => {
@@ -103,7 +102,6 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
       const r = await apiRequest("PATCH", `/api/admin/non-teaching-staff/${editTarget!.id}`, {
         fullName: d.fullName, email: d.email || "", phone: d.phone || "", designation,
       });
-      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
       return r.json();
     },
     onSuccess: () => {
@@ -116,8 +114,7 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
-      const r = await apiRequest("DELETE", `/api/admin/non-teaching-staff/${id}`);
-      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
+      await apiRequest("DELETE", `/api/admin/non-teaching-staff/${id}`);
     },
     onSuccess: () => {
       toast({ title: "Staff Removed" });

@@ -270,6 +270,7 @@ export async function registerRoutes(
     }
     await storage.logSecurityEvent(pendingInitUserId, req.session.schoolId ?? null, "init_complete", true, req.ip || null, req.headers["user-agent"] || null);
     await storage.logSecurityEvent(pendingInitUserId, req.session.schoolId ?? null, "login_success", true, req.ip || null, req.headers["user-agent"] || null);
+    await new Promise<void>((resolve, reject) => req.session.save(err => err ? reject(err) : resolve()));
     res.json({ message: "Account initialized" });
   });
 
@@ -306,6 +307,7 @@ export async function registerRoutes(
       req.session.userRole = userData.user.role;
     }
     await storage.logSecurityEvent(pendingPinUserId, req.session.schoolId ?? null, "login_success", true, req.ip || null, req.headers["user-agent"] || null);
+    await new Promise<void>((resolve, reject) => req.session.save(err => err ? reject(err) : resolve()));
     res.json({ message: "Login successful" });
   });
 
