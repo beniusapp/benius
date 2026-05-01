@@ -370,8 +370,8 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
                       <td className="py-3 px-4 text-[#D4AF37] text-xs">{t.subject}</td>
                       <td className="py-3 px-4">
                         <div className="flex flex-wrap gap-1" data-testid={`cell-sections-${t.id}`}>
-                          {t.mappings.length > 0
-                            ? t.mappings.map((m, idx) => (
+                          {(t.mappings ?? []).length > 0
+                            ? (t.mappings ?? []).map((m, idx) => (
                                 <button
                                   key={idx}
                                   onClick={() => onNavigate?.("faculty-mapping")}
