@@ -24,6 +24,7 @@ interface FacultyMember {
   id: number;
   fullName: string;
   subject: string;
+  mappedSubject?: string | null;
   designation: string | null;
   qualifications: string | null;
   department: string | null;
@@ -60,8 +61,9 @@ function SkeletonCard() {
 
 function FacultyCard({ member }: { member: FacultyMember }) {
   const [imgError, setImgError] = useState(false);
-  const subjects = member.subject
-    ? member.subject.split(",").map(s => s.trim()).filter(Boolean)
+  const displaySubject = member.mappedSubject || member.subject;
+  const subjects = displaySubject
+    ? displaySubject.split(",").map(s => s.trim()).filter(Boolean)
     : [];
 
   return (
@@ -148,9 +150,10 @@ export default function StudentFaculty() {
 
   const filtered = useMemo(() => {
     return faculty.filter(f => {
+      const displaySubject = f.mappedSubject || f.subject;
       const matchSearch = !searchQuery.trim() ||
         f.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        f.subject.toLowerCase().includes(searchQuery.toLowerCase());
+        displaySubject.toLowerCase().includes(searchQuery.toLowerCase());
       const matchDept = activeDept === "all" || f.department === activeDept;
       return matchSearch && matchDept;
     });

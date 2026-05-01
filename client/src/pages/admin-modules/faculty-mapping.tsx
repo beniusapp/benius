@@ -180,6 +180,8 @@ export default function FacultyMapping({ schoolId, classes, sections }: Props) {
     onSuccess: () => {
       toast({ title: "Mapping Saved", description: `${selectedTeacher?.fullName}'s assignments have been updated.` });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/faculty-mappings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher-me"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/faculty"] });
       setSavingFor(null);
     },
     onError: (e: Error) => {
@@ -196,6 +198,8 @@ export default function FacultyMapping({ schoolId, classes, sections }: Props) {
       toast({ title: "Mappings Cleared" });
       if (selectedTeacher) { setSelectedCells(new Set()); setCellSubjects(new Map()); }
       queryClient.invalidateQueries({ queryKey: ["/api/admin/faculty-mappings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher-me"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/faculty"] });
     },
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });

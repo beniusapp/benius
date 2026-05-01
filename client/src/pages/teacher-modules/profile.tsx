@@ -126,16 +126,20 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
     }
   }, [securityOpen]);
 
+  const mappedClassValue = (() => {
+    const maps = teacher.mappings ?? [];
+    if (maps.length === 0) {
+      return teacher.assignedClass ? `${teacher.assignedClass} – ${teacher.assignedSection}` : "—";
+    }
+    return maps.map(m => `${m.className}${m.section}${m.subject ? ` · ${m.subject}` : ""}`).join(", ");
+  })();
+
   const fields = [
     { icon: User, label: "Full Name", value: teacher.fullName },
     { icon: Mail, label: "Email", value: teacher.email },
     { icon: Phone, label: "Phone", value: teacher.phone || "—" },
     { icon: BookOpen, label: "Subject", value: teacher.subject || "—" },
-    {
-      icon: GraduationCap,
-      label: "Assigned Class",
-      value: teacher.assignedClass ? `${teacher.assignedClass} – ${teacher.assignedSection}` : "—",
-    },
+    { icon: GraduationCap, label: "Assigned Classes", value: mappedClassValue },
   ];
 
   const uploadMutation = useMutation({

@@ -1009,6 +1009,69 @@ export class DatabaseStorage {
     return rows;
   }
 
+  async getFacultyBySchoolWithMappings(schoolId: number): Promise<{
+    id: number; fullName: string; subject: string; phone: string;
+    assignedClass: string; assignedSection: string;
+    designation: string | null; qualifications: string | null;
+    department: string | null; profileImageUrl: string | null;
+    mappings: { className: string; section: string; subject: string | null }[];
+  }[]> {
+    const teacherRows = await db.select({
+      id: teachers.id,
+      fullName: teachers.fullName,
+      subject: teachers.subject,
+      phone: teachers.phone,
+      assignedClass: teachers.assignedClass,
+      assignedSection: teachers.assignedSection,
+      designation: teachers.designation,
+      qualifications: teachers.qualifications,
+      department: teachers.department,
+      profileImageUrl: teachers.profileImageUrl,
+    }).from(teachers).where(eq(teachers.schoolId, schoolId)).orderBy(teachers.fullName);
+
+    const mappingRows = await db.select({
+      teacherId: facultyMappings.teacherId,
+      className: facultyMappings.className,
+      section: facultyMappings.section,
+      subject: facultyMappings.subject,
+    }).from(facultyMappings)
+      .where(eq(facultyMappings.schoolId, schoolId))
+      .orderBy(facultyMappings.className, facultyMappings.section);
+
+    const byTeacher = new Map<number, { className: string; section: string; subject: string | null }[]>();
+    for (const m of mappingRows) {
+      if (!byTeacher.has(m.teacherId)) byTeacher.set(m.teacherId, []);
+      byTeacher.get(m.teacherId)!.push({ className: m.className, section: m.section, subject: m.subject });
+    }
+
+    return teacherRows.map(t => ({ ...t, mappings: byTeacher.get(t.id) ?? [] }));
+  }
+
+  async getFacultyByClassSection(schoolId: number, className: string, section: string): Promise<{
+    id: number; fullName: string; subject: string; designation: string | null;
+    qualifications: string | null; department: string | null; profileImageUrl: string | null;
+    mappedSubject: string | null;
+  }[]> {
+    const rows = await db.select({
+      id: teachers.id,
+      fullName: teachers.fullName,
+      subject: teachers.subject,
+      designation: teachers.designation,
+      qualifications: teachers.qualifications,
+      department: teachers.department,
+      profileImageUrl: teachers.profileImageUrl,
+      mappedSubject: facultyMappings.subject,
+    }).from(facultyMappings)
+      .innerJoin(teachers, eq(facultyMappings.teacherId, teachers.id))
+      .where(and(
+        eq(facultyMappings.schoolId, schoolId),
+        eq(facultyMappings.className, className),
+        eq(facultyMappings.section, section),
+      ))
+      .orderBy(teachers.fullName);
+    return rows;
+  }
+
   // ===== CALENDAR METHODS =====
   async createCalendarEvent(data: InsertCalendarEvent): Promise<CalendarEvent> {
     const [event] = await db.insert(calendarEvents).values(data).returning();

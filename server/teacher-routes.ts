@@ -1724,8 +1724,8 @@ export function registerTeacherRoutes(app: Express) {
   // ===== FACULTY INFO =====
   app.get("/api/faculty/:schoolId", async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
-    const list = await storage.getTeachersBySchool(parseInt(req.params.schoolId));
-    res.json(list.map(t => ({ id: t.id, fullName: t.fullName, subject: t.subject, phone: t.phone, assignedClass: t.assignedClass, assignedSection: t.assignedSection })));
+    const list = await storage.getFacultyBySchoolWithMappings(parseInt(req.params.schoolId));
+    res.json(list);
   });
 
   // ===== PAGINATED STUDENTS (Big Data) =====

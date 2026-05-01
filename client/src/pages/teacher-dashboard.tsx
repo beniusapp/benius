@@ -209,9 +209,23 @@ export default function TeacherDashboard() {
               <h2 className="text-2xl font-bold tracking-tight" data-testid="text-welcome">
                 Welcome, {teacher.fullName}
               </h2>
-              <p className="text-muted-foreground mt-1">
-                Class {teacher.assignedClass}-{teacher.assignedSection} | {teacher.subject}
-              </p>
+              {teacher.mappings && teacher.mappings.length > 0 ? (
+                <div className="mt-2 flex flex-wrap justify-center gap-1.5" data-testid="text-assignments">
+                  {teacher.mappings.map((m, i) => (
+                    <span
+                      key={i}
+                      className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20"
+                      data-testid={`badge-assignment-${i}`}
+                    >
+                      Class {m.className}{m.section}{m.subject ? ` · ${m.subject}` : ""}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-muted-foreground mt-1" data-testid="text-assignments">
+                  Class {teacher.assignedClass}-{teacher.assignedSection} | {teacher.subject}
+                </p>
+              )}
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
               {modules.map((mod) => {
