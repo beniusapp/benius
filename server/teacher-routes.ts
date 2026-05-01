@@ -27,9 +27,9 @@ const createTeacherSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
   phone: z.string().min(7),
-  subject: z.string().min(1),
-  assignedClass: z.string().min(1),
-  assignedSection: z.string().min(1),
+  subject: z.string().optional().default(""),
+  assignedClass: z.string().optional().default(""),
+  assignedSection: z.string().optional().default(""),
   designation: z.string().optional(),
 });
 
@@ -2355,6 +2355,37 @@ export function registerTeacherRoutes(app: Express) {
       res.status(201).json(teacher);
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to create teacher" });
+    }
+  });
+
+  app.patch("/api/admin/teachers/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const teacherId = parseInt(req.params.id);
+    if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
+    const editSchema = z.object({
+      fullName: z.string().min(2).optional(),
+      phone: z.string().min(7).optional(),
+      designation: z.string().optional(),
+    });
+    const parsed = editSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      const teacher = await storage.getTeacherById(teacherId);
+      if (!teacher || teacher.schoolId !== schoolId)
+        return res.status(404).json({ message: "Teacher not found" });
+      const updated = await storage.updateTeacherAssignment(teacherId, schoolId, {
+        fullName: parsed.data.fullName ?? teacher.fullName,
+        subject: teacher.subject,
+        assignedClass: teacher.assignedClass,
+        assignedSection: teacher.assignedSection,
+        phone: parsed.data.phone ?? teacher.phone,
+        designation: parsed.data.designation ?? teacher.designation ?? "",
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to update teacher" });
     }
   });
 

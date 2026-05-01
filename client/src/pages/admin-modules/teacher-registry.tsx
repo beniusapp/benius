@@ -22,9 +22,6 @@ const addSchema = z.object({
   email: z.string().email("Valid email required"),
   password: z.string().min(6, "Password must be at least 6 characters"),
   phone: z.string().min(7, "Phone number required"),
-  subject: z.string().min(1, "Subject required"),
-  assignedClass: z.string().min(1, "Class required"),
-  assignedSection: z.string().min(1, "Section required"),
   designation: z.string().optional(),
 });
 type AddForm = z.infer<typeof addSchema>;
@@ -32,9 +29,6 @@ type AddForm = z.infer<typeof addSchema>;
 const editSchema = z.object({
   fullName: z.string().min(2),
   phone: z.string().min(7),
-  subject: z.string().min(1),
-  assignedClass: z.string().min(1),
-  assignedSection: z.string().min(1),
   designation: z.string().optional(),
 });
 type EditForm = z.infer<typeof editSchema>;
@@ -51,7 +45,7 @@ function SkeletonRow() {
   );
 }
 
-export default function TeacherRegistry({ schoolId, classes, sections, subjects, onNavigate }: Props) {
+export default function TeacherRegistry({ schoolId, classes, sections, onNavigate }: Props) {
   const { toast } = useToast();
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
@@ -73,7 +67,6 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
 
   const cfgClasses = (schoolConfig?.classes ?? []).length > 0 ? schoolConfig!.classes : (classes.length > 0 ? classes : ["1","2","3","4","5","6","7","8","9","10","11","12"]);
   const cfgSections = (schoolConfig?.sections ?? []).length > 0 ? schoolConfig!.sections : (sections.length > 0 ? sections : ["A","B","C","D"]);
-  const cfgSubjects = (schoolConfig?.subjects ?? []).length > 0 ? schoolConfig!.subjects : (subjects.length > 0 ? subjects : ["Math","Science","English","Hindi","Social"]);
 
   const handleSearch = useCallback((val: string) => {
     setQ(val);
@@ -117,7 +110,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
 
   const addForm = useForm<AddForm>({
     resolver: zodResolver(addSchema),
-    defaultValues: { fullName: "", email: "", password: "", phone: "", subject: "", assignedClass: "", assignedSection: "", designation: "" },
+    defaultValues: { fullName: "", email: "", password: "", phone: "", designation: "" },
   });
 
   const addMutation = useMutation({
@@ -136,7 +129,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
 
   const editForm = useForm<EditForm>({
     resolver: zodResolver(editSchema),
-    defaultValues: { fullName: "", phone: "", subject: "", assignedClass: "", assignedSection: "", designation: "" },
+    defaultValues: { fullName: "", phone: "", designation: "" },
   });
 
   useEffect(() => {
@@ -144,9 +137,6 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
       editForm.reset({
         fullName: editTarget.fullName,
         phone: editTarget.phone,
-        subject: editTarget.subject,
-        assignedClass: editTarget.assignedClass,
-        assignedSection: editTarget.assignedSection,
         designation: editTarget.designation ?? "",
       });
     }
@@ -233,48 +223,6 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
                   </FormItem>
                 )} />
               ))}
-              <FormField control={addForm.control} name="subject" render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-white/70 text-xs">Subject</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
-                    <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-9 text-sm" data-testid="select-reg-subject">
-                      <SelectValue placeholder="Select" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {cfgSubjects.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )} />
-              <FormField control={addForm.control} name="assignedClass" render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-white/70 text-xs">Class</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
-                    <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-9 text-sm" data-testid="select-reg-class">
-                      <SelectValue placeholder="Select" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {cfgClasses.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )} />
-              <FormField control={addForm.control} name="assignedSection" render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-white/70 text-xs">Section</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
-                    <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-9 text-sm" data-testid="select-reg-section">
-                      <SelectValue placeholder="Select" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {cfgSections.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )} />
               <div className="flex items-end col-span-2 md:col-span-3">
                 <Button
                   type="submit"
@@ -471,48 +419,6 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
                       <FormItem>
                         <FormLabel className="text-white/70 text-xs">Designation</FormLabel>
                         <FormControl><Input {...field} placeholder="e.g. HOD, Senior Teacher" className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-edit-reg-designation" /></FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )} />
-                    <FormField control={editForm.control} name="subject" render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-white/70 text-xs">Subject</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
-                          <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="select-edit-reg-subject">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {cfgSubjects.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )} />
-                    <FormField control={editForm.control} name="assignedClass" render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-white/70 text-xs">Class</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
-                          <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="select-edit-reg-class">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {cfgClasses.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )} />
-                    <FormField control={editForm.control} name="assignedSection" render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-white/70 text-xs">Section</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
-                          <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="select-edit-reg-section">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {cfgSections.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
                         <FormMessage />
                       </FormItem>
                     )} />
