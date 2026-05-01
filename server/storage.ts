@@ -2973,6 +2973,29 @@ export class DatabaseStorage {
       .orderBy(facultyMappings.className, facultyMappings.section);
   }
 
+  async getFacultyMappedToClass(schoolId: number, className: string, section: string): Promise<{
+    id: number; fullName: string; subject: string | null; designation: string | null;
+    qualifications: string | null; department: string | null; profileImageUrl: string | null;
+  }[]> {
+    const rows = await db.select({
+      id: teachers.id,
+      fullName: teachers.fullName,
+      subject: facultyMappings.subject,
+      designation: teachers.designation,
+      qualifications: teachers.qualifications,
+      department: teachers.department,
+      profileImageUrl: teachers.profileImageUrl,
+    }).from(facultyMappings)
+      .innerJoin(teachers, eq(facultyMappings.teacherId, teachers.id))
+      .where(and(
+        eq(facultyMappings.schoolId, schoolId),
+        eq(facultyMappings.className, className),
+        eq(facultyMappings.section, section),
+      ))
+      .orderBy(teachers.fullName);
+    return rows;
+  }
+
   async getTeachersBySchoolPaginated(schoolId: number, q: string, page: number, pageSize: number, filterClass?: string, filterSection?: string): Promise<{ data: (Teacher & { email: string; mappings: { className: string; section: string }[] })[]; total: number }> {
     const baseWhere = eq(teachers.schoolId, schoolId);
     const searchCondition = q

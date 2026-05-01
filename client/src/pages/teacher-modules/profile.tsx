@@ -4,7 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import {
   User, Mail, Phone, BookOpen, GraduationCap,
   Camera, Loader2, Lock, Eye, EyeOff, CheckCircle, X,
-  ZoomIn, ZoomOut, MoreVertical, ShieldCheck,
+  ZoomIn, ZoomOut, MoreVertical, ShieldCheck, LayoutGrid,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -539,7 +539,7 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
           </div>
 
           {/* Info fields */}
-          <div className="px-5 pb-6 space-y-2">
+          <div className="px-5 pb-4 space-y-2">
             {fields.map((f) => {
               const Icon = f.icon;
               return (
@@ -557,6 +557,37 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
               );
             })}
           </div>
+
+          {/* Faculty Assignments */}
+          {teacher.mappings && teacher.mappings.length > 0 && (
+            <div className="px-5 pb-6">
+              <div className="flex items-center gap-2 mb-2 px-1">
+                <LayoutGrid className="w-3.5 h-3.5 text-[#10b981]" />
+                <p className="text-[10px] text-white/40 uppercase tracking-wide">Faculty Assignments</p>
+              </div>
+              <div className="flex flex-wrap gap-2" data-testid="div-faculty-assignments">
+                {teacher.mappings.map((m, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#10b981]/10 border border-[#10b981]/20"
+                    data-testid={`badge-assignment-${i}`}
+                  >
+                    <GraduationCap className="w-3 h-3 text-[#10b981]" />
+                    <span className="text-xs font-semibold text-[#10b981]">
+                      Class {m.className}{m.section}
+                    </span>
+                    {m.subject && (
+                      <>
+                        <span className="text-white/20 text-xs">·</span>
+                        <span className="text-xs text-white/60">{m.subject}</span>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
         </motion.div>
       </motion.div>
     </>
