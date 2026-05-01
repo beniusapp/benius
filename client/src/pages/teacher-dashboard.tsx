@@ -41,6 +41,7 @@ export interface TeacherMe {
   schoolCode: string;
   attendanceDoneToday: boolean;
   profileImageUrl: string | null;
+  mappings: { className: string; section: string; subject: string | null }[];
 }
 
 type TeacherModule = {

@@ -197,22 +197,64 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
 
 export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
-  const { classes, sections, subjects, examTypes } = useSchoolConfig(teacher.schoolId);
+  const { classes: schoolClasses, sections: schoolSections, subjects, examTypes } = useSchoolConfig(teacher.schoolId);
   const today = new Date().toISOString().split("T")[0];
   const [tab, setTab] = useState<"add" | "view">("add");
 
-  const [selectedClass, setSelectedClass] = useState(teacher.assignedClass || "");
-  const [selectedSection, setSelectedSection] = useState(teacher.assignedSection || "");
-  const [subject, setSubject] = useState(teacher.subject || "");
+  const mappedCombos = teacher.mappings ?? [];
+  const hasMappings = mappedCombos.length > 0;
+  const classOpts = hasMappings ? [...new Set(mappedCombos.map(m => m.className))] : schoolClasses;
+
+  const [selectedClass, setSelectedClass] = useState(
+    hasMappings ? mappedCombos[0].className : teacher.assignedClass || ""
+  );
+  const [selectedSection, setSelectedSection] = useState(
+    hasMappings ? mappedCombos[0].section : teacher.assignedSection || ""
+  );
+  const [subject, setSubject] = useState(
+    hasMappings ? (mappedCombos[0].subject ?? teacher.subject ?? "") : teacher.subject || ""
+  );
   const [examType, setExamType] = useState("");
   const [totalMarks, setTotalMarks] = useState("100");
   const [marks, setMarks] = useState<Record<number, string>>({});
   const [absentMap, setAbsentMap] = useState<Record<number, boolean>>({});
   const inputRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
-  const [viewClass, setViewClass] = useState(teacher.assignedClass || "");
-  const [viewSection, setViewSection] = useState(teacher.assignedSection || "");
-  const [viewSubject, setViewSubject] = useState(teacher.subject || "");
+  const [viewClass, setViewClass] = useState(
+    hasMappings ? mappedCombos[0].className : teacher.assignedClass || ""
+  );
+  const [viewSection, setViewSection] = useState(
+    hasMappings ? mappedCombos[0].section : teacher.assignedSection || ""
+  );
+  const [viewSubject, setViewSubject] = useState(
+    hasMappings ? (mappedCombos[0].subject ?? teacher.subject ?? "") : teacher.subject || ""
+  );
+
+  const addSectionOpts = useMemo(
+    () => hasMappings ? mappedCombos.filter(m => m.className === selectedClass).map(m => m.section) : schoolSections,
+    [hasMappings, mappedCombos, selectedClass, schoolSections]
+  );
+  const viewSectionOpts = useMemo(
+    () => hasMappings ? mappedCombos.filter(m => m.className === viewClass).map(m => m.section) : schoolSections,
+    [hasMappings, mappedCombos, viewClass, schoolSections]
+  );
+
+  function handleAddClassChange(cls: string) {
+    setSelectedClass(cls);
+    if (hasMappings) {
+      const combo = mappedCombos.find(m => m.className === cls);
+      setSelectedSection(combo?.section ?? "");
+      setSubject(combo?.subject ?? "");
+    }
+  }
+  function handleViewClassChange(cls: string) {
+    setViewClass(cls);
+    if (hasMappings) {
+      const combo = mappedCombos.find(m => m.className === cls);
+      setViewSection(combo?.section ?? "");
+      setViewSubject(combo?.subject ?? "");
+    }
+  }
   const [viewExamType, setViewExamType] = useState("");
   const [expandedStudent, setExpandedStudent] = useState<number | null>(null);
 
@@ -344,12 +386,12 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Class *</label>
-                <Select value={selectedClass} onValueChange={setSelectedClass}>
+                <Select value={selectedClass} onValueChange={handleAddClassChange}>
                   <SelectTrigger className="rounded-xl" data-testid="select-class">
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent>
-                    {classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                    {classOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -360,7 +402,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent>
-                    {sections.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    {addSectionOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -527,12 +569,12 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Class</label>
-                <Select value={viewClass} onValueChange={setViewClass}>
+                <Select value={viewClass} onValueChange={handleViewClassChange}>
                   <SelectTrigger className="rounded-xl" data-testid="select-view-class">
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent>
-                    {classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                    {classOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -543,7 +585,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent>
-                    {sections.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    {viewSectionOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>

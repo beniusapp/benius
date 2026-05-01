@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Loader2, Search, Save, AlertCircle, ArrowLeft,
@@ -109,12 +109,35 @@ function SkeletonCards() {
 
 export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
-  const { classes: classOptions, sections: sectionOptions } = useSchoolConfig(teacher.schoolId);
+  const { classes: schoolClasses, sections: schoolSections } = useSchoolConfig(teacher.schoolId);
   const today = new Date().toISOString().split("T")[0];
 
+  const mappedCombos = teacher.mappings ?? [];
+  const hasMappings = mappedCombos.length > 0;
+  const classOpts = hasMappings
+    ? [...new Set(mappedCombos.map(m => m.className))]
+    : schoolClasses;
+
   const [view, setView] = useState<ViewState>("landing");
-  const [selectedClass, setSelectedClass] = useState(teacher.assignedClass || "10");
-  const [selectedSection, setSelectedSection] = useState(teacher.assignedSection || "A");
+  const [selectedClass, setSelectedClass] = useState(
+    hasMappings ? mappedCombos[0].className : teacher.assignedClass || "10"
+  );
+  const [selectedSection, setSelectedSection] = useState(
+    hasMappings ? mappedCombos[0].section : teacher.assignedSection || "A"
+  );
+
+  const sectionOpts = useMemo(() => {
+    if (!hasMappings) return schoolSections;
+    return mappedCombos.filter(m => m.className === selectedClass).map(m => m.section);
+  }, [hasMappings, mappedCombos, selectedClass, schoolSections]);
+
+  const handleClassChange = useCallback((cls: string, setter: (v: string) => void) => {
+    setter(cls);
+    if (hasMappings) {
+      const firstSec = mappedCombos.find(m => m.className === cls)?.section ?? "";
+      setSelectedSection(firstSec);
+    }
+  }, [hasMappings, mappedCombos]);
   const [selectedDate, setSelectedDate] = useState(today);
   const [searchQuery, setSearchQuery] = useState("");
   const [localStatuses, setLocalStatuses] = useState<Record<number, string>>({});
@@ -326,12 +349,12 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Class</label>
-              <Select value={selectedClass} onValueChange={setSelectedClass}>
+              <Select value={selectedClass} onValueChange={(v) => handleClassChange(v, setSelectedClass)}>
                 <SelectTrigger className="rounded-xl" data-testid="select-class-history">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {classOptions.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  {classOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -342,7 +365,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {sectionOptions.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  {sectionOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -418,12 +441,12 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
           <div className="space-y-1">
             <label className="text-xs font-medium text-muted-foreground">Class</label>
-            <Select value={selectedClass} onValueChange={(v) => { setSelectedClass(v); setLocalStatuses({}); }}>
+            <Select value={selectedClass} onValueChange={(v) => { handleClassChange(v, setSelectedClass); setLocalStatuses({}); }}>
               <SelectTrigger className="rounded-xl" data-testid="select-class">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {classOptions.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                {classOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -434,7 +457,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {sectionOptions.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                {sectionOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>

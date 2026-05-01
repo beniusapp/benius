@@ -2963,6 +2963,16 @@ export class DatabaseStorage {
     );
   }
 
+  async getFacultyMappingsByTeacher(teacherId: number): Promise<{ className: string; section: string; subject: string | null }[]> {
+    return db.select({
+      className: facultyMappings.className,
+      section: facultyMappings.section,
+      subject: facultyMappings.subject,
+    }).from(facultyMappings)
+      .where(eq(facultyMappings.teacherId, teacherId))
+      .orderBy(facultyMappings.className, facultyMappings.section);
+  }
+
   async getTeachersBySchoolPaginated(schoolId: number, q: string, page: number, pageSize: number, filterClass?: string, filterSection?: string): Promise<{ data: (Teacher & { email: string; mappings: { className: string; section: string }[] })[]; total: number }> {
     const baseWhere = eq(teachers.schoolId, schoolId);
     const searchCondition = q

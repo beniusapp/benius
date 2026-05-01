@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Loader2, Plus, FileDown, Upload, X, Pencil, Trash2,
@@ -67,12 +67,44 @@ function getAvatarColor(name: string): string {
 
 export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
-  const { classes, sections, subjects } = useSchoolConfig(teacher.schoolId);
+  const { classes: schoolClasses, sections: schoolSections, subjects } = useSchoolConfig(teacher.schoolId);
   const today = new Date().toISOString().split("T")[0];
 
-  const [selectedClass, setSelectedClass] = useState(teacher.assignedClass || "");
-  const [selectedSection, setSelectedSection] = useState(teacher.assignedSection || "");
-  const [subject, setSubject] = useState("");
+  const mappedCombos = teacher.mappings ?? [];
+  const hasMappings = mappedCombos.length > 0;
+  const classOpts = hasMappings ? [...new Set(mappedCombos.map(m => m.className))] : schoolClasses;
+
+  const [selectedClass, setSelectedClass] = useState(
+    hasMappings ? mappedCombos[0].className : teacher.assignedClass || ""
+  );
+  const [selectedSection, setSelectedSection] = useState(
+    hasMappings ? mappedCombos[0].section : teacher.assignedSection || ""
+  );
+  const [subject, setSubject] = useState(
+    hasMappings ? (mappedCombos[0].subject ?? "") : ""
+  );
+
+  const sectionOpts = useMemo(
+    () => hasMappings ? mappedCombos.filter(m => m.className === selectedClass).map(m => m.section) : schoolSections,
+    [hasMappings, mappedCombos, selectedClass, schoolSections]
+  );
+
+  function handleClassChange(cls: string) {
+    setSelectedClass(cls);
+    if (hasMappings) {
+      const combo = mappedCombos.find(m => m.className === cls);
+      setSelectedSection(combo?.section ?? "");
+      setSubject(combo?.subject ?? "");
+    }
+  }
+
+  function handleSectionChange(sec: string) {
+    setSelectedSection(sec);
+    if (hasMappings) {
+      const combo = mappedCombos.find(m => m.className === selectedClass && m.section === sec);
+      if (combo?.subject) setSubject(combo.subject);
+    }
+  }
   const [content, setContent] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
@@ -196,23 +228,23 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Class *</label>
-              <Select value={selectedClass} onValueChange={setSelectedClass}>
+              <Select value={selectedClass} onValueChange={handleClassChange}>
                 <SelectTrigger className="rounded-xl" data-testid="select-class">
                   <SelectValue placeholder="Select" />
                 </SelectTrigger>
                 <SelectContent>
-                  {classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  {classOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Section *</label>
-              <Select value={selectedSection} onValueChange={setSelectedSection}>
+              <Select value={selectedSection} onValueChange={handleSectionChange}>
                 <SelectTrigger className="rounded-xl" data-testid="select-section">
                   <SelectValue placeholder="Select" />
                 </SelectTrigger>
                 <SelectContent>
-                  {sections.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  {sectionOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

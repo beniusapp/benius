@@ -140,9 +140,12 @@ export function registerTeacherRoutes(app: Express) {
     const data = await storage.getTeacherWithSchool(req.session.teacherId);
     if (!data) return res.status(401).json({ message: "Teacher not found" });
 
-    const todayDone = await storage.hasAttendanceToday(
-      data.teacher.id, data.teacher.assignedClass, data.teacher.assignedSection, data.teacher.schoolId
-    );
+    const [todayDone, mappings] = await Promise.all([
+      storage.hasAttendanceToday(
+        data.teacher.id, data.teacher.assignedClass, data.teacher.assignedSection, data.teacher.schoolId
+      ),
+      storage.getFacultyMappingsByTeacher(data.teacher.id),
+    ]);
 
     res.json({
       id: data.teacher.id,
@@ -159,6 +162,7 @@ export function registerTeacherRoutes(app: Express) {
       schoolCode: data.school.code,
       attendanceDoneToday: todayDone,
       profileImageUrl: data.teacher.profileImageUrl || null,
+      mappings,
     });
   });
 
