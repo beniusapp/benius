@@ -2456,7 +2456,7 @@ export function registerTeacherRoutes(app: Express) {
 
   const facultyMappingSchema = z.object({
     teacherId: z.number().int().positive(),
-    mappings: z.array(z.object({ className: z.string().min(1), section: z.string().min(1) })),
+    mappings: z.array(z.object({ className: z.string().min(1), section: z.string().min(1), subject: z.string().optional().nullable() })),
   });
 
   app.post("/api/admin/faculty-mappings", async (req, res) => {

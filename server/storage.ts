@@ -2933,6 +2933,7 @@ export class DatabaseStorage {
       schoolId: facultyMappings.schoolId,
       className: facultyMappings.className,
       section: facultyMappings.section,
+      subject: facultyMappings.subject,
       teacherName: teachers.fullName,
       email: users.email,
     }).from(facultyMappings)
@@ -2943,14 +2944,14 @@ export class DatabaseStorage {
     return rows;
   }
 
-  async replaceFacultyMappings(teacherId: number, schoolId: number, mappings: { className: string; section: string }[]): Promise<FacultyMapping[]> {
+  async replaceFacultyMappings(teacherId: number, schoolId: number, mappings: { className: string; section: string; subject?: string | null }[]): Promise<FacultyMapping[]> {
     return await db.transaction(async (tx) => {
       await tx.delete(facultyMappings).where(
         and(eq(facultyMappings.teacherId, teacherId), eq(facultyMappings.schoolId, schoolId))
       );
       if (mappings.length === 0) return [];
       const rows = await tx.insert(facultyMappings).values(
-        mappings.map(m => ({ teacherId, schoolId, className: m.className, section: m.section }))
+        mappings.map(m => ({ teacherId, schoolId, className: m.className, section: m.section, subject: m.subject ?? null }))
       ).returning();
       return rows;
     });

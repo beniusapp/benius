@@ -273,10 +273,12 @@ app.use((req, res, next) => {
       teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
       class_name TEXT NOT NULL,
       section TEXT NOT NULL,
+      subject TEXT,
       UNIQUE (school_id, teacher_id, class_name, section)
     );
 
     ALTER TABLE non_teaching_staff ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE faculty_mappings ADD COLUMN IF NOT EXISTS subject TEXT;
   `);
 
   await registerRoutes(httpServer, app);

@@ -650,6 +650,7 @@ export const facultyMappings = pgTable("faculty_mappings", {
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
   className: varchar("class_name", { length: 20 }).notNull(),
   section: varchar("section", { length: 10 }).notNull(),
+  subject: text("subject"),
 });
 
 export const insertFacultyMappingSchema = createInsertSchema(facultyMappings).omit({ id: true });
