@@ -2313,8 +2313,8 @@ export function registerTeacherRoutes(app: Express) {
     }
   });
 
-  // ===== TEACHER REGISTRY (admin CRUD) =====
-  app.get("/api/admin/teacher-registry", async (req, res) => {
+  // ===== TEACHER REGISTRY — /api/admin/teachers CRUD (session-scoped) =====
+  app.get("/api/admin/teachers", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId!;
@@ -2329,7 +2329,32 @@ export function registerTeacherRoutes(app: Express) {
     }
   });
 
-  app.delete("/api/admin/teacher-registry/:id", async (req, res) => {
+  app.post("/api/admin/teachers", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const parsed = createTeacherSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      const existing = await storage.getUserByEmail(parsed.data.email);
+      if (existing) return res.status(409).json({ message: "A user with this email already exists" });
+      const passwordHash = await bcrypt.hash(parsed.data.password, 10);
+      const teacher = await storage.createTeacher({
+        schoolId,
+        fullName: parsed.data.fullName,
+        phone: parsed.data.phone,
+        subject: parsed.data.subject,
+        assignedClass: parsed.data.assignedClass,
+        assignedSection: parsed.data.assignedSection,
+        mustChangePassword: true,
+      }, parsed.data.email, passwordHash);
+      res.status(201).json(teacher);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to create teacher" });
+    }
+  });
+
+  app.delete("/api/admin/teachers/:id", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId!;

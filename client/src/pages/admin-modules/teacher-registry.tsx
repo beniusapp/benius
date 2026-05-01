@@ -85,9 +85,9 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects 
   params.set("page", String(page));
 
   const { data, isLoading } = useQuery<{ data: TeacherWithEmail[]; total: number }>({
-    queryKey: ["/api/admin/teacher-registry", debouncedQ, page],
+    queryKey: ["/api/admin/teachers", debouncedQ, page],
     queryFn: async () => {
-      const r = await fetch(`/api/admin/teacher-registry?${params}`, { credentials: "include" });
+      const r = await fetch(`/api/admin/teachers?${params}`, { credentials: "include" });
       if (!r.ok) throw new Error("Failed");
       return r.json();
     },
@@ -102,14 +102,14 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects 
 
   const addMutation = useMutation({
     mutationFn: async (d: AddForm) => {
-      const r = await apiRequest("POST", `/api/schools/${schoolId}/teachers`, d);
+      const r = await apiRequest("POST", "/api/admin/teachers", d);
       if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
       return r.json();
     },
     onSuccess: () => {
       toast({ title: "Teacher Added", description: "Teacher account created and added to registry." });
       addForm.reset(); setShowForm(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/teacher-registry"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/schools", schoolId, "teachers"] });
     },
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
@@ -142,7 +142,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects 
     onSuccess: () => {
       toast({ title: "Teacher Updated" });
       setEditTarget(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/teacher-registry"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/schools", schoolId, "teachers"] });
     },
     onError: (e: Error) => toast({ title: "Update Failed", description: e.message, variant: "destructive" }),
@@ -150,13 +150,13 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects 
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
-      const r = await apiRequest("DELETE", `/api/admin/teacher-registry/${id}`);
+      const r = await apiRequest("DELETE", `/api/admin/teachers/${id}`);
       if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
     },
     onSuccess: () => {
       toast({ title: "Teacher Removed", description: `${deleteTarget?.fullName} has been removed from the registry.` });
       setDeleteTarget(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/teacher-registry"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/schools", schoolId, "teachers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/faculty-mappings"] });
     },
