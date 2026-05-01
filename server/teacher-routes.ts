@@ -1724,25 +1724,8 @@ export function registerTeacherRoutes(app: Express) {
   // ===== FACULTY INFO =====
   app.get("/api/faculty/:schoolId", async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
-    const schoolId = parseInt(req.params.schoolId);
-    const [list, allMappings] = await Promise.all([
-      storage.getTeachersBySchool(schoolId),
-      storage.getFacultyMappingsBySchool(schoolId),
-    ]);
-    const mappingsByTeacher = new Map<number, { className: string; section: string; subject: string | null }[]>();
-    for (const m of allMappings) {
-      if (!mappingsByTeacher.has(m.teacherId)) mappingsByTeacher.set(m.teacherId, []);
-      mappingsByTeacher.get(m.teacherId)!.push({ className: m.className, section: m.section, subject: m.subject ?? null });
-    }
-    res.json(list.map(t => ({
-      id: t.id,
-      fullName: t.fullName,
-      subject: t.subject,
-      phone: t.phone,
-      assignedClass: t.assignedClass,
-      assignedSection: t.assignedSection,
-      mappings: mappingsByTeacher.get(t.id) ?? [],
-    })));
+    const list = await storage.getTeachersBySchool(parseInt(req.params.schoolId));
+    res.json(list.map(t => ({ id: t.id, fullName: t.fullName, subject: t.subject, phone: t.phone, assignedClass: t.assignedClass, assignedSection: t.assignedSection })));
   });
 
   // ===== PAGINATED STUDENTS (Big Data) =====

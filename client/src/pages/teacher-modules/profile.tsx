@@ -126,29 +126,15 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
     }
   }, [securityOpen]);
 
-  const mappedSubjects = teacher.mappings?.length
-    ? [...new Set(teacher.mappings.map((m) => m.subject).filter(Boolean) as string[])]
-    : null;
-
-  const mappedClasses = teacher.mappings?.length
-    ? teacher.mappings.map((m) => `Class ${m.className}${m.section}`)
-    : null;
-
-  const fields: { icon: typeof User; label: string; value: string; tags?: string[] }[] = [
+  const fields = [
     { icon: User, label: "Full Name", value: teacher.fullName },
     { icon: Mail, label: "Email", value: teacher.email },
     { icon: Phone, label: "Phone", value: teacher.phone || "—" },
-    {
-      icon: BookOpen,
-      label: "Subject",
-      value: mappedSubjects ? mappedSubjects.join(", ") : teacher.subject || "—",
-      tags: mappedSubjects ?? undefined,
-    },
+    { icon: BookOpen, label: "Subject", value: teacher.subject || "—" },
     {
       icon: GraduationCap,
       label: "Assigned Class",
-      value: mappedClasses ? mappedClasses.join(", ") : teacher.assignedClass ? `${teacher.assignedClass} – ${teacher.assignedSection}` : "—",
-      tags: mappedClasses ?? undefined,
+      value: teacher.assignedClass ? `${teacher.assignedClass} – ${teacher.assignedSection}` : "—",
     },
   ];
 
@@ -556,37 +542,21 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
           <div className="px-5 pb-6 space-y-2">
             {fields.map((f) => {
               const Icon = f.icon;
-              const hasTags = f.tags && f.tags.length > 0;
               return (
                 <div
                   key={f.label}
-                  className="flex items-start gap-3 px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.08] hover:border-white/[0.15] transition-colors"
+                  className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/[0.05] border border-white/[0.08] hover:border-white/[0.15] transition-colors"
                   data-testid={`field-${f.label.toLowerCase().replace(/\s/g, "-")}`}
                 >
-                  <Icon className="w-4 h-4 text-[#10b981] flex-shrink-0 mt-0.5" />
-                  <div className="min-w-0 flex-1">
+                  <Icon className="w-4 h-4 text-[#10b981] flex-shrink-0" />
+                  <div>
                     <p className="text-[10px] text-white/40 uppercase tracking-wide">{f.label}</p>
-                    {hasTags ? (
-                      <div className="flex flex-wrap gap-1.5 mt-1">
-                        {f.tags!.map((tag, i) => (
-                          <span
-                            key={i}
-                            className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-white/[0.08] text-white/85 border border-white/[0.12]"
-                            data-testid={`tag-${f.label.toLowerCase().replace(/\s/g, "-")}-${i}`}
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm font-medium text-white">{f.value}</p>
-                    )}
+                    <p className="text-sm font-medium text-white">{f.value}</p>
                   </div>
                 </div>
               );
             })}
           </div>
-
         </motion.div>
       </motion.div>
     </>

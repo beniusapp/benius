@@ -1464,10 +1464,6 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    if (student.class && student.section) {
-      const mapped = await storage.getFacultyMappedToClass(student.schoolId, student.class, student.section);
-      if (mapped.length > 0) return res.json(mapped);
-    }
     const faculty = await storage.getFacultyBySchool(student.schoolId);
     res.json(faculty);
   });

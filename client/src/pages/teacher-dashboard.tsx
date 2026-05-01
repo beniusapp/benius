@@ -209,24 +209,9 @@ export default function TeacherDashboard() {
               <h2 className="text-2xl font-bold tracking-tight" data-testid="text-welcome">
                 Welcome, {teacher.fullName}
               </h2>
-              {teacher.mappings && teacher.mappings.length > 0 ? (
-                <p className="text-muted-foreground mt-1 text-sm" data-testid="text-assigned-summary">
-                  Assigned to:{" "}
-                  {teacher.mappings.map((m, i) => (
-                    <span key={i}>
-                      {i > 0 && " · "}
-                      <span className="font-medium text-foreground">
-                        {m.className}{m.section}
-                      </span>
-                      {m.subject && <span className="text-muted-foreground"> – {m.subject}</span>}
-                    </span>
-                  ))}
-                </p>
-              ) : (
-                <p className="text-muted-foreground mt-1" data-testid="text-assigned-summary">
-                  Class {teacher.assignedClass}-{teacher.assignedSection} | {teacher.subject}
-                </p>
-              )}
+              <p className="text-muted-foreground mt-1">
+                Class {teacher.assignedClass}-{teacher.assignedSection} | {teacher.subject}
+              </p>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
               {modules.map((mod) => {
