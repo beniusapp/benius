@@ -152,7 +152,7 @@ export default function StudentDashboard() {
     : null;
   const unreadCount = unreadData?.count ?? 0;
 
-  const handleTileClick = (id: string, label: string, route: string | null) => {
+  const handleTileClick = (label: string, route: string | null) => {
     if (route) { setLocation(route); return; }
     toast({ title: label, description: `${label} module coming soon.` });
   };
@@ -347,7 +347,7 @@ export default function StudentDashboard() {
                 }}
                 whileTap={{ scale: 0.97 }}
                 data-testid={`tile-${tile.id}`}
-                onClick={() => handleTileClick(tile.id, tile.label, tile.route)}
+                onClick={() => handleTileClick(tile.label, tile.route)}
                 className="relative text-left focus:outline-none"
                 style={{
                   background: "rgba(255,255,255,0.78)",
