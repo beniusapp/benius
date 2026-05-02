@@ -37,7 +37,8 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
-import { eq, sql, like, count, and, desc, gte, lte, or, ilike, isNull, inArray, alias, type SQL } from "drizzle-orm";
+import { eq, sql, like, count, and, desc, gte, lte, or, ilike, isNull, inArray, type SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { randomBytes } from "node:crypto";
 
 export class DatabaseStorage {
