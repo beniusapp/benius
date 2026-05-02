@@ -19,11 +19,22 @@ interface StudentMeResponse {
   schoolId?: number;
 }
 
-interface AttendanceStats {
-  overallPercent: number;
-  workingDays: number;
-  totalPresent: number;
-  totalAbsent: number;
+interface MonthlyAttendanceDay {
+  date: string;
+  dayOfWeek: number;
+  status: string;
+  isHoliday: boolean;
+  isSunday: boolean;
+  isFuture: boolean;
+  isApprovedLeave: boolean;
+}
+
+interface MonthlyAttendanceResponse {
+  schoolId: number;
+  studentId: number;
+  year: number;
+  month: number;
+  days: MonthlyAttendanceDay[];
 }
 
 interface HomeworkSubmission {
@@ -99,8 +110,16 @@ export default function StudentDashboard() {
     refetchInterval: 60000,
   });
 
-  const { data: attendanceStats } = useQuery<AttendanceStats & { startDate: string }>({
-    queryKey: ["/api/student/attendance/stats"],
+  const now = new Date();
+  const currentYear  = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
+
+  const { data: monthlyAttendance } = useQuery<MonthlyAttendanceResponse>({
+    queryKey: ["/api/student/attendance/monthly", currentYear, currentMonth],
+    queryFn: () =>
+      fetch(`/api/student/attendance/monthly?year=${currentYear}&month=${currentMonth}`, {
+        credentials: "include",
+      }).then((r) => r.json()),
     enabled: !!student,
   });
 
@@ -144,7 +163,16 @@ export default function StudentDashboard() {
 
   const firstName = student.name.split(" ")[0];
   const greeting   = getGreeting();
-  const attendPct  = attendanceStats?.overallPercent ?? null;
+
+  const attendPct = useMemo(() => {
+    if (!monthlyAttendance) return null;
+    const workingDays = monthlyAttendance.days.filter(
+      (d) => !d.isHoliday && !d.isSunday && !d.isFuture
+    );
+    if (workingDays.length === 0) return null;
+    const present = workingDays.filter((d) => d.status === "present").length;
+    return Math.round((present / workingDays.length) * 100);
+  }, [monthlyAttendance]);
   const pendingHwCount = homeworkItems
     ? homeworkItems.filter(
         (hw) => hw.submission === null || hw.submission.status === "rejected"
