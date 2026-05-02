@@ -857,9 +857,10 @@ export default function AdminDashboard() {
                 icon={
                   <motion.div
                     initial={{ opacity: 0, scale: 0.5 }}
-                    animate={{ opacity: 1, rotateZ: [-6, 6, -6] }}
+                    animate={{ opacity: 1, scale: 1, rotateZ: [-6, 6, -6] }}
                     transition={{
                       opacity: { duration: 0.35, delay: 0.2 },
+                      scale: { duration: 0.35, delay: 0.2 },
                       rotateZ: { duration: 2.4, repeat: Infinity, ease: "easeInOut", delay: 0.45 },
                     }}
                     style={{ filter: "drop-shadow(0 0 5px #3b82f6aa)" }}
@@ -952,12 +953,14 @@ export default function AdminDashboard() {
                     initial={{ opacity: 0, scale: 0.5 }}
                     animate={totalActionRequired > 0 ? {
                       opacity: 1,
+                      scale: 1,
                       rotateZ: [0, 14, -14, 10, -10, 6, -6, 0],
-                    } : { opacity: 1, rotateZ: 0 }}
+                    } : { opacity: 1, scale: 1, rotateZ: 0 }}
                     transition={totalActionRequired > 0 ? {
                       opacity: { duration: 0.35, delay: 0.3 },
-                      rotateZ: { duration: 0.7, repeat: Infinity, repeatDelay: 2.3, ease: "easeInOut", delay: 0.55 },
-                    } : { opacity: { duration: 0.35, delay: 0.3 } }}
+                      scale: { duration: 0.35, delay: 0.3 },
+                      rotateZ: { type: "spring", stiffness: 260, damping: 18, repeat: Infinity, repeatDelay: 2.3, delay: 0.55 },
+                    } : { opacity: { duration: 0.35, delay: 0.3 }, scale: { duration: 0.35, delay: 0.3 } }}
                     style={{
                       filter: totalActionRequired > 0
                         ? "drop-shadow(0 0 5px #ef4444aa)"
