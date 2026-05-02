@@ -1,15 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useRoute } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { motion } from "framer-motion";
 import {
-  GraduationCap, LogOut, Users, UserCheck, Settings, BookOpen, Clock, UserCog,
-  Bell, Image, BarChart2, Shield, UserSquare, CreditCard, Package,
+  GraduationCap, LogOut, Users, UserCheck, Settings, BookOpen, Clock,
+  Bell, BarChart2, Shield, UserSquare, CreditCard, Package,
   TrendingUp, MessageSquare, CalendarDays, ChevronLeft, Loader2,
   ArrowRight, AlertTriangle, UserCircle2, X, KeyRound, Lock, Phone, Mail,
-  CheckCircle2, History, ChevronDown, PanelLeftClose, PanelLeftOpen,
+  CheckCircle2, ChevronDown, PanelLeftClose, PanelLeftOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -70,40 +71,52 @@ type ActiveModule =
 interface TileConfig {
   id: ActiveModule;
   label: string;
-  icon: any;
+  icon: React.ElementType;
+  emoji: string;
   group: string;
   desc: string;
+  accentColor: string;
   badgeKey?: string;
 }
 
 const TILES: TileConfig[] = [
-  { id: "school-setup", label: "School Setup", icon: Settings, group: "Foundation", desc: "Classes, Sections, Subjects, Exam Types" },
-  { id: "timetable", label: "Timetable Master", icon: Clock, group: "Foundation", desc: "Map teachers to periods and classes" },
-  { id: "attendance", label: "Attendance Overview", icon: CalendarDays, group: "Oversight", desc: "School-wide daily presence stats" },
-  { id: "exam-controller", label: "Exam Controller", icon: Shield, group: "Oversight", desc: "Lock scores & generate report cards" },
-  { id: "complaint-hub", label: "Complaint Hub", icon: MessageSquare, group: "Oversight", desc: "All teacher complaints in one place", badgeKey: "complaints" },
-  { id: "noticeboard", label: "Noticeboard", icon: Bell, group: "Oversight", desc: "Post notices to classes or whole school" },
-  { id: "approval-center", label: "Approval Center", icon: UserCheck, group: "Management", desc: "Leaves, gallery, e-books — unified", badgeKey: "approvals" },
-  { id: "teacher-registry", label: "Teacher Registry", icon: BookOpen, group: "Management", desc: "Register & manage teaching staff" },
-  { id: "non-teaching-staff", label: "Support Staff", icon: UserSquare, group: "Management", desc: "Admin, security, accounts & more" },
-  { id: "faculty-mapping", label: "Faculty Mapping", icon: Users, group: "Management", desc: "Assign teachers to classes & sections" },
-  { id: "student-registry", label: "Student Registry", icon: GraduationCap, group: "Management", desc: "5000+ students with smart pagination" },
-  { id: "analytics", label: "Performance Analytics", icon: BarChart2, group: "Enterprise", desc: "Exam scores and class analytics" },
-  { id: "audit-logs", label: "Audit Logs", icon: Shield, group: "Enterprise", desc: "Immutable trail of all admin actions" },
-  { id: "visitor-log", label: "Visitor Log", icon: UserSquare, group: "Enterprise", desc: "Campus visitor check-in & check-out" },
-  { id: "id-card-gen", label: "ID Card Gen", icon: CreditCard, group: "Enterprise", desc: "Generate & print student ID cards" },
-  { id: "assets", label: "Assets & Inventory", icon: Package, group: "Enterprise", desc: "Track school equipment and resources" },
-  { id: "school-calendar", label: "School Calendar", icon: CalendarDays, group: "Foundation", desc: "Events, holidays and academic schedule" },
+  { id: "school-setup",       label: "School Setup",          icon: Settings,      emoji: "⚙️",  group: "Foundation", desc: "Classes, Sections, Subjects, Exam Types",   accentColor: "#D4AF37" },
+  { id: "timetable",          label: "Timetable Master",      icon: Clock,         emoji: "📅",  group: "Foundation", desc: "Map teachers to periods and classes",        accentColor: "#3b82f6" },
+  { id: "school-calendar",    label: "School Calendar",       icon: CalendarDays,  emoji: "🗓️", group: "Foundation", desc: "Events, holidays and academic schedule",     accentColor: "#06b6d4" },
+  { id: "attendance",         label: "Attendance Overview",   icon: CalendarDays,  emoji: "📊",  group: "Oversight",  desc: "School-wide daily presence stats",           accentColor: "#10b981" },
+  { id: "exam-controller",    label: "Exam Controller",       icon: Shield,        emoji: "🏆",  group: "Oversight",  desc: "Lock scores & generate report cards",        accentColor: "#f59e0b" },
+  { id: "complaint-hub",      label: "Complaint Hub",         icon: MessageSquare, emoji: "🛡️", group: "Oversight",  desc: "All teacher complaints in one place",        accentColor: "#ef4444", badgeKey: "complaints" },
+  { id: "noticeboard",        label: "Noticeboard",           icon: Bell,          emoji: "🔔",  group: "Oversight",  desc: "Post notices to classes or whole school",    accentColor: "#eab308" },
+  { id: "approval-center",    label: "Approval Center",       icon: UserCheck,     emoji: "✅",  group: "Management", desc: "Leaves, gallery, e-books — unified",         accentColor: "#10b981", badgeKey: "approvals" },
+  { id: "teacher-registry",   label: "Teacher Registry",      icon: BookOpen,      emoji: "📖",  group: "Management", desc: "Register & manage teaching staff",           accentColor: "#3b82f6" },
+  { id: "non-teaching-staff", label: "Support Staff",         icon: UserSquare,    emoji: "👷",  group: "Management", desc: "Admin, security, accounts & more",           accentColor: "#64748b" },
+  { id: "faculty-mapping",    label: "Faculty Mapping",       icon: Users,         emoji: "🗂️", group: "Management", desc: "Assign teachers to classes & sections",      accentColor: "#6366f1" },
+  { id: "student-registry",   label: "Student Registry",      icon: GraduationCap, emoji: "🎓",  group: "Management", desc: "5000+ students with smart pagination",       accentColor: "#8b5cf6" },
+  { id: "analytics",          label: "Performance Analytics", icon: BarChart2,     emoji: "📈",  group: "Enterprise", desc: "Exam scores and class analytics",            accentColor: "#06b6d4" },
+  { id: "audit-logs",         label: "Audit Logs",            icon: Shield,        emoji: "🔐",  group: "Enterprise", desc: "Immutable trail of all admin actions",       accentColor: "#D4AF37" },
+  { id: "visitor-log",        label: "Visitor Log",           icon: UserSquare,    emoji: "🚪",  group: "Enterprise", desc: "Campus visitor check-in & check-out",        accentColor: "#14b8a6" },
+  { id: "id-card-gen",        label: "ID Card Gen",           icon: CreditCard,    emoji: "💳",  group: "Enterprise", desc: "Generate & print student ID cards",          accentColor: "#a855f7" },
+  { id: "assets",             label: "Assets & Inventory",    icon: Package,       emoji: "📦",  group: "Enterprise", desc: "Track school equipment and resources",       accentColor: "#f97316" },
 ];
 
-const GROUP_COLORS: Record<string, string> = {
-  Foundation: "text-blue-400 bg-blue-500/10 border-blue-500/20",
-  Oversight: "text-purple-400 bg-purple-500/10 border-purple-500/20",
-  Management: "text-green-400 bg-green-500/10 border-green-500/20",
-  Enterprise: "text-[#D4AF37] bg-[#D4AF37]/10 border-[#D4AF37]/20",
+const GROUP_ORDER = ["Foundation", "Oversight", "Management", "Enterprise"];
+
+const GROUP_ZONE: Record<string, { color: string; sidebarClass: string }> = {
+  Foundation: { color: "#6366f1", sidebarClass: "text-indigo-400" },
+  Oversight:  { color: "#06b6d4", sidebarClass: "text-cyan-400" },
+  Management: { color: "#10b981", sidebarClass: "text-emerald-400" },
+  Enterprise: { color: "#D4AF37", sidebarClass: "text-yellow-500" },
 };
 
-const GROUP_ORDER = ["Foundation", "Oversight", "Management", "Enterprise"];
+const containerVariants = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.05 } },
+};
+
+const cardVariants = {
+  hidden: { opacity: 0, y: 24 },
+  show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 200, damping: 22 } },
+};
 
 const changePwSchema = z.object({
   currentPassword: z.string().min(1, "Required"),
@@ -121,6 +134,140 @@ const profileSchema = z.object({
   recoveryEmail: z.string().email("Valid email").optional().or(z.literal("")),
   recoveryPhone: z.string().max(20).optional().or(z.literal("")),
 });
+
+function useCountUp(target: number, duration = 1100) {
+  const [count, setCount] = useState(0);
+  const rafRef = useRef(0);
+
+  useEffect(() => {
+    if (target === 0) { setCount(0); return; }
+    const startTime = performance.now();
+    const animate = (now: number) => {
+      const progress = Math.min((now - startTime) / duration, 1);
+      const eased = 1 - (1 - progress) ** 3;
+      setCount(Math.round(eased * target));
+      if (progress < 1) rafRef.current = requestAnimationFrame(animate);
+    };
+    rafRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [target, duration]);
+
+  return count;
+}
+
+function CircularProgress({ value, max, color, size = 52 }: {
+  value: number; max: number; color: string; size?: number;
+}) {
+  const sw = 3.5;
+  const r = (size - sw) / 2;
+  const circumference = 2 * Math.PI * r;
+  const pct = max > 0 ? Math.min(value / max, 1) : 0;
+  const offset = circumference * (1 - pct);
+  return (
+    <svg width={size} height={size} style={{ transform: "rotate(-90deg)", flexShrink: 0 }}>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={sw} />
+      <circle
+        cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={sw}
+        strokeDasharray={circumference} strokeDashoffset={offset}
+        strokeLinecap="round"
+        style={{ transition: "stroke-dashoffset 1.2s cubic-bezier(0.22,1,0.36,1)" }}
+      />
+    </svg>
+  );
+}
+
+function TileCard({ tile, badge, onClick }: {
+  tile: TileConfig;
+  badge?: number;
+  onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const [tiltX, setTiltX] = useState(0);
+  const [tiltY, setTiltY] = useState(0);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width - 0.5) * 16;
+    const y = -((e.clientY - rect.top) / rect.height - 0.5) * 16;
+    setTiltX(x);
+    setTiltY(y);
+    setHovered(true);
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    setTiltX(0);
+    setTiltY(0);
+    setHovered(false);
+  }, []);
+
+  return (
+    <motion.button
+      variants={cardVariants}
+      onClick={onClick}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      animate={{ rotateX: tiltY, rotateY: tiltX, scale: hovered ? 1.04 : 1 }}
+      transition={{ type: "spring", stiffness: 280, damping: 26 }}
+      data-testid={`tile-${tile.id}`}
+      className="relative text-left focus:outline-none flex flex-col"
+      style={{
+        transformStyle: "preserve-3d",
+        background: "rgba(255,255,255,0.04)",
+        backdropFilter: "blur(16px)",
+        WebkitBackdropFilter: "blur(16px)",
+        borderRadius: "16px",
+        border: "1px solid rgba(255,255,255,0.08)",
+        borderTop: `3px solid ${tile.accentColor}`,
+        boxShadow: hovered
+          ? `0 24px 64px ${tile.accentColor}20, 0 8px 24px rgba(0,0,0,0.5), 0 0 0 1px ${tile.accentColor}25`
+          : "0 4px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05)",
+        padding: "20px",
+        minHeight: "164px",
+        cursor: "pointer",
+      }}
+    >
+      {badge !== undefined && badge > 0 && (
+        <span
+          className="absolute top-3 right-3 min-w-[20px] h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center px-1.5"
+          data-testid={`badge-${tile.id}`}
+        >
+          {badge > 9 ? "9+" : badge}
+        </span>
+      )}
+
+      <div
+        className="flex items-center justify-center rounded-2xl mb-4"
+        style={{
+          width: "60px",
+          height: "60px",
+          background: `${tile.accentColor}18`,
+          boxShadow: `0 0 22px ${tile.accentColor}28, 0 0 40px ${tile.accentColor}10`,
+          fontSize: "30px",
+          lineHeight: 1,
+          flexShrink: 0,
+          transition: "box-shadow 0.2s",
+          ...(hovered ? { boxShadow: `0 0 28px ${tile.accentColor}50, 0 0 60px ${tile.accentColor}18` } : {}),
+        }}
+      >
+        {tile.emoji}
+      </div>
+
+      <h3 className="font-bold text-white text-sm leading-tight mb-1.5">{tile.label}</h3>
+      <p className="text-white/40 text-xs leading-relaxed flex-1">{tile.desc}</p>
+
+      <div
+        className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg self-start transition-all duration-200"
+        style={{
+          background: hovered ? `${tile.accentColor}20` : "transparent",
+          color: hovered ? tile.accentColor : "rgba(255,255,255,0.30)",
+          border: `1px solid ${hovered ? tile.accentColor + "40" : "transparent"}`,
+        }}
+      >
+        Open <ArrowRight className="w-3 h-3" />
+      </div>
+    </motion.button>
+  );
+}
 
 function PinInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (
@@ -445,7 +592,7 @@ export default function AdminDashboard() {
     enabled: !!me?.schoolId,
   });
 
-  const { data: teachersList = [] } = useQuery<any[]>({
+  const { data: teachersList = [] } = useQuery<unknown[]>({
     queryKey: ["/api/schools", me?.schoolId, "teachers"],
     queryFn: async () => {
       if (!me?.schoolId) return [];
@@ -466,7 +613,7 @@ export default function AdminDashboard() {
     enabled: !!me?.schoolId,
   });
 
-  const { data: pendingLeaves = [] } = useQuery<any[]>({
+  const { data: pendingLeaves = [] } = useQuery<unknown[]>({
     queryKey: ["/api/leave/school", me?.schoolId],
     queryFn: async () => {
       if (!me?.schoolId) return [];
@@ -476,7 +623,7 @@ export default function AdminDashboard() {
     enabled: !!me?.schoolId,
   });
 
-  const { data: galleryItems = [] } = useQuery<any[]>({
+  const { data: galleryItems = [] } = useQuery<unknown[]>({
     queryKey: ["/api/gallery", me?.schoolId, "all"],
     queryFn: async () => {
       if (!me?.schoolId) return [];
@@ -486,7 +633,7 @@ export default function AdminDashboard() {
     enabled: !!me?.schoolId,
   });
 
-  const { data: pendingEbooks = [] } = useQuery<any[]>({
+  const { data: pendingEbooks = [] } = useQuery<unknown[]>({
     queryKey: ["/api/library/books", me?.schoolId, "pending"],
     queryFn: async () => {
       if (!me?.schoolId) return [];
@@ -496,7 +643,7 @@ export default function AdminDashboard() {
     enabled: !!me?.schoolId,
   });
 
-  const { data: complaints = [] } = useQuery<any[]>({
+  const { data: complaints = [] } = useQuery<unknown[]>({
     queryKey: ["/api/complaints/school", me?.schoolId],
     queryFn: async () => {
       if (!me?.schoolId) return [];
@@ -506,15 +653,20 @@ export default function AdminDashboard() {
     enabled: !!me?.schoolId,
   });
 
-  const pendingLeavesCount = (pendingLeaves as any[]).filter(l => l.status === "pending").length;
-  const pendingGalleryCount = (galleryItems as any[]).filter(g => !g.approved).length;
-  const openComplaintsCount = (complaints as any[]).filter(c => c.status === "open" || c.status === "in_progress").length;
-  const totalActionRequired = pendingLeavesCount + pendingGalleryCount + pendingEbooks.length;
+  const pendingLeavesCount   = (pendingLeaves  as { status: string }[]).filter(l => l.status === "pending").length;
+  const pendingGalleryCount  = (galleryItems   as { approved: boolean }[]).filter(g => !g.approved).length;
+  const openComplaintsCount  = (complaints     as { status: string }[]).filter(c => c.status === "open" || c.status === "in_progress").length;
+  const totalActionRequired  = pendingLeavesCount + pendingGalleryCount + pendingEbooks.length;
 
   const BADGES: Record<string, number> = {
-    approvals: totalActionRequired,
+    approvals:  totalActionRequired,
     complaints: openComplaintsCount,
   };
+
+  const studentCountAnimated   = useCountUp(me?.studentCount ?? 0);
+  const facultyCountAnimated   = useCountUp(teachersList.length);
+  const attendancePctAnimated  = useCountUp(dailySummary?.percentage ?? 0);
+  const actionCountAnimated    = useCountUp(totalActionRequired);
 
   const logoutMutation = useMutation({
     mutationFn: async () => { await apiRequest("POST", "/api/logout"); },
@@ -524,171 +676,253 @@ export default function AdminDashboard() {
 
   if (isLoading || !me) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#0A1628]">
-        <Loader2 className="w-8 h-8 animate-spin text-[#D4AF37]" />
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#0f172a" }}>
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-9 h-9 animate-spin" style={{ color: "#6366f1" }} />
+          <p className="text-sm text-white/40 font-medium">Loading Command Center…</p>
+        </div>
       </div>
     );
   }
 
   const meta = {
-    classes: schoolMeta?.classes ?? [],
-    sections: schoolMeta?.sections ?? [],
-    subjects: schoolMeta?.subjects ?? [],
+    classes:    schoolMeta?.classes    ?? [],
+    sections:   schoolMeta?.sections   ?? [],
+    subjects:   schoolMeta?.subjects   ?? [],
     exam_types: schoolMeta?.exam_types ?? [],
   };
 
   const renderModule = () => {
     switch (activeModule) {
-      case "school-setup": return <SchoolSetup schoolId={me.schoolId} />;
-      case "student-registry": return <StudentRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} />;
-      case "faculty-mapping": return <FacultyMapping schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
-      case "teacher-registry": return <TeacherRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} onNavigate={(mod) => goToModule(mod as ActiveModule)} />;
-      case "non-teaching-staff": return <NonTeachingStaff schoolId={me.schoolId} />;
-      case "approval-center": return <ApprovalCenter schoolId={me.schoolId} />;
-      case "audit-logs": return <AuditLogsModule schoolId={me.schoolId} />;
-      case "visitor-log": return <VisitorLogModule schoolId={me.schoolId} />;
-      case "attendance": return <AttendanceOverview schoolId={me.schoolId} onViewStudent={() => goToModule("student-registry")} />;
-      case "analytics": return <PerformanceAnalytics schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} examTypes={meta.exam_types} />;
-      case "exam-controller": return <ExamController schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} examTypes={meta.exam_types} />;
-      case "complaint-hub": return <ComplaintHub schoolId={me.schoolId} />;
-      case "noticeboard": return <NoticeboardAdmin schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} adminUserId={me.id} />;
-      case "timetable": return <TimetableMaster schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
-      case "id-card-gen": return <IdCardGen schoolId={me.schoolId} schoolName={me.schoolName} classes={meta.classes} sections={meta.sections} />;
-      case "assets": return <AssetsInventory schoolId={me.schoolId} />;
-      case "school-calendar": return <SchoolCalendar />;
+      case "school-setup":      return <SchoolSetup schoolId={me.schoolId} />;
+      case "student-registry":  return <StudentRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} />;
+      case "faculty-mapping":   return <FacultyMapping schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
+      case "teacher-registry":  return <TeacherRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} onNavigate={(mod) => goToModule(mod as ActiveModule)} />;
+      case "non-teaching-staff":return <NonTeachingStaff schoolId={me.schoolId} />;
+      case "approval-center":   return <ApprovalCenter schoolId={me.schoolId} />;
+      case "audit-logs":        return <AuditLogsModule schoolId={me.schoolId} />;
+      case "visitor-log":       return <VisitorLogModule schoolId={me.schoolId} />;
+      case "attendance":        return <AttendanceOverview schoolId={me.schoolId} onViewStudent={() => goToModule("student-registry")} />;
+      case "analytics":         return <PerformanceAnalytics schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} examTypes={meta.exam_types} />;
+      case "exam-controller":   return <ExamController schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} examTypes={meta.exam_types} />;
+      case "complaint-hub":     return <ComplaintHub schoolId={me.schoolId} />;
+      case "noticeboard":       return <NoticeboardAdmin schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} adminUserId={me.id} />;
+      case "timetable":         return <TimetableMaster schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
+      case "id-card-gen":       return <IdCardGen schoolId={me.schoolId} schoolName={me.schoolName} classes={meta.classes} sections={meta.sections} />;
+      case "assets":            return <AssetsInventory schoolId={me.schoolId} />;
+      case "school-calendar":   return <SchoolCalendar />;
       default: return null;
     }
   };
 
+  const attendancePresent = dailySummary?.present ?? 0;
+  const attendanceTotal   = dailySummary?.total   ?? 0;
+
   return (
-    <div className="min-h-screen bg-[#0A1628] text-white flex flex-col">
-      {/* ===== TOP NAVBAR ===== */}
-      <header className="border-b border-white/10 bg-[#0F1E35] sticky top-0 z-50">
+    <div className="min-h-screen text-white flex flex-col" style={{ background: "#0f172a" }}>
+
+      {/* ── Decorative background radial blobs ── */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden z-0" aria-hidden>
+        <div style={{ position: "absolute", top: "-160px", right: "-100px",  width: "600px", height: "600px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.10) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", bottom: "-140px", left: "-80px", width: "560px", height: "560px", borderRadius: "50%", background: "radial-gradient(circle, rgba(6,182,212,0.07) 0%, transparent 65%)"  }} />
+        <div style={{ position: "absolute", top: "40%", left: "35%",         width: "420px", height: "420px", borderRadius: "50%", background: "radial-gradient(circle, rgba(139,92,246,0.05) 0%, transparent 65%)" }} />
+      </div>
+
+      {/* ══════════ STICKY GLASS NAVBAR ══════════ */}
+      <header
+        className="sticky top-0 z-50 border-b"
+        style={{
+          backdropFilter: "blur(20px)",
+          WebkitBackdropFilter: "blur(20px)",
+          background: "rgba(15,23,42,0.85)",
+          borderColor: "rgba(99,102,241,0.18)",
+          boxShadow: "0 1px 0 rgba(99,102,241,0.10)",
+        }}
+        data-testid="admin-navbar"
+      >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             {activeModule !== "grid" && (
-              <button onClick={() => goToModule("grid")}
-                className="p-1.5 rounded-lg hover:bg-white/10 transition-colors mr-1" data-testid="button-back-to-grid">
-                <ChevronLeft className="w-5 h-5 text-white/70" />
+              <button
+                onClick={() => goToModule("grid")}
+                className="p-1.5 rounded-lg hover:bg-white/10 transition-colors mr-1"
+                data-testid="button-back-to-grid"
+              >
+                <ChevronLeft className="w-5 h-5 text-white/60" />
               </button>
             )}
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-[#D4AF37] to-[#B8962E] flex items-center justify-center shadow-lg">
-              <GraduationCap className="w-5 h-5 text-[#0A1628]" />
+            <div
+              className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg"
+              style={{ background: "linear-gradient(135deg, #6366f1, #06b6d4)", boxShadow: "0 4px 16px rgba(99,102,241,0.35)" }}
+            >
+              <GraduationCap className="w-5 h-5 text-white" />
             </div>
-            <div>
-              <h1 className="text-base font-bold text-white tracking-tight" data-testid="text-dashboard-title">BENIUS</h1>
-              <p className="text-[10px] text-white/40 leading-none" data-testid="text-school-name">{me.schoolName}</p>
+            <div className="leading-tight">
+              <h1 className="text-base font-extrabold text-white tracking-tight" data-testid="text-dashboard-title">BENIUS</h1>
+              <p className="text-[10px] text-white/35 leading-none font-medium" data-testid="text-school-name">{me.schoolName}</p>
             </div>
           </div>
+
           <div className="flex items-center gap-2">
-            <span className="hidden sm:block text-sm text-white/40" data-testid="text-user-email">{me.email}</span>
-            <Button variant="ghost" size="sm" onClick={() => setShowProfile(true)}
-              className="text-white/60 hover:text-white hover:bg-white/10" data-testid="button-open-profile">
+            <span className="hidden sm:block text-sm text-white/35 font-medium" data-testid="text-user-email">{me.email}</span>
+            <Button
+              variant="ghost" size="sm"
+              onClick={() => setShowProfile(true)}
+              className="text-white/50 hover:text-white hover:bg-white/10"
+              data-testid="button-open-profile"
+            >
               <UserCircle2 className="w-4 h-4 mr-1" /> Profile
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => logoutMutation.mutate()} disabled={logoutMutation.isPending}
-              className="text-white/60 hover:text-white hover:bg-white/10" data-testid="button-logout">
-              <LogOut className="w-4 h-4 mr-1" /> Logout
+            <Button
+              variant="ghost" size="sm"
+              onClick={() => logoutMutation.mutate()}
+              disabled={logoutMutation.isPending}
+              className="text-white/50 hover:text-white hover:bg-white/10"
+              data-testid="button-logout"
+            >
+              {logoutMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <LogOut className="w-4 h-4 mr-1" />}
+              Logout
             </Button>
           </div>
         </div>
       </header>
 
-      {/* ===== LIVE PULSE HEADER ===== */}
-      <div className="border-b border-white/5 bg-[#0F1E35]/50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3">
-          <div className="flex flex-wrap items-center gap-4 sm:gap-8">
-            <div className="flex items-center gap-2" data-testid="stat-students">
-              <GraduationCap className="w-4 h-4 text-[#D4AF37]" />
-              <div>
-                <p className="text-[10px] text-white/40 leading-none">Total Students</p>
-                <p className="text-base font-bold text-white">{me.studentCount.toLocaleString()}</p>
+      {/* ══════════ PREMIUM STATS BAR ══════════ */}
+      <div
+        className="relative z-10 border-b"
+        style={{ borderColor: "rgba(255,255,255,0.05)", background: "rgba(255,255,255,0.018)" }}
+      >
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+
+            {/* Total Students */}
+            <div
+              className="flex items-center gap-3 rounded-xl px-4 py-3"
+              style={{ background: "rgba(212,175,55,0.07)", border: "1px solid rgba(212,175,55,0.15)" }}
+              data-testid="stat-students"
+            >
+              <CircularProgress value={studentCountAnimated} max={Math.max(me.studentCount, 1)} color="#D4AF37" />
+              <div className="min-w-0">
+                <p className="text-[10px] text-white/40 leading-none mb-1 font-medium">Total Students</p>
+                <p className="text-xl font-extrabold text-white tracking-tight">{studentCountAnimated.toLocaleString()}</p>
               </div>
             </div>
-            <div className="w-px h-8 bg-white/10 hidden sm:block" />
-            <div className="flex items-center gap-2" data-testid="stat-teachers">
-              <Users className="w-4 h-4 text-blue-400" />
-              <div>
-                <p className="text-[10px] text-white/40 leading-none">Faculty Strength</p>
-                <p className="text-base font-bold text-white">{teachersList.length}</p>
+
+            {/* Faculty Strength */}
+            <div
+              className="flex items-center gap-3 rounded-xl px-4 py-3"
+              style={{ background: "rgba(59,130,246,0.07)", border: "1px solid rgba(59,130,246,0.15)" }}
+              data-testid="stat-teachers"
+            >
+              <CircularProgress value={facultyCountAnimated} max={Math.max(teachersList.length, 1)} color="#3b82f6" />
+              <div className="min-w-0">
+                <p className="text-[10px] text-white/40 leading-none mb-1 font-medium">Faculty Strength</p>
+                <p className="text-xl font-extrabold text-white tracking-tight">{facultyCountAnimated}</p>
               </div>
             </div>
-            <div className="w-px h-8 bg-white/10 hidden sm:block" />
-            <div className="flex items-center gap-2" data-testid="stat-attendance">
-              <TrendingUp className="w-4 h-4 text-green-400" />
-              <div>
-                <p className="text-[10px] text-white/40 leading-none">Daily Presence</p>
-                <p className="text-base font-bold text-white">
-                  {dailySummary?.total ? `${dailySummary.percentage}%` : "—"}
+
+            {/* Daily Presence */}
+            <div
+              className="flex items-center gap-3 rounded-xl px-4 py-3"
+              style={{ background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.15)" }}
+              data-testid="stat-attendance"
+            >
+              <CircularProgress value={attendancePctAnimated} max={100} color="#10b981" />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <p className="text-[10px] text-white/40 leading-none font-medium">Daily Presence</p>
+                  {dailySummary?.total ? (
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+                    </span>
+                  ) : null}
+                </div>
+                <p className="text-xl font-extrabold text-white tracking-tight">
+                  {attendanceTotal ? `${attendancePctAnimated}%` : "—"}
+                </p>
+                {attendanceTotal > 0 && (
+                  <p className="text-[10px] text-white/30 mt-0.5">{attendancePresent}/{attendanceTotal} present</p>
+                )}
+              </div>
+            </div>
+
+            {/* Action Required */}
+            <div
+              className="flex items-center gap-3 rounded-xl px-4 py-3 cursor-pointer transition-all hover:bg-red-500/12"
+              style={{
+                background: totalActionRequired > 0 ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.03)",
+                border: `1px solid ${totalActionRequired > 0 ? "rgba(239,68,68,0.20)" : "rgba(255,255,255,0.06)"}`,
+              }}
+              onClick={() => goToModule("approval-center")}
+              data-testid="stat-action-required"
+            >
+              <CircularProgress value={Math.min(actionCountAnimated, 10)} max={10} color={totalActionRequired > 0 ? "#ef4444" : "#4b5563"} />
+              <div className="min-w-0">
+                <p className="text-[10px] text-white/40 leading-none mb-1 font-medium">Action Required</p>
+                <p className={`text-xl font-extrabold tracking-tight ${totalActionRequired > 0 ? "text-red-400" : "text-white"}`}>
+                  {actionCountAnimated}
                 </p>
               </div>
             </div>
-            <div className="w-px h-8 bg-white/10 hidden sm:block" />
-            <div className="flex items-center gap-2 cursor-pointer" onClick={() => goToModule("approval-center")} data-testid="stat-action-required">
-              <AlertTriangle className={`w-4 h-4 ${totalActionRequired > 0 ? "text-red-400" : "text-white/30"}`} />
-              <div>
-                <p className="text-[10px] text-white/40 leading-none">Action Required</p>
-                <p className={`text-base font-bold ${totalActionRequired > 0 ? "text-red-400" : "text-white"}`}>{totalActionRequired}</p>
-              </div>
-            </div>
-            <div className="ml-auto text-right hidden sm:block">
-              <p className="text-[10px] text-white/40 leading-none">Today</p>
-              <p className="text-sm font-medium text-white/70">{new Date().toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })}</p>
-            </div>
+
+          </div>
+
+          {/* Date pill */}
+          <div className="mt-3 flex justify-end">
+            <span className="text-[11px] text-white/25 font-medium">
+              {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}
+            </span>
           </div>
         </div>
       </div>
 
-      {/* ===== CONTENT ROW: sidebar + main ===== */}
-      <div className="flex flex-1 min-h-0">
+      {/* ══════════ CONTENT ROW: sidebar + main ══════════ */}
+      <div className="relative z-10 flex flex-1 min-h-0">
 
-        {/* ── Collapsible Sidebar ── */}
+        {/* ── Translucent Floating Sidebar ── */}
         <aside
-          className={`flex flex-col flex-shrink-0 border-r border-white/10 bg-[#0D1A2F] transition-all duration-300 ease-in-out overflow-hidden ${sidebarOpen ? "w-60" : "w-0"}`}
+          className={`flex flex-col flex-shrink-0 border-r transition-all duration-300 ease-in-out overflow-hidden ${sidebarOpen ? "w-60" : "w-0"}`}
+          style={{
+            backdropFilter: "blur(20px)",
+            WebkitBackdropFilter: "blur(20px)",
+            background: "rgba(255,255,255,0.03)",
+            borderColor: "rgba(255,255,255,0.06)",
+          }}
           data-testid="admin-sidebar"
         >
           <div className="w-60 flex flex-col h-full overflow-y-auto">
-            {/* Sidebar header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-              <span className="text-xs font-bold text-white/40 uppercase tracking-widest">Navigation</span>
+            <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+              <span className="text-[10px] font-bold text-white/30 uppercase tracking-widest">Navigation</span>
               <button
                 onClick={() => setSidebarOpen(false)}
-                className="p-1 rounded-md text-white/30 hover:text-white hover:bg-white/10 transition-colors"
-                title="Collapse sidebar"
+                className="p-1 rounded-md text-white/25 hover:text-white hover:bg-white/8 transition-colors"
                 data-testid="button-collapse-sidebar"
               >
                 <PanelLeftClose className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Groups */}
-            <nav className="flex-1 py-3 space-y-0.5" data-testid="sidebar-nav">
+            <nav className="flex-1 py-2 space-y-0" data-testid="sidebar-nav">
               {GROUP_ORDER.map(group => {
                 const isOpen = expandedGroups[group];
                 const groupTiles = TILES.filter(t => t.group === group);
-                const groupTextColor: Record<string, string> = {
-                  Foundation: "text-blue-400",
-                  Oversight: "text-purple-400",
-                  Management: "text-green-400",
-                  Enterprise: "text-[#D4AF37]",
-                };
+                const zone = GROUP_ZONE[group];
                 return (
                   <div key={group}>
-                    {/* Group header */}
                     <button
                       onClick={() => toggleGroup(group)}
                       className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-white/5 transition-colors group"
                       data-testid={`sidebar-group-${group.toLowerCase()}`}
                     >
-                      <span className={`text-[11px] font-bold uppercase tracking-widest ${groupTextColor[group]}`}>
+                      <span className={`text-[10px] font-extrabold uppercase tracking-widest ${zone.sidebarClass}`}>
                         {group}
                       </span>
                       <ChevronDown
-                        className={`w-3.5 h-3.5 text-white/30 group-hover:text-white/60 transition-all duration-200 ${isOpen ? "rotate-180" : ""}`}
+                        className={`w-3.5 h-3.5 text-white/25 group-hover:text-white/50 transition-all duration-200 ${isOpen ? "rotate-180" : ""}`}
                       />
                     </button>
 
-                    {/* Sub-items with smooth expand/collapse */}
                     <div
                       className="overflow-hidden transition-all duration-250 ease-in-out"
                       style={{ maxHeight: isOpen ? `${groupTiles.length * 44}px` : "0px" }}
@@ -701,13 +935,17 @@ export default function AdminDashboard() {
                             key={tile.id}
                             onClick={() => goToModule(tile.id)}
                             data-testid={`sidebar-item-${tile.id}`}
-                            className={`w-full flex items-center gap-3 px-5 py-2.5 text-sm text-left transition-all duration-150 relative ${
-                              isActive
-                                ? "bg-[#D4AF37]/10 text-[#D4AF37] border-r-2 border-[#D4AF37]"
-                                : "text-white/55 hover:text-white hover:bg-white/5"
-                            }`}
+                            className="w-full flex items-center gap-3 px-5 py-2.5 text-sm text-left transition-all duration-150 relative"
+                            style={isActive ? {
+                              background: `${tile.accentColor}12`,
+                              borderRight: `2px solid ${tile.accentColor}`,
+                              color: tile.accentColor,
+                            } : { color: "rgba(255,255,255,0.45)" }}
                           >
-                            <tile.icon className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-[#D4AF37]" : "text-white/40"}`} />
+                            <tile.icon
+                              className="w-4 h-4 flex-shrink-0"
+                              style={{ color: isActive ? tile.accentColor : "rgba(255,255,255,0.30)" }}
+                            />
                             <span className="truncate text-xs font-medium">{tile.label}</span>
                             {badge !== undefined && badge > 0 && (
                               <span className="ml-auto flex-shrink-0 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
@@ -729,73 +967,74 @@ export default function AdminDashboard() {
         <main className="flex-1 min-w-0 overflow-x-hidden">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
 
-            {/* Sidebar toggle (shows when sidebar is collapsed) */}
             {!sidebarOpen && (
               <button
                 onClick={() => setSidebarOpen(true)}
-                className="flex items-center gap-2 mb-4 text-xs text-white/40 hover:text-white transition-colors"
+                className="flex items-center gap-2 mb-5 text-xs text-white/35 hover:text-white transition-colors"
                 data-testid="button-expand-sidebar"
               >
-                <PanelLeftOpen className="w-4 h-4" />
-                Show navigation
+                <PanelLeftOpen className="w-4 h-4" /> Show navigation
               </button>
             )}
 
             {activeModule === "grid" ? (
-              <div className="space-y-8">
+              <div className="space-y-10">
                 {GROUP_ORDER.map(group => {
                   const groupTiles = TILES.filter(t => t.group === group);
+                  const zone = GROUP_ZONE[group];
                   return (
-                    <div key={group}>
-                      <div className="flex items-center gap-3 mb-4">
-                        <span className={`text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full border ${GROUP_COLORS[group]}`}>
+                    <motion.section
+                      key={group}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.4 }}
+                    >
+                      {/* Zone header */}
+                      <div className="flex items-center gap-4 mb-5">
+                        <h2
+                          className="text-xs font-extrabold uppercase tracking-[0.18em] whitespace-nowrap"
+                          style={{ color: zone.color, textShadow: `0 0 20px ${zone.color}55` }}
+                        >
                           {group}
-                        </span>
-                        <div className="flex-1 h-px bg-white/5" />
+                        </h2>
+                        <div
+                          className="flex-1 h-px"
+                          style={{ background: `linear-gradient(to right, ${zone.color}50, transparent)` }}
+                        />
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                        {groupTiles.map(tile => {
-                          const badge = tile.badgeKey ? BADGES[tile.badgeKey] : undefined;
-                          return (
-                            <button
-                              key={tile.id}
-                              onClick={() => goToModule(tile.id)}
-                              data-testid={`tile-${tile.id}`}
-                              className="group relative text-left rounded-xl border border-white/10 bg-[#1A2942] p-5 hover:bg-[#1E3350] hover:border-[#D4AF37]/40 transition-all duration-200 hover:shadow-lg hover:shadow-[#D4AF37]/5"
-                            >
-                              {badge !== undefined && badge > 0 && (
-                                <span className="absolute top-3 right-3 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center" data-testid={`badge-${tile.id}`}>
-                                  {badge > 9 ? "9+" : badge}
-                                </span>
-                              )}
-                              <div className="flex items-start gap-3 mb-3">
-                                <div className="p-2.5 rounded-lg bg-[#D4AF37]/15 group-hover:bg-[#D4AF37]/25 transition-colors shrink-0">
-                                  <tile.icon className="w-5 h-5 text-[#D4AF37]" />
-                                </div>
-                              </div>
-                              <h3 className="font-semibold text-white text-sm leading-tight mb-1 group-hover:text-[#D4AF37] transition-colors">{tile.label}</h3>
-                              <p className="text-white/40 text-xs leading-relaxed">{tile.desc}</p>
-                              <div className="mt-3 flex items-center gap-1 text-[#D4AF37]/50 text-xs group-hover:text-[#D4AF37] transition-colors">
-                                <span>Open</span>
-                                <ArrowRight className="w-3 h-3" />
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
+
+                      {/* Cards grid with staggered entrance */}
+                      <motion.div
+                        variants={containerVariants}
+                        initial="hidden"
+                        animate="show"
+                        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
+                      >
+                        {groupTiles.map(tile => (
+                          <TileCard
+                            key={tile.id}
+                            tile={tile}
+                            badge={tile.badgeKey ? BADGES[tile.badgeKey] : undefined}
+                            onClick={() => goToModule(tile.id)}
+                          />
+                        ))}
+                      </motion.div>
+                    </motion.section>
                   );
                 })}
               </div>
             ) : (
               <div>
                 <div className="mb-6 flex items-center gap-2">
-                  <button onClick={() => goToModule("grid")}
-                    className="text-white/40 hover:text-white text-sm flex items-center gap-1 transition-colors" data-testid="breadcrumb-back">
+                  <button
+                    onClick={() => goToModule("grid")}
+                    className="text-white/40 hover:text-white text-sm flex items-center gap-1 transition-colors"
+                    data-testid="breadcrumb-back"
+                  >
                     <ChevronLeft className="w-4 h-4" /> Dashboard
                   </button>
-                  <span className="text-white/20">/</span>
-                  <span className="text-white/70 text-sm">{TILES.find(t => t.id === activeModule)?.label ?? activeModule}</span>
+                  <span className="text-white/15">/</span>
+                  <span className="text-white/65 text-sm">{TILES.find(t => t.id === activeModule)?.label ?? activeModule}</span>
                 </div>
                 {renderModule()}
               </div>
@@ -804,9 +1043,15 @@ export default function AdminDashboard() {
         </main>
       </div>
 
-      {/* ===== FOOTER ===== */}
-      <footer className="border-t border-white/5 py-4 text-center">
-        <p className="text-white/20 text-xs">BENIUS School Management Platform · {me.schoolName} · School Code: <span className="font-mono text-[#D4AF37]/50">{me.schoolCode}</span></p>
+      {/* ══════════ FOOTER ══════════ */}
+      <footer
+        className="relative z-10 border-t py-4 text-center"
+        style={{ borderColor: "rgba(255,255,255,0.04)" }}
+      >
+        <p className="text-white/15 text-xs">
+          BENIUS Command Center · {me.schoolName} ·{" "}
+          <span className="font-mono" style={{ color: "#D4AF37", opacity: 0.5 }}>{me.schoolCode}</span>
+        </p>
       </footer>
 
       {showProfile && <AdminProfilePanel me={me} onClose={() => setShowProfile(false)} />}
