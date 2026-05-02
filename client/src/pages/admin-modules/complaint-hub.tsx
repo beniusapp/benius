@@ -23,6 +23,10 @@ interface AdminComplaint {
   createdAt: string;
   studentName: string | null;
   teacherName: string | null;
+  complainantName: string | null;
+  complainantClass: string | null;
+  complainantSection: string | null;
+  complainantPhone: string | null;
 }
 
 type TabKey = "private" | "grievances" | "escalated";
@@ -89,17 +93,35 @@ function ComplaintCard({
           </div>
           {c.teacherName && (
             <p className="text-xs font-bold text-slate-800">
-              {c.complaintType === "teacher-to-admin" ? "From:" : "Teacher:"} {c.teacherName}
+              {c.complaintType === "teacher-to-admin" ? "From:" : "Against:"} {c.teacherName}
             </p>
           )}
-          {c.studentName && (
-            <p className="text-xs font-bold text-slate-800">
-              {c.complaintType === "student-to-staff" ? "Against staff:" : "Student:"} {c.studentName}
-            </p>
+          {c.studentName && c.complaintType !== "student-to-staff" && (
+            <p className="text-xs font-bold text-slate-800">Student: {c.studentName}</p>
           )}
           {c.reportedStudentName && !c.studentName && (
             <p className="text-xs font-bold text-slate-800">Reported: {c.reportedStudentName}</p>
           )}
+
+          {/* Reporter (student who filed the grievance) */}
+          {(c.complaintType === "student-to-staff" || c.complaintType === "student-peer-report") && c.complainantName && (
+            <div className="mt-1.5 flex flex-col gap-0.5 border-l-2 border-blue-300 pl-2">
+              <p className="text-xs font-bold text-slate-800">
+                Filed by: <span className="text-blue-700">{c.complainantName}</span>
+              </p>
+              {(c.complainantClass || c.complainantSection) && (
+                <p className="text-xs text-slate-500 font-semibold">
+                  Class {c.complainantClass ?? "—"} · Section {c.complainantSection ?? "—"}
+                </p>
+              )}
+              {c.complainantPhone && (
+                <p className="text-xs text-slate-500 font-semibold">
+                  Phone: {c.complainantPhone}
+                </p>
+              )}
+            </div>
+          )}
+
           <p className="text-slate-400 text-xs mt-0.5">{fmtDate(c.createdAt)}</p>
         </div>
       </div>

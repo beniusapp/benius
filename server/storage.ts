@@ -37,7 +37,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
-import { eq, sql, like, count, and, desc, gte, lte, or, ilike, isNull, inArray, type SQL } from "drizzle-orm";
+import { eq, sql, like, count, and, desc, gte, lte, or, ilike, isNull, inArray, alias, type SQL } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
 
 export class DatabaseStorage {
@@ -636,16 +636,40 @@ export class DatabaseStorage {
     return c;
   }
 
-  async getComplaintsBySchool(schoolId: number): Promise<(Complaint & { studentName: string | null; teacherName: string | null })[]> {
-    const result = await db.select().from(complaints)
+  async getComplaintsBySchool(schoolId: number): Promise<(Complaint & {
+    studentName: string | null;
+    teacherName: string | null;
+    complainantName: string | null;
+    complainantClass: string | null;
+    complainantSection: string | null;
+    complainantPhone: string | null;
+  })[]> {
+    const complainantStudents = alias(students, "complainant_students");
+    const result = await db.select({
+      complaint: complaints,
+      reportedStudent: { name: students.name },
+      teacher: { fullName: teachers.fullName },
+      complainant: {
+        name: complainantStudents.name,
+        class: complainantStudents.class,
+        section: complainantStudents.section,
+        phone: complainantStudents.phone,
+      },
+    })
+      .from(complaints)
       .leftJoin(students, eq(complaints.studentId, students.id))
       .leftJoin(teachers, eq(complaints.teacherId, teachers.id))
+      .leftJoin(complainantStudents, eq(complaints.complainantStudentId, complainantStudents.id))
       .where(and(eq(complaints.schoolId, schoolId), eq(complaints.isDeleted, false)))
       .orderBy(desc(complaints.createdAt));
     return result.map(r => ({
-      ...r.complaints,
-      studentName: r.students?.name || null,
-      teacherName: r.teachers?.fullName || null,
+      ...r.complaint,
+      studentName: r.reportedStudent?.name ?? null,
+      teacherName: r.teacher?.fullName ?? null,
+      complainantName: r.complainant?.name ?? null,
+      complainantClass: r.complaint.complainantClass ?? r.complainant?.class ?? null,
+      complainantSection: r.complaint.complainantSection ?? r.complainant?.section ?? null,
+      complainantPhone: r.complaint.contactNumber ?? r.complainant?.phone ?? null,
     }));
   }
 
