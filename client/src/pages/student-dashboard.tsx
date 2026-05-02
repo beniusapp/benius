@@ -116,10 +116,14 @@ export default function StudentDashboard() {
 
   const { data: monthlyAttendance } = useQuery<MonthlyAttendanceResponse>({
     queryKey: ["/api/student/attendance/monthly", currentYear, currentMonth],
-    queryFn: () =>
-      fetch(`/api/student/attendance/monthly?year=${currentYear}&month=${currentMonth}`, {
-        credentials: "include",
-      }).then((r) => r.json()),
+    queryFn: async () => {
+      const r = await fetch(
+        `/api/student/attendance/monthly?year=${currentYear}&month=${currentMonth}`,
+        { credentials: "include" }
+      );
+      if (!r.ok) throw new Error(`Attendance fetch failed: ${r.status}`);
+      return r.json() as Promise<MonthlyAttendanceResponse>;
+    },
     enabled: !!student,
   });
 
