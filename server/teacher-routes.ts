@@ -741,7 +741,10 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const list = await storage.getClassFeedComplaints(teacher.schoolId, teacher.assignedClass, teacher.assignedSection);
+    const mappings = await storage.getFacultyMappingsByTeacher(req.session.teacherId);
+    const filterClass = (req.query.cls as string) || undefined;
+    const filterSection = (req.query.section as string) || undefined;
+    const list = await storage.getClassFeedComplaints(teacher.schoolId, mappings, filterClass, filterSection);
     res.json(list);
   });
 
@@ -758,8 +761,12 @@ export function registerTeacherRoutes(app: Express) {
     // Hard-fail if no target studentId — peer reports must always have one
     if (!complaint.studentId) return res.status(403).json({ message: "Complaint has no target student" });
     const targetStudent = await storage.getStudentById(complaint.studentId);
-    if (!targetStudent || targetStudent.class !== teacher.assignedClass || targetStudent.section !== teacher.assignedSection) {
-      return res.status(403).json({ message: "Not authorized: target student not in your class" });
+    const teacherMappingsForResolve = await storage.getFacultyMappingsByTeacher(teacher.id);
+    const isAuthorizedToResolve = teacherMappingsForResolve.some(
+      m => m.className === targetStudent?.class && m.section === targetStudent?.section
+    );
+    if (!targetStudent || !isAuthorizedToResolve) {
+      return res.status(403).json({ message: "Not authorized: target student not in your assigned classes" });
     }
     const updated = await storage.resolveComplaint(id, teacher.schoolId, resolutionRemarks.trim());
     if (!updated) return res.status(404).json({ message: "Complaint not found" });
@@ -793,8 +800,12 @@ export function registerTeacherRoutes(app: Express) {
     // Hard-fail if no target studentId — peer reports must always have one
     if (!complaint.studentId) return res.status(403).json({ message: "Complaint has no target student" });
     const targetStudent = await storage.getStudentById(complaint.studentId);
-    if (!targetStudent || targetStudent.class !== teacher.assignedClass || targetStudent.section !== teacher.assignedSection) {
-      return res.status(403).json({ message: "Not authorized: target student not in your class" });
+    const teacherMappingsForEscalate = await storage.getFacultyMappingsByTeacher(teacher.id);
+    const isAuthorizedToEscalate = teacherMappingsForEscalate.some(
+      m => m.className === targetStudent?.class && m.section === targetStudent?.section
+    );
+    if (!targetStudent || !isAuthorizedToEscalate) {
+      return res.status(403).json({ message: "Not authorized: target student not in your assigned classes" });
     }
     const updated = await storage.escalateComplaint(id, teacher.schoolId);
     if (!updated) return res.status(404).json({ message: "Complaint not found" });

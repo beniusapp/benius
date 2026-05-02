@@ -761,14 +761,33 @@ export class DatabaseStorage {
     return c;
   }
 
-  async getClassFeedComplaints(schoolId: number, cls: string, section: string): Promise<(Complaint & { complainantStudentName: string | null })[]> {
-    // Step 1: find IDs of TARGET students in this class/section
+  async getClassFeedComplaints(
+    schoolId: number,
+    mappings: { className: string; section: string }[],
+    filterClass?: string,
+    filterSection?: string,
+  ): Promise<(Complaint & { complainantStudentName: string | null })[]> {
+    // Narrow mappings to the selected filter (if any)
+    const activeMappings = filterClass
+      ? mappings.filter(m =>
+          m.className === filterClass &&
+          (!filterSection || filterSection === "all" || m.section === filterSection)
+        )
+      : mappings;
+
+    if (activeMappings.length === 0) return [];
+
+    // Step 1: find IDs of TARGET students across all active class-section pairs
+    const classSectionConditions = activeMappings.map(m =>
+      and(eq(students.class, m.className), eq(students.section, m.section))
+    ) as SQL[];
+
     const targetStudentRows = await db.select({ id: students.id })
       .from(students)
       .where(and(
         eq(students.schoolId, schoolId),
-        eq(students.class, cls),
-        eq(students.section, section),
+        eq(students.isActive, true),
+        or(...classSectionConditions),
       ));
     const targetIds = targetStudentRows.map(s => s.id);
     if (targetIds.length === 0) return [];

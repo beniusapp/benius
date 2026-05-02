@@ -486,30 +486,97 @@ function ClassFeedDrawer({
 
 function ClassFeedTab({ teacher }: { teacher: TeacherMe }) {
   const [selected, setSelected] = useState<ClassFeedEntry | null>(null);
+  const [filterClass, setFilterClass] = useState("all");
+  const [filterSection, setFilterSection] = useState("all");
+
+  // Derive unique sorted class list from teacher mappings
+  const assignedClasses = Array.from(new Set(teacher.mappings.map(m => m.className))).sort((a, b) =>
+    parseInt(a) - parseInt(b) || a.localeCompare(b)
+  );
+
+  // Derive sections available for the selected class
+  const assignedSections = filterClass === "all"
+    ? []
+    : Array.from(new Set(
+        teacher.mappings.filter(m => m.className === filterClass).map(m => m.section)
+      )).sort();
+
+  // Reset section when class changes
+  const handleClassChange = (cls: string) => {
+    setFilterClass(cls);
+    setFilterSection("all");
+  };
+
+  const params = new URLSearchParams();
+  if (filterClass !== "all") params.set("cls", filterClass);
+  if (filterSection !== "all") params.set("section", filterSection);
+  const qs = params.toString() ? `?${params.toString()}` : "";
 
   const { data: feed = [], isLoading } = useQuery<ClassFeedEntry[]>({
-    queryKey: ["/api/complaints/class-feed"],
+    queryKey: ["/api/complaints/class-feed", filterClass, filterSection],
     queryFn: async () => {
-      const res = await fetch("/api/complaints/class-feed", { credentials: "include" });
+      const res = await fetch(`/api/complaints/class-feed${qs}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
   });
 
+  const noMappings = teacher.mappings.length === 0;
+
   return (
     <div className="space-y-4">
+      {/* Header */}
       <div className="flex items-center gap-2">
         <Users className="w-5 h-5 text-purple-600" />
         <h2 className="text-base font-bold">Class Feed — Peer Reports</h2>
-        <span className="ml-auto text-xs text-muted-foreground">Class {teacher.assignedClass}-{teacher.assignedSection}</span>
+        <span className="ml-auto text-xs text-muted-foreground">
+          {assignedClasses.length > 0
+            ? `${assignedClasses.length} class${assignedClasses.length > 1 ? "es" : ""} assigned`
+            : "No classes assigned"}
+        </span>
       </div>
 
-      {isLoading ? (
+      {/* Filters */}
+      {!noMappings && (
+        <div className="flex gap-2 flex-wrap">
+          <select
+            value={filterClass}
+            onChange={e => handleClassChange(e.target.value)}
+            className="h-9 px-3 rounded-xl border border-gray-200 text-sm bg-white dark:bg-gray-900 dark:border-gray-700 focus:outline-none focus:ring-2 focus:ring-purple-400"
+            data-testid="select-feed-class"
+          >
+            <option value="all">All Classes</option>
+            {assignedClasses.map(cls => (
+              <option key={cls} value={cls}>Class {cls}</option>
+            ))}
+          </select>
+
+          <select
+            value={filterSection}
+            onChange={e => setFilterSection(e.target.value)}
+            disabled={filterClass === "all"}
+            className="h-9 px-3 rounded-xl border border-gray-200 text-sm bg-white dark:bg-gray-900 dark:border-gray-700 focus:outline-none focus:ring-2 focus:ring-purple-400 disabled:opacity-50 disabled:cursor-not-allowed"
+            data-testid="select-feed-section"
+          >
+            <option value="all">All Sections</option>
+            {assignedSections.map(sec => (
+              <option key={sec} value={sec}>Section {sec}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {noMappings ? (
+        <div className="text-center py-10 text-muted-foreground">
+          <Users className="w-10 h-10 mx-auto mb-2 opacity-20" />
+          <p className="text-sm">No class assignments found. Contact your admin.</p>
+        </div>
+      ) : isLoading ? (
         <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-purple-600" /></div>
       ) : feed.length === 0 ? (
         <div className="text-center py-10 text-muted-foreground">
           <Users className="w-10 h-10 mx-auto mb-2 opacity-20" />
-          <p className="text-sm">No peer reports for your class yet.</p>
+          <p className="text-sm">No peer reports for the selected class yet.</p>
         </div>
       ) : (
         <div className="space-y-3">
