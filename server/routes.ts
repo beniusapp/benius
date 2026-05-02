@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { type Server } from "http";
 import { storage } from "./storage";
-import { insertSchoolSchema, attendanceRecords, studentProfiles, students } from "@shared/schema";
+import { insertSchoolSchema, attendanceRecords, studentProfiles, students, schools } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import multer from "multer";
@@ -2169,6 +2169,155 @@ export async function registerRoutes(
       details: `Bulk deactivated ${deactivated} students (IDs: ${numIds.slice(0, 20).join(",")})`,
     });
     res.json({ deactivated });
+  });
+
+  // ===== ADMIN: FEE RECORDS =====
+  const feeRecordBodySchema = z.object({
+    studentId: z.number().int().positive(),
+    feeType: z.string().min(1).max(100),
+    amount: z.number().int().positive(),
+    dueDate: z.string().min(1),
+    paidDate: z.string().optional().nullable(),
+    status: z.enum(["Due", "Paid", "Overdue"]),
+    receiptNumber: z.string().max(50).optional().nullable(),
+    notes: z.string().optional().nullable(),
+    academicYear: z.string().max(20).optional().nullable(),
+  });
+
+  app.get("/api/admin/fees", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const { studentId, status } = req.query as { studentId?: string; status?: string };
+    const opts: { studentId?: number; status?: string } = {};
+    if (studentId) opts.studentId = parseInt(studentId);
+    if (status) opts.status = status;
+    const records = await storage.getFeeRecordsBySchool(schoolId, opts);
+    const studentIds = [...new Set(records.map(r => r.studentId))];
+    let studentMap: Record<number, { name: string; class: string; section: string; digitalStudentId: string }> = {};
+    if (studentIds.length > 0) {
+      const stList = await db.select({ id: students.id, name: students.name, class: students.class, section: students.section, digitalStudentId: students.digitalStudentId })
+        .from(students)
+        .where(and(inArray(students.id, studentIds), eq(students.schoolId, schoolId)));
+      for (const s of stList) studentMap[s.id] = s;
+    }
+    res.json(records.map(r => ({ ...r, student: studentMap[r.studentId] ?? null })));
+  });
+
+  app.post("/api/admin/fees", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const parsed = feeRecordBodySchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const [studentCheck] = await db.select({ id: students.id }).from(students)
+      .where(and(eq(students.id, parsed.data.studentId), eq(students.schoolId, schoolId)));
+    if (!studentCheck) return res.status(400).json({ message: "Student does not belong to this school" });
+    const rec = await storage.createFeeRecord({ ...parsed.data, schoolId, createdBy: req.session.userId });
+    res.status(201).json(rec);
+  });
+
+  app.patch("/api/admin/fees/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid fee record ID" });
+    const parsed = feeRecordBodySchema.partial().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    if (parsed.data.studentId !== undefined) {
+      const [studentCheck] = await db.select({ id: students.id }).from(students)
+        .where(and(eq(students.id, parsed.data.studentId), eq(students.schoolId, schoolId)));
+      if (!studentCheck) return res.status(400).json({ message: "Student does not belong to this school" });
+    }
+    const updated = await storage.updateFeeRecord(id, schoolId, parsed.data);
+    if (!updated) return res.status(404).json({ message: "Fee record not found" });
+    res.json(updated);
+  });
+
+  app.delete("/api/admin/fees/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid fee record ID" });
+    const deleted = await storage.deleteFeeRecord(id, schoolId);
+    if (!deleted) return res.status(404).json({ message: "Fee record not found" });
+    res.json({ success: true });
+  });
+
+  // ===== STUDENT: VIEW OWN FEES =====
+  app.get("/api/student/fees", async (req, res) => {
+    if (!req.session.studentId) return res.status(403).json({ message: "Student access required" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(403).json({ message: "Student not found" });
+    const records = await storage.getFeeRecordsByStudent(req.session.studentId, student.schoolId);
+    res.json(records);
+  });
+
+  // ===== STUDENT: DOWNLOAD RECEIPT =====
+  app.get("/api/student/fees/:id/receipt", async (req, res) => {
+    if (!req.session.studentId) return res.status(403).json({ message: "Student access required" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(403).json({ message: "Student not found" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid fee record ID" });
+    const records = await storage.getFeeRecordsByStudent(req.session.studentId, student.schoolId);
+    const rec = records.find(r => r.id === id);
+    if (!rec) return res.status(404).json({ message: "Fee record not found" });
+    if (rec.status !== "Paid") return res.status(400).json({ message: "Receipt only available for paid records" });
+    const [school] = await db.select({ name: schools.name }).from(schools).where(eq(schools.id, student.schoolId));
+    const esc = (s: string | null | undefined) => (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    const paidDateStr = rec.paidDate ? new Date(rec.paidDate).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" }) : "—";
+    const dueDateStr = new Date(rec.dueDate).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" });
+    const amountStr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(rec.amount);
+    const schoolName = esc(school?.name ?? "School");
+    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Fee Receipt</title>
+<style>
+  body{font-family:Arial,sans-serif;margin:0;padding:32px;color:#1e293b;background:#fff;}
+  .receipt{max-width:580px;margin:auto;border:2px solid #06b6d4;border-radius:12px;padding:32px;}
+  .header{text-align:center;border-bottom:2px solid #e2e8f0;padding-bottom:20px;margin-bottom:20px;}
+  .header h1{margin:0 0 4px;font-size:22px;color:#0891b2;}
+  .header p{margin:0;font-size:13px;color:#64748b;}
+  .badge{display:inline-block;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:20px;padding:4px 14px;font-weight:700;font-size:13px;margin-bottom:16px;}
+  table{width:100%;border-collapse:collapse;margin-top:8px;}
+  td{padding:9px 6px;font-size:14px;border-bottom:1px solid #f1f5f9;}
+  td:first-child{color:#64748b;width:45%;}
+  td:last-child{font-weight:600;}
+  .amount-row td:last-child{font-size:18px;font-weight:800;color:#0891b2;}
+  .footer{margin-top:24px;text-align:center;font-size:11px;color:#94a3b8;}
+  @media print{body{padding:0;}button{display:none;}}
+</style></head><body>
+<div class="receipt">
+  <div class="header">
+    <h1>${schoolName}</h1>
+    <p>Official Fee Payment Receipt</p>
+  </div>
+  <div style="text-align:center;margin-bottom:16px;">
+    <span class="badge">&#10003; PAID</span>
+  </div>
+  <table>
+    <tr><td>Receipt No.</td><td>${esc(rec.receiptNumber) || "—"}</td></tr>
+    <tr><td>Student Name</td><td>${esc(student?.name) || "—"}</td></tr>
+    <tr><td>Student ID</td><td>${esc(student?.digitalStudentId) || "—"}</td></tr>
+    <tr><td>Class / Section</td><td>${esc(student?.class) || "—"} / ${esc(student?.section) || "—"}</td></tr>
+    <tr><td>Fee Type</td><td>${esc(rec.feeType)}</td></tr>
+    ${rec.academicYear ? `<tr><td>Academic Year</td><td>${esc(rec.academicYear)}</td></tr>` : ""}
+    <tr><td>Due Date</td><td>${esc(dueDateStr)}</td></tr>
+    <tr><td>Payment Date</td><td>${esc(paidDateStr)}</td></tr>
+    ${rec.notes ? `<tr><td>Notes</td><td>${esc(rec.notes)}</td></tr>` : ""}
+    <tr class="amount-row"><td>Amount Paid</td><td>${esc(amountStr)}</td></tr>
+  </table>
+  <div class="footer">
+    <p>This is a computer-generated receipt. No signature required.</p>
+    <p>&#169; ${new Date().getFullYear()} BENIUS &middot; ${schoolName}</p>
+  </div>
+</div>
+<script>window.print();</script>
+</body></html>`;
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Content-Disposition", `inline; filename="receipt-${rec.id}.html"`);
+    res.send(html);
   });
 
   registerTeacherRoutes(app);

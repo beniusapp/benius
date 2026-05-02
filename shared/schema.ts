@@ -498,6 +498,26 @@ export const insertStudentProfileSchema = createInsertSchema(studentProfiles).om
 export type InsertStudentProfile = z.infer<typeof insertStudentProfileSchema>;
 export type StudentProfile = typeof studentProfiles.$inferSelect;
 
+export const feeRecords = pgTable("fee_records", {
+  id: serial("id").primaryKey(),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  feeType: varchar("fee_type", { length: 100 }).notNull(),
+  amount: integer("amount").notNull(),
+  dueDate: date("due_date").notNull(),
+  paidDate: date("paid_date"),
+  status: varchar("status", { length: 20 }).notNull().default("Due"),
+  receiptNumber: varchar("receipt_number", { length: 50 }),
+  notes: text("notes"),
+  academicYear: varchar("academic_year", { length: 20 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
+});
+
+export const insertFeeRecordSchema = createInsertSchema(feeRecords).omit({ id: true, createdAt: true });
+export type InsertFeeRecord = z.infer<typeof insertFeeRecordSchema>;
+export type FeeRecord = typeof feeRecords.$inferSelect;
+
 export const insertHomeworkSubmissionSchema = createInsertSchema(homeworkSubmissions).omit({ id: true, submittedAt: true });
 export type InsertHomeworkSubmission = z.infer<typeof insertHomeworkSubmissionSchema>;
 export type HomeworkSubmission = typeof homeworkSubmissions.$inferSelect;

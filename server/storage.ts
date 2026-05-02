@@ -6,7 +6,7 @@ import {
   studentLeaveRequests, auditLogs, visitorLogs, studentProfiles, teacherAllocations,
   promotionOverrides, gradingTiers, gradingRules, academicHistory,
   schoolAssets, assetLogs, verificationLogs, timetableStructure, securityAudit, leavePolicies,
-  nonTeachingStaff, facultyMappings,
+  nonTeachingStaff, facultyMappings, feeRecords,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
@@ -34,6 +34,7 @@ import {
   type LeavePolicy, type InsertLeavePolicy,
   type NonTeachingStaff, type InsertNonTeachingStaff,
   type FacultyMapping, type InsertFacultyMapping,
+  type FeeRecord, type InsertFeeRecord,
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
@@ -3281,6 +3282,41 @@ export class DatabaseStorage {
         mappings: mappingsByTeacher[r.teachers.id] ?? [],
       })),
     };
+  }
+
+  async createFeeRecord(data: InsertFeeRecord): Promise<FeeRecord> {
+    const [rec] = await db.insert(feeRecords).values(data).returning();
+    return rec;
+  }
+
+  async getFeeRecordsByStudent(studentId: number, schoolId: number): Promise<FeeRecord[]> {
+    return await db.select().from(feeRecords)
+      .where(and(eq(feeRecords.studentId, studentId), eq(feeRecords.schoolId, schoolId)))
+      .orderBy(desc(feeRecords.dueDate));
+  }
+
+  async getFeeRecordsBySchool(schoolId: number, opts?: { studentId?: number; status?: string }): Promise<FeeRecord[]> {
+    const conditions = [eq(feeRecords.schoolId, schoolId)];
+    if (opts?.studentId) conditions.push(eq(feeRecords.studentId, opts.studentId));
+    if (opts?.status) conditions.push(eq(feeRecords.status, opts.status));
+    return await db.select().from(feeRecords)
+      .where(and(...conditions))
+      .orderBy(desc(feeRecords.createdAt));
+  }
+
+  async updateFeeRecord(id: number, schoolId: number, data: Partial<InsertFeeRecord>): Promise<FeeRecord | undefined> {
+    const [rec] = await db.update(feeRecords)
+      .set(data)
+      .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)))
+      .returning();
+    return rec || undefined;
+  }
+
+  async deleteFeeRecord(id: number, schoolId: number): Promise<boolean> {
+    const result = await db.delete(feeRecords)
+      .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)))
+      .returning();
+    return result.length > 0;
   }
 }
 

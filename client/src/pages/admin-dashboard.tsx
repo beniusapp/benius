@@ -35,6 +35,7 @@ import TimetableMaster from "./admin-modules/timetable-master";
 import IdCardGen from "./admin-modules/id-card-gen";
 import AssetsInventory from "./admin-modules/assets-inventory";
 import SchoolCalendar from "./admin-modules/school-calendar";
+import FeesManager from "./admin-modules/fees-manager";
 
 interface MeResponse {
   id: number; email: string; role: string;
@@ -66,7 +67,7 @@ type ActiveModule =
   | "complaint-hub" | "noticeboard" | "approval-center" | "faculty-mapping"
   | "student-registry" | "analytics" | "audit-logs" | "visitor-log"
   | "id-card-gen" | "assets" | "school-calendar"
-  | "teacher-registry" | "non-teaching-staff";
+  | "teacher-registry" | "non-teaching-staff" | "fees-manager";
 
 interface TileConfig {
   id: ActiveModule;
@@ -92,6 +93,7 @@ const TILES: TileConfig[] = [
   { id: "non-teaching-staff", label: "Support Staff",         icon: UserSquare,    emoji: "👷",  group: "Management", desc: "Admin, security, accounts & more",           accentColor: "#64748b" },
   { id: "faculty-mapping",    label: "Faculty Mapping",       icon: Users,         emoji: "🗂️", group: "Management", desc: "Assign teachers to classes & sections",      accentColor: "#6366f1" },
   { id: "student-registry",   label: "Student Registry",      icon: GraduationCap, emoji: "🎓",  group: "Management", desc: "5000+ students with smart pagination",       accentColor: "#8b5cf6" },
+  { id: "fees-manager",       label: "Fees & Payments",       icon: CreditCard,    emoji: "💰",  group: "Management", desc: "Student fee records, dues and receipts",      accentColor: "#10b981" },
   { id: "analytics",          label: "Performance Analytics", icon: BarChart2,     emoji: "📈",  group: "Enterprise", desc: "Exam scores and class analytics",            accentColor: "#06b6d4" },
   { id: "audit-logs",         label: "Audit Logs",            icon: Shield,        emoji: "🔐",  group: "Enterprise", desc: "Immutable trail of all admin actions",       accentColor: "#D4AF37" },
   { id: "visitor-log",        label: "Visitor Log",           icon: UserSquare,    emoji: "🚪",  group: "Enterprise", desc: "Campus visitor check-in & check-out",        accentColor: "#14b8a6" },
@@ -715,6 +717,7 @@ export default function AdminDashboard() {
       case "id-card-gen":       return <IdCardGen schoolId={me.schoolId} schoolName={me.schoolName} classes={meta.classes} sections={meta.sections} />;
       case "assets":            return <AssetsInventory schoolId={me.schoolId} />;
       case "school-calendar":   return <SchoolCalendar />;
+      case "fees-manager":      return <FeesManager schoolId={me.schoolId} />;
       default: return null;
     }
   };
