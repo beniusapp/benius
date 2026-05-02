@@ -459,6 +459,7 @@ export default function SchoolSetup({ schoolId }: Props) {
   const [sections, setSections] = useState<string[]>([]);
   const [subjects, setSubjects] = useState<string[]>([]);
   const [examTypes, setExamTypes] = useState<string[]>([]);
+  const [classSections, setClassSections] = useState<Record<string, string[]>>({});
   const [classInput, setClassInput] = useState("");
   const [sectionInput, setSectionInput] = useState("");
   const [subjectInput, setSubjectInput] = useState("");
@@ -504,6 +505,10 @@ export default function SchoolSetup({ schoolId }: Props) {
       setSections(meta.sections || []);
       setSubjects(meta.subjects || []);
       setExamTypes(meta.exam_types || []);
+      const cs = (meta as unknown as Record<string, unknown>).class_sections;
+      if (cs && typeof cs === "object" && !Array.isArray(cs)) {
+        setClassSections(cs as Record<string, string[]>);
+      }
       setLoaded(true);
     }
   }, [meta, loaded]);
@@ -556,6 +561,28 @@ export default function SchoolSetup({ schoolId }: Props) {
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
+
+  const saveClassSectionsMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("PUT", `/api/school-metadata/${schoolId}/class-sections-map`, { classSections });
+    },
+    onSuccess: () => {
+      toast({ title: "Saved", description: "Class-section mapping updated." });
+      queryClient.invalidateQueries({ queryKey: ["/api/school-metadata", schoolId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/school-config"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  function toggleClassSection(cls: string, sec: string) {
+    setClassSections(prev => {
+      const current = prev[cls] || [];
+      const updated = current.includes(sec)
+        ? current.filter(s => s !== sec)
+        : [...current, sec];
+      return { ...prev, [cls]: updated };
+    });
+  }
 
   const addTo = (arr: string[], set: (v: string[]) => void, val: string, setInput: (v: string) => void) => {
     const trimmed = val.trim();
@@ -657,6 +684,61 @@ export default function SchoolSetup({ schoolId }: Props) {
           onRemove={v => removeFrom(examTypes, setExamTypes, v)}
           onSave={() => saveMutation.mutate({ key: "exam_types", values: examTypes })}
           testId="exam-types" isPending={saveMutation.isPending} />
+      </div>
+
+      {/* ===== CLASS → SECTION ASSIGNMENT ===== */}
+      <div className="pt-2">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-2 rounded-lg bg-[#6366f1]/20">
+            <Grid3X3 className="w-5 h-5 text-[#6366f1]" />
+          </div>
+          <div>
+            <h3 className="font-bold text-white">Class-Section Mapping</h3>
+            <p className="text-white/40 text-xs">Define which sections belong to each class. Teachers will see only these sections when selecting a class.</p>
+          </div>
+        </div>
+        {classes.length === 0 || sections.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-white/10 p-6 text-center text-white/30 text-sm">
+            Add classes and sections above first, then map them here.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {classes.map(cls => (
+              <div key={cls} className="rounded-xl border border-white/10 bg-[#1A2942] px-4 py-3 flex flex-wrap items-center gap-3">
+                <span className="text-white font-semibold text-sm w-20 shrink-0">Class {cls}</span>
+                <div className="flex flex-wrap gap-2 flex-1">
+                  {sections.map(sec => {
+                    const active = (classSections[cls] || []).includes(sec);
+                    return (
+                      <button
+                        key={sec}
+                        onClick={() => toggleClassSection(cls, sec)}
+                        className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                          active
+                            ? "bg-[#6366f1] text-white border-[#6366f1]"
+                            : "border-white/20 text-white/40 hover:border-white/50 hover:text-white/70"
+                        }`}
+                        data-testid={`btn-toggle-section-${cls}-${sec}`}
+                      >
+                        {sec}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            <Button
+              size="sm"
+              onClick={() => saveClassSectionsMutation.mutate()}
+              disabled={saveClassSectionsMutation.isPending}
+              className="mt-2 bg-[#6366f1] hover:bg-[#4f46e5] text-white font-semibold h-9"
+              data-testid="btn-save-class-sections"
+            >
+              <Save className="w-3.5 h-3.5 mr-1.5" />
+              {saveClassSectionsMutation.isPending ? "Saving…" : "Save Class-Section Mapping"}
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* ===== ACADEMIC POLICY ===== */}

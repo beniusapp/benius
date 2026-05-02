@@ -110,7 +110,7 @@ function SkeletonCards() {
 export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
   const {
-    classes: schoolClasses,
+    classes,
     isLoading: configLoading,
     hasClasses,
     hasSections,
@@ -118,30 +118,19 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
   } = useSchoolConfigStrict(teacher.schoolId);
   const today = new Date().toISOString().split("T")[0];
 
-  const mappedCombos = teacher.mappings ?? [];
-  const hasMappings = mappedCombos.length > 0;
-
-  const classOpts = hasMappings
-    ? [...new Set(mappedCombos.map(m => m.className))]
-    : schoolClasses;
-
   const [view, setView] = useState<ViewState>("landing");
-  const [selectedClass, setSelectedClass] = useState(
-    hasMappings ? mappedCombos[0].className : ""
-  );
-  const [selectedSection, setSelectedSection] = useState(
-    hasMappings ? mappedCombos[0].section : ""
-  );
+  const [selectedClass, setSelectedClass] = useState("");
+  const [selectedSection, setSelectedSection] = useState("");
 
-  const sectionOpts = useMemo(() => {
-    if (hasMappings) return mappedCombos.filter(m => m.className === selectedClass).map(m => m.section);
-    return getSectionsForClass(selectedClass);
-  }, [hasMappings, mappedCombos, selectedClass, getSectionsForClass]);
+  const sectionOpts = useMemo(
+    () => getSectionsForClass(selectedClass),
+    [selectedClass, getSectionsForClass]
+  );
 
   const handleClassChange = useCallback((cls: string, setter: (v: string) => void) => {
     setter(cls);
-    setSelectedSection(hasMappings ? (mappedCombos.find(m => m.className === cls)?.section ?? "") : "");
-  }, [hasMappings, mappedCombos]);
+    setSelectedSection("");
+  }, []);
   const [selectedDate, setSelectedDate] = useState(today);
   const [searchQuery, setSearchQuery] = useState("");
   const [localStatuses, setLocalStatuses] = useState<Record<number, string>>({});
@@ -299,7 +288,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
   }
 
   if (view === "class-menu") {
-    const classNotReady = !hasMappings && !configLoading && (!hasClasses || !hasSections);
+    const classNotReady = !configLoading && (!hasClasses || !hasSections);
     const selectionReady = selectedClass !== "" && selectedSection !== "";
     return (
       <div className="space-y-6" data-testid="view-class-menu">
@@ -308,7 +297,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
         </Button>
         <h2 className="text-xl font-bold tracking-tight">Class Attendance</h2>
 
-        {configLoading && !hasMappings ? (
+        {configLoading ? (
           <div className="h-24 rounded-2xl bg-muted animate-pulse" />
         ) : classNotReady ? (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-5 text-center" data-testid="banner-not-configured">
@@ -325,7 +314,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                     <SelectValue placeholder="Select class" />
                   </SelectTrigger>
                   <SelectContent>
-                    {classOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                    {classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -407,7 +396,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {classOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  {classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -499,7 +488,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {classOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                {classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>

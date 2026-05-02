@@ -1597,11 +1597,23 @@ export class DatabaseStorage {
   }
 
   /**
-   * Returns a map of className → sorted unique sections derived from:
-   * 1. Active student enrolments (ground truth of what exists)
-   * 2. Faculty mappings (covers classes that have teachers but no students yet)
+   * Returns the admin-configured class → sections map.
+   * Primary source: `class_sections` key in school_metadata (set by admin in School Setup).
+   * Fallback: derives from active student enrolments + faculty mappings.
    */
   async getClassSectionsMap(schoolId: number): Promise<Record<string, string[]>> {
+    const [row] = await db.select().from(schoolMetadata)
+      .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, "class_sections")));
+
+    if (row) {
+      try {
+        const parsed = JSON.parse(row.metaValue);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return parsed as Record<string, string[]>;
+        }
+      } catch {}
+    }
+
     const studentRows = await db
       .selectDistinct({ cls: students.class, sec: students.section })
       .from(students)
@@ -1623,6 +1635,17 @@ export class DatabaseStorage {
       result[cls] = Array.from(secSet).sort();
     }
     return result;
+  }
+
+  async setClassSectionsMetadata(schoolId: number, map: Record<string, string[]>): Promise<void> {
+    const value = JSON.stringify(map);
+    const [existing] = await db.select().from(schoolMetadata)
+      .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, "class_sections")));
+    if (existing) {
+      await db.update(schoolMetadata).set({ metaValue: value }).where(eq(schoolMetadata.id, existing.id));
+    } else {
+      await db.insert(schoolMetadata).values({ schoolId, metaKey: "class_sections", metaValue: value });
+    }
   }
 
   // ===== STUDENT SEARCH =====

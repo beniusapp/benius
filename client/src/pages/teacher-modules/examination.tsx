@@ -198,7 +198,7 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
 export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
   const {
-    classes: schoolClasses,
+    classes,
     subjects,
     examTypes,
     isLoading: configLoading,
@@ -209,67 +209,35 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const today = new Date().toISOString().split("T")[0];
   const [tab, setTab] = useState<"add" | "view">("add");
 
-  const mappedCombos = teacher.mappings ?? [];
-  const hasMappings = mappedCombos.length > 0;
-  const classOpts = hasMappings ? [...new Set(mappedCombos.map(m => m.className))] : schoolClasses;
-
-  const [selectedClass, setSelectedClass] = useState(
-    hasMappings ? mappedCombos[0].className : ""
-  );
-  const [selectedSection, setSelectedSection] = useState(
-    hasMappings ? mappedCombos[0].section : ""
-  );
-  const [subject, setSubject] = useState(
-    hasMappings ? (mappedCombos[0].subject ?? "") : ""
-  );
+  const [selectedClass, setSelectedClass] = useState("");
+  const [selectedSection, setSelectedSection] = useState("");
+  const [subject, setSubject] = useState("");
   const [examType, setExamType] = useState("");
   const [totalMarks, setTotalMarks] = useState("100");
   const [marks, setMarks] = useState<Record<number, string>>({});
   const [absentMap, setAbsentMap] = useState<Record<number, boolean>>({});
   const inputRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
-  const [viewClass, setViewClass] = useState(
-    hasMappings ? mappedCombos[0].className : ""
-  );
-  const [viewSection, setViewSection] = useState(
-    hasMappings ? mappedCombos[0].section : ""
-  );
-  const [viewSubject, setViewSubject] = useState(
-    hasMappings ? (mappedCombos[0].subject ?? "") : ""
-  );
+  const [viewClass, setViewClass] = useState("");
+  const [viewSection, setViewSection] = useState("");
+  const [viewSubject, setViewSubject] = useState("");
 
   const addSectionOpts = useMemo(
-    () => hasMappings
-      ? mappedCombos.filter(m => m.className === selectedClass).map(m => m.section)
-      : getSectionsForClass(selectedClass),
-    [hasMappings, mappedCombos, selectedClass, getSectionsForClass]
+    () => getSectionsForClass(selectedClass),
+    [selectedClass, getSectionsForClass]
   );
   const viewSectionOpts = useMemo(
-    () => hasMappings
-      ? mappedCombos.filter(m => m.className === viewClass).map(m => m.section)
-      : getSectionsForClass(viewClass),
-    [hasMappings, mappedCombos, viewClass, getSectionsForClass]
+    () => getSectionsForClass(viewClass),
+    [viewClass, getSectionsForClass]
   );
 
   function handleAddClassChange(cls: string) {
     setSelectedClass(cls);
-    if (hasMappings) {
-      const combo = mappedCombos.find(m => m.className === cls);
-      setSelectedSection(combo?.section ?? "");
-      setSubject(combo?.subject ?? "");
-    } else {
-      setSelectedSection("");
-    }
+    setSelectedSection("");
   }
   function handleViewClassChange(cls: string) {
     setViewClass(cls);
-    if (hasMappings) {
-      const combo = mappedCombos.find(m => m.className === cls);
-      setViewSection(combo?.section ?? "");
-      setViewSubject(combo?.subject ?? "");
-    } else {
-      setViewSection("");
-    }
+    setViewSection("");
   }
   const [viewExamType, setViewExamType] = useState("");
   const [expandedStudent, setExpandedStudent] = useState<number | null>(null);
@@ -370,9 +338,9 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
 
   const readyToSave = !!selectedClass && !!selectedSection && !!subject && !!examType && !hasInvalidMarks;
 
-  const notConfigured = !hasMappings && !configLoading && (!hasClasses || !hasSections);
+  const notConfigured = !configLoading && (!hasClasses || !hasSections);
 
-  if (configLoading && !hasMappings) {
+  if (configLoading) {
     return (
       <div className="space-y-4" data-testid="loading-config">
         {[0,1].map(i => <div key={i} className="h-20 rounded-2xl bg-muted animate-pulse" />)}
@@ -427,7 +395,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent>
-                    {classOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                    {classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -610,7 +578,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                     <SelectValue placeholder="Select class" />
                   </SelectTrigger>
                   <SelectContent>
-                    {classOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                    {classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>

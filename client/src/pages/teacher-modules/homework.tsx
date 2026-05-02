@@ -72,7 +72,7 @@ function getAvatarColor(name: string): string {
 export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
   const {
-    classes: schoolClasses,
+    classes,
     subjects,
     isLoading: configLoading,
     hasClasses,
@@ -81,44 +81,22 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
   } = useSchoolConfigStrict(teacher.schoolId);
   const today = new Date().toISOString().split("T")[0];
 
-  const mappedCombos = teacher.mappings ?? [];
-  const hasMappings = mappedCombos.length > 0;
-  const classOpts = hasMappings ? [...new Set(mappedCombos.map(m => m.className))] : schoolClasses;
-
-  const [selectedClass, setSelectedClass] = useState(
-    hasMappings ? mappedCombos[0].className : ""
-  );
-  const [selectedSection, setSelectedSection] = useState(
-    hasMappings ? mappedCombos[0].section : ""
-  );
-  const [subject, setSubject] = useState(
-    hasMappings ? (mappedCombos[0].subject ?? "") : ""
-  );
+  const [selectedClass, setSelectedClass] = useState("");
+  const [selectedSection, setSelectedSection] = useState("");
+  const [subject, setSubject] = useState("");
 
   const sectionOpts = useMemo(
-    () => hasMappings
-      ? mappedCombos.filter(m => m.className === selectedClass).map(m => m.section)
-      : getSectionsForClass(selectedClass),
-    [hasMappings, mappedCombos, selectedClass, getSectionsForClass]
+    () => getSectionsForClass(selectedClass),
+    [selectedClass, getSectionsForClass]
   );
 
   function handleClassChange(cls: string) {
     setSelectedClass(cls);
-    if (hasMappings) {
-      const combo = mappedCombos.find(m => m.className === cls);
-      setSelectedSection(combo?.section ?? "");
-      setSubject(combo?.subject ?? "");
-    } else {
-      setSelectedSection("");
-    }
+    setSelectedSection("");
   }
 
   function handleSectionChange(sec: string) {
     setSelectedSection(sec);
-    if (hasMappings) {
-      const combo = mappedCombos.find(m => m.className === selectedClass && m.section === sec);
-      if (combo?.subject) setSubject(combo.subject);
-    }
   }
   const [content, setContent] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -243,9 +221,9 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
     setEditDueDate(entry.dueDate || "");
   }
 
-  const notConfigured = !hasMappings && !configLoading && (!hasClasses || !hasSections);
+  const notConfigured = !configLoading && (!hasClasses || !hasSections);
 
-  if (configLoading && !hasMappings) {
+  if (configLoading) {
     return (
       <div className="space-y-4" data-testid="loading-config">
         {[0,1].map(i => <div key={i} className="h-20 rounded-2xl bg-muted animate-pulse" />)}
@@ -280,7 +258,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
                   <SelectValue placeholder="Select class" />
                 </SelectTrigger>
                 <SelectContent>
-                  {classOpts.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  {classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

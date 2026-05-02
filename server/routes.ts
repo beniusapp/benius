@@ -869,6 +869,18 @@ export async function registerRoutes(
     res.json(result);
   });
 
+  app.put("/api/school-metadata/:schoolId/class-sections-map", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const { classSections } = req.body;
+    if (!classSections || typeof classSections !== "object" || Array.isArray(classSections)) {
+      return res.status(400).json({ message: "classSections must be an object" });
+    }
+    await storage.setClassSectionsMetadata(schoolId, classSections);
+    res.json({ message: "Class-section mapping saved" });
+  });
+
   // ===== ADMIN PASSWORD VERIFICATION (for Double-Lock Modal) =====
   app.post("/api/admin/verify-password", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") {
