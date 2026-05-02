@@ -885,12 +885,16 @@ export function registerTeacherRoutes(app: Express) {
     const schoolId = parseInt(req.params.schoolId);
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher || teacher.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
-    const meta = await storage.getAllSchoolMetadata(schoolId);
+    const [meta, classSections] = await Promise.all([
+      storage.getAllSchoolMetadata(schoolId),
+      storage.getClassSectionsMap(schoolId),
+    ]);
     res.json({
       classes: meta.classes || [],
       sections: meta.sections || [],
       subjects: meta.subjects || [],
       examTypes: meta.exam_types || [],
+      classSections,
     });
   });
 

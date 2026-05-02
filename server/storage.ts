@@ -1596,6 +1596,35 @@ export class DatabaseStorage {
     return result;
   }
 
+  /**
+   * Returns a map of className → sorted unique sections derived from:
+   * 1. Active student enrolments (ground truth of what exists)
+   * 2. Faculty mappings (covers classes that have teachers but no students yet)
+   */
+  async getClassSectionsMap(schoolId: number): Promise<Record<string, string[]>> {
+    const studentRows = await db
+      .selectDistinct({ cls: students.class, sec: students.section })
+      .from(students)
+      .where(and(eq(students.schoolId, schoolId), eq(students.isActive, true)));
+
+    const mappingRows = await db
+      .selectDistinct({ cls: facultyMappings.className, sec: facultyMappings.section })
+      .from(facultyMappings)
+      .where(eq(facultyMappings.schoolId, schoolId));
+
+    const map: Record<string, Set<string>> = {};
+    for (const { cls, sec } of [...studentRows, ...mappingRows]) {
+      if (!cls || !sec) continue;
+      if (!map[cls]) map[cls] = new Set();
+      map[cls].add(sec);
+    }
+    const result: Record<string, string[]> = {};
+    for (const [cls, secSet] of Object.entries(map)) {
+      result[cls] = Array.from(secSet).sort();
+    }
+    return result;
+  }
+
   // ===== STUDENT SEARCH =====
   async searchStudents(schoolId: number, query: string): Promise<Pick<Student, 'id' | 'name' | 'digitalStudentId' | 'class' | 'section' | 'photoUrl'>[]> {
     const results = await db.select({

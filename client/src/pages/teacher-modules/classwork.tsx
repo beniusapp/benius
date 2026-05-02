@@ -69,11 +69,11 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
   const {
     classes: schoolClasses,
-    sections: schoolSections,
     subjects,
     isLoading: configLoading,
     hasClasses,
     hasSections,
+    getSectionsForClass,
   } = useSchoolConfigStrict(teacher.schoolId);
   const today = new Date().toISOString().split("T")[0];
 
@@ -92,8 +92,10 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
   );
 
   const sectionOpts = useMemo(
-    () => hasMappings ? mappedCombos.filter(m => m.className === selectedClass).map(m => m.section) : schoolSections,
-    [hasMappings, mappedCombos, selectedClass, schoolSections]
+    () => hasMappings
+      ? mappedCombos.filter(m => m.className === selectedClass).map(m => m.section)
+      : getSectionsForClass(selectedClass),
+    [hasMappings, mappedCombos, selectedClass, getSectionsForClass]
   );
 
   function handleClassChange(cls: string) {

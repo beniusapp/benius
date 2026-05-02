@@ -111,10 +111,10 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
   const {
     classes: schoolClasses,
-    sections: schoolSections,
     isLoading: configLoading,
     hasClasses,
     hasSections,
+    getSectionsForClass,
   } = useSchoolConfigStrict(teacher.schoolId);
   const today = new Date().toISOString().split("T")[0];
 
@@ -135,8 +135,8 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
 
   const sectionOpts = useMemo(() => {
     if (hasMappings) return mappedCombos.filter(m => m.className === selectedClass).map(m => m.section);
-    return schoolSections;
-  }, [hasMappings, mappedCombos, selectedClass, schoolSections]);
+    return getSectionsForClass(selectedClass);
+  }, [hasMappings, mappedCombos, selectedClass, getSectionsForClass]);
 
   const handleClassChange = useCallback((cls: string, setter: (v: string) => void) => {
     setter(cls);
