@@ -297,32 +297,32 @@ export default function StudentDashboard() {
                 </span>
               </div>
 
-              {/* Quick stats pills */}
+              {/* Quick stats pills — always rendered once data loads */}
               <div className="flex flex-wrap justify-center sm:justify-start gap-2 mt-3">
-                {attendPct !== null && (
-                  <span
-                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow-sm"
-                    style={{
-                      background: attendPct >= 75 ? "#f0fdf4" : "#fef2f2",
-                      color:      attendPct >= 75 ? "#10b981" : "#ef4444",
-                      border:     `1px solid ${attendPct >= 75 ? "#bbf7d0" : "#fecaca"}`,
-                    }}
-                    data-testid="badge-attendance-pct"
-                  >
-                    <span>📊</span>
-                    Attendance: {attendPct}%
-                  </span>
-                )}
-                {pendingHwCount !== null && (
-                  <span
-                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow-sm"
-                    style={{ background: "#fffbeb", color: "#f59e0b", border: "1px solid #fde68a" }}
-                    data-testid="badge-hw-pending"
-                  >
-                    <span>📝</span>
-                    {pendingHwCount} Pending
-                  </span>
-                )}
+                <span
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow-sm"
+                  style={{
+                    background: attendPct === null ? "#f1f5f9" : attendPct >= 75 ? "#f0fdf4" : "#fef2f2",
+                    color:      attendPct === null ? "#94a3b8" : attendPct >= 75 ? "#10b981" : "#ef4444",
+                    border:     `1px solid ${attendPct === null ? "#e2e8f0" : attendPct >= 75 ? "#bbf7d0" : "#fecaca"}`,
+                  }}
+                  data-testid="badge-attendance-pct"
+                >
+                  <span>📊</span>
+                  Attendance: {attendPct !== null ? `${attendPct}%` : "—"}
+                </span>
+                <span
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow-sm"
+                  style={{
+                    background: pendingHwCount === null ? "#f1f5f9" : "#fffbeb",
+                    color:      pendingHwCount === null ? "#94a3b8" : "#f59e0b",
+                    border:     `1px solid ${pendingHwCount === null ? "#e2e8f0" : "#fde68a"}`,
+                  }}
+                  data-testid="badge-hw-pending"
+                >
+                  <span>📝</span>
+                  {pendingHwCount !== null ? pendingHwCount : "—"} Pending
+                </span>
                 {unreadCount > 0 && (
                   <span
                     className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow-sm"
@@ -428,11 +428,11 @@ export default function StudentDashboard() {
                 <div
                   className="flex items-center justify-center rounded-2xl"
                   style={{
-                    width: "60px",
-                    height: "60px",
+                    width: "68px",
+                    height: "68px",
                     background: tile.bg,
                     boxShadow: `0 4px 14px ${tile.accent}22`,
-                    fontSize: "30px",
+                    fontSize: "36px",
                     lineHeight: 1,
                     flexShrink: 0,
                   }}
