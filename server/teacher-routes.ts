@@ -6,6 +6,7 @@ import { z } from "zod";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import * as ExcelJS from "exceljs";
 
 const diskUpload = multer({
   storage: multer.diskStorage({
@@ -1756,7 +1757,6 @@ export function registerTeacherRoutes(app: Express) {
         section: section as string | undefined,
       });
 
-      const ExcelJS = (await import("exceljs")).default;
       const workbook = new ExcelJS.Workbook();
       workbook.creator = "BENIUS";
       workbook.created = new Date();

@@ -81,14 +81,15 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
       const blob = await r.blob();
       const disposition = r.headers.get("Content-Disposition") ?? "";
       const match = disposition.match(/filename="(.+)"/);
-      const filename = match ? match[1] : "students.xlsx";
+      const filename = match ? match[1] : `Student_Registry_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
+      a.href = blobUrl;
       a.download = filename;
       document.body.appendChild(a);
       a.click();
-      a.remove();
-      URL.revokeObjectURL(a.href);
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
     } catch {
       toast({ title: "Export Failed", description: "An unexpected error occurred.", variant: "destructive" });
     } finally {
