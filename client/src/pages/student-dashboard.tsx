@@ -150,9 +150,28 @@ export default function StudentDashboard() {
     return student.name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
   }, [student?.name]);
 
+  const attendPct = useMemo(() => {
+    if (!monthlyAttendance) return null;
+    const workingDays = monthlyAttendance.days.filter(
+      (d) => !d.isHoliday && !d.isSunday && !d.isFuture
+    );
+    if (workingDays.length === 0) return null;
+    const present = workingDays.filter((d) => d.status === "present").length;
+    return Math.round((present / workingDays.length) * 100);
+  }, [monthlyAttendance]);
+
+  const pendingHwCount = useMemo(() => {
+    if (!homeworkItems) return null;
+    return homeworkItems.filter(
+      (hw) => hw.submission === null || hw.submission.status === "rejected"
+    ).length;
+  }, [homeworkItems]);
+
+  const unreadCount = unreadData?.count ?? 0;
+
   if (isLoading || !student) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "linear-gradient(135deg, #f0f9ff 0%, #f8fafc 45%, #f5f3ff 100%)" }}>
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#f8fafc" }}>
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="w-10 h-10 animate-spin text-blue-500" />
           <p className="text-sm text-slate-400 font-medium">Loading your portal…</p>
@@ -163,22 +182,6 @@ export default function StudentDashboard() {
 
   const firstName = student.name.split(" ")[0];
   const greeting   = getGreeting();
-
-  const attendPct = useMemo(() => {
-    if (!monthlyAttendance) return null;
-    const workingDays = monthlyAttendance.days.filter(
-      (d) => !d.isHoliday && !d.isSunday && !d.isFuture
-    );
-    if (workingDays.length === 0) return null;
-    const present = workingDays.filter((d) => d.status === "present").length;
-    return Math.round((present / workingDays.length) * 100);
-  }, [monthlyAttendance]);
-  const pendingHwCount = homeworkItems
-    ? homeworkItems.filter(
-        (hw) => hw.submission === null || hw.submission.status === "rejected"
-      ).length
-    : null;
-  const unreadCount = unreadData?.count ?? 0;
 
   const handleTileClick = (label: string, route: string | null) => {
     if (route) { setLocation(route); return; }
