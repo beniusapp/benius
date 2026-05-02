@@ -826,8 +826,12 @@ export default function AdminDashboard() {
                 color="#D4AF37"
                 icon={
                   <motion.div
-                    animate={{ scale: [1, 1.18, 1] }}
-                    transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                    initial={{ opacity: 0, scale: 0.5 }}
+                    animate={{ opacity: 1, scale: [1, 1.12, 1] }}
+                    transition={{
+                      opacity: { duration: 0.35, delay: 0.15 },
+                      scale: { duration: 2, repeat: Infinity, ease: "easeInOut", delay: 0.35 },
+                    }}
                     style={{ filter: "drop-shadow(0 0 5px #D4AF37aa)" }}
                   >
                     <GraduationCap size={18} color="#D4AF37" strokeWidth={1.8} />
@@ -852,8 +856,12 @@ export default function AdminDashboard() {
                 color="#3b82f6"
                 icon={
                   <motion.div
-                    animate={{ rotateZ: [-6, 6, -6] }}
-                    transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+                    initial={{ opacity: 0, scale: 0.5 }}
+                    animate={{ opacity: 1, rotateZ: [-6, 6, -6] }}
+                    transition={{
+                      opacity: { duration: 0.35, delay: 0.2 },
+                      rotateZ: { duration: 2.4, repeat: Infinity, ease: "easeInOut", delay: 0.45 },
+                    }}
                     style={{ filter: "drop-shadow(0 0 5px #3b82f6aa)" }}
                   >
                     <BookOpen size={17} color="#3b82f6" strokeWidth={1.8} />
@@ -868,16 +876,17 @@ export default function AdminDashboard() {
 
             {/* Daily Presence */}
             {(() => {
-              const isHealthy = !attendanceTotal || (dailySummary?.percentage ?? 0) >= 75;
-              const presenceColor = attendanceTotal
+              const hasData = attendanceTotal > 0;
+              const isHealthy = hasData && (dailySummary?.percentage ?? 0) >= 75;
+              const presenceColor = hasData
                 ? (isHealthy ? "#10b981" : "#ef4444")
-                : "#10b981";
-              const presenceBg = attendanceTotal
+                : "#6b7280";
+              const presenceBg = hasData
                 ? (isHealthy ? "rgba(16,185,129,0.07)" : "rgba(239,68,68,0.07)")
-                : "rgba(16,185,129,0.07)";
-              const presenceBorder = attendanceTotal
+                : "rgba(255,255,255,0.03)";
+              const presenceBorder = hasData
                 ? (isHealthy ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)")
-                : "rgba(16,185,129,0.15)";
+                : "rgba(255,255,255,0.06)";
               const pulseBg = isHealthy ? "bg-emerald-400" : "bg-red-400";
               return (
                 <div
@@ -891,8 +900,12 @@ export default function AdminDashboard() {
                     color={presenceColor}
                     icon={
                       <motion.div
-                        animate={{ scale: [1, 1.10, 1] }}
-                        transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
+                        initial={{ opacity: 0, scale: 0.5 }}
+                        animate={{ opacity: 1, scale: [1, 1.10, 1] }}
+                        transition={{
+                          opacity: { duration: 0.35, delay: 0.25 },
+                          scale: { duration: 2.2, repeat: Infinity, ease: "easeInOut", delay: 0.5 },
+                        }}
                         style={{ filter: `drop-shadow(0 0 5px ${presenceColor}aa)` }}
                       >
                         <UserCheck size={17} color={presenceColor} strokeWidth={1.8} />
@@ -936,15 +949,15 @@ export default function AdminDashboard() {
                 color={totalActionRequired > 0 ? "#ef4444" : "#4b5563"}
                 icon={
                   <motion.div
+                    initial={{ opacity: 0, scale: 0.5 }}
                     animate={totalActionRequired > 0 ? {
+                      opacity: 1,
                       rotateZ: [0, 14, -14, 10, -10, 6, -6, 0],
-                    } : { rotateZ: 0 }}
+                    } : { opacity: 1, rotateZ: 0 }}
                     transition={totalActionRequired > 0 ? {
-                      duration: 0.7,
-                      repeat: Infinity,
-                      repeatDelay: 2.3,
-                      ease: "easeInOut",
-                    } : {}}
+                      opacity: { duration: 0.35, delay: 0.3 },
+                      rotateZ: { duration: 0.7, repeat: Infinity, repeatDelay: 2.3, ease: "easeInOut", delay: 0.55 },
+                    } : { opacity: { duration: 0.35, delay: 0.3 } }}
                     style={{
                       filter: totalActionRequired > 0
                         ? "drop-shadow(0 0 5px #ef4444aa)"
