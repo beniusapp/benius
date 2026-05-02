@@ -489,8 +489,20 @@ function ClassFeedTab({ teacher }: { teacher: TeacherMe }) {
   const [filterClass, setFilterClass] = useState("all");
   const [filterSection, setFilterSection] = useState("all");
 
-  // Derive unique sorted class list from teacher mappings
-  const assignedClasses = Array.from(new Set(teacher.mappings.map(m => m.className))).sort((a, b) =>
+  // Merge faculty_mappings with the legacy assignedClass/assignedSection so
+  // teachers who have only the primary assignment see their class in the dropdown.
+  const effectiveMappings = [...teacher.mappings];
+  if (teacher.assignedClass && teacher.assignedSection) {
+    const alreadyPresent = effectiveMappings.some(
+      m => m.className === teacher.assignedClass && m.section === teacher.assignedSection
+    );
+    if (!alreadyPresent) {
+      effectiveMappings.push({ className: teacher.assignedClass, section: teacher.assignedSection, subject: null });
+    }
+  }
+
+  // Derive unique sorted class list from effective mappings
+  const assignedClasses = Array.from(new Set(effectiveMappings.map(m => m.className))).sort((a, b) =>
     parseInt(a) - parseInt(b) || a.localeCompare(b)
   );
 
@@ -498,7 +510,7 @@ function ClassFeedTab({ teacher }: { teacher: TeacherMe }) {
   const assignedSections = filterClass === "all"
     ? []
     : Array.from(new Set(
-        teacher.mappings.filter(m => m.className === filterClass).map(m => m.section)
+        effectiveMappings.filter(m => m.className === filterClass).map(m => m.section)
       )).sort();
 
   // Reset section when class changes

@@ -741,10 +741,29 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const mappings = await storage.getFacultyMappingsByTeacher(req.session.teacherId);
+
+    const fmMappings = await storage.getFacultyMappingsByTeacher(req.session.teacherId);
+
+    // Merge faculty_mappings with the legacy assignedClass/assignedSection field so
+    // teachers whose assignments were saved only in the teachers table are not excluded.
+    const allMappings = [...fmMappings];
+    if (teacher.assignedClass && teacher.assignedSection) {
+      const alreadyPresent = allMappings.some(
+        m => m.className === teacher.assignedClass && m.section === teacher.assignedSection
+      );
+      if (!alreadyPresent) {
+        allMappings.push({ className: teacher.assignedClass, section: teacher.assignedSection, subject: null });
+      }
+    }
+
+    console.log(
+      `[ClassFeed] Teacher ${teacher.id} (${teacher.fullName}) — effective class assignments:`,
+      allMappings.map(m => `${m.className}-${m.section}`)
+    );
+
     const filterClass = (req.query.cls as string) || undefined;
     const filterSection = (req.query.section as string) || undefined;
-    const list = await storage.getClassFeedComplaints(teacher.schoolId, mappings, filterClass, filterSection);
+    const list = await storage.getClassFeedComplaints(teacher.schoolId, allMappings, filterClass, filterSection);
     res.json(list);
   });
 
@@ -761,8 +780,13 @@ export function registerTeacherRoutes(app: Express) {
     // Hard-fail if no target studentId — peer reports must always have one
     if (!complaint.studentId) return res.status(403).json({ message: "Complaint has no target student" });
     const targetStudent = await storage.getStudentById(complaint.studentId);
-    const teacherMappingsForResolve = await storage.getFacultyMappingsByTeacher(teacher.id);
-    const isAuthorizedToResolve = teacherMappingsForResolve.some(
+    const fmForResolve = await storage.getFacultyMappingsByTeacher(teacher.id);
+    const effectiveForResolve = [...fmForResolve];
+    if (teacher.assignedClass && teacher.assignedSection &&
+        !effectiveForResolve.some(m => m.className === teacher.assignedClass && m.section === teacher.assignedSection)) {
+      effectiveForResolve.push({ className: teacher.assignedClass, section: teacher.assignedSection, subject: null });
+    }
+    const isAuthorizedToResolve = effectiveForResolve.some(
       m => m.className === targetStudent?.class && m.section === targetStudent?.section
     );
     if (!targetStudent || !isAuthorizedToResolve) {
@@ -800,8 +824,13 @@ export function registerTeacherRoutes(app: Express) {
     // Hard-fail if no target studentId — peer reports must always have one
     if (!complaint.studentId) return res.status(403).json({ message: "Complaint has no target student" });
     const targetStudent = await storage.getStudentById(complaint.studentId);
-    const teacherMappingsForEscalate = await storage.getFacultyMappingsByTeacher(teacher.id);
-    const isAuthorizedToEscalate = teacherMappingsForEscalate.some(
+    const fmForEscalate = await storage.getFacultyMappingsByTeacher(teacher.id);
+    const effectiveForEscalate = [...fmForEscalate];
+    if (teacher.assignedClass && teacher.assignedSection &&
+        !effectiveForEscalate.some(m => m.className === teacher.assignedClass && m.section === teacher.assignedSection)) {
+      effectiveForEscalate.push({ className: teacher.assignedClass, section: teacher.assignedSection, subject: null });
+    }
+    const isAuthorizedToEscalate = effectiveForEscalate.some(
       m => m.className === targetStudent?.class && m.section === targetStudent?.section
     );
     if (!targetStudent || !isAuthorizedToEscalate) {
