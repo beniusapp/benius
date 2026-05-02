@@ -6,7 +6,7 @@ import { z } from "zod";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import * as ExcelJS from "exceljs";
+import ExcelJS from "exceljs";
 
 const diskUpload = multer({
   storage: multer.diskStorage({
@@ -1806,14 +1806,15 @@ export function registerTeacherRoutes(app: Express) {
       });
 
       sheet.columns = [
-        { header: "Student ID",  key: "digitalStudentId", width: 20 },
-        { header: "Full Name",   key: "name",             width: 28 },
-        { header: "Class",       key: "class",            width: 10 },
-        { header: "Section",     key: "section",          width: 10 },
-        { header: "Roll Number", key: "rollNo",           width: 14 },
-        { header: "Phone",       key: "phone",            width: 18 },
-        { header: "Email",       key: "email",            width: 30 },
-        { header: "Status",      key: "status",           width: 14 },
+        { header: "Student ID",    key: "digitalStudentId", width: 20 },
+        { header: "Full Name",     key: "name",             width: 28 },
+        { header: "Class",         key: "class",            width: 10 },
+        { header: "Section",       key: "section",          width: 10 },
+        { header: "Roll Number",   key: "rollNumber",       width: 14 },
+        { header: "Gender",        key: "gender",           width: 12 },
+        { header: "Guardian Name", key: "guardianName",     width: 26 },
+        { header: "Phone",         key: "phone",            width: 18 },
+        { header: "Status",        key: "status",           width: 14 },
       ];
 
       const headerRow = sheet.getRow(1);
@@ -1833,9 +1834,10 @@ export function registerTeacherRoutes(app: Express) {
           name:             r.name,
           class:            r.class,
           section:          r.section,
-          rollNo:           r.rollNo ?? "",
+          rollNumber:       r.rollNumber ?? r.rollNo ?? "",
+          gender:           r.gender ?? "",
+          guardianName:     r.guardianName ?? "",
           phone:            r.phone,
-          email:            "",
           status:           r.isActivated ? "Active" : "Pending",
         });
       }

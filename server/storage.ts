@@ -2002,7 +2002,9 @@ export class DatabaseStorage {
 
   async getStudentsForExport(schoolId: number, opts: { q?: string; cls?: string; section?: string }): Promise<Array<{
     digitalStudentId: string; name: string; class: string; section: string;
-    rollNo: string | null; phone: string; isActivated: boolean; isActive: boolean; enrollmentDate: string | null;
+    rollNo: string | null; rollNumber: number | null; phone: string;
+    gender: string | null; guardianName: string | null;
+    isActivated: boolean; isActive: boolean; enrollmentDate: string | null;
   }>> {
     const { q, cls, section } = opts;
     const conditions = [eq(students.schoolId, schoolId), eq(students.isActive, true)];
@@ -2016,6 +2018,9 @@ export class DatabaseStorage {
         class: students.class,
         section: students.section,
         phone: students.phone,
+        gender: students.gender,
+        rollNumber: students.rollNumber,
+        guardianName: students.guardianName,
         isActivated: students.isActivated,
         isActive: students.isActive,
         enrollmentDate: students.enrollmentDate,
