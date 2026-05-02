@@ -157,8 +157,8 @@ function useCountUp(target: number, duration = 1100) {
   return count;
 }
 
-function CircularProgress({ value, max, color, size = 52 }: {
-  value: number; max: number; color: string; size?: number;
+function StatRing({ value, max, color, size = 52, icon }: {
+  value: number; max: number; color: string; size?: number; icon?: React.ReactNode;
 }) {
   const sw = 3.5;
   const r = (size - sw) / 2;
@@ -166,15 +166,27 @@ function CircularProgress({ value, max, color, size = 52 }: {
   const pct = max > 0 ? Math.min(value / max, 1) : 0;
   const offset = circumference * (1 - pct);
   return (
-    <svg width={size} height={size} style={{ transform: "rotate(-90deg)", flexShrink: 0 }}>
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={sw} />
-      <circle
-        cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={sw}
-        strokeDasharray={circumference} strokeDashoffset={offset}
-        strokeLinecap="round"
-        style={{ transition: "stroke-dashoffset 1.2s cubic-bezier(0.22,1,0.36,1)" }}
-      />
-    </svg>
+    <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+      <svg width={size} height={size} style={{ transform: "rotate(-90deg)", display: "block" }}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={sw} />
+        <circle
+          cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={sw}
+          strokeDasharray={circumference} strokeDashoffset={offset}
+          strokeLinecap="round"
+          style={{ transition: "stroke-dashoffset 1.2s cubic-bezier(0.22,1,0.36,1)" }}
+        />
+      </svg>
+      {icon && (
+        <div style={{
+          position: "absolute", top: "50%", left: "50%",
+          transform: "translate(-50%, -50%)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          pointerEvents: "none",
+        }}>
+          {icon}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -808,7 +820,20 @@ export default function AdminDashboard() {
               style={{ background: "rgba(212,175,55,0.07)", border: "1px solid rgba(212,175,55,0.15)" }}
               data-testid="stat-students"
             >
-              <CircularProgress value={studentCountAnimated} max={Math.max(me.studentCount, 1)} color="#D4AF37" />
+              <StatRing
+                value={studentCountAnimated}
+                max={Math.max(me.studentCount, 1)}
+                color="#D4AF37"
+                icon={
+                  <motion.div
+                    animate={{ scale: [1, 1.18, 1] }}
+                    transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                    style={{ filter: "drop-shadow(0 0 5px #D4AF37aa)" }}
+                  >
+                    <GraduationCap size={18} color="#D4AF37" strokeWidth={1.8} />
+                  </motion.div>
+                }
+              />
               <div className="min-w-0">
                 <p className="text-[10px] text-white/40 leading-none mb-1 font-medium">Total Students</p>
                 <p className="text-xl font-extrabold text-white tracking-tight">{studentCountAnimated.toLocaleString()}</p>
@@ -821,7 +846,20 @@ export default function AdminDashboard() {
               style={{ background: "rgba(59,130,246,0.07)", border: "1px solid rgba(59,130,246,0.15)" }}
               data-testid="stat-teachers"
             >
-              <CircularProgress value={facultyCountAnimated} max={Math.max(teachersList.length, 1)} color="#3b82f6" />
+              <StatRing
+                value={facultyCountAnimated}
+                max={Math.max(teachersList.length, 1)}
+                color="#3b82f6"
+                icon={
+                  <motion.div
+                    animate={{ rotateZ: [-6, 6, -6] }}
+                    transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+                    style={{ filter: "drop-shadow(0 0 5px #3b82f6aa)" }}
+                  >
+                    <BookOpen size={17} color="#3b82f6" strokeWidth={1.8} />
+                  </motion.div>
+                }
+              />
               <div className="min-w-0">
                 <p className="text-[10px] text-white/40 leading-none mb-1 font-medium">Faculty Strength</p>
                 <p className="text-xl font-extrabold text-white tracking-tight">{facultyCountAnimated}</p>
@@ -847,7 +885,20 @@ export default function AdminDashboard() {
                   style={{ background: presenceBg, border: `1px solid ${presenceBorder}` }}
                   data-testid="stat-attendance"
                 >
-                  <CircularProgress value={attendancePctAnimated} max={100} color={presenceColor} />
+                  <StatRing
+                    value={attendancePctAnimated}
+                    max={100}
+                    color={presenceColor}
+                    icon={
+                      <motion.div
+                        animate={{ scale: [1, 1.10, 1] }}
+                        transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
+                        style={{ filter: `drop-shadow(0 0 5px ${presenceColor}aa)` }}
+                      >
+                        <UserCheck size={17} color={presenceColor} strokeWidth={1.8} />
+                      </motion.div>
+                    }
+                  />
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 mb-1">
                       <p className="text-[10px] text-white/40 leading-none font-medium">Daily Presence</p>
@@ -879,7 +930,36 @@ export default function AdminDashboard() {
               onClick={() => goToModule("approval-center")}
               data-testid="stat-action-required"
             >
-              <CircularProgress value={Math.min(actionCountAnimated, 10)} max={10} color={totalActionRequired > 0 ? "#ef4444" : "#4b5563"} />
+              <StatRing
+                value={Math.min(actionCountAnimated, 10)}
+                max={10}
+                color={totalActionRequired > 0 ? "#ef4444" : "#4b5563"}
+                icon={
+                  <motion.div
+                    animate={totalActionRequired > 0 ? {
+                      rotateZ: [0, 14, -14, 10, -10, 6, -6, 0],
+                    } : { rotateZ: 0 }}
+                    transition={totalActionRequired > 0 ? {
+                      duration: 0.7,
+                      repeat: Infinity,
+                      repeatDelay: 2.3,
+                      ease: "easeInOut",
+                    } : {}}
+                    style={{
+                      filter: totalActionRequired > 0
+                        ? "drop-shadow(0 0 5px #ef4444aa)"
+                        : "drop-shadow(0 0 3px #4b556388)",
+                      transformOrigin: "top center",
+                    }}
+                  >
+                    <Bell
+                      size={17}
+                      color={totalActionRequired > 0 ? "#ef4444" : "#6b7280"}
+                      strokeWidth={1.8}
+                    />
+                  </motion.div>
+                }
+              />
               <div className="min-w-0">
                 <p className="text-[10px] text-white/40 leading-none mb-1 font-medium">Action Required</p>
                 <p className={`text-xl font-extrabold tracking-tight ${totalActionRequired > 0 ? "text-red-400" : "text-white"}`}>
