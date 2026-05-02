@@ -1743,6 +1743,81 @@ export function registerTeacherRoutes(app: Express) {
     res.json(result);
   });
 
+  app.get("/api/schools/:schoolId/students/export", async (req, res) => {
+    try {
+      if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+      const schoolId = parseInt(req.params.schoolId);
+      if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+
+      const { q, cls, section } = req.query;
+      const rows = await storage.getStudentsForExport(schoolId, {
+        q: q as string | undefined,
+        cls: cls as string | undefined,
+        section: section as string | undefined,
+      });
+
+      const ExcelJS = (await import("exceljs")).default;
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = "BENIUS";
+      workbook.created = new Date();
+
+      const sheet = workbook.addWorksheet("Student Registry", {
+        views: [{ state: "frozen", ySplit: 1 }],
+      });
+
+      sheet.columns = [
+        { header: "Student ID",  key: "digitalStudentId", width: 20 },
+        { header: "Full Name",   key: "name",             width: 28 },
+        { header: "Class",       key: "class",            width: 10 },
+        { header: "Section",     key: "section",          width: 10 },
+        { header: "Roll Number", key: "rollNo",           width: 14 },
+        { header: "Phone",       key: "phone",            width: 18 },
+        { header: "Email",       key: "email",            width: 30 },
+        { header: "Status",      key: "status",           width: 14 },
+      ];
+
+      const headerRow = sheet.getRow(1);
+      headerRow.eachCell(cell => {
+        cell.font = { bold: true, color: { argb: "FF1A1A1A" } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD4AF37" } };
+        cell.alignment = { vertical: "middle", horizontal: "left" };
+        cell.border = {
+          bottom: { style: "thin", color: { argb: "FFB8962E" } },
+        };
+      });
+      headerRow.height = 20;
+
+      for (const r of rows) {
+        sheet.addRow({
+          digitalStudentId: r.digitalStudentId,
+          name:             r.name,
+          class:            r.class,
+          section:          r.section,
+          rollNo:           r.rollNo ?? "",
+          phone:            r.phone,
+          email:            "",
+          status:           r.isActivated ? "Active" : "Pending",
+        });
+      }
+
+      const filterParts: string[] = [];
+      if (cls)     filterParts.push(`Class ${cls}`);
+      if (section) filterParts.push(`Section ${section}`);
+      if (q)       filterParts.push(`Search "${q}"`);
+      const filterLabel = filterParts.length ? ` (${filterParts.join(", ")})` : "";
+      const filename = `students${filterLabel}_${new Date().toISOString().slice(0, 10)}.xlsx`
+        .replace(/[^\w\s()._-]/g, "_");
+
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      await workbook.xlsx.write(res);
+      res.end();
+    } catch (err) {
+      console.error("Export error:", err);
+      res.status(500).json({ message: "Export failed" });
+    }
+  });
+
   // ===== STUDENT EDIT (Admin only) =====
   const updateStudentSchema = z.object({
     name: z.string().min(2, "Name must be at least 2 characters"),

@@ -1953,6 +1953,34 @@ export class DatabaseStorage {
     return { data, total: Number(total) };
   }
 
+  async getStudentsForExport(schoolId: number, opts: { q?: string; cls?: string; section?: string }): Promise<Array<{
+    digitalStudentId: string; name: string; class: string; section: string;
+    rollNo: string | null; phone: string; isActivated: boolean; isActive: boolean; enrollmentDate: string | null;
+  }>> {
+    const { q, cls, section } = opts;
+    const conditions = [eq(students.schoolId, schoolId), eq(students.isActive, true)];
+    if (cls) conditions.push(eq(students.class, cls));
+    if (section) conditions.push(eq(students.section, section));
+    if (q) conditions.push(or(ilike(students.name, `%${q}%`), ilike(students.digitalStudentId, `%${q}%`), ilike(students.phone, `%${q}%`))!);
+    const rows = await db
+      .select({
+        digitalStudentId: students.digitalStudentId,
+        name: students.name,
+        class: students.class,
+        section: students.section,
+        phone: students.phone,
+        isActivated: students.isActivated,
+        isActive: students.isActive,
+        enrollmentDate: students.enrollmentDate,
+        rollNo: studentProfiles.rollNo,
+      })
+      .from(students)
+      .leftJoin(studentProfiles, eq(studentProfiles.studentId, students.id))
+      .where(and(...conditions))
+      .orderBy(students.class, students.section, students.digitalStudentId);
+    return rows;
+  }
+
   async updateStudent(id: number, schoolId: number, data: { name: string; class: string; section: string; phone: string }): Promise<Student | undefined> {
     const [updated] = await db.update(students)
       .set({ name: data.name, class: data.class, section: data.section, phone: data.phone })

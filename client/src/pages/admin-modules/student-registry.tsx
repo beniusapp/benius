@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, type KeyboardEvent } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Search, ChevronLeft, ChevronRight, UserPlus, Upload, X,
-  Loader2, Users, UserX, Pencil, AlignJustify,
+  Loader2, Users, UserX, Pencil, AlignJustify, FileDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,6 +59,7 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
   const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(null);
   const [deactivateTarget, setDeactivateTarget] = useState<Student | null>(null);
   const [editTarget, setEditTarget] = useState<Student | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   const handleSearch = useCallback((val: string) => {
     setQ(val);
@@ -66,6 +67,34 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
     const t = setTimeout(() => { setDebouncedQ(val); setPage(1); }, 400);
     setDebounceTimer(t);
   }, [debounceTimer]);
+
+  async function handleExport() {
+    setIsExporting(true);
+    try {
+      const exportParams = new URLSearchParams();
+      if (debouncedQ) exportParams.set("q", debouncedQ);
+      if (cls) exportParams.set("cls", cls);
+      if (section) exportParams.set("section", section);
+      const url = `/api/schools/${schoolId}/students/export?${exportParams}`;
+      const r = await fetch(url, { credentials: "include" });
+      if (!r.ok) { toast({ title: "Export Failed", description: "Could not generate the file.", variant: "destructive" }); return; }
+      const blob = await r.blob();
+      const disposition = r.headers.get("Content-Disposition") ?? "";
+      const match = disposition.match(/filename="(.+)"/);
+      const filename = match ? match[1] : "students.xlsx";
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    } catch {
+      toast({ title: "Export Failed", description: "An unexpected error occurred.", variant: "destructive" });
+    } finally {
+      setIsExporting(false);
+    }
+  }
 
   const params = new URLSearchParams();
   if (debouncedQ) params.set("q", debouncedQ);
@@ -175,6 +204,16 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
             <AlignJustify className="w-3.5 h-3.5" />
             {compact ? "Compact" : "Normal"}
           </button>
+          <Button size="sm" variant="outline"
+            className="border-[#D4AF37]/40 text-[#D4AF37] hover:bg-[#D4AF37]/10 h-11"
+            onClick={handleExport}
+            disabled={isExporting}
+            data-testid="button-export-excel">
+            {isExporting
+              ? <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+              : <FileDown className="w-4 h-4 mr-1" />}
+            {isExporting ? "Exporting…" : "Export"}
+          </Button>
           <Button size="sm" variant="outline" className="border-[#D4AF37]/40 text-[#D4AF37] hover:bg-[#D4AF37]/10 h-11"
             onClick={() => uploadRef.current?.click()} data-testid="button-upload-csv" disabled={uploadMutation.isPending}>
             <Upload className="w-4 h-4 mr-1" /> {uploadMutation.isPending ? "Uploading…" : "Bulk CSV"}
