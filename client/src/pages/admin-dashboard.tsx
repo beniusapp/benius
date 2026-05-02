@@ -4,7 +4,7 @@ import { useLocation, useRoute } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { motion } from "framer-motion";
+import { motion, useMotionValue, useTransform } from "framer-motion";
 import {
   GraduationCap, LogOut, Users, UserCheck, Settings, BookOpen, Clock,
   Bell, BarChart2, Shield, UserSquare, CreditCard, Package,
@@ -182,35 +182,38 @@ function TileCard({ tile, badge, onClick }: {
   onClick: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
-  const [tiltX, setTiltX] = useState(0);
-  const [tiltY, setTiltY] = useState(0);
+
+  const mouseX = useMotionValue(0);
+  const mouseY = useMotionValue(0);
+  const rotateX = useTransform(mouseY, [-0.5, 0.5], [8, -8]);
+  const rotateY = useTransform(mouseX, [-0.5, 0.5], [-8, 8]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width - 0.5) * 16;
-    const y = -((e.clientY - rect.top) / rect.height - 0.5) * 16;
-    setTiltX(x);
-    setTiltY(y);
-    setHovered(true);
-  }, []);
+    mouseX.set((e.clientX - rect.left) / rect.width - 0.5);
+    mouseY.set((e.clientY - rect.top) / rect.height - 0.5);
+  }, [mouseX, mouseY]);
 
   const handleMouseLeave = useCallback(() => {
-    setTiltX(0);
-    setTiltY(0);
+    mouseX.set(0);
+    mouseY.set(0);
     setHovered(false);
-  }, []);
+  }, [mouseX, mouseY]);
 
   return (
     <motion.button
       variants={cardVariants}
       onClick={onClick}
       onMouseMove={handleMouseMove}
+      onMouseEnter={() => setHovered(true)}
       onMouseLeave={handleMouseLeave}
-      animate={{ rotateX: tiltY, rotateY: tiltX, scale: hovered ? 1.04 : 1 }}
+      whileHover={{ scale: 1.04 }}
       transition={{ type: "spring", stiffness: 280, damping: 26 }}
       data-testid={`tile-${tile.id}`}
       className="relative text-left focus:outline-none flex flex-col"
       style={{
+        rotateX,
+        rotateY,
         transformStyle: "preserve-3d",
         background: "rgba(255,255,255,0.04)",
         backdropFilter: "blur(16px)",
@@ -241,12 +244,13 @@ function TileCard({ tile, badge, onClick }: {
           width: "60px",
           height: "60px",
           background: `${tile.accentColor}18`,
-          boxShadow: `0 0 22px ${tile.accentColor}28, 0 0 40px ${tile.accentColor}10`,
+          boxShadow: hovered
+            ? `0 0 28px ${tile.accentColor}50, 0 0 60px ${tile.accentColor}18`
+            : `0 0 22px ${tile.accentColor}28, 0 0 40px ${tile.accentColor}10`,
           fontSize: "30px",
           lineHeight: 1,
           flexShrink: 0,
-          transition: "box-shadow 0.2s",
-          ...(hovered ? { boxShadow: `0 0 28px ${tile.accentColor}50, 0 0 60px ${tile.accentColor}18` } : {}),
+          transition: "box-shadow 0.25s ease",
         }}
       >
         {tile.emoji}
@@ -822,30 +826,45 @@ export default function AdminDashboard() {
             </div>
 
             {/* Daily Presence */}
-            <div
-              className="flex items-center gap-3 rounded-xl px-4 py-3"
-              style={{ background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.15)" }}
-              data-testid="stat-attendance"
-            >
-              <CircularProgress value={attendancePctAnimated} max={100} color="#10b981" />
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <p className="text-[10px] text-white/40 leading-none font-medium">Daily Presence</p>
-                  {dailySummary?.total ? (
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
-                    </span>
-                  ) : null}
+            {(() => {
+              const isHealthy = !attendanceTotal || (dailySummary?.percentage ?? 0) >= 75;
+              const presenceColor = attendanceTotal
+                ? (isHealthy ? "#10b981" : "#ef4444")
+                : "#10b981";
+              const presenceBg = attendanceTotal
+                ? (isHealthy ? "rgba(16,185,129,0.07)" : "rgba(239,68,68,0.07)")
+                : "rgba(16,185,129,0.07)";
+              const presenceBorder = attendanceTotal
+                ? (isHealthy ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)")
+                : "rgba(16,185,129,0.15)";
+              const pulseBg = isHealthy ? "bg-emerald-400" : "bg-red-400";
+              return (
+                <div
+                  className="flex items-center gap-3 rounded-xl px-4 py-3"
+                  style={{ background: presenceBg, border: `1px solid ${presenceBorder}` }}
+                  data-testid="stat-attendance"
+                >
+                  <CircularProgress value={attendancePctAnimated} max={100} color={presenceColor} />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <p className="text-[10px] text-white/40 leading-none font-medium">Daily Presence</p>
+                      {attendanceTotal > 0 && (
+                        <span className="relative flex h-2 w-2">
+                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${pulseBg} opacity-75`} />
+                          <span className={`relative inline-flex rounded-full h-2 w-2 ${pulseBg}`} />
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xl font-extrabold text-white tracking-tight">
+                      {attendanceTotal ? `${attendancePctAnimated}%` : "—"}
+                    </p>
+                    {attendanceTotal > 0 && (
+                      <p className="text-[10px] text-white/30 mt-0.5">{attendancePresent}/{attendanceTotal} present</p>
+                    )}
+                  </div>
                 </div>
-                <p className="text-xl font-extrabold text-white tracking-tight">
-                  {attendanceTotal ? `${attendancePctAnimated}%` : "—"}
-                </p>
-                {attendanceTotal > 0 && (
-                  <p className="text-[10px] text-white/30 mt-0.5">{attendancePresent}/{attendanceTotal} present</p>
-                )}
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Action Required */}
             <div
@@ -941,6 +960,20 @@ export default function AdminDashboard() {
                               borderRight: `2px solid ${tile.accentColor}`,
                               color: tile.accentColor,
                             } : { color: "rgba(255,255,255,0.45)" }}
+                            onMouseEnter={isActive ? undefined : (e) => {
+                              const el = e.currentTarget;
+                              el.style.background = `${tile.accentColor}09`;
+                              el.style.borderLeft = `3px solid ${tile.accentColor}55`;
+                              el.style.paddingLeft = "17px";
+                              el.style.color = "rgba(255,255,255,0.82)";
+                            }}
+                            onMouseLeave={isActive ? undefined : (e) => {
+                              const el = e.currentTarget;
+                              el.style.background = "";
+                              el.style.borderLeft = "";
+                              el.style.paddingLeft = "";
+                              el.style.color = "rgba(255,255,255,0.45)";
+                            }}
                           >
                             <tile.icon
                               className="w-4 h-4 flex-shrink-0"
