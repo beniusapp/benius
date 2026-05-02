@@ -26,6 +26,31 @@ interface AttendanceStats {
   totalAbsent: number;
 }
 
+interface HomeworkSubmission {
+  id: number;
+  homeworkId: number;
+  studentId: number;
+  schoolId: number;
+  fileUrl: string | null;
+  status: string;
+  submittedAt: string;
+}
+
+interface HomeworkItem {
+  id: number;
+  schoolId: number;
+  teacherId: number;
+  class: string;
+  section: string;
+  subject: string;
+  content: string;
+  fileUrl: string | null;
+  dueDate: string | null;
+  createdAt: string;
+  teacherName: string;
+  submission: HomeworkSubmission | null;
+}
+
 const TILES = [
   { id: "profile",          label: "Profile",          emoji: "🎓", accent: "#3b82f6", bg: "#eff6ff", route: "/student-profile",      pulse: false },
   { id: "attendance",       label: "Attendance",       emoji: "✅", accent: "#10b981", bg: "#f0fdf4", route: "/student/attendance",    pulse: false },
@@ -79,7 +104,7 @@ export default function StudentDashboard() {
     enabled: !!student,
   });
 
-  const { data: homeworkItems } = useQuery<any[]>({
+  const { data: homeworkItems } = useQuery<HomeworkItem[]>({
     queryKey: ["/api/student/homework"],
     enabled: !!student,
   });
@@ -120,7 +145,11 @@ export default function StudentDashboard() {
   const firstName = student.name.split(" ")[0];
   const greeting   = getGreeting();
   const attendPct  = attendanceStats?.overallPercent ?? null;
-  const hwCount    = homeworkItems?.length ?? 0;
+  const pendingHwCount = homeworkItems
+    ? homeworkItems.filter(
+        (hw) => hw.submission === null || hw.submission.status === "rejected"
+      ).length
+    : null;
   const unreadCount = unreadData?.count ?? 0;
 
   const handleTileClick = (id: string, label: string, route: string | null) => {
@@ -249,14 +278,14 @@ export default function StudentDashboard() {
                     Attendance: {attendPct}%
                   </span>
                 )}
-                {hwCount > 0 && (
+                {pendingHwCount !== null && (
                   <span
                     className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow-sm"
                     style={{ background: "#fffbeb", color: "#f59e0b", border: "1px solid #fde68a" }}
                     data-testid="badge-hw-pending"
                   >
                     <span>📝</span>
-                    {hwCount} Assignment{hwCount !== 1 ? "s" : ""}
+                    {pendingHwCount} Pending
                   </span>
                 )}
                 {unreadCount > 0 && (
@@ -305,7 +334,7 @@ export default function StudentDashboard() {
           {TILES.map((tile) => {
             const showPulse =
               (tile.noticeKey && unreadCount > 0) ||
-              (tile.pulse && !tile.noticeKey && hwCount > 0);
+              (tile.pulse && !tile.noticeKey && (pendingHwCount ?? 0) > 0);
 
             return (
               <motion.button
@@ -343,7 +372,7 @@ export default function StudentDashboard() {
                   <span
                     className="absolute top-3 right-3"
                     data-testid={`badge-${tile.id}-pulse`}
-                    aria-label={tile.noticeKey ? `${unreadCount} unread notices` : `${hwCount} pending`}
+                    aria-label={tile.noticeKey ? `${unreadCount} unread notices` : `${pendingHwCount ?? 0} pending`}
                   >
                     <span
                       className="relative flex h-3 w-3"
