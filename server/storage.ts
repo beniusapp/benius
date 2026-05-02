@@ -97,12 +97,14 @@ export class DatabaseStorage {
   }
 
   async getStudentsBySchool(schoolId: number): Promise<Student[]> {
-    return await db.select().from(students).where(eq(students.schoolId, schoolId));
+    return await db.select().from(students).where(
+      and(eq(students.schoolId, schoolId), eq(students.isActive, true))
+    );
   }
 
   async getStudentsByClassSection(schoolId: number, cls: string, section: string): Promise<Student[]> {
     return await db.select().from(students).where(
-      and(eq(students.schoolId, schoolId), eq(students.class, cls), eq(students.section, section))
+      and(eq(students.schoolId, schoolId), eq(students.class, cls), eq(students.section, section), eq(students.isActive, true))
     );
   }
 
@@ -1667,6 +1669,7 @@ export class DatabaseStorage {
     }).from(students).where(
       and(
         eq(students.schoolId, schoolId),
+        eq(students.isActive, true),
         or(ilike(students.name, `%${query}%`), ilike(students.digitalStudentId, `%${query}%`))
       )
     ).limit(15);
