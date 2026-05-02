@@ -2028,12 +2028,63 @@ export class DatabaseStorage {
     return rows;
   }
 
-  async updateStudent(id: number, schoolId: number, data: { name: string; class: string; section: string; phone: string }): Promise<Student | undefined> {
+  async updateStudent(id: number, schoolId: number, data: {
+    name: string; class: string; section: string; phone: string;
+    gender?: string; rollNumber?: number | null; guardianName?: string;
+  }): Promise<Student | undefined> {
+    const setData: Record<string, unknown> = {
+      name: data.name, class: data.class, section: data.section, phone: data.phone,
+    };
+    if (data.gender !== undefined) setData.gender = data.gender;
+    if (data.rollNumber !== undefined) setData.rollNumber = data.rollNumber;
+    if (data.guardianName !== undefined) setData.guardianName = data.guardianName;
     const [updated] = await db.update(students)
-      .set({ name: data.name, class: data.class, section: data.section, phone: data.phone })
+      .set(setData as Partial<typeof students.$inferInsert>)
       .where(and(eq(students.id, id), eq(students.schoolId, schoolId)))
       .returning();
     return updated;
+  }
+
+  async getStudentStats(schoolId: number, cls?: string, section?: string): Promise<{ total: number; boys: number; girls: number }> {
+    const conditions = [eq(students.schoolId, schoolId), eq(students.isActive, true)];
+    if (cls) conditions.push(eq(students.class, cls));
+    if (section) conditions.push(eq(students.section, section));
+    const rows = await db
+      .select({ gender: students.gender, cnt: count() })
+      .from(students)
+      .where(and(...conditions))
+      .groupBy(students.gender);
+    let total = 0, boys = 0, girls = 0;
+    for (const r of rows) {
+      const n = Number(r.cnt);
+      total += n;
+      if (r.gender === "Boy") boys = n;
+      else if (r.gender === "Girl") girls = n;
+    }
+    return { total, boys, girls };
+  }
+
+  async autoAssignRollNumbers(schoolId: number, cls: string, section: string): Promise<number> {
+    const list = await db
+      .select({ id: students.id })
+      .from(students)
+      .where(and(eq(students.schoolId, schoolId), eq(students.class, cls), eq(students.section, section), eq(students.isActive, true)))
+      .orderBy(students.name);
+    let rollNo = 1;
+    for (const s of list) {
+      await db.update(students).set({ rollNumber: rollNo }).where(eq(students.id, s.id));
+      rollNo++;
+    }
+    return list.length;
+  }
+
+  async bulkDeactivateStudents(ids: number[], schoolId: number): Promise<number> {
+    if (ids.length === 0) return 0;
+    const updated = await db.update(students)
+      .set({ isActive: false })
+      .where(and(inArray(students.id, ids), eq(students.schoolId, schoolId)))
+      .returning({ id: students.id });
+    return updated.length;
   }
 
   // ===== PAGINATED TEACHERS (Big Data) =====

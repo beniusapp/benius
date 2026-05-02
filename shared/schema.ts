@@ -41,6 +41,9 @@ export const students = pgTable("students", {
   isActive: boolean("is_active").notNull().default(true),
   enrollmentDate: date("enrollment_date"),
   verifiedProfile: text("verified_profile"),
+  gender: varchar("gender", { length: 10 }),
+  rollNumber: integer("roll_number"),
+  guardianName: text("guardian_name"),
 });
 
 export const teachers = pgTable("teachers", {

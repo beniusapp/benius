@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { type Server } from "http";
 import { storage } from "./storage";
-import { insertSchoolSchema, attendanceRecords, studentProfiles } from "@shared/schema";
+import { insertSchoolSchema, attendanceRecords, studentProfiles, students } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import multer from "multer";
@@ -651,6 +651,9 @@ export async function registerRoutes(
     section: z.string().min(1),
     phone: z.string().min(7),
     dob: z.string().min(1),
+    gender: z.enum(["Boy", "Girl"]).optional(),
+    rollNumber: z.number().int().positive().optional().nullable(),
+    guardianName: z.string().optional(),
   });
 
   app.post("/api/schools/:schoolId/students", async (req, res) => {
@@ -674,7 +677,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
       }
 
-      const { name, class: cls, section, phone, dob: dobRaw } = parsed.data;
+      const { name, class: cls, section, phone, dob: dobRaw, gender, rollNumber, guardianName } = parsed.data;
 
       if (!isValidPhone(phone)) {
         return res.status(400).json({ message: "Invalid phone number" });
@@ -683,6 +686,14 @@ export async function registerRoutes(
       const dob = parseDate(dobRaw);
       if (!dob) {
         return res.status(400).json({ message: "Invalid date format" });
+      }
+
+      if (rollNumber) {
+        const existing = await db.select({ id: students.id }).from(students)
+          .where(and(eq(students.schoolId, schoolId), eq(students.class, cls), eq(students.section, section), eq(students.rollNumber, rollNumber), eq(students.isActive, true)));
+        if (existing.length > 0) {
+          return res.status(409).json({ message: `Roll number ${rollNumber} is already assigned in ${cls}-${section}` });
+        }
       }
 
       const schoolCode = userData.school.code;
@@ -700,6 +711,9 @@ export async function registerRoutes(
         dob,
         passwordHash,
         isActivated: false,
+        ...(gender ? { gender } : {}),
+        ...(rollNumber ? { rollNumber } : {}),
+        ...(guardianName ? { guardianName } : {}),
       });
 
       res.status(201).json(student);
@@ -2081,6 +2095,80 @@ export async function registerRoutes(
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch teacher attendance summary" });
     }
+  });
+
+  // ===== ADMIN: EDIT STUDENT =====
+  const updateStudentSchema = z.object({
+    name: z.string().min(2),
+    class: z.string().min(1),
+    section: z.string().min(1),
+    phone: z.string().regex(/^[0-9+\-\s()]{7,15}$/),
+    gender: z.enum(["Boy", "Girl"]).optional().nullable(),
+    rollNumber: z.number().int().positive().optional().nullable(),
+    guardianName: z.string().optional().nullable(),
+  });
+
+  app.patch("/api/admin/students/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid student ID" });
+    const parsed = updateStudentSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const { rollNumber, ...rest } = parsed.data;
+    if (rollNumber) {
+      const conflict = await db.select({ id: students.id }).from(students)
+        .where(and(eq(students.schoolId, schoolId), eq(students.class, rest.class), eq(students.section, rest.section), eq(students.rollNumber, rollNumber), eq(students.isActive, true)));
+      if (conflict.length > 0 && conflict[0].id !== id) {
+        return res.status(409).json({ message: `Roll number ${rollNumber} is already assigned in ${rest.class}-${rest.section}` });
+      }
+    }
+    const updated = await storage.updateStudent(id, schoolId, { ...rest, rollNumber: rollNumber ?? null });
+    if (!updated) return res.status(404).json({ message: "Student not found" });
+    res.json(updated);
+  });
+
+  // ===== ADMIN: STUDENT GENDER STATS =====
+  app.get("/api/schools/:schoolId/students/stats", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const { cls, section } = req.query as { cls?: string; section?: string };
+    const stats = await storage.getStudentStats(schoolId, cls || undefined, section || undefined);
+    res.json(stats);
+  });
+
+  // ===== ADMIN: AUTO-ASSIGN ROLL NUMBERS =====
+  app.post("/api/schools/:schoolId/students/auto-assign-roll", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const { cls, section } = req.body;
+    if (!cls || !section) return res.status(400).json({ message: "Class and section are required" });
+    const assigned = await storage.autoAssignRollNumbers(schoolId, cls, section);
+    res.json({ assigned, message: `Roll numbers 1–${assigned} assigned to ${cls}-${section} alphabetically` });
+  });
+
+  // ===== ADMIN: BULK DEACTIVATE STUDENTS =====
+  app.post("/api/schools/:schoolId/students/bulk-deactivate", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids must be a non-empty array" });
+    const numIds = ids.map(Number).filter(n => !isNaN(n));
+    const deactivated = await storage.bulkDeactivateStudents(numIds, schoolId);
+    await storage.createAuditLog({
+      schoolId,
+      actionType: "bulk_deactivate",
+      entityType: "student",
+      entityId: schoolId,
+      actionBy: req.session.userId!,
+      actionByRole: "admin",
+      details: `Bulk deactivated ${deactivated} students (IDs: ${numIds.slice(0, 20).join(",")})`,
+    });
+    res.json({ deactivated });
   });
 
   registerTeacherRoutes(app);
