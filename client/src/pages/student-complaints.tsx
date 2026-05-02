@@ -283,6 +283,7 @@ export default function StudentComplaints() {
   // Peer report state
   const [peerSelectedStudent, setPeerSelectedStudent] = useState<PeerStudent | null>(null);
   const [peerIncidentDate, setPeerIncidentDate] = useState("");
+  const [peerIncidentDateText, setPeerIncidentDateText] = useState("");
   const [peerContent, setPeerContent] = useState("");
 
   const { data: student, isLoading: studentLoading } = useQuery<StudentMe>({
@@ -320,7 +321,7 @@ export default function StudentComplaints() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/student/complaints/filed"] });
       toast({ title: "Report submitted", description: "Your peer report has been filed." });
-      setPeerSelectedStudent(null); setPeerIncidentDate(""); setPeerContent("");
+      setPeerSelectedStudent(null); setPeerIncidentDate(""); setPeerIncidentDateText(""); setPeerContent("");
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -561,21 +562,34 @@ export default function StudentComplaints() {
                 {/* ── Incident Date & Time ── */}
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-                    Incident Date &amp; Time <span className="font-normal text-gray-400">(DD/MM/YYYY)</span>
+                    Incident Date &amp; Time <span className="font-normal text-gray-400">(optional)</span>
                   </label>
                   <input
-                    type="datetime-local"
-                    value={peerIncidentDate}
-                    onChange={e => setPeerIncidentDate(e.target.value)}
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="DD/MM/YYYY HH:MM"
+                    value={peerIncidentDateText}
+                    onChange={e => {
+                      const digits = e.target.value.replace(/\D/g, "").slice(0, 12);
+                      let out = digits;
+                      if (digits.length > 2)  out = `${digits.slice(0,2)}/${digits.slice(2)}`;
+                      if (digits.length > 4)  out = `${digits.slice(0,2)}/${digits.slice(2,4)}/${digits.slice(4)}`;
+                      if (digits.length > 8)  out = `${digits.slice(0,2)}/${digits.slice(2,4)}/${digits.slice(4,8)} ${digits.slice(8)}`;
+                      if (digits.length > 10) out = `${digits.slice(0,2)}/${digits.slice(2,4)}/${digits.slice(4,8)} ${digits.slice(8,10)}:${digits.slice(10,12)}`;
+                      setPeerIncidentDateText(out);
+                      const m = out.match(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})$/);
+                      if (m) {
+                        const [, dd, mm, yyyy, hh, min] = m;
+                        const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(min));
+                        setPeerIncidentDate(isNaN(d.getTime()) ? "" : `${yyyy}-${mm}-${dd}T${hh}:${min}`);
+                      } else {
+                        setPeerIncidentDate("");
+                      }
+                    }}
+                    maxLength={16}
                     className="w-full px-3 h-11 rounded-xl border border-gray-200 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
                     data-testid="input-peer-incident-date"
                   />
-                  {/* Show formatted preview once a date is picked */}
-                  {peerIncidentDate && (
-                    <p className="text-xs text-gray-500 mt-1 pl-1">
-                      {fmtDateTimeAmPm(peerIncidentDate)}
-                    </p>
-                  )}
                 </div>
 
                 {/* ── Description ── */}
