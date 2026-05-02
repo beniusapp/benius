@@ -419,16 +419,16 @@ export default function TeacherDashboard() {
                   style={{
                     background: teacher.attendanceDoneToday
                       ? "rgba(16,185,129,0.12)"
-                      : "rgba(239,68,68,0.12)",
-                    border: `1px solid ${teacher.attendanceDoneToday ? "rgba(16,185,129,0.30)" : "rgba(239,68,68,0.30)"}`,
-                    color: teacher.attendanceDoneToday ? "#10b981" : "#ef4444",
+                      : "rgba(245,158,11,0.12)",
+                    border: `1px solid ${teacher.attendanceDoneToday ? "rgba(16,185,129,0.30)" : "rgba(245,158,11,0.30)"}`,
+                    color: teacher.attendanceDoneToday ? "#10b981" : "#f59e0b",
                   }}
                 >
                   <span
                     className="w-1.5 h-1.5 rounded-full flex-shrink-0"
                     style={{
-                      background: teacher.attendanceDoneToday ? "#10b981" : "#ef4444",
-                      boxShadow: `0 0 6px ${teacher.attendanceDoneToday ? "#10b981" : "#ef4444"}`,
+                      background: teacher.attendanceDoneToday ? "#10b981" : "#f59e0b",
+                      boxShadow: `0 0 6px ${teacher.attendanceDoneToday ? "#10b981" : "#f59e0b"}`,
                     }}
                   />
                   {teacher.attendanceDoneToday ? "Attendance Done" : "Attendance Pending"}
