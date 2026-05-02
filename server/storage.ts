@@ -1598,8 +1598,10 @@ export class DatabaseStorage {
 
   /**
    * Returns the admin-configured class → sections map.
-   * Primary source: `class_sections` key in school_metadata (set by admin in School Setup).
-   * Fallback: derives from active student enrolments + faculty mappings.
+   * Source: `class_sections` key in school_metadata (set by admin in School Setup).
+   * If not yet configured, returns {} so that all teacher modules fall back to
+   * the full flat sections list for every class (no partial derivation from students
+   * or faculty mappings that would silently hide sections from teachers).
    */
   async getClassSectionsMap(schoolId: number): Promise<Record<string, string[]>> {
     const [row] = await db.select().from(schoolMetadata)
@@ -1614,27 +1616,7 @@ export class DatabaseStorage {
       } catch {}
     }
 
-    const studentRows = await db
-      .selectDistinct({ cls: students.class, sec: students.section })
-      .from(students)
-      .where(and(eq(students.schoolId, schoolId), eq(students.isActive, true)));
-
-    const mappingRows = await db
-      .selectDistinct({ cls: facultyMappings.className, sec: facultyMappings.section })
-      .from(facultyMappings)
-      .where(eq(facultyMappings.schoolId, schoolId));
-
-    const map: Record<string, Set<string>> = {};
-    for (const { cls, sec } of [...studentRows, ...mappingRows]) {
-      if (!cls || !sec) continue;
-      if (!map[cls]) map[cls] = new Set();
-      map[cls].add(sec);
-    }
-    const result: Record<string, string[]> = {};
-    for (const [cls, secSet] of Object.entries(map)) {
-      result[cls] = Array.from(secSet).sort();
-    }
-    return result;
+    return {};
   }
 
   async setClassSectionsMetadata(schoolId: number, map: Record<string, string[]>): Promise<void> {
