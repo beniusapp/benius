@@ -160,13 +160,13 @@ export default function StudentDashboard() {
   return (
     <div
       className="min-h-screen"
-      style={{ background: "linear-gradient(135deg, #e0f2fe 0%, #f8fafc 40%, #ede9fe 75%, #d1fae5 100%)" }}
+      style={{ background: "#f8fafc" }}
     >
-      {/* Decorative background blobs */}
+      {/* Decorative background radial accents */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
-        <div style={{ position: "absolute", top: "-120px", right: "-80px",  width: "420px", height: "420px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)" }} />
-        <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "380px", height: "380px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.10) 0%, transparent 70%)" }} />
-        <div style={{ position: "absolute", top: "40%", left: "30%",        width: "300px", height: "300px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.07) 0%, transparent 70%)" }} />
+        <div style={{ position: "absolute", top: "-120px", right: "-80px",  width: "500px", height: "500px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "460px", height: "460px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", top: "38%", left: "28%",        width: "360px", height: "360px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.05) 0%, transparent 65%)" }} />
       </div>
 
       {/* ── Fixed glass navigation bar ── */}
