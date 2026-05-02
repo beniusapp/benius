@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { fmtDate } from "@/lib/dateUtils";
 import {
   ArrowLeft, BookOpen, GraduationCap, Loader2, Calendar,
   ChevronLeft, ChevronRight, Upload, X, FileText, AlertCircle,
@@ -44,9 +45,6 @@ function toISODate(d: Date): string {
   return d.toISOString().split("T")[0];
 }
 
-function toDisplayDate(iso: string): string {
-  return new Date(iso + "T00:00:00").toLocaleDateString("en-GB");
-}
 
 function getWeekDates(anchor: Date): Date[] {
   const day = anchor.getDay();
@@ -266,10 +264,10 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
           <div>
             <p className="text-xs text-slate-400 mb-1">Assigned by {hw.teacherName}</p>
             <div className="flex flex-wrap gap-2 text-xs text-slate-500">
-              <span>Assigned: {toDisplayDate(hw.createdAt.split("T")[0])}</span>
+              <span>Assigned: {fmtDate(hw.createdAt.split("T")[0])}</span>
               {hw.dueDate && (
                 <span className={isOverdue && !hw.submission ? "text-red-600 font-semibold" : ""}>
-                  · Due: {toDisplayDate(hw.dueDate)}
+                  · Due: {fmtDate(hw.dueDate)}
                 </span>
               )}
             </div>
@@ -554,10 +552,10 @@ export default function StudentHomework() {
                   <div className="flex items-center justify-between text-[11px] text-slate-400 mt-auto">
                     <span>By {hw.teacherName}</span>
                     <div className="flex flex-col items-end gap-0.5">
-                      <span>Assigned: {toDisplayDate(hw.createdAt.split("T")[0])}</span>
+                      <span>Assigned: {fmtDate(hw.createdAt.split("T")[0])}</span>
                       {hw.dueDate && (
                         <span className={isOverdue ? "text-red-500 font-semibold" : ""}>
-                          Due: {toDisplayDate(hw.dueDate)}
+                          Due: {fmtDate(hw.dueDate)}
                         </span>
                       )}
                     </div>

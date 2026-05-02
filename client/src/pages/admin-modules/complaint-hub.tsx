@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { fmtDateTimeAmPm } from "@/lib/dateUtils";
 import {
   MessageSquare, CheckCircle, Loader2, Lock, Shield, ArrowUpCircle,
   AlertTriangle, ChevronDown, ChevronUp, Clock, ArrowUp,
@@ -31,10 +32,6 @@ interface AdminComplaint {
 
 type TabKey = "private" | "grievances" | "escalated";
 
-function fmtDate(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleDateString("en-GB") + " " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
-}
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
@@ -122,7 +119,7 @@ function ComplaintCard({
             </div>
           )}
 
-          <p className="text-slate-400 text-xs mt-0.5">{fmtDate(c.createdAt)}</p>
+          <p className="text-slate-400 text-xs mt-0.5">{fmtDateTimeAmPm(c.createdAt)}</p>
         </div>
       </div>
 

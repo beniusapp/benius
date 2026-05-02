@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { UserCheck, LogOut, Plus, X, Loader2 } from "lucide-react";
+import { fmtDateTime } from "@/lib/dateUtils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -8,11 +9,6 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 
 interface Props { schoolId: number }
 
-function fmt(d: string | Date | null) {
-  if (!d) return "—";
-  const date = new Date(d);
-  return `${date.toLocaleDateString("en-GB")} ${date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
-}
 
 export default function VisitorLog({ schoolId }: Props) {
   const { toast } = useToast();
@@ -120,7 +116,7 @@ export default function VisitorLog({ schoolId }: Props) {
                   <td className="py-3 px-4 text-white/70 text-xs">{v.purpose}</td>
                   <td className="py-3 px-4 text-white/70 text-xs">{v.hostName}</td>
                   <td className="py-3 px-4 text-[#D4AF37] text-xs font-mono">{v.badge ?? "—"}</td>
-                  <td className="py-3 px-4 text-white/50 text-xs">{fmt(v.checkIn)}</td>
+                  <td className="py-3 px-4 text-white/50 text-xs">{fmtDateTime(v.checkIn)}</td>
                   <td className="py-3 px-4">
                     <Button size="sm" variant="outline" onClick={() => checkoutMutation.mutate(v.id)}
                       disabled={checkoutMutation.isPending}
@@ -156,8 +152,8 @@ export default function VisitorLog({ schoolId }: Props) {
                   <td className="py-2.5 px-4 text-white/80">{v.visitorName}</td>
                   <td className="py-2.5 px-4 text-white/50 text-xs">{v.purpose}</td>
                   <td className="py-2.5 px-4 text-white/50 text-xs">{v.hostName}</td>
-                  <td className="py-2.5 px-4 text-white/50 text-xs">{fmt(v.checkIn)}</td>
-                  <td className="py-2.5 px-4 text-white/50 text-xs">{fmt(v.checkOut)}</td>
+                  <td className="py-2.5 px-4 text-white/50 text-xs">{fmtDateTime(v.checkIn)}</td>
+                  <td className="py-2.5 px-4 text-white/50 text-xs">{fmtDateTime(v.checkOut)}</td>
                 </tr>
               ))}
             </tbody>

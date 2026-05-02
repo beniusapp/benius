@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { fmtDateWithWeekday } from "@/lib/dateUtils";
 import {
   Loader2, Search, Save, AlertCircle, ArrowLeft,
   ClipboardCheck, User, Edit3, History, Calendar, Clock
@@ -435,7 +436,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
               <div key={date}>
                 <div className="flex items-center gap-2 mb-3">
                   <Calendar className="w-4 h-4 text-muted-foreground" />
-                  <h3 className="font-semibold text-sm">{new Date(date + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</h3>
+                  <h3 className="font-semibold text-sm">{fmtDateWithWeekday(date)}</h3>
                   <Badge variant="secondary" className="text-xs">{records.length} records</Badge>
                 </div>
                 <div className="space-y-2">

@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { fmtDate } from "@/lib/dateUtils";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Loader2, Search, BookOpen, RotateCcw, Upload, FileText, CheckCircle, Clock, XCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,13 +39,6 @@ interface BorrowEntry {
 
 const CATEGORIES = ["Fiction", "Non-Fiction", "Science", "Mathematics", "History", "Geography", "Literature", "Technology", "Reference", "Other"];
 
-function formatDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  const day = String(d.getDate()).padStart(2, "0");
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const year = d.getFullYear();
-  return `${day}/${month}/${year}`;
-}
 
 function VerificationBadge({ status }: { status: string }) {
   if (status === "approved") {
@@ -384,7 +378,7 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                       <div className="min-w-0 flex-1">
                         <p className="font-medium text-sm" data-testid={`text-borrowed-title-${b.id}`}>{b.bookTitle}</p>
                         <p className="text-xs text-muted-foreground">
-                          {b.bookAuthor} | Borrowed: {formatDate(b.borrowedAt)}
+                          {b.bookAuthor} | Borrowed: {fmtDate(b.borrowedAt)}
                         </p>
                         {b.bookFileUrl && (
                           <Badge variant="outline" className="mt-1">

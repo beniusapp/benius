@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
+import { fmtDateLong, fmtDateShort } from "@/lib/dateUtils";
 import {
   ArrowLeft, ChevronLeft, ChevronRight, CalendarDays, Loader2,
   Repeat, RefreshCw, X, Calendar, Flame, BookOpen, Award, Star,
@@ -51,10 +52,6 @@ function buildKey(y: number, m: number, d: number) {
   return `${y}-${String(m + 1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
 }
 
-function formatDisplay(dateStr: string) {
-  const d = new Date(dateStr + "T00:00:00");
-  return d.toLocaleDateString("en-GB", { day:"2-digit", month:"short", year:"numeric" });
-}
 
 function isTodayFn(y: number, m: number, d: number) {
   const n = new Date();
@@ -96,7 +93,7 @@ function HoverEventPopover({ ev, onClose }: { ev: CalendarEvent; onClose: () => 
       <p className="text-[10px] mb-1 capitalize font-medium" style={{ color }}>
         {EVENT_TYPES.find(t => t.value === ev.eventType)?.label || ev.eventType}
       </p>
-      <p className="text-[10px] text-gray-400">{formatDisplay(ev.date)}</p>
+      <p className="text-[10px] text-gray-400">{fmtDateLong(ev.date)}</p>
       {ev.isRecurring && (
         <div className="flex items-center gap-1 mt-1">
           <Repeat className="w-2.5 h-2.5 text-gray-300" />
@@ -388,7 +385,7 @@ export default function StudentCalendar() {
           >
             <div className="bg-[#10b981] px-5 py-4 flex items-center justify-between sticky top-0">
               <div>
-                <p className="text-white font-bold text-base">{formatDisplay(selectedDay)}</p>
+                <p className="text-white font-bold text-base">{fmtDateLong(selectedDay)}</p>
                 <p className="text-emerald-100 text-xs">{DAYS_FULL[new Date(selectedDay + "T00:00:00").getDay()]}</p>
               </div>
               <button
@@ -717,7 +714,7 @@ export default function StudentCalendar() {
             <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-4">
               <h4 className="text-sm font-semibold text-gray-600 mb-3 flex items-center gap-2">
                 <CalendarDays className="w-4 h-4 text-[#10b981]" />
-                {selectedDay ? formatDisplay(selectedDay) : "Click a day to view"}
+                {selectedDay ? fmtDateLong(selectedDay) : "Click a day to view"}
               </h4>
               {!selectedDay ? (
                 <div className="space-y-2 mt-2">

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Loader2, Send, CheckCircle, Forward, Calendar, Clock, XCircle, AlertCircle, Trash2 } from "lucide-react";
+import { fmtDate } from "@/lib/dateUtils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,15 +54,6 @@ interface StudentLeaveEntry {
   rejectionReason?: string;
 }
 
-function formatDate(dateStr: string): string {
-  if (!dateStr) return "";
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return dateStr;
-  const day = String(d.getDate()).padStart(2, "0");
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const year = d.getFullYear();
-  return `${day}/${month}/${year}`;
-}
 
 function StatusBadge({ status }: { status: string }) {
   const s = status.toLowerCase();
@@ -256,7 +248,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                         </span>
                         <span className="text-[10px] text-gray-400 flex items-center gap-0.5 mt-0.5">
                           <Clock className="w-3 h-3" />
-                          {formatDate(b.periodStart)} – {formatDate(b.validUntil)}
+                          {fmtDate(b.periodStart)} – {fmtDate(b.validUntil)}
                         </span>
                       </div>
                       {b.remaining === 0 && (
@@ -416,7 +408,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                         </div>
                       </div>
                       <p className="text-xs text-gray-500">
-                        {formatDate(l.startDate)} to {formatDate(l.endDate)}
+                        {fmtDate(l.startDate)} to {fmtDate(l.endDate)}
                       </p>
                       <p className="text-sm mt-1 text-gray-700">{l.reason}</p>
                     </div>
@@ -454,7 +446,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                         <StatusBadge status={sl.status} />
                       </div>
                       <p className="text-xs text-gray-500">
-                        {formatDate(sl.startDate)} to {formatDate(sl.endDate)}
+                        {fmtDate(sl.startDate)} to {fmtDate(sl.endDate)}
                       </p>
                       <p className="text-sm mt-1 mb-2 text-gray-700">{sl.reason}</p>
                       {sl.status === "pending" && rejectingId !== sl.id && (

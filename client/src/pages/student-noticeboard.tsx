@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { fmtDate } from "@/lib/dateUtils";
 import {
   ArrowLeft, Bell, Loader2, Megaphone, BookOpen, AlertTriangle, Info, FileText,
 } from "lucide-react";
@@ -47,14 +48,6 @@ function formatSender(role: string): string {
   return `From ${role.charAt(0).toUpperCase() + role.slice(1)}`;
 }
 
-function formatDate(s: string): string {
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return s;
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
-}
 
 export default function StudentNoticeboard() {
   const [, setLocation] = useLocation();
@@ -193,7 +186,7 @@ export default function StudentNoticeboard() {
                       </a>
                     )}
                     <p className="text-[10px] text-gray-300 mt-2" data-testid={`text-date-${notice.id}`}>
-                      {formatDate(notice.createdAt)}
+                      {fmtDate(notice.createdAt)}
                     </p>
                   </div>
                 </div>

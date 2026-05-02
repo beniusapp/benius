@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { fmtDateLong } from "@/lib/dateUtils";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, CalendarDays, Loader2,
   Calendar, Repeat, Flame, BookOpen, Award, Star, X, RefreshCw, Pencil, AlertTriangle,
@@ -44,10 +45,6 @@ function buildKey(y: number, m: number, d: number) {
   return `${y}-${String(m + 1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
 }
 
-function formatDisplay(dateStr: string) {
-  const d = new Date(dateStr + "T00:00:00");
-  return d.toLocaleDateString("en-GB", { day:"2-digit", month:"short", year:"numeric" });
-}
 
 const EMPTY_FORM = {
   title: "",
@@ -405,7 +402,7 @@ export default function SchoolCalendar() {
           <div className="bg-[#1A2942] rounded-xl border border-white/10 p-4">
             <h4 className="text-sm font-semibold text-white/70 mb-3 flex items-center gap-2">
               <CalendarDays className="w-4 h-4 text-[#D4AF37]" />
-              {selectedDay ? formatDisplay(selectedDay) : "Events"}
+              {selectedDay ? fmtDateLong(selectedDay) : "Events"}
             </h4>
             {!selectedDay ? (
               <p className="text-xs text-white/30 text-center py-4">Click a day on the calendar to view or manage its events.</p>
@@ -641,7 +638,7 @@ export default function SchoolCalendar() {
                 <div>
                   <p className="text-white font-semibold mb-1">Delete this event?</p>
                   <p className="text-white/50 text-sm">
-                    "<span className="text-white/70">{editingEvent.title}</span>" on {formatDisplay(editingEvent.date.split("T")[0])} will be permanently removed.
+                    "<span className="text-white/70">{editingEvent.title}</span>" on {fmtDateLong(editingEvent.date.split("T")[0])} will be permanently removed.
                   </p>
                 </div>
                 <div className="flex gap-3">

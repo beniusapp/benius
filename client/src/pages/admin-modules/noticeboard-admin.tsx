@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { fmtDateTime } from "@/lib/dateUtils";
 import {
   Bell, Send, Loader2, Pencil, Trash2, Check, X,
   Megaphone, BookOpen, AlertTriangle, Info,
@@ -60,16 +61,6 @@ function senderLabel(n: Notice): string {
   return n.creatorRole === "teacher" ? "Teacher" : "Admin";
 }
 
-function formatDate(s: string): string {
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return s;
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const min = String(d.getMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
-}
 
 function getTypeStyle(t: string | null) {
   const cfg = NOTICE_TYPES.find(x => x.value === t) || NOTICE_TYPES[0];
@@ -285,7 +276,7 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
                       <span className="text-white/30 text-xs">by {senderLabel(n)}</span>
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
-                      <span className="text-white/25 text-xs tabular-nums">{formatDate(n.createdAt)}</span>
+                      <span className="text-white/25 text-xs tabular-nums">{fmtDateTime(n.createdAt)}</span>
                       {isOwn && !isEditing && (
                         <>
                           <button

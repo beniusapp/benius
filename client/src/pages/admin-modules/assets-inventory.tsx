@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Package, Plus, Search, Filter, MoreVertical, Edit2, Trash2, FileText, X } from "lucide-react";
+import { fmtDate } from "@/lib/dateUtils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -36,10 +37,6 @@ const CONDITION_BADGE: Record<string, string> = {
   "Broken": "text-rose-400 bg-rose-600/20 border border-rose-500/30",
 };
 
-function fmtDate(val: string | null | undefined) {
-  if (!val) return "—";
-  return new Date(val).toLocaleDateString("en-GB");
-}
 
 export default function AssetsInventory({ schoolId: _schoolId }: Props) {
   const { toast } = useToast();

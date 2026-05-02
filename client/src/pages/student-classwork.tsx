@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { fmtDate } from "@/lib/dateUtils";
 import {
   ArrowLeft, PenLine, GraduationCap, Loader2, Calendar,
   ChevronLeft, ChevronRight, FileText, X, ExternalLink,
@@ -32,9 +33,6 @@ function toISODate(d: Date): string {
   return d.toISOString().split("T")[0];
 }
 
-function toDisplayDate(iso: string): string {
-  return new Date(iso + "T00:00:00").toLocaleDateString("en-GB");
-}
 
 function getWeekDates(anchor: Date): Date[] {
   const day = anchor.getDay();
@@ -102,7 +100,7 @@ function ClassworkViewer({ cw, onClose }: { cw: ClassworkItem; onClose: () => vo
           </button>
           <div className="flex-1 min-w-0">
             <p className="text-white font-bold text-sm truncate">{cw.subject}</p>
-            <p className="text-emerald-100 text-xs">{toDisplayDate(cw.createdAt.split("T")[0])} · {cw.teacherName}</p>
+            <p className="text-emerald-100 text-xs">{fmtDate(cw.createdAt.split("T")[0])} · {cw.teacherName}</p>
           </div>
           {cw.fileUrl && (
             <a
@@ -421,7 +419,7 @@ export default function StudentClasswork() {
                       )}
                     </div>
                     <div className="flex-shrink-0 flex items-center gap-1 text-[11px] text-slate-400">
-                      <span>{toDisplayDate(cw.createdAt.split("T")[0])}</span>
+                      <span>{fmtDate(cw.createdAt.split("T")[0])}</span>
                     </div>
                   </div>
                   <p className="text-sm text-slate-700 leading-relaxed line-clamp-2">{cw.content}</p>

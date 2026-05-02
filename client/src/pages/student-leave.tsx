@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { fmtDate } from "@/lib/dateUtils";
 import {
   ArrowLeft, FileText, PlusCircle, X, Loader2, Clock, CheckCircle2, XCircle, Forward,
   CalendarDays, Trash2,
@@ -47,12 +48,6 @@ const STATUS_CONFIG: Record<string, { icon: typeof CheckCircle2; color: string; 
   forwarded: { icon: Forward, color: "text-blue-500 bg-blue-50 border-blue-200", label: "Sent to Principal" },
 };
 
-function formatDate(s: string): string {
-  if (!s) return "";
-  const d = new Date(s + (s.includes("T") ? "" : "T12:00:00"));
-  if (isNaN(d.getTime())) return s;
-  return d.toLocaleDateString("en-GB");
-}
 
 function daysBetween(start: string, end: string): number {
   const s = new Date(start), e = new Date(end);
@@ -234,8 +229,8 @@ export default function StudentLeave() {
                         {leave.category || "Leave Request"}
                       </p>
                       <p className="text-xs text-gray-500 mt-0.5">
-                        {formatDate(leave.startDate)}
-                        {leave.startDate !== leave.endDate ? ` – ${formatDate(leave.endDate)}` : ""}
+                        {fmtDate(leave.startDate)}
+                        {leave.startDate !== leave.endDate ? ` – ${fmtDate(leave.endDate)}` : ""}
                         {" "}· {days} day{days !== 1 ? "s" : ""}
                       </p>
                     </div>

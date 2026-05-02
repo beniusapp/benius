@@ -1,14 +1,12 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Check, X, BookOpen, Image, UserCheck, Loader2 } from "lucide-react";
+import { fmtDate } from "@/lib/dateUtils";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
 interface Props { schoolId: number }
 
-function fmt(d: string) {
-  return new Date(d).toLocaleDateString("en-GB");
-}
 
 function Section({ title, icon: Icon, badge, children }: { title: string; icon: any; badge?: number; children: React.ReactNode }) {
   return (
@@ -126,7 +124,7 @@ export default function ApprovalCenter({ schoolId }: Props) {
               <div key={l.id} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-[#0A1628] border border-white/10" data-testid={`card-leave-${l.id}`}>
                 <div className="flex-1 min-w-0">
                   <p className="text-white font-medium text-sm">{l.teacherName}</p>
-                  <p className="text-white/50 text-xs">{l.leaveType} · {fmt(l.startDate)} – {fmt(l.endDate)}</p>
+                  <p className="text-white/50 text-xs">{l.leaveType} · {fmtDate(l.startDate)} – {fmtDate(l.endDate)}</p>
                   <p className="text-white/40 text-xs truncate">{l.reason}</p>
                 </div>
                 <div className="flex gap-2 shrink-0">
@@ -154,7 +152,7 @@ export default function ApprovalCenter({ schoolId }: Props) {
               <div key={l.id} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-[#0A1628] border border-white/10" data-testid={`card-student-leave-${l.id}`}>
                 <div className="flex-1 min-w-0">
                   <p className="text-white font-medium text-sm">{l.studentName} <span className="text-white/40 text-xs">({l.dsid})</span></p>
-                  <p className="text-white/50 text-xs">Class {l.class}-{l.section} · {fmt(l.startDate)} – {fmt(l.endDate)}</p>
+                  <p className="text-white/50 text-xs">Class {l.class}-{l.section} · {fmtDate(l.startDate)} – {fmtDate(l.endDate)}</p>
                   <p className="text-white/40 text-xs truncate">{l.reason}</p>
                   <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400">{l.status}</span>
                 </div>

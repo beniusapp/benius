@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Shield, Loader2 } from "lucide-react";
+import { fmtDateTime } from "@/lib/dateUtils";
 
 interface Props { schoolId: number }
 
@@ -9,10 +10,6 @@ const ACTION_COLORS: Record<string, string> = {
   checkin: "text-cyan-400", checkout: "text-orange-400",
 };
 
-function fmt(d: string | Date) {
-  const date = new Date(d);
-  return `${date.toLocaleDateString("en-GB")} ${date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
-}
 
 export default function AuditLogs({ schoolId }: Props) {
   const { data: logs = [], isLoading } = useQuery<any[]>({
@@ -52,7 +49,7 @@ export default function AuditLogs({ schoolId }: Props) {
             <tbody>
               {logs.map((log: any) => (
                 <tr key={log.id} className="border-b border-white/5 hover:bg-white/3 transition-colors" data-testid={`row-audit-${log.id}`}>
-                  <td className="py-2.5 px-4 text-white/50 text-xs font-mono whitespace-nowrap">{fmt(log.createdAt)}</td>
+                  <td className="py-2.5 px-4 text-white/50 text-xs font-mono whitespace-nowrap">{fmtDateTime(log.createdAt)}</td>
                   <td className="py-2.5 px-4">
                     <span className={`text-xs font-semibold uppercase tracking-wide ${ACTION_COLORS[log.actionType] || "text-white/70"}`}>
                       {log.actionType}

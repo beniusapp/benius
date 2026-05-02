@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { fmtDate, fmtDateTimeAmPm } from "@/lib/dateUtils";
 import {
   ArrowLeft, Mail, ShieldAlert, UserX, Loader2,
   AlertTriangle, CheckCircle, Clock, Plus, Lock, ChevronDown, ChevronUp,
@@ -71,17 +72,6 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function formatDateTime(iso: string): string {
-  const d = new Date(iso);
-  const date = d.toLocaleDateString("en-GB"); // dd/mm/yyyy
-  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }); // 2:30 PM
-  return `${date} ${time}`;
-}
-
-function formatDateOnly(iso: string): string {
-  const d = new Date(iso + (iso.includes("T") ? "" : "T00:00:00"));
-  return d.toLocaleDateString("en-GB"); // dd/mm/yyyy
-}
 
 function InboxCard({ c }: { c: ComplaintRecord & { teacherName: string } }) {
   const [expanded, setExpanded] = useState(false);
@@ -94,7 +84,7 @@ function InboxCard({ c }: { c: ComplaintRecord & { teacherName: string } }) {
         <div className="flex items-start justify-between gap-2 flex-wrap">
           <div>
             <p className="text-sm font-bold text-gray-800">{c.teacherName}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{formatDateTime(c.createdAt)} · #{c.ticketId}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{fmtDateTimeAmPm(c.createdAt)} · #{c.ticketId}</p>
           </div>
           <StatusBadge status={c.status} />
         </div>
@@ -118,7 +108,7 @@ function FiledCard({ c }: { c: ComplaintRecord }) {
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4" data-testid={`card-filed-${c.id}`}>
       <div className="flex items-start justify-between gap-2 flex-wrap">
         <div>
-          <p className="text-xs text-gray-400">#{c.ticketId} · {formatDateTime(c.createdAt)}</p>
+          <p className="text-xs text-gray-400">#{c.ticketId} · {fmtDateTimeAmPm(c.createdAt)}</p>
           {c.complaintType === "student-to-staff" && c.teacherName && (
             <p className="text-sm font-semibold text-gray-700 mt-0.5">Against: {c.teacherName}</p>
           )}
@@ -127,7 +117,7 @@ function FiledCard({ c }: { c: ComplaintRecord }) {
           )}
           {c.complaintType === "student-peer-report" && c.incidentDate && (
             <p className="text-xs text-gray-500 mt-0.5">
-              Incident: {formatDateOnly(c.incidentDate)}
+              Incident: {fmtDate(c.incidentDate)}
             </p>
           )}
         </div>
@@ -583,7 +573,7 @@ export default function StudentComplaints() {
                   {/* Show formatted preview once a date is picked */}
                   {peerIncidentDate && (
                     <p className="text-xs text-gray-500 mt-1 pl-1">
-                      {formatDateTime(peerIncidentDate)}
+                      {fmtDateTimeAmPm(peerIncidentDate)}
                     </p>
                   )}
                 </div>

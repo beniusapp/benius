@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { fmtDateLong, fmtDateShort } from "@/lib/dateUtils";
 import {
   ChevronLeft, ChevronRight, Loader2, Calendar, CalendarDays,
   RefreshCw, X, Repeat,
@@ -52,10 +53,6 @@ function isTodayFn(y: number, m: number, d: number) {
   return n.getFullYear() === y && n.getMonth() === m && n.getDate() === d;
 }
 
-function formatDate(s: string) {
-  const d = new Date(s + "T00:00:00");
-  return d.toLocaleDateString("en-GB", { day:"2-digit", month:"short", year:"numeric" });
-}
 
 function getWeekStart(d: Date): Date {
   const start = new Date(d);
@@ -101,7 +98,7 @@ function EventTooltip({ ev, onClose }: { ev: CalendarEvent; onClose: () => void 
             </span>
           )}
         </div>
-        <p className="text-xs text-gray-500">{formatDate(ev.date)}</p>
+        <p className="text-xs text-gray-500">{fmtDateLong(ev.date)}</p>
         {ev.description && (
           <p className="text-xs text-gray-600 mt-1.5 pt-1.5 border-t border-gray-100 leading-relaxed">
             {ev.description}
@@ -423,7 +420,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
         </div>
         <div className="flex items-center justify-between px-5 py-3 sticky top-0 bg-white border-b border-gray-100">
           <div>
-            <p className="text-base font-bold text-gray-900">{formatDate(selectedDay)}</p>
+            <p className="text-base font-bold text-gray-900">{fmtDateLong(selectedDay)}</p>
             <p className="text-xs text-gray-500 mt-0.5">{DAYS_FULL[new Date(selectedDay + "T00:00:00").getDay()]}</p>
           </div>
           <button
@@ -559,7 +556,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
         <CardContent className="pt-4 flex-1 flex flex-col min-h-0">
           <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
             <CalendarDays className="w-4 h-4 text-emerald-600" />
-            {selectedDay ? formatDate(selectedDay) : "Events this month"}
+            {selectedDay ? fmtDateLong(selectedDay) : "Events this month"}
           </h4>
           {!selectedDay ? (
             <div className="flex-1 overflow-y-auto space-y-1.5">
@@ -699,7 +696,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
       {selectedDay && selectedEvents.length > 0 && (
         <Card className="mt-4">
           <CardContent className="pt-4 pb-4">
-            <p className="text-sm font-bold text-gray-800 mb-3">{formatDate(selectedDay)}</p>
+            <p className="text-sm font-bold text-gray-800 mb-3">{fmtDateLong(selectedDay)}</p>
             <div className="space-y-2">
               {selectedEvents.map(ev => {
                 const color = getColor(ev);
@@ -862,7 +859,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
         {selectedDay && (
           <Card>
             <CardContent className="pt-4 pb-4">
-              <p className="text-sm font-bold text-gray-800 mb-3">{formatDate(selectedDay)}</p>
+              <p className="text-sm font-bold text-gray-800 mb-3">{fmtDateLong(selectedDay)}</p>
               {selectedEvents.length === 0 ? (
                 <p className="text-sm text-gray-400">No events on this day</p>
               ) : selectedEvents.map(ev => {
