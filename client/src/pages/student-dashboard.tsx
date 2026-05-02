@@ -1,24 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import {
-  GraduationCap,
-  Loader2,
-  LogOut,
-  User,
-  CalendarCheck,
-  BookOpen,
-  PenLine,
-  CreditCard,
-  ClipboardList,
-  MessageSquareWarning,
-  Image,
-  Users,
-  CalendarDays,
-  FileText,
-  Clock,
-  Bell,
-} from "lucide-react";
+import { motion } from "framer-motion";
+import { GraduationCap, Loader2, LogOut } from "lucide-react";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -35,21 +19,45 @@ interface StudentMeResponse {
   schoolId?: number;
 }
 
+interface AttendanceStats {
+  overallPercent: number;
+  workingDays: number;
+  totalPresent: number;
+  totalAbsent: number;
+}
+
 const TILES = [
-  { id: "profile",          label: "Profile",          Icon: User },
-  { id: "attendance",       label: "Attendance",       Icon: CalendarCheck },
-  { id: "homework",         label: "Homework",         Icon: BookOpen },
-  { id: "classwork",        label: "Classwork",        Icon: PenLine },
-  { id: "noticeboard",      label: "Noticeboard",      Icon: Bell },
-  { id: "fees",             label: "Fees",             Icon: CreditCard },
-  { id: "examination",      label: "Examination",      Icon: ClipboardList },
-  { id: "complaints",       label: "Complaints",       Icon: MessageSquareWarning },
-  { id: "gallery",          label: "Gallery",          Icon: Image },
-  { id: "faculty-info",     label: "Faculty Info",     Icon: Users },
-  { id: "school-calendar",  label: "School Calendar",  Icon: CalendarDays },
-  { id: "leave",            label: "Leave",            Icon: FileText },
-  { id: "timetable",        label: "Timetable",        Icon: Clock },
-];
+  { id: "profile",          label: "Profile",          emoji: "🎓", accent: "#3b82f6", bg: "#eff6ff", route: "/student-profile",      pulse: false },
+  { id: "attendance",       label: "Attendance",       emoji: "✅", accent: "#10b981", bg: "#f0fdf4", route: "/student/attendance",    pulse: false },
+  { id: "homework",         label: "Homework",         emoji: "📝", accent: "#f59e0b", bg: "#fffbeb", route: "/student/homework",      pulse: true  },
+  { id: "classwork",        label: "Classwork",        emoji: "📚", accent: "#8b5cf6", bg: "#f5f3ff", route: "/student/classwork",    pulse: false },
+  { id: "noticeboard",      label: "Noticeboard",      emoji: "🔔", accent: "#ef4444", bg: "#fef2f2", route: "/student/noticeboard",  pulse: true, noticeKey: true },
+  { id: "fees",             label: "Fees",             emoji: "💳", accent: "#06b6d4", bg: "#ecfeff", route: null,                    pulse: false },
+  { id: "examination",      label: "Examination",      emoji: "🏆", accent: "#f97316", bg: "#fff7ed", route: "/student/examination", pulse: false },
+  { id: "complaints",       label: "Complaints",       emoji: "🎭", accent: "#ec4899", bg: "#fdf2f8", route: "/student/complaints",   pulse: false },
+  { id: "gallery",          label: "Gallery",          emoji: "🎨", accent: "#6366f1", bg: "#eef2ff", route: "/student/gallery",      pulse: false },
+  { id: "faculty-info",     label: "Faculty Info",     emoji: "👨‍🏫", accent: "#14b8a6", bg: "#f0fdfa", route: "/student/faculty",     pulse: false },
+  { id: "school-calendar",  label: "School Calendar",  emoji: "📅", accent: "#84cc16", bg: "#f7fee7", route: "/student/calendar",    pulse: false },
+  { id: "leave",            label: "Leave",            emoji: "🌴", accent: "#a78bfa", bg: "#faf5ff", route: "/student/leave",        pulse: false },
+  { id: "timetable",        label: "Timetable",        emoji: "🗓️", accent: "#0ea5e9", bg: "#f0f9ff", route: "/student/timetable",   pulse: false },
+] as const;
+
+const containerVariants = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.06 } },
+};
+
+const cardVariants = {
+  hidden: { opacity: 0, y: 22 },
+  show:   { opacity: 1, y: 0,  transition: { duration: 0.38, ease: [0.22, 1, 0.36, 1] } },
+};
+
+function getGreeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "Good Morning";
+  if (h < 17) return "Good Afternoon";
+  return "Good Evening";
+}
 
 export default function StudentDashboard() {
   const { toast } = useToast();
@@ -66,7 +74,15 @@ export default function StudentDashboard() {
     refetchInterval: 60000,
   });
 
-  const unreadNoticeCount = unreadData?.count ?? 0;
+  const { data: attendanceStats } = useQuery<AttendanceStats & { startDate: string }>({
+    queryKey: ["/api/student/attendance/stats"],
+    enabled: !!student,
+  });
+
+  const { data: homeworkItems } = useQuery<any[]>({
+    queryKey: ["/api/student/homework"],
+    enabled: !!student,
+  });
 
   useEffect(() => {
     if (!isLoading && (isError || !student || !student.schoolId)) {
@@ -75,9 +91,7 @@ export default function StudentDashboard() {
   }, [isLoading, isError, student, setLocation]);
 
   const logoutMutation = useMutation({
-    mutationFn: async () => {
-      await apiRequest("POST", "/api/student-logout");
-    },
+    mutationFn: async () => { await apiRequest("POST", "/api/student-logout"); },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/student-me"] });
       setLocation("/student-login");
@@ -87,43 +101,75 @@ export default function StudentDashboard() {
     },
   });
 
+  const initials = useMemo(() => {
+    if (!student) return "";
+    return student.name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
+  }, [student?.name]);
+
   if (isLoading || !student) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f0fdf4]">
-        <Loader2 className="w-9 h-9 animate-spin text-[#10b981]" />
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "linear-gradient(135deg, #f0f9ff 0%, #f8fafc 45%, #f5f3ff 100%)" }}>
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-10 h-10 animate-spin text-blue-500" />
+          <p className="text-sm text-slate-400 font-medium">Loading your portal…</p>
+        </div>
       </div>
     );
   }
 
-  const initials = student.name
-    .split(" ")
-    .map((n) => n[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
+  const firstName = student.name.split(" ")[0];
+  const greeting   = getGreeting();
+  const attendPct  = attendanceStats?.overallPercent ?? null;
+  const hwCount    = homeworkItems?.length ?? 0;
+  const unreadCount = unreadData?.count ?? 0;
+
+  const handleTileClick = (id: string, label: string, route: string | null) => {
+    if (route) { setLocation(route); return; }
+    toast({ title: label, description: `${label} module coming soon.` });
+  };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#f0fdf4]">
+    <div
+      className="min-h-screen"
+      style={{ background: "linear-gradient(135deg, #e0f2fe 0%, #f8fafc 40%, #ede9fe 75%, #d1fae5 100%)" }}
+    >
+      {/* Decorative background blobs */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+        <div style={{ position: "absolute", top: "-120px", right: "-80px",  width: "420px", height: "420px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)" }} />
+        <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "380px", height: "380px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.10) 0%, transparent 70%)" }} />
+        <div style={{ position: "absolute", top: "40%", left: "30%",        width: "300px", height: "300px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.07) 0%, transparent 70%)" }} />
+      </div>
 
-      {/* ── Sticky top nav ── */}
-      <header className="sticky top-0 z-30 bg-[#10b981] shadow-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
+      {/* ── Fixed glass navigation bar ── */}
+      <header
+        className="fixed top-0 left-0 right-0 z-50"
+        style={{
+          backdropFilter: "blur(18px)",
+          WebkitBackdropFilter: "blur(18px)",
+          background: "rgba(255, 255, 255, 0.75)",
+          borderBottom: "1px solid rgba(255,255,255,0.7)",
+          boxShadow: "0 1px 28px rgba(0,0,0,0.07)",
+        }}
+      >
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-white/20">
+            <div
+              className="flex items-center justify-center w-9 h-9 rounded-xl"
+              style={{ background: "linear-gradient(135deg, #3b82f6, #6366f1)" }}
+            >
               <GraduationCap className="w-5 h-5 text-white" />
             </div>
             <div className="leading-tight">
-              <p className="text-white font-bold text-base sm:text-lg tracking-tight" data-testid="text-app-title">
-                BENIUS
-              </p>
-              <p className="text-emerald-100 text-xs">Student Portal</p>
+              <p className="font-bold text-base text-slate-800 tracking-tight" data-testid="text-app-title">BENIUS</p>
+              <p className="text-[11px] text-slate-400 font-medium">Student Portal</p>
             </div>
           </div>
 
           <button
             onClick={() => logoutMutation.mutate()}
             disabled={logoutMutation.isPending}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 active:bg-white/40 text-white text-sm font-medium transition-colors disabled:opacity-60"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-60 text-slate-600 hover:text-slate-800"
+            style={{ background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.07)" }}
             data-testid="button-student-logout"
           >
             {logoutMutation.isPending
@@ -134,183 +180,233 @@ export default function StudentDashboard() {
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 sm:py-8 space-y-6 sm:space-y-8">
+      {/* ── Main content (offset for fixed header) ── */}
+      <main className="relative z-10 max-w-7xl mx-auto w-full px-4 sm:px-6 pt-24 pb-12 space-y-8">
 
-        {/* ── Profile Summary Card ── */}
-        <div
-          className="bg-white rounded-2xl shadow-sm border border-emerald-100 p-4 sm:p-6 flex flex-col sm:flex-row items-center sm:items-start gap-4"
+        {/* ── Hero greeting + profile card ── */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          className="rounded-[24px] p-6 sm:p-8"
+          style={{
+            background: "rgba(255,255,255,0.78)",
+            backdropFilter: "blur(14px)",
+            WebkitBackdropFilter: "blur(14px)",
+            border: "1px solid rgba(255,255,255,0.75)",
+            boxShadow: "0 8px 40px rgba(59,130,246,0.10), 0 1px 3px rgba(0,0,0,0.05)",
+          }}
           data-testid="card-student-profile"
         >
-          {/* Avatar */}
-          <div
-            className="flex-shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-[#10b981] flex items-center justify-center shadow-md"
-            data-testid="avatar-student"
-          >
-            <span className="text-white font-bold text-xl sm:text-2xl select-none">{initials}</span>
-          </div>
-
-          {/* Info */}
-          <div className="flex-1 text-center sm:text-left space-y-1 min-w-0">
-            <h2
-              className="text-lg sm:text-xl font-bold text-gray-900 truncate"
-              data-testid="text-student-name"
+          <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
+            {/* Avatar */}
+            <div
+              className="flex-shrink-0 w-[72px] h-[72px] sm:w-20 sm:h-20 rounded-full flex items-center justify-center shadow-lg"
+              style={{ background: "linear-gradient(135deg, #3b82f6, #8b5cf6)" }}
+              data-testid="avatar-student"
             >
-              {student.name}
-            </h2>
-            <p className="text-sm text-gray-500" data-testid="text-school-name">{student.schoolName}</p>
-            <div className="flex flex-wrap justify-center sm:justify-start gap-2 pt-1">
-              <span
-                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[#10b981] text-xs font-semibold"
-                data-testid="text-student-dsid"
-              >
-                DSID: {student.digitalStudentId}
-              </span>
-              <span
-                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[#10b981] text-xs font-semibold"
-                data-testid="text-student-class"
-              >
-                Class {student.class} – {student.section}
-              </span>
+              <span className="text-white font-bold text-2xl sm:text-3xl select-none">{initials}</span>
             </div>
-          </div>
 
-          {/* School badge (desktop) */}
-          <div className="hidden sm:flex flex-col items-end gap-1 flex-shrink-0">
-            <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-[#10b981]/10">
-              <GraduationCap className="w-6 h-6 text-[#10b981]" />
-            </div>
-            <p className="text-xs text-gray-400 font-mono">{student.schoolCode}</p>
-          </div>
-        </div>
+            {/* Greeting + info */}
+            <div className="flex-1 text-center sm:text-left min-w-0">
+              <p className="text-sm font-medium text-slate-400 mb-0.5">{student.schoolName}</p>
+              <h1 className="text-xl sm:text-2xl font-extrabold text-slate-800 mb-2 truncate" data-testid="text-student-name">
+                {greeting}, {firstName}! 👋
+              </h1>
 
-        {/* ── Section heading ── */}
-        <div>
-          <h3 className="text-base sm:text-lg font-semibold text-gray-700 mb-1">My Modules</h3>
-          <p className="text-xs sm:text-sm text-gray-400">Tap a card to access your module</p>
-        </div>
-
-        {/* ── 12-Tile grid ── */}
-        {/*
-          Breakpoints:
-            Mobile  < 768px  → 2 columns  (grid-cols-2)
-            Tablet  768–1023px → 3 columns (md:grid-cols-3)
-            Desktop ≥ 1024px → 4 columns  (lg:grid-cols-4)
-        */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-5">
-          {TILES.map(({ id, label, Icon }) => (
-            <button
-              key={id}
-              data-testid={`tile-${id}`}
-              className="
-                group relative bg-white rounded-2xl border border-emerald-50
-                p-4 sm:p-5 lg:p-6
-                flex flex-col items-center justify-center gap-3
-                min-h-[110px] sm:min-h-[130px] lg:min-h-[140px]
-                cursor-pointer select-none
-                shadow-sm hover:shadow-lg active:shadow-md
-                hover:-translate-y-1 active:translate-y-0
-                transition-all duration-200 ease-out
-                focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:ring-offset-2
-              "
-              onClick={() => {
-                if (id === "profile") {
-                  setLocation("/student-profile");
-                  return;
-                }
-                if (id === "attendance") {
-                  setLocation("/student/attendance");
-                  return;
-                }
-                if (id === "homework") {
-                  setLocation("/student/homework");
-                  return;
-                }
-                if (id === "classwork") {
-                  setLocation("/student/classwork");
-                  return;
-                }
-                if (id === "examination") {
-                  setLocation("/student/examination");
-                  return;
-                }
-                if (id === "complaints") {
-                  setLocation("/student/complaints");
-                  return;
-                }
-                if (id === "gallery") {
-                  setLocation("/student/gallery");
-                  return;
-                }
-                if (id === "faculty-info") {
-                  setLocation("/student/faculty");
-                  return;
-                }
-                if (id === "school-calendar") {
-                  setLocation("/student/calendar");
-                  return;
-                }
-                if (id === "timetable") {
-                  setLocation("/student/timetable");
-                  return;
-                }
-                if (id === "leave") {
-                  setLocation("/student/leave");
-                  return;
-                }
-                if (id === "noticeboard") {
-                  setLocation("/student/noticeboard");
-                  return;
-                }
-                toast({
-                  title: label,
-                  description: `${label} module coming soon.`,
-                });
-              }}
-            >
-              {/* Icon container with optional red dot */}
-              <div className="relative">
-                <div className="
-                  flex items-center justify-center
-                  w-12 h-12 sm:w-14 sm:h-14
-                  rounded-xl bg-emerald-50
-                  group-hover:bg-[#10b981]/15
-                  transition-colors duration-200
-                ">
-                  <Icon className="w-6 h-6 sm:w-7 sm:h-7 text-[#10b981]" strokeWidth={1.75} />
-                </div>
-                {id === "noticeboard" && unreadNoticeCount > 0 && (
-                  <span
-                    className="absolute top-0 right-0 w-2.5 h-2.5 rounded-full bg-[#FF0000] border border-white"
-                    data-testid="badge-noticeboard-unread"
-                    aria-label={`${unreadNoticeCount} unread notices`}
-                  />
-                )}
+              {/* Info badges */}
+              <div className="flex flex-wrap justify-center sm:justify-start gap-2">
+                <span
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold"
+                  style={{ background: "#eff6ff", color: "#3b82f6", border: "1px solid #bfdbfe" }}
+                  data-testid="text-student-dsid"
+                >
+                  {student.digitalStudentId}
+                </span>
+                <span
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold"
+                  style={{ background: "#f0fdf4", color: "#10b981", border: "1px solid #a7f3d0" }}
+                  data-testid="text-student-class"
+                >
+                  Class {student.class} – {student.section}
+                </span>
               </div>
 
-              {/* Label */}
-              <span className="
-                text-gray-800 font-semibold
-                text-xs sm:text-sm
-                text-center leading-tight
-              ">
-                {label}
-              </span>
+              {/* Quick stats pills */}
+              <div className="flex flex-wrap justify-center sm:justify-start gap-2 mt-3">
+                {attendPct !== null && (
+                  <span
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow-sm"
+                    style={{
+                      background: attendPct >= 75 ? "#f0fdf4" : "#fef2f2",
+                      color:      attendPct >= 75 ? "#10b981" : "#ef4444",
+                      border:     `1px solid ${attendPct >= 75 ? "#bbf7d0" : "#fecaca"}`,
+                    }}
+                    data-testid="badge-attendance-pct"
+                  >
+                    <span>📊</span>
+                    Attendance: {attendPct}%
+                  </span>
+                )}
+                {hwCount > 0 && (
+                  <span
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow-sm"
+                    style={{ background: "#fffbeb", color: "#f59e0b", border: "1px solid #fde68a" }}
+                    data-testid="badge-hw-pending"
+                  >
+                    <span>📝</span>
+                    {hwCount} Assignment{hwCount !== 1 ? "s" : ""}
+                  </span>
+                )}
+                {unreadCount > 0 && (
+                  <span
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow-sm"
+                    style={{ background: "#fef2f2", color: "#ef4444", border: "1px solid #fecaca" }}
+                    data-testid="badge-unread-notices"
+                  >
+                    <span>🔔</span>
+                    {unreadCount} New Notice{unreadCount !== 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+            </div>
 
-              {/* Subtle emerald glow on hover (desktop only) */}
-              <span className="
-                absolute inset-0 rounded-2xl opacity-0
-                group-hover:opacity-100 transition-opacity duration-200
-                ring-1 ring-inset ring-[#10b981]/20
-                pointer-events-none
-              " />
-            </button>
-          ))}
-        </div>
+            {/* School code badge (desktop) */}
+            <div className="hidden sm:flex flex-col items-center gap-1.5 flex-shrink-0">
+              <div
+                className="w-12 h-12 rounded-xl flex items-center justify-center"
+                style={{ background: "linear-gradient(135deg, #3b82f6, #6366f1)", boxShadow: "0 4px 12px rgba(99,102,241,0.3)" }}
+              >
+                <GraduationCap className="w-6 h-6 text-white" />
+              </div>
+              <p className="text-[10px] text-slate-400 font-mono font-semibold">{student.schoolCode}</p>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* ── Section heading ── */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.2, duration: 0.4 }}
+        >
+          <h2 className="text-base font-bold text-slate-700">My Modules</h2>
+          <p className="text-xs text-slate-400 mt-0.5">Tap a card to access your portal</p>
+        </motion.div>
+
+        {/* ── Module grid ── */}
+        <motion.div
+          variants={containerVariants}
+          initial="hidden"
+          animate="show"
+          className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4"
+        >
+          {TILES.map((tile) => {
+            const showPulse =
+              (tile.noticeKey && unreadCount > 0) ||
+              (tile.pulse && !tile.noticeKey && hwCount > 0);
+
+            return (
+              <motion.button
+                key={tile.id}
+                variants={cardVariants}
+                whileHover={{
+                  scale: 1.05,
+                  boxShadow: `0 0 0 2px ${tile.accent}55, 0 12px 36px ${tile.accent}30`,
+                  transition: { duration: 0.18, ease: "easeOut" },
+                }}
+                whileTap={{ scale: 0.97 }}
+                data-testid={`tile-${tile.id}`}
+                onClick={() => handleTileClick(tile.id, tile.label, tile.route)}
+                className="relative text-left focus:outline-none"
+                style={{
+                  background: "rgba(255,255,255,0.78)",
+                  backdropFilter: "blur(12px)",
+                  WebkitBackdropFilter: "blur(12px)",
+                  borderRadius: "20px",
+                  border: "1px solid rgba(255,255,255,0.72)",
+                  boxShadow: "0 4px 18px rgba(0,0,0,0.06)",
+                  borderTop: `4px solid ${tile.accent}`,
+                  cursor: "pointer",
+                  padding: "20px 16px",
+                  minHeight: "130px",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "12px",
+                }}
+              >
+                {/* Pulse dot */}
+                {showPulse && (
+                  <span
+                    className="absolute top-3 right-3"
+                    data-testid={`badge-${tile.id}-pulse`}
+                    aria-label={tile.noticeKey ? `${unreadCount} unread notices` : `${hwCount} pending`}
+                  >
+                    <span
+                      className="relative flex h-3 w-3"
+                    >
+                      <span
+                        className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                        style={{ background: "#ef4444" }}
+                      />
+                      <span
+                        className="relative inline-flex rounded-full h-3 w-3"
+                        style={{ background: "#ef4444" }}
+                      />
+                    </span>
+                  </span>
+                )}
+
+                {/* Emoji icon in colored circle */}
+                <div
+                  className="flex items-center justify-center rounded-2xl"
+                  style={{
+                    width: "60px",
+                    height: "60px",
+                    background: tile.bg,
+                    boxShadow: `0 4px 14px ${tile.accent}22`,
+                    fontSize: "30px",
+                    lineHeight: 1,
+                    flexShrink: 0,
+                  }}
+                >
+                  {tile.emoji}
+                </div>
+
+                {/* Label */}
+                <div className="text-center">
+                  <span
+                    className="text-xs sm:text-sm font-bold leading-tight block"
+                    style={{ color: "#1e293b" }}
+                  >
+                    {tile.label}
+                  </span>
+                  {tile.route === null && (
+                    <span
+                      className="text-[10px] font-semibold mt-0.5 block"
+                      style={{ color: tile.accent }}
+                    >
+                      Coming Soon
+                    </span>
+                  )}
+                </div>
+              </motion.button>
+            );
+          })}
+        </motion.div>
 
         {/* ── Footer ── */}
-        <p className="text-center text-xs text-gray-400 pb-4">
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.9, duration: 0.4 }}
+          className="text-center text-[11px] text-slate-400 pb-2"
+        >
           © {new Date().getFullYear()} BENIUS · {student.schoolName}
-        </p>
+        </motion.p>
       </main>
     </div>
   );
