@@ -159,7 +159,7 @@ function PortalCard({ portal, index }: { portal: (typeof portals)[number]; index
           </div>
 
           {/* Label */}
-          <p className="text-[9px] font-bold tracking-[0.22em] uppercase" style={{ color: `rgba(${glowColorHex},0.55)` }}>{label}</p>
+          <p className="text-[9px] font-bold tracking-[0.22em] uppercase" style={{ color: accentTo }}>{label}</p>
 
           {/* Title + description */}
           <div className="flex-1 min-h-0 space-y-1.5">
@@ -312,7 +312,7 @@ export default function Home() {
             </div>
             <div className="flex items-baseline gap-2">
               <span className="text-lg font-black tracking-tight text-white" data-testid="text-app-title">BENIUS</span>
-              <span className="text-[11px] text-white/30 font-medium hidden sm:inline">School Management</span>
+              <span className="text-[11px] text-white/55 font-medium hidden sm:inline">School Management</span>
             </div>
           </div>
           <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full"
@@ -367,6 +367,31 @@ export default function Home() {
               Empowering <span className="text-white/90 font-semibold">10,000+ minds</span> with real-time
               attendance, smart timetables, and secure administration.
             </motion.p>
+
+            {/* CTA */}
+            <motion.div
+              initial={{ opacity: 0, y: -12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1], delay: 0.26 }}
+              className="flex justify-center"
+            >
+              <Link href="/login">
+                <motion.button
+                  data-testid="button-cta-explore"
+                  whileHover={{ scale: 1.06 }}
+                  whileTap={{ scale: 0.96 }}
+                  transition={{ type: "spring", stiffness: 350, damping: 20 }}
+                  className="relative px-6 py-2 rounded-full text-xs font-bold text-white tracking-wide flex items-center gap-2"
+                  style={{
+                    background: "linear-gradient(135deg, #6366f1, #06b6d4)",
+                    boxShadow: "0 0 20px 4px rgba(99,102,241,0.35), 0 0 40px 8px rgba(6,182,212,0.18)",
+                  }}
+                >
+                  Explore Portals
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </motion.button>
+              </Link>
+            </motion.div>
           </div>
 
           {/* Portal grid — desktop 3 cols, mobile flex-col */}
@@ -381,7 +406,7 @@ export default function Home() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.6, delay: 0.65 }}
-            className="text-center text-[10px] sm:text-xs text-white/30 flex-shrink-0"
+            className="text-center text-[10px] sm:text-xs text-white/60 flex-shrink-0"
           >
             Contact your school administrator for access credentials.
           </motion.p>
@@ -397,9 +422,9 @@ export default function Home() {
           <div className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0"
               style={{ boxShadow: "0 0 5px 2px rgba(52,211,153,0.65)" }} />
-            <span className="text-[10px] text-white/45 font-medium" data-testid="text-footer-status">All Systems Operational</span>
+            <span className="text-[10px] text-white/70 font-medium" data-testid="text-footer-status">All Systems Operational</span>
           </div>
-          <p className="text-[10px] text-white/25 font-medium" data-testid="text-footer-copyright">
+          <p className="text-[10px] text-white/55 font-medium" data-testid="text-footer-copyright">
             © {new Date().getFullYear()} BENIUS · Secure Multi-Tenant Infrastructure
           </p>
         </div>
