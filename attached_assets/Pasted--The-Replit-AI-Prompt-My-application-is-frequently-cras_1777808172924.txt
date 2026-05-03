@@ -1,0 +1,24 @@
+### The Replit AI Prompt
+
+"My application is frequently crashing with a **'Page Unresponsive'** error (as seen in **'1000079812.jpg'**). This started happening after implementing advanced UI features like glassmorphism, 3D icons, and animations. Please perform a deep performance audit and code fix based on the following:
+
+**1. Fix Infinite Loops (React/JS):**
+* Audit all `useEffect`, `useMemo`, and `useCallback` hooks across the project, especially in the `/admin-dashboard` and the main Landing Page.
+* Ensure every effect has a proper dependency array to prevent rapid-fire state updates that freeze the main thread.
+* Check for any recursive component rendering or state-update loops.
+
+**2. Optimize UI & Animation Performance:**
+* **GPU Acceleration:** Update CSS for 3D tilts and glassmorphism to include `will-change: transform, opacity;` and `transform: translateZ(0);` to offload rendering to the GPU.
+* **Lottie/3D Assets:** Ensure animated icons are only running when they are in the viewport. Implement 'lazy loading' for heavy SVG or Lottie animations.
+* **Mesh Gradients:** If using high-CPU animated gradients, refactor them to use CSS `canvas` or optimized `keyframes` that don't trigger constant layout shifts.
+
+**3. Memory & Resource Management:**
+* Check for memory leaks, such as event listeners or intervals (`setInterval`) that are not being cleared in the `return` cleanup function of `useEffect`.
+* If data-heavy tables (like Student Registry) are loading, implement **Pagination** or **Virtual Scrolling** (e.g., `react-window`) so the browser doesn't try to render thousands of DOM elements at once.
+
+**4. Replit Environment Optimization:**
+* Optimize the build process to reduce the bundle size.
+* If the app is pre-loading too many assets on the landing page, implement **Code Splitting** using `React.lazy()` and `Suspense` so only the necessary code for the current page is loaded.
+
+**5. Debugging Action:**
+* Provide a log of any detected 'Long Tasks' in the browser console and fix the specific functions causing them."
