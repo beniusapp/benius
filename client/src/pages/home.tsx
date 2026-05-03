@@ -336,11 +336,11 @@ export default function Home() {
       </header>
 
       {/* ── Main content ── */}
-      <main className="relative z-10 flex-1 min-h-0 flex flex-col items-center justify-center px-4 sm:px-6 py-3 sm:py-4">
-        <div className="w-full max-w-5xl flex flex-col gap-4 sm:gap-5 min-h-0">
+      <main className="relative z-10 flex-1 min-h-0 flex flex-col items-center justify-center px-4 sm:px-6 py-2 sm:py-3">
+        <div className="w-full max-w-5xl flex flex-col gap-3 sm:gap-4 min-h-0">
 
           {/* Hero */}
-          <div className="text-center space-y-2 sm:space-y-3 flex-shrink-0">
+          <div className="text-center space-y-2 flex-shrink-0">
             <motion.div
               initial={{ opacity: 0, y: -20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -379,31 +379,6 @@ export default function Home() {
               Empowering <span className="text-white/90 font-semibold">10,000+ minds</span> with real-time
               attendance, smart timetables, and secure administration.
             </motion.p>
-
-            {/* CTA */}
-            <motion.div
-              initial={{ opacity: 0, y: -12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1], delay: 0.26 }}
-              className="flex justify-center"
-            >
-              <Link href="/login">
-                <motion.button
-                  data-testid="button-cta-explore"
-                  whileHover={{ scale: 1.06 }}
-                  whileTap={{ scale: 0.96 }}
-                  transition={{ type: "spring", stiffness: 350, damping: 20 }}
-                  className="relative px-6 py-2 rounded-full text-xs font-bold text-white tracking-wide flex items-center gap-2"
-                  style={{
-                    background: "linear-gradient(135deg, #6366f1, #06b6d4)",
-                    boxShadow: "0 0 20px 4px rgba(99,102,241,0.35), 0 0 40px 8px rgba(6,182,212,0.18)",
-                  }}
-                >
-                  Explore Portals
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </motion.button>
-              </Link>
-            </motion.div>
           </div>
 
           {/* Portal grid — desktop 3 cols, mobile flex-col */}
