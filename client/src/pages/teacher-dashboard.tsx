@@ -390,7 +390,7 @@ export default function TeacherDashboard() {
       {/* Main content — padded below fixed nav */}
       <div className="relative z-10 pt-16">
         {ActiveComponent ? (
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 text-foreground" style={{ color: "inherit" }}>
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 text-foreground">
             <ActiveComponent teacher={teacher} />
           </div>
         ) : (
