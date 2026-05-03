@@ -1,0 +1,24 @@
+### The "No-Scroll" Premium Landing Page Prompt
+
+"I want to redesign the landing page (`/`) to be a **single-screen, high-impact 'Full Viewport' experience**. The page should have **zero scrolling**; all content must fit perfectly within the user's screen (100vh) to create a sleek, app-like feel.
+
+**1. Layout & Composition (The 100vh Rule):**
+*   **Full-Height Flex:** Use a centered flexbox or grid layout that ensures the header, headline, and portal cards are perfectly balanced on the screen without triggering a scrollbar.
+*   **Background:** Implement a deep, high-end dark theme using a **fluid mesh gradient** (Indigos and Cyans) that slowly shifts colors in the background, giving the page a living, breathing feel.
+
+**2. The 'Pillars of Access' (Portal Cards):**
+*   **Horizontal Alignment:** Place the **Admin, Teacher, and Student Portal** cards side-by-side in a single row.
+*   **Glassmorphism:** Each card should be a translucent glass pane (`backdrop-filter: blur(25px)`) with a subtle white border-glow.
+*   **3D Hero Icons:** Center a massive, high-fidelity **3D icon** at the top of each card (e.g., a 3D Command Console for Admin, a 3D Holographic Globe for Teacher, and a 3D Rocket/Cap for Student).
+
+**3. Interactive Motion & 'Wow' Factor:**
+*   **Perspective Tilt:** Use a 3D tilt effect so the cards follow the user’s mouse movement (`react-parallax-tilt` style), making the 'Glass' feel real.
+*   **Magnetic Buttons:** The 'Enter Portal' buttons should have a magnetic pull effect when the cursor gets close.
+*   **Staggered Load:** On page load, the headline should fade in from the top, and the three cards should 'pop' out from the center with a spring-heavy animation.
+
+**4. Visibility & Typography:**
+*   **Headline:** Use a bold, large-scale font like 'Plus Jakarta Sans'. The main title should use a **vibrant gradient text** (e.g., Mint to Blue) to stand out against the dark background.
+*   **Contrast Audit:** Ensure every piece of text is 100% visible. No 'ghost' text (white on white). Use high-contrast whites for descriptions and vibrant accents for labels.
+
+**5. Responsive Strategy:**
+*   On mobile, since we cannot scroll, the cards should shrink proportionally or switch to a very compact, high-design 'Control Center' layout that still fits entirely on one screen without scrolling."
