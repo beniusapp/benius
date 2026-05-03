@@ -388,7 +388,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
         </Button>
         <h2 className="text-xl font-bold tracking-tight">Attendance History</h2>
 
-        <div className="backdrop-blur-md bg-white/70 dark:bg-gray-900/70 border border-white/20 rounded-2xl shadow-lg p-4">
+        <div className="bg-white dark:bg-gray-900 border border-border rounded-2xl shadow-lg p-4">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Class</label>
@@ -480,7 +480,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
       </Button>
       <h2 className="text-xl font-bold tracking-tight" data-testid="text-mark-title">Mark Attendance</h2>
 
-      <div className="backdrop-blur-md bg-white/70 dark:bg-gray-900/70 border border-white/20 rounded-2xl shadow-lg p-4">
+      <div className="bg-white dark:bg-gray-900 border border-border rounded-2xl shadow-lg p-4">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
           <div className="space-y-1">
             <label className="text-xs font-medium text-muted-foreground">Class</label>

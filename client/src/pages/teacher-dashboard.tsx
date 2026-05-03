@@ -272,7 +272,7 @@ export default function TeacherDashboard() {
   const initials = teacher.fullName.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
 
   return (
-    <div className="min-h-screen" style={{ background: "#0f172a", color: "#fff" }}>
+    <div className="min-h-screen" style={{ background: "#0f172a" }}>
 
       {/* Decorative radial blobs */}
       <div style={{
@@ -390,7 +390,7 @@ export default function TeacherDashboard() {
       {/* Main content — padded below fixed nav */}
       <div className="relative z-10 pt-16">
         {ActiveComponent ? (
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 text-foreground" style={{ color: "inherit" }}>
             <ActiveComponent teacher={teacher} />
           </div>
         ) : (
