@@ -1,0 +1,33 @@
+I need to fix a critical accessibility and visibility bug in the /teacher-dashboard and its sub-modules (Attendance, Mark Attendance, etc.). As seen in files '1000079740.jpg', '1000079741.jpg', and '1000079742.jpg', text elements like 'My Attendance', 'Class Attendance', labels, and student names are nearly invisible because white text is being rendered on light-colored backgrounds.
+
+Please refactor the CSS/Tailwind configuration with these requirements:
+
+1. Fix Text Contrast & High-Visibility Colors:
+
+Labels & Dropdowns: Update all form labels (Class, Section, Date) and dropdown placeholders in the Attendance modules to use Deep Charcoal (#1e293b).
+
+Student Information: In the 'Mark Attendance' list, ensure student names (e.g., 'Montu Saha') and IDs (e.g., 'PPS-0007') use a bold, dark color that stands out against the card background.
+
+Secondary Text: Small descriptive text and dates must be updated to meet WCAG contrast standards (minimum 4.5:1 ratio).
+
+2. Global Input & Card Refactoring:
+
+Typed Text Fix: Apply a global style to all input, select, and textarea fields so that the text typed by the user is always dark and visible, regardless of the container theme.
+
+Card Logic: If a card or 'Glassmorphism' container has a light background-alpha, force all child text to a dark palette.
+
+Gradient Safety: For the blue-to-purple background gradients, ensure the overlay text is either pure white (if the gradient is dark) or deep black (if the gradient is light).
+
+3. Global UI Consistency (Safe Color Variables):
+
+Define a global CSS variable --text-primary and --text-secondary.
+
+Implement a logic where these variables switch between light and dark modes correctly, ensuring no 'ghost text' (white on white) occurs on any dashboard page (/teacher, /admin, /student).
+
+Check the 'Save Attendance' button and other action buttons to ensure the white text is high-contrast against the vibrant button backgrounds.
+
+4. Audit & Cleanup:
+
+Scan the entire codebase for hardcoded text-white classes on light-colored utility backgrounds and replace them with theme-aware classes.
+
+Ensure the 'Back' button and 'Navigation' headers are clearly visible against the dashboard background.
