@@ -1,0 +1,31 @@
+I need to fix critical text visibility and contrast issues in the /teacher-dashboard/calendar section, as shown in files '1000079743.jpg', '1000079744.jpg', and '1000079745.jpg'. Many elements, especially in the upper header and navigation area, are nearly invisible due to white/light-grey text sitting on a light background.
+
+Please refactor the Calendar UI with these requirements:
+
+1. Header & Navigation Visibility:
+
+Month/Year Selectors: Update the text color inside the Month and Year dropdowns to Deep Charcoal (#1e293b) or Pure Black. Currently, the white text on a light-grey background is illegible.
+
+Navigation Buttons: Ensure the 'Previous' (<), 'Next' (>), and 'Today' buttons have high-contrast text or icons against their background.
+
+Calendar Tabs: Change the 'Month', 'Week', and 'Agenda' tab text to a dark, bold color. Ensure the 'Active' tab state has a clearly visible underline or highlight color.
+
+Event Counters: Make the '0 events | 0 holidays' text at the top-left dark and legible.
+
+2. Calendar Grid & Agenda Contrast:
+
+Day Headers: Ensure 'SUN', 'MON', 'TUE', etc., use a high-contrast dark font.
+
+Date Numbers: Darken the date numbers within the calendar grid squares so they are easily readable against the white grid cells.
+
+Agenda View: In the Agenda list, ensure the Month/Year headers (e.g., 'January 2026') and event titles (e.g., 'New Year's Day') use dark text colors. The white text on the light-grey 'January' bar is currently invisible.
+
+3. Global Styling Logic:
+
+Theme-Aware Text: Implement a rule that ensures if the background is lighter than a specific threshold, the text automatically defaults to a dark utility class (e.g., text-slate-900 in Tailwind).
+
+Button Text: Check the 'Holiday', 'Academic', 'Examination', and 'Event' legend buttons. Ensure the white text inside these colorful pills is bold and sharp.
+
+4. Verification:
+
+Review the entire /calendar route for any 'ghost' text (white text on white background) and force a color override to ensure 100% legibility for teachers.
