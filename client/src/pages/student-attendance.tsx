@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { motion } from "framer-motion";
 import {
   ArrowLeft, Calendar, BarChart2, Info, Download,
   ChevronLeft, ChevronRight, GraduationCap, Loader2,
@@ -223,7 +224,7 @@ export default function StudentAttendance() {
 
   if (studentLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f0fdf4]">
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#f8fafc" }}>
         <Loader2 className="w-9 h-9 animate-spin text-[#10b981]" />
       </div>
     );
@@ -258,34 +259,58 @@ export default function StudentAttendance() {
   })();
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#f0fdf4] print:bg-white" onClick={() => tooltip && closeTooltip()}>
+    <div className="min-h-screen flex flex-col print:bg-white relative" style={{ background: "#f8fafc" }} onClick={() => tooltip && closeTooltip()}>
+
+      {/* ── Decorative blobs ── */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+        <div style={{ position: "absolute", top: "-120px", right: "-80px", width: "500px", height: "500px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "460px", height: "460px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", top: "38%", left: "28%", width: "360px", height: "360px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.05) 0%, transparent 65%)" }} />
+      </div>
 
       {/* ── Sticky Header ── */}
-      <header className="sticky top-0 z-30 bg-[#10b981] shadow-md print:hidden">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3">
+      <header
+        className="sticky top-0 z-30 print:hidden"
+        style={{
+          backdropFilter: "blur(18px)",
+          WebkitBackdropFilter: "blur(18px)",
+          background: "rgba(255, 255, 255, 0.75)",
+          borderBottom: "1px solid rgba(255,255,255,0.7)",
+          boxShadow: "0 1px 28px rgba(0,0,0,0.07)",
+        }}
+      >
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 h-14 flex items-center gap-3">
           <button
             onClick={() => setLocation("/student-dashboard")}
-            className="flex items-center justify-center w-11 h-11 rounded-lg bg-white/20 hover:bg-white/30 text-white transition-colors"
+            className="flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0"
+            style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
             data-testid="button-back"
             aria-label="Back to dashboard"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className="w-5 h-5 text-slate-600" />
           </button>
-          <div className="flex items-center gap-2">
-            <GraduationCap className="w-5 h-5 text-white" />
-            <div className="leading-tight">
-              <p className="text-white font-bold text-base">Attendance</p>
-              <p className="text-emerald-100 text-xs">{student.schoolName}</p>
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <div className="flex items-center justify-center w-8 h-8 rounded-xl flex-shrink-0" style={{ background: "linear-gradient(135deg, #10b981, #3b82f6)" }}>
+              <GraduationCap className="w-4 h-4 text-white" />
+            </div>
+            <div className="leading-tight min-w-0">
+              <p className="font-bold text-sm text-slate-800">Attendance</p>
+              <p className="text-[11px] text-slate-400 truncate">{student.schoolName}</p>
             </div>
           </div>
-          <div className="ml-auto text-right">
-            <p className="text-white text-xs font-semibold">{student.digitalStudentId}</p>
-            <p className="text-emerald-100 text-[10px]">Class {student.class}–{student.section}</p>
+          <div className="hidden sm:block text-right flex-shrink-0">
+            <p className="text-xs font-semibold text-slate-600">{student.digitalStudentId}</p>
+            <p className="text-[10px] text-slate-400">Class {student.class}–{student.section}</p>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-4xl mx-auto w-full px-4 sm:px-6 py-5 space-y-5 print:space-y-4 print:py-2">
+      <motion.main
+        className="flex-1 max-w-4xl mx-auto w-full px-4 sm:px-6 py-5 space-y-5 print:space-y-4 print:py-2 relative z-10"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
+      >
 
         {/* ── Print Header (only in PDF) ── */}
         <div className="hidden print:flex print:items-center print:justify-between print:border-b print:border-slate-200 print:pb-3 print:mb-2">
@@ -303,25 +328,25 @@ export default function StudentAttendance() {
         >
           {statsLoading ? (
             Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="flex-shrink-0 w-40 sm:w-auto bg-white rounded-2xl border border-emerald-100 shadow-sm p-4 animate-pulse h-20" />
+              <div key={i} className="flex-shrink-0 w-40 sm:w-auto rounded-2xl p-4 animate-pulse h-20" />
             ))
           ) : (
             <>
-              <div className="flex-shrink-0 w-40 sm:w-auto bg-white rounded-2xl border border-emerald-100 shadow-sm p-4 flex flex-col items-center justify-center" data-testid="stat-overall-percent">
+              <div className="flex-shrink-0 w-40 sm:w-auto rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center justify-center" data-testid="stat-overall-percent">
                 <p className="text-2xl sm:text-3xl font-extrabold text-emerald-500">
                   {statsData?.overallPercent ?? 0}%
                 </p>
                 <p className="text-[10px] sm:text-xs text-slate-500 font-medium mt-0.5 text-center">Overall Attendance</p>
               </div>
-              <div className="flex-shrink-0 w-40 sm:w-auto bg-white rounded-2xl border border-emerald-100 shadow-sm p-4 flex flex-col items-center justify-center" data-testid="stat-working-days">
+              <div className="flex-shrink-0 w-40 sm:w-auto rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center justify-center" data-testid="stat-working-days">
                 <p className="text-2xl sm:text-3xl font-extrabold text-slate-700">{statsData?.workingDays ?? 0}</p>
                 <p className="text-[10px] sm:text-xs text-slate-500 font-medium mt-0.5 text-center">Working Days</p>
               </div>
-              <div className="flex-shrink-0 w-40 sm:w-auto bg-white rounded-2xl border border-emerald-100 shadow-sm p-4 flex flex-col items-center justify-center" data-testid="stat-present">
+              <div className="flex-shrink-0 w-40 sm:w-auto rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center justify-center" data-testid="stat-present">
                 <p className="text-2xl sm:text-3xl font-extrabold text-emerald-600">{statsData?.totalPresent ?? 0}</p>
                 <p className="text-[10px] sm:text-xs text-slate-500 font-medium mt-0.5 text-center">Days Present</p>
               </div>
-              <div className="flex-shrink-0 w-40 sm:w-auto bg-white rounded-2xl border border-emerald-100 shadow-sm p-4 flex flex-col items-center justify-center" data-testid="stat-absent">
+              <div className="flex-shrink-0 w-40 sm:w-auto rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center justify-center" data-testid="stat-absent">
                 <p className="text-2xl sm:text-3xl font-extrabold text-red-500">{statsData?.totalAbsent ?? 0}</p>
                 <p className="text-[10px] sm:text-xs text-slate-500 font-medium mt-0.5 text-center">Days Absent</p>
               </div>
@@ -413,7 +438,7 @@ export default function StudentAttendance() {
             {/* Calendar grid */}
             <div
               ref={calendarRef}
-              className="relative bg-white rounded-2xl border border-emerald-50 shadow-sm overflow-hidden select-none"
+              className="relative rounded-2xl overflow-hidden select-none bg-white/80 border border-white/70 shadow-sm"
               onTouchStart={handleTouchStart}
               onTouchEnd={handleTouchEnd}
               data-testid="calendar-grid"
@@ -513,7 +538,7 @@ export default function StudentAttendance() {
             </div>
 
             {/* Legend Card */}
-            <div className="bg-white rounded-2xl border border-emerald-50 shadow-sm p-4 print:border-slate-200">
+            <div className="rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm print:border-slate-200">
               <div className="flex items-center gap-2 mb-3">
                 <Info className="w-4 h-4 text-slate-400" />
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Legend</span>
@@ -536,7 +561,7 @@ export default function StudentAttendance() {
             </div>
 
             {/* Status Summary Grid */}
-            <div className="bg-white rounded-2xl border border-emerald-50 shadow-sm overflow-hidden print:border-slate-200">
+            <div className="rounded-2xl overflow-hidden bg-white/80 border border-white/70 shadow-sm print:border-slate-200">
               <div className="px-4 py-3 border-b border-slate-50 flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-[#10b981]" />
                 <span className="text-sm font-bold text-slate-700">{MONTH_NAMES[selectedMonth - 1]} {selectedYear} — Summary</span>
@@ -581,7 +606,7 @@ export default function StudentAttendance() {
             </div>
 
             {/* Bar Chart */}
-            <div className="bg-white rounded-2xl border border-emerald-50 shadow-sm overflow-hidden print:border-slate-200">
+            <div className="rounded-2xl overflow-hidden bg-white/80 border border-white/70 shadow-sm print:border-slate-200">
               <div className="px-4 py-3 border-b border-slate-50 flex items-center gap-2">
                 <BarChart2 className="w-4 h-4 text-[#10b981]" />
                 <span className="text-sm font-bold text-slate-700">Monthly Attendance — {academicYear}</span>
@@ -733,7 +758,7 @@ export default function StudentAttendance() {
             Download Attendance Report
           </button>
         </div>
-      </main>
+      </motion.main>
 
       {/* Print styles */}
       <style>{`

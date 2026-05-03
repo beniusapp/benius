@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { motion } from "framer-motion";
 import { ArrowLeft, Aperture, X, Download, Loader2, Image } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 
@@ -78,39 +79,61 @@ export default function StudentGallery() {
 
   if (studentLoading || !student) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f0fdf4]">
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#f8fafc" }}>
         <Loader2 className="w-9 h-9 animate-spin text-[#10b981]" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#f0fdf4] flex flex-col">
+    <div className="min-h-screen flex flex-col relative" style={{ background: "#f8fafc" }}>
+
+      {/* ── Decorative blobs ── */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+        <div style={{ position: "absolute", top: "-120px", right: "-80px", width: "500px", height: "500px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "460px", height: "460px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", top: "38%", left: "28%", width: "360px", height: "360px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.05) 0%, transparent 65%)" }} />
+      </div>
 
       {/* ── Sticky Header ── */}
-      <header className="sticky top-0 z-30 bg-[#10b981] shadow-md">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
+      <header
+        className="sticky top-0 z-30"
+        style={{
+          backdropFilter: "blur(18px)",
+          WebkitBackdropFilter: "blur(18px)",
+          background: "rgba(255, 255, 255, 0.75)",
+          borderBottom: "1px solid rgba(255,255,255,0.7)",
+          boxShadow: "0 1px 28px rgba(0,0,0,0.07)",
+        }}
+      >
+        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-3">
           <button
             onClick={() => setLocation("/student-dashboard")}
-            className="flex items-center justify-center w-11 h-11 rounded-xl bg-white/20 hover:bg-white/30 text-white transition-colors flex-shrink-0"
+            className="flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0"
+            style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
             data-testid="button-back"
             aria-label="Back"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className="w-5 h-5 text-slate-600" />
           </button>
-          <div className="flex-1 min-w-0">
-            <p className="text-white font-bold text-sm leading-tight">School Gallery</p>
-            <p className="text-emerald-100 text-xs">{student.schoolName}</p>
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <div className="flex items-center justify-center w-8 h-8 rounded-xl flex-shrink-0" style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}>
+              <Aperture className="w-4 h-4 text-white" />
+            </div>
+            <div className="leading-tight min-w-0">
+              <p className="font-bold text-sm text-slate-800">School Gallery</p>
+              <p className="text-[11px] text-slate-400 truncate">{student.schoolName}</p>
+            </div>
           </div>
-          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/20">
-            <Aperture className="w-3.5 h-3.5 text-white" />
-            <span className="text-white text-xs font-semibold">{items.length} photos</span>
+          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full flex-shrink-0" style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.06)" }}>
+            <Aperture className="w-3.5 h-3.5 text-slate-500" />
+            <span className="text-slate-600 text-xs font-semibold">{items.length} photos</span>
           </div>
         </div>
       </header>
 
       {/* ── Tag Filter Bar ── */}
-      <div className="sticky top-[60px] z-20 bg-[#f0fdf4]/90 backdrop-blur-sm border-b border-emerald-100">
+      <div className="sticky top-14 z-20 bg-white/80 backdrop-blur-sm border-b border-slate-100">
         <div className="max-w-5xl mx-auto px-4 py-2">
           <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
             <button
@@ -146,7 +169,12 @@ export default function StudentGallery() {
         </div>
       </div>
 
-      <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-5">
+      <motion.main
+        className="flex-1 max-w-5xl mx-auto w-full px-4 py-5"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
+      >
 
         {/* ── Loading Skeletons ── */}
         {isLoading && (
@@ -202,7 +230,7 @@ export default function StudentGallery() {
             ))}
           </div>
         )}
-      </main>
+      </motion.main>
 
       {/* ── Lightbox Overlay ── */}
       {lightbox && (

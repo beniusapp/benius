@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { motion } from "framer-motion";
 import { fmtDate } from "@/lib/dateUtils";
 import {
   ArrowLeft, FileText, PlusCircle, X, Loader2, Clock, CheckCircle2, XCircle, Forward,
@@ -129,33 +130,56 @@ export default function StudentLeave() {
 
   if (studentLoading || !student) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f0fdf4]">
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#f8fafc" }}>
         <Loader2 className="w-9 h-9 animate-spin text-[#10b981]" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#f0fdf4] flex flex-col">
+    <div className="min-h-screen flex flex-col relative" style={{ background: "#f8fafc" }}>
+
+      {/* ── Decorative blobs ── */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+        <div style={{ position: "absolute", top: "-120px", right: "-80px", width: "500px", height: "500px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "460px", height: "460px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", top: "38%", left: "28%", width: "360px", height: "360px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.05) 0%, transparent 65%)" }} />
+      </div>
 
       {/* ── Header ── */}
-      <header className="sticky top-0 z-30 bg-[#10b981] shadow-md">
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
+      <header
+        className="sticky top-0 z-30"
+        style={{
+          backdropFilter: "blur(18px)",
+          WebkitBackdropFilter: "blur(18px)",
+          background: "rgba(255, 255, 255, 0.75)",
+          borderBottom: "1px solid rgba(255,255,255,0.7)",
+          boxShadow: "0 1px 28px rgba(0,0,0,0.07)",
+        }}
+      >
+        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
           <button
             onClick={() => setLocation("/student-dashboard")}
-            className="flex items-center justify-center w-11 h-11 rounded-xl bg-white/20 hover:bg-white/30 text-white transition-colors flex-shrink-0"
+            className="flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0"
+            style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
             data-testid="button-back"
             aria-label="Back"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className="w-5 h-5 text-slate-600" />
           </button>
-          <div className="flex-1 min-w-0">
-            <p className="text-white font-bold text-sm leading-tight">Leave Hub</p>
-            <p className="text-emerald-100 text-xs">Class {student.class} – {student.section}</p>
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <div className="flex items-center justify-center w-8 h-8 rounded-xl flex-shrink-0" style={{ background: "linear-gradient(135deg, #a78bfa, #6366f1)" }}>
+              <FileText className="w-4 h-4 text-white" />
+            </div>
+            <div className="leading-tight min-w-0">
+              <p className="font-bold text-sm text-slate-800">Leave Hub</p>
+              <p className="text-[11px] text-slate-400 truncate">Class {student.class} – {student.section}</p>
+            </div>
           </div>
           <button
             onClick={() => setDrawerOpen(true)}
-            className="flex items-center gap-1.5 px-3 h-10 rounded-xl bg-white/20 hover:bg-white/30 text-white text-sm font-semibold transition-colors"
+            className="flex items-center gap-1.5 px-3 h-9 rounded-xl text-sm font-semibold transition-colors flex-shrink-0"
+            style={{ background: "linear-gradient(135deg, #10b981, #3b82f6)", color: "#fff" }}
             data-testid="button-apply-leave"
           >
             <PlusCircle className="w-4 h-4" />
@@ -164,7 +188,12 @@ export default function StudentLeave() {
         </div>
       </header>
 
-      <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-5 space-y-4">
+      <motion.main
+        className="flex-1 max-w-2xl mx-auto w-full px-4 py-5 space-y-4"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
+      >
 
         {/* ── Summary Cards ── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -198,14 +227,14 @@ export default function StudentLeave() {
           {leavesLoading ? (
             <div className="space-y-3">
               {[1, 2, 3].map(i => (
-                <div key={i} className="bg-white rounded-2xl border border-emerald-50 shadow-sm p-4 animate-pulse">
+                <div key={i} className="rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm animate-pulse">
                   <div className="h-4 bg-gray-200 rounded w-1/2 mb-2" />
                   <div className="h-3 bg-gray-100 rounded w-3/4" />
                 </div>
               ))}
             </div>
           ) : leaves.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-8 flex flex-col items-center text-center gap-3">
+            <div className="rounded-2xl p-8 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center text-center gap-3">
               <FileText className="w-12 h-12 text-emerald-200" />
               <div>
                 <p className="font-bold text-gray-700">No leave requests yet</p>
@@ -220,7 +249,7 @@ export default function StudentLeave() {
               return (
                 <div
                   key={leave.id}
-                  className="bg-white rounded-2xl border border-emerald-50 shadow-sm p-4"
+                  className="rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm"
                   data-testid={`card-leave-${leave.id}`}
                 >
                   <div className="flex items-start justify-between gap-2 mb-2">
@@ -280,7 +309,7 @@ export default function StudentLeave() {
             })
           )}
         </div>
-      </main>
+      </motion.main>
 
       {/* ── Leave Application Drawer ── */}
       {drawerOpen && (

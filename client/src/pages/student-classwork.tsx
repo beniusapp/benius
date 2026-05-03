@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { motion } from "framer-motion";
 import { fmtDate } from "@/lib/dateUtils";
 import {
   ArrowLeft, PenLine, GraduationCap, Loader2, Calendar,
@@ -126,13 +127,13 @@ function ClassworkViewer({ cw, onClose }: { cw: ClassworkItem; onClose: () => vo
           )}
         </div>
 
-        <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-4">
+        <div className="rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm">
           <h2 className="text-sm font-semibold text-slate-600 mb-2">Instructions / Description</h2>
           <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{cw.content}</p>
         </div>
 
         {cw.fileUrl && (
-          <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm overflow-hidden">
+          <div className="rounded-2xl overflow-hidden bg-white/80 border border-white/70 shadow-sm">
             {isImage && (
               <img
                 src={cw.fileUrl}
@@ -297,7 +298,7 @@ export default function StudentClasswork() {
 
   if (studentLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f0fdf4]">
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#f8fafc" }}>
         <Loader2 className="w-9 h-9 animate-spin text-[#10b981]" />
       </div>
     );
@@ -309,35 +310,59 @@ export default function StudentClasswork() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#f0fdf4]">
+    <div className="min-h-screen flex flex-col relative" style={{ background: "#f8fafc" }}>
+      {/* ── Decorative blobs ── */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+        <div style={{ position: "absolute", top: "-120px", right: "-80px", width: "500px", height: "500px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "460px", height: "460px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", top: "38%", left: "28%", width: "360px", height: "360px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.05) 0%, transparent 65%)" }} />
+      </div>
+
       {/* Header */}
-      <header className="sticky top-0 z-30 bg-[#10b981] shadow-md">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3">
+      <header
+        className="sticky top-0 z-30"
+        style={{
+          backdropFilter: "blur(18px)",
+          WebkitBackdropFilter: "blur(18px)",
+          background: "rgba(255, 255, 255, 0.75)",
+          borderBottom: "1px solid rgba(255,255,255,0.7)",
+          boxShadow: "0 1px 28px rgba(0,0,0,0.07)",
+        }}
+      >
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 h-14 flex items-center gap-3">
           <button
             onClick={() => setLocation("/student-dashboard")}
-            className="flex items-center justify-center w-11 h-11 rounded-lg bg-white/20 hover:bg-white/30 text-white transition-colors"
+            className="flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0"
+            style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
             data-testid="button-back"
             aria-label="Back to dashboard"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className="w-5 h-5 text-slate-600" />
           </button>
-          <div className="flex items-center gap-2">
-            <PenLine className="w-5 h-5 text-white" />
-            <div className="leading-tight">
-              <p className="text-white font-bold text-base">Classwork</p>
-              <p className="text-emerald-100 text-xs">{student.schoolName}</p>
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <div className="flex items-center justify-center w-8 h-8 rounded-xl flex-shrink-0" style={{ background: "linear-gradient(135deg, #8b5cf6, #3b82f6)" }}>
+              <PenLine className="w-4 h-4 text-white" />
+            </div>
+            <div className="leading-tight min-w-0">
+              <p className="font-bold text-sm text-slate-800">Classwork</p>
+              <p className="text-[11px] text-slate-400 truncate">{student.schoolName}</p>
             </div>
           </div>
-          <div className="ml-auto text-right">
-            <p className="text-white text-xs font-semibold">{student.digitalStudentId}</p>
-            <p className="text-emerald-100 text-[10px]">Class {student.class}–{student.section}</p>
+          <div className="hidden sm:block text-right flex-shrink-0">
+            <p className="text-xs font-semibold text-slate-600">{student.digitalStudentId}</p>
+            <p className="text-[10px] text-slate-400">Class {student.class}–{student.section}</p>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-4xl mx-auto w-full px-4 sm:px-6 py-5 space-y-5">
+      <motion.main
+        className="flex-1 max-w-4xl mx-auto w-full px-4 sm:px-6 py-5 space-y-5"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
+      >
         {/* Smart Date Navigation */}
-        <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-3">
+        <div className="rounded-2xl p-3 bg-white/80 border border-white/70 shadow-sm">
           <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
             {weekDates.map(d => {
               const iso = toISODate(d);
@@ -384,7 +409,7 @@ export default function StudentClasswork() {
         {cwLoading ? (
           <div className="space-y-3">
             {[1, 2, 3].map(i => (
-              <div key={i} className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-4 animate-pulse h-28" />
+              <div key={i} className="rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm animate-pulse h-28" />
             ))}
           </div>
         ) : !cwList || cwList.length === 0 ? (
@@ -406,7 +431,7 @@ export default function StudentClasswork() {
                 <button
                   key={cw.id}
                   onClick={() => setActiveCw(cw)}
-                  className="w-full text-left bg-white rounded-2xl border border-emerald-100 shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 transition-all p-4 flex flex-col gap-3 focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:ring-offset-2"
+                  className="w-full text-left rounded-2xl bg-white/80 border border-white/70 shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 transition-all p-4 flex flex-col gap-3 focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:ring-offset-2"
                   data-testid={`card-classwork-${cw.id}`}
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -436,7 +461,7 @@ export default function StudentClasswork() {
             })}
           </div>
         )}
-      </main>
+      </motion.main>
 
       {showCalendar && (
         <DatePickerModal

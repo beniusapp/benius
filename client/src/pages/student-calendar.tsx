@@ -288,7 +288,7 @@ export default function StudentCalendar() {
 
   if (studentLoading || !student) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f0fdf4]">
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#f8fafc" }}>
         <Loader2 className="w-9 h-9 animate-spin text-[#10b981]" />
       </div>
     );
@@ -296,14 +296,14 @@ export default function StudentCalendar() {
 
   /* ═══════════════ VIEW SWITCHER ═══════════════ */
   const viewSwitcher = (
-    <div className="flex items-center justify-center gap-1 bg-white/20 rounded-xl p-1" data-testid="view-switcher">
+    <div className="flex items-center justify-center gap-1 rounded-xl p-1" style={{ background: "rgba(0,0,0,0.05)" }} data-testid="view-switcher">
       {(["month","week","year"] as View[]).map(v => (
         <button
           key={v}
           onClick={() => switchView(v)}
           data-testid={`button-view-${v}`}
           className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all ${
-            view === v ? "bg-white text-[#10b981]" : "text-white/80 hover:text-white"
+            view === v ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
           }`}
         >
           {v}
@@ -312,27 +312,52 @@ export default function StudentCalendar() {
     </div>
   );
 
+  /* ═══════════════ BLOBS ═══════════════ */
+  const decorativeBlobs = (
+    <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+      <div style={{ position: "absolute", top: "-120px", right: "-80px", width: "500px", height: "500px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 65%)" }} />
+      <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "460px", height: "460px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 65%)" }} />
+      <div style={{ position: "absolute", top: "38%", left: "28%", width: "360px", height: "360px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.05) 0%, transparent 65%)" }} />
+    </div>
+  );
+
   /* ═══════════════ HEADER ═══════════════ */
   const topHeader = (
-    <header className="sticky top-0 z-30 bg-[#10b981] shadow-md">
-      <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
+    <header
+      className="sticky top-0 z-30"
+      style={{
+        backdropFilter: "blur(18px)",
+        WebkitBackdropFilter: "blur(18px)",
+        background: "rgba(255, 255, 255, 0.75)",
+        borderBottom: "1px solid rgba(255,255,255,0.7)",
+        boxShadow: "0 1px 28px rgba(0,0,0,0.07)",
+      }}
+    >
+      <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-3">
         <button
           onClick={() => setLocation("/student-dashboard")}
-          className="flex items-center justify-center w-11 h-11 rounded-xl bg-white/20 hover:bg-white/30 text-white transition-colors flex-shrink-0"
+          className="flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0"
+          style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
           data-testid="button-back"
           aria-label="Back"
         >
-          <ArrowLeft className="w-5 h-5" />
+          <ArrowLeft className="w-5 h-5 text-slate-600" />
         </button>
-        <div className="flex-1 min-w-0">
-          <p className="text-white font-bold text-sm leading-tight">School Calendar</p>
-          <p className="text-emerald-100 text-xs">{student.schoolName}</p>
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <div className="flex items-center justify-center w-8 h-8 rounded-xl flex-shrink-0" style={{ background: "linear-gradient(135deg, #84cc16, #10b981)" }}>
+            <CalendarDays className="w-4 h-4 text-white" />
+          </div>
+          <div className="leading-tight min-w-0">
+            <p className="font-bold text-sm text-slate-800">School Calendar</p>
+            <p className="text-[11px] text-slate-400 truncate">{student.schoolName}</p>
+          </div>
         </div>
         {viewSwitcher}
         <button
           onClick={() => refetch()}
           disabled={isFetching}
-          className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/20 hover:bg-white/30 text-white transition-colors disabled:opacity-60"
+          className="w-10 h-10 flex items-center justify-center rounded-xl transition-colors disabled:opacity-60"
+          style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
           data-testid="button-sync-now"
           aria-label="Sync Now"
         >
@@ -344,23 +369,25 @@ export default function StudentCalendar() {
 
   /* ═══════════════ MONTH NAV BAR ═══════════════ */
   const monthNav = (
-    <div className="flex items-center justify-between px-4 py-3 bg-[#10b981]">
+    <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-slate-100">
       <button
         onClick={view === "week" ? prevWeek : view === "year" ? () => { setViewYear(y => y - 1); setSelectedDay(null); } : prevMonth}
-        className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/20 hover:bg-white/30 text-white transition-colors"
+        className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-600 transition-colors"
+        style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
         data-testid={view === "week" ? "button-prev-week" : view === "year" ? "button-prev-year" : "button-prev-month"}
       >
         <ChevronLeft className="w-5 h-5" />
       </button>
       <div className="text-center">
-        <p className="text-white font-bold text-base" data-testid="text-month-year">{navTitle()}</p>
-        <button onClick={goToday} className="text-[10px] text-emerald-100 hover:text-white transition-colors" data-testid="button-today">
+        <p className="text-slate-800 font-bold text-base" data-testid="text-month-year">{navTitle()}</p>
+        <button onClick={goToday} className="text-[10px] text-emerald-600 hover:text-emerald-700 transition-colors" data-testid="button-today">
           Today
         </button>
       </div>
       <button
         onClick={view === "week" ? nextWeek : view === "year" ? () => { setViewYear(y => y + 1); setSelectedDay(null); } : nextMonth}
-        className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/20 hover:bg-white/30 text-white transition-colors"
+        className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-600 transition-colors"
+        style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
         data-testid={view === "week" ? "button-next-week" : view === "year" ? "button-next-year" : "button-next-month"}
       >
         <ChevronRight className="w-5 h-5" />
@@ -383,14 +410,15 @@ export default function StudentCalendar() {
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
             data-testid="modal-event"
           >
-            <div className="bg-[#10b981] px-5 py-4 flex items-center justify-between sticky top-0">
+            <div className="bg-white border-b border-slate-100 px-5 py-4 flex items-center justify-between sticky top-0">
               <div>
-                <p className="text-white font-bold text-base">{fmtDateLong(selectedDay)}</p>
-                <p className="text-emerald-100 text-xs">{DAYS_FULL[new Date(selectedDay + "T00:00:00").getDay()]}</p>
+                <p className="text-slate-800 font-bold text-base">{fmtDateLong(selectedDay)}</p>
+                <p className="text-slate-400 text-xs">{DAYS_FULL[new Date(selectedDay + "T00:00:00").getDay()]}</p>
               </div>
               <button
                 onClick={() => setBottomSheetOpen(false)}
-                className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/20 hover:bg-white/30 text-white transition-colors"
+                className="w-9 h-9 flex items-center justify-center rounded-xl text-slate-600 transition-colors"
+                style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
                 data-testid="button-close-modal"
               >
                 <X className="w-4 h-4" />
@@ -551,7 +579,7 @@ export default function StudentCalendar() {
 
   /* ═══════════════ YEAR / AGENDA VIEW ═══════════════ */
   const yearViewAgenda = (
-    <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm divide-y divide-emerald-50" data-testid="year-agenda">
+    <div className="rounded-2xl divide-y divide-emerald-50 bg-white/80 border border-white/70 shadow-sm" data-testid="year-agenda">
       {eventsLoading ? (
         <div className="flex justify-center py-12">
           <Loader2 className="w-7 h-7 animate-spin text-[#10b981]" />
@@ -612,9 +640,15 @@ export default function StudentCalendar() {
   /* ═══════════════ MOBILE MONTH AGENDA ═══════════════ */
   if (isMobile) {
     return (
-      <div className="min-h-screen bg-[#f0fdf4] flex flex-col" data-testid="student-calendar-mobile">
+      <div className="min-h-screen flex flex-col relative" style={{ background: "#f8fafc" }} data-testid="student-calendar-mobile">
+        {decorativeBlobs}
         {topHeader}
-        <main className="flex-1 max-w-xl mx-auto w-full">
+        <motion.main
+          className="flex-1 max-w-xl mx-auto w-full"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, ease: "easeOut" }}
+        >
           {view !== "year" && (
             <div className="bg-white rounded-b-2xl border border-emerald-100 shadow-sm overflow-hidden mb-4">
               {monthNav}
@@ -622,7 +656,7 @@ export default function StudentCalendar() {
           )}
 
           {view === "year" && (
-            <div className="bg-[#10b981] mb-4">
+            <div className="rounded-2xl overflow-hidden bg-white/80 border border-white/70 shadow-sm mb-4">
               {monthNav}
             </div>
           )}
@@ -634,7 +668,7 @@ export default function StudentCalendar() {
                   <Loader2 className="w-7 h-7 animate-spin text-[#10b981]" />
                 </div>
               ) : agendaDates.length === 0 ? (
-                <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-8 text-center">
+                <div className="rounded-2xl p-8 bg-white/80 border border-white/70 shadow-sm text-center">
                   <Calendar className="w-10 h-10 text-emerald-200 mx-auto mb-3" />
                   <p className="text-gray-500 font-medium">No events in {MONTHS[viewMonth]} {viewYear}</p>
                 </div>
@@ -692,7 +726,7 @@ export default function StudentCalendar() {
             {view === "week" && weekViewGrid}
             {view === "year" && yearViewAgenda}
           </div>
-        </main>
+        </motion.main>
         {bottomSheet}
       </div>
     );
@@ -700,18 +734,24 @@ export default function StudentCalendar() {
 
   /* ═══════════════ DESKTOP LAYOUT ═══════════════ */
   return (
-    <div className="min-h-screen bg-[#f0fdf4] flex flex-col" data-testid="student-calendar-desktop">
+    <div className="min-h-screen flex flex-col relative" style={{ background: "#f8fafc" }} data-testid="student-calendar-desktop">
+      {decorativeBlobs}
       {topHeader}
-      <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-5">
+      <motion.main
+        className="flex-1 max-w-5xl mx-auto w-full px-4 py-5"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
+      >
 
         {view === "month" && (
           <div className="grid grid-cols-3 gap-5">
-            <div className="col-span-2 bg-white rounded-2xl border border-emerald-100 shadow-sm overflow-hidden">
+            <div className="col-span-2 rounded-2xl overflow-hidden">
               {monthNav}
               {monthViewGrid}
             </div>
 
-            <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-4">
+            <div className="rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm">
               <h4 className="text-sm font-semibold text-gray-600 mb-3 flex items-center gap-2">
                 <CalendarDays className="w-4 h-4 text-[#10b981]" />
                 {selectedDay ? fmtDateLong(selectedDay) : "Click a day to view"}
@@ -766,7 +806,7 @@ export default function StudentCalendar() {
 
         {view === "week" && (
           <div className="space-y-4">
-            <div className="bg-[#10b981] rounded-2xl overflow-hidden">
+            <div className="rounded-2xl overflow-hidden bg-white/80 border border-white/70 shadow-sm">
               {monthNav}
             </div>
             {eventsLoading ? (
@@ -777,14 +817,14 @@ export default function StudentCalendar() {
 
         {view === "year" && (
           <div className="space-y-4">
-            <div className="bg-[#10b981] rounded-2xl overflow-hidden">
+            <div className="rounded-2xl overflow-hidden bg-white/80 border border-white/70 shadow-sm">
               {monthNav}
             </div>
             {yearViewAgenda}
           </div>
         )}
 
-        <div className="mt-4 bg-white rounded-2xl border border-emerald-100 shadow-sm p-4">
+        <div className="mt-4 rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm">
           <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide flex items-center gap-2">
             <CalendarDays className="w-3.5 h-3.5 text-[#10b981]" /> Event Legend
           </p>
@@ -801,7 +841,7 @@ export default function StudentCalendar() {
             </div>
           </div>
         </div>
-      </main>
+      </motion.main>
 
       {(view === "month" || view === "week") && bottomSheet}
     </div>

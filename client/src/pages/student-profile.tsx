@@ -99,11 +99,11 @@ const menuVariants = {
 function StatusBadge({ status, profile }: { status: string; profile: StudentProfileRecord | null }) {
   if (status === "pending") {
     return (
-      <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-yellow-400/30 bg-yellow-400/10 text-yellow-300 text-xs font-medium" data-testid="status-banner">
-        <Clock className="w-3.5 h-3.5 flex-shrink-0 text-yellow-400" />
+      <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-yellow-200 bg-yellow-50 text-yellow-700 text-xs font-medium" data-testid="status-banner">
+        <Clock className="w-3.5 h-3.5 flex-shrink-0 text-yellow-500" />
         <span data-testid="status-label">Awaiting Teacher Verification</span>
         {profile?.submittedAt && (
-          <span className="ml-auto text-yellow-400/70 text-[10px]">
+          <span className="ml-auto text-yellow-500 text-[10px]">
             {new Date(profile.submittedAt).toLocaleDateString("en-GB")}
           </span>
         )}
@@ -112,11 +112,11 @@ function StatusBadge({ status, profile }: { status: string; profile: StudentProf
   }
   if (status === "approved") {
     return (
-      <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-[#10b981]/40 bg-[#10b981]/15 text-emerald-300 text-xs font-semibold" data-testid="status-banner">
+      <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs font-semibold" data-testid="status-banner">
         <CheckCircle className="w-4 h-4 flex-shrink-0 text-[#10b981]" />
         <span data-testid="status-label">Profile Verified</span>
         {profile?.verifiedAt && (
-          <span className="ml-auto text-emerald-400/60 text-[10px] font-normal">
+          <span className="ml-auto text-emerald-500 text-[10px] font-normal">
             {new Date(profile.verifiedAt).toLocaleDateString("en-GB")}
           </span>
         )}
@@ -125,12 +125,12 @@ function StatusBadge({ status, profile }: { status: string; profile: StudentProf
   }
   if (status === "rejected") {
     return (
-      <div className="flex items-start gap-2 px-4 py-3 rounded-xl border border-red-400/30 bg-red-400/10 text-red-300" data-testid="status-banner">
-        <XCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-red-400" />
+      <div className="flex items-start gap-2 px-4 py-3 rounded-xl border border-red-200 bg-red-50 text-red-600" data-testid="status-banner">
+        <XCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-red-500" />
         <div>
           <p className="font-semibold text-sm" data-testid="status-label">Rejected — Please resubmit</p>
           {profile?.rejectionNote && (
-            <p className="text-xs mt-1 text-red-400/80" data-testid="rejection-note">
+            <p className="text-xs mt-1 text-red-500" data-testid="rejection-note">
               {profile.rejectionNote}
             </p>
           )}
@@ -139,8 +139,8 @@ function StatusBadge({ status, profile }: { status: string; profile: StudentProf
     );
   }
   return (
-    <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-white/10 bg-white/5 text-white/40 text-xs" data-testid="status-banner">
-      <AlertCircle className="w-3.5 h-3.5 text-white/30" />
+    <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-100 bg-slate-50 text-slate-400 text-xs" data-testid="status-banner">
+      <AlertCircle className="w-3.5 h-3.5 text-slate-300" />
       <span data-testid="status-label">Draft — Submit for verification to get approved</span>
     </div>
   );
@@ -148,9 +148,9 @@ function StatusBadge({ status, profile }: { status: string; profile: StudentProf
 
 function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="flex items-center justify-between gap-4 py-2.5 border-b border-white/6 last:border-0">
-      <span className="text-xs text-white/40 uppercase tracking-wide flex-shrink-0">{label}</span>
-      <span className={`text-sm font-semibold text-white text-right ${mono ? "font-mono" : ""}`}>{value}</span>
+    <div className="flex items-center justify-between gap-4 py-2.5 border-b border-slate-100 last:border-0">
+      <span className="text-xs text-slate-400 uppercase tracking-wide flex-shrink-0">{label}</span>
+      <span className={`text-sm font-semibold text-slate-800 text-right ${mono ? "font-mono" : ""}`}>{value}</span>
     </div>
   );
 }
@@ -158,12 +158,12 @@ function InfoRow({ label, value, mono }: { label: string; value: string; mono?: 
 function ReadOnlyField({ label, value, testId }: { label: string; value: string; testId?: string }) {
   return (
     <div>
-      <label className="text-xs font-medium text-white/40 mb-1.5 block">{label}</label>
+      <label className="text-xs font-medium text-slate-500 mb-1.5 block">{label}</label>
       <div
-        className="w-full px-3 py-2.5 rounded-xl bg-white/4 border border-white/8 text-white/50 text-sm flex items-center gap-2"
+        className="w-full px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-500 text-sm flex items-center gap-2"
         data-testid={testId}
       >
-        <Lock className="w-3 h-3 text-white/25 flex-shrink-0" />
+        <Lock className="w-3 h-3 text-slate-300 flex-shrink-0" />
         <span>{value || "—"}</span>
       </div>
     </div>
@@ -331,7 +331,7 @@ export default function StudentProfile() {
 
   if (studentLoading || profileLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#0a1628] to-[#0a2018]">
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#f8fafc" }}>
         <Loader2 className="w-9 h-9 animate-spin text-[#10b981]" />
       </div>
     );
@@ -428,17 +428,34 @@ export default function StudentProfile() {
   const isAnyFormOpen = isEditing || securityOpen;
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-[#0a1628] via-[#0a1e2a] to-[#061410]">
+    <div className="min-h-screen flex flex-col relative" style={{ background: "#f8fafc" }}>
+
+      {/* ── Decorative blobs ── */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+        <div style={{ position: "absolute", top: "-120px", right: "-80px", width: "500px", height: "500px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "460px", height: "460px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", top: "38%", left: "28%", width: "360px", height: "360px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.05) 0%, transparent 65%)" }} />
+      </div>
 
       {/* ── Sticky Header ── */}
-      <header className="sticky top-0 z-40 bg-[#10b981]/90 backdrop-blur-md shadow-lg shadow-emerald-900/20">
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
+      <header
+        className="sticky top-0 z-40"
+        style={{
+          backdropFilter: "blur(18px)",
+          WebkitBackdropFilter: "blur(18px)",
+          background: "rgba(255, 255, 255, 0.75)",
+          borderBottom: "1px solid rgba(255,255,255,0.7)",
+          boxShadow: "0 1px 28px rgba(0,0,0,0.07)",
+        }}
+      >
+        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
 
           {/* Left: Back / Cancel */}
           {isEditing ? (
             <button
               onClick={handleCancel}
-              className="flex items-center justify-center gap-1.5 h-10 px-3 rounded-xl bg-white/15 hover:bg-white/25 text-white transition-colors flex-shrink-0 text-sm font-medium"
+              className="flex items-center justify-center gap-1.5 h-10 px-3 rounded-xl transition-colors flex-shrink-0 text-sm font-medium text-slate-600"
+              style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
               data-testid="button-back"
             >
               <X className="w-4 h-4" />
@@ -447,7 +464,8 @@ export default function StudentProfile() {
           ) : securityOpen ? (
             <button
               onClick={() => setSecurityOpen(false)}
-              className="flex items-center justify-center gap-1.5 h-10 px-3 rounded-xl bg-white/15 hover:bg-white/25 text-white transition-colors flex-shrink-0 text-sm font-medium"
+              className="flex items-center justify-center gap-1.5 h-10 px-3 rounded-xl transition-colors flex-shrink-0 text-sm font-medium text-slate-600"
+              style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
               data-testid="button-back"
             >
               <X className="w-4 h-4" />
@@ -456,20 +474,23 @@ export default function StudentProfile() {
           ) : (
             <button
               onClick={() => setLocation("/student-dashboard")}
-              className="flex items-center justify-center w-10 h-10 rounded-xl bg-white/15 hover:bg-white/25 text-white transition-colors flex-shrink-0"
+              className="flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0"
+              style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
               data-testid="button-back"
             >
-              <ArrowLeft className="w-5 h-5" />
+              <ArrowLeft className="w-5 h-5 text-slate-600" />
             </button>
           )}
 
           <div className="flex-1 flex items-center gap-2 min-w-0">
-            <GraduationCap className="w-5 h-5 text-white/80 flex-shrink-0" />
+            <div className="flex items-center justify-center w-8 h-8 rounded-xl flex-shrink-0" style={{ background: "linear-gradient(135deg, #3b82f6, #6366f1)" }}>
+              <GraduationCap className="w-4 h-4 text-white" />
+            </div>
             <div className="min-w-0">
-              <p className="text-white font-bold text-sm leading-tight truncate">
+              <p className="font-bold text-sm text-slate-800 leading-tight truncate">
                 {isEditing ? "Verification Details" : securityOpen ? "Security" : "My Profile"}
               </p>
-              <p className="text-emerald-100/70 text-[11px] truncate">{student.schoolName}</p>
+              <p className="text-[11px] text-slate-400 truncate">{student.schoolName}</p>
             </div>
           </div>
 
@@ -478,10 +499,11 @@ export default function StudentProfile() {
             <div className="relative" ref={menuRef}>
               <button
                 onClick={() => setMenuOpen((v) => !v)}
-                className="flex items-center justify-center w-10 h-10 rounded-xl bg-white/15 hover:bg-white/25 text-white transition-colors"
+                className="flex items-center justify-center w-10 h-10 rounded-xl transition-colors"
+                style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
                 data-testid="button-menu"
               >
-                <MoreVertical className="w-5 h-5" />
+                <MoreVertical className="w-5 h-5 text-slate-600" />
               </button>
 
               <AnimatePresence>
@@ -491,7 +513,8 @@ export default function StudentProfile() {
                     initial="hidden"
                     animate="show"
                     exit="exit"
-                    className="absolute right-0 top-12 z-50 w-60 rounded-2xl bg-[#0f2a1e]/95 backdrop-blur-xl border border-white/12 shadow-2xl shadow-black/40 overflow-hidden"
+                    className="absolute right-0 top-12 z-50 w-60 rounded-2xl overflow-hidden"
+                    style={{ background: "rgba(255,255,255,0.95)", backdropFilter: "blur(20px)", border: "1px solid rgba(0,0,0,0.08)", boxShadow: "0 8px 32px rgba(0,0,0,0.12)" }}
                     data-testid="menu-options"
                   >
                     {/* Submit for Verification */}
@@ -511,43 +534,43 @@ export default function StudentProfile() {
                       className={`w-full flex items-center gap-3 px-4 py-3.5 text-left transition-colors ${
                         isVerificationLocked
                           ? "opacity-50 cursor-not-allowed"
-                          : "hover:bg-white/8"
+                          : "hover:bg-slate-50"
                       }`}
                       data-testid="menu-submit-verification"
                     >
-                      <div className="w-8 h-8 rounded-lg bg-[#10b981]/20 flex items-center justify-center flex-shrink-0">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
                         <FileText className="w-4 h-4 text-[#10b981]" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-white">Submit for Verification</p>
+                        <p className="text-sm font-semibold text-slate-800">Submit for Verification</p>
                         {limitData && (
-                          <p className={`text-[10px] mt-0.5 ${isVerificationLocked ? "text-red-400" : "text-emerald-400"}`}>
+                          <p className={`text-[10px] mt-0.5 ${isVerificationLocked ? "text-red-500" : "text-emerald-600"}`}>
                             {isVerificationLocked
                               ? "Limit reached this month"
                               : `${limitData.remaining} of ${limitData.allowed} attempts left`}
                           </p>
                         )}
                       </div>
-                      {!isVerificationLocked && <ChevronRight className="w-4 h-4 text-white/30 flex-shrink-0" />}
-                      {isVerificationLocked && <Lock className="w-4 h-4 text-red-400/60 flex-shrink-0" />}
+                      {!isVerificationLocked && <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />}
+                      {isVerificationLocked && <Lock className="w-4 h-4 text-red-400 flex-shrink-0" />}
                     </button>
 
-                    <div className="h-px bg-white/8 mx-3" />
+                    <div className="h-px bg-slate-100 mx-3" />
 
                     {/* Security */}
                     <button
                       onClick={handleOpenSecurity}
-                      className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-white/8 transition-colors"
+                      className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-slate-50 transition-colors"
                       data-testid="menu-security"
                     >
-                      <div className="w-8 h-8 rounded-lg bg-blue-500/15 flex items-center justify-center flex-shrink-0">
-                        <Shield className="w-4 h-4 text-blue-400" />
+                      <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
+                        <Shield className="w-4 h-4 text-blue-500" />
                       </div>
                       <div className="flex-1">
-                        <p className="text-sm font-semibold text-white">Security</p>
-                        <p className="text-[10px] text-white/40 mt-0.5">Change password</p>
+                        <p className="text-sm font-semibold text-slate-800">Security</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Change password</p>
                       </div>
-                      <ChevronRight className="w-4 h-4 text-white/30 flex-shrink-0" />
+                      <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
                     </button>
                   </motion.div>
                 )}
@@ -558,7 +581,12 @@ export default function StudentProfile() {
       </header>
 
       {/* ── Main Content ── */}
-      <main className="flex-1 overflow-y-auto">
+      <motion.main
+        className="flex-1 overflow-y-auto"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
+      >
         <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
 
           {/* ══ READ-ONLY VIEW ══ */}
@@ -567,7 +595,7 @@ export default function StudentProfile() {
               <StatusBadge status={status} profile={profile} />
 
               {/* Identity Card */}
-              <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden shadow-xl">
+              <div className="rounded-2xl border border-slate-100 bg-white overflow-hidden shadow-sm">
                 <div className="px-5 py-6 flex items-center gap-5">
                   <div className="relative flex-shrink-0">
                     {photoToShow ? (
@@ -579,18 +607,18 @@ export default function StudentProfile() {
                             ? "border-[#10b981]"
                             : profile?.photoStatus === "pending"
                             ? "border-yellow-400"
-                            : "border-white/20"
+                            : "border-slate-200"
                         }`}
                         data-testid="img-profile-photo"
                       />
                     ) : (
-                      <div className="w-20 h-20 rounded-full bg-gradient-to-br from-[#10b981]/30 to-emerald-700/20 border-2 border-[#10b981]/40 flex items-center justify-center shadow-lg">
+                      <div className="w-20 h-20 rounded-full bg-gradient-to-br from-emerald-100 to-blue-100 border-2 border-emerald-200 flex items-center justify-center shadow-lg">
                         <span className="text-xl font-bold text-[#10b981]">{initials}</span>
                       </div>
                     )}
                     {photoIsApproved && (
                       <span
-                        className="absolute -bottom-0.5 -right-0.5 w-6 h-6 rounded-full bg-[#10b981] border-2 border-[#0a1628] flex items-center justify-center shadow-lg"
+                        className="absolute -bottom-0.5 -right-0.5 w-6 h-6 rounded-full bg-[#10b981] border-2 border-white flex items-center justify-center shadow-lg"
                         title="Photo Verified"
                         data-testid="badge-verified"
                       >
@@ -598,20 +626,20 @@ export default function StudentProfile() {
                       </span>
                     )}
                     {profile?.photoStatus === "pending" && (
-                      <span className="absolute -bottom-0.5 -right-0.5 w-6 h-6 rounded-full bg-yellow-400 border-2 border-[#0a1628] flex items-center justify-center shadow-lg" title="Photo Pending">
-                        <Clock className="w-3 h-3 text-[#0a1628]" />
+                      <span className="absolute -bottom-0.5 -right-0.5 w-6 h-6 rounded-full bg-yellow-400 border-2 border-white flex items-center justify-center shadow-lg" title="Photo Pending">
+                        <Clock className="w-3 h-3 text-white" />
                       </span>
                     )}
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <h2 className="text-lg font-bold text-white truncate" data-testid="text-student-name">
+                    <h2 className="text-lg font-bold text-slate-800 truncate" data-testid="text-student-name">
                       {profile?.fullName || student.name}
                     </h2>
-                    <p className="text-sm text-emerald-300/80 mt-0.5">
+                    <p className="text-sm text-emerald-600 mt-0.5">
                       Class {student.class} – {student.section}
                     </p>
-                    <p className="text-xs text-white/40 mt-1 font-mono">{student.digitalStudentId}</p>
+                    <p className="text-xs text-slate-400 mt-1 font-mono">{student.digitalStudentId}</p>
                   </div>
                 </div>
 
@@ -630,9 +658,9 @@ export default function StudentProfile() {
 
               {/* Photo pending sub-card */}
               {profile?.photoStatus === "pending" && (
-                <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-yellow-400/25 bg-yellow-400/8">
-                  <Camera className="w-4 h-4 text-yellow-400 flex-shrink-0" />
-                  <p className="text-xs text-yellow-300 font-medium">
+                <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-yellow-200 bg-yellow-50">
+                  <Camera className="w-4 h-4 text-yellow-500 flex-shrink-0" />
+                  <p className="text-xs text-yellow-700 font-medium">
                     Your photo is pending teacher review and not yet visible on ID cards.
                   </p>
                 </div>
@@ -640,10 +668,10 @@ export default function StudentProfile() {
 
               {/* Last verified snapshot */}
               {approvedSnapshot && status !== "approved" && (
-                <div className="rounded-2xl border border-[#10b981]/25 bg-[#10b981]/8 overflow-hidden">
-                  <div className="px-4 py-3 border-b border-[#10b981]/15 flex items-center gap-2">
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-emerald-100 flex items-center gap-2">
                     <CheckCircle className="w-4 h-4 text-[#10b981]" />
-                    <h3 className="text-xs font-bold text-emerald-300 uppercase tracking-wide">Last Verified Data</h3>
+                    <h3 className="text-xs font-bold text-emerald-700 uppercase tracking-wide">Last Verified Data</h3>
                     {approvedSnapshot.approvedAt && (
                       <span className="ml-auto text-[10px] text-emerald-500">
                         {new Date(approvedSnapshot.approvedAt).toLocaleDateString("en-GB")}
@@ -653,14 +681,14 @@ export default function StudentProfile() {
                   <div className="px-4 py-3 grid grid-cols-2 gap-2 text-xs">
                     {approvedSnapshot.fullName && (
                       <div>
-                        <span className="text-[#10b981]/70">Full Name: </span>
-                        <span className="text-emerald-200 font-semibold">{approvedSnapshot.fullName}</span>
+                        <span className="text-emerald-600">Full Name: </span>
+                        <span className="text-emerald-800 font-semibold">{approvedSnapshot.fullName}</span>
                       </div>
                     )}
                     {approvedSnapshot.fatherName && (
                       <div>
-                        <span className="text-[#10b981]/70">Father: </span>
-                        <span className="text-emerald-200 font-semibold">{approvedSnapshot.fatherName}</span>
+                        <span className="text-emerald-600">Father: </span>
+                        <span className="text-emerald-800 font-semibold">{approvedSnapshot.fatherName}</span>
                       </div>
                     )}
                   </div>
@@ -668,9 +696,9 @@ export default function StudentProfile() {
               )}
 
               {/* Hint */}
-              <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-white/8 bg-white/3">
-                <MoreVertical className="w-4 h-4 text-white/30" />
-                <p className="text-xs text-white/35">
+              <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-slate-100 bg-slate-50">
+                <MoreVertical className="w-4 h-4 text-slate-300" />
+                <p className="text-xs text-slate-400">
                   Tap the ⋮ menu above to submit for verification or change your password.
                 </p>
               </div>
@@ -685,15 +713,15 @@ export default function StudentProfile() {
                 <div
                   className={`flex items-center gap-3 px-4 py-3 rounded-xl border text-sm font-medium ${
                     isVerificationLocked
-                      ? "border-red-400/30 bg-red-400/10 text-red-300"
+                      ? "border-red-200 bg-red-50 text-red-700"
                       : limitData.remaining === 1
-                      ? "border-yellow-400/30 bg-yellow-400/8 text-yellow-300"
-                      : "border-[#10b981]/30 bg-[#10b981]/10 text-emerald-300"
+                      ? "border-yellow-200 bg-yellow-50 text-yellow-700"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-700"
                   }`}
                   data-testid="verification-limit-banner"
                 >
                   {isVerificationLocked
-                    ? <AlertTriangle className="w-4 h-4 flex-shrink-0 text-red-400" />
+                    ? <AlertTriangle className="w-4 h-4 flex-shrink-0 text-red-500" />
                     : <FileText className="w-4 h-4 flex-shrink-0" />}
                   <span>
                     {isVerificationLocked
@@ -704,7 +732,7 @@ export default function StudentProfile() {
               )}
 
               {/* Photo upload section */}
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-5 flex flex-col items-center gap-3">
+              <div className="rounded-2xl border border-slate-100 bg-white px-5 py-5 flex flex-col items-center gap-3 shadow-sm">
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -740,14 +768,14 @@ export default function StudentProfile() {
                     </button>
                   )}
                   {photoIsApproved && (
-                    <span className="absolute -bottom-1 -right-1 bg-[#10b981] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-[#0a1628]">
+                    <span className="absolute -bottom-1 -right-1 bg-[#10b981] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-white">
                       ✓ VERIFIED
                     </span>
                   )}
                 </div>
 
                 {profile?.photoStatus === "pending" && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-yellow-400/25 bg-yellow-400/8 text-yellow-300 text-xs w-full">
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-yellow-200 bg-yellow-50 text-yellow-700 text-xs w-full">
                     <Camera className="w-3.5 h-3.5 flex-shrink-0" />
                     Photo pending teacher review
                   </div>
@@ -757,7 +785,7 @@ export default function StudentProfile() {
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={photoMutation.isPending}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-[#10b981]/30 text-[#10b981] text-xs font-medium hover:bg-[#10b981]/10 transition-colors"
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-emerald-200 text-[#10b981] text-xs font-medium hover:bg-emerald-50 transition-colors"
                     data-testid="button-upload-photo-alt"
                   >
                     {photoMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
@@ -768,14 +796,14 @@ export default function StudentProfile() {
 
               {/* Form fields card — no overflow-hidden to prevent Android keyboard clipping */}
               <div
-                className="rounded-2xl border border-[#10b981]/25 bg-white/5"
+                className="rounded-2xl border border-slate-100 bg-white shadow-sm"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="px-5 py-4 border-b border-white/8 flex items-center gap-2">
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
                   <User className="w-4 h-4 text-[#10b981]" />
-                  <h2 className="text-sm font-bold text-white">Verification Details</h2>
+                  <h2 className="text-sm font-bold text-slate-800">Verification Details</h2>
                   {status === "pending" && (
-                    <span className="ml-auto text-[10px] text-yellow-400 bg-yellow-400/10 border border-yellow-400/25 px-2 py-0.5 rounded-full">
+                    <span className="ml-auto text-[10px] text-yellow-700 bg-yellow-100 border border-yellow-200 px-2 py-0.5 rounded-full">
                       Under Review
                     </span>
                   )}
@@ -786,7 +814,7 @@ export default function StudentProfile() {
 
                     {/* Full Name — editable */}
                     <div>
-                      <label className="text-xs font-medium text-white/50 mb-1.5 block">
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">
                         Full Name <span className="text-red-400">*</span>
                       </label>
                       <input
@@ -803,7 +831,7 @@ export default function StudentProfile() {
 
                     {/* Roll Number — editable */}
                     <div>
-                      <label className="text-xs font-medium text-white/50 mb-1.5 block">Roll Number</label>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Roll Number</label>
                       <input
                         type="text"
                         value={form.rollNo}
@@ -823,7 +851,7 @@ export default function StudentProfile() {
 
                     {/* Father's Name — editable */}
                     <div>
-                      <label className="text-xs font-medium text-white/50 mb-1.5 block">
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">
                         Father's Name <span className="text-red-400">*</span>
                       </label>
                       <input
@@ -839,7 +867,7 @@ export default function StudentProfile() {
 
                     {/* Mother's Name — editable */}
                     <div>
-                      <label className="text-xs font-medium text-white/50 mb-1.5 block">
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">
                         Mother's Name <span className="text-red-400">*</span>
                       </label>
                       <input
@@ -856,7 +884,7 @@ export default function StudentProfile() {
 
                   {/* Address — editable, full-width */}
                   <div>
-                    <label className="text-xs font-medium text-white/50 mb-1.5 block">
+                    <label className="text-xs font-medium text-slate-500 mb-1.5 block">
                       Present Address <span className="text-red-400">*</span>
                     </label>
                     <textarea
@@ -873,15 +901,15 @@ export default function StudentProfile() {
               </div>
 
               {/* System-assigned read-only strip */}
-              <div className="rounded-xl border border-white/8 bg-white/3 px-4 py-3">
+              <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
                 <div className="flex items-center gap-2 mb-2">
-                  <Lock className="w-3.5 h-3.5 text-white/30" />
-                  <span className="text-[10px] text-white/30 uppercase tracking-widest">System-assigned (read-only)</span>
+                  <Lock className="w-3.5 h-3.5 text-slate-400" />
+                  <span className="text-[10px] text-slate-400 uppercase tracking-widest">System-assigned (read-only)</span>
                 </div>
                 <div className="flex flex-wrap gap-4 text-xs">
-                  <div><span className="text-white/30">DSID: </span><span className="text-white/60 font-mono">{student.digitalStudentId}</span></div>
-                  <div><span className="text-white/30">School: </span><span className="text-white/60 font-mono">{student.schoolCode}</span></div>
-                  <div><span className="text-white/30">Enrolled: </span><span className="text-white/60">{enrollmentDateDisplay}</span></div>
+                  <div><span className="text-slate-400">DSID: </span><span className="text-slate-600 font-mono">{student.digitalStudentId}</span></div>
+                  <div><span className="text-slate-400">School: </span><span className="text-slate-600 font-mono">{student.schoolCode}</span></div>
+                  <div><span className="text-slate-400">Enrolled: </span><span className="text-slate-600">{enrollmentDateDisplay}</span></div>
                 </div>
               </div>
 
@@ -889,7 +917,7 @@ export default function StudentProfile() {
               <div className="flex flex-col sm:flex-row gap-3">
                 <button
                   onClick={handleCancel}
-                  className="flex-1 flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl border-2 border-[#10b981]/40 text-[#10b981] text-sm font-semibold hover:bg-[#10b981]/10 transition-colors"
+                  className="flex-1 flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-colors"
                   data-testid="button-cancel-bottom"
                 >
                   <X className="w-4 h-4" />
@@ -902,10 +930,10 @@ export default function StudentProfile() {
                     disabled={!canSubmit || isVerificationLocked || submitMutation.isPending}
                     className={`w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl text-sm font-semibold transition-colors disabled:cursor-not-allowed ${
                       !canSubmit
-                        ? "bg-yellow-400/15 border border-yellow-400/30 text-yellow-300 opacity-80"
+                        ? "bg-yellow-50 border border-yellow-200 text-yellow-700 opacity-80"
                         : isVerificationLocked
-                        ? "bg-red-400/15 border border-red-400/25 text-red-300 opacity-80"
-                        : "bg-[#10b981] hover:bg-emerald-600 text-white shadow-lg shadow-emerald-900/30"
+                        ? "bg-red-50 border border-red-200 text-red-600 opacity-80"
+                        : "bg-[#10b981] hover:bg-emerald-600 text-white shadow-sm"
                     }`}
                     data-testid="button-submit"
                   >
@@ -927,7 +955,7 @@ export default function StudentProfile() {
                       : "Submit for Approval"}
                   </button>
                   {isVerificationLocked && canSubmit && (
-                    <p className="text-[10px] text-red-400/70 text-center">
+                    <p className="text-[10px] text-red-500 text-center">
                       Monthly limit (3) reached. Please contact Admin.
                     </p>
                   )}
@@ -939,19 +967,19 @@ export default function StudentProfile() {
           {/* ══ SECURITY / CHANGE PASSWORD — INLINE FULL-PAGE VIEW ══ */}
           {securityOpen && (
             <div
-              className="rounded-2xl border border-white/10 bg-[#0f2a1e]"
+              className="rounded-2xl border border-slate-100 bg-white shadow-sm"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Header row */}
-              <div className="px-5 py-4 border-b border-white/8 flex items-center gap-3">
-                <Shield className="w-5 h-5 text-blue-400 flex-shrink-0" />
-                <h2 className="text-sm font-bold text-white">Change Password</h2>
+              <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
+                <Shield className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                <h2 className="text-sm font-bold text-slate-800">Change Password</h2>
               </div>
 
               <div className="p-5 space-y-4">
                 {/* Current Password */}
                 <div>
-                  <label className="text-xs font-medium text-white/50 uppercase tracking-wide mb-1.5 block">Current Password</label>
+                  <label className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5 block">Current Password</label>
                   <div className="relative">
                     <input
                       ref={currentPasswordRef}
@@ -977,7 +1005,7 @@ export default function StudentProfile() {
 
                 {/* New Password */}
                 <div>
-                  <label className="text-xs font-medium text-white/50 uppercase tracking-wide mb-1.5 block">New Password</label>
+                  <label className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5 block">New Password</label>
                   <div className="relative">
                     <input
                       type={showNewPw ? "text" : "password"}
@@ -1009,7 +1037,7 @@ export default function StudentProfile() {
 
                 {/* Confirm Password */}
                 <div>
-                  <label className="text-xs font-medium text-white/50 uppercase tracking-wide mb-1.5 block">Confirm New Password</label>
+                  <label className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5 block">Confirm New Password</label>
                   <div className="relative">
                     <input
                       type={showConfirmPw ? "text" : "password"}
@@ -1049,7 +1077,7 @@ export default function StudentProfile() {
                 <div className="flex flex-col sm:flex-row gap-3 pt-2">
                   <button
                     onClick={() => setSecurityOpen(false)}
-                    className="flex-1 flex items-center justify-center py-3 px-4 rounded-xl border border-white/15 text-white/60 text-sm font-medium hover:bg-white/8 transition-colors"
+                    className="flex-1 flex items-center justify-center py-3 px-4 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"
                     data-testid="button-close-security-modal"
                   >
                     Cancel
@@ -1057,7 +1085,7 @@ export default function StudentProfile() {
                   <button
                     onClick={handleChangePassword}
                     disabled={passwordMutation.isPending}
-                    className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-[#10b981] hover:bg-emerald-600 text-white text-sm font-semibold transition-colors disabled:opacity-50 shadow-lg shadow-emerald-900/30"
+                    className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-[#10b981] hover:bg-emerald-600 text-white text-sm font-semibold transition-colors disabled:opacity-50 shadow-sm"
                     data-testid="button-change-password"
                   >
                     {passwordMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
@@ -1069,7 +1097,7 @@ export default function StudentProfile() {
           )}
 
         </div>
-      </main>
+      </motion.main>
     </div>
   );
 }

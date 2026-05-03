@@ -146,7 +146,12 @@ export default function StudentFees() {
         </div>
       </header>
 
-      <main className="relative z-10 max-w-4xl mx-auto w-full px-4 sm:px-6 pt-24 pb-12 space-y-6">
+      <motion.main
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
+        className="relative z-10 max-w-4xl mx-auto w-full px-4 sm:px-6 pt-24 pb-12 space-y-6"
+      >
 
         {/* Summary cards */}
         <motion.div
@@ -319,7 +324,7 @@ export default function StudentFees() {
         >
           © {new Date().getFullYear()} BENIUS · {student.schoolName}
         </motion.p>
-      </main>
+      </motion.main>
     </div>
   );
 }

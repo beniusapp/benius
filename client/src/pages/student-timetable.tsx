@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { motion } from "framer-motion";
 import { ArrowLeft, Clock, Loader2, School, Coffee } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 
@@ -161,39 +162,57 @@ export default function StudentTimetable() {
 
   if (studentLoading || !student) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "#0A1628" }}>
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#f8fafc" }}>
         <Loader2 className="w-9 h-9 animate-spin text-[#10b981]" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: "#0A1628" }}>
+    <div className="min-h-screen flex flex-col relative" style={{ background: "#f8fafc" }}>
+
+      {/* ── Decorative blobs ── */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+        <div style={{ position: "absolute", top: "-120px", right: "-80px", width: "500px", height: "500px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "460px", height: "460px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", top: "38%", left: "28%", width: "360px", height: "360px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.05) 0%, transparent 65%)" }} />
+      </div>
 
       {/* ── Header ── */}
-      <header className="sticky top-0 z-30" style={{ background: "#10b981", boxShadow: "0 2px 16px rgba(16,185,129,0.25)" }}>
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
+      <header
+        className="sticky top-0 z-30"
+        style={{
+          backdropFilter: "blur(18px)",
+          WebkitBackdropFilter: "blur(18px)",
+          background: "rgba(255, 255, 255, 0.75)",
+          borderBottom: "1px solid rgba(255,255,255,0.7)",
+          boxShadow: "0 1px 28px rgba(0,0,0,0.07)",
+        }}
+      >
+        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
           <button
             onClick={() => setLocation("/student-dashboard")}
-            className="flex items-center justify-center w-11 h-11 rounded-xl transition-colors flex-shrink-0"
-            style={{ background: "rgba(255,255,255,0.18)" }}
+            className="flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0"
+            style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
             data-testid="button-back"
             aria-label="Back"
           >
-            <ArrowLeft className="w-5 h-5" style={{ color: "#fff" }} />
+            <ArrowLeft className="w-5 h-5 text-slate-600" />
           </button>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-sm leading-tight" style={{ color: "#fff" }}>Timetable</p>
-            <p className="text-xs" style={{ color: "rgba(255,255,255,0.80)" }}>
-              Class {student.class} – {student.section} · {student.schoolName}
-            </p>
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <div className="flex items-center justify-center w-8 h-8 rounded-xl flex-shrink-0" style={{ background: "linear-gradient(135deg, #0ea5e9, #3b82f6)" }}>
+              <Clock className="w-4 h-4 text-white" />
+            </div>
+            <div className="leading-tight min-w-0">
+              <p className="font-bold text-sm text-slate-800">Timetable</p>
+              <p className="text-[11px] text-slate-400 truncate">Class {student.class} – {student.section} · {student.schoolName}</p>
+            </div>
           </div>
-          <Clock className="w-5 h-5 flex-shrink-0" style={{ color: "rgba(255,255,255,0.70)" }} />
         </div>
       </header>
 
       {/* ── Day Strip ── */}
-      <div className="sticky top-[60px] z-20 border-b" style={{ background: "#0D1F3C", borderColor: "rgba(255,255,255,0.08)" }}>
+      <div className="sticky top-14 z-20 border-b bg-white/80 backdrop-blur-sm" style={{ borderColor: "rgba(0,0,0,0.06)" }}>
         <div className="max-w-2xl mx-auto px-2 py-2.5">
           <div className="flex gap-1.5 overflow-x-auto scrollbar-hide">
             {DAYS.map(day => {
@@ -230,12 +249,17 @@ export default function StudentTimetable() {
 
       {/* ── Selected day label ── */}
       <div className="max-w-2xl mx-auto w-full px-4 pt-4 pb-1">
-        <p className="text-xs font-semibold" style={{ color: "rgba(255,255,255,0.40)" }}>
+        <p className="text-xs font-semibold text-slate-400">
           {DAY_FULL[selectedDay]}{isTodaySelected ? " · Today" : ""}
         </p>
       </div>
 
-      <main className="flex-1 max-w-2xl mx-auto w-full px-4 pb-8 space-y-2">
+      <motion.main
+        className="flex-1 max-w-2xl mx-auto w-full px-4 pb-8 space-y-2"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
+      >
 
         {/* ── Loading ── */}
         {ttLoading && (
@@ -246,29 +270,27 @@ export default function StudentTimetable() {
 
         {/* ── Holiday State ── */}
         {!ttLoading && isHolidayDay && (
-          <div className="rounded-2xl border p-8 flex flex-col items-center text-center gap-4 mt-2"
-            style={{ background: "#1A2942", borderColor: "rgba(239,68,68,0.20)" }}>
-            <div className="w-20 h-20 rounded-3xl flex items-center justify-center" style={{ background: "rgba(239,68,68,0.12)" }}>
-              <School className="w-10 h-10" style={{ color: "rgba(239,68,68,0.50)" }} />
+          <div className="rounded-2xl border border-red-100 p-8 flex flex-col items-center text-center gap-4 mt-2 bg-white shadow-sm">
+            <div className="w-20 h-20 rounded-3xl flex items-center justify-center bg-red-50">
+              <School className="w-10 h-10 text-red-300" />
             </div>
             <div>
-              <h3 className="text-lg font-bold" style={{ color: "#fff" }}>School Closed</h3>
+              <h3 className="text-lg font-bold text-slate-800">School Closed</h3>
               {holidayEvent && (
-                <p className="text-sm font-semibold mt-1" style={{ color: "#ef4444" }}>{holidayEvent.title}</p>
+                <p className="text-sm font-semibold mt-1 text-red-500">{holidayEvent.title}</p>
               )}
-              <p className="text-sm mt-1" style={{ color: "rgba(255,255,255,0.40)" }}>Enjoy your holiday!</p>
+              <p className="text-sm mt-1 text-slate-400">Enjoy your holiday!</p>
             </div>
           </div>
         )}
 
         {/* ── Empty Timetable (no structure, no entries) ── */}
         {!ttLoading && !isHolidayDay && structureForDay.length === 0 && dayEntries.length === 0 && (
-          <div className="rounded-2xl border p-8 flex flex-col items-center text-center gap-3 mt-2"
-            style={{ background: "#1A2942", borderColor: "rgba(255,255,255,0.08)" }}>
-            <Clock className="w-12 h-12" style={{ color: "rgba(16,185,129,0.20)" }} />
+          <div className="rounded-2xl border border-slate-100 p-8 flex flex-col items-center text-center gap-3 mt-2 bg-white shadow-sm">
+            <Clock className="w-12 h-12 text-slate-200" />
             <div>
-              <h3 className="text-base font-bold" style={{ color: "#fff" }}>No periods scheduled</h3>
-              <p className="text-sm mt-1" style={{ color: "rgba(255,255,255,0.45)" }}>No timetable set for {DAY_LABELS[selectedDay]}.</p>
+              <h3 className="text-base font-bold text-slate-700">No periods scheduled</h3>
+              <p className="text-sm mt-1 text-slate-400">No timetable set for {DAY_LABELS[selectedDay]}.</p>
             </div>
           </div>
         )}
@@ -281,16 +303,14 @@ export default function StudentTimetable() {
               structureForDay.map((srow, idx) => {
                 if (srow.isBreak) {
                   return (
-                    <div key={idx} className="flex items-center gap-3 px-4 py-2.5 rounded-xl"
-                      style={{ background: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.15)" }}>
-                      <div className="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center"
-                        style={{ background: "rgba(245,158,11,0.12)" }}>
-                        <Coffee className="w-4 h-4" style={{ color: "#f59e0b" }} />
+                    <div key={idx} className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-amber-50 border border-amber-100">
+                      <div className="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center bg-amber-100">
+                        <Coffee className="w-4 h-4 text-amber-500" />
                       </div>
                       <div>
-                        <p className="text-sm font-semibold" style={{ color: "#f59e0b" }}>{srow.label || "Break"}</p>
+                        <p className="text-sm font-semibold text-amber-700">{srow.label || "Break"}</p>
                         {srow.startTime && srow.endTime && (
-                          <p className="text-xs" style={{ color: "rgba(245,158,11,0.60)" }}>
+                          <p className="text-xs text-amber-500">
                             {formatTime(srow.startTime)} – {formatTime(srow.endTime)}
                           </p>
                         )}
@@ -310,55 +330,52 @@ export default function StudentTimetable() {
                 const isPast = isTodaySelected && hasTime
                   ? currentMinutes >= timeToMinutes(timeEnd!)
                   : false;
-                const subjectColor = entry ? getSubjectColor(entry.subject) : "#334155";
+                const subjectColor = entry ? getSubjectColor(entry.subject) : "#94a3b8";
 
                 return (
                   <div
                     key={idx}
-                    className="relative rounded-2xl overflow-hidden transition-all"
+                    className="relative rounded-2xl overflow-hidden transition-all bg-white"
                     style={{
-                      background: "#1A2942",
-                      border: isActive
-                        ? "1px solid #10b981"
-                        : "1px solid rgba(255,255,255,0.07)",
+                      border: isActive ? `1px solid ${subjectColor}` : "1px solid rgba(0,0,0,0.07)",
                       opacity: isPast && !isActive ? 0.55 : 1,
-                      boxShadow: isActive ? "0 0 20px rgba(16,185,129,0.22)" : "none",
+                      boxShadow: isActive ? `0 0 20px ${subjectColor}33` : "0 1px 4px rgba(0,0,0,0.05)",
                     }}
                     data-testid={entry ? `period-card-${entry.id}` : `period-empty-${idx}`}
                   >
-                    {/* Active glow bar */}
+                    {/* Active accent bar */}
                     {isActive && (
-                      <span className="absolute left-0 top-0 bottom-0 w-1" style={{ background: "#10b981" }} />
+                      <span className="absolute left-0 top-0 bottom-0 w-1" style={{ background: subjectColor }} />
                     )}
 
                     <div className="px-4 py-3.5 flex items-center gap-4">
                       {/* Period badge */}
                       <div className="flex-shrink-0 w-12 h-12 rounded-xl flex flex-col items-center justify-center"
-                        style={{ background: entry ? `${subjectColor}18` : "rgba(255,255,255,0.04)" }}>
-                        <span className="text-[10px] font-bold" style={{ color: entry ? subjectColor : "rgba(255,255,255,0.20)" }}>P</span>
-                        <span className="text-base font-black leading-none" style={{ color: entry ? subjectColor : "rgba(255,255,255,0.20)" }}>{srow.periodNumber}</span>
+                        style={{ background: entry ? `${subjectColor}15` : "rgba(0,0,0,0.03)" }}>
+                        <span className="text-[10px] font-bold" style={{ color: entry ? subjectColor : "#cbd5e1" }}>P</span>
+                        <span className="text-base font-black leading-none" style={{ color: entry ? subjectColor : "#cbd5e1" }}>{srow.periodNumber}</span>
                       </div>
 
                       <div className="flex-1 min-w-0">
                         {entry ? (
                           <>
-                            <p className="font-bold text-sm truncate" style={{ color: "#fff" }}>{entry.subject}</p>
+                            <p className="font-bold text-sm truncate text-slate-800">{entry.subject}</p>
                             {entry.teacherName && (
-                              <p className="text-xs truncate mt-0.5 font-medium" style={{ color: "#fff" }}>{entry.teacherName}</p>
+                              <p className="text-xs truncate mt-0.5 font-medium text-slate-500">{entry.teacherName}</p>
                             )}
                             {hasTime ? (
-                              <p className="text-xs mt-0.5 font-bold" style={{ color: isActive ? "#10b981" : "#fff" }}>
+                              <p className="text-xs mt-0.5 font-bold" style={{ color: isActive ? subjectColor : "#64748b" }}>
                                 {formatTime(timeStart)} – {formatTime(timeEnd)}
                               </p>
                             ) : srow.label && srow.label !== `Period ${srow.periodNumber}` ? (
-                              <p className="text-xs mt-0.5 font-bold" style={{ color: "#fff" }}>{srow.label}</p>
+                              <p className="text-xs mt-0.5 font-bold text-slate-500">{srow.label}</p>
                             ) : null}
                           </>
                         ) : (
                           <>
-                            <p className="font-bold text-sm" style={{ color: "#fff" }}>Free Period</p>
+                            <p className="font-bold text-sm text-slate-400">Free Period</p>
                             {hasTime && (
-                              <p className="text-xs mt-0.5 font-bold" style={{ color: "#fff" }}>
+                              <p className="text-xs mt-0.5 font-bold text-slate-400">
                                 {formatTime(timeStart)} – {formatTime(timeEnd)}
                               </p>
                             )}
@@ -368,7 +385,7 @@ export default function StudentTimetable() {
 
                       {isActive && (
                         <span className="flex-shrink-0 px-2.5 py-1 rounded-full text-[10px] font-black"
-                          style={{ background: "rgba(16,185,129,0.20)", color: "#10b981", border: "1px solid rgba(16,185,129,0.40)" }}>
+                          style={{ background: `${subjectColor}20`, color: subjectColor, border: `1px solid ${subjectColor}40` }}>
                           NOW
                         </span>
                       )}
@@ -391,36 +408,35 @@ export default function StudentTimetable() {
                 return (
                   <div
                     key={entry.id}
-                    className="relative rounded-2xl overflow-hidden transition-all"
+                    className="relative rounded-2xl overflow-hidden transition-all bg-white"
                     style={{
-                      background: "#1A2942",
-                      border: isActive ? "1px solid #10b981" : "1px solid rgba(255,255,255,0.07)",
+                      border: isActive ? `1px solid ${subjectColor}` : "1px solid rgba(0,0,0,0.07)",
                       opacity: isPast && !isActive ? 0.55 : 1,
-                      boxShadow: isActive ? "0 0 20px rgba(16,185,129,0.22)" : "none",
+                      boxShadow: isActive ? `0 0 20px ${subjectColor}33` : "0 1px 4px rgba(0,0,0,0.05)",
                     }}
                     data-testid={`period-card-${entry.id}`}
                   >
-                    {isActive && <span className="absolute left-0 top-0 bottom-0 w-1" style={{ background: "#10b981" }} />}
+                    {isActive && <span className="absolute left-0 top-0 bottom-0 w-1" style={{ background: subjectColor }} />}
                     <div className="px-4 py-3.5 flex items-center gap-4">
                       <div className="flex-shrink-0 w-12 h-12 rounded-xl flex flex-col items-center justify-center"
-                        style={{ background: `${subjectColor}18` }}>
+                        style={{ background: `${subjectColor}15` }}>
                         <span className="text-[10px] font-bold" style={{ color: subjectColor }}>P</span>
                         <span className="text-base font-black leading-none" style={{ color: subjectColor }}>{entry.period}</span>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-bold text-sm" style={{ color: "#fff" }}>{entry.subject}</p>
+                        <p className="font-bold text-sm text-slate-800">{entry.subject}</p>
                         {entry.teacherName && (
-                          <p className="text-xs mt-0.5 font-medium" style={{ color: "#fff" }}>{entry.teacherName}</p>
+                          <p className="text-xs mt-0.5 font-medium text-slate-500">{entry.teacherName}</p>
                         )}
                         {hasTime && (
-                          <p className="text-xs mt-0.5 font-bold" style={{ color: isActive ? "#10b981" : "#fff" }}>
+                          <p className="text-xs mt-0.5 font-bold" style={{ color: isActive ? subjectColor : "#64748b" }}>
                             {formatTime(entry.startTime)} – {formatTime(entry.endTime)}
                           </p>
                         )}
                       </div>
                       {isActive && (
                         <span className="flex-shrink-0 px-2.5 py-1 rounded-full text-[10px] font-black"
-                          style={{ background: "rgba(16,185,129,0.20)", color: "#10b981", border: "1px solid rgba(16,185,129,0.40)" }}>
+                          style={{ background: `${subjectColor}20`, color: subjectColor, border: `1px solid ${subjectColor}40` }}>
                           NOW
                         </span>
                       )}
@@ -431,7 +447,7 @@ export default function StudentTimetable() {
             )}
           </div>
         )}
-      </main>
+      </motion.main>
     </div>
   );
 }

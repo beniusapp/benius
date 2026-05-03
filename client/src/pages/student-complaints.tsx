@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { motion } from "framer-motion";
 import { fmtDate, fmtDateTimeAmPm } from "@/lib/dateUtils";
 import {
   ArrowLeft, Mail, ShieldAlert, UserX, Loader2,
@@ -76,7 +77,7 @@ function StatusBadge({ status }: { status: string }) {
 function InboxCard({ c }: { c: ComplaintRecord & { teacherName: string } }) {
   const [expanded, setExpanded] = useState(false);
   return (
-    <div className="bg-white rounded-2xl border border-red-100 shadow-sm p-4 flex gap-3" data-testid={`card-inbox-${c.id}`}>
+    <div className="rounded-2xl p-4 flex gap-3 bg-white/80 border border-white/70 shadow-sm" data-testid={`card-inbox-${c.id}`}>
       <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center">
         <AlertTriangle className="w-5 h-5 text-red-400" />
       </div>
@@ -105,7 +106,7 @@ function InboxCard({ c }: { c: ComplaintRecord & { teacherName: string } }) {
 
 function FiledCard({ c }: { c: ComplaintRecord }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4" data-testid={`card-filed-${c.id}`}>
+    <div className="rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm" data-testid={`card-filed-${c.id}`}>
       <div className="flex items-start justify-between gap-2 flex-wrap">
         <div>
           <p className="text-xs text-gray-400">#{c.ticketId} · {fmtDateTimeAmPm(c.createdAt)}</p>
@@ -328,7 +329,7 @@ export default function StudentComplaints() {
 
   if (studentLoading || !student) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f0fdf4]">
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#f8fafc" }}>
         <Loader2 className="w-9 h-9 animate-spin text-[#10b981]" />
       </div>
     );
@@ -372,33 +373,60 @@ export default function StudentComplaints() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f0fdf4] flex flex-col">
+    <div className="min-h-screen flex flex-col relative" style={{ background: "#f8fafc" }}>
+
+      {/* ── Decorative blobs ── */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+        <div style={{ position: "absolute", top: "-120px", right: "-80px", width: "500px", height: "500px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "460px", height: "460px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", top: "38%", left: "28%", width: "360px", height: "360px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.05) 0%, transparent 65%)" }} />
+      </div>
 
       {/* ── Sticky header ── */}
-      <header className="sticky top-0 z-30 bg-[#10b981] shadow-md">
-        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
+      <header
+        className="sticky top-0 z-30"
+        style={{
+          backdropFilter: "blur(18px)",
+          WebkitBackdropFilter: "blur(18px)",
+          background: "rgba(255, 255, 255, 0.75)",
+          borderBottom: "1px solid rgba(255,255,255,0.7)",
+          boxShadow: "0 1px 28px rgba(0,0,0,0.07)",
+        }}
+      >
+        <div className="max-w-3xl mx-auto px-4 h-14 flex items-center gap-3">
           <button
             onClick={() => setLocation("/student-dashboard")}
-            className="flex items-center justify-center w-11 h-11 rounded-xl bg-white/20 hover:bg-white/30 text-white transition-colors flex-shrink-0"
+            className="flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0"
+            style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
             data-testid="button-back"
             aria-label="Back"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className="w-5 h-5 text-slate-600" />
           </button>
-          <div className="flex-1 min-w-0">
-            <p className="text-white font-bold text-sm leading-tight">Conduct & Grievance Hub</p>
-            <p className="text-emerald-100 text-xs">{student.digitalStudentId} · Class {student.class}-{student.section}</p>
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <div className="flex items-center justify-center w-8 h-8 rounded-xl flex-shrink-0" style={{ background: "linear-gradient(135deg, #ec4899, #8b5cf6)" }}>
+              <Mail className="w-4 h-4 text-white" />
+            </div>
+            <div className="leading-tight min-w-0">
+              <p className="font-bold text-sm text-slate-800 truncate">Conduct & Grievance</p>
+              <p className="text-[11px] text-slate-400 truncate">{student.digitalStudentId} · Class {student.class}-{student.section}</p>
+            </div>
           </div>
-          <span className="hidden sm:flex items-center px-2.5 py-1 rounded-full bg-white/20 text-white text-xs font-semibold">
+          <span className="hidden sm:flex items-center px-2.5 py-1 rounded-full text-xs font-semibold flex-shrink-0" style={{ background: "rgba(0,0,0,0.05)", color: "#475569" }}>
             {student.schoolCode}
           </span>
         </div>
       </header>
 
-      <main className="flex-1 max-w-3xl mx-auto w-full px-4 py-5 space-y-5 pb-24">
+      <motion.main
+        className="flex-1 max-w-3xl mx-auto w-full px-4 py-5 space-y-5 pb-24"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
+      >
 
         {/* ── Three-Tab Segmented Toggle ── */}
-        <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-1.5 flex gap-1">
+        <div className="rounded-2xl p-1.5 flex gap-1 bg-white/80 border border-white/70 shadow-sm">
           {tabs.map(({ id, label, Icon, count }) => (
             <button
               key={id}
@@ -431,7 +459,7 @@ export default function StudentComplaints() {
             {inboxLoading ? (
               <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-[#10b981]" /></div>
             ) : inboxData.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-8 flex flex-col items-center gap-3 text-center">
+              <div className="rounded-2xl p-8 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center gap-3 text-center">
                 <div className="w-14 h-14 rounded-2xl bg-emerald-50 flex items-center justify-center">
                   <Mail className="w-7 h-7 text-emerald-300" />
                 </div>
@@ -457,7 +485,7 @@ export default function StudentComplaints() {
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-5" data-testid="form-staff-grievance">
+            <div className="rounded-2xl p-5 bg-white/80 border border-white/70 shadow-sm" data-testid="form-staff-grievance">
               <h2 className="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2">
                 <ShieldAlert className="w-4 h-4 text-[#10b981]" /> File a Staff Grievance
               </h2>
@@ -541,7 +569,7 @@ export default function StudentComplaints() {
         {/* ── Tab: Peer Reports ── */}
         {activeTab === "peer" && (
           <div className="space-y-4">
-            <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-5" data-testid="form-peer-report">
+            <div className="rounded-2xl p-5 bg-white/80 border border-white/70 shadow-sm" data-testid="form-peer-report">
               <h2 className="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2">
                 <UserX className="w-4 h-4 text-[#10b981]" /> Report Peer Misconduct
               </h2>
@@ -629,14 +657,14 @@ export default function StudentComplaints() {
             )}
 
             {!filedLoading && peerReports.length === 0 && (
-              <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-6 flex flex-col items-center gap-2 text-center">
+              <div className="rounded-2xl p-6 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center gap-2 text-center">
                 <UserX className="w-8 h-8 text-gray-200" />
                 <p className="text-sm text-gray-400">No peer reports filed yet.</p>
               </div>
             )}
           </div>
         )}
-      </main>
+      </motion.main>
 
       {/* ── Mobile FAB ── */}
       {(activeTab === "staff" || activeTab === "peer") && (

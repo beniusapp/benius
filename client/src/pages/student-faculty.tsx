@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { motion } from "framer-motion";
 import { ArrowLeft, UserCheck, Search, GraduationCap, Loader2 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 
@@ -42,7 +43,7 @@ function getInitials(name: string): string {
 
 function SkeletonCard() {
   return (
-    <div className="bg-white rounded-2xl border border-emerald-50 shadow-sm p-5 animate-pulse">
+    <div className="rounded-2xl p-5 bg-white/80 border border-white/70 shadow-sm animate-pulse">
       <div className="flex flex-col items-center gap-3">
         <div className="w-20 h-20 rounded-full bg-gray-200" />
         <div className="w-full space-y-2">
@@ -68,7 +69,7 @@ function FacultyCard({ member }: { member: FacultyMember }) {
 
   return (
     <div
-      className="bg-white rounded-2xl border border-emerald-50 shadow-sm p-5 flex flex-col items-center gap-3 hover:shadow-md transition-shadow"
+      className="rounded-2xl p-5 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center gap-3 hover:shadow-md transition-shadow"
       data-testid={`card-faculty-${member.id}`}
     >
       {/* Circular avatar */}
@@ -161,39 +162,61 @@ export default function StudentFaculty() {
 
   if (studentLoading || !student) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f0fdf4]">
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#f8fafc" }}>
         <Loader2 className="w-9 h-9 animate-spin text-[#10b981]" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#f0fdf4] flex flex-col">
+    <div className="min-h-screen flex flex-col relative" style={{ background: "#f8fafc" }}>
+
+      {/* ── Decorative blobs ── */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+        <div style={{ position: "absolute", top: "-120px", right: "-80px", width: "500px", height: "500px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "460px", height: "460px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", top: "38%", left: "28%", width: "360px", height: "360px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.05) 0%, transparent 65%)" }} />
+      </div>
 
       {/* ── Sticky Header ── */}
-      <header className="sticky top-0 z-30 bg-[#10b981] shadow-md">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
+      <header
+        className="sticky top-0 z-30"
+        style={{
+          backdropFilter: "blur(18px)",
+          WebkitBackdropFilter: "blur(18px)",
+          background: "rgba(255, 255, 255, 0.75)",
+          borderBottom: "1px solid rgba(255,255,255,0.7)",
+          boxShadow: "0 1px 28px rgba(0,0,0,0.07)",
+        }}
+      >
+        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-3">
           <button
             onClick={() => setLocation("/student-dashboard")}
-            className="flex items-center justify-center w-11 h-11 rounded-xl bg-white/20 hover:bg-white/30 text-white transition-colors flex-shrink-0"
+            className="flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0"
+            style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
             data-testid="button-back"
             aria-label="Back"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className="w-5 h-5 text-slate-600" />
           </button>
-          <div className="flex-1 min-w-0">
-            <p className="text-white font-bold text-sm leading-tight">Faculty Directory</p>
-            <p className="text-emerald-100 text-xs">{student.schoolName}</p>
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <div className="flex items-center justify-center w-8 h-8 rounded-xl flex-shrink-0" style={{ background: "linear-gradient(135deg, #14b8a6, #3b82f6)" }}>
+              <UserCheck className="w-4 h-4 text-white" />
+            </div>
+            <div className="leading-tight min-w-0">
+              <p className="font-bold text-sm text-slate-800">Faculty Directory</p>
+              <p className="text-[11px] text-slate-400 truncate">{student.schoolName}</p>
+            </div>
           </div>
-          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/20">
-            <UserCheck className="w-3.5 h-3.5 text-white" />
-            <span className="text-white text-xs font-semibold">{faculty.length} staff</span>
+          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full flex-shrink-0" style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.06)" }}>
+            <UserCheck className="w-3.5 h-3.5 text-slate-500" />
+            <span className="text-slate-600 text-xs font-semibold">{faculty.length} staff</span>
           </div>
         </div>
       </header>
 
       {/* ── Search & Department Filter ── */}
-      <div className="sticky top-[60px] z-20 bg-[#f0fdf4]/90 backdrop-blur-sm border-b border-emerald-100">
+      <div className="sticky top-14 z-20 bg-white/80 backdrop-blur-sm border-b border-slate-100">
         <div className="max-w-5xl mx-auto px-4 py-3 space-y-2.5">
           {/* Search bar */}
           <div className="relative">
@@ -241,7 +264,12 @@ export default function StudentFaculty() {
         </div>
       </div>
 
-      <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-5">
+      <motion.main
+        className="flex-1 max-w-5xl mx-auto w-full px-4 py-5"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
+      >
 
         {/* ── Loading Skeletons ── */}
         {facultyLoading && (
@@ -277,7 +305,7 @@ export default function StudentFaculty() {
             ))}
           </div>
         )}
-      </main>
+      </motion.main>
     </div>
   );
 }

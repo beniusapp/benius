@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { motion } from "framer-motion";
 import {
   ArrowLeft, GraduationCap, Loader2, ClipboardList, Download,
   Trophy, TrendingUp, AlertCircle, ChevronDown, CheckCircle, XCircle,
@@ -212,7 +213,7 @@ export default function StudentExamination() {
 
   if (studentLoading || !student) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f0fdf4]">
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#f8fafc" }}>
         <Loader2 className="w-9 h-9 animate-spin text-[#10b981]" />
       </div>
     );
@@ -221,40 +222,62 @@ export default function StudentExamination() {
   const noPublishedTypes = !typesLoading && examTypes.length === 0;
 
   return (
-    <div className="min-h-screen bg-[#f0fdf4] flex flex-col">
+    <div className="min-h-screen flex flex-col relative" style={{ background: "#f8fafc" }}>
       <PrintStyles />
 
+      {/* ── Decorative blobs ── */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+        <div style={{ position: "absolute", top: "-120px", right: "-80px", width: "500px", height: "500px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "460px", height: "460px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", top: "38%", left: "28%", width: "360px", height: "360px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.05) 0%, transparent 65%)" }} />
+      </div>
+
       {/* ── Sticky header ── */}
-      <header className="sticky top-0 z-30 bg-[#10b981] shadow-md no-print">
-        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
+      <header
+        className="sticky top-0 z-30 no-print"
+        style={{
+          backdropFilter: "blur(18px)",
+          WebkitBackdropFilter: "blur(18px)",
+          background: "rgba(255, 255, 255, 0.75)",
+          borderBottom: "1px solid rgba(255,255,255,0.7)",
+          boxShadow: "0 1px 28px rgba(0,0,0,0.07)",
+        }}
+      >
+        <div className="max-w-3xl mx-auto px-4 h-14 flex items-center gap-3">
           <button
             onClick={() => setLocation("/student-dashboard")}
-            className="flex items-center justify-center w-11 h-11 rounded-xl bg-white/20 hover:bg-white/30 text-white transition-colors"
+            className="flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0"
+            style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
             data-testid="button-back"
             aria-label="Back"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className="w-5 h-5 text-slate-600" />
           </button>
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-white/20 flex-shrink-0">
+            <div className="flex items-center justify-center w-8 h-8 rounded-xl flex-shrink-0" style={{ background: "linear-gradient(135deg, #f97316, #ef4444)" }}>
               <ClipboardList className="w-4 h-4 text-white" />
             </div>
-            <div className="min-w-0">
-              <p className="text-white font-bold text-sm leading-tight truncate">Academic Performance</p>
-              <p className="text-emerald-100 text-xs truncate">{student.digitalStudentId} · Class {student.class}-{student.section}</p>
+            <div className="min-w-0 leading-tight">
+              <p className="font-bold text-sm text-slate-800 truncate">Academic Performance</p>
+              <p className="text-[11px] text-slate-400 truncate">{student.digitalStudentId} · Class {student.class}-{student.section}</p>
             </div>
           </div>
-          <span className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/20 text-white text-xs font-semibold flex-shrink-0">
+          <span className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold flex-shrink-0" style={{ background: "rgba(0,0,0,0.05)", color: "#475569" }}>
             <GraduationCap className="w-3.5 h-3.5" />
             {student.schoolCode}
           </span>
         </div>
       </header>
 
-      <main className="flex-1 max-w-3xl mx-auto w-full px-4 py-5 space-y-5">
+      <motion.main
+        className="flex-1 max-w-3xl mx-auto w-full px-4 py-5 space-y-5"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
+      >
 
         {/* ── Year/Class Switcher ── */}
-        <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-4 no-print">
+        <div className="rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm no-print">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
               <h2 className="text-sm font-bold text-gray-800">Academic Year</h2>
@@ -324,7 +347,7 @@ export default function StudentExamination() {
 
         {/* ── Marks Table / Empty State ── */}
         {!selectedExamType || noPublishedTypes ? (
-          <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-8 flex flex-col items-center gap-3 text-center">
+          <div className="rounded-2xl p-8 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center gap-3 text-center">
             <div className="w-14 h-14 rounded-2xl bg-amber-50 flex items-center justify-center">
               <AlertCircle className="w-7 h-7 text-amber-400" />
             </div>
@@ -338,7 +361,7 @@ export default function StudentExamination() {
             <Loader2 className="w-7 h-7 animate-spin text-[#10b981]" />
           </div>
         ) : scores.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-8 flex flex-col items-center gap-3 text-center">
+          <div className="rounded-2xl p-8 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center gap-3 text-center">
             <div className="w-14 h-14 rounded-2xl bg-amber-50 flex items-center justify-center">
               <AlertCircle className="w-7 h-7 text-amber-400" />
             </div>
@@ -372,7 +395,7 @@ export default function StudentExamination() {
             </div>
 
             {/* Marks Table */}
-            <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm overflow-hidden">
+            <div className="rounded-2xl overflow-hidden bg-white/80 border border-white/70 shadow-sm">
               <div className="px-4 py-3 border-b border-emerald-50 flex items-center justify-between no-print">
                 <h3 className="text-sm font-bold text-gray-800">{selectedExamType} — Class {selectedClass}</h3>
                 <button
@@ -488,7 +511,7 @@ export default function StudentExamination() {
         {/* ── Academic Journey Section ── */}
         <AcademicJourneySection student={student} currentClass={currentClass} classes={classes} />
 
-      </main>
+      </motion.main>
     </div>
   );
 }
@@ -513,7 +536,7 @@ function AcademicJourneySection({
 
   if (isLoading) {
     return (
-      <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-6 flex justify-center no-print">
+      <div className="rounded-2xl p-6 bg-white/80 border border-white/70 shadow-sm flex justify-center no-print">
         <Loader2 className="w-6 h-6 animate-spin text-[#10b981]" />
       </div>
     );
@@ -529,7 +552,7 @@ function AcademicJourneySection({
     : "Final exam percentage across classes";
 
   return (
-    <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-5 no-print" data-testid="section-academic-journey">
+    <div className="rounded-2xl p-5 bg-white/80 border border-white/70 shadow-sm no-print" data-testid="section-academic-journey">
       <div className="flex items-center gap-2 mb-4">
         <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-50">
           <TrendingUp className="w-4 h-4 text-[#10b981]" />
