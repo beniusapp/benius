@@ -3,6 +3,12 @@ import { motion } from "framer-motion";
 import { Link } from "wouter";
 import { Shield, BookOpen, GraduationCap, ArrowRight } from "lucide-react";
 
+const prefetchMap: Record<string, () => void> = {
+  "/login":        () => { import("@/pages/login"); },
+  "/teacher-login": () => { import("@/pages/teacher-login"); },
+  "/student-login": () => { import("@/pages/student-login"); },
+};
+
 const portals = [
   {
     href: "/login",
@@ -65,6 +71,19 @@ function PortalCard({ portal, index }: { portal: (typeof portals)[number]; index
   const cardRef = useRef<HTMLDivElement>(null);
   const magnetRef = useRef<HTMLDivElement>(null);
   const lastMoveTime = useRef(0);
+  const prefetched = useRef(false);
+
+  const triggerPrefetch = useCallback(() => {
+    if (prefetched.current) return;
+    prefetched.current = true;
+    const fn = prefetchMap[portal.href];
+    if (!fn) return;
+    if ("requestIdleCallback" in window) {
+      requestIdleCallback(fn, { timeout: 2000 });
+    } else {
+      setTimeout(fn, 0);
+    }
+  }, [portal.href]);
 
   const onMouseMove = useCallback((e: MouseEvent<HTMLDivElement>) => {
     const now = Date.now();
@@ -118,7 +137,7 @@ function PortalCard({ portal, index }: { portal: (typeof portals)[number]; index
           ref={cardRef}
           onMouseMove={onMouseMove}
           onMouseLeave={onMouseLeave}
-          onMouseEnter={() => setHovered(true)}
+          onMouseEnter={() => { setHovered(true); triggerPrefetch(); }}
           animate={{ rotateX: tilt.rotateX, rotateY: tilt.rotateY, scale: hovered ? 1.03 : 1 }}
           transition={{ type: "spring", stiffness: 220, damping: 22 }}
           className="hidden sm:flex relative rounded-2xl overflow-hidden cursor-pointer p-5 flex-col gap-3 h-full"
@@ -193,6 +212,8 @@ function PortalCard({ portal, index }: { portal: (typeof portals)[number]; index
         {/* ── Mobile strip (visible only on mobile) ── */}
         <motion.div
           whileTap={{ scale: 0.97 }}
+          onMouseEnter={triggerPrefetch}
+          onTouchStart={triggerPrefetch}
           className="sm:hidden relative flex items-center gap-4 px-4 py-3.5 rounded-2xl overflow-hidden cursor-pointer"
           style={{
             background: "rgba(255,255,255,0.05)",
