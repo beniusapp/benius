@@ -142,6 +142,7 @@ function useCountUp(target: number, duration = 1100) {
   const rafRef = useRef(0);
 
   useEffect(() => {
+    cancelAnimationFrame(rafRef.current);
     if (target === 0) { setCount(0); return; }
     const startTime = performance.now();
     const animate = (now: number) => {

@@ -1,4 +1,4 @@
-import { useState, useRef, type MouseEvent } from "react";
+import { useState, useRef, useCallback, type MouseEvent } from "react";
 import { motion } from "framer-motion";
 import { Link } from "wouter";
 import { Shield, BookOpen, GraduationCap, ArrowRight } from "lucide-react";
@@ -64,8 +64,13 @@ function PortalCard({ portal, index }: { portal: (typeof portals)[number]; index
   const [magnetXY, setMagnetXY] = useState({ x: 0, y: 0 });
   const cardRef = useRef<HTMLDivElement>(null);
   const magnetRef = useRef<HTMLDivElement>(null);
+  const lastMoveTime = useRef(0);
 
-  function onMouseMove(e: MouseEvent<HTMLDivElement>) {
+  const onMouseMove = useCallback((e: MouseEvent<HTMLDivElement>) => {
+    const now = Date.now();
+    if (now - lastMoveTime.current < 16) return;
+    lastMoveTime.current = now;
+
     const el = cardRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
@@ -88,7 +93,7 @@ function PortalCard({ portal, index }: { portal: (typeof portals)[number]; index
         setMagnetXY({ x: 0, y: 0 });
       }
     }
-  }
+  }, []);
 
   function onMouseLeave() {
     setGlow(g => ({ ...g, visible: false }));
@@ -127,6 +132,9 @@ function PortalCard({ portal, index }: { portal: (typeof portals)[number]; index
               ? `0 0 48px 0 ${glowColor}38, 0 24px 64px -12px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.1)`
               : `0 8px 32px -4px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06)`,
             transition: "border-color 0.3s, box-shadow 0.3s",
+            willChange: "transform, opacity",
+            transform: "translateZ(0)",
+            contain: "paint layout",
           }}
         >
           {/* Cursor glow */}
@@ -285,15 +293,19 @@ export default function Home() {
       `}</style>
 
       {/* ── Background ── */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
+      <div
+        className="absolute inset-0 pointer-events-none overflow-hidden"
+        aria-hidden="true"
+        style={{ transform: "translateZ(0)", isolation: "isolate" }}
+      >
         <div className="mesh-1 absolute top-[-22%] left-[-14%] w-[680px] h-[680px] rounded-full opacity-40"
-          style={{ background: "radial-gradient(circle, #6366f158 0%, transparent 65%)", filter: "blur(78px)" }} />
+          style={{ background: "radial-gradient(circle, #6366f158 0%, transparent 65%)", filter: "blur(60px)" }} />
         <div className="mesh-2 absolute top-[3%] right-[-18%] w-[760px] h-[760px] rounded-full opacity-28"
-          style={{ background: "radial-gradient(circle, #06b6d448 0%, transparent 65%)", filter: "blur(88px)" }} />
+          style={{ background: "radial-gradient(circle, #06b6d448 0%, transparent 65%)", filter: "blur(68px)" }} />
         <div className="mesh-3 absolute bottom-[-22%] left-[18%] w-[580px] h-[580px] rounded-full opacity-33"
-          style={{ background: "radial-gradient(circle, #8b5cf658 0%, transparent 65%)", filter: "blur(78px)" }} />
+          style={{ background: "radial-gradient(circle, #8b5cf658 0%, transparent 65%)", filter: "blur(60px)" }} />
         <div className="mesh-4 absolute top-[38%] left-[52%] w-[380px] h-[380px] rounded-full opacity-18"
-          style={{ background: "radial-gradient(circle, #14b8a642 0%, transparent 65%)", filter: "blur(58px)" }} />
+          style={{ background: "radial-gradient(circle, #14b8a642 0%, transparent 65%)", filter: "blur(48px)" }} />
         <div className="absolute inset-0 opacity-[0.028]"
           style={{ backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.9) 1px, transparent 1px)", backgroundSize: "36px 36px" }} />
         <div className="geo-1 absolute top-[20%] left-[7%] w-20 h-20 rounded-3xl opacity-[0.055]"
