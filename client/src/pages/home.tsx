@@ -141,12 +141,12 @@ function PortalCard({ portal, index }: { portal: (typeof portals)[number]; index
 
           {/* Icon orb + badge */}
           <div className="flex items-start justify-between gap-2">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center flex-shrink-0"
+            <div className="w-20 h-20 rounded-2xl flex items-center justify-center flex-shrink-0"
               style={{
                 background: `linear-gradient(145deg, ${orb1}ee, ${orb2}bb)`,
                 boxShadow: `0 10px 28px ${glowColor}55, inset 0 1px 0 rgba(255,255,255,0.28), inset 0 -1px 0 rgba(0,0,0,0.22)`,
               }}>
-              <Icon className="w-8 h-8 text-white drop-shadow-lg" />
+              <Icon className="w-9 h-9 text-white drop-shadow-lg" />
             </div>
             <span className="text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full border flex-shrink-0"
               style={{
@@ -164,7 +164,7 @@ function PortalCard({ portal, index }: { portal: (typeof portals)[number]; index
           {/* Title + description */}
           <div className="flex-1 min-h-0 space-y-1.5">
             <h3 className="text-base font-bold text-white leading-snug">{title}</h3>
-            <p className="text-xs text-white/65 leading-relaxed line-clamp-2">{description}</p>
+            <p className="text-xs text-white/75 leading-relaxed line-clamp-2">{description}</p>
           </div>
 
           {/* Magnetic Enter Portal */}
@@ -214,7 +214,7 @@ function PortalCard({ portal, index }: { portal: (typeof portals)[number]; index
 
           {/* Arrow */}
           <div className="flex items-center gap-1 text-xs font-semibold flex-shrink-0" style={{ color: accentTo }}>
-            <span className="hidden xs:inline text-[11px]">Enter</span>
+            <span className="text-[11px]">Enter</span>
             <ArrowRight className="w-4 h-4" />
           </div>
         </motion.div>
@@ -424,7 +424,7 @@ export default function Home() {
               style={{ boxShadow: "0 0 5px 2px rgba(52,211,153,0.65)" }} />
             <span className="text-[10px] text-white/70 font-medium" data-testid="text-footer-status">All Systems Operational</span>
           </div>
-          <p className="text-[10px] text-white/55 font-medium" data-testid="text-footer-copyright">
+          <p className="text-[10px] text-white/70 font-medium" data-testid="text-footer-copyright">
             © {new Date().getFullYear()} BENIUS · Secure Multi-Tenant Infrastructure
           </p>
         </div>
