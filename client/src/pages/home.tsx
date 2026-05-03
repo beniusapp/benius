@@ -1,5 +1,5 @@
 import { useState, useRef, type MouseEvent } from "react";
-import { motion, useScroll, useTransform } from "framer-motion";
+import { motion } from "framer-motion";
 import { Link } from "wouter";
 import { Shield, BookOpen, GraduationCap, ArrowRight } from "lucide-react";
 
@@ -115,10 +115,9 @@ function PortalCard({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 50 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-60px" }}
-      transition={{ type: "spring", stiffness: 80, damping: 20, delay: index * 0.12 }}
+      initial={{ opacity: 0, y: 40 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: "spring", stiffness: 80, damping: 20, delay: 0.35 + index * 0.1 }}
     >
       <MagneticWrap strength={0.15}>
         <Link href={href} data-testid={testId}>
@@ -302,20 +301,20 @@ export default function Home() {
         {/* Mesh gradient orbs */}
         <div
           className="mesh-1 absolute top-[-25%] left-[-15%] w-[700px] h-[700px] rounded-full opacity-40"
-          style={{ background: "radial-gradient(circle, #6366f155 0%, transparent 65%)", filter: "blur(80px)" }}
+          style={{ background: "radial-gradient(circle, #6366f155 0%, transparent 65%)", filter: "blur(80px)", willChange: "transform" }}
         />
         <div
           className="mesh-2 absolute top-[5%] right-[-20%] w-[800px] h-[800px] rounded-full opacity-30"
-          style={{ background: "radial-gradient(circle, #06b6d445 0%, transparent 65%)", filter: "blur(90px)" }}
+          style={{ background: "radial-gradient(circle, #06b6d445 0%, transparent 65%)", filter: "blur(90px)", willChange: "transform" }}
         />
         <div
           className="mesh-3 absolute bottom-[-25%] left-[20%] w-[600px] h-[600px] rounded-full opacity-35"
-          style={{ background: "radial-gradient(circle, #8b5cf655 0%, transparent 65%)", filter: "blur(80px)" }}
+          style={{ background: "radial-gradient(circle, #8b5cf655 0%, transparent 65%)", filter: "blur(80px)", willChange: "transform" }}
         />
         {/* Extra mid orb */}
         <div
           className="mesh-1 absolute top-[40%] left-[55%] w-[400px] h-[400px] rounded-full opacity-20"
-          style={{ background: "radial-gradient(circle, #14b8a640 0%, transparent 65%)", filter: "blur(60px)", animationDelay: "8s" }}
+          style={{ background: "radial-gradient(circle, #14b8a640 0%, transparent 65%)", filter: "blur(60px)", animationDelay: "8s", willChange: "transform" }}
         />
 
         {/* Dot-grid overlay */}
@@ -467,9 +466,8 @@ export default function Home() {
           {/* Bottom hint */}
           <motion.p
             initial={{ opacity: 0 }}
-            whileInView={{ opacity: 1 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.6, delay: 0.3 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.6, delay: 0.7 }}
             className="text-center text-xs text-white/25 mt-12"
           >
             Contact your school administrator for access credentials.
