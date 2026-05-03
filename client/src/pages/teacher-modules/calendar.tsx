@@ -792,7 +792,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
   /* ── Mobile Month View ── */
   if (isMobile && view === "month") {
     return (
-      <div className="space-y-4" data-testid="teacher-calendar-mobile">
+      <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-sm space-y-4" data-testid="teacher-calendar-mobile">
         {navBar}
         {viewSwitcher}
         {legend}
@@ -884,7 +884,7 @@ export default function CalendarModule({ teacher }: { teacher: TeacherMe }) {
 
   /* ── Main Render (desktop + non-month mobile views) ── */
   return (
-    <div className="space-y-4" data-testid="teacher-calendar-desktop">
+    <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-sm space-y-4" data-testid="teacher-calendar-desktop">
       {navBar}
       {viewSwitcher}
       {legend}
