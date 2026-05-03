@@ -10,7 +10,7 @@ import {
   Bell, BarChart2, Shield, UserSquare, CreditCard, Package,
   TrendingUp, MessageSquare, CalendarDays, ChevronLeft, Loader2,
   ArrowRight, AlertTriangle, UserCircle2, X, KeyRound, Lock, Phone, Mail,
-  CheckCircle2, ChevronDown, PanelLeftClose, PanelLeftOpen,
+  CheckCircle2, ChevronDown, PanelLeftClose, PanelLeftOpen, Menu,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -238,8 +238,8 @@ function TileCard({ tile, badge, onClick }: {
         boxShadow: hovered
           ? `0 24px 64px ${tile.accentColor}20, 0 8px 24px rgba(0,0,0,0.5), 0 0 0 1px ${tile.accentColor}25`
           : "0 4px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05)",
-        padding: "20px",
-        minHeight: "164px",
+        padding: "clamp(12px, 3vw, 20px)",
+        minHeight: "140px",
         cursor: "pointer",
       }}
     >
@@ -580,13 +580,23 @@ export default function AdminDashboard() {
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
     Foundation: true, Oversight: true, Management: true, Enterprise: true,
   });
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 640);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 640) setSidebarOpen(false);
+      else setSidebarOpen(true);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   function toggleGroup(group: string) {
     setExpandedGroups(prev => ({ ...prev, [group]: !prev[group] }));
   }
 
   function goToModule(id: ActiveModule | "grid") {
+    if (window.innerWidth < 640) setSidebarOpen(false);
     if (id === "grid") setLocation("/admin-dashboard");
     else setLocation(`/admin-dashboard/${id}`);
   }
@@ -759,48 +769,58 @@ export default function AdminDashboard() {
         }}
         data-testid="admin-navbar"
       >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-2 sm:gap-4">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Mobile hamburger / sidebar toggle */}
+            <button
+              onClick={() => setSidebarOpen(v => !v)}
+              className="p-1.5 rounded-lg hover:bg-white/10 transition-colors sm:hidden"
+              data-testid="button-toggle-sidebar-mobile"
+              aria-label="Toggle navigation"
+            >
+              <Menu className="w-5 h-5 text-white/60" />
+            </button>
             {activeModule !== "grid" && (
               <button
                 onClick={() => goToModule("grid")}
-                className="p-1.5 rounded-lg hover:bg-white/10 transition-colors mr-1"
+                className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
                 data-testid="button-back-to-grid"
               >
                 <ChevronLeft className="w-5 h-5 text-white/60" />
               </button>
             )}
             <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg"
+              className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0"
               style={{ background: "linear-gradient(135deg, #6366f1, #06b6d4)", boxShadow: "0 4px 16px rgba(99,102,241,0.35)" }}
             >
               <GraduationCap className="w-5 h-5 text-white" />
             </div>
-            <div className="leading-tight">
+            <div className="leading-tight min-w-0">
               <h1 className="text-base font-extrabold text-white tracking-tight" data-testid="text-dashboard-title">BENIUS</h1>
-              <p className="text-[10px] text-white/35 leading-none font-medium" data-testid="text-school-name">{me.schoolName}</p>
+              <p className="text-[10px] text-white/35 leading-none font-medium truncate" data-testid="text-school-name">{me.schoolName}</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
             <span className="hidden sm:block text-sm text-white/35 font-medium" data-testid="text-user-email">{me.email}</span>
             <Button
               variant="ghost" size="sm"
               onClick={() => setShowProfile(true)}
-              className="text-white/50 hover:text-white hover:bg-white/10"
+              className="text-white/50 hover:text-white hover:bg-white/10 px-2 sm:px-3"
               data-testid="button-open-profile"
             >
-              <UserCircle2 className="w-4 h-4 mr-1" /> Profile
+              <UserCircle2 className="w-4 h-4 sm:mr-1" />
+              <span className="hidden sm:inline">Profile</span>
             </Button>
             <Button
               variant="ghost" size="sm"
               onClick={() => logoutMutation.mutate()}
               disabled={logoutMutation.isPending}
-              className="text-white/50 hover:text-white hover:bg-white/10"
+              className="text-white/50 hover:text-white hover:bg-white/10 px-2 sm:px-3"
               data-testid="button-logout"
             >
-              {logoutMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <LogOut className="w-4 h-4 mr-1" />}
-              Logout
+              {logoutMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin sm:mr-1" /> : <LogOut className="w-4 h-4 sm:mr-1" />}
+              <span className="hidden sm:inline">Logout</span>
             </Button>
           </div>
         </div>
@@ -998,13 +1018,28 @@ export default function AdminDashboard() {
       {/* ══════════ CONTENT ROW: sidebar + main ══════════ */}
       <div className="relative z-10 flex flex-1 min-h-0">
 
+        {/* Mobile backdrop overlay */}
+        {sidebarOpen && (
+          <div
+            className="fixed inset-0 z-30 bg-black/50 sm:hidden"
+            onClick={() => setSidebarOpen(false)}
+            aria-hidden
+          />
+        )}
+
         {/* ── Translucent Floating Sidebar ── */}
         <aside
-          className={`flex flex-col flex-shrink-0 border-r transition-all duration-300 ease-in-out overflow-hidden ${sidebarOpen ? "w-60" : "w-0"}`}
+          className={`
+            flex flex-col flex-shrink-0 border-r overflow-hidden
+            fixed top-0 bottom-0 left-0 z-40
+            sm:relative sm:top-auto sm:bottom-auto sm:left-auto sm:z-auto
+            transition-all duration-300 ease-in-out
+            ${sidebarOpen ? "w-60 translate-x-0" : "w-0 -translate-x-full sm:translate-x-0"}
+          `}
           style={{
             backdropFilter: "blur(20px)",
             WebkitBackdropFilter: "blur(20px)",
-            background: "rgba(255,255,255,0.03)",
+            background: "rgba(15,23,42,0.97)",
             borderColor: "rgba(255,255,255,0.06)",
           }}
           data-testid="admin-sidebar"
@@ -1102,7 +1137,7 @@ export default function AdminDashboard() {
             {!sidebarOpen && (
               <button
                 onClick={() => setSidebarOpen(true)}
-                className="flex items-center gap-2 mb-5 text-xs text-white/35 hover:text-white transition-colors"
+                className="hidden sm:flex items-center gap-2 mb-5 text-xs text-white/35 hover:text-white transition-colors"
                 data-testid="button-expand-sidebar"
               >
                 <PanelLeftOpen className="w-4 h-4" /> Show navigation
@@ -1140,7 +1175,7 @@ export default function AdminDashboard() {
                         variants={containerVariants}
                         initial="hidden"
                         animate="show"
-                        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
+                        className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4"
                       >
                         {groupTiles.map(tile => (
                           <TileCard
