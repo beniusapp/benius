@@ -43,6 +43,7 @@ waitForPort = 5000
 
 [agent]
 integrations = ["javascript_database:1.0.0"]
+stack = "FULLSTACK_JS"
 
 [postMerge]
 path = "scripts/post-merge.sh"
