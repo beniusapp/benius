@@ -882,6 +882,30 @@ export async function registerRoutes(
     res.json({ message: "Class-section mapping saved" });
   });
 
+  app.put("/api/school-metadata/:schoolId/class-subjects-map", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const { classSubjects } = req.body;
+    if (!classSubjects || typeof classSubjects !== "object" || Array.isArray(classSubjects)) {
+      return res.status(400).json({ message: "classSubjects must be an object" });
+    }
+    await storage.setClassSubjectsMetadata(schoolId, classSubjects);
+    res.json({ message: "Class-subject mapping saved" });
+  });
+
+  app.put("/api/school-metadata/:schoolId/class-exam-types-map", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const { classExamTypes } = req.body;
+    if (!classExamTypes || typeof classExamTypes !== "object" || Array.isArray(classExamTypes)) {
+      return res.status(400).json({ message: "classExamTypes must be an object" });
+    }
+    await storage.setClassExamTypesMetadata(schoolId, classExamTypes);
+    res.json({ message: "Class-exam-type mapping saved" });
+  });
+
   app.put("/api/school-metadata/:schoolId/:metaKey", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
     const schoolId = parseInt(req.params.schoolId);

@@ -460,6 +460,8 @@ export default function SchoolSetup({ schoolId }: Props) {
   const [subjects, setSubjects] = useState<string[]>([]);
   const [examTypes, setExamTypes] = useState<string[]>([]);
   const [classSections, setClassSections] = useState<Record<string, string[]>>({});
+  const [classSubjects, setClassSubjects] = useState<Record<string, string[]>>({});
+  const [classExamTypes, setClassExamTypes] = useState<Record<string, string[]>>({});
   const [classInput, setClassInput] = useState("");
   const [sectionInput, setSectionInput] = useState("");
   const [subjectInput, setSubjectInput] = useState("");
@@ -505,9 +507,18 @@ export default function SchoolSetup({ schoolId }: Props) {
       setSections(meta.sections || []);
       setSubjects(meta.subjects || []);
       setExamTypes(meta.exam_types || []);
-      const cs = (meta as unknown as Record<string, unknown>).class_sections;
+      const raw = meta as unknown as Record<string, unknown>;
+      const cs = raw.class_sections;
       if (cs && typeof cs === "object" && !Array.isArray(cs)) {
         setClassSections(cs as Record<string, string[]>);
+      }
+      const csu = raw.class_subjects;
+      if (csu && typeof csu === "object" && !Array.isArray(csu)) {
+        setClassSubjects(csu as Record<string, string[]>);
+      }
+      const cet = raw.class_exam_types;
+      if (cet && typeof cet === "object" && !Array.isArray(cet)) {
+        setClassExamTypes(cet as Record<string, string[]>);
       }
       setLoaded(true);
     }
@@ -574,12 +585,56 @@ export default function SchoolSetup({ schoolId }: Props) {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const saveClassSubjectsMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("PUT", `/api/school-metadata/${schoolId}/class-subjects-map`, { classSubjects });
+    },
+    onSuccess: () => {
+      toast({ title: "Saved", description: "Class-subject mapping updated." });
+      queryClient.invalidateQueries({ queryKey: ["/api/school-metadata", schoolId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/school-config"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const saveClassExamTypesMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("PUT", `/api/school-metadata/${schoolId}/class-exam-types-map`, { classExamTypes });
+    },
+    onSuccess: () => {
+      toast({ title: "Saved", description: "Class-exam-type mapping updated." });
+      queryClient.invalidateQueries({ queryKey: ["/api/school-metadata", schoolId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/school-config"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
   function toggleClassSection(cls: string, sec: string) {
     setClassSections(prev => {
       const current = prev[cls] || [];
       const updated = current.includes(sec)
         ? current.filter(s => s !== sec)
         : [...current, sec];
+      return { ...prev, [cls]: updated };
+    });
+  }
+
+  function toggleClassSubject(cls: string, sub: string) {
+    setClassSubjects(prev => {
+      const current = prev[cls] || [];
+      const updated = current.includes(sub)
+        ? current.filter(s => s !== sub)
+        : [...current, sub];
+      return { ...prev, [cls]: updated };
+    });
+  }
+
+  function toggleClassExamType(cls: string, et: string) {
+    setClassExamTypes(prev => {
+      const current = prev[cls] || [];
+      const updated = current.includes(et)
+        ? current.filter(s => s !== et)
+        : [...current, et];
       return { ...prev, [cls]: updated };
     });
   }
@@ -736,6 +791,116 @@ export default function SchoolSetup({ schoolId }: Props) {
             >
               <Save className="w-3.5 h-3.5 mr-1.5" />
               {saveClassSectionsMutation.isPending ? "Saving…" : "Save Class-Section Mapping"}
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* ===== CLASS → SUBJECT ASSIGNMENT ===== */}
+      <div className="pt-2">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-2 rounded-lg bg-[#10b981]/20">
+            <BookOpen className="w-5 h-5 text-[#10b981]" />
+          </div>
+          <div>
+            <h3 className="font-bold text-white">Class-Subject Mapping</h3>
+            <p className="text-white/40 text-xs">Define which subjects are taught in each class. Teachers will see only these subjects when selecting a class.</p>
+          </div>
+        </div>
+        {classes.length === 0 || subjects.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-white/10 p-6 text-center text-white/30 text-sm">
+            Add classes and subjects above first, then map them here.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {classes.map(cls => (
+              <div key={cls} className="rounded-xl border border-white/10 bg-[#1A2942] px-4 py-3 flex flex-wrap items-center gap-3">
+                <span className="text-white font-semibold text-sm w-20 shrink-0">Class {cls}</span>
+                <div className="flex flex-wrap gap-2 flex-1">
+                  {subjects.map(sub => {
+                    const active = (classSubjects[cls] || []).includes(sub);
+                    return (
+                      <button
+                        key={sub}
+                        onClick={() => toggleClassSubject(cls, sub)}
+                        className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                          active
+                            ? "bg-[#10b981] text-white border-[#10b981]"
+                            : "border-white/20 text-white/40 hover:border-white/50 hover:text-white/70"
+                        }`}
+                        data-testid={`btn-toggle-subject-${cls}-${sub}`}
+                      >
+                        {sub}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            <Button
+              size="sm"
+              onClick={() => saveClassSubjectsMutation.mutate()}
+              disabled={saveClassSubjectsMutation.isPending}
+              className="mt-2 bg-[#10b981] hover:bg-emerald-600 text-white font-semibold h-9"
+              data-testid="btn-save-class-subjects"
+            >
+              <Save className="w-3.5 h-3.5 mr-1.5" />
+              {saveClassSubjectsMutation.isPending ? "Saving…" : "Save Class-Subject Mapping"}
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* ===== CLASS → EXAM TYPE ASSIGNMENT ===== */}
+      <div className="pt-2">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-2 rounded-lg bg-[#D4AF37]/20">
+            <FileText className="w-5 h-5 text-[#D4AF37]" />
+          </div>
+          <div>
+            <h3 className="font-bold text-white">Class-Exam Type Mapping</h3>
+            <p className="text-white/40 text-xs">Define which exam types apply to each class. Teachers will see only these exam types when selecting a class.</p>
+          </div>
+        </div>
+        {classes.length === 0 || examTypes.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-white/10 p-6 text-center text-white/30 text-sm">
+            Add classes and exam types above first, then map them here.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {classes.map(cls => (
+              <div key={cls} className="rounded-xl border border-white/10 bg-[#1A2942] px-4 py-3 flex flex-wrap items-center gap-3">
+                <span className="text-white font-semibold text-sm w-20 shrink-0">Class {cls}</span>
+                <div className="flex flex-wrap gap-2 flex-1">
+                  {examTypes.map(et => {
+                    const active = (classExamTypes[cls] || []).includes(et);
+                    return (
+                      <button
+                        key={et}
+                        onClick={() => toggleClassExamType(cls, et)}
+                        className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                          active
+                            ? "bg-[#D4AF37] text-[#0A1628] border-[#D4AF37]"
+                            : "border-white/20 text-white/40 hover:border-white/50 hover:text-white/70"
+                        }`}
+                        data-testid={`btn-toggle-examtype-${cls}-${et}`}
+                      >
+                        {et}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            <Button
+              size="sm"
+              onClick={() => saveClassExamTypesMutation.mutate()}
+              disabled={saveClassExamTypesMutation.isPending}
+              className="mt-2 bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-9"
+              data-testid="btn-save-class-exam-types"
+            >
+              <Save className="w-3.5 h-3.5 mr-1.5" />
+              {saveClassExamTypesMutation.isPending ? "Saving…" : "Save Class-Exam Type Mapping"}
             </Button>
           </div>
         )}

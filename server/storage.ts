@@ -1677,6 +1677,28 @@ export class DatabaseStorage {
     }
   }
 
+  async setClassSubjectsMetadata(schoolId: number, map: Record<string, string[]>): Promise<void> {
+    const value = JSON.stringify(map);
+    const [existing] = await db.select().from(schoolMetadata)
+      .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, "class_subjects")));
+    if (existing) {
+      await db.update(schoolMetadata).set({ metaValue: value }).where(eq(schoolMetadata.id, existing.id));
+    } else {
+      await db.insert(schoolMetadata).values({ schoolId, metaKey: "class_subjects", metaValue: value });
+    }
+  }
+
+  async setClassExamTypesMetadata(schoolId: number, map: Record<string, string[]>): Promise<void> {
+    const value = JSON.stringify(map);
+    const [existing] = await db.select().from(schoolMetadata)
+      .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, "class_exam_types")));
+    if (existing) {
+      await db.update(schoolMetadata).set({ metaValue: value }).where(eq(schoolMetadata.id, existing.id));
+    } else {
+      await db.insert(schoolMetadata).values({ schoolId, metaKey: "class_exam_types", metaValue: value });
+    }
+  }
+
   // ===== STUDENT SEARCH =====
   async searchStudents(schoolId: number, query: string): Promise<Pick<Student, 'id' | 'name' | 'digitalStudentId' | 'class' | 'section' | 'photoUrl'>[]> {
     const results = await db.select({
