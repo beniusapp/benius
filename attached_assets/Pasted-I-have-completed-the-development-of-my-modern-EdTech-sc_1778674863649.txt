@@ -1,0 +1,43 @@
+I have completed the development of my modern EdTech school management application. I need a comprehensive, professional Quality Assurance (QA) Checklist to test every detail of the platform before launch. Please provide a detailed breakdown covering the following areas:
+
+1. Visual & Aesthetic Audit (The 'Premium' Look):
+
+Glassmorphism Check: Are all cards using backdrop-filter: blur() correctly? Do they have consistent 1px borders and soft shadows?
+
+3D Iconography: Are all 3D icons high-resolution, centered, and correctly sized across /admin, /teacher, and /student portals?
+
+Typography & Visibility: Check for 'ghost text' (white on white). Are all labels, dropdowns, and student names 100% legible?
+
+Animation Smoothness: Do the staggered entrance, hover-tilt effects, and micro-interactions run at 60fps without lagging the browser?
+
+2. Functional Testing (The 'Logic' Check):
+
+Portal Routing: Do the 'Enter Portal' buttons correctly navigate to /admin-dashboard, /teacher-dashboard, and /student-dashboard?
+
+Attendance Flow: Test the 'Mark Attendance' logic—can a teacher select a class/section, mark students, and save successfully? Is the data reflected in the Student Portal?
+
+Role-Based Access: Can a student accidentally access the Admin portal? Ensure redirects are secure.
+
+Form Validations: Do empty fields in 'Add Student' or 'Post Notice' trigger proper error messages?
+
+3. Performance & Stability (Fixing 'Page Unresponsive'):
+
+Resource Usage: Monitor if the high-end gradients and animations are causing high CPU/RAM usage.
+
+Loading States: Are there 'Skeleton Loaders' or 'Shimmer effects' while data is being fetched?
+
+Memory Leaks: Verify that navigating between pages doesn't cause the app to slow down over time.
+
+4. Responsiveness & 'No-Scroll' Layout:
+
+Viewport Lock: On the landing page (/), is the content perfectly contained within 100vh on various screen sizes (Mobile, Tablet, Desktop) without a vertical scrollbar?
+
+Mobile Adaptability: Does the grid system switch to 1 or 2 columns on mobile while keeping the 3D icons crisp and tappable?
+
+5. User Experience (UX) Polish:
+
+Navigation: Is the 'Back' button always available and visible? Does the sticky glass navbar stay functional?
+
+Status Indicators: Are the 'System Status' and 'Live Presence' pulsing dots working correctly?
+
+Please present this as a Master Checklist with 'Pass/Fail' criteria so I can test my Replit application systematically.
