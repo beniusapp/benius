@@ -6,6 +6,8 @@ interface SchoolConfig {
   subjects: string[];
   examTypes: string[];
   classSections: Record<string, string[]>;
+  classSubjects: Record<string, string[]>;
+  classExamTypes: Record<string, string[]>;
 }
 
 const FALLBACK_CLASSES = ["L.K.G", "U.K.G", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
@@ -29,6 +31,8 @@ export function useSchoolConfig(schoolId: number) {
     subjects: data?.subjects || [],
     examTypes: data?.examTypes?.length ? data.examTypes : FALLBACK_EXAM_TYPES,
     classSections: data?.classSections ?? {},
+    classSubjects: data?.classSubjects ?? {},
+    classExamTypes: data?.classExamTypes ?? {},
     isLoading,
     hasConfig: !!data && (!!data.classes?.length || !!data.subjects?.length || !!data.examTypes?.length),
   };
@@ -36,8 +40,7 @@ export function useSchoolConfig(schoolId: number) {
 
 /**
  * Strict variant — returns ONLY school-defined values, never hardcoded fallbacks.
- * classSections: per-class section map derived from student enrolments + faculty mappings.
- * When a class is selected, use classSections[className] for the sections dropdown.
+ * Per-class maps let modules filter sections/subjects/examTypes by the selected class.
  */
 export function useSchoolConfigStrict(schoolId: number) {
   const { data, isLoading } = useQuery<SchoolConfig>({
@@ -56,6 +59,8 @@ export function useSchoolConfigStrict(schoolId: number) {
   const subjects = data?.subjects ?? [];
   const examTypes = data?.examTypes?.length ? data.examTypes : FALLBACK_EXAM_TYPES;
   const classSections: Record<string, string[]> = data?.classSections ?? {};
+  const classSubjects: Record<string, string[]> = data?.classSubjects ?? {};
+  const classExamTypes: Record<string, string[]> = data?.classExamTypes ?? {};
 
   const hasClasses = classes.length > 0;
   const hasSections = sections.length > 0;
@@ -70,13 +75,33 @@ export function useSchoolConfigStrict(schoolId: number) {
     return sections;
   }
 
+  /** Get subjects for a given className — from classSubjects map if available, else all school subjects */
+  function getSubjectsForClass(className: string): string[] {
+    if (className && classSubjects[className]?.length) {
+      return classSubjects[className];
+    }
+    return subjects;
+  }
+
+  /** Get exam types for a given className — from classExamTypes map if available, else all school exam types */
+  function getExamTypesForClass(className: string): string[] {
+    if (className && classExamTypes[className]?.length) {
+      return classExamTypes[className];
+    }
+    return examTypes;
+  }
+
   return {
     classes,
     sections,
     subjects,
     examTypes,
     classSections,
+    classSubjects,
+    classExamTypes,
     getSectionsForClass,
+    getSubjectsForClass,
+    getExamTypesForClass,
     isLoading,
     hasClasses,
     hasSections,

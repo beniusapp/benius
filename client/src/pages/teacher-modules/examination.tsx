@@ -205,6 +205,8 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     hasClasses,
     hasSections,
     getSectionsForClass,
+    getSubjectsForClass,
+    getExamTypesForClass,
   } = useSchoolConfigStrict(teacher.schoolId);
   const today = new Date().toISOString().split("T")[0];
   const [tab, setTab] = useState<"add" | "view">("add");
@@ -230,14 +232,33 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     () => getSectionsForClass(viewClass),
     [viewClass, getSectionsForClass]
   );
+  const addSubjectOpts = useMemo(
+    () => getSubjectsForClass(selectedClass),
+    [selectedClass, getSubjectsForClass]
+  );
+  const viewSubjectOpts = useMemo(
+    () => getSubjectsForClass(viewClass),
+    [viewClass, getSubjectsForClass]
+  );
+  const addExamTypeOpts = useMemo(
+    () => getExamTypesForClass(selectedClass),
+    [selectedClass, getExamTypesForClass]
+  );
+  const viewExamTypeOpts = useMemo(
+    () => getExamTypesForClass(viewClass),
+    [viewClass, getExamTypesForClass]
+  );
 
   function handleAddClassChange(cls: string) {
     setSelectedClass(cls);
     setSelectedSection("");
+    setSubject("");
+    setExamType("");
   }
   function handleViewClassChange(cls: string) {
     setViewClass(cls);
     setViewSection("");
+    setViewSubject("");
   }
   const [viewExamType, setViewExamType] = useState("");
   const [expandedStudent, setExpandedStudent] = useState<number | null>(null);
@@ -412,13 +433,13 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Subject *</label>
-                {subjects.length > 0 ? (
+                {addSubjectOpts.length > 0 ? (
                   <Select value={subject} onValueChange={setSubject}>
                     <SelectTrigger className="rounded-xl" data-testid="select-subject">
                       <SelectValue placeholder="Select subject" />
                     </SelectTrigger>
                     <SelectContent>
-                      {subjects.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                      {addSubjectOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 ) : (
@@ -433,7 +454,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent>
-                    {examTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                    {addExamTypeOpts.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -595,13 +616,13 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Subject *</label>
-                {subjects.length > 0 ? (
+                {viewSubjectOpts.length > 0 ? (
                   <Select value={viewSubject} onValueChange={setViewSubject}>
                     <SelectTrigger className="rounded-xl" data-testid="select-view-subject">
                       <SelectValue placeholder="Select subject" />
                     </SelectTrigger>
                     <SelectContent>
-                      {subjects.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                      {viewSubjectOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 ) : (
@@ -616,7 +637,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                     <SelectValue placeholder="Select exam type" />
                   </SelectTrigger>
                   <SelectContent>
-                    {examTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                    {viewExamTypeOpts.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>

@@ -1677,6 +1677,34 @@ export class DatabaseStorage {
     }
   }
 
+  async getClassSubjectsMap(schoolId: number): Promise<Record<string, string[]>> {
+    const [row] = await db.select().from(schoolMetadata)
+      .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, "class_subjects")));
+    if (row) {
+      try {
+        const parsed = JSON.parse(row.metaValue);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return parsed as Record<string, string[]>;
+        }
+      } catch {}
+    }
+    return {};
+  }
+
+  async getClassExamTypesMap(schoolId: number): Promise<Record<string, string[]>> {
+    const [row] = await db.select().from(schoolMetadata)
+      .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, "class_exam_types")));
+    if (row) {
+      try {
+        const parsed = JSON.parse(row.metaValue);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return parsed as Record<string, string[]>;
+        }
+      } catch {}
+    }
+    return {};
+  }
+
   async setClassSubjectsMetadata(schoolId: number, map: Record<string, string[]>): Promise<void> {
     const value = JSON.stringify(map);
     const [existing] = await db.select().from(schoolMetadata)

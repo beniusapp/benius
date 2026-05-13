@@ -78,6 +78,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
     hasClasses,
     hasSections,
     getSectionsForClass,
+    getSubjectsForClass,
   } = useSchoolConfigStrict(teacher.schoolId);
   const today = new Date().toISOString().split("T")[0];
 
@@ -89,10 +90,15 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
     () => getSectionsForClass(selectedClass),
     [selectedClass, getSectionsForClass]
   );
+  const subjectOpts = useMemo(
+    () => getSubjectsForClass(selectedClass),
+    [selectedClass, getSubjectsForClass]
+  );
 
   function handleClassChange(cls: string) {
     setSelectedClass(cls);
     setSelectedSection("");
+    setSubject("");
   }
 
   function handleSectionChange(sec: string) {
@@ -275,13 +281,13 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
             </div>
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Subject *</label>
-              {subjects.length > 0 ? (
+              {subjectOpts.length > 0 ? (
                 <Select value={subject} onValueChange={setSubject}>
                   <SelectTrigger className="rounded-xl" data-testid="select-subject">
                     <SelectValue placeholder="Select subject" />
                   </SelectTrigger>
                   <SelectContent>
-                    {subjects.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    {subjectOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                   </SelectContent>
                 </Select>
               ) : (

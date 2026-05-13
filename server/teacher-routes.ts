@@ -926,9 +926,11 @@ export function registerTeacherRoutes(app: Express) {
     const schoolId = parseInt(req.params.schoolId);
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher || teacher.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
-    const [meta, classSections] = await Promise.all([
+    const [meta, classSections, classSubjects, classExamTypes] = await Promise.all([
       storage.getAllSchoolMetadata(schoolId),
       storage.getClassSectionsMap(schoolId),
+      storage.getClassSubjectsMap(schoolId),
+      storage.getClassExamTypesMap(schoolId),
     ]);
     res.json({
       classes: meta.classes || [],
@@ -936,6 +938,8 @@ export function registerTeacherRoutes(app: Express) {
       subjects: meta.subjects || [],
       examTypes: meta.exam_types || [],
       classSections,
+      classSubjects,
+      classExamTypes,
     });
   });
 

@@ -371,6 +371,7 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
     subjects: SUBJECT_LIST,
     isLoading: configLoading,
     hasClasses, hasSections, hasSubjects, isFullyConfigured,
+    getSubjectsForClass,
   } = useSchoolConfigStrict(teacher.schoolId);
 
   const [explorerClass, setExplorerClass] = useState("");
@@ -524,7 +525,7 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
           structure={explorerStructure}
           explorerClass={explorerClass}
           explorerSection={explorerSection}
-          subjectList={SUBJECT_LIST}
+          subjectList={getSubjectsForClass(explorerClass)}
           teacherId={teacher.id}
           myEntries={myEntries}
           onClose={() => setModal(null)}
