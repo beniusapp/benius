@@ -1172,6 +1172,33 @@ export class DatabaseStorage {
     return result.length > 0;
   }
 
+  async deleteGoogleSyncedCalendarEvents(schoolId: number): Promise<number> {
+    const result = await db.delete(calendarEvents).where(
+      and(eq(calendarEvents.schoolId, schoolId), eq(calendarEvents.venue, "gcal-sync"))
+    ).returning();
+    return result.length;
+  }
+
+  async setSchoolMetadataRaw(schoolId: number, metaKey: string, value: unknown): Promise<void> {
+    const metaValue = JSON.stringify(value);
+    const existing = await db.select().from(schoolMetadata)
+      .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, metaKey)));
+    if (existing.length > 0) {
+      await db.update(schoolMetadata)
+        .set({ metaValue, updatedAt: new Date() })
+        .where(eq(schoolMetadata.id, existing[0].id));
+    } else {
+      await db.insert(schoolMetadata).values({ schoolId, metaKey, metaValue });
+    }
+  }
+
+  async getSchoolMetadataRaw(schoolId: number, metaKey: string): Promise<unknown> {
+    const [row] = await db.select().from(schoolMetadata)
+      .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, metaKey)));
+    if (!row) return null;
+    try { return JSON.parse(row.metaValue); } catch { return null; }
+  }
+
   // ===== LIBRARY METHODS =====
   async createLibraryBook(data: InsertLibraryBook): Promise<LibraryBook> {
     const [book] = await db.insert(libraryBooks).values(data).returning();

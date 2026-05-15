@@ -4,7 +4,9 @@ import { fmtDateLong } from "@/lib/dateUtils";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, CalendarDays, Loader2,
   Calendar, Repeat, Flame, BookOpen, Award, Star, X, RefreshCw, Pencil, AlertTriangle,
+  Settings2, CheckCircle2, Link2,
 } from "lucide-react";
+import { SiGoogle } from "react-icons/si";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -164,6 +166,49 @@ export default function SchoolCalendar() {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant:"destructive" }),
   });
 
+  // ── Google Calendar Integration ──
+  const [gcalOpen, setGcalOpen] = useState(false);
+  const [gcalForm, setGcalForm] = useState({ calendarId: "", apiKey: "" });
+  const [showApiKey, setShowApiKey] = useState(false);
+
+  const { data: gcalSettings, refetch: refetchGcalSettings } = useQuery<{
+    calendarId: string; apiKeySet: boolean; lastSync: { syncedAt: string; count: number } | null;
+  }>({
+    queryKey: ["/api/admin/calendar/google-settings"],
+    staleTime: 60000,
+  });
+
+  useEffect(() => {
+    if (gcalSettings) {
+      setGcalForm(f => ({ ...f, calendarId: gcalSettings.calendarId || "" }));
+    }
+  }, [gcalSettings]);
+
+  const saveGcalSettingsMutation = useMutation({
+    mutationFn: (data: { calendarId: string; apiKey: string }) =>
+      apiRequest("POST", "/api/admin/calendar/google-settings", data),
+    onSuccess: () => {
+      refetchGcalSettings();
+      setGcalForm(f => ({ ...f, apiKey: "" }));
+      setShowApiKey(false);
+      toast({ title: "Settings saved", description: "Google Calendar ID and API Key saved." });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const syncGcalMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/calendar/sync-google", {});
+      return res.json() as Promise<{ message: string; count: number }>;
+    },
+    onSuccess: (json) => {
+      invalidateAll();
+      refetchGcalSettings();
+      toast({ title: "Google Calendar synced", description: json.message });
+    },
+    onError: (e: Error) => toast({ title: "Sync failed", description: e.message, variant: "destructive" }),
+  });
+
   const calendarDays = useMemo(() => {
     const firstDay = new Date(year, month, 1).getDay();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -263,10 +308,25 @@ export default function SchoolCalendar() {
             disabled={isFetching}
             data-testid="button-sync-now"
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white/50 text-sm hover:text-white hover:border-white/20 transition-colors disabled:opacity-60"
-            title="Sync Now"
+            title="Refresh calendar"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
-            Sync
+            Refresh
+          </button>
+          <button
+            onClick={() => setGcalOpen(v => !v)}
+            data-testid="button-google-calendar"
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+              gcalSettings?.apiKeySet
+                ? "bg-green-500/15 border-green-500/30 text-green-400 hover:bg-green-500/25"
+                : gcalOpen
+                ? "bg-[#4285F4]/20 border-[#4285F4]/40 text-[#4285F4]"
+                : "bg-white/5 border-white/10 text-white/50 hover:text-white hover:border-white/20"
+            }`}
+          >
+            <SiGoogle className="w-3 h-3" />
+            Google Calendar
+            {gcalSettings?.apiKeySet && <CheckCircle2 className="w-3 h-3 ml-0.5" />}
           </button>
           <button
             onClick={() => seedMutation.mutate()}
@@ -291,6 +351,102 @@ export default function SchoolCalendar() {
           </button>
         </div>
       </div>
+
+      {/* ── Google Calendar Integration Panel ── */}
+      {gcalOpen && (
+        <div className="bg-[#1A2942] border border-[#4285F4]/30 rounded-xl overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+            <div className="flex items-center gap-2">
+              <SiGoogle className="w-4 h-4 text-[#4285F4]" />
+              <span className="text-sm font-semibold text-white">Google Calendar Integration</span>
+              {gcalSettings?.apiKeySet && (
+                <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30">
+                  <CheckCircle2 className="w-2.5 h-2.5" />Connected
+                </span>
+              )}
+            </div>
+            <button onClick={() => setGcalOpen(false)} className="text-white/30 hover:text-white transition-colors" data-testid="button-close-gcal">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="p-4 space-y-4">
+            {/* Instructions */}
+            <div className="bg-[#0A1628] rounded-lg p-3 text-xs text-white/50 space-y-1 border border-white/5">
+              <p className="text-white/70 font-medium flex items-center gap-1.5"><Link2 className="w-3 h-3" />How to connect your Google Calendar</p>
+              <ol className="list-decimal ml-4 space-y-0.5">
+                <li>Go to <span className="text-[#4285F4]">console.cloud.google.com</span> → Enable Google Calendar API → Create an API Key</li>
+                <li>In Google Calendar → Settings → your calendar → <span className="text-white/70">Share with specific people</span> → set to "Public"</li>
+                <li>Copy the <span className="text-white/70">Calendar ID</span> (e.g. <span className="text-white/60 font-mono">school@group.calendar.google.com</span>) from calendar settings</li>
+                <li>Paste both below and click Save, then Sync</li>
+              </ol>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-white/50 uppercase tracking-wide block mb-1">Google Calendar ID *</label>
+                <input
+                  value={gcalForm.calendarId}
+                  onChange={e => setGcalForm(f => ({ ...f, calendarId: e.target.value }))}
+                  placeholder="school@group.calendar.google.com"
+                  className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#4285F4]/50"
+                  data-testid="input-gcal-id"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-white/50 uppercase tracking-wide block mb-1">
+                  Google API Key * {gcalSettings?.apiKeySet && !gcalForm.apiKey && <span className="text-green-400/70 normal-case">(saved — enter new to update)</span>}
+                </label>
+                <div className="relative">
+                  <input
+                    type={showApiKey ? "text" : "password"}
+                    value={gcalForm.apiKey}
+                    onChange={e => setGcalForm(f => ({ ...f, apiKey: e.target.value }))}
+                    placeholder={gcalSettings?.apiKeySet ? "••••••••••••••• (saved)" : "AIzaSy..."}
+                    className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#4285F4]/50 pr-16"
+                    data-testid="input-gcal-api-key"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey(v => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 text-xs"
+                  >
+                    {showApiKey ? "hide" : "show"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                onClick={() => saveGcalSettingsMutation.mutate(gcalForm)}
+                disabled={saveGcalSettingsMutation.isPending || !gcalForm.calendarId || !gcalForm.apiKey}
+                data-testid="button-save-gcal-settings"
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#4285F4]/20 border border-[#4285F4]/40 text-[#4285F4] text-sm font-medium hover:bg-[#4285F4]/30 transition-colors disabled:opacity-50"
+              >
+                {saveGcalSettingsMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Settings2 className="w-3.5 h-3.5" />}
+                Save Settings
+              </button>
+              <button
+                onClick={() => syncGcalMutation.mutate()}
+                disabled={syncGcalMutation.isPending || !gcalSettings?.apiKeySet}
+                data-testid="button-sync-gcal"
+                title={!gcalSettings?.apiKeySet ? "Save your settings first" : "Fetch latest events from Google Calendar"}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-green-500/15 border border-green-500/30 text-green-400 text-sm font-medium hover:bg-green-500/25 transition-colors disabled:opacity-50"
+              >
+                {syncGcalMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                {syncGcalMutation.isPending ? "Syncing…" : "Sync Now"}
+              </button>
+              {gcalSettings?.lastSync && (
+                <span className="text-xs text-white/40 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-green-500/60" />
+                  Last synced {new Date(gcalSettings.lastSync.syncedAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })} · {gcalSettings.lastSync.count} events
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {legend}
 
