@@ -172,7 +172,8 @@ export default function SchoolCalendar() {
   const [showApiKey, setShowApiKey] = useState(false);
 
   const { data: gcalSettings, refetch: refetchGcalSettings } = useQuery<{
-    calendarId: string; apiKeySet: boolean; lastSync: { syncedAt: string; count: number } | null;
+    calendarId: string; apiKeySet: boolean; autoSync: boolean;
+    lastSync: { syncedAt: string; count: number } | null;
   }>({
     queryKey: ["/api/admin/calendar/google-settings"],
     staleTime: 60000,
@@ -208,6 +209,32 @@ export default function SchoolCalendar() {
     },
     onError: (e: Error) => toast({ title: "Sync failed", description: e.message, variant: "destructive" }),
   });
+
+  const toggleAutoSyncMutation = useMutation({
+    mutationFn: (autoSync: boolean) =>
+      apiRequest("PATCH", "/api/admin/calendar/google-auto-sync", { autoSync }),
+    onSuccess: () => {
+      refetchGcalSettings();
+      const next = (() => {
+        const d = new Date(); d.setHours(2, 0, 0, 0);
+        if (d <= new Date()) d.setDate(d.getDate() + 1);
+        return d.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
+      })();
+      toast({
+        title: gcalSettings?.autoSync ? "Auto-sync disabled" : "Auto-sync enabled",
+        description: gcalSettings?.autoSync ? "Nightly sync turned off." : `Events will sync automatically at 2:00 AM. Next: ${next}`,
+      });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  function nextSyncLabel() {
+    const d = new Date(); d.setHours(2, 0, 0, 0);
+    if (d <= new Date()) d.setDate(d.getDate() + 1);
+    const isTonight = d.toDateString() === new Date().toDateString() ||
+      (d.getTime() - Date.now()) < 24 * 60 * 60 * 1000;
+    return isTonight ? "tonight at 2:00 AM" : `tomorrow at 2:00 AM`;
+  }
 
   const calendarDays = useMemo(() => {
     const firstDay = new Date(year, month, 1).getDay();
@@ -444,6 +471,39 @@ export default function SchoolCalendar() {
                 </span>
               )}
             </div>
+
+            {/* Auto-sync toggle row */}
+            {gcalSettings?.apiKeySet && (
+              <div className="flex items-center justify-between py-3 px-1 border-t border-white/5">
+                <div>
+                  <p className="text-sm font-medium text-white/80">Auto-sync nightly at 2:00 AM</p>
+                  <p className="text-xs text-white/40 mt-0.5">
+                    {gcalSettings.autoSync
+                      ? `Enabled — next sync ${nextSyncLabel()}`
+                      : "Disabled — click to enable automatic daily refresh"}
+                  </p>
+                </div>
+                <button
+                  onClick={() => toggleAutoSyncMutation.mutate(!gcalSettings.autoSync)}
+                  disabled={toggleAutoSyncMutation.isPending}
+                  data-testid="button-toggle-auto-sync"
+                  className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none disabled:opacity-60 ${
+                    gcalSettings.autoSync ? "bg-green-500" : "bg-white/10"
+                  }`}
+                  title={gcalSettings.autoSync ? "Disable nightly auto-sync" : "Enable nightly auto-sync"}
+                >
+                  {toggleAutoSyncMutation.isPending ? (
+                    <Loader2 className="absolute inset-0 m-auto w-3.5 h-3.5 animate-spin text-white" />
+                  ) : (
+                    <span
+                      className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
+                        gcalSettings.autoSync ? "translate-x-5" : "translate-x-0"
+                      }`}
+                    />
+                  )}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

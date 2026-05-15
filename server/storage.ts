@@ -1199,6 +1199,25 @@ export class DatabaseStorage {
     try { return JSON.parse(row.metaValue); } catch { return null; }
   }
 
+  async getSchoolsWithGoogleAutoSync(): Promise<Array<{ schoolId: number; calendarId: string; apiKey: string }>> {
+    const autoSyncRows = await db.select().from(schoolMetadata)
+      .where(eq(schoolMetadata.metaKey, "google_calendar_auto_sync"));
+    const enabledIds = autoSyncRows
+      .filter(r => { try { return JSON.parse(r.metaValue) === true; } catch { return false; } })
+      .map(r => r.schoolId);
+    if (enabledIds.length === 0) return [];
+    const configRows = await db.select().from(schoolMetadata)
+      .where(and(eq(schoolMetadata.metaKey, "google_calendar_config"), inArray(schoolMetadata.schoolId, enabledIds)));
+    const results: Array<{ schoolId: number; calendarId: string; apiKey: string }> = [];
+    for (const row of configRows) {
+      try {
+        const cfg = JSON.parse(row.metaValue) as any;
+        if (cfg?.calendarId && cfg?.apiKey) results.push({ schoolId: row.schoolId, calendarId: cfg.calendarId, apiKey: cfg.apiKey });
+      } catch {}
+    }
+    return results;
+  }
+
   // ===== LIBRARY METHODS =====
   async createLibraryBook(data: InsertLibraryBook): Promise<LibraryBook> {
     const [book] = await db.insert(libraryBooks).values(data).returning();
