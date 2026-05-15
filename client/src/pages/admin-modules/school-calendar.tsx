@@ -4,9 +4,7 @@ import { fmtDateLong } from "@/lib/dateUtils";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, CalendarDays, Loader2,
   Calendar, Repeat, Flame, BookOpen, Award, Star, X, RefreshCw, Pencil, AlertTriangle,
-  Settings2, CheckCircle2, Link2,
 } from "lucide-react";
-import { SiGoogle } from "react-icons/si";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -165,76 +163,6 @@ export default function SchoolCalendar() {
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant:"destructive" }),
   });
-
-  // ── Google Calendar Integration ──
-  const [gcalOpen, setGcalOpen] = useState(false);
-  const [gcalForm, setGcalForm] = useState({ calendarId: "", apiKey: "" });
-  const [showApiKey, setShowApiKey] = useState(false);
-
-  const { data: gcalSettings, refetch: refetchGcalSettings } = useQuery<{
-    calendarId: string; apiKeySet: boolean; autoSync: boolean;
-    lastSync: { syncedAt: string; count: number } | null;
-  }>({
-    queryKey: ["/api/admin/calendar/google-settings"],
-    staleTime: 60000,
-  });
-
-  useEffect(() => {
-    if (gcalSettings) {
-      setGcalForm(f => ({ ...f, calendarId: gcalSettings.calendarId || "" }));
-    }
-  }, [gcalSettings]);
-
-  const saveGcalSettingsMutation = useMutation({
-    mutationFn: (data: { calendarId: string; apiKey: string }) =>
-      apiRequest("POST", "/api/admin/calendar/google-settings", data),
-    onSuccess: () => {
-      refetchGcalSettings();
-      setGcalForm(f => ({ ...f, apiKey: "" }));
-      setShowApiKey(false);
-      toast({ title: "Settings saved", description: "Google Calendar ID and API Key saved." });
-    },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-
-  const syncGcalMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/admin/calendar/sync-google", {});
-      return res.json() as Promise<{ message: string; count: number }>;
-    },
-    onSuccess: (json) => {
-      invalidateAll();
-      refetchGcalSettings();
-      toast({ title: "Google Calendar synced", description: json.message });
-    },
-    onError: (e: Error) => toast({ title: "Sync failed", description: e.message, variant: "destructive" }),
-  });
-
-  const toggleAutoSyncMutation = useMutation({
-    mutationFn: (autoSync: boolean) =>
-      apiRequest("PATCH", "/api/admin/calendar/google-auto-sync", { autoSync }),
-    onSuccess: () => {
-      refetchGcalSettings();
-      const next = (() => {
-        const d = new Date(); d.setHours(2, 0, 0, 0);
-        if (d <= new Date()) d.setDate(d.getDate() + 1);
-        return d.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
-      })();
-      toast({
-        title: gcalSettings?.autoSync ? "Auto-sync disabled" : "Auto-sync enabled",
-        description: gcalSettings?.autoSync ? "Nightly sync turned off." : `Events will sync automatically at 2:00 AM. Next: ${next}`,
-      });
-    },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-
-  function nextSyncLabel() {
-    const d = new Date(); d.setHours(2, 0, 0, 0);
-    if (d <= new Date()) d.setDate(d.getDate() + 1);
-    const isTonight = d.toDateString() === new Date().toDateString() ||
-      (d.getTime() - Date.now()) < 24 * 60 * 60 * 1000;
-    return isTonight ? "tonight at 2:00 AM" : `tomorrow at 2:00 AM`;
-  }
 
   const calendarDays = useMemo(() => {
     const firstDay = new Date(year, month, 1).getDay();
