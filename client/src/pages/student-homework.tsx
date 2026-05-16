@@ -450,7 +450,7 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
             </button>
             {!canSubmit && (
               <p className="text-center text-[11px] text-slate-400 mt-2">
-                {submitMode === "write" ? "Write something to enable submission" : "Select a file to enable submission"}
+                Write an answer or select a file to enable submission
               </p>
             )}
           </div>
