@@ -11,6 +11,8 @@ import { registerTeacherRoutes } from "./teacher-routes";
 import { db } from "./db";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
+import path from "node:path";
+import fs from "node:fs";
 
 declare module "express-session" {
   interface SessionData {
@@ -1355,22 +1357,18 @@ export async function registerRoutes(
     const homeworkSubmissionUpload = multer({
       storage: multer.diskStorage({
         destination: (_req, _file, cb) => {
-          const pathMod = require("path");
-          const fsMod = require("fs");
-          const dir = pathMod.join(process.cwd(), "uploads", "homework-submissions");
-          if (!fsMod.existsSync(dir)) fsMod.mkdirSync(dir, { recursive: true });
+          const dir = path.join(process.cwd(), "uploads", "homework-submissions");
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
           cb(null, dir);
         },
         filename: (_req, file, cb) => {
-          const pathMod = require("path");
           const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
-          cb(null, unique + pathMod.extname(file.originalname).toLowerCase());
+          cb(null, unique + path.extname(file.originalname).toLowerCase());
         },
       }),
       limits: { fileSize: 10 * 1024 * 1024 },
       fileFilter: (_req, file, cb) => {
-        const pathMod = require("path");
-        const ext = pathMod.extname(file.originalname).toLowerCase();
+        const ext = path.extname(file.originalname).toLowerCase();
         if (ALLOWED_SUBMISSION_MIMES.has(file.mimetype) && ALLOWED_SUBMISSION_EXTS.has(ext)) {
           cb(null, true);
         } else {
