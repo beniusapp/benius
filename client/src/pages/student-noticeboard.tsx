@@ -1,13 +1,12 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { fmtDate } from "@/lib/dateUtils";
 import {
-  ArrowLeft, Bell, Loader2, Megaphone, BookOpen, AlertTriangle, Info, FileText,
+  ArrowLeft, Bell, Loader2, Megaphone, BookOpen, AlertTriangle, Info, FileText, X, ExternalLink,
 } from "lucide-react";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
-import { useToast } from "@/hooks/use-toast";
 
 interface StudentMe {
   id: number;
@@ -30,11 +29,13 @@ interface StudentNotice {
   isRead: boolean;
 }
 
-const TYPE_CONFIG: Record<string, { label: string; icon: typeof Megaphone; color: string; bg: string }> = {
-  Urgent:   { label: "Urgent",   icon: AlertTriangle, color: "text-red-600",    bg: "bg-red-50 border-red-200" },
-  Academic: { label: "Academic", icon: BookOpen,      color: "text-blue-600",   bg: "bg-blue-50 border-blue-200" },
-  Event:    { label: "Event",    icon: Megaphone,     color: "text-purple-600", bg: "bg-purple-50 border-purple-200" },
-  Routine:  { label: "Routine",  icon: Info,          color: "text-gray-500",   bg: "bg-gray-50 border-gray-200" },
+const TYPE_CONFIG: Record<string, { label: string; icon: typeof Megaphone; color: string; bg: string; accent: string }> = {
+  Urgent:   { label: "Urgent",   icon: AlertTriangle, color: "text-red-600",    bg: "bg-red-50 border-red-200",    accent: "#ef4444" },
+  Academic: { label: "Academic", icon: BookOpen,      color: "text-blue-600",   bg: "bg-blue-50 border-blue-200",  accent: "#3b82f6" },
+  Event:    { label: "Event",    icon: Megaphone,     color: "text-purple-600", bg: "bg-purple-50 border-purple-200", accent: "#8b5cf6" },
+  Routine:  { label: "Routine",  icon: Info,          color: "text-gray-500",   bg: "bg-gray-50 border-gray-200",  accent: "#6b7280" },
+  Holiday:  { label: "Holiday",  icon: Bell,          color: "text-green-600",  bg: "bg-green-50 border-green-200", accent: "#10b981" },
+  Exam:     { label: "Exam",     icon: BookOpen,      color: "text-blue-700",   bg: "bg-blue-50 border-blue-200",  accent: "#1d4ed8" },
 };
 
 function getTypeConfig(t: string | null) {
@@ -49,9 +50,13 @@ function formatSender(role: string): string {
   return `From ${role.charAt(0).toUpperCase() + role.slice(1)}`;
 }
 
+function isImageUrl(url: string): boolean {
+  return /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(url);
+}
 
 export default function StudentNoticeboard() {
   const [, setLocation] = useLocation();
+  const [selectedNotice, setSelectedNotice] = useState<StudentNotice | null>(null);
 
   const { data: student, isLoading: studentLoading } = useQuery<StudentMe | null>({
     queryKey: ["/api/student-me"],
@@ -73,7 +78,6 @@ export default function StudentNoticeboard() {
       await apiRequest("POST", "/api/student/notices/mark-read", { noticeIds: ids });
     },
     onSuccess: (_, ids) => {
-      // Optimistically mark items as read in cache so NEW badges clear immediately
       queryClient.setQueryData<StudentNotice[]>(["/api/student/notices"], (old) =>
         old ? old.map(n => (ids as number[]).includes(n.id) ? { ...n, isRead: true } : n) : old
       );
@@ -81,14 +85,14 @@ export default function StudentNoticeboard() {
     },
   });
 
-  useEffect(() => {
-    if (notices.length > 0) {
-      const unreadIds = notices.filter(n => !n.isRead).map(n => n.id);
-      if (unreadIds.length > 0) {
-        markReadMutation.mutate(unreadIds);
-      }
+  const openNotice = (notice: StudentNotice) => {
+    setSelectedNotice(notice);
+    if (!notice.isRead) {
+      markReadMutation.mutate([notice.id]);
     }
-  }, [notices]);
+  };
+
+  const closeNotice = () => setSelectedNotice(null);
 
   if (studentLoading || !student) {
     return (
@@ -98,10 +102,12 @@ export default function StudentNoticeboard() {
     );
   }
 
+  const unreadCount = notices.filter(n => !n.isRead).length;
+
   return (
     <div className="min-h-screen flex flex-col relative" style={{ background: "#f8fafc" }}>
 
-      {/* ── Decorative blobs ── */}
+      {/* Decorative blobs */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
         <div style={{ position: "absolute", top: "-120px", right: "-80px", width: "500px", height: "500px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 65%)" }} />
         <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "460px", height: "460px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 65%)" }} />
@@ -136,6 +142,11 @@ export default function StudentNoticeboard() {
               <p className="font-bold text-sm text-slate-800">Noticeboard</p>
               <p className="text-[11px] text-slate-400 truncate">Class {student.class} – {student.section}</p>
             </div>
+            {unreadCount > 0 && (
+              <span className="ml-1 text-[10px] font-bold text-white bg-red-500 px-1.5 py-0.5 rounded-full" data-testid="badge-header-unread">
+                {unreadCount} new
+              </span>
+            )}
           </div>
         </div>
       </header>
@@ -146,7 +157,6 @@ export default function StudentNoticeboard() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: "easeOut" }}
       >
-
         {noticesLoading ? (
           <div className="space-y-3">
             {[1, 2, 3].map(i => (
@@ -170,9 +180,15 @@ export default function StudentNoticeboard() {
             const cfg = getTypeConfig(notice.noticeType);
             const Icon = cfg.icon;
             return (
-              <div
+              <motion.button
                 key={notice.id}
-                className={`bg-white rounded-2xl shadow-sm p-4 transition-all border ${!notice.isRead ? "border-l-4 border-l-[#FF0000] border-emerald-50" : "border-emerald-50"}`}
+                onClick={() => openNotice(notice)}
+                whileTap={{ scale: 0.985 }}
+                className={`w-full text-left bg-white rounded-2xl shadow-sm p-4 transition-all border active:shadow-md ${
+                  !notice.isRead
+                    ? "border-l-4 border-l-[#FF0000] border-emerald-50"
+                    : "border-emerald-50 hover:border-emerald-100"
+                }`}
                 data-testid={`notice-card-${notice.id}`}
               >
                 <div className="flex items-start gap-3">
@@ -199,29 +215,174 @@ export default function StudentNoticeboard() {
                         </span>
                       )}
                     </div>
-                    <p className="text-sm font-bold text-black leading-relaxed">{notice.content}</p>
+                    <p className="text-sm font-bold text-black leading-relaxed line-clamp-2">{notice.content}</p>
                     {notice.fileUrl && (
-                      <a
-                        href={notice.fileUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 mt-2 text-xs text-[#10b981] underline hover:no-underline"
-                        data-testid={`link-notice-file-${notice.id}`}
-                      >
+                      <span className="inline-flex items-center gap-1 mt-2 text-xs text-[#10b981] font-medium">
                         <FileText className="w-3 h-3" />
-                        View Attachment
-                      </a>
+                        Attachment
+                      </span>
                     )}
                     <p className="text-[10px] text-gray-300 mt-2" data-testid={`text-date-${notice.id}`}>
-                      {fmtDate(notice.createdAt)}
+                      {fmtDate(notice.createdAt)} · Tap to read
                     </p>
                   </div>
                 </div>
-              </div>
+              </motion.button>
             );
           })
         )}
       </motion.main>
+
+      {/* ── Notice Detail Bottom Sheet ── */}
+      <AnimatePresence>
+        {selectedNotice && (() => {
+          const cfg = getTypeConfig(selectedNotice.noticeType);
+          const Icon = cfg.icon;
+          const isImg = selectedNotice.fileUrl ? isImageUrl(selectedNotice.fileUrl) : false;
+          return (
+            <>
+              {/* Backdrop */}
+              <motion.div
+                key="backdrop"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="fixed inset-0 z-40 bg-black/40"
+                style={{ backdropFilter: "blur(3px)" }}
+                onClick={closeNotice}
+                data-testid="backdrop-notice-detail"
+              />
+
+              {/* Sheet */}
+              <motion.div
+                key="sheet"
+                initial={{ y: "100%" }}
+                animate={{ y: 0 }}
+                exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 28, stiffness: 300 }}
+                className="fixed bottom-0 left-0 right-0 z-50 max-w-2xl mx-auto"
+                data-testid="sheet-notice-detail"
+              >
+                <div
+                  className="rounded-t-3xl overflow-hidden"
+                  style={{
+                    background: "#fff",
+                    boxShadow: "0 -8px 40px rgba(0,0,0,0.18)",
+                    maxHeight: "88vh",
+                    overflowY: "auto",
+                  }}
+                >
+                  {/* Drag handle */}
+                  <div className="flex justify-center pt-3 pb-1">
+                    <div className="w-10 h-1 rounded-full bg-gray-200" />
+                  </div>
+
+                  {/* Sheet header */}
+                  <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                    <div className="flex items-center gap-2">
+                      <div className={`flex items-center justify-center w-8 h-8 rounded-xl border ${cfg.bg}`}>
+                        <Icon className={`w-4 h-4 ${cfg.color}`} strokeWidth={1.75} />
+                      </div>
+                      <div>
+                        <p className={`text-xs font-bold ${cfg.color}`}>{cfg.label}</p>
+                        <p className="text-[11px] text-gray-400">{formatSender(selectedNotice.creatorRole)}</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={closeNotice}
+                      className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 transition-colors"
+                      data-testid="button-close-notice-detail"
+                      aria-label="Close"
+                    >
+                      <X className="w-4 h-4 text-gray-500" />
+                    </button>
+                  </div>
+
+                  {/* Sheet body */}
+                  <div className="px-5 py-4 space-y-4">
+                    {/* Meta row */}
+                    <div className="flex items-center gap-2 text-[11px] text-gray-400 flex-wrap">
+                      <span>{fmtDate(selectedNotice.createdAt)}</span>
+                      {selectedNotice.targetType === "whole_school" && (
+                        <>
+                          <span>·</span>
+                          <span>School-wide</span>
+                        </>
+                      )}
+                      {selectedNotice.targetClass && selectedNotice.targetType !== "whole_school" && (
+                        <>
+                          <span>·</span>
+                          <span>
+                            Class {selectedNotice.targetClass}
+                            {selectedNotice.targetSection ? ` – ${selectedNotice.targetSection}` : " (All Sections)"}
+                          </span>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Full notice content */}
+                    <div
+                      className="rounded-2xl p-4"
+                      style={{ background: "#f8fafc", border: `1px solid ${cfg.accent}22` }}
+                    >
+                      <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap" data-testid="text-notice-full-content">
+                        {selectedNotice.content}
+                      </p>
+                    </div>
+
+                    {/* Attachment */}
+                    {selectedNotice.fileUrl && (
+                      <div>
+                        <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">Attachment</p>
+                        {isImg ? (
+                          <a
+                            href={selectedNotice.fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block rounded-xl overflow-hidden border border-gray-100"
+                            data-testid="link-notice-detail-image"
+                          >
+                            <img
+                              src={selectedNotice.fileUrl}
+                              alt="Notice attachment"
+                              className="w-full max-h-64 object-cover"
+                            />
+                            <div className="flex items-center gap-1.5 px-3 py-2 bg-gray-50">
+                              <ExternalLink className="w-3 h-3 text-gray-400" />
+                              <span className="text-xs text-gray-500">Tap image to open full size</span>
+                            </div>
+                          </a>
+                        ) : (
+                          <a
+                            href={selectedNotice.fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-3 p-3 rounded-xl border border-emerald-100 bg-emerald-50/50 hover:bg-emerald-50 transition-colors"
+                            data-testid="link-notice-detail-file"
+                          >
+                            <div className="w-9 h-9 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                              <FileText className="w-4 h-4 text-emerald-600" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-semibold text-emerald-700">View Attachment</p>
+                              <p className="text-xs text-emerald-500">Opens in new tab</p>
+                            </div>
+                            <ExternalLink className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                          </a>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Bottom padding for safe area */}
+                    <div className="h-4" />
+                  </div>
+                </div>
+              </motion.div>
+            </>
+          );
+        })()}
+      </AnimatePresence>
     </div>
   );
 }
