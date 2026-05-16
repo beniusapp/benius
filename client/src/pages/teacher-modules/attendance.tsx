@@ -496,14 +496,34 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
           </div>
         ) : (
           <div className="space-y-6">
-            {groupedHistory.map(([date, records]) => (
+            {groupedHistory.map(([date, records]) => {
+              const counts = records.reduce<Record<string, number>>(
+                (acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; },
+                {}
+              );
+              const summaryPills = [
+                { key: "present",  label: "Present",  cls: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" },
+                { key: "absent",   label: "Absent",   cls: "bg-red-500/20 text-red-300 border-red-500/30"             },
+                { key: "late",     label: "Late",     cls: "bg-amber-500/20 text-amber-300 border-amber-500/30"       },
+                { key: "halfday",  label: "Half Day", cls: "bg-blue-500/20 text-blue-300 border-blue-500/30"          },
+              ].filter(p => counts[p.key] > 0);
+              return (
               <div key={date}>
-                <div className="flex items-center gap-2 mb-3">
-                  <Calendar className="w-4 h-4 text-white/40" />
+                <div className="flex flex-wrap items-center gap-2 mb-3">
+                  <Calendar className="w-4 h-4 text-white/40 shrink-0" />
                   <h3 className="font-semibold text-sm text-white">{fmtDateWithWeekday(date)}</h3>
                   <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-white/60 border border-white/10">
-                    {records.length} records
+                    {records.length} total
                   </span>
+                  {summaryPills.map(p => (
+                    <span
+                      key={p.key}
+                      className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${p.cls}`}
+                      data-testid={`count-${p.key}-${date}`}
+                    >
+                      {counts[p.key]} {p.label}
+                    </span>
+                  ))}
                 </div>
                 <div className="space-y-2">
                   {records.map(r => (
@@ -530,7 +550,8 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                   ))}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
