@@ -162,12 +162,12 @@ export default function StudentDashboard() {
 
   const attendPct = useMemo(() => {
     if (!monthlyAttendance) return null;
-    const workingDays = monthlyAttendance.days.filter(
-      (d) => !d.isHoliday && !d.isSunday && !d.isFuture
+    const markedDays = monthlyAttendance.days.filter(
+      (d) => !d.isHoliday && !d.isSunday && !d.isFuture && d.status !== "none"
     );
-    if (workingDays.length === 0) return null;
-    const present = workingDays.filter((d) => d.status === "present").length;
-    return Math.round((present / workingDays.length) * 100);
+    if (markedDays.length === 0) return null;
+    const present = markedDays.filter((d) => d.status === "present").length;
+    return Math.round((present / markedDays.length) * 100);
   }, [monthlyAttendance]);
 
   const pendingHwCount = useMemo(() => {
