@@ -6,7 +6,7 @@ import { fmtDate } from "@/lib/dateUtils";
 import {
   ArrowLeft, BookOpen, GraduationCap, Loader2, Calendar,
   ChevronLeft, ChevronRight, Upload, X, FileText, AlertCircle,
-  CheckCircle, Clock, ExternalLink, Send, RefreshCw,
+  CheckCircle, Clock, ExternalLink, Send, RefreshCw, Pencil,
 } from "lucide-react";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -28,6 +28,7 @@ interface HomeworkSubmission {
   studentId: number;
   status: string;
   fileUrl: string | null;
+  textAnswer: string | null;
   submittedAt: string;
 }
 
@@ -199,14 +200,25 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [submitMode, setSubmitMode] = useState<"write" | "upload">("write");
+  const [textAnswer, setTextAnswer] = useState(hw.submission?.textAnswer || "");
   const today = toISODate(new Date());
   const isOverdue = hw.dueDate && hw.dueDate < today;
   const isApproved = hw.submission?.status === "approved";
 
+  const canSubmit = submitMode === "write"
+    ? textAnswer.trim().length > 0
+    : selectedFile !== null;
+
   const submitMutation = useMutation({
     mutationFn: async () => {
       const formData = new FormData();
-      if (selectedFile) formData.append("file", selectedFile);
+      if (submitMode === "upload" && selectedFile) {
+        formData.append("file", selectedFile);
+      }
+      if (submitMode === "write" && textAnswer.trim()) {
+        formData.append("textAnswer", textAnswer.trim());
+      }
       const res = await fetch(`/api/student/homework/${hw.id}/submit`, {
         method: "POST",
         body: formData,
@@ -247,11 +259,12 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
       <div className="fixed inset-0 z-40 bg-black/40 sm:bg-black/30" onClick={onClose} />
       <div
         className="fixed z-50 bg-white shadow-2xl flex flex-col
-          bottom-0 left-0 right-0 rounded-t-3xl max-h-[85vh]
-          sm:top-0 sm:right-0 sm:bottom-0 sm:left-auto sm:w-[420px] sm:rounded-none sm:max-h-none"
+          bottom-0 left-0 right-0 rounded-t-3xl max-h-[90vh]
+          sm:top-0 sm:right-0 sm:bottom-0 sm:left-auto sm:w-[440px] sm:rounded-none sm:max-h-none"
         data-testid="homework-drawer"
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-shrink-0">
           <div className="flex items-center gap-2">
             <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${subjectColor}`}>{hw.subject}</span>
             {hw.submission && <StatusBadge submission={hw.submission} dueDate={hw.dueDate} />}
@@ -262,6 +275,7 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {/* Meta */}
           <div>
             <p className="text-xs text-slate-400 mb-1">Assigned by {hw.teacherName}</p>
             <div className="flex flex-wrap gap-2 text-xs text-slate-500">
@@ -274,11 +288,13 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
             </div>
           </div>
 
+          {/* Instructions */}
           <div>
             <h3 className="text-sm font-semibold text-slate-700 mb-1">Instructions</h3>
             <p className="text-sm text-slate-600 whitespace-pre-wrap leading-relaxed">{hw.content}</p>
           </div>
 
+          {/* Teacher attachment */}
           {hw.fileUrl && (
             <div>
               <h3 className="text-sm font-semibold text-slate-700 mb-2">Attached Resource</h3>
@@ -296,6 +312,7 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
             </div>
           )}
 
+          {/* Previous submission */}
           {hw.submission && (
             <div className={`rounded-xl p-3 border ${
               hw.submission.status === "approved" ? "bg-emerald-50 border-emerald-200" :
@@ -303,9 +320,19 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
               "bg-blue-50 border-blue-200"
             }`}>
               <p className="text-xs font-semibold text-slate-600 mb-1">Current Submission</p>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-400">
                 Submitted: {new Date(hw.submission.submittedAt).toLocaleDateString("en-GB")}
               </p>
+              {hw.submission.textAnswer && (
+                <div className="mt-2 p-2 bg-white/70 rounded-lg border border-slate-200">
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1 flex items-center gap-1">
+                    <Pencil className="w-3 h-3" /> Written Answer
+                  </p>
+                  <p className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed line-clamp-4">
+                    {hw.submission.textAnswer}
+                  </p>
+                </div>
+              )}
               {hw.submission.fileUrl && (
                 <a
                   href={hw.submission.fileUrl}
@@ -320,66 +347,122 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
             </div>
           )}
 
+          {/* Submission form */}
           {!isApproved && (
             <div>
-              <h3 className="text-sm font-semibold text-slate-700 mb-2">
+              <h3 className="text-sm font-semibold text-slate-700 mb-3">
                 {hw.submission ? "Update Submission" : "Submit Homework"}
               </h3>
-              {isOverdue && !isApproved && (
+
+              {isOverdue && (
                 <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 mb-3">
                   <AlertCircle className="w-4 h-4 flex-shrink-0" />
                   Past due date — late submission will still be accepted
                 </div>
               )}
-              <div
-                className={`relative flex flex-col items-center justify-center gap-2 p-5 rounded-xl border-2 border-dashed cursor-pointer transition-colors ${
-                  dragging ? "border-[#10b981] bg-emerald-50" : "border-slate-200 bg-slate-50 hover:border-emerald-300 hover:bg-emerald-50/40"
-                }`}
-                onDragOver={e => { e.preventDefault(); setDragging(true); }}
-                onDragLeave={() => setDragging(false)}
-                onDrop={handleFileDrop}
-                onClick={() => fileInputRef.current?.click()}
-                data-testid="dropzone-upload"
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  className="hidden"
-                  onChange={e => setSelectedFile(e.target.files?.[0] ?? null)}
-                  data-testid="input-file-upload"
-                />
-                <Upload className="w-7 h-7 text-slate-400" />
-                {selectedFile ? (
-                  <div className="text-center">
-                    <p className="text-sm font-semibold text-emerald-700 truncate max-w-[200px]">{selectedFile.name}</p>
-                    <p className="text-xs text-slate-400">{(selectedFile.size / 1024).toFixed(0)} KB</p>
-                  </div>
-                ) : (
-                  <div className="text-center">
-                    <p className="text-sm text-slate-500 font-medium">Tap to select file</p>
-                    <p className="text-xs text-slate-400">or drag & drop here · Max 10 MB</p>
-                  </div>
-                )}
-              </div>
-              {selectedFile && (
+
+              {/* Mode tabs */}
+              <div className="flex gap-2 p-1 bg-slate-100 rounded-xl mb-4" data-testid="submission-mode-tabs">
                 <button
-                  onClick={() => setSelectedFile(null)}
-                  className="mt-2 text-xs text-slate-400 hover:text-red-500 flex items-center gap-1"
-                  data-testid="button-remove-file"
+                  onClick={() => setSubmitMode("write")}
+                  data-testid="tab-write-answer"
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-semibold transition-all ${
+                    submitMode === "write"
+                      ? "bg-white text-emerald-700 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
                 >
-                  <X className="w-3 h-3" /> Remove file
+                  <Pencil className="w-3.5 h-3.5" />
+                  Write Answer
                 </button>
+                <button
+                  onClick={() => setSubmitMode("upload")}
+                  data-testid="tab-upload-file"
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-semibold transition-all ${
+                    submitMode === "upload"
+                      ? "bg-white text-emerald-700 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  Upload File
+                </button>
+              </div>
+
+              {/* Write mode */}
+              {submitMode === "write" && (
+                <div className="space-y-2">
+                  <textarea
+                    value={textAnswer}
+                    onChange={e => setTextAnswer(e.target.value)}
+                    placeholder="Write your answer here… You can type your solution, explanation, or any response to the homework task."
+                    rows={7}
+                    maxLength={5000}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-emerald-400 focus:bg-white resize-none leading-relaxed transition-colors"
+                    data-testid="textarea-text-answer"
+                  />
+                  <div className="flex justify-end">
+                    <span className="text-[10px] text-slate-400">{textAnswer.length}/5000</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Upload mode */}
+              {submitMode === "upload" && (
+                <div className="space-y-2">
+                  <div
+                    className={`relative flex flex-col items-center justify-center gap-2 p-6 rounded-xl border-2 border-dashed cursor-pointer transition-colors ${
+                      dragging ? "border-[#10b981] bg-emerald-50" : "border-slate-200 bg-slate-50 hover:border-emerald-300 hover:bg-emerald-50/40"
+                    }`}
+                    onDragOver={e => { e.preventDefault(); setDragging(true); }}
+                    onDragLeave={() => setDragging(false)}
+                    onDrop={handleFileDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                    data-testid="dropzone-upload"
+                  >
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      className="hidden"
+                      onChange={e => setSelectedFile(e.target.files?.[0] ?? null)}
+                      data-testid="input-file-upload"
+                    />
+                    <Upload className="w-8 h-8 text-slate-400" />
+                    {selectedFile ? (
+                      <div className="text-center">
+                        <p className="text-sm font-semibold text-emerald-700 truncate max-w-[220px]">{selectedFile.name}</p>
+                        <p className="text-xs text-slate-400">{(selectedFile.size / 1024).toFixed(0)} KB · ready to submit</p>
+                      </div>
+                    ) : (
+                      <div className="text-center">
+                        <p className="text-sm text-slate-600 font-semibold">Tap to select file</p>
+                        <p className="text-xs text-slate-400 mt-0.5">or drag & drop here</p>
+                        <p className="text-xs text-slate-400">PDF, image, doc · Max 10 MB</p>
+                      </div>
+                    )}
+                  </div>
+                  {selectedFile && (
+                    <button
+                      onClick={() => setSelectedFile(null)}
+                      className="text-xs text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors"
+                      data-testid="button-remove-file"
+                    >
+                      <X className="w-3 h-3" /> Remove file
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           )}
         </div>
 
+        {/* Footer */}
         {!isApproved && (
-          <div className="px-5 py-4 border-t border-slate-100">
+          <div className="px-5 py-4 border-t border-slate-100 flex-shrink-0">
             <button
               onClick={() => submitMutation.mutate()}
-              disabled={submitMutation.isPending}
-              className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-[#10b981] hover:bg-emerald-600 active:bg-emerald-700 text-white font-bold text-sm transition-colors disabled:opacity-60 min-h-[48px]"
+              disabled={submitMutation.isPending || !canSubmit}
+              className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-[#10b981] hover:bg-emerald-600 active:bg-emerald-700 text-white font-bold text-sm transition-colors disabled:opacity-50 min-h-[48px]"
               data-testid="button-submit-homework"
             >
               {submitMutation.isPending ? (
@@ -390,6 +473,11 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
                 <><Send className="w-4 h-4" /> Submit Homework</>
               )}
             </button>
+            {!canSubmit && (
+              <p className="text-center text-[11px] text-slate-400 mt-2">
+                {submitMode === "write" ? "Write something to enable submission" : "Select a file to enable submission"}
+              </p>
+            )}
           </div>
         )}
       </div>

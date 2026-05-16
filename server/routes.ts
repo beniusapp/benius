@@ -1402,6 +1402,12 @@ export async function registerRoutes(
         return res.status(400).json({ message: "This homework has already been approved and cannot be re-submitted" });
       }
       const fileUrl = req.file ? `/uploads/homework-submissions/${req.file.filename}` : undefined;
+      const textAnswer = typeof req.body?.textAnswer === "string" && req.body.textAnswer.trim()
+        ? req.body.textAnswer.trim()
+        : undefined;
+      if (!fileUrl && !textAnswer && !existing) {
+        return res.status(400).json({ message: "Please write an answer or upload a file before submitting." });
+      }
       const today = new Date().toISOString().split("T")[0];
       const isLate = hw.dueDate ? hw.dueDate < today : false;
       const submission = await storage.upsertHomeworkSubmission({
@@ -1409,6 +1415,7 @@ export async function registerRoutes(
         studentId: student.id,
         schoolId: student.schoolId,
         fileUrl,
+        textAnswer,
       });
       res.json({ submission, isLate });
     });

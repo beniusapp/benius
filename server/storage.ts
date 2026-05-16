@@ -467,11 +467,16 @@ export class DatabaseStorage {
     return sub;
   }
 
-  async upsertHomeworkSubmission(data: { homeworkId: number; studentId: number; schoolId: number; fileUrl?: string | null }): Promise<HomeworkSubmission> {
+  async upsertHomeworkSubmission(data: { homeworkId: number; studentId: number; schoolId: number; fileUrl?: string | null; textAnswer?: string | null }): Promise<HomeworkSubmission> {
     const existing = await this.getHomeworkSubmission(data.homeworkId, data.studentId);
     if (existing) {
       const [updated] = await db.update(homeworkSubmissions)
-        .set({ fileUrl: data.fileUrl !== undefined ? data.fileUrl : existing.fileUrl, status: "submitted", submittedAt: new Date() })
+        .set({
+          fileUrl: data.fileUrl !== undefined ? data.fileUrl : existing.fileUrl,
+          textAnswer: data.textAnswer !== undefined ? data.textAnswer : existing.textAnswer,
+          status: "submitted",
+          submittedAt: new Date(),
+        })
         .where(eq(homeworkSubmissions.id, existing.id))
         .returning();
       return updated;
@@ -481,6 +486,7 @@ export class DatabaseStorage {
       studentId: data.studentId,
       schoolId: data.schoolId,
       fileUrl: data.fileUrl ?? null,
+      textAnswer: data.textAnswer ?? null,
       status: "submitted",
     }).returning();
     return created;

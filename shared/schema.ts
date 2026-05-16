@@ -107,6 +107,7 @@ export const homeworkSubmissions = pgTable("homework_submissions", {
   studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
   fileUrl: text("file_url"),
+  textAnswer: text("text_answer"),
   status: text("status").notNull().default("submitted"),
   submittedAt: timestamp("submitted_at").notNull().defaultNow(),
   reviewedAt: timestamp("reviewed_at"),
