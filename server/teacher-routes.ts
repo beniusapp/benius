@@ -305,6 +305,12 @@ export function registerTeacherRoutes(app: Express) {
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
+    // Compute academic year from the date (Indian academic year: April–March)
+    const dateObj = new Date(date);
+    const yr = dateObj.getFullYear();
+    const mo = dateObj.getMonth(); // 0-indexed; March=2, April=3
+    const academicYear = mo >= 3 ? `${yr}-${String(yr + 1).slice(-2)}` : `${yr - 1}-${String(yr).slice(-2)}`;
+
     const markedBy = `${teacher.fullName} at ${new Date().toISOString()}`;
     const formattedRecords = records.map((r: any) => ({
       studentId: r.studentId,
@@ -313,6 +319,9 @@ export function registerTeacherRoutes(app: Express) {
       date,
       status: r.status,
       markedBy,
+      class: cls || teacher.assignedClass,
+      section: section || teacher.assignedSection,
+      academicYear,
     }));
 
     const saved = await storage.upsertAttendance(formattedRecords);

@@ -76,6 +76,9 @@ export const attendanceRecords = pgTable("attendance_records", {
   editCount: integer("edit_count").notNull().default(0),
   markedBy: text("marked_by").notNull(),
   markedAt: timestamp("marked_at").notNull().defaultNow(),
+  class: varchar("class", { length: 20 }),
+  section: varchar("section", { length: 10 }),
+  academicYear: varchar("academic_year", { length: 20 }),
 });
 
 export const homework = pgTable("homework", {

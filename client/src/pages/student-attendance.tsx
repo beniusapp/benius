@@ -48,8 +48,9 @@ interface MonthStat {
   present: number;
   absent: number;
   halfDay: number;
+  late: number;
   leave: number;
-  holiday: number;
+  holiday?: number;
   workingDays: number;
 }
 
@@ -60,9 +61,11 @@ interface YearlyResponse {
 interface StatsResponse {
   overallPercent: number;
   workingDays: number;
+  daysPresent: number;
   totalPresent: number;
   totalAbsent: number;
   totalHalfDay: number;
+  totalLate: number;
   totalLeave: number;
 }
 
@@ -110,7 +113,7 @@ function getDayCell(day: DayData): {
   if (day.status === "absent") {
     return { bg: "bg-red-400", ring: "", dot: null, label: "Absent", textColor: "text-white" };
   }
-  if (day.status === "half_day" || day.status === "late") {
+  if (day.status === "halfday" || day.status === "half_day" || day.status === "late") {
     return { bg: "bg-amber-100", ring: "", dot: "bg-amber-500", label: day.status === "late" ? "Late" : "Half Day", textColor: "text-amber-800" };
   }
   if (day.status === "leave") {
@@ -343,7 +346,7 @@ export default function StudentAttendance() {
                 <p className="text-[10px] sm:text-xs text-slate-500 font-medium mt-0.5 text-center">Working Days</p>
               </div>
               <div className="flex-shrink-0 w-40 sm:w-auto rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center justify-center" data-testid="stat-present">
-                <p className="text-2xl sm:text-3xl font-extrabold text-emerald-600">{statsData?.totalPresent ?? 0}</p>
+                <p className="text-2xl sm:text-3xl font-extrabold text-emerald-600">{statsData?.daysPresent ?? 0}</p>
                 <p className="text-[10px] sm:text-xs text-slate-500 font-medium mt-0.5 text-center">Days Present</p>
               </div>
               <div className="flex-shrink-0 w-40 sm:w-auto rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center justify-center" data-testid="stat-absent">
