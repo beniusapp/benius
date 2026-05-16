@@ -767,7 +767,7 @@ export class DatabaseStorage {
     return ownResults;
   }
 
-  async getStudentInboxComplaints(studentId: number, schoolId: number): Promise<(Complaint & { teacherName: string; studentName: string | null; studentClass: string | null; studentSection: string | null })[]> {
+  async getStudentInboxComplaints(studentId: number, schoolId: number): Promise<(Complaint & { teacherName: string; studentName: string | null; studentClass: string | null; studentSection: string | null; batchPeers: { name: string; class: string | null; section: string | null }[] })[]> {
     const result = await db.select().from(complaints)
       .innerJoin(teachers, eq(complaints.teacherId, teachers.id))
       .leftJoin(students, eq(complaints.studentId, students.id))
@@ -778,12 +778,44 @@ export class DatabaseStorage {
         eq(complaints.isDeleted, false),
       ))
       .orderBy(desc(complaints.createdAt));
+
+    // For complaints that have a batchId, fetch all sibling students in that batch
+    const batchIds = result
+      .map(r => r.complaints.batchId)
+      .filter((b): b is string => !!b);
+
+    let batchPeerMap: Map<string, { name: string; class: string | null; section: string | null }[]> = new Map();
+    if (batchIds.length > 0) {
+      const uniqueBatchIds = [...new Set(batchIds)];
+      const siblings = await db.select({
+        batchId: complaints.batchId,
+        studentId: complaints.studentId,
+        fullName: students.fullName,
+        class: students.class,
+        section: students.section,
+      })
+        .from(complaints)
+        .leftJoin(students, eq(complaints.studentId, students.id))
+        .where(and(
+          inArray(complaints.batchId, uniqueBatchIds),
+          eq(complaints.isDeleted, false),
+        ));
+
+      for (const s of siblings) {
+        if (!s.batchId || s.studentId === studentId) continue;
+        const list = batchPeerMap.get(s.batchId) ?? [];
+        list.push({ name: s.fullName ?? "Unknown", class: s.class ?? null, section: s.section ?? null });
+        batchPeerMap.set(s.batchId, list);
+      }
+    }
+
     return result.map(r => ({
       ...r.complaints,
       teacherName: r.teachers.fullName,
       studentName: r.students?.fullName ?? null,
       studentClass: r.students?.class ?? null,
       studentSection: r.students?.section ?? null,
+      batchPeers: r.complaints.batchId ? (batchPeerMap.get(r.complaints.batchId) ?? []) : [],
     }));
   }
 

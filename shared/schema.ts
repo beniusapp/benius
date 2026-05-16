@@ -172,6 +172,7 @@ export const complaints = pgTable("complaints", {
   resolutionRemarks: text("resolution_remarks"),
   escalatedToPrincipal: boolean("escalated_to_principal").notNull().default(false),
   notifyAdmin: boolean("notify_admin").notNull().default(false),
+  batchId: varchar("batch_id", { length: 50 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

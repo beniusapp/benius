@@ -55,6 +55,7 @@ interface ComplaintRecord {
   studentName?: string | null;
   studentClass?: string | null;
   studentSection?: string | null;
+  batchPeers?: { name: string; class: string | null; section: string | null }[];
 }
 
 type TabId = "inbox" | "staff" | "peer";
@@ -79,7 +80,9 @@ function StatusBadge({ status }: { status: string }) {
 
 function InboxCard({ c }: { c: ComplaintRecord & { teacherName: string } }) {
   const [expanded, setExpanded] = useState(false);
-  const hasStudentInfo = c.studentName || c.studentClass;
+  const peers = c.batchPeers ?? [];
+  const isBatch = peers.length > 0;
+
   return (
     <div className="rounded-2xl p-4 flex gap-3 bg-white/80 border border-white/70 shadow-sm" data-testid={`card-inbox-${c.id}`}>
       <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center">
@@ -94,22 +97,48 @@ function InboxCard({ c }: { c: ComplaintRecord & { teacherName: string } }) {
           <StatusBadge status={c.status} />
         </div>
 
-        {hasStudentInfo && (
-          <div className="mt-2 mb-1 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-50 border border-red-100" data-testid={`chip-student-info-${c.id}`}>
-            <div className="w-4 h-4 rounded-full bg-red-200 flex items-center justify-center flex-shrink-0">
-              <span className="text-[8px] font-bold text-red-700">
-                {c.studentName ? c.studentName.charAt(0).toUpperCase() : "S"}
+        {/* Students complained about in this incident */}
+        <div className="mt-2 mb-1 flex flex-wrap gap-1.5" data-testid={`chip-student-info-${c.id}`}>
+          {/* Viewing student — always shown as "You" */}
+          <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-100 border border-red-200">
+            <div className="w-4 h-4 rounded-full bg-red-300 flex items-center justify-center flex-shrink-0">
+              <span className="text-[8px] font-bold text-red-800">
+                {c.studentName ? c.studentName.charAt(0).toUpperCase() : "Y"}
               </span>
             </div>
-            <span className="text-xs font-semibold text-red-700 truncate max-w-[140px]">
-              {c.studentName ?? "You"}
-            </span>
+            <span className="text-xs font-bold text-red-800">You</span>
             {c.studentClass && (
-              <span className="text-[10px] font-bold text-red-400">
+              <span className="text-[10px] font-semibold text-red-500">
                 · Class {c.studentClass}{c.studentSection ? `-${c.studentSection}` : ""}
               </span>
             )}
           </div>
+
+          {/* Co-complained peers (only present if teacher filed multiple students at once) */}
+          {isBatch && peers.map((peer, idx) => (
+            <div
+              key={idx}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-orange-50 border border-orange-200"
+              data-testid={`chip-peer-${c.id}-${idx}`}
+            >
+              <div className="w-4 h-4 rounded-full bg-orange-200 flex items-center justify-center flex-shrink-0">
+                <span className="text-[8px] font-bold text-orange-800">
+                  {peer.name.charAt(0).toUpperCase()}
+                </span>
+              </div>
+              <span className="text-xs font-semibold text-orange-800 truncate max-w-[120px]">{peer.name}</span>
+              {peer.class && (
+                <span className="text-[10px] font-semibold text-orange-500">
+                  · Class {peer.class}{peer.section ? `-${peer.section}` : ""}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+        {isBatch && (
+          <p className="text-[10px] text-gray-400 mb-1.5">
+            This notice was issued to {peers.length + 1} students in the same incident.
+          </p>
         )}
 
         <p className={`text-sm text-gray-600 mt-1.5 ${expanded ? "" : "line-clamp-2"}`}>{c.content}</p>

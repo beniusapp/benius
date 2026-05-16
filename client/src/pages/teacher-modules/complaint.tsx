@@ -705,6 +705,9 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
         if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
         return [await res.json()];
       }
+      const batchId = selectedStudents.length > 1
+        ? `batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        : null;
       const results = await Promise.all(
         selectedStudents.map(async (student) => {
           const fd = new FormData();
@@ -713,6 +716,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
           fd.append("studentId", String(student.id));
           if (selectedFile) fd.append("file", selectedFile);
           if (notifyAdmin) fd.append("notifyAdmin", "true");
+          if (batchId) fd.append("batchId", batchId);
           const res = await fetch("/api/complaints", { method: "POST", body: fd, credentials: "include" });
           if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
           return res.json();

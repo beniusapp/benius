@@ -577,7 +577,7 @@ export function registerTeacherRoutes(app: Express) {
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
-    const { studentId, content, complaintType, reportedStudentName, notifyAdmin } = req.body;
+    const { studentId, content, complaintType, reportedStudentName, notifyAdmin, batchId } = req.body;
     if (!content) return res.status(400).json({ message: "Content required" });
     if (complaintType !== "teacher-to-admin" && !studentId) return res.status(400).json({ message: "Student required for this complaint type" });
 
@@ -599,6 +599,7 @@ export function registerTeacherRoutes(app: Express) {
       escalatedToPrincipal: shouldNotifyAdmin,
       notifyAdmin: shouldNotifyAdmin,
       status: shouldNotifyAdmin ? "Escalated" : "Pending",
+      batchId: batchId || null,
     });
     res.status(201).json(complaint);
   });
