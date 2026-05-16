@@ -176,18 +176,16 @@ function ResolutionThread({ complaintId, teacherId }: { complaintId: number; tea
   );
 }
 
-function StudentSearchInput({
+function MultiStudentSearchInput({
   schoolId,
-  label,
-  onSelect,
-  selectedStudent,
-  onClear,
+  selectedStudents,
+  onAdd,
+  onRemove,
 }: {
   schoolId: number;
-  label: string;
-  onSelect: (student: SearchResult) => void;
-  selectedStudent: SearchResult | null;
-  onClear: () => void;
+  selectedStudents: SearchResult[];
+  onAdd: (student: SearchResult) => void;
+  onRemove: (id: number) => void;
 }) {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -195,13 +193,13 @@ function StudentSearchInput({
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedQuery(query);
-    }, 300);
+    const timer = setTimeout(() => setDebouncedQuery(query), 300);
     return () => clearTimeout(timer);
   }, [query]);
 
-  const { data: results = [], isFetching } = useQuery<SearchResult[]>({
+  const selectedIds = new Set(selectedStudents.map(s => s.id));
+
+  const { data: allResults = [], isFetching } = useQuery<SearchResult[]>({
     queryKey: ["/api/students/search", schoolId, debouncedQuery],
     queryFn: async () => {
       const res = await fetch(`/api/students/search/${schoolId}?q=${encodeURIComponent(debouncedQuery)}`, { credentials: "include" });
@@ -210,6 +208,8 @@ function StudentSearchInput({
     },
     enabled: debouncedQuery.length >= 2,
   });
+
+  const results = allResults.filter(s => !selectedIds.has(s.id));
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -221,48 +221,53 @@ function StudentSearchInput({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  if (selectedStudent) {
-    return (
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-muted-foreground">{label}</label>
-        <Card className="rounded-xl border" data-testid="card-student-mini-profile">
-          <CardContent className="p-3 flex items-center gap-3">
-            <Avatar className="h-10 w-10" data-testid="img-student-avatar">
-              <AvatarImage src={selectedStudent.photoUrl || undefined} alt={selectedStudent.name} />
-              <AvatarFallback className="bg-indigo-100 text-indigo-700 text-sm font-semibold dark:bg-indigo-950 dark:text-indigo-300">
-                {selectedStudent.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
-              </AvatarFallback>
-            </Avatar>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold truncate" data-testid="text-student-name">{selectedStudent.name}</p>
-              <p className="text-xs text-muted-foreground" data-testid="text-student-details">
-                {selectedStudent.digitalStudentId} · Class {selectedStudent.class}-{selectedStudent.section}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={onClear}
-              className="w-7 h-7 rounded-full bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors shrink-0"
-              data-testid="button-clear-student"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-1 relative" ref={containerRef}>
-      <label className="text-xs font-medium text-muted-foreground">{label}</label>
+    <div className="space-y-2" ref={containerRef}>
+      <div className="flex items-center justify-between">
+        <label className="text-xs font-medium text-muted-foreground">Students *</label>
+        {selectedStudents.length > 0 && (
+          <span className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/30 px-2 py-0.5 rounded-full">
+            {selectedStudents.length} selected
+          </span>
+        )}
+      </div>
+
+      {selectedStudents.length > 0 && (
+        <div className="flex flex-wrap gap-2 p-2.5 rounded-xl border bg-muted/30" data-testid="selected-students-chips">
+          {selectedStudents.map(s => (
+            <div
+              key={s.id}
+              className="flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full bg-indigo-100 dark:bg-indigo-950/50 text-indigo-800 dark:text-indigo-300 text-xs font-medium border border-indigo-200 dark:border-indigo-800"
+              data-testid={`chip-student-${s.id}`}
+            >
+              <Avatar className="h-4 w-4">
+                <AvatarImage src={s.photoUrl || undefined} alt={s.name} />
+                <AvatarFallback className="bg-indigo-200 text-indigo-700 text-[8px] font-bold">
+                  {s.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              <span className="max-w-[100px] truncate">{s.name}</span>
+              <span className="text-indigo-400 dark:text-indigo-500 text-[10px]">{s.class}-{s.section}</span>
+              <button
+                type="button"
+                onClick={() => onRemove(s.id)}
+                className="w-4 h-4 rounded-full bg-indigo-200 dark:bg-indigo-800 hover:bg-indigo-300 dark:hover:bg-indigo-700 flex items-center justify-center transition-colors shrink-0"
+                data-testid={`button-remove-student-${s.id}`}
+              >
+                <X className="w-2.5 h-2.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
         <Input
           value={query}
           onChange={(e) => { setQuery(e.target.value); setShowDropdown(true); }}
           onFocus={() => setShowDropdown(true)}
-          placeholder="Search by name or DSID (min 2 chars)..."
+          placeholder={selectedStudents.length === 0 ? "Search by name or DSID (min 2 chars)…" : "Search to add more students…"}
           className="rounded-xl pl-9"
           data-testid="input-search-student"
         />
@@ -270,37 +275,43 @@ function StudentSearchInput({
           <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-muted-foreground" />
         )}
       </div>
+
       {showDropdown && debouncedQuery.length >= 2 && (
-        <div className="absolute z-50 w-full mt-1 bg-card border rounded-xl shadow-lg max-h-60 overflow-y-auto" data-testid="dropdown-search-results">
-          {results.length === 0 && !isFetching ? (
-            <div className="p-3 text-center text-xs text-muted-foreground">No students found</div>
-          ) : (
-            results.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => {
-                  onSelect(s);
-                  setQuery("");
-                  setDebouncedQuery("");
-                  setShowDropdown(false);
-                }}
-                className="w-full flex items-center gap-3 p-2.5 text-left hover-elevate transition-colors"
-                data-testid={`option-student-${s.id}`}
-              >
-                <Avatar className="h-8 w-8">
-                  <AvatarImage src={s.photoUrl || undefined} alt={s.name} />
-                  <AvatarFallback className="bg-muted text-xs font-semibold">
-                    {s.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{s.name}</p>
-                  <p className="text-xs text-muted-foreground">{s.digitalStudentId} · {s.class}-{s.section}</p>
-                </div>
-              </button>
-            ))
-          )}
+        <div className="relative z-50 w-full" data-testid="dropdown-search-results">
+          <div className="absolute w-full mt-0.5 bg-card border rounded-xl shadow-lg max-h-60 overflow-y-auto">
+            {results.length === 0 && !isFetching ? (
+              <div className="p-3 text-center text-xs text-muted-foreground">
+                {allResults.length > 0 ? "All matching students already selected" : "No students found"}
+              </div>
+            ) : (
+              results.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => {
+                    onAdd(s);
+                    setQuery("");
+                    setDebouncedQuery("");
+                    setShowDropdown(false);
+                  }}
+                  className="w-full flex items-center gap-3 p-2.5 text-left hover:bg-muted/50 transition-colors first:rounded-t-xl last:rounded-b-xl"
+                  data-testid={`option-student-${s.id}`}
+                >
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={s.photoUrl || undefined} alt={s.name} />
+                    <AvatarFallback className="bg-muted text-xs font-semibold">
+                      {s.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{s.name}</p>
+                    <p className="text-xs text-muted-foreground">{s.digitalStudentId} · {s.class}-{s.section}</p>
+                  </div>
+                  <Plus className="w-4 h-4 text-indigo-500 shrink-0" />
+                </button>
+              ))
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -639,7 +650,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
   const [activeView, setActiveView] = useState<"my" | "feed">("my");
 
   const [complaintType, setComplaintType] = useState<ComplaintType>("teacher-to-student");
-  const [selectedStudent, setSelectedStudent] = useState<SearchResult | null>(null);
+  const [selectedStudents, setSelectedStudents] = useState<SearchResult[]>([]);
   const [content, setContent] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
@@ -663,7 +674,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
   const canPost = (() => {
     if (!content.trim()) return false;
     if (complaintType === "teacher-to-admin") return true;
-    return selectedStudent !== null;
+    return selectedStudents.length > 0;
   })();
 
   const handleFileSelect = useCallback((file: File | null) => {
@@ -685,20 +696,40 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
 
   const submitMutation = useMutation({
     mutationFn: async () => {
-      const fd = new FormData();
-      fd.append("content", content);
-      fd.append("complaintType", complaintType);
-      if (complaintType !== "teacher-to-admin" && selectedStudent) fd.append("studentId", String(selectedStudent.id));
-      if (selectedFile) fd.append("file", selectedFile);
-      if (notifyAdmin && complaintType === "teacher-to-student") fd.append("notifyAdmin", "true");
-      const res = await fetch("/api/complaints", { method: "POST", body: fd, credentials: "include" });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
-      return res.json();
+      if (complaintType === "teacher-to-admin") {
+        const fd = new FormData();
+        fd.append("content", content);
+        fd.append("complaintType", complaintType);
+        if (selectedFile) fd.append("file", selectedFile);
+        const res = await fetch("/api/complaints", { method: "POST", body: fd, credentials: "include" });
+        if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
+        return [await res.json()];
+      }
+      const results = await Promise.all(
+        selectedStudents.map(async (student) => {
+          const fd = new FormData();
+          fd.append("content", content);
+          fd.append("complaintType", complaintType);
+          fd.append("studentId", String(student.id));
+          if (selectedFile) fd.append("file", selectedFile);
+          if (notifyAdmin) fd.append("notifyAdmin", "true");
+          const res = await fetch("/api/complaints", { method: "POST", body: fd, credentials: "include" });
+          if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
+          return res.json();
+        })
+      );
+      return results;
     },
-    onSuccess: () => {
-      toast({ title: "Complaint Filed", description: "A unique ticket ID has been generated." });
+    onSuccess: (data) => {
+      const count = data.length;
+      toast({
+        title: count > 1 ? `${count} Complaints Filed` : "Complaint Filed",
+        description: count > 1
+          ? `${count} separate tickets generated, one per student.`
+          : "A unique ticket ID has been generated.",
+      });
       setContent("");
-      setSelectedStudent(null);
+      setSelectedStudents([]);
       setNotifyAdmin(false);
       clearFile();
       queryClient.invalidateQueries({ queryKey: ["/api/complaints/teacher", teacher.id] });
@@ -802,7 +833,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
               ]).map(opt => (
                 <button
                   key={opt.key}
-                  onClick={() => { setComplaintType(opt.key); setSelectedStudent(null); setNotifyAdmin(false); }}
+                  onClick={() => { setComplaintType(opt.key); setSelectedStudents([]); setNotifyAdmin(false); }}
                   className={`flex-1 px-2 py-2 rounded-lg text-xs font-semibold transition-all ${
                     complaintType === opt.key
                       ? "bg-white dark:bg-gray-900 shadow-sm text-foreground"
@@ -818,12 +849,11 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
 
           {complaintType === "teacher-to-student" && (
             <>
-              <StudentSearchInput
+              <MultiStudentSearchInput
                 schoolId={teacher.schoolId}
-                label="Student *"
-                onSelect={(s) => setSelectedStudent(s)}
-                selectedStudent={selectedStudent}
-                onClear={() => setSelectedStudent(null)}
+                selectedStudents={selectedStudents}
+                onAdd={(s) => setSelectedStudents(prev => prev.some(x => x.id === s.id) ? prev : [...prev, s])}
+                onRemove={(id) => setSelectedStudents(prev => prev.filter(s => s.id !== id))}
               />
               <label className="flex items-center gap-3 cursor-pointer p-3 rounded-xl border border-amber-200 bg-amber-50 hover:bg-amber-100 transition-colors" data-testid="label-notify-admin">
                 <input
