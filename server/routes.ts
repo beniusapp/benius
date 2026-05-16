@@ -1850,6 +1850,48 @@ export async function registerRoutes(
     res.status(201).json(complaint);
   });
 
+  // ===== STUDENT COMPLAINT NOTES =====
+  // GET notes for a complaint the student is a party to
+  app.get("/api/student/complaints/:id/notes", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(401).json({ message: "Student not found" });
+    const complaintId = parseInt(req.params.id);
+    if (isNaN(complaintId)) return res.status(400).json({ message: "Invalid id" });
+    const c = await storage.getComplaintByIdForSchool(complaintId, student.schoolId);
+    if (!c) return res.status(404).json({ message: "Complaint not found" });
+    // Only allow if this student is the recipient (inbox) or the filer
+    const isRecipient = c.studentId === student.id;
+    const isFiler = c.complainantStudentId === student.id;
+    if (!isRecipient && !isFiler) return res.status(403).json({ message: "Access denied" });
+    const notes = await storage.getComplaintNotes(complaintId);
+    res.json(notes);
+  });
+
+  // POST a comment on a complaint the student is a party to
+  app.post("/api/student/complaints/:id/notes", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(401).json({ message: "Student not found" });
+    const complaintId = parseInt(req.params.id);
+    if (isNaN(complaintId)) return res.status(400).json({ message: "Invalid id" });
+    const c = await storage.getComplaintByIdForSchool(complaintId, student.schoolId);
+    if (!c) return res.status(404).json({ message: "Complaint not found" });
+    const isRecipient = c.studentId === student.id;
+    const isFiler = c.complainantStudentId === student.id;
+    if (!isRecipient && !isFiler) return res.status(403).json({ message: "Access denied" });
+    const { content } = req.body;
+    if (!content?.trim()) return res.status(400).json({ message: "Content required" });
+    const note = await storage.addComplaintNote({
+      complaintId,
+      authorId: student.id,
+      authorRole: "student",
+      authorName: student.fullName || student.name,
+      content: content.trim(),
+    });
+    res.status(201).json(note);
+  });
+
   // ===== ADMIN TEACHERS: PATCH (edit assignment — strict session-scoped) =====
   const editTeacherSchema = z.object({
     fullName: z.string().min(2, "Name must be at least 2 characters").optional(),

@@ -6,7 +6,7 @@ import { fmtDate, fmtDateTimeAmPm } from "@/lib/dateUtils";
 import {
   ArrowLeft, Mail, ShieldAlert, UserX, Loader2,
   AlertTriangle, CheckCircle, Clock, Plus, Lock, ChevronDown, ChevronUp,
-  Search, X,
+  Search, X, MessageSquare, Send, ChevronRight,
 } from "lucide-react";
 import { getQueryFn, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -36,6 +36,16 @@ interface PeerStudent {
   class: string;
   section: string;
   photoUrl: string | null;
+}
+
+interface ComplaintNote {
+  id: number;
+  complaintId: number;
+  authorId: number;
+  authorRole: string;
+  authorName: string;
+  content: string;
+  createdAt: string;
 }
 
 interface ComplaintRecord {
@@ -78,13 +88,266 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 
-function InboxCard({ c }: { c: ComplaintRecord & { teacherName: string } }) {
-  const [expanded, setExpanded] = useState(false);
+/* ── Inbox Detail Drawer ── */
+function InboxDetailDrawer({
+  c,
+  student,
+  onClose,
+}: {
+  c: ComplaintRecord & { teacherName: string };
+  student: StudentMe;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [commentText, setCommentText] = useState("");
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  const { data: notes = [], isLoading: notesLoading } = useQuery<ComplaintNote[]>({
+    queryKey: ["/api/student/complaints", c.id, "notes"],
+    queryFn: async () => {
+      const res = await fetch(`/api/student/complaints/${c.id}/notes`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load comments");
+      return res.json();
+    },
+    refetchInterval: 15000,
+  });
+
+  const postNote = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/student/complaints/${c.id}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ content: commentText.trim() }),
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      setCommentText("");
+      queryClient.invalidateQueries({ queryKey: ["/api/student/complaints", c.id, "notes"] });
+      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  useEffect(() => {
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior }), 200);
+  }, [notes.length]);
+
+  const peers = c.batchPeers ?? [];
+
+  function roleAvatar(role: string, name: string) {
+    const initials = name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase();
+    if (role === "student") return { bg: "bg-emerald-100", text: "text-emerald-700", initials };
+    if (role === "teacher") return { bg: "bg-red-100", text: "text-red-700", initials };
+    return { bg: "bg-blue-100", text: "text-blue-700", initials };
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex flex-col justify-end"
+      style={{ background: "rgba(0,0,0,0.45)" }}
+      onClick={onClose}
+      data-testid="overlay-inbox-detail"
+    >
+      <div
+        className="relative bg-white rounded-t-3xl w-full max-w-2xl mx-auto flex flex-col"
+        style={{ maxHeight: "90dvh" }}
+        onClick={e => e.stopPropagation()}
+        data-testid="drawer-inbox-detail"
+      >
+        {/* Drag handle */}
+        <div className="flex justify-center pt-3 pb-1 flex-shrink-0">
+          <div className="w-10 h-1 rounded-full bg-gray-200" />
+        </div>
+
+        {/* Header */}
+        <div className="px-5 pb-3 pt-1 border-b border-gray-100 flex items-start justify-between gap-3 flex-shrink-0">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-mono text-xs font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded">{c.ticketId}</span>
+              <StatusBadge status={c.status} />
+            </div>
+            <p className="text-sm font-bold text-gray-800 mt-1">{c.teacherName}</p>
+            <p className="text-xs text-gray-400">{fmtDateTimeAmPm(c.createdAt)}</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 mt-0.5"
+            data-testid="button-close-inbox-detail"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4 text-gray-500" />
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+
+          {/* Students in incident */}
+          {(c.studentName || c.studentClass || peers.length > 0) && (
+            <div>
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Students in this incident</p>
+              <div className="flex flex-wrap gap-1.5">
+                <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-100 border border-red-200">
+                  <div className="w-4 h-4 rounded-full bg-red-300 flex items-center justify-center flex-shrink-0">
+                    <span className="text-[8px] font-bold text-red-800">
+                      {c.studentName ? c.studentName.charAt(0).toUpperCase() : "Y"}
+                    </span>
+                  </div>
+                  <span className="text-xs font-bold text-red-800">You</span>
+                  {c.studentClass && (
+                    <span className="text-[10px] font-semibold text-red-500">
+                      · Class {c.studentClass}{c.studentSection ? `-${c.studentSection}` : ""}
+                    </span>
+                  )}
+                </div>
+                {peers.map((peer, idx) => (
+                  <div key={idx} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-orange-50 border border-orange-200">
+                    <div className="w-4 h-4 rounded-full bg-orange-200 flex items-center justify-center flex-shrink-0">
+                      <span className="text-[8px] font-bold text-orange-800">{peer.name.charAt(0).toUpperCase()}</span>
+                    </div>
+                    <span className="text-xs font-semibold text-orange-800">{peer.name}</span>
+                    {peer.class && (
+                      <span className="text-[10px] font-semibold text-orange-500">
+                        · Class {peer.class}{peer.section ? `-${peer.section}` : ""}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Complaint content */}
+          <div>
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Details</p>
+            <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
+              {c.content}
+            </p>
+          </div>
+
+          {/* Resolution / Escalation banners */}
+          {c.resolutionRemarks && (
+            <div className="flex items-start gap-2 px-4 py-3 bg-emerald-50 rounded-xl border border-emerald-200">
+              <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-xs font-bold text-emerald-700">Resolution</p>
+                <p className="text-xs text-emerald-600 mt-0.5">{c.resolutionRemarks}</p>
+              </div>
+            </div>
+          )}
+          {c.escalatedToPrincipal && (
+            <div className="flex items-center gap-2 px-4 py-3 bg-red-50 rounded-xl border border-red-200">
+              <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />
+              <p className="text-xs font-bold text-red-700">
+                Escalated to Principal {!c.resolutionRemarks && "— awaiting response"}
+              </p>
+            </div>
+          )}
+
+          {/* Notes / Comments thread */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <MessageSquare className="w-3.5 h-3.5 text-gray-400" />
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Comments</p>
+              {notes.length > 0 && (
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">{notes.length}</span>
+              )}
+            </div>
+
+            {notesLoading ? (
+              <div className="flex justify-center py-4">
+                <Loader2 className="w-5 h-5 animate-spin text-gray-300" />
+              </div>
+            ) : notes.length === 0 ? (
+              <div className="text-center py-6 text-gray-400">
+                <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                <p className="text-xs">No comments yet. Be the first to respond.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {notes.map(note => {
+                  const av = roleAvatar(note.authorRole, note.authorName);
+                  const isMe = note.authorRole === "student";
+                  return (
+                    <div key={note.id} className={`flex gap-2.5 ${isMe ? "flex-row-reverse" : ""}`} data-testid={`note-${note.id}`}>
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${av.bg}`}>
+                        <span className={`text-[10px] font-bold ${av.text}`}>{av.initials}</span>
+                      </div>
+                      <div className={`max-w-[75%] ${isMe ? "items-end" : "items-start"} flex flex-col`}>
+                        <div className={`flex items-center gap-1.5 mb-0.5 ${isMe ? "flex-row-reverse" : ""}`}>
+                          <span className="text-[10px] font-bold text-gray-600">{isMe ? "You" : note.authorName}</span>
+                          <span className="text-[9px] text-gray-400">{fmtDateTimeAmPm(note.createdAt)}</span>
+                        </div>
+                        <div className={`px-3 py-2 rounded-2xl text-sm leading-relaxed ${
+                          isMe
+                            ? "bg-[#10b981] text-white rounded-tr-sm"
+                            : note.authorRole === "teacher"
+                            ? "bg-red-50 text-gray-800 border border-red-100 rounded-tl-sm"
+                            : "bg-blue-50 text-gray-800 border border-blue-100 rounded-tl-sm"
+                        }`}>
+                          {note.content}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div ref={bottomRef} />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Comment input */}
+        <div className="flex-shrink-0 px-4 py-3 border-t border-gray-100 bg-white rounded-b-3xl" style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
+          <div className="flex gap-2 items-end">
+            <textarea
+              value={commentText}
+              onChange={e => setCommentText(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter" && !e.shiftKey && commentText.trim()) {
+                  e.preventDefault();
+                  postNote.mutate();
+                }
+              }}
+              placeholder="Write a comment…"
+              rows={1}
+              className="flex-1 px-4 py-2.5 rounded-2xl border border-gray-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent bg-gray-50"
+              style={{ maxHeight: "96px" }}
+              data-testid="input-inbox-comment"
+            />
+            <button
+              onClick={() => postNote.mutate()}
+              disabled={!commentText.trim() || postNote.isPending}
+              className="w-10 h-10 rounded-full bg-[#10b981] disabled:bg-gray-200 flex items-center justify-center flex-shrink-0 transition-colors"
+              data-testid="button-send-inbox-comment"
+              aria-label="Send comment"
+            >
+              {postNote.isPending
+                ? <Loader2 className="w-4 h-4 animate-spin text-white" />
+                : <Send className="w-4 h-4 text-white" />
+              }
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InboxCard({ c, onOpen }: { c: ComplaintRecord & { teacherName: string }; onOpen: () => void }) {
   const peers = c.batchPeers ?? [];
   const isBatch = peers.length > 0;
 
   return (
-    <div className="rounded-2xl p-4 flex gap-3 bg-white/80 border border-white/70 shadow-sm" data-testid={`card-inbox-${c.id}`}>
+    <button
+      className="w-full text-left rounded-2xl p-4 flex gap-3 bg-white/80 border border-white/70 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 active:scale-[0.99]"
+      onClick={onOpen}
+      data-testid={`card-inbox-${c.id}`}
+    >
       <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center">
         <AlertTriangle className="w-5 h-5 text-red-400" />
       </div>
@@ -141,18 +404,14 @@ function InboxCard({ c }: { c: ComplaintRecord & { teacherName: string } }) {
           </p>
         )}
 
-        <p className={`text-sm text-gray-600 mt-1.5 ${expanded ? "" : "line-clamp-2"}`}>{c.content}</p>
-        {c.content.length > 100 && (
-          <button
-            onClick={() => setExpanded(v => !v)}
-            className="flex items-center gap-1 text-xs text-[#10b981] font-medium mt-1 min-h-[32px]"
-            data-testid={`btn-expand-inbox-${c.id}`}
-          >
-            {expanded ? <><ChevronUp className="w-3 h-3" /> Show less</> : <><ChevronDown className="w-3 h-3" /> Read more</>}
-          </button>
-        )}
+        <p className="text-sm text-gray-600 mt-1.5 line-clamp-2">{c.content}</p>
+        <div className="flex items-center gap-1 text-[10px] text-[#10b981] font-semibold mt-2">
+          <MessageSquare className="w-3 h-3" />
+          <span>Tap to view details &amp; comment</span>
+          <ChevronRight className="w-3 h-3 ml-auto" />
+        </div>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -327,6 +586,7 @@ export default function StudentComplaints() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabId>("inbox");
+  const [selectedInboxItem, setSelectedInboxItem] = useState<(ComplaintRecord & { teacherName: string }) | null>(null);
 
   const [staffTeacherId, setStaffTeacherId] = useState("");
   const [staffContent, setStaffContent] = useState("");
@@ -520,7 +780,9 @@ export default function StudentComplaints() {
               </div>
             ) : (
               <div className="space-y-3">
-                {inboxData.map(c => <InboxCard key={c.id} c={c} />)}
+                {inboxData.map(c => (
+                  <InboxCard key={c.id} c={c} onOpen={() => setSelectedInboxItem(c)} />
+                ))}
               </div>
             )}
           </div>
@@ -733,6 +995,15 @@ export default function StudentComplaints() {
             <Plus className="w-6 h-6" />
           </button>
         </div>
+      )}
+
+      {/* ── Inbox Detail Drawer ── */}
+      {selectedInboxItem && student && (
+        <InboxDetailDrawer
+          c={selectedInboxItem}
+          student={student}
+          onClose={() => setSelectedInboxItem(null)}
+        />
       )}
     </div>
   );
