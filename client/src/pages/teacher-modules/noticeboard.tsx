@@ -30,7 +30,7 @@ interface NoticeEntry {
 
 const DEFAULT_NOTICE_TYPES = ["Routine", "Urgent", "Holiday", "Exam", "Event"];
 
-type ScopeType = "specific" | "entire" | "range" | "whole_school";
+type ScopeType = "specific" | "entire" | "multi_class" | "whole_school";
 
 const NOTICE_TYPE_STYLES: Record<string, { border: string; bg: string; text: string; pill: string }> = {
   Routine: { border: "border-slate-300", bg: "bg-slate-50 dark:bg-slate-900/30", text: "text-slate-600", pill: "bg-slate-100 text-slate-700 border-slate-300" },
@@ -53,7 +53,10 @@ function getNoticeIcon(type: string | null) {
 function getTargetLabel(entry: NoticeEntry): string {
   if (entry.targetType === "whole_school") return "Whole School";
   if (!entry.targetClass) return "All Classes";
-  if (entry.targetClass.includes("-")) return `Classes ${entry.targetClass}`;
+  if (entry.targetClass.includes(",")) {
+    const classes = entry.targetClass.split(",").map(c => `Cls ${c}`).join(", ");
+    return `${classes} (All Sections)`;
+  }
   if (!entry.targetSection) return `Class ${entry.targetClass} (All Sections)`;
   if (entry.targetSection.includes(",")) return `Class ${entry.targetClass} — Sec ${entry.targetSection}`;
   return `Class ${entry.targetClass}${entry.targetSection}`;
@@ -75,8 +78,7 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
   const [scope, setScope] = useState<ScopeType>("specific");
   const [targetClass, setTargetClass] = useState(teacher.assignedClass || "");
   const [selectedSections, setSelectedSections] = useState<string[]>([teacher.assignedSection || "A"]);
-  const [rangeFrom, setRangeFrom] = useState("");
-  const [rangeTo, setRangeTo] = useState("");
+  const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
   const [noticeType, setNoticeType] = useState("Routine");
   const [content, setContent] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -91,16 +93,22 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
     );
   };
 
+  const toggleClass = (c: string) => {
+    setSelectedClasses(prev =>
+      prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]
+    );
+  };
+
   const getPostTargetClass = (): string => {
     if (scope === "whole_school") return "";
-    if (scope === "range") return `${rangeFrom}-${rangeTo}`;
+    if (scope === "multi_class") return selectedClasses.join(",");
     return targetClass;
   };
 
   const getPostTargetSection = (): string | null => {
     if (scope === "whole_school") return null;
     if (scope === "entire") return null;
-    if (scope === "range") return null;
+    if (scope === "multi_class") return null;
     return selectedSections.join(",");
   };
 
@@ -109,7 +117,7 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
     if (scope === "whole_school") return true;
     if (scope === "specific") return targetClass !== "" && selectedSections.length > 0;
     if (scope === "entire") return targetClass !== "";
-    if (scope === "range") return rangeFrom !== "" && rangeTo !== "" && CLASS_OPTIONS.indexOf(rangeTo) >= CLASS_OPTIONS.indexOf(rangeFrom);
+    if (scope === "multi_class") return selectedClasses.length > 0;
     return false;
   })();
 
@@ -213,7 +221,7 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const scopeLabel = scope === "specific" ? "Specific Section" : scope === "entire" ? "Entire Class" : scope === "range" ? "Class Range" : "Whole School";
+  const scopeLabel = scope === "specific" ? "Specific Section" : scope === "entire" ? "Entire Class" : scope === "multi_class" ? "Multi Class" : "Whole School";
 
   return (
     <div className="space-y-6">
@@ -316,7 +324,7 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
                   {([
                     { key: "specific" as ScopeType, label: "Specific Section" },
                     { key: "entire" as ScopeType, label: "Entire Class" },
-                    { key: "range" as ScopeType, label: "Class Range" },
+                    { key: "multi_class" as ScopeType, label: "Multi Class" },
                     { key: "whole_school" as ScopeType, label: "Whole School" },
                   ]).map(opt => (
                     <button
@@ -391,30 +399,32 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
                 </div>
               )}
 
-              {scope === "range" && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-muted-foreground">From Class *</label>
-                    <Select value={rangeFrom} onValueChange={setRangeFrom}>
-                      <SelectTrigger className="rounded-xl" data-testid="select-range-from">
-                        <SelectValue placeholder="From" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CLASS_OPTIONS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+              {scope === "multi_class" && (
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Classes * (tap to select, all their sections will receive this notice)
+                  </label>
+                  <div className="flex flex-wrap gap-1.5" data-testid="class-pills">
+                    {CLASS_OPTIONS.map(c => (
+                      <button
+                        key={c}
+                        onClick={() => toggleClass(c)}
+                        className={`px-3 h-9 rounded-lg text-xs font-bold transition-all ${
+                          selectedClasses.includes(c)
+                            ? "bg-amber-500 text-white shadow-sm"
+                            : "bg-muted/60 text-muted-foreground hover:bg-muted"
+                        }`}
+                        data-testid={`pill-class-${c}`}
+                      >
+                        {c}
+                      </button>
+                    ))}
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-muted-foreground">To Class *</label>
-                    <Select value={rangeTo} onValueChange={setRangeTo}>
-                      <SelectTrigger className="rounded-xl" data-testid="select-range-to">
-                        <SelectValue placeholder="To" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CLASS_OPTIONS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  {selectedClasses.length > 0 && (
+                    <p className="text-[11px] text-amber-600 font-medium mt-1">
+                      Selected: {selectedClasses.join(", ")}
+                    </p>
+                  )}
                 </div>
               )}
 
