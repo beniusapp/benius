@@ -227,6 +227,32 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
     return students.filter(s => s.name.toLowerCase().includes(q) || s.dsid.toLowerCase().includes(q));
   }, [students, searchQuery]);
 
+  // Holiday lockdown — fetch calendar events for the selected month so we can
+  // detect holidays before the teacher even tries to submit.
+  const selectedDateObj = useMemo(() => new Date(selectedDate + "T00:00:00"), [selectedDate]);
+  const calMonth = selectedDateObj.getMonth() + 1;
+  const calYear = selectedDateObj.getFullYear();
+
+  const { data: calendarEventsForMonth = [] } = useQuery<{ id: number; date: string; eventType: string; title: string }[]>({
+    queryKey: ["/api/teacher/calendar", calYear, calMonth],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/teacher/calendar?month=${calMonth}&year=${calYear}`,
+        { credentials: "include" }
+      );
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: view === "mark",
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const holidayOnDate = useMemo(
+    () => calendarEventsForMonth.find(e => e.date === selectedDate && e.eventType === "holiday"),
+    [calendarEventsForMonth, selectedDate]
+  );
+  const isHolidayDate = !!holidayOnDate;
+
   const groupedHistory = useMemo(() => {
     const groups: Record<string, HistoryRecord[]> = {};
     historyRecords.forEach(r => {
@@ -560,7 +586,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
 
   /* ── MARK ATTENDANCE ── */
   const allAtLimit = students.length > 0 && students.every(s => s.editCount >= 3);
-  const canSave = isEditable && !allAtLimit && students.length > 0;
+  const canSave = isEditable && !allAtLimit && students.length > 0 && !isHolidayDate;
 
   return (
     <div className="space-y-4 pb-24" data-testid="view-mark">
@@ -618,7 +644,16 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
           </div>
         </div>
 
-        {!isEditable && selectedDate < sevenDaysAgo && (
+        {isHolidayDate && (
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-red-500/15 border border-red-500/35 text-red-300 text-sm mt-2" data-testid="text-holiday-lockdown">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+            <span>
+              <strong className="font-semibold text-red-200">{holidayOnDate?.title}</strong>
+              <span className="text-red-300/80"> — Attendance is locked on school-wide holidays.</span>
+            </span>
+          </div>
+        )}
+        {!isHolidayDate && !isEditable && selectedDate < sevenDaysAgo && (
           <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm mt-2" data-testid="text-date-warning">
             <AlertCircle className="w-4 h-4 shrink-0" />
             This date is outside the 7-day edit window.

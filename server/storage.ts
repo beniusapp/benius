@@ -1150,6 +1150,17 @@ export class DatabaseStorage {
     );
   }
 
+  async getHolidayOnDate(schoolId: number, date: string): Promise<CalendarEvent | null> {
+    const [event] = await db.select().from(calendarEvents).where(
+      and(
+        eq(calendarEvents.schoolId, schoolId),
+        eq(calendarEvents.date, date),
+        eq(calendarEvents.eventType, "holiday"),
+      )
+    );
+    return event || null;
+  }
+
   async deleteCalendarEvent(id: number): Promise<boolean> {
     const result = await db.delete(calendarEvents).where(eq(calendarEvents.id, id)).returning();
     return result.length > 0;

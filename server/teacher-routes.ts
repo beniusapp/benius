@@ -305,6 +305,17 @@ export function registerTeacherRoutes(app: Express) {
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
+    // Rule A — Holiday Lockdown: reject attendance if the date is a school-wide holiday.
+    // This is the single source of truth enforced at the API layer so no attendance
+    // record (and therefore no working-day count) can ever be created on a holiday.
+    const holiday = await storage.getHolidayOnDate(teacher.schoolId, date);
+    if (holiday) {
+      return res.status(423).json({
+        message: `Attendance is locked. "${holiday.title}" is a school-wide holiday.`,
+        holidayName: holiday.title,
+      });
+    }
+
     // Compute academic year from the date (Indian academic year: April–March)
     const dateObj = new Date(date);
     const yr = dateObj.getFullYear();
