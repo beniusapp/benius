@@ -5,13 +5,6 @@ import {
   Loader2, Search, Save, AlertCircle, ArrowLeft,
   ClipboardCheck, User, Edit3, History, Calendar, Clock
 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
@@ -42,12 +35,11 @@ interface HistoryRecord {
 
 type ViewState = "landing" | "class-menu" | "mark" | "history" | "my-attendance";
 
-
 const STATUS_CONFIG = [
-  { value: "present", label: "P", bg: "bg-emerald-500", ring: "ring-emerald-400", text: "text-emerald-700", lightBg: "bg-emerald-50" },
-  { value: "absent", label: "A", bg: "bg-red-500", ring: "ring-red-400", text: "text-red-700", lightBg: "bg-red-50" },
-  { value: "late", label: "L", bg: "bg-amber-500", ring: "ring-amber-400", text: "text-amber-700", lightBg: "bg-amber-50" },
-  { value: "halfday", label: "H", bg: "bg-blue-500", ring: "ring-blue-400", text: "text-blue-700", lightBg: "bg-blue-50" },
+  { value: "present",  label: "P", bg: "bg-emerald-500", ring: "ring-emerald-400" },
+  { value: "absent",   label: "A", bg: "bg-red-500",     ring: "ring-red-400"     },
+  { value: "late",     label: "L", bg: "bg-amber-500",   ring: "ring-amber-400"   },
+  { value: "halfday",  label: "H", bg: "bg-blue-500",    ring: "ring-blue-400"    },
 ];
 
 function getInitials(name: string): string {
@@ -69,19 +61,19 @@ function getAvatarColor(name: string): string {
 
 function getAttemptsBadge(editCount: number) {
   const remaining = Math.max(0, 3 - editCount);
-  if (remaining === 3) return { label: "3/3", cls: "bg-emerald-100 text-emerald-700 border-emerald-300 shadow-emerald-200/50 shadow-sm" };
-  if (remaining === 2) return { label: "2/3", cls: "bg-orange-100 text-orange-700 border-orange-300 shadow-orange-200/50 shadow-sm" };
-  if (remaining === 1) return { label: "1/3", cls: "bg-red-100 text-red-700 border-red-300 shadow-red-200/50 shadow-sm" };
-  return { label: "0/3", cls: "bg-gray-200 text-gray-500 border-gray-300" };
+  if (remaining === 3) return { label: "3/3", cls: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" };
+  if (remaining === 2) return { label: "2/3", cls: "bg-orange-500/20 text-orange-300 border-orange-500/30" };
+  if (remaining === 1) return { label: "1/3", cls: "bg-red-500/20 text-red-300 border-red-500/30" };
+  return { label: "0/3", cls: "bg-white/10 text-white/40 border-white/20" };
 }
 
 function statusBadgeColor(status: string) {
   switch (status) {
-    case "present": return "bg-emerald-100 text-emerald-700";
-    case "absent": return "bg-red-100 text-red-700";
-    case "late": return "bg-amber-100 text-amber-700";
-    case "halfday": return "bg-blue-100 text-blue-700";
-    default: return "bg-gray-100 text-gray-700";
+    case "present":  return "bg-emerald-500/20 text-emerald-300";
+    case "absent":   return "bg-red-500/20 text-red-300";
+    case "late":     return "bg-amber-500/20 text-amber-300";
+    case "halfday":  return "bg-blue-500/20 text-blue-300";
+    default:         return "bg-white/10 text-white/50";
   }
 }
 
@@ -89,22 +81,76 @@ function SkeletonCards() {
   return (
     <div className="space-y-3">
       {[1, 2, 3, 4].map(i => (
-        <div key={i} className="rounded-xl border bg-card p-4 animate-pulse">
+        <div key={i} className="rounded-xl border border-white/10 bg-white/5 p-4 animate-pulse">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-muted" />
+            <div className="w-10 h-10 rounded-full bg-white/10" />
             <div className="flex-1 space-y-2">
-              <div className="h-4 bg-muted rounded w-32" />
-              <div className="h-3 bg-muted rounded w-20" />
+              <div className="h-4 bg-white/10 rounded w-32" />
+              <div className="h-3 bg-white/10 rounded w-20" />
             </div>
             <div className="flex gap-2">
               {[1, 2, 3, 4].map(j => (
-                <div key={j} className="w-10 h-10 rounded-full bg-muted" />
+                <div key={j} className="w-10 h-10 rounded-full bg-white/10" />
               ))}
             </div>
           </div>
         </div>
       ))}
     </div>
+  );
+}
+
+/* Shared dark-styled select */
+function DarkSelect({
+  value, onValueChange, disabled, options, placeholder, testId,
+}: {
+  value: string;
+  onValueChange: (v: string) => void;
+  disabled?: boolean;
+  options: string[];
+  placeholder?: string;
+  testId?: string;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={e => onValueChange(e.target.value)}
+      disabled={disabled}
+      data-testid={testId}
+      className="w-full rounded-xl bg-white/5 border border-white/15 text-white text-sm px-3 py-2 focus:outline-none focus:border-white/30 disabled:opacity-50 disabled:cursor-not-allowed appearance-none cursor-pointer"
+      style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.4)' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")`, backgroundRepeat: "no-repeat", backgroundPosition: "right 10px center" }}
+    >
+      {placeholder && <option value="" disabled>{placeholder}</option>}
+      {options.map(o => (
+        <option key={o} value={o} style={{ background: "#1A2942", color: "#fff" }}>{o}</option>
+      ))}
+    </select>
+  );
+}
+
+/* Shared dark-styled date / text input */
+function DarkInput({
+  type = "text", value, onChange, placeholder, max, className = "", testId,
+}: {
+  type?: string;
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  placeholder?: string;
+  max?: string;
+  className?: string;
+  testId?: string;
+}) {
+  return (
+    <input
+      type={type}
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      max={max}
+      data-testid={testId}
+      className={`w-full rounded-xl bg-white/5 border border-white/15 text-white text-sm px-3 py-2 focus:outline-none focus:border-white/30 placeholder:text-white/30 ${className}`}
+      style={type === "date" ? { colorScheme: "dark" } : undefined}
+    />
   );
 }
 
@@ -231,38 +277,39 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
     }
   }
 
+  /* ── LANDING ── */
   if (view === "landing") {
     return (
       <div className="space-y-6" data-testid="view-landing">
-        <h2 className="text-xl font-bold tracking-tight" data-testid="text-attendance-title">Attendance</h2>
+        <h2 className="text-xl font-bold text-white" data-testid="text-attendance-title">Attendance</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <button
             onClick={() => navigateTo("my-attendance")}
-            className="group relative overflow-hidden rounded-2xl border bg-gradient-to-br from-violet-50 to-indigo-50 dark:from-violet-950/30 dark:to-indigo-950/30 p-6 text-left transition-all hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98]"
+            className="group relative overflow-hidden rounded-2xl border border-violet-500/25 bg-gradient-to-br from-violet-500/15 to-indigo-500/15 p-6 text-left transition-all hover:shadow-lg hover:border-violet-500/40 hover:-translate-y-0.5 active:scale-[0.98]"
             data-testid="card-my-attendance"
           >
             <div className="flex items-start gap-4">
-              <div className="rounded-xl bg-violet-100 dark:bg-violet-900/50 p-3">
-                <User className="w-6 h-6 text-violet-600 dark:text-violet-400" />
+              <div className="rounded-xl bg-violet-500/20 p-3">
+                <User className="w-6 h-6 text-violet-300" />
               </div>
               <div>
-                <h3 className="font-semibold text-base">My Attendance</h3>
-                <p className="text-sm text-muted-foreground mt-1">View your personal attendance log</p>
+                <h3 className="font-semibold text-base text-white">My Attendance</h3>
+                <p className="text-sm text-white/60 mt-1">View your personal attendance log</p>
               </div>
             </div>
           </button>
           <button
             onClick={() => navigateTo("class-menu")}
-            className="group relative overflow-hidden rounded-2xl border bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950/30 dark:to-teal-950/30 p-6 text-left transition-all hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98]"
+            className="group relative overflow-hidden rounded-2xl border border-emerald-500/25 bg-gradient-to-br from-emerald-500/15 to-teal-500/15 p-6 text-left transition-all hover:shadow-lg hover:border-emerald-500/40 hover:-translate-y-0.5 active:scale-[0.98]"
             data-testid="card-class-attendance"
           >
             <div className="flex items-start gap-4">
-              <div className="rounded-xl bg-emerald-100 dark:bg-emerald-900/50 p-3">
-                <ClipboardCheck className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
+              <div className="rounded-xl bg-emerald-500/20 p-3">
+                <ClipboardCheck className="w-6 h-6 text-emerald-300" />
               </div>
               <div>
-                <h3 className="font-semibold text-base">Class Attendance</h3>
-                <p className="text-sm text-muted-foreground mt-1">Mark or view student attendance</p>
+                <h3 className="font-semibold text-base text-white">Class Attendance</h3>
+                <p className="text-sm text-white/60 mt-1">Mark or view student attendance</p>
               </div>
             </div>
           </button>
@@ -271,64 +318,71 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
     );
   }
 
+  /* ── MY ATTENDANCE ── */
   if (view === "my-attendance") {
     return (
       <div className="space-y-4" data-testid="view-my-attendance">
-        <Button variant="ghost" size="sm" onClick={() => navigateTo("landing")} data-testid="button-back">
-          <ArrowLeft className="w-4 h-4 mr-1" /> Back
-        </Button>
-        <Card className="rounded-2xl">
-          <CardContent className="py-12 text-center">
-            <User className="w-12 h-12 mx-auto text-muted-foreground/40 mb-3" />
-            <h3 className="font-semibold text-lg">My Attendance</h3>
-            <p className="text-sm text-muted-foreground mt-2">Coming Soon — Personal attendance log will be available here.</p>
-          </CardContent>
-        </Card>
+        <button
+          onClick={() => navigateTo("landing")}
+          className="flex items-center gap-1.5 text-sm text-white/60 hover:text-white transition-colors"
+          data-testid="button-back"
+        >
+          <ArrowLeft className="w-4 h-4" /> Back
+        </button>
+        <div className="rounded-2xl border border-white/10 bg-white/5 py-12 text-center">
+          <User className="w-12 h-12 mx-auto text-white/20 mb-3" />
+          <h3 className="font-semibold text-lg text-white">My Attendance</h3>
+          <p className="text-sm text-white/50 mt-2">Coming Soon — Personal attendance log will be available here.</p>
+        </div>
       </div>
     );
   }
 
+  /* ── CLASS MENU ── */
   if (view === "class-menu") {
     const classNotReady = !configLoading && (!hasClasses || !hasSections);
     const selectionReady = selectedClass !== "" && selectedSection !== "";
     return (
       <div className="space-y-6" data-testid="view-class-menu">
-        <Button variant="ghost" size="sm" onClick={() => navigateTo("landing")} data-testid="button-back">
-          <ArrowLeft className="w-4 h-4 mr-1" /> Back
-        </Button>
-        <h2 className="text-xl font-bold tracking-tight">Class Attendance</h2>
+        <button
+          onClick={() => navigateTo("landing")}
+          className="flex items-center gap-1.5 text-sm text-white/60 hover:text-white transition-colors"
+          data-testid="button-back"
+        >
+          <ArrowLeft className="w-4 h-4" /> Back
+        </button>
+        <h2 className="text-xl font-bold text-white">Class Attendance</h2>
 
         {configLoading ? (
-          <div className="h-24 rounded-2xl bg-muted animate-pulse" />
+          <div className="h-24 rounded-2xl bg-white/5 animate-pulse" />
         ) : classNotReady ? (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-5 text-center" data-testid="banner-not-configured">
-            <p className="text-sm font-medium text-amber-800 dark:text-amber-300">School setup incomplete</p>
-            <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">Ask your admin to configure classes and sections in School Setup before marking attendance.</p>
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5 text-center" data-testid="banner-not-configured">
+            <p className="text-sm font-medium text-amber-300">School setup incomplete</p>
+            <p className="text-xs text-amber-400/70 mt-1">Ask your admin to configure classes and sections in School Setup before marking attendance.</p>
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-3 p-4 rounded-2xl border bg-muted/30" data-testid="selector-class-section">
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Class *</label>
-                <Select value={selectedClass} onValueChange={(v) => handleClassChange(v, setSelectedClass)}>
-                  <SelectTrigger className="rounded-xl" data-testid="select-class-menu">
-                    <SelectValue placeholder="Select class" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+            <div className="grid grid-cols-2 gap-3 p-4 rounded-2xl border border-white/10 bg-white/5" data-testid="selector-class-section">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-white/60">Class *</label>
+                <DarkSelect
+                  value={selectedClass}
+                  onValueChange={(v) => handleClassChange(v, setSelectedClass)}
+                  options={classes}
+                  placeholder="Select class"
+                  testId="select-class-menu"
+                />
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Section *</label>
-                <Select value={selectedSection} onValueChange={setSelectedSection} disabled={!selectedClass}>
-                  <SelectTrigger className="rounded-xl" data-testid="select-section-menu">
-                    <SelectValue placeholder="Select section" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {sectionOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-white/60">Section *</label>
+                <DarkSelect
+                  value={selectedSection}
+                  onValueChange={setSelectedSection}
+                  disabled={!selectedClass}
+                  options={sectionOpts}
+                  placeholder="Select section"
+                  testId="select-section-menu"
+                />
               </div>
             </div>
 
@@ -338,18 +392,18 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                 disabled={!selectionReady}
                 className={`group relative overflow-hidden rounded-2xl border p-6 text-left transition-all ${
                   selectionReady
-                    ? "bg-gradient-to-br from-sky-50 to-blue-50 dark:from-sky-950/30 dark:to-blue-950/30 hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98]"
-                    : "bg-muted/40 opacity-60 cursor-not-allowed"
+                    ? "border-sky-500/25 bg-gradient-to-br from-sky-500/15 to-blue-500/15 hover:shadow-lg hover:border-sky-500/40 hover:-translate-y-0.5 active:scale-[0.98]"
+                    : "border-white/10 bg-white/5 opacity-50 cursor-not-allowed"
                 }`}
                 data-testid="card-mark-today"
               >
                 <div className="flex items-start gap-4">
-                  <div className="rounded-xl bg-sky-100 dark:bg-sky-900/50 p-3">
-                    <Edit3 className="w-6 h-6 text-sky-600 dark:text-sky-400" />
+                  <div className="rounded-xl bg-sky-500/20 p-3">
+                    <Edit3 className="w-6 h-6 text-sky-300" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-base">Mark Attendance</h3>
-                    <p className="text-sm text-muted-foreground mt-1">{selectionReady ? `Class ${selectedClass}-${selectedSection}` : "Select class & section first"}</p>
+                    <h3 className="font-semibold text-base text-white">Mark Attendance</h3>
+                    <p className="text-sm text-white/60 mt-1">{selectionReady ? `Class ${selectedClass}-${selectedSection}` : "Select class & section first"}</p>
                   </div>
                 </div>
               </button>
@@ -358,18 +412,18 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                 disabled={!selectionReady}
                 className={`group relative overflow-hidden rounded-2xl border p-6 text-left transition-all ${
                   selectionReady
-                    ? "bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98]"
-                    : "bg-muted/40 opacity-60 cursor-not-allowed"
+                    ? "border-amber-500/25 bg-gradient-to-br from-amber-500/15 to-orange-500/15 hover:shadow-lg hover:border-amber-500/40 hover:-translate-y-0.5 active:scale-[0.98]"
+                    : "border-white/10 bg-white/5 opacity-50 cursor-not-allowed"
                 }`}
                 data-testid="card-history"
               >
                 <div className="flex items-start gap-4">
-                  <div className="rounded-xl bg-amber-100 dark:bg-amber-900/50 p-3">
-                    <History className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+                  <div className="rounded-xl bg-amber-500/20 p-3">
+                    <History className="w-6 h-6 text-amber-300" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-base">Attendance History</h3>
-                    <p className="text-sm text-muted-foreground mt-1">{selectionReady ? `Class ${selectedClass}-${selectedSection}` : "Select class & section first"}</p>
+                    <h3 className="font-semibold text-base text-white">Attendance History</h3>
+                    <p className="text-sm text-white/60 mt-1">{selectionReady ? `Class ${selectedClass}-${selectedSection}` : "Select class & section first"}</p>
                   </div>
                 </div>
               </button>
@@ -380,53 +434,63 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
     );
   }
 
+  /* ── HISTORY ── */
   if (view === "history") {
     return (
       <div className="space-y-4" data-testid="view-history">
-        <Button variant="ghost" size="sm" onClick={() => navigateTo("class-menu")} data-testid="button-back">
-          <ArrowLeft className="w-4 h-4 mr-1" /> Back
-        </Button>
-        <h2 className="text-xl font-bold tracking-tight">Attendance History</h2>
+        <button
+          onClick={() => navigateTo("class-menu")}
+          className="flex items-center gap-1.5 text-sm text-white/60 hover:text-white transition-colors"
+          data-testid="button-back"
+        >
+          <ArrowLeft className="w-4 h-4" /> Back
+        </button>
+        <h2 className="text-xl font-bold text-white">Attendance History</h2>
 
-        <div className="bg-white dark:bg-gray-900 border border-border rounded-2xl shadow-lg p-4">
+        <div className="border border-white/10 bg-white/5 rounded-2xl p-4">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Class</label>
-              <Select value={selectedClass} onValueChange={(v) => handleClassChange(v, setSelectedClass)}>
-                <SelectTrigger className="rounded-xl" data-testid="select-class-history">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                </SelectContent>
-              </Select>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-white/60">Class</label>
+              <DarkSelect
+                value={selectedClass}
+                onValueChange={(v) => handleClassChange(v, setSelectedClass)}
+                options={classes}
+                testId="select-class-history"
+              />
             </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Section</label>
-              <Select value={selectedSection} onValueChange={setSelectedSection}>
-                <SelectTrigger className="rounded-xl" data-testid="select-section-history">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {sectionOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                </SelectContent>
-              </Select>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-white/60">Section</label>
+              <DarkSelect
+                value={selectedSection}
+                onValueChange={setSelectedSection}
+                options={sectionOpts}
+                testId="select-section-history"
+              />
             </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">From</label>
-              <Input type="date" value={historyStartDate} onChange={e => setHistoryStartDate(e.target.value)}
-                className="rounded-xl" data-testid="input-start-date" />
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-white/60">From</label>
+              <DarkInput
+                type="date"
+                value={historyStartDate}
+                onChange={e => setHistoryStartDate(e.target.value)}
+                testId="input-start-date"
+              />
             </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">To</label>
-              <Input type="date" value={historyEndDate} max={today} onChange={e => setHistoryEndDate(e.target.value)}
-                className="rounded-xl" data-testid="input-end-date" />
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-white/60">To</label>
+              <DarkInput
+                type="date"
+                value={historyEndDate}
+                max={today}
+                onChange={e => setHistoryEndDate(e.target.value)}
+                testId="input-end-date"
+              />
             </div>
           </div>
         </div>
 
         {historyLoading ? <SkeletonCards /> : groupedHistory.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground text-sm" data-testid="text-no-history">
+          <div className="text-center py-12 text-white/40 text-sm" data-testid="text-no-history">
             <Calendar className="w-10 h-10 mx-auto mb-2 opacity-30" />
             No attendance records found for this period.
           </div>
@@ -435,27 +499,30 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
             {groupedHistory.map(([date, records]) => (
               <div key={date}>
                 <div className="flex items-center gap-2 mb-3">
-                  <Calendar className="w-4 h-4 text-muted-foreground" />
-                  <h3 className="font-semibold text-sm">{fmtDateWithWeekday(date)}</h3>
-                  <Badge variant="secondary" className="text-xs">{records.length} records</Badge>
+                  <Calendar className="w-4 h-4 text-white/40" />
+                  <h3 className="font-semibold text-sm text-white">{fmtDateWithWeekday(date)}</h3>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-white/60 border border-white/10">
+                    {records.length} records
+                  </span>
                 </div>
                 <div className="space-y-2">
                   {records.map(r => (
-                    <div key={`${r.studentId}-${r.date}`}
-                      className="flex items-center gap-3 rounded-xl border bg-card p-3 text-sm"
+                    <div
+                      key={`${r.studentId}-${r.date}`}
+                      className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3 text-sm"
                       data-testid={`history-card-${r.studentId}-${r.date}`}
                     >
                       <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold ${getAvatarColor(r.studentName)}`}>
                         {getInitials(r.studentName)}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{r.studentName}</p>
-                        <p className="text-xs text-muted-foreground font-mono">{r.dsid}</p>
+                        <p className="font-medium truncate text-white">{r.studentName}</p>
+                        <p className="text-xs text-white/50 font-mono">{r.dsid}</p>
                       </div>
                       <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusBadgeColor(r.status)}`}>
                         {r.status.charAt(0).toUpperCase() + r.status.slice(1)}
                       </span>
-                      <div className="hidden sm:block text-xs text-muted-foreground text-right max-w-[180px]">
+                      <div className="hidden sm:block text-xs text-white/40 text-right max-w-[180px]">
                         <p className="truncate">{r.markedBy}</p>
                         <p>Edits: {r.editCount}/3</p>
                       </div>
@@ -470,78 +537,80 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
     );
   }
 
+  /* ── MARK ATTENDANCE ── */
   const allAtLimit = students.length > 0 && students.every(s => s.editCount >= 3);
   const canSave = isEditable && !allAtLimit && students.length > 0;
 
   return (
     <div className="space-y-4 pb-24" data-testid="view-mark">
-      <Button variant="ghost" size="sm" onClick={() => navigateTo("class-menu")} data-testid="button-back">
-        <ArrowLeft className="w-4 h-4 mr-1" /> Back
-      </Button>
-      <h2 className="text-xl font-bold tracking-tight" data-testid="text-mark-title">Mark Attendance</h2>
+      <button
+        onClick={() => navigateTo("class-menu")}
+        className="flex items-center gap-1.5 text-sm text-white/60 hover:text-white transition-colors"
+        data-testid="button-back"
+      >
+        <ArrowLeft className="w-4 h-4" /> Back
+      </button>
+      <h2 className="text-xl font-bold text-white" data-testid="text-mark-title">Mark Attendance</h2>
 
-      <div className="bg-white dark:bg-gray-900 border border-border rounded-2xl shadow-lg p-4">
+      <div className="border border-white/10 bg-white/5 rounded-2xl p-4">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-muted-foreground">Class</label>
-            <Select value={selectedClass} onValueChange={(v) => { handleClassChange(v, setSelectedClass); setLocalStatuses({}); }}>
-              <SelectTrigger className="rounded-xl" data-testid="select-class">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-muted-foreground">Section</label>
-            <Select value={selectedSection} onValueChange={(v) => { setSelectedSection(v); setLocalStatuses({}); }}>
-              <SelectTrigger className="rounded-xl" data-testid="select-section">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {sectionOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1 col-span-2 sm:col-span-1">
-            <label className="text-xs font-medium text-muted-foreground">Date</label>
-            <Input
-              type="date" value={selectedDate} max={today}
-              onChange={(e) => { setSelectedDate(e.target.value); setLocalStatuses({}); }}
-              className="rounded-xl"
-              data-testid="input-date"
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-white/60">Class</label>
+            <DarkSelect
+              value={selectedClass}
+              onValueChange={(v) => { handleClassChange(v, setSelectedClass); setLocalStatuses({}); }}
+              options={classes}
+              testId="select-class"
             />
           </div>
-          <div className="space-y-1 col-span-2 sm:col-span-1">
-            <label className="text-xs font-medium text-muted-foreground">Search</label>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-white/60">Section</label>
+            <DarkSelect
+              value={selectedSection}
+              onValueChange={(v) => { setSelectedSection(v); setLocalStatuses({}); }}
+              options={sectionOpts}
+              testId="select-section"
+            />
+          </div>
+          <div className="space-y-1.5 col-span-2 sm:col-span-1">
+            <label className="text-xs font-medium text-white/60">Date</label>
+            <DarkInput
+              type="date"
+              value={selectedDate}
+              max={today}
+              onChange={(e) => { setSelectedDate(e.target.value); setLocalStatuses({}); }}
+              testId="input-date"
+            />
+          </div>
+          <div className="space-y-1.5 col-span-2 sm:col-span-1">
+            <label className="text-xs font-medium text-white/60">Search</label>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Name or DSID..."
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
+              <DarkInput
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 rounded-xl"
-                data-testid="input-search"
+                placeholder="Name or DSID…"
+                className="pl-9"
+                testId="input-search"
               />
             </div>
           </div>
         </div>
 
         {!isEditable && selectedDate < sevenDaysAgo && (
-          <div className="flex items-center gap-2 p-3 rounded-xl bg-destructive/10 text-destructive text-sm mt-2" data-testid="text-date-warning">
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm mt-2" data-testid="text-date-warning">
             <AlertCircle className="w-4 h-4 shrink-0" />
             This date is outside the 7-day edit window.
           </div>
         )}
         {selectedDate > today && (
-          <div className="flex items-center gap-2 p-3 rounded-xl bg-destructive/10 text-destructive text-sm mt-2" data-testid="text-future-warning">
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm mt-2" data-testid="text-future-warning">
             <AlertCircle className="w-4 h-4 shrink-0" />
             Cannot mark attendance for future dates.
           </div>
         )}
         {isError && (
-          <div className="flex items-center gap-2 p-3 rounded-xl bg-destructive/10 text-destructive text-sm mt-2" data-testid="text-attendance-error">
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm mt-2" data-testid="text-attendance-error">
             <AlertCircle className="w-4 h-4 shrink-0" />
             Failed to load attendance data.
           </div>
@@ -549,7 +618,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
       </div>
 
       {isLoading ? <SkeletonCards /> : filteredStudents.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground text-sm" data-testid="text-no-students">
+        <div className="text-center py-12 text-white/40 text-sm" data-testid="text-no-students">
           <ClipboardCheck className="w-10 h-10 mx-auto mb-2 opacity-30" />
           No students found for {selectedClass}-{selectedSection}.
         </div>
@@ -564,12 +633,12 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
             return (
               <div
                 key={student.studentId}
-                className={`relative rounded-xl border bg-card p-3 sm:p-4 transition-shadow hover:shadow-md ${locked ? "opacity-50" : ""}`}
+                className={`relative rounded-xl border border-white/10 bg-white/5 p-3 sm:p-4 transition-shadow hover:border-white/20 ${locked ? "opacity-50" : ""}`}
                 data-testid={`card-student-${student.studentId}`}
               >
                 {locked && (
-                  <div className="absolute inset-0 rounded-xl bg-background/60 flex items-center justify-center z-10">
-                    <span className="text-xs font-semibold text-destructive bg-destructive/10 px-3 py-1 rounded-full" data-testid={`text-locked-${student.studentId}`}>
+                  <div className="absolute inset-0 rounded-xl bg-black/40 flex items-center justify-center z-10">
+                    <span className="text-xs font-semibold text-red-300 bg-red-500/20 border border-red-500/30 px-3 py-1 rounded-full" data-testid={`text-locked-${student.studentId}`}>
                       Edit limit reached
                     </span>
                   </div>
@@ -579,8 +648,8 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                     {getInitials(student.name)}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-sm truncate" data-testid={`text-student-name-${student.studentId}`}>{student.name}</p>
-                    <p className="text-xs text-muted-foreground font-mono">{student.dsid}</p>
+                    <p className="font-semibold text-sm truncate text-white" data-testid={`text-student-name-${student.studentId}`}>{student.name}</p>
+                    <p className="text-xs text-white/50 font-mono">{student.dsid}</p>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     {STATUS_CONFIG.map((opt) => {
@@ -592,10 +661,10 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                           disabled={locked || !isEditable || isDisabledByAbsent}
                           onClick={() => setStatus(student.studentId, opt.value)}
                           className={`
-                            w-10 h-10 rounded-full text-xs font-bold transition-all duration-300 flex items-center justify-center
+                            w-10 h-10 rounded-full text-xs font-bold transition-all duration-200 flex items-center justify-center
                             ${isActive
-                              ? `${opt.bg} text-white ring-2 ring-offset-2 ${opt.ring} scale-105`
-                              : "bg-muted text-muted-foreground hover:bg-muted/80"
+                              ? `${opt.bg} text-white ring-2 ring-offset-2 ring-offset-transparent ${opt.ring} scale-105`
+                              : "bg-white/10 text-white/60 hover:bg-white/20"
                             }
                             ${isDisabledByAbsent ? "opacity-20 grayscale pointer-events-none" : ""}
                             ${locked || !isEditable ? "cursor-not-allowed" : "cursor-pointer active:scale-90"}
@@ -616,7 +685,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                       {badge.label}
                     </span>
                     {student.markedBy && (
-                      <span className="text-[10px] text-muted-foreground truncate max-w-[200px]" data-testid={`text-audit-${student.studentId}`}>
+                      <span className="text-[10px] text-white/40 truncate max-w-[200px]" data-testid={`text-audit-${student.studentId}`}>
                         <Clock className="w-3 h-3 inline mr-0.5 -mt-px" />
                         {student.markedBy}
                       </span>
@@ -632,19 +701,19 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
       {view === "mark" && students.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 p-4 z-50 pointer-events-none">
           <div className="max-w-2xl mx-auto pointer-events-auto">
-            <Button
+            <button
               onClick={() => saveMutation.mutate()}
               disabled={!canSave || saveMutation.isPending}
-              className="w-full h-14 rounded-2xl text-base font-semibold shadow-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] transition-transform"
+              className="w-full h-14 rounded-2xl text-base font-semibold shadow-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] transition-all text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               data-testid="button-save-attendance"
             >
               {saveMutation.isPending ? (
-                <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                <Loader2 className="w-5 h-5 animate-spin" />
               ) : (
-                <Save className="w-5 h-5 mr-2" />
+                <Save className="w-5 h-5" />
               )}
               Save Attendance
-            </Button>
+            </button>
           </div>
         </div>
       )}
