@@ -52,6 +52,9 @@ interface ComplaintRecord {
   resolutionRemarks: string | null;
   escalatedToPrincipal: boolean | null;
   createdAt: string;
+  studentName?: string | null;
+  studentClass?: string | null;
+  studentSection?: string | null;
 }
 
 type TabId = "inbox" | "staff" | "peer";
@@ -76,6 +79,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function InboxCard({ c }: { c: ComplaintRecord & { teacherName: string } }) {
   const [expanded, setExpanded] = useState(false);
+  const hasStudentInfo = c.studentName || c.studentClass;
   return (
     <div className="rounded-2xl p-4 flex gap-3 bg-white/80 border border-white/70 shadow-sm" data-testid={`card-inbox-${c.id}`}>
       <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center">
@@ -89,7 +93,26 @@ function InboxCard({ c }: { c: ComplaintRecord & { teacherName: string } }) {
           </div>
           <StatusBadge status={c.status} />
         </div>
-        <p className={`text-sm text-gray-600 mt-2 ${expanded ? "" : "line-clamp-2"}`}>{c.content}</p>
+
+        {hasStudentInfo && (
+          <div className="mt-2 mb-1 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-50 border border-red-100" data-testid={`chip-student-info-${c.id}`}>
+            <div className="w-4 h-4 rounded-full bg-red-200 flex items-center justify-center flex-shrink-0">
+              <span className="text-[8px] font-bold text-red-700">
+                {c.studentName ? c.studentName.charAt(0).toUpperCase() : "S"}
+              </span>
+            </div>
+            <span className="text-xs font-semibold text-red-700 truncate max-w-[140px]">
+              {c.studentName ?? "You"}
+            </span>
+            {c.studentClass && (
+              <span className="text-[10px] font-bold text-red-400">
+                · Class {c.studentClass}{c.studentSection ? `-${c.studentSection}` : ""}
+              </span>
+            )}
+          </div>
+        )}
+
+        <p className={`text-sm text-gray-600 mt-1.5 ${expanded ? "" : "line-clamp-2"}`}>{c.content}</p>
         {c.content.length > 100 && (
           <button
             onClick={() => setExpanded(v => !v)}

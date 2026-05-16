@@ -767,9 +767,10 @@ export class DatabaseStorage {
     return ownResults;
   }
 
-  async getStudentInboxComplaints(studentId: number, schoolId: number): Promise<(Complaint & { teacherName: string })[]> {
+  async getStudentInboxComplaints(studentId: number, schoolId: number): Promise<(Complaint & { teacherName: string; studentName: string | null; studentClass: string | null; studentSection: string | null })[]> {
     const result = await db.select().from(complaints)
       .innerJoin(teachers, eq(complaints.teacherId, teachers.id))
+      .leftJoin(students, eq(complaints.studentId, students.id))
       .where(and(
         eq(complaints.studentId, studentId),
         eq(complaints.schoolId, schoolId),
@@ -777,7 +778,13 @@ export class DatabaseStorage {
         eq(complaints.isDeleted, false),
       ))
       .orderBy(desc(complaints.createdAt));
-    return result.map(r => ({ ...r.complaints, teacherName: r.teachers.fullName }));
+    return result.map(r => ({
+      ...r.complaints,
+      teacherName: r.teachers.fullName,
+      studentName: r.students?.fullName ?? null,
+      studentClass: r.students?.class ?? null,
+      studentSection: r.students?.section ?? null,
+    }));
   }
 
   async getStudentFiledComplaints(complainantStudentId: number, schoolId: number): Promise<(Complaint & { teacherName: string | null })[]> {
