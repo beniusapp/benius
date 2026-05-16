@@ -125,11 +125,17 @@ export default function StudentDashboard() {
       return r.json() as Promise<MonthlyAttendanceResponse>;
     },
     enabled: !!student,
+    staleTime: 0,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
 
   const { data: homeworkItems } = useQuery<HomeworkItem[]>({
     queryKey: ["/api/student/homework"],
     enabled: !!student,
+    staleTime: 0,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
 
   useEffect(() => {
