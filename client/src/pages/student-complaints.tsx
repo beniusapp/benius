@@ -607,6 +607,9 @@ export default function StudentComplaints() {
   const { data: inboxData = [], isLoading: inboxLoading } = useQuery<(ComplaintRecord & { teacherName: string })[]>({
     queryKey: ["/api/student/complaints/inbox"],
     enabled: !!student,
+    staleTime: 0,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
 
   const { data: filedData = [], isLoading: filedLoading } = useQuery<ComplaintRecord[]>({

@@ -1886,7 +1886,7 @@ export async function registerRoutes(
       complaintId,
       authorId: student.id,
       authorRole: "student",
-      authorName: student.fullName || student.name,
+      authorName: student.name,
       content: content.trim(),
     });
     res.status(201).json(note);

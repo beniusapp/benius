@@ -790,7 +790,7 @@ export class DatabaseStorage {
       const siblings = await db.select({
         batchId: complaints.batchId,
         studentId: complaints.studentId,
-        fullName: students.fullName,
+        name: students.name,
         class: students.class,
         section: students.section,
       })
@@ -804,7 +804,7 @@ export class DatabaseStorage {
       for (const s of siblings) {
         if (!s.batchId || s.studentId === studentId) continue;
         const list = batchPeerMap.get(s.batchId) ?? [];
-        list.push({ name: s.fullName ?? "Unknown", class: s.class ?? null, section: s.section ?? null });
+        list.push({ name: s.name ?? "Unknown", class: s.class ?? null, section: s.section ?? null });
         batchPeerMap.set(s.batchId, list);
       }
     }
@@ -812,7 +812,7 @@ export class DatabaseStorage {
     return result.map(r => ({
       ...r.complaints,
       teacherName: r.teachers.fullName,
-      studentName: r.students?.fullName ?? null,
+      studentName: r.students?.name ?? null,
       studentClass: r.students?.class ?? null,
       studentSection: r.students?.section ?? null,
       batchPeers: r.complaints.batchId ? (batchPeerMap.get(r.complaints.batchId) ?? []) : [],
