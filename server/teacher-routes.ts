@@ -2674,14 +2674,26 @@ export function registerTeacherRoutes(app: Express) {
     if (!teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(teacherId);
     if (!teacher) return res.status(404).json({ message: "Teacher not found" });
-    const cls = teacher.assignedClass || undefined;
-    const sec = teacher.assignedSection || undefined;
+    const mappings = await storage.getFacultyMappingsByTeacher(teacherId);
+    const seen = new Set<string>();
+    const assignments: Array<{ cls: string; sec?: string }> = [];
+    if (teacher.assignedClass) {
+      const key = `${teacher.assignedClass}|${teacher.assignedSection}`;
+      seen.add(key);
+      assignments.push({ cls: teacher.assignedClass, sec: teacher.assignedSection || undefined });
+    }
+    for (const m of mappings) {
+      const key = `${m.className}|${m.section}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        assignments.push({ cls: m.className, sec: m.section });
+      }
+    }
+    const teacherFilter = assignments.length > 0 ? assignments : undefined;
     const { month, year } = req.query;
     if (year && !month) {
       const y = parseInt(year as string);
-      const startDate = `${y}-01-01`;
-      const endDate = `${y}-12-31`;
-      const events = await storage.getCalendarEventsByRange(teacher.schoolId, startDate, endDate, cls, sec);
+      const events = await storage.getCalendarEventsByRange(teacher.schoolId, `${y}-01-01`, `${y}-12-31`, teacherFilter);
       return res.json(events);
     }
     if (month && year) {
@@ -2690,10 +2702,10 @@ export function registerTeacherRoutes(app: Express) {
       const startDate = `${y}-${String(m).padStart(2, "0")}-01`;
       const lastDay = new Date(y, m, 0).getDate();
       const endDate = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
-      const events = await storage.getCalendarEventsByRange(teacher.schoolId, startDate, endDate, cls, sec);
+      const events = await storage.getCalendarEventsByRange(teacher.schoolId, startDate, endDate, teacherFilter);
       return res.json(events);
     }
-    const events = await storage.getCalendarEvents(teacher.schoolId, cls, sec);
+    const events = await storage.getCalendarEvents(teacher.schoolId, teacherFilter);
     res.json(events);
   });
 }

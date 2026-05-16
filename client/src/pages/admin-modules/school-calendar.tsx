@@ -3,7 +3,8 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { fmtDateLong } from "@/lib/dateUtils";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, CalendarDays, Loader2,
-  Calendar, Repeat, Flame, BookOpen, Award, Star, X, RefreshCw, Pencil, AlertTriangle,
+  Calendar, Repeat, Flame, BookOpen, Award, Star, X, RefreshCw, Pencil,
+  AlertTriangle, Users, BookMarked, Tag,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -18,9 +19,16 @@ interface CalendarEvent {
   description: string | null;
   colorCode: string | null;
   isRecurring: boolean;
-  scope: string;
+  audienceScope: string;
   targetClass: string | null;
   targetSection: string | null;
+}
+
+interface SchoolConfigData {
+  classes: string[];
+  sections: string[];
+  subjects: string[];
+  classSections: Record<string, string[]>;
 }
 
 const MONTHS = [
@@ -48,6 +56,8 @@ function buildKey(y: number, m: number, d: number) {
   return `${y}-${String(m + 1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
 }
 
+const SELECT_CLS = "w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#D4AF37]/50 cursor-pointer [color-scheme:dark] appearance-none";
+const INPUT_CLS  = "w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#D4AF37]/50";
 
 const EMPTY_FORM = {
   title: "",
@@ -57,7 +67,6 @@ const EMPTY_FORM = {
   endDate: "",
   isRecurring: false,
   colorCode: "",
-  scope: "all",
   targetClass: "",
   targetSection: "",
 };
@@ -69,7 +78,6 @@ const EMPTY_EDIT = {
   date: "",
   isRecurring: false,
   colorCode: "",
-  scope: "all",
   targetClass: "",
   targetSection: "",
 };
@@ -80,19 +88,183 @@ function invalidateAll() {
   queryClient.invalidateQueries({ queryKey: ["/api/student/calendar"] });
 }
 
+function AudienceBadge({ ev }: { ev: CalendarEvent }) {
+  if (ev.audienceScope === "Entire_Class") {
+    return (
+      <span className="ml-1 px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 text-[10px] normal-case font-medium">
+        Class {ev.targetClass}
+      </span>
+    );
+  }
+  if (ev.audienceScope === "Specific_Section") {
+    return (
+      <span className="ml-1 px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px] normal-case font-medium">
+        Class {ev.targetClass}-{ev.targetSection}
+      </span>
+    );
+  }
+  return (
+    <span className="ml-1 px-1.5 py-0.5 rounded bg-white/5 text-white/30 text-[10px] normal-case">
+      All School
+    </span>
+  );
+}
+
+function AudiencePicker({
+  targeted, onToggle,
+  targetClass, onClassChange,
+  targetSection, onSectionChange,
+  configClasses, getSectionsFor,
+  testPrefix,
+}: {
+  targeted: boolean;
+  onToggle: (val: boolean) => void;
+  targetClass: string;
+  onClassChange: (val: string) => void;
+  targetSection: string;
+  onSectionChange: (val: string) => void;
+  configClasses: string[];
+  getSectionsFor: (cls: string) => string[];
+  testPrefix: string;
+}) {
+  const sectionOptions = targetClass ? getSectionsFor(targetClass) : [];
+
+  return (
+    <div>
+      <label className="text-xs text-white/50 uppercase tracking-wide block mb-2">Audience</label>
+      <div className="flex gap-2 mb-3">
+        <button
+          type="button"
+          onClick={() => onToggle(false)}
+          data-testid={`${testPrefix}-scope-all`}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg border text-sm font-medium transition-all ${
+            !targeted
+              ? "bg-[#D4AF37]/20 border-[#D4AF37]/50 text-[#D4AF37]"
+              : "border-white/10 text-white/40 hover:text-white/60"
+          }`}
+        >
+          <Users className="w-3.5 h-3.5" />
+          All School
+        </button>
+        <button
+          type="button"
+          onClick={() => onToggle(true)}
+          data-testid={`${testPrefix}-scope-targeted`}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg border text-sm font-medium transition-all ${
+            targeted
+              ? "bg-blue-500/20 border-blue-500/40 text-blue-400"
+              : "border-white/10 text-white/40 hover:text-white/60"
+          }`}
+        >
+          <BookMarked className="w-3.5 h-3.5" />
+          Target Class
+        </button>
+      </div>
+
+      {targeted && (
+        <div className="space-y-2.5 p-3 bg-[#0A1628]/60 rounded-lg border border-white/5">
+          <div>
+            <label className="text-xs text-white/40 block mb-1">
+              Class <span className="text-red-400">*</span>
+            </label>
+            {configClasses.length > 0 ? (
+              <select
+                value={targetClass}
+                onChange={e => onClassChange(e.target.value)}
+                className={SELECT_CLS}
+                data-testid={`${testPrefix}-target-class`}
+              >
+                <option value="">— Select class —</option>
+                {configClasses.map(c => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={targetClass}
+                onChange={e => onClassChange(e.target.value)}
+                placeholder="e.g. 6"
+                className={INPUT_CLS}
+                data-testid={`${testPrefix}-target-class`}
+              />
+            )}
+          </div>
+
+          {targetClass && (
+            <div>
+              <label className="text-xs text-white/40 block mb-1 flex items-center gap-1.5">
+                <Tag className="w-3 h-3" />
+                Section
+                <span className="text-white/25 font-normal">(optional — blank = entire class)</span>
+              </label>
+              {sectionOptions.length > 0 ? (
+                <select
+                  value={targetSection}
+                  onChange={e => onSectionChange(e.target.value)}
+                  className={SELECT_CLS}
+                  data-testid={`${testPrefix}-target-section`}
+                >
+                  <option value="">All sections of Class {targetClass}</option>
+                  {sectionOptions.map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={targetSection}
+                  onChange={e => onSectionChange(e.target.value)}
+                  placeholder="Optional — e.g. A"
+                  className={INPUT_CLS}
+                  data-testid={`${testPrefix}-target-section`}
+                />
+              )}
+              <p className="text-[10px] text-white/25 mt-1">
+                {targetSection
+                  ? `Only students in Class ${targetClass}-${targetSection} will see this event.`
+                  : `All students in Class ${targetClass} (every section) will see this event.`}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SchoolCalendar() {
   const { toast } = useToast();
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth());
   const [year, setYear] = useState(now.getFullYear());
   const [addOpen, setAddOpen] = useState(false);
+  const [addTargeted, setAddTargeted] = useState(false);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
 
   const [editOpen, setEditOpen] = useState(false);
+  const [editTargeted, setEditTargeted] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [editForm, setEditForm] = useState(EMPTY_EDIT);
+
+  const { data: schoolConfig } = useQuery<SchoolConfigData>({
+    queryKey: ["/api/admin/school-config"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/school-config", { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load school config");
+      return r.json();
+    },
+    staleTime: 60_000,
+  });
+
+  const configClasses = schoolConfig?.classes ?? [];
+  const configSections = schoolConfig?.sections ?? [];
+  const configClassSections = schoolConfig?.classSections ?? {};
+
+  function getSectionsFor(cls: string): string[] {
+    if (cls && configClassSections[cls]?.length) return configClassSections[cls];
+    return configSections;
+  }
 
   const { data: events = [], isLoading, refetch, isFetching } = useQuery<CalendarEvent[]>({
     queryKey: ["/api/admin/calendar", month + 1, year],
@@ -108,11 +280,10 @@ export default function SchoolCalendar() {
     mutationFn: (data: typeof form) => apiRequest("POST", "/api/admin/calendar", data),
     onSuccess: () => {
       invalidateAll();
-      setAddOpen(false);
-      setForm(EMPTY_FORM);
+      closeAddModal();
       toast({ title: "Event added", description: "Calendar updated successfully." });
     },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant:"destructive" }),
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const editMutation = useMutation({
@@ -120,27 +291,36 @@ export default function SchoolCalendar() {
       apiRequest("PATCH", `/api/admin/calendar/${data.id}`, data),
     onSuccess: () => {
       invalidateAll();
-      setEditOpen(false);
-      setEditingEvent(null);
-      setDeleteConfirm(false);
-      setEditForm(EMPTY_EDIT);
+      closeEditModal();
       toast({ title: "Event updated", description: "Changes saved successfully." });
     },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant:"destructive" }),
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/admin/calendar/${id}`),
     onSuccess: () => {
       invalidateAll();
-      setEditOpen(false);
-      setEditingEvent(null);
-      setDeleteConfirm(false);
+      closeEditModal();
       setSelectedDay(null);
       toast({ title: "Event deleted" });
     },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant:"destructive" }),
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
+
+  function closeAddModal() {
+    setAddOpen(false);
+    setAddTargeted(false);
+    setForm(EMPTY_FORM);
+  }
+
+  function closeEditModal() {
+    setEditOpen(false);
+    setEditingEvent(null);
+    setDeleteConfirm(false);
+    setEditTargeted(false);
+    setEditForm(EMPTY_EDIT);
+  }
 
   const calendarDays = useMemo(() => {
     const firstDay = new Date(year, month, 1).getDay();
@@ -190,11 +370,13 @@ export default function SchoolCalendar() {
 
   function openAddForDay(dayKey: string) {
     setForm(f => ({ ...f, startDate: dayKey, endDate: dayKey }));
+    setAddTargeted(false);
     setAddOpen(true);
   }
 
   function openEdit(ev: CalendarEvent) {
     setEditingEvent(ev);
+    setEditTargeted(ev.audienceScope !== "All_School");
     setEditForm({
       title: ev.title,
       description: ev.description || "",
@@ -202,7 +384,6 @@ export default function SchoolCalendar() {
       date: ev.date.split("T")[0],
       isRecurring: ev.isRecurring,
       colorCode: ev.colorCode || "",
-      scope: ev.scope || "all",
       targetClass: ev.targetClass || "",
       targetSection: ev.targetSection || "",
     });
@@ -219,7 +400,6 @@ export default function SchoolCalendar() {
   const monthEventCount = events.length;
   const holidayCount = events.filter(e => e.eventType === "holiday").length;
 
-  /* ══ LEGEND ══ */
   const legend = (
     <div className="flex items-center gap-4 flex-wrap">
       {EVENT_TYPES.map(t => (
@@ -228,6 +408,17 @@ export default function SchoolCalendar() {
           <span className="text-xs text-white/50">{t.label}</span>
         </div>
       ))}
+      <div className="flex items-center gap-3 ml-auto">
+        <span className="flex items-center gap-1 text-[10px] text-white/30">
+          <span className="w-2 h-2 rounded-full bg-white/20" />All School
+        </span>
+        <span className="flex items-center gap-1 text-[10px] text-purple-400/70">
+          <span className="w-2 h-2 rounded-full bg-purple-500/40" />Entire Class
+        </span>
+        <span className="flex items-center gap-1 text-[10px] text-blue-400/70">
+          <span className="w-2 h-2 rounded-full bg-blue-500/40" />Specific Section
+        </span>
+      </div>
     </div>
   );
 
@@ -253,6 +444,7 @@ export default function SchoolCalendar() {
             onClick={() => {
               const todayKey = buildKey(now.getFullYear(), now.getMonth(), now.getDate());
               setForm(f => ({ ...f, startDate: todayKey, endDate: todayKey }));
+              setAddTargeted(false);
               setAddOpen(true);
             }}
             data-testid="button-add-event"
@@ -353,9 +545,14 @@ export default function SchoolCalendar() {
                             style={{ backgroundColor: `${getEventColor(ev)}25`, color: getEventColor(ev) }}
                             data-testid={`event-chip-${ev.id}`}
                             onClick={(e) => { e.stopPropagation(); openEdit(ev); }}
-                            title={`Click to edit: ${ev.title}${ev.scope === "specific" ? ` (Class ${ev.targetClass}-${ev.targetSection})` : ""}`}
+                            title={`${ev.title}${ev.audienceScope === "Specific_Section" ? ` (Class ${ev.targetClass}-${ev.targetSection})` : ev.audienceScope === "Entire_Class" ? ` (Class ${ev.targetClass})` : ""}`}
                           >
-                            {ev.title}{ev.scope === "specific" && <span className="opacity-60"> {ev.targetClass}-{ev.targetSection}</span>}
+                            {ev.title}
+                            {ev.audienceScope !== "All_School" && (
+                              <span className="opacity-50 ml-0.5">
+                                {ev.targetClass}{ev.targetSection ? `-${ev.targetSection}` : ""}
+                              </span>
+                            )}
                           </div>
                         ))}
                         {dayEvs.length > 2 && (
@@ -401,12 +598,9 @@ export default function SchoolCalendar() {
                     <span className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: getEventColor(ev) }} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-white truncate" data-testid={`text-event-title-${ev.id}`}>{ev.title}</p>
-                      <p className="text-[11px] text-white/40 capitalize">
+                      <p className="text-[11px] text-white/40 capitalize flex items-center flex-wrap gap-0.5">
                         {ev.eventType}{ev.isRecurring ? " · recurring" : ""}
-                        {ev.scope === "specific"
-                          ? <span className="ml-1 px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px] normal-case font-medium">Class {ev.targetClass}-{ev.targetSection}</span>
-                          : <span className="ml-1 px-1.5 py-0.5 rounded bg-white/5 text-white/30 text-[10px] normal-case">All School</span>
-                        }
+                        <AudienceBadge ev={ev} />
                       </p>
                       {ev.description && <p className="text-[11px] text-white/30 mt-0.5 line-clamp-1">{ev.description}</p>}
                     </div>
@@ -460,6 +654,12 @@ export default function SchoolCalendar() {
                       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getEventColor(ev) }} />
                       <span className="text-xs text-white/50 shrink-0">{new Date(ev.date + "T00:00:00").getDate()}</span>
                       <span className="text-xs text-white/70 truncate flex-1">{ev.title}</span>
+                      {ev.audienceScope === "Entire_Class" && (
+                        <span className="text-[9px] text-purple-400/70 shrink-0">Cl.{ev.targetClass}</span>
+                      )}
+                      {ev.audienceScope === "Specific_Section" && (
+                        <span className="text-[9px] text-blue-400/70 shrink-0">{ev.targetClass}-{ev.targetSection}</span>
+                      )}
                       {ev.isRecurring && <Repeat className="w-3 h-3 text-white/20 shrink-0" />}
                     </div>
                   ))
@@ -473,13 +673,13 @@ export default function SchoolCalendar() {
       {/* ══ ADD EVENT MODAL ══ */}
       {addOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.7)" }}>
-          <div className="bg-[#1A2942] rounded-xl border border-white/10 w-full max-w-md shadow-2xl">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+          <div className="bg-[#1A2942] rounded-xl border border-white/10 w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 sticky top-0 bg-[#1A2942] z-10">
               <h3 className="text-base font-semibold text-white flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-[#D4AF37]" />
                 Add Calendar Event
               </h3>
-              <button onClick={() => setAddOpen(false)} className="p-1.5 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors" data-testid="button-close-add-modal">
+              <button onClick={closeAddModal} className="p-1.5 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors" data-testid="button-close-add-modal">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -490,7 +690,7 @@ export default function SchoolCalendar() {
                   value={form.title}
                   onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
                   placeholder="e.g. Annual Sports Day"
-                  className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#D4AF37]/50"
+                  className={INPUT_CLS}
                   data-testid="input-event-title"
                 />
               </div>
@@ -505,7 +705,7 @@ export default function SchoolCalendar() {
                       startDate: e.target.value,
                       endDate: !f.endDate || f.endDate < e.target.value ? e.target.value : f.endDate,
                     }))}
-                    className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#D4AF37]/50 [color-scheme:dark]"
+                    className={INPUT_CLS + " [color-scheme:dark]"}
                     data-testid="input-start-date"
                   />
                 </div>
@@ -516,7 +716,7 @@ export default function SchoolCalendar() {
                     value={form.endDate}
                     onChange={e => setForm(f => ({ ...f, endDate: e.target.value }))}
                     min={form.startDate}
-                    className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#D4AF37]/50 [color-scheme:dark]"
+                    className={INPUT_CLS + " [color-scheme:dark]"}
                     data-testid="input-end-date"
                   />
                 </div>
@@ -543,51 +743,22 @@ export default function SchoolCalendar() {
                   ))}
                 </div>
               </div>
-              <div>
-                <label className="text-xs text-white/50 uppercase tracking-wide block mb-1">Audience</label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setForm(f => ({ ...f, scope: "all", targetClass: "", targetSection: "" }))}
-                    data-testid="button-scope-all"
-                    className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-all ${form.scope === "all" ? "bg-[#D4AF37]/20 border-[#D4AF37]/50 text-[#D4AF37]" : "border-white/10 text-white/40 hover:text-white/60"}`}
-                  >
-                    All School
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setForm(f => ({ ...f, scope: "specific" }))}
-                    data-testid="button-scope-specific"
-                    className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-all ${form.scope === "specific" ? "bg-blue-500/20 border-blue-500/40 text-blue-400" : "border-white/10 text-white/40 hover:text-white/60"}`}
-                  >
-                    Specific Class
-                  </button>
-                </div>
-                {form.scope === "specific" && (
-                  <div className="grid grid-cols-2 gap-3 mt-3">
-                    <div>
-                      <label className="text-xs text-white/40 block mb-1">Class <span className="text-red-400">*</span></label>
-                      <input
-                        value={form.targetClass}
-                        onChange={e => setForm(f => ({ ...f, targetClass: e.target.value }))}
-                        placeholder="e.g. 6"
-                        className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#D4AF37]/50"
-                        data-testid="input-target-class"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-white/40 block mb-1">Section <span className="text-red-400">*</span></label>
-                      <input
-                        value={form.targetSection}
-                        onChange={e => setForm(f => ({ ...f, targetSection: e.target.value }))}
-                        placeholder="e.g. A"
-                        className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#D4AF37]/50"
-                        data-testid="input-target-section"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
+
+              <AudiencePicker
+                targeted={addTargeted}
+                onToggle={(val) => {
+                  setAddTargeted(val);
+                  if (!val) setForm(f => ({ ...f, targetClass: "", targetSection: "" }));
+                }}
+                targetClass={form.targetClass}
+                onClassChange={(val) => setForm(f => ({ ...f, targetClass: val, targetSection: "" }))}
+                targetSection={form.targetSection}
+                onSectionChange={(val) => setForm(f => ({ ...f, targetSection: val }))}
+                configClasses={configClasses}
+                getSectionsFor={getSectionsFor}
+                testPrefix="button-add"
+              />
+
               <div>
                 <label className="text-xs text-white/50 uppercase tracking-wide block mb-1">Description</label>
                 <textarea
@@ -595,7 +766,7 @@ export default function SchoolCalendar() {
                   onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
                   rows={2}
                   placeholder="Optional notes..."
-                  className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#D4AF37]/50 resize-none"
+                  className={INPUT_CLS + " resize-none"}
                   data-testid="input-event-description"
                 />
               </div>
@@ -613,9 +784,9 @@ export default function SchoolCalendar() {
                 </span>
               </label>
             </div>
-            <div className="flex gap-3 px-5 py-4 border-t border-white/10">
+            <div className="flex gap-3 px-5 py-4 border-t border-white/10 sticky bottom-0 bg-[#1A2942]">
               <button
-                onClick={() => setAddOpen(false)}
+                onClick={closeAddModal}
                 className="flex-1 py-2.5 rounded-lg border border-white/10 text-white/50 text-sm hover:text-white hover:border-white/20 transition-colors"
                 data-testid="button-cancel-add"
               >
@@ -623,7 +794,7 @@ export default function SchoolCalendar() {
               </button>
               <button
                 onClick={() => addMutation.mutate(form)}
-                disabled={addMutation.isPending || !form.title || !form.startDate || (form.scope === "specific" && (!form.targetClass || !form.targetSection))}
+                disabled={addMutation.isPending || !form.title || !form.startDate || (addTargeted && !form.targetClass)}
                 className="flex-1 py-2.5 rounded-lg bg-[#D4AF37] text-[#0A1628] text-sm font-bold hover:bg-[#D4AF37]/90 transition-colors disabled:opacity-60"
                 data-testid="button-confirm-add"
               >
@@ -637,14 +808,14 @@ export default function SchoolCalendar() {
       {/* ══ EDIT EVENT MODAL ══ */}
       {editOpen && editingEvent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.7)" }}>
-          <div className="bg-[#1A2942] rounded-xl border border-white/10 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+          <div className="bg-[#1A2942] rounded-xl border border-white/10 w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 sticky top-0 bg-[#1A2942] z-10">
               <h3 className="text-base font-semibold text-white flex items-center gap-2">
                 <Pencil className="w-4 h-4 text-[#D4AF37]" />
                 {deleteConfirm ? "Confirm Delete" : "Edit Event"}
               </h3>
               <button
-                onClick={() => { setEditOpen(false); setEditingEvent(null); setDeleteConfirm(false); }}
+                onClick={closeEditModal}
                 className="p-1.5 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
                 data-testid="button-close-edit-modal"
               >
@@ -653,7 +824,6 @@ export default function SchoolCalendar() {
             </div>
 
             {deleteConfirm ? (
-              /* ── Confirm Delete Step ── */
               <div className="px-5 py-6 text-center space-y-4">
                 <div className="w-12 h-12 rounded-full bg-red-500/15 flex items-center justify-center mx-auto">
                   <AlertTriangle className="w-6 h-6 text-red-400" />
@@ -683,7 +853,6 @@ export default function SchoolCalendar() {
                 </div>
               </div>
             ) : (
-              /* ── Edit Form ── */
               <>
                 <div className="px-5 py-4 space-y-4">
                   <div>
@@ -691,7 +860,7 @@ export default function SchoolCalendar() {
                     <input
                       value={editForm.title}
                       onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))}
-                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#D4AF37]/50"
+                      className={INPUT_CLS}
                       data-testid="input-edit-event-title"
                     />
                   </div>
@@ -701,7 +870,7 @@ export default function SchoolCalendar() {
                       type="date"
                       value={editForm.date}
                       onChange={e => setEditForm(f => ({ ...f, date: e.target.value }))}
-                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#D4AF37]/50 [color-scheme:dark]"
+                      className={INPUT_CLS + " [color-scheme:dark]"}
                       data-testid="input-edit-event-date"
                     />
                   </div>
@@ -727,51 +896,22 @@ export default function SchoolCalendar() {
                       ))}
                     </div>
                   </div>
-                  <div>
-                    <label className="text-xs text-white/50 uppercase tracking-wide block mb-1">Audience</label>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setEditForm(f => ({ ...f, scope: "all", targetClass: "", targetSection: "" }))}
-                        data-testid="button-edit-scope-all"
-                        className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-all ${editForm.scope === "all" ? "bg-[#D4AF37]/20 border-[#D4AF37]/50 text-[#D4AF37]" : "border-white/10 text-white/40 hover:text-white/60"}`}
-                      >
-                        All School
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditForm(f => ({ ...f, scope: "specific" }))}
-                        data-testid="button-edit-scope-specific"
-                        className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-all ${editForm.scope === "specific" ? "bg-blue-500/20 border-blue-500/40 text-blue-400" : "border-white/10 text-white/40 hover:text-white/60"}`}
-                      >
-                        Specific Class
-                      </button>
-                    </div>
-                    {editForm.scope === "specific" && (
-                      <div className="grid grid-cols-2 gap-3 mt-3">
-                        <div>
-                          <label className="text-xs text-white/40 block mb-1">Class <span className="text-red-400">*</span></label>
-                          <input
-                            value={editForm.targetClass}
-                            onChange={e => setEditForm(f => ({ ...f, targetClass: e.target.value }))}
-                            placeholder="e.g. 6"
-                            className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#D4AF37]/50"
-                            data-testid="input-edit-target-class"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs text-white/40 block mb-1">Section <span className="text-red-400">*</span></label>
-                          <input
-                            value={editForm.targetSection}
-                            onChange={e => setEditForm(f => ({ ...f, targetSection: e.target.value }))}
-                            placeholder="e.g. A"
-                            className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#D4AF37]/50"
-                            data-testid="input-edit-target-section"
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
+
+                  <AudiencePicker
+                    targeted={editTargeted}
+                    onToggle={(val) => {
+                      setEditTargeted(val);
+                      if (!val) setEditForm(f => ({ ...f, targetClass: "", targetSection: "" }));
+                    }}
+                    targetClass={editForm.targetClass}
+                    onClassChange={(val) => setEditForm(f => ({ ...f, targetClass: val, targetSection: "" }))}
+                    targetSection={editForm.targetSection}
+                    onSectionChange={(val) => setEditForm(f => ({ ...f, targetSection: val }))}
+                    configClasses={configClasses}
+                    getSectionsFor={getSectionsFor}
+                    testPrefix="button-edit"
+                  />
+
                   <div>
                     <label className="text-xs text-white/50 uppercase tracking-wide block mb-1">Description</label>
                     <textarea
@@ -779,7 +919,7 @@ export default function SchoolCalendar() {
                       onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
                       rows={2}
                       placeholder="Optional notes..."
-                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#D4AF37]/50 resize-none"
+                      className={INPUT_CLS + " resize-none"}
                       data-testid="input-edit-event-description"
                     />
                   </div>
@@ -797,10 +937,10 @@ export default function SchoolCalendar() {
                     </span>
                   </label>
                 </div>
-                <div className="px-5 py-4 border-t border-white/10 space-y-2">
+                <div className="px-5 py-4 border-t border-white/10 space-y-2 sticky bottom-0 bg-[#1A2942]">
                   <div className="flex gap-3">
                     <button
-                      onClick={() => { setEditOpen(false); setEditingEvent(null); }}
+                      onClick={closeEditModal}
                       className="flex-1 py-2.5 rounded-lg border border-white/10 text-white/50 text-sm hover:text-white hover:border-white/20 transition-colors"
                       data-testid="button-cancel-edit"
                     >
@@ -808,7 +948,7 @@ export default function SchoolCalendar() {
                     </button>
                     <button
                       onClick={() => editMutation.mutate({ ...editForm, id: editingEvent.id })}
-                      disabled={editMutation.isPending || !editForm.title || !editForm.date || (editForm.scope === "specific" && (!editForm.targetClass || !editForm.targetSection))}
+                      disabled={editMutation.isPending || !editForm.title || !editForm.date || (editTargeted && !editForm.targetClass)}
                       className="flex-1 py-2.5 rounded-lg bg-[#D4AF37] text-[#0A1628] text-sm font-bold hover:bg-[#D4AF37]/90 transition-colors disabled:opacity-60"
                       data-testid="button-submit-edit"
                     >

@@ -42,6 +42,28 @@ import { eq, sql, like, count, and, desc, gte, lte, or, ilike, isNull, inArray, 
 import { alias } from "drizzle-orm/pg-core";
 import { randomBytes } from "node:crypto";
 
+function buildCalendarAudienceFilter(
+  filter?: Array<{ cls: string; sec?: string }>
+): SQL | undefined {
+  if (!filter || filter.length === 0) return undefined;
+  const clauses: SQL[] = [eq(calendarEvents.audienceScope, "All_School")];
+  for (const { cls, sec } of filter) {
+    clauses.push(
+      and(eq(calendarEvents.audienceScope, "Entire_Class"), eq(calendarEvents.targetClass, cls)) as SQL
+    );
+    if (sec) {
+      clauses.push(
+        and(
+          eq(calendarEvents.audienceScope, "Specific_Section"),
+          eq(calendarEvents.targetClass, cls),
+          eq(calendarEvents.targetSection, sec)
+        ) as SQL
+      );
+    }
+  }
+  return or(...clauses) as SQL;
+}
+
 export class DatabaseStorage {
   async getSchools(): Promise<School[]> {
     return await db.select().from(schools);
@@ -1136,47 +1158,22 @@ export class DatabaseStorage {
     return await db.insert(calendarEvents).values(data).returning();
   }
 
-  async getCalendarEvents(schoolId: number, targetClass?: string, targetSection?: string): Promise<CalendarEvent[]> {
-    if (targetClass && targetSection) {
-      return await db.select().from(calendarEvents).where(
-        and(
-          eq(calendarEvents.schoolId, schoolId),
-          or(
-            eq(calendarEvents.scope, "all"),
-            and(
-              eq(calendarEvents.scope, "specific"),
-              eq(calendarEvents.targetClass, targetClass),
-              eq(calendarEvents.targetSection, targetSection),
-            ),
-          ),
-        )
-      );
-    }
-    return await db.select().from(calendarEvents).where(eq(calendarEvents.schoolId, schoolId));
+  async getCalendarEvents(schoolId: number, filter?: Array<{ cls: string; sec?: string }>): Promise<CalendarEvent[]> {
+    const conditions: SQL[] = [eq(calendarEvents.schoolId, schoolId)];
+    const audienceFilter = buildCalendarAudienceFilter(filter);
+    if (audienceFilter) conditions.push(audienceFilter);
+    return await db.select().from(calendarEvents).where(and(...conditions));
   }
 
-  async getCalendarEventsByRange(schoolId: number, startDate: string, endDate: string, targetClass?: string, targetSection?: string): Promise<CalendarEvent[]> {
-    const baseConditions = [
+  async getCalendarEventsByRange(schoolId: number, startDate: string, endDate: string, filter?: Array<{ cls: string; sec?: string }>): Promise<CalendarEvent[]> {
+    const conditions: SQL[] = [
       eq(calendarEvents.schoolId, schoolId),
       gte(calendarEvents.date, startDate),
       lte(calendarEvents.date, endDate),
     ];
-    if (targetClass && targetSection) {
-      return await db.select().from(calendarEvents).where(
-        and(
-          ...baseConditions,
-          or(
-            eq(calendarEvents.scope, "all"),
-            and(
-              eq(calendarEvents.scope, "specific"),
-              eq(calendarEvents.targetClass, targetClass),
-              eq(calendarEvents.targetSection, targetSection),
-            ),
-          ),
-        )
-      );
-    }
-    return await db.select().from(calendarEvents).where(and(...baseConditions));
+    const audienceFilter = buildCalendarAudienceFilter(filter);
+    if (audienceFilter) conditions.push(audienceFilter);
+    return await db.select().from(calendarEvents).where(and(...conditions));
   }
 
   async getHolidayOnDate(schoolId: number, date: string): Promise<CalendarEvent | null> {
@@ -1185,7 +1182,7 @@ export class DatabaseStorage {
         eq(calendarEvents.schoolId, schoolId),
         eq(calendarEvents.date, date),
         eq(calendarEvents.eventType, "holiday"),
-        eq(calendarEvents.scope, "all"),
+        eq(calendarEvents.audienceScope, "All_School"),
       )
     );
     return event || null;
@@ -1204,7 +1201,7 @@ export class DatabaseStorage {
     description?: string | null;
     colorCode?: string | null;
     isRecurring?: boolean;
-    scope?: string;
+    audienceScope?: string;
     targetClass?: string | null;
     targetSection?: string | null;
   }): Promise<CalendarEvent | null> {
