@@ -1136,18 +1136,47 @@ export class DatabaseStorage {
     return await db.insert(calendarEvents).values(data).returning();
   }
 
-  async getCalendarEvents(schoolId: number): Promise<CalendarEvent[]> {
+  async getCalendarEvents(schoolId: number, targetClass?: string, targetSection?: string): Promise<CalendarEvent[]> {
+    if (targetClass && targetSection) {
+      return await db.select().from(calendarEvents).where(
+        and(
+          eq(calendarEvents.schoolId, schoolId),
+          or(
+            eq(calendarEvents.scope, "all"),
+            and(
+              eq(calendarEvents.scope, "specific"),
+              eq(calendarEvents.targetClass, targetClass),
+              eq(calendarEvents.targetSection, targetSection),
+            ),
+          ),
+        )
+      );
+    }
     return await db.select().from(calendarEvents).where(eq(calendarEvents.schoolId, schoolId));
   }
 
-  async getCalendarEventsByRange(schoolId: number, startDate: string, endDate: string): Promise<CalendarEvent[]> {
-    return await db.select().from(calendarEvents).where(
-      and(
-        eq(calendarEvents.schoolId, schoolId),
-        gte(calendarEvents.date, startDate),
-        lte(calendarEvents.date, endDate),
-      )
-    );
+  async getCalendarEventsByRange(schoolId: number, startDate: string, endDate: string, targetClass?: string, targetSection?: string): Promise<CalendarEvent[]> {
+    const baseConditions = [
+      eq(calendarEvents.schoolId, schoolId),
+      gte(calendarEvents.date, startDate),
+      lte(calendarEvents.date, endDate),
+    ];
+    if (targetClass && targetSection) {
+      return await db.select().from(calendarEvents).where(
+        and(
+          ...baseConditions,
+          or(
+            eq(calendarEvents.scope, "all"),
+            and(
+              eq(calendarEvents.scope, "specific"),
+              eq(calendarEvents.targetClass, targetClass),
+              eq(calendarEvents.targetSection, targetSection),
+            ),
+          ),
+        )
+      );
+    }
+    return await db.select().from(calendarEvents).where(and(...baseConditions));
   }
 
   async getHolidayOnDate(schoolId: number, date: string): Promise<CalendarEvent | null> {
@@ -1156,6 +1185,7 @@ export class DatabaseStorage {
         eq(calendarEvents.schoolId, schoolId),
         eq(calendarEvents.date, date),
         eq(calendarEvents.eventType, "holiday"),
+        eq(calendarEvents.scope, "all"),
       )
     );
     return event || null;
@@ -1174,6 +1204,9 @@ export class DatabaseStorage {
     description?: string | null;
     colorCode?: string | null;
     isRecurring?: boolean;
+    scope?: string;
+    targetClass?: string | null;
+    targetSection?: string | null;
   }): Promise<CalendarEvent | null> {
     const [updated] = await db.update(calendarEvents)
       .set(data)

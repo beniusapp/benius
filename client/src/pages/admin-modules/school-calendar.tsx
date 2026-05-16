@@ -18,6 +18,9 @@ interface CalendarEvent {
   description: string | null;
   colorCode: string | null;
   isRecurring: boolean;
+  scope: string;
+  targetClass: string | null;
+  targetSection: string | null;
 }
 
 const MONTHS = [
@@ -54,6 +57,9 @@ const EMPTY_FORM = {
   endDate: "",
   isRecurring: false,
   colorCode: "",
+  scope: "all",
+  targetClass: "",
+  targetSection: "",
 };
 
 const EMPTY_EDIT = {
@@ -63,6 +69,9 @@ const EMPTY_EDIT = {
   date: "",
   isRecurring: false,
   colorCode: "",
+  scope: "all",
+  targetClass: "",
+  targetSection: "",
 };
 
 function invalidateAll() {
@@ -193,6 +202,9 @@ export default function SchoolCalendar() {
       date: ev.date.split("T")[0],
       isRecurring: ev.isRecurring,
       colorCode: ev.colorCode || "",
+      scope: ev.scope || "all",
+      targetClass: ev.targetClass || "",
+      targetSection: ev.targetSection || "",
     });
     setDeleteConfirm(false);
     setEditOpen(true);
@@ -341,9 +353,9 @@ export default function SchoolCalendar() {
                             style={{ backgroundColor: `${getEventColor(ev)}25`, color: getEventColor(ev) }}
                             data-testid={`event-chip-${ev.id}`}
                             onClick={(e) => { e.stopPropagation(); openEdit(ev); }}
-                            title={`Click to edit: ${ev.title}`}
+                            title={`Click to edit: ${ev.title}${ev.scope === "specific" ? ` (Class ${ev.targetClass}-${ev.targetSection})` : ""}`}
                           >
-                            {ev.title}
+                            {ev.title}{ev.scope === "specific" && <span className="opacity-60"> {ev.targetClass}-{ev.targetSection}</span>}
                           </div>
                         ))}
                         {dayEvs.length > 2 && (
@@ -389,7 +401,13 @@ export default function SchoolCalendar() {
                     <span className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: getEventColor(ev) }} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-white truncate" data-testid={`text-event-title-${ev.id}`}>{ev.title}</p>
-                      <p className="text-[11px] text-white/40 capitalize">{ev.eventType}{ev.isRecurring ? " · recurring" : ""}</p>
+                      <p className="text-[11px] text-white/40 capitalize">
+                        {ev.eventType}{ev.isRecurring ? " · recurring" : ""}
+                        {ev.scope === "specific"
+                          ? <span className="ml-1 px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px] normal-case font-medium">Class {ev.targetClass}-{ev.targetSection}</span>
+                          : <span className="ml-1 px-1.5 py-0.5 rounded bg-white/5 text-white/30 text-[10px] normal-case">All School</span>
+                        }
+                      </p>
                       {ev.description && <p className="text-[11px] text-white/30 mt-0.5 line-clamp-1">{ev.description}</p>}
                     </div>
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -526,6 +544,51 @@ export default function SchoolCalendar() {
                 </div>
               </div>
               <div>
+                <label className="text-xs text-white/50 uppercase tracking-wide block mb-1">Audience</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setForm(f => ({ ...f, scope: "all", targetClass: "", targetSection: "" }))}
+                    data-testid="button-scope-all"
+                    className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-all ${form.scope === "all" ? "bg-[#D4AF37]/20 border-[#D4AF37]/50 text-[#D4AF37]" : "border-white/10 text-white/40 hover:text-white/60"}`}
+                  >
+                    All School
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm(f => ({ ...f, scope: "specific" }))}
+                    data-testid="button-scope-specific"
+                    className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-all ${form.scope === "specific" ? "bg-blue-500/20 border-blue-500/40 text-blue-400" : "border-white/10 text-white/40 hover:text-white/60"}`}
+                  >
+                    Specific Class
+                  </button>
+                </div>
+                {form.scope === "specific" && (
+                  <div className="grid grid-cols-2 gap-3 mt-3">
+                    <div>
+                      <label className="text-xs text-white/40 block mb-1">Class <span className="text-red-400">*</span></label>
+                      <input
+                        value={form.targetClass}
+                        onChange={e => setForm(f => ({ ...f, targetClass: e.target.value }))}
+                        placeholder="e.g. 6"
+                        className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#D4AF37]/50"
+                        data-testid="input-target-class"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-white/40 block mb-1">Section <span className="text-red-400">*</span></label>
+                      <input
+                        value={form.targetSection}
+                        onChange={e => setForm(f => ({ ...f, targetSection: e.target.value }))}
+                        placeholder="e.g. A"
+                        className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#D4AF37]/50"
+                        data-testid="input-target-section"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div>
                 <label className="text-xs text-white/50 uppercase tracking-wide block mb-1">Description</label>
                 <textarea
                   value={form.description}
@@ -560,7 +623,7 @@ export default function SchoolCalendar() {
               </button>
               <button
                 onClick={() => addMutation.mutate(form)}
-                disabled={addMutation.isPending || !form.title || !form.startDate}
+                disabled={addMutation.isPending || !form.title || !form.startDate || (form.scope === "specific" && (!form.targetClass || !form.targetSection))}
                 className="flex-1 py-2.5 rounded-lg bg-[#D4AF37] text-[#0A1628] text-sm font-bold hover:bg-[#D4AF37]/90 transition-colors disabled:opacity-60"
                 data-testid="button-confirm-add"
               >
@@ -665,6 +728,51 @@ export default function SchoolCalendar() {
                     </div>
                   </div>
                   <div>
+                    <label className="text-xs text-white/50 uppercase tracking-wide block mb-1">Audience</label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditForm(f => ({ ...f, scope: "all", targetClass: "", targetSection: "" }))}
+                        data-testid="button-edit-scope-all"
+                        className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-all ${editForm.scope === "all" ? "bg-[#D4AF37]/20 border-[#D4AF37]/50 text-[#D4AF37]" : "border-white/10 text-white/40 hover:text-white/60"}`}
+                      >
+                        All School
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditForm(f => ({ ...f, scope: "specific" }))}
+                        data-testid="button-edit-scope-specific"
+                        className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-all ${editForm.scope === "specific" ? "bg-blue-500/20 border-blue-500/40 text-blue-400" : "border-white/10 text-white/40 hover:text-white/60"}`}
+                      >
+                        Specific Class
+                      </button>
+                    </div>
+                    {editForm.scope === "specific" && (
+                      <div className="grid grid-cols-2 gap-3 mt-3">
+                        <div>
+                          <label className="text-xs text-white/40 block mb-1">Class <span className="text-red-400">*</span></label>
+                          <input
+                            value={editForm.targetClass}
+                            onChange={e => setEditForm(f => ({ ...f, targetClass: e.target.value }))}
+                            placeholder="e.g. 6"
+                            className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#D4AF37]/50"
+                            data-testid="input-edit-target-class"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-white/40 block mb-1">Section <span className="text-red-400">*</span></label>
+                          <input
+                            value={editForm.targetSection}
+                            onChange={e => setEditForm(f => ({ ...f, targetSection: e.target.value }))}
+                            placeholder="e.g. A"
+                            className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#D4AF37]/50"
+                            data-testid="input-edit-target-section"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div>
                     <label className="text-xs text-white/50 uppercase tracking-wide block mb-1">Description</label>
                     <textarea
                       value={editForm.description}
@@ -700,7 +808,7 @@ export default function SchoolCalendar() {
                     </button>
                     <button
                       onClick={() => editMutation.mutate({ ...editForm, id: editingEvent.id })}
-                      disabled={editMutation.isPending || !editForm.title || !editForm.date}
+                      disabled={editMutation.isPending || !editForm.title || !editForm.date || (editForm.scope === "specific" && (!editForm.targetClass || !editForm.targetSection))}
                       className="flex-1 py-2.5 rounded-lg bg-[#D4AF37] text-[#0A1628] text-sm font-bold hover:bg-[#D4AF37]/90 transition-colors disabled:opacity-60"
                       data-testid="button-submit-edit"
                     >

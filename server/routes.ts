@@ -1545,12 +1545,21 @@ export async function registerRoutes(
   app.post("/api/admin/calendar", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId!;
-    const { title, description, eventType, startDate, endDate, isRecurring, colorCode } = req.body;
+    const { title, description, eventType, startDate, endDate, isRecurring, colorCode, scope, targetClass, targetSection } = req.body;
     if (!title || !eventType || !startDate) return res.status(400).json({ message: "title, eventType, startDate required" });
-    const color = colorCode || (eventType === "holiday" ? "#ef4444" : eventType === "academic" || eventType === "examination" ? "#3b82f6" : "#10b981");
+    const scopeValue: "all" | "specific" = scope === "specific" ? "specific" : "all";
+    if (scopeValue === "specific" && (!targetClass || !targetSection)) {
+      return res.status(400).json({ message: "targetClass and targetSection are required when scope is 'specific'" });
+    }
+    const color = colorCode || (eventType === "holiday" ? "#ef4444" : eventType === "examination" ? "#3b82f6" : "#10b981");
 
-    const baseInsert = { schoolId, title, description: description || null, eventType, venue: null, colorCode: color, isRecurring: !!isRecurring };
-    const entries: { schoolId: number; title: string; description: string | null; eventType: string; venue: null; colorCode: string; isRecurring: boolean; date: string }[] = [];
+    const baseInsert = {
+      schoolId, title, description: description || null, eventType, venue: null, colorCode: color,
+      isRecurring: !!isRecurring, scope: scopeValue,
+      targetClass: scopeValue === "specific" ? (targetClass as string) : null,
+      targetSection: scopeValue === "specific" ? (targetSection as string) : null,
+    };
+    const entries: { schoolId: number; title: string; description: string | null; eventType: string; venue: null; colorCode: string; isRecurring: boolean; date: string; scope: string; targetClass: string | null; targetSection: string | null }[] = [];
 
     const start = new Date(startDate + "T00:00:00");
     const end = endDate ? new Date(endDate + "T00:00:00") : start;
@@ -1583,11 +1592,15 @@ export async function registerRoutes(
     const schoolId = req.session.schoolId!;
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
-    const { title, description, eventType, date, venue, colorCode, isRecurring } = req.body;
+    const { title, description, eventType, date, venue, colorCode, isRecurring, scope, targetClass, targetSection } = req.body;
     if (!title || !eventType || !date) return res.status(400).json({ message: "title, eventType, date required" });
-    const color = colorCode || (eventType === "holiday" ? "#ef4444" : eventType === "academic" || eventType === "examination" ? "#3b82f6" : "#10b981");
+    const scopeValue: "all" | "specific" = scope === "specific" ? "specific" : "all";
+    const color = colorCode || (eventType === "holiday" ? "#ef4444" : eventType === "examination" ? "#3b82f6" : "#10b981");
     const updated = await storage.updateCalendarEvent(id, schoolId, {
-      title, description: description || null, eventType, date, venue: venue || null, colorCode: color, isRecurring: !!isRecurring,
+      title, description: description || null, eventType, date, venue: venue || null, colorCode: color,
+      isRecurring: !!isRecurring, scope: scopeValue,
+      targetClass: scopeValue === "specific" ? (targetClass || null) : null,
+      targetSection: scopeValue === "specific" ? (targetSection || null) : null,
     });
     if (!updated) return res.status(404).json({ message: "Event not found or access denied" });
     res.json(updated);
@@ -1611,22 +1624,24 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
+    const cls = student.class || undefined;
+    const sec = student.section || undefined;
     const monthParam = req.query.month !== undefined ? parseInt(req.query.month as string) : null;
     const yearParam = req.query.year ? parseInt(req.query.year as string) : null;
     if (yearParam !== null && monthParam === null) {
       const startDate = `${yearParam}-01-01`;
       const endDate = `${yearParam}-12-31`;
-      const events = await storage.getCalendarEventsByRange(student.schoolId, startDate, endDate);
+      const events = await storage.getCalendarEventsByRange(student.schoolId, startDate, endDate, cls, sec);
       return res.json(events);
     }
     if (monthParam !== null && yearParam !== null) {
       const firstDay = new Date(yearParam, monthParam, 1);
       const lastDay = new Date(yearParam, monthParam + 1, 0);
       const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-      const events = await storage.getCalendarEventsByRange(student.schoolId, fmt(firstDay), fmt(lastDay));
+      const events = await storage.getCalendarEventsByRange(student.schoolId, fmt(firstDay), fmt(lastDay), cls, sec);
       return res.json(events);
     }
-    const events = await storage.getCalendarEvents(student.schoolId);
+    const events = await storage.getCalendarEvents(student.schoolId, cls, sec);
     res.json(events);
   });
 
