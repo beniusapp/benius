@@ -170,14 +170,6 @@ function TileCard({
         </span>
       )}
 
-      {/* status dot (e.g. attendance done/pending) */}
-      {dotColor && badge === undefined && (
-        <span
-          className="absolute top-3 right-3 w-2.5 h-2.5 rounded-full"
-          style={{ background: dotColor, boxShadow: `0 0 8px ${dotColor}` }}
-          data-testid="badge-attendance-status"
-        />
-      )}
 
       {/* emoji icon block */}
       <div
@@ -413,27 +405,6 @@ export default function TeacherDashboard() {
 
               {/* Pill badges */}
               <div className="flex flex-wrap justify-center gap-2 mt-3" data-testid="text-assignments">
-                {/* Attendance status pill */}
-                <span
-                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold"
-                  style={{
-                    background: teacher.attendanceDoneToday
-                      ? "rgba(16,185,129,0.12)"
-                      : "rgba(245,158,11,0.12)",
-                    border: `1px solid ${teacher.attendanceDoneToday ? "rgba(16,185,129,0.30)" : "rgba(245,158,11,0.30)"}`,
-                    color: teacher.attendanceDoneToday ? "#10b981" : "#f59e0b",
-                  }}
-                >
-                  <span
-                    className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                    style={{
-                      background: teacher.attendanceDoneToday ? "#10b981" : "#f59e0b",
-                      boxShadow: `0 0 6px ${teacher.attendanceDoneToday ? "#10b981" : "#f59e0b"}`,
-                    }}
-                  />
-                  {teacher.attendanceDoneToday ? "Attendance Done" : "Attendance Pending"}
-                </span>
-
                 {/* Pending approvals pill */}
                 {pendingProfilesCount > 0 && (
                   <span
