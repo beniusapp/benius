@@ -296,16 +296,14 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   useEffect(() => {
-    if (existingScores.length > 0) {
-      const m: Record<number, string> = {};
-      const a: Record<number, boolean> = {};
-      existingScores.forEach(s => {
-        m[s.studentId] = String(s.marks);
-        a[s.studentId] = s.isAbsent;
-      });
-      setMarks(m);
-      setAbsentMap(a);
-    }
+    const m: Record<number, string> = {};
+    const a: Record<number, boolean> = {};
+    existingScores.forEach(s => {
+      m[s.studentId] = String(s.marks);
+      a[s.studentId] = s.isAbsent;
+    });
+    setMarks(m);
+    setAbsentMap(a);
   }, [existingScores]);
 
   const maxMarks = parseInt(totalMarks) || 100;
