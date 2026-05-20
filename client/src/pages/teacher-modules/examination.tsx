@@ -215,7 +215,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const [selectedSection, setSelectedSection] = useState("");
   const [subject, setSubject] = useState("");
   const [examType, setExamType] = useState("");
-  const [totalMarks, setTotalMarks] = useState("100");
+  const [totalMarks, setTotalMarks] = useState("");
   const [marks, setMarks] = useState<Record<number, string>>({});
   const [absentMap, setAbsentMap] = useState<Record<number, boolean>>({});
   const inputRefs = useRef<Record<number, HTMLInputElement | null>>({});
@@ -307,7 +307,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     if (existingScores.length > 0) {
       setTotalMarks(String(existingScores[0].totalMarks));
     } else {
-      setTotalMarks("100");
+      setTotalMarks("");
     }
   }, [existingScores]);
 
@@ -367,7 +367,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     }
   }, [students]);
 
-  const readyToSave = !!selectedClass && !!selectedSection && !!subject && !!examType && !hasInvalidMarks;
+  const readyToSave = !!selectedClass && !!selectedSection && !!subject && !!examType && !!totalMarks && !hasInvalidMarks;
 
   const notConfigured = !configLoading && (!hasClasses || !hasSections);
 
@@ -469,13 +469,20 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                 </Select>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Total Marks</label>
+                <label className="text-xs font-medium text-muted-foreground">Total Marks *</label>
                 <Input type="number" value={totalMarks} onChange={(e) => setTotalMarks(e.target.value)}
-                  min="1" className="rounded-xl" data-testid="input-total-marks" />
+                  min="1" placeholder="e.g. 100" className={`rounded-xl ${examType && selectedClass && selectedSection && !totalMarks ? "border-amber-400 focus-visible:ring-amber-400" : ""}`} data-testid="input-total-marks" />
               </div>
             </div>
 
-            {examType && selectedClass && selectedSection && students.length > 0 && (
+            {examType && selectedClass && selectedSection && !totalMarks && students.length > 0 && (
+              <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800" data-testid="prompt-total-marks">
+                <span className="text-base">✏️</span>
+                Enter <strong className="mx-1">Total Marks</strong> above to start recording student scores.
+              </div>
+            )}
+
+            {examType && selectedClass && selectedSection && !!totalMarks && students.length > 0 && (
               <>
                 <div className="overflow-x-auto rounded-xl border">
                   <table className="w-full text-sm" data-testid="table-marks">
