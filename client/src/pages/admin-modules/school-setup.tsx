@@ -95,8 +95,13 @@ interface ExamPolicyTierLocal {
   tierName: string;
   applicableClasses: string[];
   targetTerms: TargetTermLocal[];
+  enableMaxFailed: boolean;
+  maxFailedTermName: string;
   maxFailedSubjectsFinal: string;
+  enableCompositeRule: boolean;
+  compositeHalfYearlyTerm: string;
   halfYearlyFailsThreshold: string;
+  compositeFinalTerm: string;
   finalFailsAllowance: string;
   expanded: boolean;
 }
@@ -110,8 +115,13 @@ function emptyExamPolicyTier(): ExamPolicyTierLocal {
     tierName: "",
     applicableClasses: [],
     targetTerms: [emptyTargetTerm()],
+    enableMaxFailed: true,
+    maxFailedTermName: "",
     maxFailedSubjectsFinal: "3",
+    enableCompositeRule: false,
+    compositeHalfYearlyTerm: "",
     halfYearlyFailsThreshold: "5",
+    compositeFinalTerm: "",
     finalFailsAllowance: "3",
     expanded: true,
   };
@@ -133,8 +143,14 @@ function validateExamPolicyTiers(tiers: ExamPolicyTierLocal[]): string[] {
       const totalWeight = term.components.reduce((s, c) => s + (parseFloat(c.weight) || 0), 0);
       if (Math.abs(totalWeight - 100) >= 0.01) errors.push(`"${t.tierName}" / "${term.targetName || "Unnamed term"}": Weights must sum to exactly 100% (currently ${totalWeight.toFixed(1)}%).`);
       for (const comp of term.components) {
-        if (!comp.sourceExam.trim()) errors.push(`"${t.tierName}" / "${term.targetName || "Unnamed term"}": A component is missing a source exam name.`);
+        if (!comp.sourceExam.trim()) errors.push(`"${t.tierName}" / "${term.targetName || "Unnamed term"}": A component is missing a source exam.`);
       }
+    }
+    if (!t.enableMaxFailed && !t.enableCompositeRule) errors.push(`"${t.tierName}": At least one retention rule (Rule 1 or Composite) must be enabled.`);
+    if (t.enableMaxFailed && !t.maxFailedTermName) errors.push(`"${t.tierName}": Select a term for Rule 1 (max failed subjects).`);
+    if (t.enableCompositeRule) {
+      if (!t.compositeHalfYearlyTerm) errors.push(`"${t.tierName}": Select a term for the Composite Rule first threshold.`);
+      if (!t.compositeFinalTerm) errors.push(`"${t.tierName}": Select a term for the Composite Rule second threshold.`);
     }
   }
   return Array.from(new Set(errors));
@@ -506,9 +522,25 @@ function TierAccordion({ tier, classesList, onChange, onDelete, onSave, isSaving
   );
 }
 
-function ExamPolicyTierAccordion({ tier, classesList, onChange, onDelete, onSave, isSaving }: {
+function TermSelect({ value, onChange, terms, placeholder, testId }: {
+  value: string; onChange: (v: string) => void; terms: string[]; placeholder: string; testId?: string;
+}) {
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)}
+      className="h-9 w-full rounded-md border border-white/20 bg-[#0A1628] text-sm px-2 text-white appearance-none cursor-pointer focus:outline-none focus:border-[#D4AF37]/60"
+      style={{ colorScheme: "dark" }} data-testid={testId}>
+      <option value="" className="bg-[#0A1628] text-white/40">{placeholder}</option>
+      {terms.filter(t => t.trim()).map(t => (
+        <option key={t} value={t} className="bg-[#0A1628] text-white">{t}</option>
+      ))}
+    </select>
+  );
+}
+
+function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, onDelete, onSave, isSaving }: {
   tier: ExamPolicyTierLocal;
   classesList: string[];
+  examTypesList: string[];
   onChange: (t: ExamPolicyTierLocal) => void;
   onDelete: () => void;
   onSave: () => void;
@@ -516,6 +548,8 @@ function ExamPolicyTierAccordion({ tier, classesList, onChange, onDelete, onSave
 }) {
   const [showClassPicker, setShowClassPicker] = useState(false);
   const setField = (field: keyof ExamPolicyTierLocal, val: any) => onChange({ ...tier, [field]: val });
+
+  const termNames = tier.targetTerms.map(t => t.targetName).filter(n => n.trim());
 
   const toggleClass = (cls: string) => {
     const updated = tier.applicableClasses.includes(cls)
@@ -633,7 +667,9 @@ function ExamPolicyTierAccordion({ tier, classesList, onChange, onDelete, onSave
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-[#D4AF37]">Section A — Exam Aggregation Weights</p>
-                <p className="text-xs text-white/40 mt-0.5">Define how component exams combine into each composite result term. Weights must sum to exactly 100%.</p>
+                <p className="text-xs text-white/40 mt-0.5">
+                  Define how component exams (from your configured Exam Types) combine into each composite result term. Weights must sum to exactly 100%.
+                </p>
               </div>
               <Button size="sm" type="button" onClick={addTargetTerm}
                 className="bg-[#D4AF37]/20 hover:bg-[#D4AF37]/30 text-[#D4AF37] border border-[#D4AF37]/40 h-8 text-xs shrink-0 ml-3"
@@ -641,6 +677,12 @@ function ExamPolicyTierAccordion({ tier, classesList, onChange, onDelete, onSave
                 <Plus className="w-3 h-3 mr-1" /> Add Term
               </Button>
             </div>
+
+            {examTypesList.length === 0 && (
+              <div className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400/70">
+                No exam types configured yet. Go to the <span className="font-semibold">Exam Types</span> section above to add them first.
+              </div>
+            )}
 
             {tier.targetTerms.length === 0 && (
               <p className="text-white/30 text-xs italic text-center py-2">No target terms yet. Click "Add Term" to define a composite result.</p>
@@ -653,7 +695,7 @@ function ExamPolicyTierAccordion({ tier, classesList, onChange, onDelete, onSave
                 <div key={termIdx} className="rounded-md border border-white/10 bg-[#0A1628] p-3 space-y-2">
                   <div className="flex items-center gap-2">
                     <Input value={term.targetName} onChange={e => updateTargetTermName(termIdx, e.target.value)}
-                      placeholder="Target term name (e.g. Final Exam Result)"
+                      placeholder="Result term name (e.g. Final Exam Result)"
                       className="bg-[#1A2942] border-white/20 text-white text-xs h-8 flex-1"
                       data-testid={`input-target-term-name-${tier.tempId}-${termIdx}`} />
                     <button onClick={() => removeTargetTerm(termIdx)}
@@ -675,10 +717,24 @@ function ExamPolicyTierAccordion({ tier, classesList, onChange, onDelete, onSave
                         {term.components.map((comp, compIdx) => (
                           <tr key={compIdx}>
                             <td className="py-1 pr-2">
-                              <Input value={comp.sourceExam} onChange={e => updateComponent(termIdx, compIdx, "sourceExam", e.target.value)}
-                                placeholder="e.g. Unit Test 1"
-                                className="bg-[#1A2942] border-white/20 text-white text-xs h-7"
-                                data-testid={`input-source-exam-${tier.tempId}-${termIdx}-${compIdx}`} />
+                              {examTypesList.length > 0 ? (
+                                <select value={comp.sourceExam}
+                                  onChange={e => updateComponent(termIdx, compIdx, "sourceExam", e.target.value)}
+                                  className="h-7 w-full rounded border border-white/20 bg-[#1A2942] text-xs px-2 text-white appearance-none cursor-pointer focus:outline-none focus:border-[#D4AF37]/60"
+                                  style={{ colorScheme: "dark" }}
+                                  data-testid={`select-source-exam-${tier.tempId}-${termIdx}-${compIdx}`}>
+                                  <option value="" className="bg-[#1A2942] text-white/40">— pick exam —</option>
+                                  {examTypesList.map(et => (
+                                    <option key={et} value={et} className="bg-[#1A2942] text-white">{et}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <Input value={comp.sourceExam}
+                                  onChange={e => updateComponent(termIdx, compIdx, "sourceExam", e.target.value)}
+                                  placeholder="Exam name"
+                                  className="bg-[#1A2942] border-white/20 text-white text-xs h-7"
+                                  data-testid={`input-source-exam-${tier.tempId}-${termIdx}-${compIdx}`} />
+                              )}
                             </td>
                             <td className="py-1 pr-2">
                               <Input type="number" min="1" max="100" value={comp.weight}
@@ -718,44 +774,120 @@ function ExamPolicyTierAccordion({ tier, classesList, onChange, onDelete, onSave
           <div className="rounded-lg border border-white/10 bg-[#0A1628]/60 p-4 space-y-4">
             <div>
               <p className="text-sm font-semibold text-[#D4AF37]">Section B — Promotion & Failure Logic</p>
-              <p className="text-xs text-white/40 mt-0.5">Define subject-failure thresholds that automatically trigger student retention at year-end.</p>
+              <p className="text-xs text-white/40 mt-0.5">
+                Enable one or both retention rules. A student is retained if <span className="text-white/60 font-medium">any enabled rule</span> is triggered.
+                Term names are pulled from Section A above.
+              </p>
             </div>
-            <div className="space-y-4">
-              <div className="rounded-md border border-white/10 bg-[#1A2942]/60 p-3">
-                <label className="text-xs text-white/60 mb-2 block font-medium">
-                  Max failed subjects in the <span className="text-[#D4AF37]/80">Final</span> term before automatic Retention
-                </label>
-                <div className="flex items-center gap-3">
-                  <Input type="number" min="0" max="20" value={tier.maxFailedSubjectsFinal}
-                    onChange={e => setField("maxFailedSubjectsFinal", e.target.value)}
-                    className="bg-[#0A1628] border-white/20 text-white text-sm h-9 w-24"
-                    data-testid={`input-max-failed-final-${tier.tempId}`} />
-                  <span className="text-xs text-white/40">subjects — student is retained if fail count ≥ this value</span>
-                </div>
+
+            {termNames.length === 0 && (
+              <div className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/30 italic">
+                Define target terms in Section A first — they will appear as dropdown options here.
               </div>
-              <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3 space-y-3">
+            )}
+
+            {/* Rule 1 */}
+            <div className={`rounded-md border p-3 space-y-3 transition-colors ${tier.enableMaxFailed ? "border-[#D4AF37]/30 bg-[#D4AF37]/5" : "border-white/10 bg-[#1A2942]/40"}`}>
+              <div className="flex items-center gap-3">
+                <button type="button"
+                  onClick={() => setField("enableMaxFailed", !tier.enableMaxFailed)}
+                  className={`w-9 h-5 rounded-full border-2 relative transition-colors shrink-0 ${tier.enableMaxFailed ? "bg-[#D4AF37] border-[#D4AF37]" : "bg-white/10 border-white/20"}`}
+                  data-testid={`toggle-enable-max-failed-${tier.tempId}`}>
+                  <span className={`absolute top-0.5 w-3 h-3 rounded-full transition-transform ${tier.enableMaxFailed ? "bg-[#0A1628] translate-x-4" : "bg-white/40 translate-x-0.5"}`} />
+                </button>
                 <div>
-                  <p className="text-xs text-amber-400/80 font-semibold">Composite Overlap Rule</p>
-                  <p className="text-xs text-white/30 mt-0.5">If a student fails ≥ X subjects in the Half Yearly term AND ≥ Y subjects in the Final term → automatic Retention.</p>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-white/50 mb-1 block">Half Yearly fails threshold (X)</label>
-                    <Input type="number" min="0" max="20" value={tier.halfYearlyFailsThreshold}
-                      onChange={e => setField("halfYearlyFailsThreshold", e.target.value)}
-                      className="bg-[#0A1628] border-white/20 text-white text-sm h-9"
-                      data-testid={`input-hy-threshold-${tier.tempId}`} />
-                  </div>
-                  <div>
-                    <label className="text-xs text-white/50 mb-1 block">Final fails allowance if HY tripped (Y)</label>
-                    <Input type="number" min="0" max="20" value={tier.finalFailsAllowance}
-                      onChange={e => setField("finalFailsAllowance", e.target.value)}
-                      className="bg-[#0A1628] border-white/20 text-white text-sm h-9"
-                      data-testid={`input-final-allowance-${tier.tempId}`} />
-                  </div>
+                  <p className={`text-xs font-semibold ${tier.enableMaxFailed ? "text-[#D4AF37]" : "text-white/40"}`}>Rule 1 — Max Failed Subjects in a Term</p>
+                  <p className="text-[10px] text-white/30 mt-0.5">Student is retained if they fail ≥ N subjects in the selected term.</p>
                 </div>
               </div>
+              {tier.enableMaxFailed && (
+                <div className="space-y-2 pl-1">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-white/60">
+                    <span>Max failed subjects in</span>
+                    <div className="w-52">
+                      <TermSelect
+                        value={tier.maxFailedTermName}
+                        onChange={v => setField("maxFailedTermName", v)}
+                        terms={termNames}
+                        placeholder="— pick term from Section A —"
+                        testId={`select-max-failed-term-${tier.tempId}`}
+                      />
+                    </div>
+                    <span>term:</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Input type="number" min="0" max="20" value={tier.maxFailedSubjectsFinal}
+                      onChange={e => setField("maxFailedSubjectsFinal", e.target.value)}
+                      className="bg-[#0A1628] border-white/20 text-white text-sm h-9 w-24"
+                      data-testid={`input-max-failed-count-${tier.tempId}`} />
+                    <span className="text-xs text-white/40">subjects — retain if fail count ≥ this value</span>
+                  </div>
+                </div>
+              )}
             </div>
+
+            {/* Rule 2: Composite Overlap */}
+            <div className={`rounded-md border p-3 space-y-3 transition-colors ${tier.enableCompositeRule ? "border-amber-500/30 bg-amber-500/5" : "border-white/10 bg-[#1A2942]/40"}`}>
+              <div className="flex items-center gap-3">
+                <button type="button"
+                  onClick={() => setField("enableCompositeRule", !tier.enableCompositeRule)}
+                  className={`w-9 h-5 rounded-full border-2 relative transition-colors shrink-0 ${tier.enableCompositeRule ? "bg-amber-500 border-amber-500" : "bg-white/10 border-white/20"}`}
+                  data-testid={`toggle-enable-composite-${tier.tempId}`}>
+                  <span className={`absolute top-0.5 w-3 h-3 rounded-full transition-transform ${tier.enableCompositeRule ? "bg-[#0A1628] translate-x-4" : "bg-white/40 translate-x-0.5"}`} />
+                </button>
+                <div>
+                  <p className={`text-xs font-semibold ${tier.enableCompositeRule ? "text-amber-400" : "text-white/40"}`}>Rule 2 — Composite Overlap Rule</p>
+                  <p className="text-[10px] text-white/30 mt-0.5">Retain if student fails ≥ X subjects in Term 1 AND ≥ Y subjects in Term 2.</p>
+                </div>
+              </div>
+              {tier.enableCompositeRule && (
+                <div className="space-y-3 pl-1">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-white/50 block">First term (Term 1)</label>
+                      <TermSelect
+                        value={tier.compositeHalfYearlyTerm}
+                        onChange={v => setField("compositeHalfYearlyTerm", v)}
+                        terms={termNames}
+                        placeholder="— pick term —"
+                        testId={`select-composite-hy-term-${tier.tempId}`}
+                      />
+                      <div className="flex items-center gap-2 mt-1">
+                        <Input type="number" min="0" max="20" value={tier.halfYearlyFailsThreshold}
+                          onChange={e => setField("halfYearlyFailsThreshold", e.target.value)}
+                          className="bg-[#0A1628] border-white/20 text-white text-sm h-9 w-20"
+                          data-testid={`input-hy-threshold-${tier.tempId}`} />
+                        <span className="text-xs text-white/40">fails threshold (X)</span>
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-white/50 block">Second term (Term 2)</label>
+                      <TermSelect
+                        value={tier.compositeFinalTerm}
+                        onChange={v => setField("compositeFinalTerm", v)}
+                        terms={termNames}
+                        placeholder="— pick term —"
+                        testId={`select-composite-final-term-${tier.tempId}`}
+                      />
+                      <div className="flex items-center gap-2 mt-1">
+                        <Input type="number" min="0" max="20" value={tier.finalFailsAllowance}
+                          onChange={e => setField("finalFailsAllowance", e.target.value)}
+                          className="bg-[#0A1628] border-white/20 text-white text-sm h-9 w-20"
+                          data-testid={`input-final-allowance-${tier.tempId}`} />
+                        <span className="text-xs text-white/40">fails threshold (Y)</span>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-amber-400/50 italic">
+                    Retention triggered when: fails in "{tier.compositeHalfYearlyTerm || "Term 1"}" ≥ {tier.halfYearlyFailsThreshold || "X"} AND fails in "{tier.compositeFinalTerm || "Term 2"}" ≥ {tier.finalFailsAllowance || "Y"}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {!tier.enableMaxFailed && !tier.enableCompositeRule && (
+              <p className="text-xs text-red-400/70 italic">⚠ Enable at least one retention rule before saving.</p>
+            )}
           </div>
 
           {/* Action Buttons */}
@@ -910,15 +1042,22 @@ export default function SchoolSetup({ schoolId }: Props) {
           targetName: name,
           components: (comps as any[]).map(c => ({ sourceExam: c.source_exam ?? "", weight: String(c.weight ?? "") })),
         }));
+        const r1 = rules.rule1 ?? {};
+        const r2 = rules.rule2 ?? {};
         return {
           id: t.id,
           tempId: String(t.id),
           tierName: t.tierName,
           applicableClasses: t.applicableClasses || [],
           targetTerms: targetTerms.length > 0 ? targetTerms : [emptyTargetTerm()],
-          maxFailedSubjectsFinal: String(rules.max_failed_subjects_final ?? 3),
-          halfYearlyFailsThreshold: String(rules.composite_fail_rules?.half_yearly_fails_threshold ?? 5),
-          finalFailsAllowance: String(rules.composite_fail_rules?.final_fails_allowance_if_half_yearly_tripped ?? 3),
+          enableMaxFailed: r1.enabled !== false,
+          maxFailedTermName: r1.term ?? "",
+          maxFailedSubjectsFinal: String(r1.max_fails ?? rules.max_failed_subjects_final ?? 3),
+          enableCompositeRule: r2.enabled === true,
+          compositeHalfYearlyTerm: r2.first_term ?? "",
+          halfYearlyFailsThreshold: String(r2.first_fails ?? rules.composite_fail_rules?.half_yearly_fails_threshold ?? 5),
+          compositeFinalTerm: r2.second_term ?? "",
+          finalFailsAllowance: String(r2.second_fails ?? rules.composite_fail_rules?.final_fails_allowance_if_half_yearly_tripped ?? 3),
           expanded: false,
         } as ExamPolicyTierLocal;
       }));
@@ -1031,16 +1170,25 @@ export default function SchoolSetup({ schoolId }: Props) {
     try {
       const examWeights: Record<string, { source_exam: string; weight: number }[]> = {};
       for (const term of tier.targetTerms) {
-        examWeights[term.targetName] = term.components.map(c => ({
-          source_exam: c.sourceExam,
-          weight: parseFloat(c.weight) || 0,
-        }));
+        if (term.targetName.trim()) {
+          examWeights[term.targetName] = term.components.map(c => ({
+            source_exam: c.sourceExam,
+            weight: parseFloat(c.weight) || 0,
+          }));
+        }
       }
       const promotionFailRules = {
-        max_failed_subjects_final: parseInt(tier.maxFailedSubjectsFinal) || 3,
-        composite_fail_rules: {
-          half_yearly_fails_threshold: parseInt(tier.halfYearlyFailsThreshold) || 5,
-          final_fails_allowance_if_half_yearly_tripped: parseInt(tier.finalFailsAllowance) || 3,
+        rule1: {
+          enabled: tier.enableMaxFailed,
+          term: tier.maxFailedTermName,
+          max_fails: parseInt(tier.maxFailedSubjectsFinal) || 3,
+        },
+        rule2: {
+          enabled: tier.enableCompositeRule,
+          first_term: tier.compositeHalfYearlyTerm,
+          first_fails: parseInt(tier.halfYearlyFailsThreshold) || 5,
+          second_term: tier.compositeFinalTerm,
+          second_fails: parseInt(tier.finalFailsAllowance) || 3,
         },
       };
       const payload = {
@@ -1425,6 +1573,7 @@ export default function SchoolSetup({ schoolId }: Props) {
               key={tier.tempId}
               tier={tier}
               classesList={classesList}
+              examTypesList={examTypes}
               onChange={updated => updateExamPolicyTierFn(tier.tempId, updated)}
               onDelete={() => deleteExamPolicyTierFn(tier)}
               onSave={() => saveExamPolicyTierFn(tier)}
