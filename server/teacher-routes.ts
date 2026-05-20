@@ -865,80 +865,104 @@ export function registerTeacherRoutes(app: Express) {
   // ===== EXAMINATION =====
   app.post("/api/exam-scores", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    try {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
-    const { scores, subject, examType, totalMarks, passMarks, class: cls, section } = req.body;
-    if (!Array.isArray(scores) || !subject || !examType) return res.status(400).json({ message: "Scores, subject, and examType required" });
+      const { scores, subject, examType, totalMarks, passMarks, class: cls, section } = req.body;
+      if (!Array.isArray(scores) || !subject || !examType) return res.status(400).json({ message: "Scores, subject, and examType required" });
 
-    const resolvedClass = cls || teacher.assignedClass;
-    const resolvedSection = section || teacher.assignedSection;
-    const maxMarks = parseInt(totalMarks) || 100;
-    const pMarks = parseInt(passMarks) || 33;
-    const formattedScores = scores.map((s: any) => ({
-      studentId: s.studentId,
-      teacherId: teacher.id,
-      schoolId: teacher.schoolId,
-      subject,
-      examType,
-      marks: s.isAbsent ? 0 : parseInt(s.marks) || 0,
-      totalMarks: maxMarks,
-      passMarks: pMarks,
-      isAbsent: !!s.isAbsent,
-      class: resolvedClass || null,
-      section: resolvedSection || null,
-    }));
+      const resolvedClass = cls || teacher.assignedClass || null;
+      const resolvedSection = section || teacher.assignedSection || null;
+      const maxMarks = parseInt(totalMarks) || 100;
+      const pMarks = parseInt(passMarks) || 33;
+      const formattedScores = scores.map((s: any) => ({
+        studentId: parseInt(s.studentId),
+        teacherId: teacher.id,
+        schoolId: teacher.schoolId,
+        subject,
+        examType,
+        marks: s.isAbsent ? 0 : parseInt(s.marks) || 0,
+        totalMarks: maxMarks,
+        passMarks: pMarks,
+        isAbsent: !!s.isAbsent,
+        class: resolvedClass || null,
+        section: resolvedSection || null,
+      }));
 
-    const saved = await storage.upsertExamScores(formattedScores);
-    res.json({ message: `Saved ${saved.length} scores`, count: saved.length });
+      const saved = await storage.upsertExamScores(formattedScores);
+      res.json({ message: `Saved ${saved.length} scores`, count: saved.length });
+    } catch (err: any) {
+      console.error("POST /api/exam-scores error:", err);
+      res.status(500).json({ message: err?.message || "Failed to save exam scores" });
+    }
   });
 
   app.post("/api/exam-scores/publish", async (req, res) => {
     if (!req.session.teacherId && (!req.session.userId || req.session.userRole !== "admin")) {
       return res.status(401).json({ message: "Not authenticated" });
     }
-    const { class: cls, section, examType, schoolId } = req.body;
-    if (!cls || !section || !examType || !schoolId) {
-      return res.status(400).json({ message: "class, section, examType, schoolId required" });
+    try {
+      const { class: cls, section, examType, schoolId } = req.body;
+      if (!cls || !section || !examType || !schoolId) {
+        return res.status(400).json({ message: "class, section, examType, schoolId required" });
+      }
+      const sid = parseInt(schoolId);
+      if (req.session.teacherId) {
+        const teacher = await storage.getTeacherById(req.session.teacherId);
+        if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
+      } else if (req.session.schoolId !== sid) {
+        return res.status(403).json({ message: "Not authorized for this school" });
+      }
+      const count = await storage.publishExamScores(sid, cls, section, examType);
+      res.json({ message: `Published ${count} scores`, count });
+    } catch (err: any) {
+      console.error("POST /api/exam-scores/publish error:", err);
+      res.status(500).json({ message: err?.message || "Failed to publish scores" });
     }
-    const sid = parseInt(schoolId);
-    if (req.session.teacherId) {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
-    } else if (req.session.schoolId !== sid) {
-      return res.status(403).json({ message: "Not authorized for this school" });
-    }
-    const count = await storage.publishExamScores(sid, cls, section, examType);
-    res.json({ message: `Published ${count} scores`, count });
   });
 
-  app.get("/api/exam-scores/:schoolId/:subject/:examType/:class/:section", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const { schoolId, subject, examType, class: cls, section } = req.params;
-    const list = await storage.getExamScores(parseInt(schoolId), decodeURIComponent(subject), decodeURIComponent(examType), cls, section);
-    res.json(list);
-  });
-
+  // IMPORTANT: specific routes must be registered before the parameterized wildcard route
   app.get("/api/exam-scores/class-average/:schoolId/:class/:section/:subject", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const { schoolId, class: cls, section, subject } = req.params;
-    const sid = parseInt(schoolId);
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
-    const averages = await storage.getClassAverages(sid, decodeURIComponent(cls), decodeURIComponent(section), decodeURIComponent(subject));
-    res.json(averages);
+    try {
+      const { schoolId, class: cls, section, subject } = req.params;
+      const sid = parseInt(schoolId);
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
+      const averages = await storage.getClassAverages(sid, decodeURIComponent(cls), decodeURIComponent(section), decodeURIComponent(subject));
+      res.json(averages);
+    } catch (err: any) {
+      console.error("GET /api/exam-scores/class-average error:", err);
+      res.status(500).json({ message: err?.message || "Failed to fetch class averages" });
+    }
   });
 
   app.get("/api/exam-scores/student/:studentId/:schoolId", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const studentId = parseInt(req.params.studentId);
-    const schoolId = parseInt(req.params.schoolId);
+    try {
+      const studentId = parseInt(req.params.studentId);
+      const schoolId = parseInt(req.params.schoolId);
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized for this school" });
+      const list = await storage.getExamScoresByStudent(studentId, schoolId);
+      res.json(list);
+    } catch (err: any) {
+      console.error("GET /api/exam-scores/student error:", err);
+      res.status(500).json({ message: err?.message || "Failed to fetch student scores" });
+    }
+  });
 
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher || teacher.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized for this school" });
-
-    const list = await storage.getExamScoresByStudent(studentId, schoolId);
-    res.json(list);
+  app.get("/api/exam-scores/:schoolId/:subject/:examType/:class/:section", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const { schoolId, subject, examType, class: cls, section } = req.params;
+      const list = await storage.getExamScores(parseInt(schoolId), decodeURIComponent(subject), decodeURIComponent(examType), cls, section);
+      res.json(list);
+    } catch (err: any) {
+      console.error("GET /api/exam-scores error:", err);
+      res.status(500).json({ message: err?.message || "Failed to fetch exam scores" });
+    }
   });
 
   // ===== SCHOOL CONFIG (Teacher Read-Only) =====

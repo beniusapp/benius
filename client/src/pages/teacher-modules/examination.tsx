@@ -334,7 +334,14 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
           marks: absentMap[s.studentId] ? 0 : marks[s.studentId],
           isAbsent: !!absentMap[s.studentId],
         }));
-      const res = await apiRequest("POST", "/api/exam-scores", { scores, subject, examType, totalMarks: maxMarks });
+      const res = await apiRequest("POST", "/api/exam-scores", {
+        scores,
+        subject,
+        examType,
+        totalMarks: maxMarks,
+        class: selectedClass,
+        section: selectedSection,
+      });
       return res.json();
     },
     onSuccess: (data) => {
