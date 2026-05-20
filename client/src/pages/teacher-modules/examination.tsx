@@ -304,6 +304,11 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     });
     setMarks(m);
     setAbsentMap(a);
+    if (existingScores.length > 0) {
+      setTotalMarks(String(existingScores[0].totalMarks));
+    } else {
+      setTotalMarks("100");
+    }
   }, [existingScores]);
 
   const maxMarks = parseInt(totalMarks) || 100;
