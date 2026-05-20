@@ -1,0 +1,46 @@
+Act as an expert Full-Stack Architect. I am building a multi-tenant school management system in Replit. I need to build an "Exam Aggregation & Promotion Policy Engine" inside `/admin-dashboard/school-setup` that mimics my existing Academic Policy UX. Different schools need to myir own terminal exam combinations and strict pass/fail rules for promotion, grouped by custom class tiers.
+
+Please write the database schemas, backend controllers, and frontend component logic based on these exact specifications:
+
+### 1. Database Schema Requirements (`ExamPolicyTiers`)
+Create a schema that supports tenant-isolated, tier-based grading and progression policies:
+* `id` (Primary Key)
+* `tenant_id` (Foreign Key - strict school isolation)
+* `tier_name` (String, e.g., "Middle School Policy")
+* `applicable_classes` (Array of Strings, e.g., ["5", "6", "7"])
+* `exam_weights` (JSON Object defining calculation components for target terms, e.g.:
+  ```json
+  {
+    "Half Yearly Exam Result": [
+      { "source_exam": "Unit Test 1", "weight": 20.0 },
+      { "source_exam": "Half Yearly Exam", "weight": 80.0 }
+    ],
+    "Final Exam Result": [
+      { "source_exam": "Unit Test 2", "weight": 20.0 },
+      { "source_exam": "Final exam", "weight": 80.0 }
+    ]
+  }
+  promotion_fail_rules (JSON Object defining complex failure thresholds across terms, e.g.:
+  {
+  "max_failed_subjects_final": 3,
+  "composite_fail_rules": {
+    "half_yearly_fails_threshold": 5,
+    "final_fails_allowance_if_half_yearly_tripped": 3
+  }
+}
+2. Frontend Rule Builder UI (/admin-dashboard/school-setup)
+Build a user interface patterned exactly after the attached Academic Policy screenshot:
+Tier Header: Card layout showing Tier Name, dynamic Class Multi-select tags, and collapsible accordion body.
+Section A: Exam Aggregation Weights: * A dynamic row builder where the admin selects a "Composite Target Term" (e.g., Final Exam).
+Underneath, they add rows linking component exams with number inputs for weights. Provide a validation check ensuring that component weights for any target term sum up to exactly 100%.
+Section B: Promotion & Failure Logic:
+Number input fields for the strict progression gatekeepers:
+"Maximum allowed failed subjects in Final Exam before automatic Retention/Fail" (e.g., 3).
+"Composite Overlap Rule: If a student fails X subjects in Half Yearly [5] AND Y subjects in Final [3], trigger automatic Retention/Fail."
+3. Backend Policy Engine Execution
+Write the calculation controllers that handle raw marks inputs from /teacher-dashboard/examination.
+When computing report cards or triggering end-of-year automatic promotions, the engine must look up the student's class tier, calculate the weighted aggregate scores for each subject, determine if individual subjects are a 'Pass' or 'Fail' based on the Academic Policy, and evaluate the total subject failure counts against the promotion_fail_rules to dynamically mark the student's status as 'Promoted' or 'Retained'.
+What you need to write:
+The backend model definition for ExamPolicyTiers accommodating the complex JSON parameter blocks.
+The controller API routes matching tenant_id allowing CRUD functionality for these policy configurations.
+The core analytical helper function that loops through a student's marks array and returns a pass/fail promotion decision based on these custom rules.

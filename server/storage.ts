@@ -6,7 +6,7 @@ import {
   studentLeaveRequests, auditLogs, visitorLogs, studentProfiles, teacherAllocations,
   promotionOverrides, gradingTiers, gradingRules, academicHistory,
   schoolAssets, assetLogs, verificationLogs, timetableStructure, securityAudit, leavePolicies,
-  nonTeachingStaff, facultyMappings, feeRecords,
+  nonTeachingStaff, facultyMappings, feeRecords, examPolicyTiers,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
@@ -35,6 +35,7 @@ import {
   type NonTeachingStaff, type InsertNonTeachingStaff,
   type FacultyMapping, type InsertFacultyMapping,
   type FeeRecord, type InsertFeeRecord,
+  type ExamPolicyTier, type InsertExamPolicyTier,
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
@@ -3467,6 +3468,163 @@ export class DatabaseStorage {
       .returning();
     return result.length > 0;
   }
+
+  // ===== EXAM POLICY TIERS =====
+
+  async getExamPolicyTiers(schoolId: number): Promise<ExamPolicyTier[]> {
+    return await db.select().from(examPolicyTiers)
+      .where(eq(examPolicyTiers.schoolId, schoolId))
+      .orderBy(examPolicyTiers.createdAt);
+  }
+
+  async createExamPolicyTier(data: InsertExamPolicyTier): Promise<ExamPolicyTier> {
+    const [inserted] = await db.insert(examPolicyTiers).values(data).returning();
+    return inserted;
+  }
+
+  async updateExamPolicyTier(id: number, schoolId: number, data: Partial<InsertExamPolicyTier>): Promise<ExamPolicyTier | undefined> {
+    const [updated] = await db.update(examPolicyTiers)
+      .set(data)
+      .where(and(eq(examPolicyTiers.id, id), eq(examPolicyTiers.schoolId, schoolId)))
+      .returning();
+    return updated ?? undefined;
+  }
+
+  async deleteExamPolicyTier(id: number, schoolId: number): Promise<boolean> {
+    const result = await db.delete(examPolicyTiers)
+      .where(and(eq(examPolicyTiers.id, id), eq(examPolicyTiers.schoolId, schoolId)))
+      .returning();
+    return result.length > 0;
+  }
 }
 
 export const storage = new DatabaseStorage();
+
+// ===== PROMOTION ENGINE =====
+
+interface StudentScoreForEngine {
+  subject: string;
+  examType: string;
+  marks: number;
+  totalMarks: number;
+  isAbsent: boolean;
+}
+
+export interface SubjectAggregate {
+  subject: string;
+  termResults: Record<string, { percentage: number; status: "pass" | "fail" | "absent" | "incomplete" }>;
+}
+
+export interface PromotionResult {
+  promoted: boolean;
+  reason: string;
+  subjectAggregates: SubjectAggregate[];
+  termFailCounts: Record<string, number>;
+}
+
+export function evaluatePromotion(
+  scores: StudentScoreForEngine[],
+  tier: ExamPolicyTier,
+  passPercentage: number
+): PromotionResult {
+  let weights: Record<string, { source_exam: string; weight: number }[]> = {};
+  let rules: {
+    max_failed_subjects_final?: number;
+    composite_fail_rules?: {
+      half_yearly_fails_threshold?: number;
+      final_fails_allowance_if_half_yearly_tripped?: number;
+    };
+  } = {};
+
+  try { weights = JSON.parse(tier.examWeights || "{}"); } catch { /* use empty */ }
+  try { rules = JSON.parse(tier.promotionFailRules || "{}"); } catch { /* use defaults */ }
+
+  const termNames = Object.keys(weights);
+
+  const bySubject: Record<string, StudentScoreForEngine[]> = {};
+  for (const s of scores) {
+    if (!bySubject[s.subject]) bySubject[s.subject] = [];
+    bySubject[s.subject].push(s);
+  }
+
+  const subjectAggregates: SubjectAggregate[] = [];
+
+  for (const subject of Object.keys(bySubject)) {
+    const subjectScores = bySubject[subject];
+    const termResults: SubjectAggregate["termResults"] = {};
+
+    for (const [termName, components] of Object.entries(weights)) {
+      let weightedSum = 0;
+      let totalWeight = 0;
+      let hasAbsent = false;
+      let hasData = false;
+
+      for (const comp of components) {
+        const record = subjectScores.find(s => s.examType === comp.source_exam);
+        if (!record) continue;
+        hasData = true;
+        if (record.isAbsent) { hasAbsent = true; continue; }
+        if (record.totalMarks === 0) continue;
+        const pct = (record.marks / record.totalMarks) * 100;
+        weightedSum += pct * (comp.weight / 100);
+        totalWeight += comp.weight;
+      }
+
+      if (!hasData) {
+        termResults[termName] = { percentage: 0, status: "incomplete" };
+      } else if (hasAbsent) {
+        termResults[termName] = { percentage: 0, status: "absent" };
+      } else {
+        const effectivePct = totalWeight > 0 ? (weightedSum * 100) / totalWeight : 0;
+        termResults[termName] = {
+          percentage: Math.round(effectivePct * 10) / 10,
+          status: effectivePct >= passPercentage ? "pass" : "fail",
+        };
+      }
+    }
+    subjectAggregates.push({ subject, termResults });
+  }
+
+  const termFailCounts: Record<string, number> = {};
+  for (const termName of termNames) {
+    termFailCounts[termName] = subjectAggregates.filter(s => {
+      const r = s.termResults[termName];
+      return r?.status === "fail" || r?.status === "absent";
+    }).length;
+  }
+
+  const maxFailedFinal = rules.max_failed_subjects_final ?? 3;
+  const halfYearlyThreshold = rules.composite_fail_rules?.half_yearly_fails_threshold ?? 5;
+  const finalAllowance = rules.composite_fail_rules?.final_fails_allowance_if_half_yearly_tripped ?? 3;
+
+  const finalTermName = termNames.find(n => n.toLowerCase().includes("final")) ?? termNames[termNames.length - 1];
+  const halfYearlyTermName = termNames.find(n => n.toLowerCase().includes("half") || n.toLowerCase().includes("mid")) ?? termNames[0];
+
+  const finalFails = termFailCounts[finalTermName] ?? 0;
+  const halfYearlyFails = termFailCounts[halfYearlyTermName] ?? 0;
+
+  if (termNames.length > 0 && finalFails >= maxFailedFinal) {
+    return {
+      promoted: false,
+      reason: `Failed ${finalFails} subject(s) in "${finalTermName}" — maximum allowed before retention is ${maxFailedFinal - 1}.`,
+      subjectAggregates,
+      termFailCounts,
+    };
+  }
+
+  if (termNames.length >= 2 && halfYearlyFails >= halfYearlyThreshold && finalFails >= finalAllowance) {
+    return {
+      promoted: false,
+      reason: `Composite rule triggered: ${halfYearlyFails} fail(s) in "${halfYearlyTermName}" (threshold: ${halfYearlyThreshold}) AND ${finalFails} fail(s) in "${finalTermName}" (allowance: ${finalAllowance}).`,
+      subjectAggregates,
+      termFailCounts,
+    };
+  }
+
+  return {
+    promoted: true,
+    reason: "Student meets all promotion criteria.",
+    subjectAggregates,
+    termFailCounts,
+  };
+}

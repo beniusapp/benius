@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Plus, X, Save, BookOpen, Grid3X3, FileText, ChevronDown, ChevronRight, Trash2, GraduationCap, AlertTriangle, CalendarClock, Check, ChevronsUpDown } from "lucide-react";
+import { Plus, X, Save, BookOpen, Grid3X3, FileText, ChevronDown, ChevronRight, Trash2, GraduationCap, AlertTriangle, CalendarClock, Check, ChevronsUpDown, Scale } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -85,6 +85,59 @@ function MetaSection({ title, icon: Icon, items, onAdd, onRemove, onSave, input,
       </Button>
     </div>
   );
+}
+
+interface WeightComponentLocal { sourceExam: string; weight: string; }
+interface TargetTermLocal { targetName: string; components: WeightComponentLocal[]; }
+interface ExamPolicyTierLocal {
+  id?: number;
+  tempId: string;
+  tierName: string;
+  applicableClasses: string[];
+  targetTerms: TargetTermLocal[];
+  maxFailedSubjectsFinal: string;
+  halfYearlyFailsThreshold: string;
+  finalFailsAllowance: string;
+  expanded: boolean;
+}
+
+function emptyTargetTerm(): TargetTermLocal {
+  return { targetName: "", components: [{ sourceExam: "", weight: "" }] };
+}
+function emptyExamPolicyTier(): ExamPolicyTierLocal {
+  return {
+    tempId: `new-${Date.now()}`,
+    tierName: "",
+    applicableClasses: [],
+    targetTerms: [emptyTargetTerm()],
+    maxFailedSubjectsFinal: "3",
+    halfYearlyFailsThreshold: "5",
+    finalFailsAllowance: "3",
+    expanded: true,
+  };
+}
+function validateExamPolicyTiers(tiers: ExamPolicyTierLocal[]): string[] {
+  const errors: string[] = [];
+  const classMap = new Map<string, string>();
+  for (const t of tiers) {
+    if (!t.tierName.trim()) { errors.push("A policy tier is missing a name."); continue; }
+    if (t.applicableClasses.length === 0) errors.push(`"${t.tierName}": At least one class must be selected.`);
+    for (const cls of t.applicableClasses) {
+      if (classMap.has(cls)) errors.push(`Class "${cls}" is assigned to both "${classMap.get(cls)}" and "${t.tierName}".`);
+      else classMap.set(cls, t.tierName);
+    }
+    if (t.targetTerms.length === 0) errors.push(`"${t.tierName}": At least one target term must be defined.`);
+    for (const term of t.targetTerms) {
+      if (!term.targetName.trim()) errors.push(`"${t.tierName}": A target term is missing a name.`);
+      if (term.components.length === 0) { errors.push(`"${t.tierName}" / "${term.targetName || "Unnamed term"}": At least one exam component is required.`); continue; }
+      const totalWeight = term.components.reduce((s, c) => s + (parseFloat(c.weight) || 0), 0);
+      if (Math.abs(totalWeight - 100) >= 0.01) errors.push(`"${t.tierName}" / "${term.targetName || "Unnamed term"}": Weights must sum to exactly 100% (currently ${totalWeight.toFixed(1)}%).`);
+      for (const comp of term.components) {
+        if (!comp.sourceExam.trim()) errors.push(`"${t.tierName}" / "${term.targetName || "Unnamed term"}": A component is missing a source exam name.`);
+      }
+    }
+  }
+  return Array.from(new Set(errors));
 }
 
 interface GradeRow { gradeLabel: string; minPercent: string; maxPercent: string; gradePoint: string; remarks: string; }
@@ -453,6 +506,277 @@ function TierAccordion({ tier, classesList, onChange, onDelete, onSave, isSaving
   );
 }
 
+function ExamPolicyTierAccordion({ tier, classesList, onChange, onDelete, onSave, isSaving }: {
+  tier: ExamPolicyTierLocal;
+  classesList: string[];
+  onChange: (t: ExamPolicyTierLocal) => void;
+  onDelete: () => void;
+  onSave: () => void;
+  isSaving: boolean;
+}) {
+  const [showClassPicker, setShowClassPicker] = useState(false);
+  const setField = (field: keyof ExamPolicyTierLocal, val: any) => onChange({ ...tier, [field]: val });
+
+  const toggleClass = (cls: string) => {
+    const updated = tier.applicableClasses.includes(cls)
+      ? tier.applicableClasses.filter(c => c !== cls)
+      : [...tier.applicableClasses, cls];
+    setField("applicableClasses", updated);
+  };
+  const addTargetTerm = () => onChange({ ...tier, targetTerms: [...tier.targetTerms, emptyTargetTerm()] });
+  const removeTargetTerm = (idx: number) => onChange({ ...tier, targetTerms: tier.targetTerms.filter((_, i) => i !== idx) });
+  const updateTargetTermName = (idx: number, name: string) =>
+    onChange({ ...tier, targetTerms: tier.targetTerms.map((t, i) => i === idx ? { ...t, targetName: name } : t) });
+  const addComponent = (termIdx: number) =>
+    onChange({ ...tier, targetTerms: tier.targetTerms.map((t, i) => i === termIdx ? { ...t, components: [...t.components, { sourceExam: "", weight: "" }] } : t) });
+  const removeComponent = (termIdx: number, compIdx: number) =>
+    onChange({ ...tier, targetTerms: tier.targetTerms.map((t, i) => i === termIdx ? { ...t, components: t.components.filter((_, ci) => ci !== compIdx) } : t) });
+  const updateComponent = (termIdx: number, compIdx: number, field: "sourceExam" | "weight", val: string) =>
+    onChange({ ...tier, targetTerms: tier.targetTerms.map((t, i) => i === termIdx ? { ...t, components: t.components.map((c, ci) => ci === compIdx ? { ...c, [field]: val } : c) } : t) });
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-[#1A2942] overflow-hidden" data-testid={`exam-policy-card-${tier.tempId}`}>
+      <button
+        className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-white/5 transition-colors"
+        onClick={() => setField("expanded", !tier.expanded)}
+        data-testid={`btn-expand-exam-policy-${tier.tempId}`}
+      >
+        <div className="p-1.5 rounded-lg bg-[#D4AF37]/20">
+          <Scale className="w-4 h-4 text-[#D4AF37]" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold text-white text-sm truncate">{tier.tierName || "Unnamed Policy"}</p>
+          <p className="text-white/40 text-xs">
+            {tier.applicableClasses.length > 0 ? `Classes: ${tier.applicableClasses.join(", ")}` : "No classes selected"}
+            &nbsp;·&nbsp;{tier.targetTerms.length} target term{tier.targetTerms.length !== 1 ? "s" : ""}
+          </p>
+        </div>
+        {tier.expanded ? <ChevronDown className="w-4 h-4 text-white/40 shrink-0" /> : <ChevronRight className="w-4 h-4 text-white/40 shrink-0" />}
+      </button>
+
+      {tier.expanded && (
+        <div className="px-5 pb-5 space-y-5 border-t border-white/10 pt-4">
+
+          {/* Tier Name */}
+          <div>
+            <label className="text-xs text-white/50 mb-1 block">Policy Tier Name</label>
+            <Input value={tier.tierName} onChange={e => setField("tierName", e.target.value)}
+              placeholder="e.g. Middle School Policy"
+              className="bg-[#0A1628] border-white/20 text-white text-sm h-9"
+              data-testid={`input-exam-policy-name-${tier.tempId}`} />
+          </div>
+
+          {/* Class Multi-select */}
+          <div>
+            <label className="text-xs text-white/50 mb-1 block">Applicable Classes</label>
+            <div className="relative">
+              <button type="button" onClick={() => setShowClassPicker(p => !p)}
+                className="w-full flex items-center justify-between h-9 px-3 rounded-md bg-[#0A1628] border border-white/20 text-sm text-left hover:border-white/40 transition-colors"
+                data-testid={`btn-exam-policy-class-picker-${tier.tempId}`}>
+                <span className={tier.applicableClasses.length === 0 ? "text-white/30" : "text-white"}>
+                  {tier.applicableClasses.length === 0 ? "Select classes…"
+                    : tier.applicableClasses.length === 1 ? tier.applicableClasses[0]
+                    : `${tier.applicableClasses.length} classes selected`}
+                </span>
+                <ChevronsUpDown className="w-3.5 h-3.5 text-white/30 shrink-0" />
+              </button>
+              {showClassPicker && (
+                <div className="absolute z-20 top-10 left-0 w-full rounded-md border border-white/20 bg-[#0F1E35] shadow-xl py-1 max-h-52 overflow-y-auto">
+                  {classesList.length === 0 ? (
+                    <p className="text-white/30 text-xs px-3 py-2 italic">No classes configured — add them in the Classes section above.</p>
+                  ) : (
+                    classesList.map(cls => {
+                      const checked = tier.applicableClasses.includes(cls);
+                      return (
+                        <button key={cls} type="button" onClick={() => toggleClass(cls)}
+                          className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition-colors ${checked ? "bg-[#D4AF37]/10 text-[#D4AF37]" : "text-white/70 hover:bg-white/5"}`}
+                          data-testid={`exam-policy-class-option-${tier.tempId}-${cls}`}>
+                          <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${checked ? "bg-[#D4AF37] border-[#D4AF37]" : "border-white/30"}`}>
+                            {checked && <Check className="w-2.5 h-2.5 text-[#0A1628]" />}
+                          </span>
+                          {cls}
+                        </button>
+                      );
+                    })
+                  )}
+                  {classesList.length > 0 && (
+                    <div className="border-t border-white/10 mt-1 pt-1 px-3 pb-1 flex gap-2">
+                      <button type="button" onClick={() => setField("applicableClasses", classesList)}
+                        className="text-[10px] text-[#D4AF37] hover:underline" data-testid={`btn-exam-policy-select-all-${tier.tempId}`}>
+                        Select all
+                      </button>
+                      <button type="button" onClick={() => setField("applicableClasses", [])}
+                        className="text-[10px] text-white/40 hover:underline">Clear</button>
+                      <button type="button" onClick={() => setShowClassPicker(false)}
+                        className="text-[10px] text-white/40 hover:underline ml-auto">Done</button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            {tier.applicableClasses.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {tier.applicableClasses.map(cls => (
+                  <span key={cls} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/30">
+                    {cls}
+                    <button onClick={() => toggleClass(cls)} className="hover:text-red-400 transition-colors">
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Section A: Exam Aggregation Weights */}
+          <div className="rounded-lg border border-[#D4AF37]/20 bg-[#D4AF37]/5 p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-[#D4AF37]">Section A — Exam Aggregation Weights</p>
+                <p className="text-xs text-white/40 mt-0.5">Define how component exams combine into each composite result term. Weights must sum to exactly 100%.</p>
+              </div>
+              <Button size="sm" type="button" onClick={addTargetTerm}
+                className="bg-[#D4AF37]/20 hover:bg-[#D4AF37]/30 text-[#D4AF37] border border-[#D4AF37]/40 h-8 text-xs shrink-0 ml-3"
+                data-testid={`btn-add-target-term-${tier.tempId}`}>
+                <Plus className="w-3 h-3 mr-1" /> Add Term
+              </Button>
+            </div>
+
+            {tier.targetTerms.length === 0 && (
+              <p className="text-white/30 text-xs italic text-center py-2">No target terms yet. Click "Add Term" to define a composite result.</p>
+            )}
+
+            {tier.targetTerms.map((term, termIdx) => {
+              const totalWeight = term.components.reduce((sum, c) => sum + (parseFloat(c.weight) || 0), 0);
+              const weightOk = Math.abs(totalWeight - 100) < 0.01;
+              return (
+                <div key={termIdx} className="rounded-md border border-white/10 bg-[#0A1628] p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Input value={term.targetName} onChange={e => updateTargetTermName(termIdx, e.target.value)}
+                      placeholder="Target term name (e.g. Final Exam Result)"
+                      className="bg-[#1A2942] border-white/20 text-white text-xs h-8 flex-1"
+                      data-testid={`input-target-term-name-${tier.tempId}-${termIdx}`} />
+                    <button onClick={() => removeTargetTerm(termIdx)}
+                      className="text-red-400/60 hover:text-red-400 transition-colors shrink-0 p-1"
+                      data-testid={`btn-remove-target-term-${tier.tempId}-${termIdx}`}>
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs" style={{ minWidth: "340px" }}>
+                      <thead>
+                        <tr className="border-b border-white/10">
+                          <th className="text-left text-white/40 font-medium pb-1.5 pr-2">Source Exam</th>
+                          <th className="text-left text-white/40 font-medium pb-1.5 pr-2" style={{ width: "96px" }}>Weight (%)</th>
+                          <th className="pb-1.5" style={{ width: "28px" }}></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {term.components.map((comp, compIdx) => (
+                          <tr key={compIdx}>
+                            <td className="py-1 pr-2">
+                              <Input value={comp.sourceExam} onChange={e => updateComponent(termIdx, compIdx, "sourceExam", e.target.value)}
+                                placeholder="e.g. Unit Test 1"
+                                className="bg-[#1A2942] border-white/20 text-white text-xs h-7"
+                                data-testid={`input-source-exam-${tier.tempId}-${termIdx}-${compIdx}`} />
+                            </td>
+                            <td className="py-1 pr-2">
+                              <Input type="number" min="1" max="100" value={comp.weight}
+                                onChange={e => updateComponent(termIdx, compIdx, "weight", e.target.value)}
+                                placeholder="0"
+                                className="bg-[#1A2942] border-white/20 text-white text-xs h-7"
+                                data-testid={`input-weight-${tier.tempId}-${termIdx}-${compIdx}`} />
+                            </td>
+                            <td className="py-1">
+                              <button onClick={() => removeComponent(termIdx, compIdx)}
+                                className="text-red-400/60 hover:text-red-400 transition-colors p-0.5"
+                                data-testid={`btn-remove-component-${tier.tempId}-${termIdx}-${compIdx}`}>
+                                <X className="w-3 h-3" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex items-center justify-between pt-1">
+                    <button onClick={() => addComponent(termIdx)}
+                      className="text-xs text-white/40 hover:text-[#D4AF37] transition-colors flex items-center gap-1"
+                      data-testid={`btn-add-component-${tier.tempId}-${termIdx}`}>
+                      <Plus className="w-3 h-3" /> Add component
+                    </button>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${weightOk ? "bg-emerald-500/20 text-emerald-400" : term.components.length > 0 ? "bg-red-500/20 text-red-400" : "bg-white/10 text-white/30"}`}>
+                      {totalWeight.toFixed(1)}% / 100%
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Section B: Promotion & Failure Logic */}
+          <div className="rounded-lg border border-white/10 bg-[#0A1628]/60 p-4 space-y-4">
+            <div>
+              <p className="text-sm font-semibold text-[#D4AF37]">Section B — Promotion & Failure Logic</p>
+              <p className="text-xs text-white/40 mt-0.5">Define subject-failure thresholds that automatically trigger student retention at year-end.</p>
+            </div>
+            <div className="space-y-4">
+              <div className="rounded-md border border-white/10 bg-[#1A2942]/60 p-3">
+                <label className="text-xs text-white/60 mb-2 block font-medium">
+                  Max failed subjects in the <span className="text-[#D4AF37]/80">Final</span> term before automatic Retention
+                </label>
+                <div className="flex items-center gap-3">
+                  <Input type="number" min="0" max="20" value={tier.maxFailedSubjectsFinal}
+                    onChange={e => setField("maxFailedSubjectsFinal", e.target.value)}
+                    className="bg-[#0A1628] border-white/20 text-white text-sm h-9 w-24"
+                    data-testid={`input-max-failed-final-${tier.tempId}`} />
+                  <span className="text-xs text-white/40">subjects — student is retained if fail count ≥ this value</span>
+                </div>
+              </div>
+              <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3 space-y-3">
+                <div>
+                  <p className="text-xs text-amber-400/80 font-semibold">Composite Overlap Rule</p>
+                  <p className="text-xs text-white/30 mt-0.5">If a student fails ≥ X subjects in the Half Yearly term AND ≥ Y subjects in the Final term → automatic Retention.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-white/50 mb-1 block">Half Yearly fails threshold (X)</label>
+                    <Input type="number" min="0" max="20" value={tier.halfYearlyFailsThreshold}
+                      onChange={e => setField("halfYearlyFailsThreshold", e.target.value)}
+                      className="bg-[#0A1628] border-white/20 text-white text-sm h-9"
+                      data-testid={`input-hy-threshold-${tier.tempId}`} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/50 mb-1 block">Final fails allowance if HY tripped (Y)</label>
+                    <Input type="number" min="0" max="20" value={tier.finalFailsAllowance}
+                      onChange={e => setField("finalFailsAllowance", e.target.value)}
+                      className="bg-[#0A1628] border-white/20 text-white text-sm h-9"
+                      data-testid={`input-final-allowance-${tier.tempId}`} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex gap-2 pt-1">
+            <Button onClick={onSave} disabled={isSaving} size="sm"
+              className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-9"
+              data-testid={`btn-save-exam-policy-${tier.tempId}`}>
+              <Save className="w-3.5 h-3.5 mr-1.5" /> {isSaving ? "Saving…" : "Save Policy"}
+            </Button>
+            <Button onClick={onDelete} size="sm" variant="ghost"
+              className="text-red-400/70 hover:text-red-400 hover:bg-red-400/10 h-9"
+              data-testid={`btn-del-exam-policy-${tier.tempId}`}>
+              <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Delete
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SchoolSetup({ schoolId }: Props) {
   const { toast } = useToast();
   const [classes, setClasses] = useState<string[]>([]);
@@ -473,6 +797,10 @@ export default function SchoolSetup({ schoolId }: Props) {
   const [policyErrors, setPolicyErrors] = useState<string[]>([]);
   const [leavePolicies, setLeavePolicies] = useState<LeavePolicyLocal[]>([]);
   const [savingPolicyIdx, setSavingPolicyIdx] = useState<number | null>(null);
+  const [examPolicyTierList, setExamPolicyTierList] = useState<ExamPolicyTierLocal[]>([]);
+  const [examPolicyLoaded, setExamPolicyLoaded] = useState(false);
+  const [savingExamPolicyId, setSavingExamPolicyId] = useState<string | null>(null);
+  const [examPolicyErrors, setExamPolicyErrors] = useState<string[]>([]);
 
   const { data: meta } = useQuery({
     queryKey: ["/api/school-metadata", schoolId],
@@ -496,6 +824,15 @@ export default function SchoolSetup({ schoolId }: Props) {
     queryKey: ["/api/admin/leave-policies"],
     queryFn: async () => {
       const r = await fetch("/api/admin/leave-policies", { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!schoolId,
+  });
+
+  const { data: examPolicyData } = useQuery<any[]>({
+    queryKey: ["/api/admin/exam-policy-tiers"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/exam-policy-tiers", { credentials: "include" });
       return r.ok ? r.json() : [];
     },
     enabled: !!schoolId,
@@ -561,6 +898,33 @@ export default function SchoolSetup({ schoolId }: Props) {
       setPolicyLoaded(true);
     }
   }, [policyData, policyLoaded]);
+
+  useEffect(() => {
+    if (examPolicyData && !examPolicyLoaded) {
+      setExamPolicyTierList(examPolicyData.map((t: any) => {
+        let weights: Record<string, { source_exam: string; weight: number }[]> = {};
+        try { weights = JSON.parse(t.examWeights || "{}"); } catch {}
+        let rules: any = {};
+        try { rules = JSON.parse(t.promotionFailRules || "{}"); } catch {}
+        const targetTerms: TargetTermLocal[] = Object.entries(weights).map(([name, comps]) => ({
+          targetName: name,
+          components: (comps as any[]).map(c => ({ sourceExam: c.source_exam ?? "", weight: String(c.weight ?? "") })),
+        }));
+        return {
+          id: t.id,
+          tempId: String(t.id),
+          tierName: t.tierName,
+          applicableClasses: t.applicableClasses || [],
+          targetTerms: targetTerms.length > 0 ? targetTerms : [emptyTargetTerm()],
+          maxFailedSubjectsFinal: String(rules.max_failed_subjects_final ?? 3),
+          halfYearlyFailsThreshold: String(rules.composite_fail_rules?.half_yearly_fails_threshold ?? 5),
+          finalFailsAllowance: String(rules.composite_fail_rules?.final_fails_allowance_if_half_yearly_tripped ?? 3),
+          expanded: false,
+        } as ExamPolicyTierLocal;
+      }));
+      setExamPolicyLoaded(true);
+    }
+  }, [examPolicyData, examPolicyLoaded]);
 
   const saveMutation = useMutation({
     mutationFn: async ({ key, values }: { key: string; values: string[] }) => {
@@ -652,6 +1016,68 @@ export default function SchoolSetup({ schoolId }: Props) {
       gradingSystem: "percentage", passingGrades: [],
       sortOrder: prev.length, expanded: true, rules: [],
     }]);
+  };
+
+  const addExamPolicyTierFn = () => setExamPolicyTierList(prev => [...prev, emptyExamPolicyTier()]);
+  const updateExamPolicyTierFn = (tempId: string, updated: ExamPolicyTierLocal) => {
+    setExamPolicyTierList(prev => prev.map(t => t.tempId === tempId ? updated : t));
+    setExamPolicyErrors([]);
+  };
+  const saveExamPolicyTierFn = async (tier: ExamPolicyTierLocal) => {
+    const errs = validateExamPolicyTiers([tier]);
+    if (errs.length > 0) { setExamPolicyErrors(errs); return; }
+    setExamPolicyErrors([]);
+    setSavingExamPolicyId(tier.tempId);
+    try {
+      const examWeights: Record<string, { source_exam: string; weight: number }[]> = {};
+      for (const term of tier.targetTerms) {
+        examWeights[term.targetName] = term.components.map(c => ({
+          source_exam: c.sourceExam,
+          weight: parseFloat(c.weight) || 0,
+        }));
+      }
+      const promotionFailRules = {
+        max_failed_subjects_final: parseInt(tier.maxFailedSubjectsFinal) || 3,
+        composite_fail_rules: {
+          half_yearly_fails_threshold: parseInt(tier.halfYearlyFailsThreshold) || 5,
+          final_fails_allowance_if_half_yearly_tripped: parseInt(tier.finalFailsAllowance) || 3,
+        },
+      };
+      const payload = {
+        tierName: tier.tierName.trim(),
+        applicableClasses: tier.applicableClasses,
+        examWeights: JSON.stringify(examWeights),
+        promotionFailRules: JSON.stringify(promotionFailRules),
+      };
+      if (tier.id) {
+        const res = await apiRequest("PATCH", `/api/admin/exam-policy-tiers/${tier.id}`, payload);
+        const updated = await res.json();
+        setExamPolicyTierList(prev => prev.map(t => t.tempId === tier.tempId ? { ...t, id: updated.id } : t));
+      } else {
+        const res = await apiRequest("POST", "/api/admin/exam-policy-tiers", payload);
+        const created = await res.json();
+        setExamPolicyTierList(prev => prev.map(t => t.tempId === tier.tempId ? { ...t, id: created.id, tempId: String(created.id) } : t));
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/exam-policy-tiers"] });
+      toast({ title: "Policy saved", description: `"${tier.tierName.trim()}" updated.` });
+    } catch (e) {
+      toast({ title: "Save failed", description: e instanceof Error ? e.message : "An error occurred", variant: "destructive" });
+    } finally {
+      setSavingExamPolicyId(null);
+    }
+  };
+  const deleteExamPolicyTierFn = async (tier: ExamPolicyTierLocal) => {
+    if (tier.id) {
+      try {
+        await apiRequest("DELETE", `/api/admin/exam-policy-tiers/${tier.id}`, undefined);
+        queryClient.invalidateQueries({ queryKey: ["/api/admin/exam-policy-tiers"] });
+        toast({ title: "Policy deleted" });
+      } catch {
+        toast({ title: "Delete failed", variant: "destructive" });
+        return;
+      }
+    }
+    setExamPolicyTierList(prev => prev.filter(t => t.tempId !== tier.tempId));
   };
 
   const updateTier = (tempId: string, updated: TierLocal) => {
@@ -952,6 +1378,57 @@ export default function SchoolSetup({ schoolId }: Props) {
               onDelete={() => deleteTier(tier)}
               onSave={() => saveTier(tier)}
               isSaving={savingTierId === tier.tempId}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* ===== EXAM AGGREGATION & PROMOTION POLICY ===== */}
+      <div className="pt-2">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-2 rounded-lg bg-[#D4AF37]/20">
+            <Scale className="w-5 h-5 text-[#D4AF37]" />
+          </div>
+          <div>
+            <h3 className="font-bold text-white">Exam Aggregation & Promotion Policy</h3>
+            <p className="text-white/40 text-xs">
+              Configure how component exam scores are weighted into composite results, and define the subject-failure thresholds that gate student promotion.
+            </p>
+          </div>
+          <Button size="sm" onClick={addExamPolicyTierFn}
+            className="ml-auto bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-9"
+            data-testid="btn-add-exam-policy-tier">
+            <Plus className="w-4 h-4 mr-1" /> Add Policy
+          </Button>
+        </div>
+
+        {examPolicyErrors.length > 0 && (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 mb-3 flex gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              {examPolicyErrors.map((e, i) => <p key={i} className="text-red-300 text-xs">{e}</p>)}
+            </div>
+          </div>
+        )}
+
+        {examPolicyTierList.length === 0 && (
+          <div className="rounded-xl border border-dashed border-white/10 p-8 text-center">
+            <Scale className="w-8 h-8 mx-auto mb-2 text-white/20" />
+            <p className="text-white/30 text-sm">No exam policy tiers configured yet.</p>
+            <p className="text-white/20 text-xs mt-1">Click "Add Policy" to define how exams are weighted and how promotion is decided for each class group.</p>
+          </div>
+        )}
+
+        <div className="space-y-3">
+          {examPolicyTierList.map(tier => (
+            <ExamPolicyTierAccordion
+              key={tier.tempId}
+              tier={tier}
+              classesList={classesList}
+              onChange={updated => updateExamPolicyTierFn(tier.tempId, updated)}
+              onDelete={() => deleteExamPolicyTierFn(tier)}
+              onSave={() => saveExamPolicyTierFn(tier)}
+              isSaving={savingExamPolicyId === tier.tempId}
             />
           ))}
         </div>

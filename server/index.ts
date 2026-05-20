@@ -279,6 +279,16 @@ app.use((req, res, next) => {
 
     ALTER TABLE non_teaching_staff ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE faculty_mappings ADD COLUMN IF NOT EXISTS subject TEXT;
+
+    CREATE TABLE IF NOT EXISTS exam_policy_tiers (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      tier_name TEXT NOT NULL,
+      applicable_classes TEXT[] NOT NULL DEFAULT '{}',
+      exam_weights TEXT NOT NULL DEFAULT '{}',
+      promotion_fail_rules TEXT NOT NULL DEFAULT '{}',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
   `);
 
   await registerRoutes(httpServer, app);

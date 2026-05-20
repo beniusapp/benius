@@ -704,3 +704,17 @@ export const leavePolicies = pgTable("leave_policies", {
 export const insertLeavePolicySchema = createInsertSchema(leavePolicies).omit({ id: true, createdAt: true });
 export type InsertLeavePolicy = z.infer<typeof insertLeavePolicySchema>;
 export type LeavePolicy = typeof leavePolicies.$inferSelect;
+
+export const examPolicyTiers = pgTable("exam_policy_tiers", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  tierName: text("tier_name").notNull(),
+  applicableClasses: text("applicable_classes").array().notNull().default([]),
+  examWeights: text("exam_weights").notNull().default("{}"),
+  promotionFailRules: text("promotion_fail_rules").notNull().default("{}"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertExamPolicyTierSchema = createInsertSchema(examPolicyTiers).omit({ id: true, createdAt: true });
+export type InsertExamPolicyTier = z.infer<typeof insertExamPolicyTierSchema>;
+export type ExamPolicyTier = typeof examPolicyTiers.$inferSelect;

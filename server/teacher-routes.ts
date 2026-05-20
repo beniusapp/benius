@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { storage } from "./storage";
+import { storage, evaluatePromotion } from "./storage";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { z } from "zod";
@@ -2007,6 +2007,92 @@ export function registerTeacherRoutes(app: Express) {
     if (!validTier) return res.status(403).json({ message: "Tier not found for this school" });
     const rules = await storage.replaceGradingRules(tierId, schoolId, parsed.data);
     res.json(rules);
+  });
+
+  // ===== EXAM POLICY TIERS =====
+
+  app.get("/api/admin/exam-policy-tiers", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    try {
+      const tiers = await storage.getExamPolicyTiers(req.session.schoolId!);
+      res.json(tiers);
+    } catch { res.status(500).json({ message: "Failed to fetch exam policy tiers" }); }
+  });
+
+  app.post("/api/admin/exam-policy-tiers", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schema = z.object({
+      tierName: z.string().min(1, "Tier name is required"),
+      applicableClasses: z.array(z.string()).min(1, "At least one class must be selected"),
+      examWeights: z.string().default("{}"),
+      promotionFailRules: z.string().default("{}"),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      const tier = await storage.createExamPolicyTier({ ...parsed.data, schoolId: req.session.schoolId! });
+      res.status(201).json(tier);
+    } catch { res.status(500).json({ message: "Failed to create exam policy tier" }); }
+  });
+
+  app.patch("/api/admin/exam-policy-tiers/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id as string);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+    const schema = z.object({
+      tierName: z.string().min(1).optional(),
+      applicableClasses: z.array(z.string()).optional(),
+      examWeights: z.string().optional(),
+      promotionFailRules: z.string().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      const updated = await storage.updateExamPolicyTier(id, req.session.schoolId!, parsed.data);
+      if (!updated) return res.status(404).json({ message: "Tier not found" });
+      res.json(updated);
+    } catch { res.status(500).json({ message: "Failed to update exam policy tier" }); }
+  });
+
+  app.delete("/api/admin/exam-policy-tiers/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id as string);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+    try {
+      await storage.deleteExamPolicyTier(id, req.session.schoolId!);
+      res.json({ message: "Deleted" });
+    } catch { res.status(500).json({ message: "Failed to delete exam policy tier" }); }
+  });
+
+  app.post("/api/admin/exam-policy-tiers/evaluate", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schema = z.object({
+      studentClass: z.string().min(1),
+      scores: z.array(z.object({
+        subject: z.string(),
+        examType: z.string(),
+        marks: z.number(),
+        totalMarks: z.number(),
+        isAbsent: z.boolean().default(false),
+      })),
+      passPercentage: z.number().min(0).max(100).optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const schoolId = req.session.schoolId!;
+    const tiers = await storage.getExamPolicyTiers(schoolId);
+    const matchingTier = tiers.find(t => (t.applicableClasses || []).includes(parsed.data.studentClass));
+    if (!matchingTier) return res.status(404).json({ message: `No exam policy tier found for class "${parsed.data.studentClass}"` });
+    const gradingTiers = await storage.getGradingTiers(schoolId);
+    const matchingGradingTier = gradingTiers.find(t => (t.classes || []).includes(parsed.data.studentClass));
+    const passPercentage = parsed.data.passPercentage ?? matchingGradingTier?.passPercentage ?? 35;
+    const result = evaluatePromotion(parsed.data.scores, matchingTier, passPercentage);
+    res.json({ tier: matchingTier.tierName, passPercentage, ...result });
   });
 
   // ===== ACADEMIC ADVANCEMENT WIZARD =====
