@@ -488,26 +488,42 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
   const resSections = useMemo(() => getSectionsForClass(resClass), [resClass, getSectionsForClass]);
 
+  // Policy fetch — useEffect+state, bypassing React Query cache entirely
+  // so a stale/errored cache entry can never block a fresh network request.
+  const [policyTier, setPolicyTier] = useState<ExamPolicyTier | null>(null);
+  const [policyLoading, setPolicyLoading] = useState(false);
+  const [policyError, setPolicyError] = useState<string | null>(null);
+  const [policyRetry, setPolicyRetry] = useState(0);
+
+  useEffect(() => {
+    if (!resClass) {
+      setPolicyTier(null);
+      setPolicyError(null);
+      return;
+    }
+    let cancelled = false;
+    setPolicyLoading(true);
+    setPolicyTier(null);
+    setPolicyError(null);
+    fetch(`/api/teacher/exam-policy/${encodeURIComponent(resClass)}`, { credentials: "include" })
+      .then(async res => {
+        if (cancelled) return;
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.message || `No policy for class ${resClass}`);
+        }
+        return res.json();
+      })
+      .then(data => { if (!cancelled) { setPolicyTier(data); setPolicyLoading(false); } })
+      .catch(err => { if (!cancelled) { setPolicyError(err.message); setPolicyLoading(false); } });
+    return () => { cancelled = true; };
+  }, [resClass, policyRetry]);
+
   function handleResClassChange(cls: string) {
-    // Bust any stale/errored cache for the previous class policy before switching
-    if (cls) queryClient.invalidateQueries({ queryKey: ["/api/teacher/exam-policy", cls] });
     setResClass(cls);
     setResSection("");
     setResTerm("");
   }
-
-  const { data: policyTier, isLoading: policyLoading, error: policyError } = useQuery<ExamPolicyTier>({
-    queryKey: ["/api/teacher/exam-policy", resClass],
-    queryFn: async () => {
-      const res = await fetch(`/api/teacher/exam-policy/${encodeURIComponent(resClass)}`, { credentials: "include" });
-      if (!res.ok) throw new Error((await res.json()).message || "No policy");
-      return res.json();
-    },
-    enabled: !!resClass,
-    staleTime: 0,          // always consider data stale so it re-fetches when key changes
-    refetchOnMount: "always", // force fetch every time the Results tab mounts
-    retry: 2,              // retry up to 2 times on failure
-  });
 
   const { data: classScores = [], isLoading: scoresLoading } = useQuery<RawStudentScore[]>({
     queryKey: ["/api/teacher/class-scores", resClass, resSection],
@@ -631,9 +647,20 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
         {/* No policy warning */}
         {resClass && !policyLoading && policyError && (
-          <div className="mt-3 flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-400">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
-            No Exam Policy configured for Class {resClass}. Ask your admin to set one up in School Setup → Exam Aggregation & Promotion Policy.
+          <div className="mt-3 flex flex-col gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-400">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{policyError.toLowerCase().startsWith("no policy") || policyError.toLowerCase().startsWith("no exam policy")
+                ? `No Exam Policy configured for Class ${resClass}. Ask your admin to set one up in School Setup → Exam Aggregation & Promotion Policy.`
+                : policyError
+              }</span>
+            </div>
+            <button
+              onClick={() => setPolicyRetry(r => r + 1)}
+              className="self-start flex items-center gap-1.5 text-xs font-semibold text-amber-300 hover:text-amber-100 underline underline-offset-2 transition-colors"
+              data-testid="btn-retry-policy">
+              ↻ Retry
+            </button>
           </div>
         )}
       </div>
