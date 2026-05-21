@@ -1515,6 +1515,7 @@ export default function SchoolSetup({ schoolId }: Props) {
         setExamPolicyTierList(prev => prev.map(t => t.tempId === tier.tempId ? { ...t, id: created.id, tempId: String(created.id) } : t));
       }
       queryClient.invalidateQueries({ queryKey: ["/api/admin/exam-policy-tiers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/exam-policy"] });
       toast({ title: "✓ Policy Saved", description: `"${tier.tierName.trim()}" has been saved securely.`, duration: 3000 });
       setSavedExamPolicyId(tier.tempId);
       setTimeout(() => setSavedExamPolicyId(prev => prev === tier.tempId ? null : prev), 2500);

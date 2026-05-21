@@ -545,47 +545,30 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
   const resSections = useMemo(() => getSectionsForClass(resClass), [resClass, getSectionsForClass]);
 
-  // Policy fetch — useEffect+state, bypassing React Query cache entirely
-  // so a stale/errored cache entry can never block a fresh network request.
-  const [policyTier, setPolicyTier] = useState<ExamPolicyTier | null>(null);
-  const [policyLoading, setPolicyLoading] = useState(false);
-  const [policyError, setPolicyError] = useState<string | null>(null);
-  const [policyRetry, setPolicyRetry] = useState(0);
-
-  useEffect(() => {
-    if (!resClass) {
-      setPolicyTier(null);
-      setPolicyError(null);
-      return;
-    }
-
-    // Main fetch — shows loading + clears stale data
-    let cancelled = false;
-    const doFetch = (silent = false) => {
-      if (!silent) { setPolicyLoading(true); setPolicyTier(null); setPolicyError(null); }
-      fetch(`/api/teacher/exam-policy/${encodeURIComponent(resClass)}`, { credentials: "include" })
-        .then(async r => {
-          if (cancelled) return;
-          if (!r.ok) {
-            const body = await r.json().catch(() => ({}));
-            throw new Error(body.message || `No policy for class ${resClass}`);
-          }
-          return r.json();
-        })
-        .then(data => {
-          if (!cancelled) { setPolicyTier(data); setPolicyLoading(false); setPolicyError(null); }
-        })
-        .catch(err => {
-          if (!cancelled) { setPolicyError(err.message); setPolicyLoading(false); }
-        });
-    };
-
-    doFetch(false);
-
-    // Silent background re-fetch every 60 s so admin changes propagate automatically
-    const interval = setInterval(() => doFetch(true), 60_000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [resClass, policyRetry]);
+  // Policy fetch — React Query with staleTime:0 so admin saves immediately reflect here
+  const {
+    data: policyTier = null,
+    isLoading: policyLoading,
+    isError: policyIsError,
+    error: policyErrorRaw,
+    refetch: refetchPolicy,
+  } = useQuery<ExamPolicyTier | null>({
+    queryKey: ["/api/teacher/exam-policy", resClass],
+    queryFn: async () => {
+      const r = await fetch(`/api/teacher/exam-policy/${encodeURIComponent(resClass)}`, { credentials: "include" });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.message || `No policy for class ${resClass}`);
+      }
+      return r.json();
+    },
+    enabled: !!resClass,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    retry: false,
+  });
+  const policyError = policyIsError ? ((policyErrorRaw as Error)?.message ?? "Failed to load policy") : null;
 
   // Grading rules fetch — same no-cache useEffect pattern
   const [gradingRules, setGradingRules] = useState<GradingRuleClient[]>([]);
@@ -795,7 +778,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
               )}
             </div>
             <button
-              onClick={() => setPolicyRetry(r => r + 1)}
+              onClick={() => refetchPolicy()}
               className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-yellow-400 transition-colors px-2 py-1 rounded-lg hover:bg-yellow-500/10 border border-transparent hover:border-yellow-500/20"
               title="Re-fetch latest policy from server"
               data-testid="btn-refresh-policy">
@@ -825,7 +808,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
               }</span>
             </div>
             <button
-              onClick={() => setPolicyRetry(r => r + 1)}
+              onClick={() => refetchPolicy()}
               className="self-start flex items-center gap-1.5 text-xs font-semibold text-amber-300 hover:text-amber-100 underline underline-offset-2 transition-colors"
               data-testid="btn-retry-policy">
               ↻ Retry
