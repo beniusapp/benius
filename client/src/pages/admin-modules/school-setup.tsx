@@ -89,6 +89,18 @@ function MetaSection({ title, icon: Icon, items, onAdd, onRemove, onSave, input,
 
 interface WeightComponentLocal { sourceExam: string; weight: string; }
 interface TargetTermLocal { targetName: string; components: WeightComponentLocal[]; }
+interface TermColsLocal {
+  studentProfile: boolean; weightedAvg: boolean; termGrade: boolean;
+  subjectFails: boolean; attendance: boolean; promotionGate: boolean;
+  reportCard: boolean; cumulativeTotal: boolean; finalGrade: boolean;
+}
+function defaultTermCols(): TermColsLocal {
+  return {
+    studentProfile: true, weightedAvg: true, termGrade: true,
+    subjectFails: true, attendance: true, promotionGate: true,
+    reportCard: true, cumulativeTotal: false, finalGrade: false,
+  };
+}
 interface CumulativeTermWeight { termName: string; weight: string; }
 interface ExamPolicyTierLocal {
   id?: number;
@@ -105,16 +117,8 @@ interface ExamPolicyTierLocal {
   compositeFinalTerm: string;
   finalFailsAllowance: string;
   expanded: boolean;
-  // Section C — Results Panel Configuration
-  colStudentProfile: boolean;
-  colWeightedAvg: boolean;
-  colTermGrade: boolean;
-  colSubjectFails: boolean;
-  colAttendance: boolean;
-  colPromotionGate: boolean;
-  colReportCard: boolean;
-  colCumulativeTotal: boolean;
-  colFinalGrade: boolean;
+  // Section C — per-term column visibility
+  termColumnConfigs: Record<string, TermColsLocal>;
   cumulativeEnabled: boolean;
   cumulativeTriggerTerm: string;
   cumulativeTermWeights: CumulativeTermWeight[];
@@ -138,15 +142,7 @@ function emptyExamPolicyTier(): ExamPolicyTierLocal {
     compositeFinalTerm: "",
     finalFailsAllowance: "3",
     expanded: true,
-    colStudentProfile: true,
-    colWeightedAvg: true,
-    colTermGrade: true,
-    colSubjectFails: true,
-    colAttendance: true,
-    colPromotionGate: true,
-    colReportCard: true,
-    colCumulativeTotal: false,
-    colFinalGrade: false,
+    termColumnConfigs: {},
     cumulativeEnabled: false,
     cumulativeTriggerTerm: "",
     cumulativeTermWeights: [],
@@ -563,7 +559,7 @@ function TermSelect({ value, onChange, terms, placeholder, testId }: {
   );
 }
 
-function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, onDelete, onSave, isSaving }: {
+function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, onDelete, onSave, isSaving, justSaved }: {
   tier: ExamPolicyTierLocal;
   classesList: string[];
   examTypesList: string[];
@@ -571,11 +567,15 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
   onDelete: () => void;
   onSave: () => void;
   isSaving: boolean;
+  justSaved?: boolean;
 }) {
   const [showClassPicker, setShowClassPicker] = useState(false);
+  const [sectionCTerm, setSectionCTerm] = useState<string>("");
   const setField = (field: keyof ExamPolicyTierLocal, val: any) => onChange({ ...tier, [field]: val });
 
   const termNames = tier.targetTerms.map(t => t.targetName).filter(n => n.trim());
+  const pendingTermNames = termNames.filter(n => !tier.termColumnConfigs[n]);
+  const anyCumulativeEnabled = Object.values(tier.termColumnConfigs).some(tc => tc.cumulativeTotal || tc.finalGrade);
 
   const toggleClass = (cls: string) => {
     const updated = tier.applicableClasses.includes(cls)
@@ -921,164 +921,239 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
             <div>
               <p className="text-sm font-semibold text-blue-300">Section C — Results Panel Configuration</p>
               <p className="text-xs text-white/40 mt-0.5">
-                Choose which columns appear in the Teacher Results sheet for this policy tier.
+                Configure which columns appear in the Teacher Results sheet. Every term from Section A must be configured before saving.
               </p>
             </div>
 
-            {/* Column toggles */}
-            <div className="space-y-2">
-              <p className="text-[11px] text-white/50 font-medium uppercase tracking-wide">Visible Columns</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                {([
-                  { key: "colStudentProfile", label: "Student Profile (Avatar · Roll · Name · ID)" },
-                  { key: "colWeightedAvg", label: "Term Weighted Average Score" },
-                  { key: "colTermGrade", label: "Term Grade (based on weighted score)" },
-                  { key: "colSubjectFails", label: "Subject Fails Count" },
-                  { key: "colAttendance", label: "Attendance Meter" },
-                  { key: "colPromotionGate", label: "Promotion Gate Verdict" },
-                  { key: "colReportCard", label: "Detailed Report Card Trigger Button" },
-                  { key: "colCumulativeTotal", label: "Cumulative Total % (Combined Terms)" },
-                  { key: "colFinalGrade", label: "Final Cumulative Grade" },
-                ] as { key: keyof ExamPolicyTierLocal; label: string }[]).map(({ key, label }) => {
-                  const isOn = tier[key] as boolean;
-                  return (
-                    <button key={key} type="button"
-                      onClick={() => setField(key, !isOn)}
-                      className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-left transition-colors text-xs ${isOn ? "border-blue-500/40 bg-blue-500/10 text-blue-200" : "border-white/10 bg-[#0A1628] text-white/40 hover:border-white/20"}`}
-                      data-testid={`toggle-col-${key}-${tier.tempId}`}>
-                      <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${isOn ? "bg-blue-500 border-blue-500" : "border-white/30"}`}>
-                        {isOn && <Check className="w-2.5 h-2.5 text-white" />}
-                      </span>
-                      {label}
-                    </button>
-                  );
-                })}
+            {termNames.length === 0 ? (
+              <div className="rounded-md border border-white/10 bg-white/5 px-3 py-2.5 text-xs text-white/30 italic">
+                Define target terms in Section A first — they will appear here as term buttons to configure.
               </div>
-            </div>
-
-            {/* Cumulative calculation setup — only visible when cumulative columns enabled */}
-            {(tier.colCumulativeTotal || tier.colFinalGrade) && (
-              <div className="rounded-md border border-blue-400/20 bg-[#0A1628] p-3 space-y-3">
-                <div className="flex items-center gap-3">
-                  <button type="button"
-                    onClick={() => {
-                      const enabling = !tier.cumulativeEnabled;
-                      const autoWeights = enabling && tier.cumulativeTermWeights.length === 0
-                        ? termNames.map(n => ({ termName: n, weight: "" }))
-                        : tier.cumulativeTermWeights;
-                      onChange({ ...tier, cumulativeEnabled: enabling, cumulativeTermWeights: autoWeights });
-                    }}
-                    className={`w-9 h-5 rounded-full border-2 relative transition-colors shrink-0 ${tier.cumulativeEnabled ? "bg-blue-500 border-blue-500" : "bg-white/10 border-white/20"}`}
-                    data-testid={`toggle-cumulative-${tier.tempId}`}>
-                    <span className={`absolute top-0.5 w-3 h-3 rounded-full transition-transform ${tier.cumulativeEnabled ? "bg-white translate-x-4" : "bg-white/40 translate-x-0.5"}`} />
-                  </button>
-                  <div>
-                    <p className={`text-xs font-semibold ${tier.cumulativeEnabled ? "text-blue-300" : "text-white/40"}`}>Enable Cumulative Aggregation</p>
-                    <p className="text-[10px] text-white/30">Combine multiple term scores into a year-end cumulative percentage.</p>
+            ) : (
+              <>
+                {/* Term selector — pill buttons with configured/pending badges */}
+                <div className="space-y-2">
+                  <p className="text-[11px] text-white/50 font-medium uppercase tracking-wide">Select Term to Configure</p>
+                  <div className="flex flex-wrap gap-2">
+                    {termNames.map(termName => {
+                      const isConfigured = !!tier.termColumnConfigs[termName];
+                      const isActive = sectionCTerm === termName;
+                      return (
+                        <button key={termName} type="button"
+                          onClick={() => {
+                            setSectionCTerm(termName);
+                            if (!tier.termColumnConfigs[termName]) {
+                              onChange({ ...tier, termColumnConfigs: { ...tier.termColumnConfigs, [termName]: defaultTermCols() } });
+                            }
+                          }}
+                          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                            isActive
+                              ? "border-blue-400/70 bg-blue-500/20 text-blue-200 shadow-sm shadow-blue-500/20"
+                              : "border-white/15 bg-[#0A1628] text-white/55 hover:border-white/30 hover:text-white/80"
+                          }`}
+                          data-testid={`btn-section-c-term-${tier.tempId}-${termName.replace(/\s+/g, "-")}`}>
+                          <span>{termName}</span>
+                          {isConfigured ? (
+                            <span className="flex items-center gap-0.5 text-[9px] font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                              <Check className="w-2 h-2" /> Done
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-bold text-amber-400 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                              ● Pending
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
+                  {!sectionCTerm && (
+                    <p className="text-[11px] text-white/30 italic pt-0.5">Click a term button above to configure its column layout.</p>
+                  )}
                 </div>
 
-                {tier.cumulativeEnabled && (
-                  <div className="space-y-3 pl-1">
-                    {/* Trigger term */}
-                    <div className="space-y-1">
-                      <label className="text-[10px] text-white/50 uppercase tracking-wide">Cumulative Trigger Term</label>
-                      <p className="text-[10px] text-white/30">Cumulative columns appear only when teacher selects this term.</p>
-                      <TermSelect
-                        value={tier.cumulativeTriggerTerm}
-                        onChange={v => setField("cumulativeTriggerTerm", v)}
-                        terms={termNames}
-                        placeholder="— pick year-end term —"
-                        testId={`select-cumulative-trigger-${tier.tempId}`}
-                      />
-                    </div>
-
-                    {/* Term weights table */}
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[10px] text-white/50 uppercase tracking-wide">Term Contribution Weights (must sum to 100%)</label>
-                        <button type="button"
-                          onClick={() => setField("cumulativeTermWeights", [...tier.cumulativeTermWeights, { termName: "", weight: "" }])}
-                          className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-0.5"
-                          data-testid={`btn-add-cumul-weight-${tier.tempId}`}>
-                          <Plus className="w-3 h-3" /> Add term
-                        </button>
-                      </div>
-                      {tier.cumulativeTermWeights.length === 0 && (
-                        <p className="text-[10px] text-white/30 italic">No term weights configured. Click "Add term" or toggle off and on to auto-fill from Section A.</p>
-                      )}
-                      {tier.cumulativeTermWeights.map((tw, wi) => (
-                        <div key={wi} className="flex items-center gap-2">
-                          <div className="flex-1">
-                            {termNames.length > 0 ? (
-                              <select value={tw.termName}
-                                onChange={e => {
-                                  const updated = tier.cumulativeTermWeights.map((w, i) => i === wi ? { ...w, termName: e.target.value } : w);
-                                  setField("cumulativeTermWeights", updated);
-                                }}
-                                className="h-7 w-full rounded border border-white/20 bg-[#1A2942] text-xs px-2 text-white appearance-none cursor-pointer focus:outline-none focus:border-blue-500/60"
-                                style={{ colorScheme: "dark" }}
-                                data-testid={`select-cumul-term-${tier.tempId}-${wi}`}>
-                                <option value="" className="bg-[#1A2942] text-white/40">— pick term —</option>
-                                {termNames.map(n => <option key={n} value={n} className="bg-[#1A2942] text-white">{n}</option>)}
-                              </select>
-                            ) : (
-                              <Input value={tw.termName}
-                                onChange={e => {
-                                  const updated = tier.cumulativeTermWeights.map((w, i) => i === wi ? { ...w, termName: e.target.value } : w);
-                                  setField("cumulativeTermWeights", updated);
-                                }}
-                                placeholder="Term name"
-                                className="bg-[#1A2942] border-white/20 text-white text-xs h-7"
-                                data-testid={`input-cumul-term-${tier.tempId}-${wi}`} />
-                            )}
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0">
-                            <Input type="number" min="0" max="100" value={tw.weight}
-                              onChange={e => {
-                                const updated = tier.cumulativeTermWeights.map((w, i) => i === wi ? { ...w, weight: e.target.value } : w);
-                                setField("cumulativeTermWeights", updated);
-                              }}
-                              placeholder="0"
-                              className="bg-[#1A2942] border-white/20 text-white text-xs h-7 w-16"
-                              data-testid={`input-cumul-weight-${tier.tempId}-${wi}`} />
-                            <span className="text-[10px] text-white/40">%</span>
-                            <button type="button"
-                              onClick={() => setField("cumulativeTermWeights", tier.cumulativeTermWeights.filter((_, i) => i !== wi))}
-                              className="text-red-400/60 hover:text-red-400 transition-colors p-0.5"
-                              data-testid={`btn-remove-cumul-weight-${tier.tempId}-${wi}`}>
-                              <X className="w-3 h-3" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                      {tier.cumulativeTermWeights.length > 0 && (() => {
-                        const total = tier.cumulativeTermWeights.reduce((s, tw) => s + (parseFloat(tw.weight) || 0), 0);
-                        const ok = Math.abs(total - 100) < 0.01;
+                {/* Column toggles for selected term */}
+                {sectionCTerm && tier.termColumnConfigs[sectionCTerm] && (
+                  <div className="rounded-md border border-blue-400/20 bg-[#0A1628] p-3 space-y-2.5">
+                    <p className="text-[11px] font-semibold text-blue-300/80">
+                      Configuring columns for: <span className="text-blue-200">{sectionCTerm}</span>
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {([
+                        { key: "studentProfile" as keyof TermColsLocal, label: "Student Profile (Avatar · Roll · Name · ID)" },
+                        { key: "weightedAvg" as keyof TermColsLocal, label: "Term Weighted Average Score" },
+                        { key: "termGrade" as keyof TermColsLocal, label: "Term Grade (based on weighted score)" },
+                        { key: "subjectFails" as keyof TermColsLocal, label: "Subject Fails Count" },
+                        { key: "attendance" as keyof TermColsLocal, label: "Attendance Meter" },
+                        { key: "promotionGate" as keyof TermColsLocal, label: "Promotion Gate Verdict" },
+                        { key: "reportCard" as keyof TermColsLocal, label: "Detailed Report Card Trigger Button" },
+                        { key: "cumulativeTotal" as keyof TermColsLocal, label: "Cumulative Total % (Combined Terms)" },
+                        { key: "finalGrade" as keyof TermColsLocal, label: "Final Cumulative Grade" },
+                      ]).map(({ key, label }) => {
+                        const isOn = tier.termColumnConfigs[sectionCTerm][key];
                         return (
-                          <div className="flex items-center justify-between pt-0.5">
-                            <p className="text-[10px] text-blue-300/60 italic">
-                              Formula: Cumulative % = {tier.cumulativeTermWeights.filter(tw => tw.termName).map(tw => `(${tw.termName || "?"} × ${tw.weight || "?"}%)`).join(" + ")}
-                            </p>
-                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${ok ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
-                              {total.toFixed(1)}% / 100%
+                          <button key={key} type="button"
+                            onClick={() => {
+                              const curr = tier.termColumnConfigs[sectionCTerm];
+                              onChange({ ...tier, termColumnConfigs: { ...tier.termColumnConfigs, [sectionCTerm]: { ...curr, [key]: !isOn } } });
+                            }}
+                            className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-left transition-colors text-xs ${isOn ? "border-blue-500/40 bg-blue-500/10 text-blue-200" : "border-white/10 bg-[#1A2942] text-white/40 hover:border-white/20"}`}
+                            data-testid={`toggle-col-${key}-${tier.tempId}`}>
+                            <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${isOn ? "bg-blue-500 border-blue-500" : "border-white/30"}`}>
+                              {isOn && <Check className="w-2.5 h-2.5 text-white" />}
                             </span>
-                          </div>
+                            {label}
+                          </button>
                         );
-                      })()}
+                      })}
                     </div>
                   </div>
                 )}
-              </div>
+
+                {/* Cumulative aggregation setup — only shown when any term enables cumulative columns */}
+                {anyCumulativeEnabled && (
+                  <div className="rounded-md border border-blue-400/20 bg-[#0A1628] p-3 space-y-3">
+                    <div className="flex items-center gap-3">
+                      <button type="button"
+                        onClick={() => {
+                          const enabling = !tier.cumulativeEnabled;
+                          const autoWeights = enabling && tier.cumulativeTermWeights.length === 0
+                            ? termNames.map(n => ({ termName: n, weight: "" }))
+                            : tier.cumulativeTermWeights;
+                          onChange({ ...tier, cumulativeEnabled: enabling, cumulativeTermWeights: autoWeights });
+                        }}
+                        className={`w-9 h-5 rounded-full border-2 relative transition-colors shrink-0 ${tier.cumulativeEnabled ? "bg-blue-500 border-blue-500" : "bg-white/10 border-white/20"}`}
+                        data-testid={`toggle-cumulative-${tier.tempId}`}>
+                        <span className={`absolute top-0.5 w-3 h-3 rounded-full transition-transform ${tier.cumulativeEnabled ? "bg-white translate-x-4" : "bg-white/40 translate-x-0.5"}`} />
+                      </button>
+                      <div>
+                        <p className={`text-xs font-semibold ${tier.cumulativeEnabled ? "text-blue-300" : "text-white/40"}`}>Enable Cumulative Aggregation</p>
+                        <p className="text-[10px] text-white/30">Combine multiple term scores into a year-end cumulative percentage.</p>
+                      </div>
+                    </div>
+
+                    {tier.cumulativeEnabled && (
+                      <div className="space-y-3 pl-1">
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-white/50 uppercase tracking-wide">Cumulative Trigger Term</label>
+                          <p className="text-[10px] text-white/30">Cumulative columns appear only when teacher selects this term.</p>
+                          <TermSelect
+                            value={tier.cumulativeTriggerTerm}
+                            onChange={v => setField("cumulativeTriggerTerm", v)}
+                            terms={termNames}
+                            placeholder="— pick year-end term —"
+                            testId={`select-cumulative-trigger-${tier.tempId}`}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] text-white/50 uppercase tracking-wide">Term Contribution Weights (must sum to 100%)</label>
+                            <button type="button"
+                              onClick={() => setField("cumulativeTermWeights", [...tier.cumulativeTermWeights, { termName: "", weight: "" }])}
+                              className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-0.5"
+                              data-testid={`btn-add-cumul-weight-${tier.tempId}`}>
+                              <Plus className="w-3 h-3" /> Add term
+                            </button>
+                          </div>
+                          {tier.cumulativeTermWeights.length === 0 && (
+                            <p className="text-[10px] text-white/30 italic">No weights configured. Click "Add term" or toggle off and on to auto-fill from Section A.</p>
+                          )}
+                          {tier.cumulativeTermWeights.map((tw, wi) => (
+                            <div key={wi} className="flex items-center gap-2">
+                              <div className="flex-1">
+                                {termNames.length > 0 ? (
+                                  <select value={tw.termName}
+                                    onChange={e => {
+                                      const updated = tier.cumulativeTermWeights.map((w, i) => i === wi ? { ...w, termName: e.target.value } : w);
+                                      setField("cumulativeTermWeights", updated);
+                                    }}
+                                    className="h-7 w-full rounded border border-white/20 bg-[#1A2942] text-xs px-2 text-white appearance-none cursor-pointer focus:outline-none focus:border-blue-500/60"
+                                    style={{ colorScheme: "dark" }}
+                                    data-testid={`select-cumul-term-${tier.tempId}-${wi}`}>
+                                    <option value="" className="bg-[#1A2942] text-white/40">— pick term —</option>
+                                    {termNames.map(n => <option key={n} value={n} className="bg-[#1A2942] text-white">{n}</option>)}
+                                  </select>
+                                ) : (
+                                  <Input value={tw.termName}
+                                    onChange={e => {
+                                      const updated = tier.cumulativeTermWeights.map((w, i) => i === wi ? { ...w, termName: e.target.value } : w);
+                                      setField("cumulativeTermWeights", updated);
+                                    }}
+                                    placeholder="Term name"
+                                    className="bg-[#1A2942] border-white/20 text-white text-xs h-7"
+                                    data-testid={`input-cumul-term-${tier.tempId}-${wi}`} />
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Input type="number" min="0" max="100" value={tw.weight}
+                                  onChange={e => {
+                                    const updated = tier.cumulativeTermWeights.map((w, i) => i === wi ? { ...w, weight: e.target.value } : w);
+                                    setField("cumulativeTermWeights", updated);
+                                  }}
+                                  placeholder="0"
+                                  className="bg-[#1A2942] border-white/20 text-white text-xs h-7 w-16"
+                                  data-testid={`input-cumul-weight-${tier.tempId}-${wi}`} />
+                                <span className="text-[10px] text-white/40">%</span>
+                                <button type="button"
+                                  onClick={() => setField("cumulativeTermWeights", tier.cumulativeTermWeights.filter((_, i) => i !== wi))}
+                                  className="text-red-400/60 hover:text-red-400 transition-colors p-0.5"
+                                  data-testid={`btn-remove-cumul-weight-${tier.tempId}-${wi}`}>
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                          {tier.cumulativeTermWeights.length > 0 && (() => {
+                            const total = tier.cumulativeTermWeights.reduce((s, tw) => s + (parseFloat(tw.weight) || 0), 0);
+                            const ok = Math.abs(total - 100) < 0.01;
+                            return (
+                              <div className="flex items-center justify-between pt-0.5">
+                                <p className="text-[10px] text-blue-300/60 italic">
+                                  Formula: {tier.cumulativeTermWeights.filter(tw => tw.termName).map(tw => `(${tw.termName} × ${tw.weight || "?"}%)`).join(" + ")}
+                                </p>
+                                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${ok ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
+                                  {total.toFixed(1)}% / 100%
+                                </span>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
             )}
           </div>
 
+          {/* Validation banner — shown when any term is still pending */}
+          {pendingTermNames.length > 0 && (
+            <div className="flex items-start gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-300">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-400" />
+              <span>
+                Please configure the Results Panel Layout for all terms before saving.{" "}
+                <span className="font-semibold text-amber-200">Missing: {pendingTermNames.join(", ")}</span>
+              </span>
+            </div>
+          )}
+
           {/* Action Buttons */}
           <div className="flex gap-2 pt-1">
-            <Button onClick={onSave} disabled={isSaving} size="sm"
-              className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-9"
+            <Button onClick={onSave}
+              disabled={isSaving || pendingTermNames.length > 0 || termNames.length === 0}
+              size="sm"
+              className={`font-semibold h-9 transition-all duration-300 ${
+                justSaved
+                  ? "bg-emerald-500 hover:bg-emerald-600 text-white border-0"
+                  : "bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628]"
+              } disabled:opacity-50`}
               data-testid={`btn-save-exam-policy-${tier.tempId}`}>
-              <Save className="w-3.5 h-3.5 mr-1.5" /> {isSaving ? "Saving…" : "Save Policy"}
+              {justSaved ? (
+                <><Check className="w-3.5 h-3.5 mr-1.5" /> Policy Saved!</>
+              ) : isSaving ? (
+                "Saving…"
+              ) : (
+                <><Save className="w-3.5 h-3.5 mr-1.5" /> Save Policy</>
+              )}
             </Button>
             <Button onClick={onDelete} size="sm" variant="ghost"
               className="text-red-400/70 hover:text-red-400 hover:bg-red-400/10 h-9"
@@ -1115,6 +1190,7 @@ export default function SchoolSetup({ schoolId }: Props) {
   const [examPolicyTierList, setExamPolicyTierList] = useState<ExamPolicyTierLocal[]>([]);
   const [examPolicyLoaded, setExamPolicyLoaded] = useState(false);
   const [savingExamPolicyId, setSavingExamPolicyId] = useState<string | null>(null);
+  const [savedExamPolicyId, setSavedExamPolicyId] = useState<string | null>(null);
   const [examPolicyErrors, setExamPolicyErrors] = useState<string[]>([]);
 
   const { data: meta } = useQuery({
@@ -1229,8 +1305,25 @@ export default function SchoolSetup({ schoolId }: Props) {
         }));
         const r1 = rules.rule1 ?? {};
         const r2 = rules.rule2 ?? {};
-        const cols = rc.columns ?? {};
         const cumul = rc.cumulative ?? {};
+        // Parse per-term column configs — support new format (termConfigs) and legacy (columns)
+        const termColumnConfigs: Record<string, TermColsLocal> = {};
+        if (rc.termConfigs && typeof rc.termConfigs === "object") {
+          Object.assign(termColumnConfigs, rc.termConfigs);
+        } else if (rc.columns) {
+          // Legacy: apply old single-column config to every term
+          const c = rc.columns;
+          const legacyCols: TermColsLocal = {
+            studentProfile: c.studentProfile !== false, weightedAvg: c.weightedAvg !== false,
+            termGrade: c.termGrade !== false, subjectFails: c.subjectFails !== false,
+            attendance: c.attendance !== false, promotionGate: c.promotionGate !== false,
+            reportCard: c.reportCard !== false, cumulativeTotal: c.cumulativeTotal === true,
+            finalGrade: c.finalGrade === true,
+          };
+          for (const term of targetTerms) {
+            if (term.targetName.trim()) termColumnConfigs[term.targetName] = { ...legacyCols };
+          }
+        }
         return {
           id: t.id,
           tempId: String(t.id),
@@ -1246,15 +1339,7 @@ export default function SchoolSetup({ schoolId }: Props) {
           compositeFinalTerm: r2.second_term ?? "",
           finalFailsAllowance: String(r2.second_fails ?? rules.composite_fail_rules?.final_fails_allowance_if_half_yearly_tripped ?? 3),
           expanded: false,
-          colStudentProfile: cols.studentProfile !== false,
-          colWeightedAvg: cols.weightedAvg !== false,
-          colTermGrade: cols.termGrade !== false,
-          colSubjectFails: cols.subjectFails !== false,
-          colAttendance: cols.attendance !== false,
-          colPromotionGate: cols.promotionGate !== false,
-          colReportCard: cols.reportCard !== false,
-          colCumulativeTotal: cols.cumulativeTotal === true,
-          colFinalGrade: cols.finalGrade === true,
+          termColumnConfigs,
           cumulativeEnabled: cumul.enabled === true,
           cumulativeTriggerTerm: cumul.triggerTerm ?? "",
           cumulativeTermWeights: Object.entries(cumul.termWeights ?? {}).map(([termName, w]) => ({ termName, weight: String(w) })),
@@ -1391,17 +1476,7 @@ export default function SchoolSetup({ schoolId }: Props) {
         },
       };
       const resultsConfig = {
-        columns: {
-          studentProfile: tier.colStudentProfile,
-          weightedAvg: tier.colWeightedAvg,
-          termGrade: tier.colTermGrade,
-          subjectFails: tier.colSubjectFails,
-          attendance: tier.colAttendance,
-          promotionGate: tier.colPromotionGate,
-          reportCard: tier.colReportCard,
-          cumulativeTotal: tier.colCumulativeTotal,
-          finalGrade: tier.colFinalGrade,
-        },
+        termConfigs: tier.termColumnConfigs,
         cumulative: {
           enabled: tier.cumulativeEnabled,
           triggerTerm: tier.cumulativeTriggerTerm,
@@ -1427,7 +1502,9 @@ export default function SchoolSetup({ schoolId }: Props) {
         setExamPolicyTierList(prev => prev.map(t => t.tempId === tier.tempId ? { ...t, id: created.id, tempId: String(created.id) } : t));
       }
       queryClient.invalidateQueries({ queryKey: ["/api/admin/exam-policy-tiers"] });
-      toast({ title: "Policy saved", description: `"${tier.tierName.trim()}" updated.` });
+      toast({ title: "✓ Policy Saved", description: `"${tier.tierName.trim()}" has been saved securely.`, duration: 3000 });
+      setSavedExamPolicyId(tier.tempId);
+      setTimeout(() => setSavedExamPolicyId(prev => prev === tier.tempId ? null : prev), 2500);
     } catch (e) {
       toast({ title: "Save failed", description: e instanceof Error ? e.message : "An error occurred", variant: "destructive" });
     } finally {
@@ -1798,6 +1875,7 @@ export default function SchoolSetup({ schoolId }: Props) {
               onDelete={() => deleteExamPolicyTierFn(tier)}
               onSave={() => saveExamPolicyTierFn(tier)}
               isSaving={savingExamPolicyId === tier.tempId}
+              justSaved={savedExamPolicyId === tier.tempId}
             />
           ))}
         </div>

@@ -640,7 +640,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     } catch { return []; }
   }, [policyTier]);
 
-  // Parse Section C results config — column visibility + cumulative setup
+  // Parse Section C results config — per-term column visibility + cumulative setup
   const { showCol, cumulConfig } = useMemo(() => {
     const defaults = {
       showCol: {
@@ -653,23 +653,50 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     if (!policyTier?.resultsConfig) return defaults;
     try {
       const rc = JSON.parse(policyTier.resultsConfig);
-      const cols = rc.columns ?? {};
-      return {
-        showCol: {
-          studentProfile: cols.studentProfile !== false,
-          weightedAvg: cols.weightedAvg !== false,
-          termGrade: cols.termGrade !== false,
-          subjectFails: cols.subjectFails !== false,
-          attendance: cols.attendance !== false,
-          promotionGate: cols.promotionGate !== false,
-          reportCard: cols.reportCard !== false,
-          cumulativeTotal: cols.cumulativeTotal === true,
-          finalGrade: cols.finalGrade === true,
-        },
-        cumulConfig: rc.cumulative ?? null,
-      };
+      const cumConf = rc.cumulative ?? null;
+      // New per-term format: { termConfigs: { "Term Name": { studentProfile, ... } }, cumulative: {...} }
+      if (rc.termConfigs && resTerm) {
+        const trimmed = resTerm.trim();
+        const key = Object.keys(rc.termConfigs).find(k => k.trim() === trimmed);
+        const tc = key ? rc.termConfigs[key] : null;
+        if (tc) {
+          return {
+            showCol: {
+              studentProfile: tc.studentProfile !== false,
+              weightedAvg: tc.weightedAvg !== false,
+              termGrade: tc.termGrade !== false,
+              subjectFails: tc.subjectFails !== false,
+              attendance: tc.attendance !== false,
+              promotionGate: tc.promotionGate !== false,
+              reportCard: tc.reportCard !== false,
+              cumulativeTotal: tc.cumulativeTotal === true,
+              finalGrade: tc.finalGrade === true,
+            },
+            cumulConfig: cumConf,
+          };
+        }
+      }
+      // Legacy single-column format: { columns: {...}, cumulative: {...} }
+      if (rc.columns) {
+        const cols = rc.columns;
+        return {
+          showCol: {
+            studentProfile: cols.studentProfile !== false,
+            weightedAvg: cols.weightedAvg !== false,
+            termGrade: cols.termGrade !== false,
+            subjectFails: cols.subjectFails !== false,
+            attendance: cols.attendance !== false,
+            promotionGate: cols.promotionGate !== false,
+            reportCard: cols.reportCard !== false,
+            cumulativeTotal: cols.cumulativeTotal === true,
+            finalGrade: cols.finalGrade === true,
+          },
+          cumulConfig: cumConf,
+        };
+      }
+      return { ...defaults, cumulConfig: cumConf };
     } catch { return defaults; }
-  }, [policyTier]);
+  }, [policyTier, resTerm]);
 
   // Is the currently selected term the cumulative trigger?
   const isCumulativeTerm = useMemo(() => {
