@@ -931,50 +931,49 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
               </div>
             ) : (
               <>
-                {/* Term selector — stacked full-width buttons */}
-                <div className="space-y-1.5">
-                  <p className="text-[11px] text-white/50 font-medium uppercase tracking-wide">Select Term to Configure</p>
-                  <div className="flex flex-col gap-1.5">
+                {/* Term selector — dropdown + per-term status badges */}
+                <div className="space-y-2">
+                  <label className="text-[11px] text-white/50 font-medium uppercase tracking-wide">Select Term to Configure</label>
+                  <select
+                    value={sectionCTerm}
+                    onChange={e => {
+                      const termName = e.target.value;
+                      setSectionCTerm(termName);
+                      if (termName && !tier.termColumnConfigs[termName]) {
+                        const freshConfigs: Record<string, TermColsLocal> = {};
+                        for (const [k, v] of Object.entries(tier.termColumnConfigs)) {
+                          freshConfigs[k] = { ...v };
+                        }
+                        freshConfigs[termName] = defaultTermCols();
+                        onChange({ ...tier, termColumnConfigs: freshConfigs });
+                      }
+                    }}
+                    className="w-full h-10 rounded-lg border border-white/20 bg-[#1A2942] text-sm px-3 text-white appearance-none cursor-pointer focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/30"
+                    style={{ colorScheme: "dark" }}
+                    data-testid={`select-section-c-term-${tier.tempId}`}>
+                    <option value="" className="bg-[#1A2942] text-white/40">— choose a term to configure —</option>
+                    {termNames.map(n => (
+                      <option key={n} value={n} className="bg-[#1A2942] text-white">{n}</option>
+                    ))}
+                  </select>
+                  {/* Per-term status badges */}
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
                     {termNames.map(termName => {
                       const isConfigured = !!tier.termColumnConfigs[termName];
-                      const isActive = sectionCTerm === termName;
                       return (
-                        <button key={termName} type="button"
-                          onClick={() => {
-                            setSectionCTerm(termName);
-                            if (!tier.termColumnConfigs[termName]) {
-                              // Deep-copy existing entries + add new term with fresh defaults
-                              const freshConfigs: Record<string, TermColsLocal> = {};
-                              for (const [k, v] of Object.entries(tier.termColumnConfigs)) {
-                                freshConfigs[k] = { ...v };
-                              }
-                              freshConfigs[termName] = defaultTermCols();
-                              onChange({ ...tier, termColumnConfigs: freshConfigs });
-                            }
-                          }}
-                          className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg border text-sm font-medium transition-all ${
-                            isActive
-                              ? "border-blue-400/70 bg-blue-500/20 text-blue-200 shadow-sm shadow-blue-500/20"
-                              : "border-white/15 bg-[#0A1628] text-white/60 hover:border-white/30 hover:text-white/85"
-                          }`}
-                          data-testid={`btn-section-c-term-${tier.tempId}-${termName.replace(/\s+/g, "-")}`}>
-                          <span>{termName}</span>
+                        <span key={termName} className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border">
+                          <span className={isConfigured ? "text-emerald-300" : "text-white/50"}>{termName}:</span>
                           {isConfigured ? (
-                            <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                            <span className="flex items-center gap-0.5 text-emerald-400 font-bold">
                               <Check className="w-2.5 h-2.5" /> Done
                             </span>
                           ) : (
-                            <span className="text-[10px] font-bold text-amber-400 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-full">
-                              ● Pending Layout
-                            </span>
+                            <span className="text-amber-400 font-bold">● Pending</span>
                           )}
-                        </button>
+                        </span>
                       );
                     })}
                   </div>
-                  {!sectionCTerm && (
-                    <p className="text-[11px] text-white/30 italic pt-1">Click a term above to open its column layout.</p>
-                  )}
                 </div>
 
                 {/* Column toggles for selected term */}
@@ -1021,8 +1020,8 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
                   </div>
                 )}
 
-                {/* Cumulative aggregation setup — only shown when any term enables cumulative columns */}
-                {anyCumulativeEnabled && (
+                {/* Cumulative aggregation setup — only shown once a term is selected AND it enables cumulative columns */}
+                {sectionCTerm && anyCumulativeEnabled && (
                   <div className="rounded-md border border-blue-400/20 bg-[#0A1628] p-3 space-y-3">
                     <div className="flex items-center gap-3">
                       <button type="button"
