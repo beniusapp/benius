@@ -2822,6 +2822,23 @@ export function registerTeacherRoutes(app: Express) {
 
   // ===== RESULTS ENGINE — TEACHER READ-ONLY =====
 
+  app.get("/api/teacher/grading-rules/:class", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const cls = decodeURIComponent(req.params.class);
+    try {
+      const tiers = await storage.getGradingTiers(teacher.schoolId);
+      const tier = tiers.find(t => (t.classes || []).map(String).includes(String(cls).trim()));
+      if (!tier) return res.json({ rules: [], passPercentage: 35 });
+      const rules = await storage.getGradingRules(teacher.schoolId, tier.id);
+      res.json({ rules, passPercentage: tier.passPercentage });
+    } catch (err) {
+      console.error("[grading-rules] error:", err);
+      res.status(500).json({ message: "Failed to fetch grading rules" });
+    }
+  });
+
   app.get("/api/teacher/exam-policy/:class", async (req, res) => {
     console.log("[exam-policy] session:", { teacherId: req.session.teacherId, userId: req.session.userId, schoolId: req.session.schoolId });
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });

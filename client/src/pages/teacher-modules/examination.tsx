@@ -172,16 +172,52 @@ function computeAllStudentResults(
   });
 }
 
-// ── Grade helper ──────────────────────────────────────────────────────────────
-function getGrade(pct: number): { grade: string; color: string } {
-  if (pct >= 90) return { grade: "A+", color: "text-emerald-700 bg-emerald-100" };
-  if (pct >= 80) return { grade: "A", color: "text-green-700 bg-green-100" };
-  if (pct >= 70) return { grade: "B+", color: "text-teal-700 bg-teal-100" };
-  if (pct >= 60) return { grade: "B", color: "text-blue-700 bg-blue-100" };
-  if (pct >= 50) return { grade: "C+", color: "text-indigo-700 bg-indigo-100" };
-  if (pct >= 40) return { grade: "C", color: "text-amber-700 bg-amber-100" };
-  if (pct >= 33) return { grade: "D", color: "text-orange-700 bg-orange-100" };
-  return { grade: "F", color: "text-red-700 bg-red-100" };
+// ── Grade types & helpers ─────────────────────────────────────────────────────
+interface GradingRuleClient {
+  id: number; tierId: number; gradeLabel: string;
+  minPercent: number; maxPercent: number; remarks: string | null; sortOrder: number;
+}
+
+function gradeColor(label: string): string {
+  const l = label.toUpperCase();
+  if (l === "O" || l === "A+") return "text-emerald-400";
+  if (l.startsWith("A")) return "text-green-400";
+  if (l === "B+") return "text-teal-400";
+  if (l.startsWith("B")) return "text-blue-400";
+  if (l.startsWith("C")) return "text-yellow-400";
+  if (l.startsWith("D")) return "text-orange-400";
+  return "text-red-400";
+}
+
+function gradeBg(label: string): string {
+  const l = label.toUpperCase();
+  if (l === "O" || l === "A+") return "bg-emerald-500/15 border-emerald-500/30";
+  if (l.startsWith("A")) return "bg-green-500/15 border-green-500/30";
+  if (l === "B+") return "bg-teal-500/15 border-teal-500/30";
+  if (l.startsWith("B")) return "bg-blue-500/15 border-blue-500/30";
+  if (l.startsWith("C")) return "bg-yellow-500/15 border-yellow-500/30";
+  if (l.startsWith("D")) return "bg-orange-500/15 border-orange-500/30";
+  return "bg-red-500/15 border-red-500/30";
+}
+
+function computeGrade(pct: number, rules: GradingRuleClient[]): { label: string; color: string; bg: string; remarks: string | null } {
+  if (rules.length > 0) {
+    const sorted = [...rules].sort((a, b) => b.minPercent - a.minPercent);
+    for (const r of sorted) {
+      if (pct >= r.minPercent) return { label: r.gradeLabel, color: gradeColor(r.gradeLabel), bg: gradeBg(r.gradeLabel), remarks: r.remarks };
+    }
+    const last = sorted[sorted.length - 1];
+    return { label: last.gradeLabel, color: gradeColor(last.gradeLabel), bg: gradeBg(last.gradeLabel), remarks: last.remarks };
+  }
+  // Fallback static grades when no school rules configured
+  if (pct >= 90) return { label: "A+", color: "text-emerald-400", bg: "bg-emerald-500/15 border-emerald-500/30", remarks: "Outstanding" };
+  if (pct >= 80) return { label: "A",  color: "text-green-400",   bg: "bg-green-500/15 border-green-500/30",   remarks: "Excellent" };
+  if (pct >= 70) return { label: "B+", color: "text-teal-400",    bg: "bg-teal-500/15 border-teal-500/30",    remarks: "Very Good" };
+  if (pct >= 60) return { label: "B",  color: "text-blue-400",    bg: "bg-blue-500/15 border-blue-500/30",    remarks: "Good" };
+  if (pct >= 50) return { label: "C+", color: "text-yellow-400",  bg: "bg-yellow-500/15 border-yellow-500/30", remarks: "Average" };
+  if (pct >= 40) return { label: "C",  color: "text-amber-400",   bg: "bg-amber-500/15 border-amber-500/30",  remarks: "Below Average" };
+  if (pct >= 33) return { label: "D",  color: "text-orange-400",  bg: "bg-orange-500/15 border-orange-500/30", remarks: "Poor" };
+  return { label: "F", color: "text-red-400", bg: "bg-red-500/15 border-red-500/30", remarks: "Fail" };
 }
 
 interface ClassAvgEntry { examType: string; avgPercentage: number; }
@@ -244,14 +280,14 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
               <tbody>
                 {subjectScores.map((s, i) => {
                   const pct = Math.round((s.marks / s.totalMarks) * 100);
-                  const g = getGrade(pct);
+                  const g = computeGrade(pct, []);
                   return (
                     <tr key={i} className="border-b last:border-0">
                       <td className="py-1.5 px-2 font-medium">{s.examType}</td>
                       <td className="py-1.5 px-2 text-center">{s.marks}/{s.totalMarks}</td>
                       <td className="py-1.5 px-2 text-center">{pct}%</td>
                       <td className="py-1.5 px-2 text-center">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${g.color}`}>{g.grade}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${g.color} ${g.bg}`}>{g.label}</span>
                       </td>
                     </tr>
                   );
@@ -295,14 +331,14 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
                       </div>
                     );
                     const pct = Math.round((s.marks / s.totalMarks) * 100);
-                    const g = getGrade(pct);
+                    const g = computeGrade(pct, []);
                     return (
                       <div key={i} className="flex items-center justify-between gap-2 text-[11px]">
                         <span className="text-muted-foreground">{s.examType}</span>
                         <div className="flex items-center gap-2">
                           <span className="font-medium">{s.marks}/{s.totalMarks}</span>
                           <span className="text-muted-foreground">({pct}%)</span>
-                          <span className={`px-1 py-0.5 rounded text-[9px] font-bold ${g.color}`}>{g.grade}</span>
+                          <span className={`px-1 py-0.5 rounded border text-[9px] font-bold ${g.color} ${g.bg}`}>{g.label}</span>
                         </div>
                       </div>
                     );
@@ -318,10 +354,11 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
 }
 
 // ── Report Card Modal ─────────────────────────────────────────────────────────
-function ReportCardModal({ student, term, policy, onClose }: {
+function ReportCardModal({ student, term, policy, gradingRules, onClose }: {
   student: ComputedStudentResult;
   term: string;
   policy: ExamPolicyTier;
+  gradingRules: GradingRuleClient[];
   onClose: () => void;
 }) {
   const termSubjects = student.termResults[term] ?? [];
@@ -333,6 +370,7 @@ function ReportCardModal({ student, term, policy, onClose }: {
   const overallAvg = subjectsWithScores.length > 0
     ? Math.round((subjectsWithScores.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / subjectsWithScores.length) * 10) / 10
     : null;
+  const overallGrade = overallAvg !== null ? computeGrade(overallAvg, gradingRules) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-3 sm:p-6 bg-black/70 backdrop-blur-sm overflow-y-auto" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -366,9 +404,20 @@ function ReportCardModal({ student, term, policy, onClose }: {
           <div><span className="text-slate-500 text-xs block">Student Name</span><span className="text-white font-semibold">{student.name}</span></div>
           <div><span className="text-slate-500 text-xs block">DSID</span><span className="text-slate-300 font-mono text-xs">{student.digitalStudentId}</span></div>
           {student.rollNumber !== null && <div><span className="text-slate-500 text-xs block">Roll No.</span><span className="text-slate-300">{student.rollNumber}</span></div>}
-          <div className="ml-auto text-right">
-            <span className="text-slate-500 text-xs block">Term Average</span>
-            <span className="text-yellow-400 font-bold text-lg">{overallAvg !== null ? `${overallAvg}%` : "—"}</span>
+          <div className="ml-auto flex items-end gap-4">
+            <div className="text-right">
+              <span className="text-slate-500 text-xs block">Term Average</span>
+              <span className="text-yellow-400 font-bold text-lg">{overallAvg !== null ? `${overallAvg}%` : "—"}</span>
+            </div>
+            {overallGrade && (
+              <div className="text-right">
+                <span className="text-slate-500 text-xs block">Overall Grade</span>
+                <span className={`inline-flex items-center justify-center px-3 py-1 rounded-xl border text-xl font-bold ${overallGrade.color} ${overallGrade.bg}`}
+                  title={overallGrade.remarks ?? ""}>
+                  {overallGrade.label}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -388,6 +437,13 @@ function ReportCardModal({ student, term, policy, onClose }: {
                       {subj.percentage !== null && (
                         <span className="text-yellow-400 font-bold text-sm">{subj.percentage}%</span>
                       )}
+                      {subj.status === "scored" && subj.percentage !== null && (() => {
+                        const g = computeGrade(subj.percentage, gradingRules);
+                        return (
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${g.color} ${g.bg}`}
+                            title={g.remarks ?? ""}>{g.label}</span>
+                        );
+                      })()}
                       {subj.passed === true && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">PASS</span>}
                       {subj.passed === false && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">FAIL</span>}
                       {subj.status === "incomplete" && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-400 border border-slate-500/30">INCOMPLETE</span>}
@@ -519,6 +575,20 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     return () => { cancelled = true; };
   }, [resClass, policyRetry]);
 
+  // Grading rules fetch — same no-cache useEffect pattern
+  const [gradingRules, setGradingRules] = useState<GradingRuleClient[]>([]);
+  const [gradingPassPct, setGradingPassPct] = useState(35);
+
+  useEffect(() => {
+    if (!resClass) { setGradingRules([]); setGradingPassPct(35); return; }
+    let cancelled = false;
+    fetch(`/api/teacher/grading-rules/${encodeURIComponent(resClass)}`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : { rules: [], passPercentage: 35 })
+      .then(d => { if (!cancelled) { setGradingRules(d.rules ?? []); setGradingPassPct(d.passPercentage ?? 35); } })
+      .catch(() => { if (!cancelled) { setGradingRules([]); setGradingPassPct(35); } });
+    return () => { cancelled = true; };
+  }, [resClass]);
+
   function handleResClassChange(cls: string) {
     setResClass(cls);
     setResSection("");
@@ -563,11 +633,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     if (termNames.length > 0 && !resTerm) setResTerm(termNames[0]);
   }, [termNames, resTerm]);
 
-  // Compute results
+  // Compute results — pass school's pass% to engine
   const allResults = useMemo(() => {
     if (!policyTier || classScores.length === 0) return [];
-    return computeAllStudentResults(classScores, policyTier, attendanceSummary);
-  }, [policyTier, classScores, attendanceSummary]);
+    return computeAllStudentResults(classScores, policyTier, attendanceSummary, gradingPassPct);
+  }, [policyTier, classScores, attendanceSummary, gradingPassPct]);
 
   // Filter by search
   const filteredResults = useMemo(() => {
@@ -716,6 +786,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       <th className="text-left py-3 px-4 text-xs font-semibold text-slate-400 w-10">#</th>
                       <th className="text-left py-3 px-4 text-xs font-semibold text-slate-400">Student</th>
                       <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Weighted Avg<br /><span className="font-normal text-slate-600">({resTerm})</span></th>
+                      <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Grade<br /><span className="font-normal text-slate-600">({resTerm})</span></th>
                       <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Subject Fails<br /><span className="font-normal text-slate-600">({resTerm})</span></th>
                       <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Attendance</th>
                       <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Promotion Gate</th>
@@ -754,15 +825,28 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                           <td className="py-3 px-4 text-center">
                             {weightedAvg !== null ? (
                               <div>
-                                <span className={`text-base font-bold ${weightedAvg >= 60 ? "text-emerald-400" : weightedAvg >= 35 ? "text-yellow-400" : "text-red-400"}`}>
+                                <span className={`text-base font-bold ${weightedAvg >= 60 ? "text-emerald-400" : weightedAvg >= gradingPassPct ? "text-yellow-400" : "text-red-400"}`}>
                                   {weightedAvg}%
                                 </span>
                                 <div className="w-20 mx-auto mt-1 h-1.5 rounded-full bg-[#1e293b] overflow-hidden">
-                                  <div className={`h-full rounded-full ${weightedAvg >= 60 ? "bg-emerald-500" : weightedAvg >= 35 ? "bg-yellow-500" : "bg-red-500"}`}
+                                  <div className={`h-full rounded-full ${weightedAvg >= 60 ? "bg-emerald-500" : weightedAvg >= gradingPassPct ? "bg-yellow-500" : "bg-red-500"}`}
                                     style={{ width: `${Math.min(100, weightedAvg)}%` }} />
                                 </div>
                               </div>
                             ) : <span className="text-slate-600 text-xs italic">No data</span>}
+                          </td>
+
+                          {/* Grade */}
+                          <td className="py-3 px-4 text-center">
+                            {weightedAvg !== null ? (() => {
+                              const g = computeGrade(weightedAvg, gradingRules);
+                              return (
+                                <span className={`inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border text-sm font-bold ${g.color} ${g.bg}`}
+                                  title={g.remarks ?? ""} data-testid={`grade-${student.studentId}`}>
+                                  {g.label}
+                                </span>
+                              );
+                            })() : <span className="text-slate-600 text-xs">—</span>}
                           </td>
 
                           {/* Fail count */}
@@ -827,6 +911,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
           student={reportStudent}
           term={resTerm}
           policy={policyTier}
+          gradingRules={gradingRules}
           onClose={() => setReportStudent(null)}
         />
       )}
@@ -1059,7 +1144,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                         const isAbsent = !!absentMap[s.studentId];
                         const val = parseInt(marks[s.studentId] || "0");
                         const pct = isAbsent ? 0 : Math.round((val / maxMarks) * 100);
-                        const g = getGrade(pct);
+                        const g = computeGrade(pct, []);
                         const isOverMax = !isAbsent && val > maxMarks;
                         return (
                           <tr key={s.studentId} className={`border-b last:border-0 ${isAbsent ? "bg-muted/20" : isOverMax ? "bg-red-50 dark:bg-red-950/20" : "hover:bg-muted/20"}`}
@@ -1083,7 +1168,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                             <td className="py-2 px-3 text-center text-xs font-medium">{isAbsent ? "—" : `${pct}%`}</td>
                             <td className="py-2 px-3 text-center">
                               {isAbsent ? <span className="text-xs text-muted-foreground">—</span> : (
-                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${g.color}`}>{g.grade}</span>
+                                <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${g.color} ${g.bg}`}>{g.label}</span>
                               )}
                             </td>
                             <td className="py-2 px-3 text-center">
@@ -1198,7 +1283,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                       {viewScores.map((s, idx) => {
                         const isExpanded = expandedStudent === s.studentId;
                         const pct = s.isAbsent ? 0 : Math.round((s.marks / s.totalMarks) * 100);
-                        const g = getGrade(pct);
+                        const g = computeGrade(pct, []);
                         return (
                           <Fragment key={s.studentId}>
                             <tr className="border-b last:border-0 hover:bg-muted/20 cursor-pointer" onClick={() => setExpandedStudent(isExpanded ? null : s.studentId)} data-testid={`row-view-${s.studentId}`}>
@@ -1208,7 +1293,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                               <td className="py-2 px-3 text-center text-xs">{s.isAbsent ? <span className="font-bold text-gray-500">AB</span> : `${s.marks}/${s.totalMarks}`}</td>
                               <td className="py-2 px-3 text-center text-xs font-medium">{s.isAbsent ? "—" : `${pct}%`}</td>
                               <td className="py-2 px-3 text-center">
-                                {s.isAbsent ? <span className="text-xs text-muted-foreground">—</span> : <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${g.color}`}>{g.grade}</span>}
+                                {s.isAbsent ? <span className="text-xs text-muted-foreground">—</span> : <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${g.color} ${g.bg}`}>{g.label}</span>}
                               </td>
                               <td className="py-2 px-3 text-center">{isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}</td>
                             </tr>
