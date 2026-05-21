@@ -289,6 +289,7 @@ app.use((req, res, next) => {
       promotion_fail_rules TEXT NOT NULL DEFAULT '{}',
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE exam_policy_tiers ADD COLUMN IF NOT EXISTS results_config TEXT NOT NULL DEFAULT '{}';
   `);
 
   await registerRoutes(httpServer, app);

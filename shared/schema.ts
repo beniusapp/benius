@@ -712,6 +712,7 @@ export const examPolicyTiers = pgTable("exam_policy_tiers", {
   applicableClasses: text("applicable_classes").array().notNull().default([]),
   examWeights: text("exam_weights").notNull().default("{}"),
   promotionFailRules: text("promotion_fail_rules").notNull().default("{}"),
+  resultsConfig: text("results_config").notNull().default("{}"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

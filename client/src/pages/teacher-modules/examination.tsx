@@ -38,6 +38,7 @@ interface RawStudentScore {
 interface AttendanceSummary { studentId: number; attendancePct: number | null; presentDays: number; totalDays: number; }
 interface ExamPolicyTier {
   id: number; tierName: string; applicableClasses: string[]; examWeights: string; promotionFailRules: string;
+  resultsConfig?: string;
 }
 interface CompBreakdown {
   sourceExam: string; weight: number;
@@ -639,6 +640,43 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     } catch { return []; }
   }, [policyTier]);
 
+  // Parse Section C results config — column visibility + cumulative setup
+  const { showCol, cumulConfig } = useMemo(() => {
+    const defaults = {
+      showCol: {
+        studentProfile: true, weightedAvg: true, termGrade: true,
+        subjectFails: true, attendance: true, promotionGate: true,
+        reportCard: true, cumulativeTotal: false, finalGrade: false,
+      },
+      cumulConfig: null as null | { enabled: boolean; triggerTerm: string; termWeights: Record<string, number> },
+    };
+    if (!policyTier?.resultsConfig) return defaults;
+    try {
+      const rc = JSON.parse(policyTier.resultsConfig);
+      const cols = rc.columns ?? {};
+      return {
+        showCol: {
+          studentProfile: cols.studentProfile !== false,
+          weightedAvg: cols.weightedAvg !== false,
+          termGrade: cols.termGrade !== false,
+          subjectFails: cols.subjectFails !== false,
+          attendance: cols.attendance !== false,
+          promotionGate: cols.promotionGate !== false,
+          reportCard: cols.reportCard !== false,
+          cumulativeTotal: cols.cumulativeTotal === true,
+          finalGrade: cols.finalGrade === true,
+        },
+        cumulConfig: rc.cumulative ?? null,
+      };
+    } catch { return defaults; }
+  }, [policyTier]);
+
+  // Is the currently selected term the cumulative trigger?
+  const isCumulativeTerm = useMemo(() => {
+    if (!cumulConfig?.enabled || !cumulConfig.triggerTerm || !resTerm) return false;
+    return resTerm.trim() === cumulConfig.triggerTerm.trim();
+  }, [cumulConfig, resTerm]);
+
   // Auto-select first term when policy loads
   useEffect(() => {
     if (termNames.length > 0 && !resTerm) setResTerm(termNames[0]);
@@ -814,17 +852,48 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-sm" style={{ minWidth: "700px" }}>
+                <table className="w-full text-sm" style={{ minWidth: "640px" }}>
                   <thead>
                     <tr className="border-b border-[#1e293b] bg-[#1e293b]/40">
                       <th className="text-left py-3 px-4 text-xs font-semibold text-slate-400 w-10">#</th>
-                      <th className="text-left py-3 px-4 text-xs font-semibold text-slate-400">Student</th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Weighted Avg<br /><span className="font-normal text-slate-600">({resTerm})</span></th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Grade<br /><span className="font-normal text-slate-600">({resTerm})</span></th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Subject Fails<br /><span className="font-normal text-slate-600">({resTerm})</span></th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Attendance</th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Promotion Gate</th>
-                      <th className="text-center py-3 px-3 text-xs font-semibold text-slate-400 w-28">Report</th>
+                      {showCol.studentProfile && (
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-400">Student</th>
+                      )}
+                      {showCol.weightedAvg && (
+                        <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">
+                          Weighted Avg<br /><span className="font-normal text-slate-600">({resTerm})</span>
+                        </th>
+                      )}
+                      {showCol.termGrade && (
+                        <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">
+                          Grade<br /><span className="font-normal text-slate-600">({resTerm})</span>
+                        </th>
+                      )}
+                      {showCol.subjectFails && (
+                        <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">
+                          Subject Fails<br /><span className="font-normal text-slate-600">({resTerm})</span>
+                        </th>
+                      )}
+                      {showCol.attendance && (
+                        <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Attendance</th>
+                      )}
+                      {showCol.promotionGate && (
+                        <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Promotion Gate</th>
+                      )}
+                      {showCol.cumulativeTotal && isCumulativeTerm && (
+                        <th className="text-center py-3 px-4 text-xs font-semibold text-blue-400">
+                          Cumulative Total %<br />
+                          <span className="font-normal text-blue-600 text-[10px]">
+                            {cumulConfig ? Object.entries(cumulConfig.termWeights ?? {}).map(([t, w]) => `${t}×${w}%`).join(" + ") : ""}
+                          </span>
+                        </th>
+                      )}
+                      {showCol.finalGrade && isCumulativeTerm && (
+                        <th className="text-center py-3 px-4 text-xs font-semibold text-blue-400">Final Grade</th>
+                      )}
+                      {showCol.reportCard && (
+                        <th className="text-center py-3 px-3 text-xs font-semibold text-slate-400 w-28">Report</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -837,97 +906,162 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       const failCount = student.allTermFailCounts[resTerm] ?? 0;
                       const att = student.attendancePct;
 
+                      // Cumulative calculation: Σ(termAvg × termWeight / 100)
+                      let cumulativePct: number | null = null;
+                      if (isCumulativeTerm && cumulConfig?.termWeights) {
+                        const twEntries = Object.entries(cumulConfig.termWeights);
+                        let totalContrib = 0;
+                        let allHaveData = twEntries.length > 0;
+                        for (const [termName, weight] of twEntries) {
+                          const w = Number(weight);
+                          const tSubjs = student.termResults[termName.trim()] ?? [];
+                          const tScored = tSubjs.filter(s => s.status === "scored");
+                          if (tScored.length === 0) { allHaveData = false; break; }
+                          const avg = tScored.reduce((s, sub) => s + (sub.percentage ?? 0), 0) / tScored.length;
+                          totalContrib += avg * (w / 100);
+                        }
+                        if (allHaveData) cumulativePct = Math.round(totalContrib * 10) / 10;
+                      }
+
                       return (
                         <tr key={student.studentId} className="border-b border-[#1e293b]/60 hover:bg-[#1e293b]/30 transition-colors" data-testid={`result-row-${student.studentId}`}>
-                          {/* Roll / index */}
+                          {/* Roll / index — always visible */}
                           <td className="py-3 px-4 text-slate-500 text-xs">{student.rollNumber ?? idx + 1}</td>
 
                           {/* Student card */}
-                          <td className="py-3 px-4">
-                            <div className="flex items-center gap-2.5">
-                              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-yellow-500/20 to-yellow-600/10 border border-yellow-500/20 flex items-center justify-center shrink-0">
-                                <span className="text-yellow-400 font-bold text-xs">{student.name.charAt(0)}</span>
+                          {showCol.studentProfile && (
+                            <td className="py-3 px-4">
+                              <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-yellow-500/20 to-yellow-600/10 border border-yellow-500/20 flex items-center justify-center shrink-0">
+                                  <span className="text-yellow-400 font-bold text-xs">{student.name.charAt(0)}</span>
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-white font-semibold text-sm truncate">{student.name}</p>
+                                  <p className="text-slate-500 font-mono text-[10px]">{student.digitalStudentId}</p>
+                                </div>
                               </div>
-                              <div className="min-w-0">
-                                <p className="text-white font-semibold text-sm truncate">{student.name}</p>
-                                <p className="text-slate-500 font-mono text-[10px]">{student.digitalStudentId}</p>
-                              </div>
-                            </div>
-                          </td>
+                            </td>
+                          )}
 
                           {/* Weighted avg */}
-                          <td className="py-3 px-4 text-center">
-                            {weightedAvg !== null ? (
-                              <div>
-                                <span className={`text-base font-bold ${weightedAvg >= 60 ? "text-emerald-400" : weightedAvg >= gradingPassPct ? "text-yellow-400" : "text-red-400"}`}>
-                                  {weightedAvg}%
-                                </span>
-                                <div className="w-20 mx-auto mt-1 h-1.5 rounded-full bg-[#1e293b] overflow-hidden">
-                                  <div className={`h-full rounded-full ${weightedAvg >= 60 ? "bg-emerald-500" : weightedAvg >= gradingPassPct ? "bg-yellow-500" : "bg-red-500"}`}
-                                    style={{ width: `${Math.min(100, weightedAvg)}%` }} />
+                          {showCol.weightedAvg && (
+                            <td className="py-3 px-4 text-center">
+                              {weightedAvg !== null ? (
+                                <div>
+                                  <span className={`text-base font-bold ${weightedAvg >= 60 ? "text-emerald-400" : weightedAvg >= gradingPassPct ? "text-yellow-400" : "text-red-400"}`}>
+                                    {weightedAvg}%
+                                  </span>
+                                  <div className="w-20 mx-auto mt-1 h-1.5 rounded-full bg-[#1e293b] overflow-hidden">
+                                    <div className={`h-full rounded-full ${weightedAvg >= 60 ? "bg-emerald-500" : weightedAvg >= gradingPassPct ? "bg-yellow-500" : "bg-red-500"}`}
+                                      style={{ width: `${Math.min(100, weightedAvg)}%` }} />
+                                  </div>
                                 </div>
-                              </div>
-                            ) : <span className="text-slate-600 text-xs italic">No data</span>}
-                          </td>
+                              ) : <span className="text-slate-600 text-xs italic">No data</span>}
+                            </td>
+                          )}
 
-                          {/* Grade */}
-                          <td className="py-3 px-4 text-center">
-                            {weightedAvg !== null ? (() => {
-                              const g = computeGrade(weightedAvg, gradingRules);
-                              return (
-                                <span className={`inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border text-sm font-bold ${g.color} ${g.bg}`}
-                                  title={g.remarks ?? ""} data-testid={`grade-${student.studentId}`}>
-                                  {g.label}
-                                </span>
-                              );
-                            })() : <span className="text-slate-600 text-xs">—</span>}
-                          </td>
+                          {/* Term Grade */}
+                          {showCol.termGrade && (
+                            <td className="py-3 px-4 text-center">
+                              {weightedAvg !== null ? (() => {
+                                const g = computeGrade(weightedAvg, gradingRules);
+                                return (
+                                  <span className={`inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border text-sm font-bold ${g.color} ${g.bg}`}
+                                    title={g.remarks ?? ""} data-testid={`grade-${student.studentId}`}>
+                                    {g.label}
+                                  </span>
+                                );
+                              })() : <span className="text-slate-600 text-xs">—</span>}
+                            </td>
+                          )}
 
-                          {/* Fail count */}
-                          <td className="py-3 px-4 text-center">
-                            <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold border ${failCount === 0 ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : failCount <= 2 ? "bg-amber-500/10 border-amber-500/30 text-amber-400" : "bg-red-500/10 border-red-500/30 text-red-400"}`}>
-                              {failCount}
-                            </span>
-                          </td>
+                          {/* Subject Fails */}
+                          {showCol.subjectFails && (
+                            <td className="py-3 px-4 text-center">
+                              <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold border ${failCount === 0 ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : failCount <= 2 ? "bg-amber-500/10 border-amber-500/30 text-amber-400" : "bg-red-500/10 border-red-500/30 text-red-400"}`}>
+                                {failCount}
+                              </span>
+                            </td>
+                          )}
 
-                          {/* Attendance bar */}
-                          <td className="py-3 px-4 text-center">
-                            {att !== null ? (
+                          {/* Attendance */}
+                          {showCol.attendance && (
+                            <td className="py-3 px-4 text-center">
+                              {att !== null ? (
+                                <div className="flex flex-col items-center gap-1">
+                                  <span className={`text-xs font-bold ${att < 75 ? "text-red-400" : att < 85 ? "text-yellow-400" : "text-emerald-400"}`}>{att}%</span>
+                                  <div className="w-16 h-1.5 rounded-full bg-[#1e293b] overflow-hidden">
+                                    <div className={`h-full rounded-full ${att < 75 ? "bg-red-500" : att < 85 ? "bg-yellow-500" : "bg-emerald-500"}`}
+                                      style={{ width: `${att}%` }} />
+                                  </div>
+                                  {att < 75 && <span className="text-[9px] text-red-400">Low</span>}
+                                </div>
+                              ) : <span className="text-slate-600 text-xs">—</span>}
+                            </td>
+                          )}
+
+                          {/* Promotion Gate */}
+                          {showCol.promotionGate && (
+                            <td className="py-3 px-4 text-center">
                               <div className="flex flex-col items-center gap-1">
-                                <span className={`text-xs font-bold ${att < 75 ? "text-red-400" : att < 85 ? "text-yellow-400" : "text-emerald-400"}`}>{att}%</span>
-                                <div className="w-16 h-1.5 rounded-full bg-[#1e293b] overflow-hidden">
-                                  <div className={`h-full rounded-full ${att < 75 ? "bg-red-500" : att < 85 ? "bg-yellow-500" : "bg-emerald-500"}`}
-                                    style={{ width: `${att}%` }} />
-                                </div>
-                                {att < 75 && <span className="text-[9px] text-red-400">Low</span>}
+                                {student.promoted ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold">
+                                    <CheckCircle2 className="w-3 h-3" /> Promoted
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-500/15 border border-red-500/30 text-red-400 text-xs font-bold">
+                                    <XCircle className="w-3 h-3" /> Retained
+                                  </span>
+                                )}
+                                <span className="text-[9px] text-slate-600 leading-tight max-w-[140px] text-center">{student.promotionReason}</span>
                               </div>
-                            ) : <span className="text-slate-600 text-xs">—</span>}
-                          </td>
+                            </td>
+                          )}
 
-                          {/* Promotion verdict */}
-                          <td className="py-3 px-4 text-center">
-                            <div className="flex flex-col items-center gap-1">
-                              {student.promoted ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold">
-                                  <CheckCircle2 className="w-3 h-3" /> Promoted
-                                </span>
+                          {/* Cumulative Total % — only shown when trigger term selected */}
+                          {showCol.cumulativeTotal && isCumulativeTerm && (
+                            <td className="py-3 px-4 text-center">
+                              {cumulativePct !== null ? (
+                                <div>
+                                  <span className={`text-base font-bold ${cumulativePct >= 60 ? "text-blue-300" : cumulativePct >= gradingPassPct ? "text-blue-400" : "text-red-400"}`}>
+                                    {cumulativePct}%
+                                  </span>
+                                  <div className="w-20 mx-auto mt-1 h-1.5 rounded-full bg-[#1e293b] overflow-hidden">
+                                    <div className={`h-full rounded-full ${cumulativePct >= 60 ? "bg-blue-500" : cumulativePct >= gradingPassPct ? "bg-blue-400" : "bg-red-500"}`}
+                                      style={{ width: `${Math.min(100, cumulativePct)}%` }} />
+                                  </div>
+                                </div>
                               ) : (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-500/15 border border-red-500/30 text-red-400 text-xs font-bold">
-                                  <XCircle className="w-3 h-3" /> Retained
-                                </span>
+                                <span className="text-slate-600 text-xs italic" title="Scores for all contributing terms are required">Partial</span>
                               )}
-                              <span className="text-[9px] text-slate-600 leading-tight max-w-[140px] text-center">{student.promotionReason}</span>
-                            </div>
-                          </td>
+                            </td>
+                          )}
 
-                          {/* Report card button */}
-                          <td className="py-3 px-3 text-center">
-                            <button onClick={() => setReportStudent(student)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs font-semibold hover:bg-yellow-500/20 transition-colors"
-                              data-testid={`btn-report-card-${student.studentId}`}>
-                              <FileText className="w-3 h-3" /> Report
-                            </button>
-                          </td>
+                          {/* Final Cumulative Grade */}
+                          {showCol.finalGrade && isCumulativeTerm && (
+                            <td className="py-3 px-4 text-center">
+                              {cumulativePct !== null ? (() => {
+                                const g = computeGrade(cumulativePct, gradingRules);
+                                return (
+                                  <span className={`inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border text-sm font-bold ${g.color} ${g.bg}`}
+                                    title={g.remarks ?? ""} data-testid={`cumul-grade-${student.studentId}`}>
+                                    {g.label}
+                                  </span>
+                                );
+                              })() : <span className="text-slate-600 text-xs">—</span>}
+                            </td>
+                          )}
+
+                          {/* Report card */}
+                          {showCol.reportCard && (
+                            <td className="py-3 px-3 text-center">
+                              <button onClick={() => setReportStudent(student)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs font-semibold hover:bg-yellow-500/20 transition-colors"
+                                data-testid={`btn-report-card-${student.studentId}`}>
+                                <FileText className="w-3 h-3" /> Report
+                              </button>
+                            </td>
+                          )}
                         </tr>
                       );
                     })}
