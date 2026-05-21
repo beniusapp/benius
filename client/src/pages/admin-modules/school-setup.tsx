@@ -575,7 +575,11 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
 
   const termNames = tier.targetTerms.map(t => t.targetName).filter(n => n.trim());
   const pendingTermNames = termNames.filter(n => !tier.termColumnConfigs[n]);
-  const anyCumulativeEnabled = Object.values(tier.termColumnConfigs).some(tc => tc.cumulativeTotal || tc.finalGrade);
+  const currentTermCumulativeEnabled = !!(
+    sectionCTerm &&
+    tier.termColumnConfigs[sectionCTerm] &&
+    (tier.termColumnConfigs[sectionCTerm].cumulativeTotal || tier.termColumnConfigs[sectionCTerm].finalGrade)
+  );
 
   const toggleClass = (cls: string) => {
     const updated = tier.applicableClasses.includes(cls)
@@ -1020,8 +1024,8 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
                   </div>
                 )}
 
-                {/* Cumulative aggregation setup — only shown once a term is selected AND it enables cumulative columns */}
-                {sectionCTerm && anyCumulativeEnabled && (
+                {/* Cumulative aggregation setup — only shown when the currently-selected term has cumulative columns ON */}
+                {currentTermCumulativeEnabled && (
                   <div className="rounded-md border border-blue-400/20 bg-[#0A1628] p-3 space-y-3">
                     <div className="flex items-center gap-3">
                       <button type="button"
