@@ -488,6 +488,14 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
   const resSections = useMemo(() => getSectionsForClass(resClass), [resClass, getSectionsForClass]);
 
+  function handleResClassChange(cls: string) {
+    // Bust any stale/errored cache for the previous class policy before switching
+    if (cls) queryClient.invalidateQueries({ queryKey: ["/api/teacher/exam-policy", cls] });
+    setResClass(cls);
+    setResSection("");
+    setResTerm("");
+  }
+
   const { data: policyTier, isLoading: policyLoading, error: policyError } = useQuery<ExamPolicyTier>({
     queryKey: ["/api/teacher/exam-policy", resClass],
     queryFn: async () => {
@@ -496,7 +504,9 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
       return res.json();
     },
     enabled: !!resClass,
-    retry: false,
+    staleTime: 0,          // always consider data stale so it re-fetches when key changes
+    refetchOnMount: "always", // force fetch every time the Results tab mounts
+    retry: 2,              // retry up to 2 times on failure
   });
 
   const { data: classScores = [], isLoading: scoresLoading } = useQuery<RawStudentScore[]>({
@@ -507,6 +517,8 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
       return res.json();
     },
     enabled: !!resClass && !!resSection,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   const { data: attendanceSummary = [] } = useQuery<AttendanceSummary[]>({
@@ -517,6 +529,8 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
       return res.json();
     },
     enabled: !!resClass && !!resSection,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   // Parse term names from policy — trim to handle accidental whitespace in DB
@@ -565,7 +579,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
           {/* Class */}
           <div className="space-y-1">
             <label className="text-xs font-medium text-slate-400">Class *</label>
-            <select value={resClass} onChange={e => { setResClass(e.target.value); setResSection(""); setResTerm(""); }}
+            <select value={resClass} onChange={e => handleResClassChange(e.target.value)}
               className="w-full h-9 rounded-xl border border-[#1e293b] bg-[#020617] text-sm px-3 text-white appearance-none cursor-pointer focus:outline-none focus:border-yellow-500/50"
               style={{ colorScheme: "dark" }} data-testid="select-results-class">
               <option value="">Select class</option>
