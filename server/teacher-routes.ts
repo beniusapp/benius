@@ -2028,6 +2028,7 @@ export function registerTeacherRoutes(app: Express) {
       applicableClasses: z.array(z.string()).min(1, "At least one class must be selected"),
       examWeights: z.string().default("{}"),
       promotionFailRules: z.string().default("{}"),
+      resultsConfig: z.string().default("{}"),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
@@ -2047,6 +2048,7 @@ export function registerTeacherRoutes(app: Express) {
       applicableClasses: z.array(z.string()).optional(),
       examWeights: z.string().optional(),
       promotionFailRules: z.string().optional(),
+      resultsConfig: z.string().optional(),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
