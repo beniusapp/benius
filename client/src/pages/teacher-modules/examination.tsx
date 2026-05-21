@@ -64,10 +64,14 @@ function computeAllStudentResults(
   attendanceSummary: AttendanceSummary[],
   passPercentage: number = 35,
 ): ComputedStudentResult[] {
-  let weights: Record<string, { source_exam: string; weight: number }[]> = {};
+  let rawWeights: Record<string, { source_exam: string; weight: number }[]> = {};
   let rules: any = {};
-  try { weights = JSON.parse(policy.examWeights || "{}"); } catch {}
+  try { rawWeights = JSON.parse(policy.examWeights || "{}"); } catch {}
   try { rules = JSON.parse(policy.promotionFailRules || "{}"); } catch {}
+
+  // Normalise term names: trim whitespace so "Finally term " === "Finally term"
+  const weights: Record<string, { source_exam: string; weight: number }[]> = {};
+  for (const [k, v] of Object.entries(rawWeights)) weights[k.trim()] = v;
 
   const termNames = Object.keys(weights);
   const attendanceMap = new Map(attendanceSummary.map(a => [a.studentId, a]));
@@ -128,13 +132,13 @@ function computeAllStudentResults(
       allTermFailCounts[termName] = subjectResults.filter(s => s.passed === false).length;
     }
 
-    // Apply promotion rules (new rule1/rule2 format)
+    // Apply promotion rules (new rule1/rule2 format) — trim term names for safety
     const rule1 = rules.rule1 ?? {};
     const rule2 = rules.rule2 ?? {};
     let promoted = true, promotionReason = "Meets all promotion criteria.";
 
     if (rule1.enabled !== false && termNames.length > 0) {
-      const r1Term = rule1.term || termNames[termNames.length - 1];
+      const r1Term = (rule1.term ?? termNames[termNames.length - 1]).trim();
       const r1Max = parseInt(rule1.max_fails) || 3;
       const r1Fails = allTermFailCounts[r1Term] ?? 0;
       if (r1Fails >= r1Max) {
@@ -144,8 +148,8 @@ function computeAllStudentResults(
     }
 
     if (promoted && rule2.enabled === true) {
-      const t1 = rule2.first_term || termNames[0];
-      const t2 = rule2.second_term || termNames[termNames.length - 1];
+      const t1 = (rule2.first_term ?? termNames[0]).trim();
+      const t2 = (rule2.second_term ?? termNames[termNames.length - 1]).trim();
       const f1Thresh = parseInt(rule2.first_fails) || 5;
       const f2Thresh = parseInt(rule2.second_fails) || 3;
       const f1 = allTermFailCounts[t1] ?? 0;
@@ -515,12 +519,12 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     enabled: !!resClass && !!resSection,
   });
 
-  // Parse term names from policy
+  // Parse term names from policy — trim to handle accidental whitespace in DB
   const termNames = useMemo(() => {
     if (!policyTier) return [];
     try {
       const w = JSON.parse(policyTier.examWeights || "{}");
-      return Object.keys(w);
+      return Object.keys(w).map(k => k.trim());
     } catch { return []; }
   }, [policyTier]);
 

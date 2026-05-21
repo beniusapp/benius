@@ -2823,21 +2823,27 @@ export function registerTeacherRoutes(app: Express) {
   // ===== RESULTS ENGINE — TEACHER READ-ONLY =====
 
   app.get("/api/teacher/exam-policy/:class", async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
     const cls = decodeURIComponent(req.params.class);
     try {
-      const tiers = await storage.getExamPolicyTiers(req.session.schoolId!);
-      const tier = tiers.find(t => (t.applicableClasses || []).includes(cls));
+      const tiers = await storage.getExamPolicyTiers(teacher.schoolId);
+      const tier = tiers.find(t =>
+        (t.applicableClasses || []).map((c: string) => String(c).trim()).includes(String(cls).trim())
+      );
       if (!tier) return res.status(404).json({ message: "No exam policy configured for this class" });
       res.json(tier);
     } catch { res.status(500).json({ message: "Failed to fetch exam policy" }); }
   });
 
   app.get("/api/teacher/class-scores/:class/:section", async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
     const cls = decodeURIComponent(req.params.class);
     const section = decodeURIComponent(req.params.section);
-    const schoolId = req.session.schoolId!;
+    const schoolId = teacher.schoolId;
     try {
       const studentList = await storage.getStudentsByClassSection(schoolId, cls, section);
       const results = await Promise.all(studentList.map(async (s) => {
@@ -2861,10 +2867,12 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.get("/api/teacher/attendance-summary/:class/:section", async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
     const cls = decodeURIComponent(req.params.class);
     const section = decodeURIComponent(req.params.section);
-    const schoolId = req.session.schoolId!;
+    const schoolId = teacher.schoolId;
     try {
       const today = new Date().toISOString().split("T")[0];
       const year = new Date().getFullYear();
