@@ -2819,4 +2819,73 @@ export function registerTeacherRoutes(app: Express) {
     const events = await storage.getCalendarEvents(teacher.schoolId, teacherFilter);
     res.json(events);
   });
+
+  // ===== RESULTS ENGINE — TEACHER READ-ONLY =====
+
+  app.get("/api/teacher/exam-policy/:class", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const cls = decodeURIComponent(req.params.class);
+    try {
+      const tiers = await storage.getExamPolicyTiers(req.session.schoolId!);
+      const tier = tiers.find(t => (t.applicableClasses || []).includes(cls));
+      if (!tier) return res.status(404).json({ message: "No exam policy configured for this class" });
+      res.json(tier);
+    } catch { res.status(500).json({ message: "Failed to fetch exam policy" }); }
+  });
+
+  app.get("/api/teacher/class-scores/:class/:section", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const cls = decodeURIComponent(req.params.class);
+    const section = decodeURIComponent(req.params.section);
+    const schoolId = req.session.schoolId!;
+    try {
+      const studentList = await storage.getStudentsByClassSection(schoolId, cls, section);
+      const results = await Promise.all(studentList.map(async (s) => {
+        const scores = await storage.getExamScoresByStudent(s.id, schoolId);
+        return {
+          studentId: s.id,
+          name: s.name,
+          digitalStudentId: s.digitalStudentId,
+          rollNumber: s.rollNumber,
+          scores: scores.map(sc => ({
+            subject: sc.subject,
+            examType: sc.examType,
+            marks: sc.marks ?? 0,
+            totalMarks: sc.totalMarks ?? 100,
+            isAbsent: sc.isAbsent ?? false,
+          })),
+        };
+      }));
+      res.json(results);
+    } catch { res.status(500).json({ message: "Failed to fetch class scores" }); }
+  });
+
+  app.get("/api/teacher/attendance-summary/:class/:section", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const cls = decodeURIComponent(req.params.class);
+    const section = decodeURIComponent(req.params.section);
+    const schoolId = req.session.schoolId!;
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const year = new Date().getFullYear();
+      const aprThisYear = `${year}-04-01`;
+      const aprLastYear = `${year - 1}-04-01`;
+      const yearStart = today >= aprThisYear ? aprThisYear : aprLastYear;
+      const records = await storage.getAttendanceHistory(schoolId, cls, section, yearStart, today);
+      const byStudent: Record<number, { present: number; total: number }> = {};
+      for (const r of records) {
+        const sid = (r as any).studentId as number;
+        if (!byStudent[sid]) byStudent[sid] = { present: 0, total: 0 };
+        byStudent[sid].total++;
+        if ((r as any).status === "present") byStudent[sid].present++;
+      }
+      const summary = Object.entries(byStudent).map(([sid, data]) => ({
+        studentId: parseInt(sid),
+        attendancePct: data.total > 0 ? Math.round((data.present / data.total) * 100) : null,
+        presentDays: data.present,
+        totalDays: data.total,
+      }));
+      res.json(summary);
+    } catch { res.status(500).json({ message: "Failed to fetch attendance summary" }); }
+  });
 }
