@@ -931,10 +931,10 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
               </div>
             ) : (
               <>
-                {/* Term selector — pill buttons with configured/pending badges */}
-                <div className="space-y-2">
+                {/* Term selector — stacked full-width buttons */}
+                <div className="space-y-1.5">
                   <p className="text-[11px] text-white/50 font-medium uppercase tracking-wide">Select Term to Configure</p>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-col gap-1.5">
                     {termNames.map(termName => {
                       const isConfigured = !!tier.termColumnConfigs[termName];
                       const isActive = sectionCTerm === termName;
@@ -943,23 +943,29 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
                           onClick={() => {
                             setSectionCTerm(termName);
                             if (!tier.termColumnConfigs[termName]) {
-                              onChange({ ...tier, termColumnConfigs: { ...tier.termColumnConfigs, [termName]: defaultTermCols() } });
+                              // Deep-copy existing entries + add new term with fresh defaults
+                              const freshConfigs: Record<string, TermColsLocal> = {};
+                              for (const [k, v] of Object.entries(tier.termColumnConfigs)) {
+                                freshConfigs[k] = { ...v };
+                              }
+                              freshConfigs[termName] = defaultTermCols();
+                              onChange({ ...tier, termColumnConfigs: freshConfigs });
                             }
                           }}
-                          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                          className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg border text-sm font-medium transition-all ${
                             isActive
                               ? "border-blue-400/70 bg-blue-500/20 text-blue-200 shadow-sm shadow-blue-500/20"
-                              : "border-white/15 bg-[#0A1628] text-white/55 hover:border-white/30 hover:text-white/80"
+                              : "border-white/15 bg-[#0A1628] text-white/60 hover:border-white/30 hover:text-white/85"
                           }`}
                           data-testid={`btn-section-c-term-${tier.tempId}-${termName.replace(/\s+/g, "-")}`}>
                           <span>{termName}</span>
                           {isConfigured ? (
-                            <span className="flex items-center gap-0.5 text-[9px] font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                              <Check className="w-2 h-2" /> Done
+                            <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                              <Check className="w-2.5 h-2.5" /> Done
                             </span>
                           ) : (
-                            <span className="text-[9px] font-bold text-amber-400 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                              ● Pending
+                            <span className="text-[10px] font-bold text-amber-400 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-full">
+                              ● Pending Layout
                             </span>
                           )}
                         </button>
@@ -967,7 +973,7 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
                     })}
                   </div>
                   {!sectionCTerm && (
-                    <p className="text-[11px] text-white/30 italic pt-0.5">Click a term button above to configure its column layout.</p>
+                    <p className="text-[11px] text-white/30 italic pt-1">Click a term above to open its column layout.</p>
                   )}
                 </div>
 
@@ -993,8 +999,14 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
                         return (
                           <button key={key} type="button"
                             onClick={() => {
-                              const curr = tier.termColumnConfigs[sectionCTerm];
-                              onChange({ ...tier, termColumnConfigs: { ...tier.termColumnConfigs, [sectionCTerm]: { ...curr, [key]: !isOn } } });
+                              // Deep-copy every entry to prevent any shared-reference bleed between terms
+                              const freshConfigs: Record<string, TermColsLocal> = {};
+                              for (const [k, v] of Object.entries(tier.termColumnConfigs)) {
+                                freshConfigs[k] = k === sectionCTerm
+                                  ? { ...v, [key]: !isOn }
+                                  : { ...v };
+                              }
+                              onChange({ ...tier, termColumnConfigs: freshConfigs });
                             }}
                             className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-left transition-colors text-xs ${isOn ? "border-blue-500/40 bg-blue-500/10 text-blue-200" : "border-white/10 bg-[#1A2942] text-white/40 hover:border-white/20"}`}
                             data-testid={`toggle-col-${key}-${tier.tempId}`}>
@@ -1306,22 +1318,24 @@ export default function SchoolSetup({ schoolId }: Props) {
         const r1 = rules.rule1 ?? {};
         const r2 = rules.rule2 ?? {};
         const cumul = rc.cumulative ?? {};
-        // Parse per-term column configs — support new format (termConfigs) and legacy (columns)
+        // Parse per-term column configs — new format only (termConfigs).
+        // Deep-copy each entry individually to guarantee no shared references between terms.
+        // Legacy (rc.columns) is intentionally NOT migrated: admin must configure each term fresh.
         const termColumnConfigs: Record<string, TermColsLocal> = {};
         if (rc.termConfigs && typeof rc.termConfigs === "object") {
-          Object.assign(termColumnConfigs, rc.termConfigs);
-        } else if (rc.columns) {
-          // Legacy: apply old single-column config to every term
-          const c = rc.columns;
-          const legacyCols: TermColsLocal = {
-            studentProfile: c.studentProfile !== false, weightedAvg: c.weightedAvg !== false,
-            termGrade: c.termGrade !== false, subjectFails: c.subjectFails !== false,
-            attendance: c.attendance !== false, promotionGate: c.promotionGate !== false,
-            reportCard: c.reportCard !== false, cumulativeTotal: c.cumulativeTotal === true,
-            finalGrade: c.finalGrade === true,
-          };
-          for (const term of targetTerms) {
-            if (term.targetName.trim()) termColumnConfigs[term.targetName] = { ...legacyCols };
+          for (const [termKey, v] of Object.entries(rc.termConfigs)) {
+            const tc = v as Record<string, unknown>;
+            termColumnConfigs[termKey] = {
+              studentProfile: tc.studentProfile !== false,
+              weightedAvg: tc.weightedAvg !== false,
+              termGrade: tc.termGrade !== false,
+              subjectFails: tc.subjectFails !== false,
+              attendance: tc.attendance !== false,
+              promotionGate: tc.promotionGate !== false,
+              reportCard: tc.reportCard !== false,
+              cumulativeTotal: tc.cumulativeTotal === true,
+              finalGrade: tc.finalGrade === true,
+            };
           }
         }
         return {
