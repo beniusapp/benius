@@ -557,22 +557,33 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
       setPolicyError(null);
       return;
     }
+
+    // Main fetch — shows loading + clears stale data
     let cancelled = false;
-    setPolicyLoading(true);
-    setPolicyTier(null);
-    setPolicyError(null);
-    fetch(`/api/teacher/exam-policy/${encodeURIComponent(resClass)}`, { credentials: "include" })
-      .then(async res => {
-        if (cancelled) return;
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.message || `No policy for class ${resClass}`);
-        }
-        return res.json();
-      })
-      .then(data => { if (!cancelled) { setPolicyTier(data); setPolicyLoading(false); } })
-      .catch(err => { if (!cancelled) { setPolicyError(err.message); setPolicyLoading(false); } });
-    return () => { cancelled = true; };
+    const doFetch = (silent = false) => {
+      if (!silent) { setPolicyLoading(true); setPolicyTier(null); setPolicyError(null); }
+      fetch(`/api/teacher/exam-policy/${encodeURIComponent(resClass)}`, { credentials: "include" })
+        .then(async r => {
+          if (cancelled) return;
+          if (!r.ok) {
+            const body = await r.json().catch(() => ({}));
+            throw new Error(body.message || `No policy for class ${resClass}`);
+          }
+          return r.json();
+        })
+        .then(data => {
+          if (!cancelled) { setPolicyTier(data); setPolicyLoading(false); setPolicyError(null); }
+        })
+        .catch(err => {
+          if (!cancelled) { setPolicyError(err.message); setPolicyLoading(false); }
+        });
+    };
+
+    doFetch(false);
+
+    // Silent background re-fetch every 60 s so admin changes propagate automatically
+    const interval = setInterval(() => doFetch(true), 60_000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [resClass, policyRetry]);
 
   // Grading rules fetch — same no-cache useEffect pattern
@@ -707,11 +718,34 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
           </div>
         </div>
 
-        {/* Policy info pill */}
-        {policyTier && (
+        {/* Policy info pill + refresh */}
+        {resClass && !policyLoading && (policyTier || policyError) && (
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              {policyTier && (
+                <>
+                  <span className="px-2 py-0.5 rounded-full bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 font-semibold">{policyTier.tierName}</span>
+                  <span>policy applied · {termNames.length} term{termNames.length !== 1 ? "s" : ""} configured</span>
+                </>
+              )}
+            </div>
+            <button
+              onClick={() => setPolicyRetry(r => r + 1)}
+              className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-yellow-400 transition-colors px-2 py-1 rounded-lg hover:bg-yellow-500/10 border border-transparent hover:border-yellow-500/20"
+              title="Re-fetch latest policy from server"
+              data-testid="btn-refresh-policy">
+              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" />
+                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /><path d="M8 16H3v5" />
+              </svg>
+              Refresh
+            </button>
+          </div>
+        )}
+        {policyLoading && resClass && (
           <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
-            <span className="px-2 py-0.5 rounded-full bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 font-semibold">{policyTier.tierName}</span>
-            <span>policy applied · {termNames.length} term{termNames.length !== 1 ? "s" : ""} configured</span>
+            <Loader2 className="w-3 h-3 animate-spin" />
+            <span>Loading policy…</span>
           </div>
         )}
 

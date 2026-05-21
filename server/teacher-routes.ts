@@ -2840,23 +2840,18 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.get("/api/teacher/exam-policy/:class", async (req, res) => {
-    console.log("[exam-policy] session:", { teacherId: req.session.teacherId, userId: req.session.userId, schoolId: req.session.schoolId });
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
-    console.log("[exam-policy] teacher:", teacher ? { id: teacher.id, schoolId: teacher.schoolId } : null);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
     const cls = decodeURIComponent(req.params.class);
     try {
       const tiers = await storage.getExamPolicyTiers(teacher.schoolId);
-      console.log("[exam-policy] class:", cls, "tiers:", tiers.map(t => ({ id: t.id, name: t.tierName, classes: t.applicableClasses })));
       const tier = tiers.find(t =>
         (t.applicableClasses || []).map((c: string) => String(c).trim()).includes(String(cls).trim())
       );
-      console.log("[exam-policy] matched tier:", tier ? tier.tierName : "NONE");
       if (!tier) return res.status(404).json({ message: "No exam policy configured for this class" });
       res.json(tier);
-    } catch (err) {
-      console.error("[exam-policy] error:", err);
+    } catch {
       res.status(500).json({ message: "Failed to fetch exam policy" });
     }
   });
