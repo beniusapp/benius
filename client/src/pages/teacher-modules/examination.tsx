@@ -356,11 +356,15 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
 }
 
 // ── Report Card Modal ─────────────────────────────────────────────────────────
-function ReportCardModal({ student, term, policy, gradingRules, onClose }: {
+function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict, promoEntry, onClose }: {
   student: ComputedStudentResult;
   term: string;
   policy: ExamPolicyTier;
   gradingRules: GradingRuleClient[];
+  /** Whether the active term has the Promotion Gate verdict enabled in policy config. */
+  showPromoVerdict: boolean;
+  /** The teacher's manually-set ledger entry for this student, if any. */
+  promoEntry: PromoEntry | undefined;
   onClose: () => void;
 }) {
   const termSubjects = student.termResults[term] ?? [];
@@ -512,17 +516,76 @@ function ReportCardModal({ student, term, policy, gradingRules, onClose }: {
             </div>
           )}
 
-          {/* Policy criteria summary — final routing is set in the Promotion Ledger */}
-          <div className="rounded-xl p-4 border border-[#1e293b] bg-[#1e293b]/30">
-            <p className="text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
-              <TrendingUp className="w-3.5 h-3.5 text-yellow-400" /> Policy Criteria Assessment
-            </p>
-            <p className="text-xs text-slate-400">{student.promotionReason}</p>
-            {student.attendancePct !== null && (
-              <p className="text-xs text-slate-500 mt-1">Attendance: <span className={`font-semibold ${student.attendancePct < 75 ? "text-red-400" : "text-emerald-400"}`}>{student.attendancePct}%</span></p>
-            )}
-            <p className="text-[10px] text-slate-600 italic mt-2">Class routing is set via the Promotion Ledger in the Results tab.</p>
-          </div>
+          {/* ── Promotion Verdict Block ───────────────────────────────────────
+               Shown only when the active term has promotionGateVerdict enabled.
+               Reads from the teacher's manually-set Promotion Ledger entry.      ── */}
+          {showPromoVerdict ? (
+            promoEntry ? (
+              /* Ledger entry exists → render final verdict */
+              <div className={`rounded-xl border overflow-hidden ${promoEntry.decision === "promoted" ? "border-emerald-500/30" : "border-red-500/30"}`}>
+                {/* Coloured verdict banner */}
+                <div className={`px-5 py-4 flex items-center gap-3 ${promoEntry.decision === "promoted" ? "bg-emerald-500/15" : "bg-red-500/15"}`}>
+                  <div className={`w-11 h-11 rounded-full flex items-center justify-center shrink-0 border ${promoEntry.decision === "promoted" ? "bg-emerald-500/25 border-emerald-500/40" : "bg-red-500/25 border-red-500/40"}`}>
+                    {promoEntry.decision === "promoted"
+                      ? <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                      : <XCircle className="w-5 h-5 text-red-400" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-bold leading-snug ${promoEntry.decision === "promoted" ? "text-emerald-300" : "text-red-300"}`}>
+                      {promoEntry.decision === "promoted"
+                        ? `Promoted to Class ${promoEntry.targetClass} — Section ${promoEntry.targetSection}`
+                        : `Retained in Class ${promoEntry.targetClass} — Section ${promoEntry.targetSection}`}
+                    </p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Final Academic Verdict · {term}</p>
+                  </div>
+                  <span className={`shrink-0 px-3 py-1 rounded-full text-xs font-bold border ${promoEntry.decision === "promoted" ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-300" : "bg-red-500/20 border-red-500/30 text-red-300"}`}>
+                    {promoEntry.decision === "promoted" ? "PROMOTED" : "DETAINED"}
+                  </span>
+                </div>
+
+                {/* Summary strip */}
+                <div className="px-5 py-3 border-t border-[#1e293b] bg-[#0f172a] flex flex-wrap gap-4 text-xs text-slate-400">
+                  {student.attendancePct !== null && (
+                    <span>Attendance: <span className={`font-semibold ${student.attendancePct < 75 ? "text-red-400" : "text-emerald-400"}`}>{student.attendancePct}%</span></span>
+                  )}
+                  <span className="text-slate-600 text-[10px] italic flex-1 text-right">{student.promotionReason}</span>
+                </div>
+
+                {/* Signature placeholders */}
+                <div className="px-5 py-4 grid grid-cols-3 gap-6 border-t border-[#1e293b] bg-[#0f172a]">
+                  {["Class Teacher", "Principal / H.O.D", "Parent / Guardian"].map(label => (
+                    <div key={label} className="flex flex-col items-center gap-2">
+                      <div className="w-full h-9 border-b border-dashed border-[#334155]" />
+                      <p className="text-[9px] text-slate-500 uppercase tracking-wider text-center">{label}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              /* Final term but ledger not yet filled */
+              <div className="rounded-xl p-4 border border-amber-500/20 bg-amber-500/5 flex items-start gap-3">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-amber-300">Promotion Verdict Not Yet Set</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                    The Promotion Ledger has not been filled for this student yet. Go to the Results tab, run Auto-Suggestion or set decisions manually, then save the ledger.
+                  </p>
+                </div>
+              </div>
+            )
+          ) : (
+            /* Non-final term — show policy assessment only, no routing claim */
+            <div className="rounded-xl p-4 border border-[#1e293b] bg-[#1e293b]/30">
+              <p className="text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
+                <TrendingUp className="w-3.5 h-3.5 text-yellow-400" /> Policy Criteria Assessment
+              </p>
+              <p className="text-xs text-slate-400">{student.promotionReason}</p>
+              {student.attendancePct !== null && (
+                <p className="text-xs text-slate-500 mt-1">Attendance: <span className={`font-semibold ${student.attendancePct < 75 ? "text-red-400" : "text-emerald-400"}`}>{student.attendancePct}%</span></p>
+              )}
+              <p className="text-[10px] text-slate-600 italic mt-2">Promotion routing is determined in the Final Term Promotion Ledger.</p>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -1427,6 +1490,8 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
           term={resTerm}
           policy={policyTier}
           gradingRules={gradingRules}
+          showPromoVerdict={isPromotionTerm}
+          promoEntry={promoMap[reportStudent.studentId]}
           onClose={() => setReportStudent(null)}
         />
       )}

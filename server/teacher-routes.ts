@@ -2965,4 +2965,69 @@ export function registerTeacherRoutes(app: Express) {
       res.status(500).json({ message: err?.message ?? "Failed to save promotion decisions" });
     }
   });
+
+  /** GET /api/teacher/promotion-verdict/:studentId?term=...&class=...&section=...
+   *  Backend utility: evaluates whether promotionGateVerdict is active for the term
+   *  (checks the policy config) then returns the verdict from the Promotion Ledger.
+   *  Returns { omit: true } when the term has promotionGateVerdict disabled. */
+  app.get("/api/teacher/promotion-verdict/:studentId", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    try {
+      const studentId = parseInt(req.params.studentId, 10);
+      const term = decodeURIComponent((req.query.term as string) ?? "");
+      const cls  = decodeURIComponent((req.query.class as string) ?? "");
+      const section = decodeURIComponent((req.query.section as string) ?? "");
+
+      if (!term || !cls || !section) {
+        return res.status(400).json({ message: "term, class and section query params are required" });
+      }
+
+      // ── Step 1: check policy config to see if promotionGateVerdict is enabled ──
+      const tiers = await storage.getExamPolicyTiers(teacher.schoolId);
+      const tier = tiers.find(t =>
+        (t.applicableClasses || []).map((c: string) => String(c).trim()).includes(String(cls).trim())
+      );
+      if (!tier) return res.status(404).json({ message: "No exam policy for this class" });
+
+      let resultsConfig: Record<string, any> = {};
+      try { resultsConfig = JSON.parse(tier.resultsConfig ?? "{}"); } catch {}
+      const termConfig = resultsConfig[term] ?? {};
+      const promotionGateVerdict: boolean = !!(termConfig.promotionGate ?? false);
+
+      // If the term has promotionGateVerdict disabled, instruct the client to omit the block
+      if (!promotionGateVerdict) {
+        return res.json({ omit: true, reason: "Promotion gate is not active for this term." });
+      }
+
+      // ── Step 2: fetch the verdict from the Promotion Ledger ──
+      const decisions = await storage.getPromotionDecisions(teacher.schoolId, cls, section, term);
+      const verdict = decisions.find(d => d.studentId === studentId);
+
+      if (!verdict) {
+        return res.json({
+          omit: false,
+          promotionGateVerdict: true,
+          pending: true,
+          message: "Ledger entry not yet set for this student.",
+        });
+      }
+
+      res.json({
+        omit: false,
+        promotionGateVerdict: true,
+        pending: false,
+        studentId: verdict.studentId,
+        decision: verdict.decision,          // "promoted" | "retained"
+        targetClass: verdict.targetClass,
+        targetSection: verdict.targetSection,
+        destination: `${verdict.targetClass}-${verdict.targetSection}`,
+        locked: verdict.locked,
+        processedAt: verdict.updatedAt ?? verdict.createdAt,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to fetch promotion verdict" });
+    }
+  });
 }
