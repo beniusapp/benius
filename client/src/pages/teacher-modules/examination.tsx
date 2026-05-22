@@ -975,11 +975,14 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
       return res.json();
     },
     onSuccess: (_data, lock) => {
-      if (lock) setPromoLocked(true);
+      // Update lock state immediately — do NOT wait for the query refetch cycle
+      setPromoLocked(!!lock);
       toast({
-        title: lock ? "🔒 Ledger Locked & Saved" : "✓ Draft Saved",
-        description: lock ? "Promotion decisions are now permanent." : "Ledger saved as draft. You can still edit.",
-        duration: 3000,
+        title: lock ? "🔒 Ledger Locked & Saved" : "🔓 Ledger Unlocked — Saved as Draft",
+        description: lock
+          ? "Promotion decisions are now permanent."
+          : "Ledger is now editable. You can adjust decisions and re-lock when ready.",
+        duration: 4000,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/promotion-decisions", resClass, resSection, resTerm] });
     },
