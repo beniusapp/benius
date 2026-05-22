@@ -2122,10 +2122,36 @@ export function registerTeacherRoutes(app: Express) {
 
   // ===== ACADEMIC ADVANCEMENT WIZARD =====
 
+  // ── Ledger Status Overview (admin) ──────────────────────────────────────────
+  app.get("/api/admin/ledger-status", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const { term } = req.query as Record<string, string>;
+    if (!term) return res.status(400).json({ message: "term is required" });
+    try {
+      const data = await storage.getLedgerStatus(req.session.schoolId!, term);
+      res.json(data);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to fetch ledger status" });
+    }
+  });
+
+  // ── Available terms (from promotion_decisions) ───────────────────────────────
+  app.get("/api/admin/ledger-terms", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    try {
+      const rows = await storage.getDistinctLedgerTerms(req.session.schoolId!);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to fetch terms" });
+    }
+  });
+
   app.get("/api/admin/exam/aggregated", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
-    const { class: cls, section, examType } = req.query as Record<string, string>;
+    const { class: cls, section, examType, term } = req.query as Record<string, string>;
     if (!cls || !section || !examType)
       return res.status(400).json({ message: "class, section, and examType are required" });
     const schoolId = req.session.schoolId!;
@@ -2146,7 +2172,19 @@ export function registerTeacherRoutes(app: Express) {
       return { ...s, gradeLabel: grade.gradeLabel, gradePoint: grade.gradePoint, gradeRemarks: grade.remarks, tierPassThreshold: grade.passPercentage };
     }));
     const passThreshold = studentsWithGrades.length > 0 ? studentsWithGrades[0].tierPassThreshold : legacyThreshold;
-    res.json({ students: studentsWithGrades, overrides, missingSubjects, passThreshold });
+
+    // If a term is provided, enrich each student with their ledger row
+    let ledgerDecisions: import("../shared/schema").PromotionDecision[] = [];
+    if (term) {
+      ledgerDecisions = await storage.getPromotionDecisions(schoolId, cls, section, term);
+    }
+    const ledgerMap = new Map(ledgerDecisions.map(d => [d.studentId, d]));
+    const studentsEnriched = studentsWithGrades.map(s => ({
+      ...s,
+      ledger: ledgerMap.get(s.studentId) ?? null,
+    }));
+
+    res.json({ students: studentsEnriched, overrides, missingSubjects, passThreshold });
   });
 
   app.post("/api/admin/exam/override", async (req, res) => {
@@ -2171,6 +2209,7 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
     const promoteSchema = z.object({
+      term: z.string().optional(),
       items: z.array(z.object({
         studentId: z.number().int().positive(),
         nextClass: z.string().min(1),
@@ -2206,6 +2245,11 @@ export function registerTeacherRoutes(app: Express) {
     }));
     await storage.archiveStudentHistory(historyRecords);
     const promoted = await storage.bulkPromoteStudents(schoolId, parsed.data.items);
+    // Mark ledger as admin-executed if term provided
+    if (parsed.data.term && parsed.data.items.length > 0) {
+      const { fromClass, fromSection } = parsed.data.items[0];
+      await storage.markLedgerExecuted(schoolId, fromClass, fromSection, parsed.data.term);
+    }
     res.json({ promoted });
   });
 

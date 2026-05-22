@@ -1028,6 +1028,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
         targetClass: promoMap[s.studentId]?.targetClass ?? getNextClass(resClass),
         targetSection: promoMap[s.studentId]?.targetSection ?? resSection,
         editCount: promoMap[s.studentId]?.editCount ?? 0,
+        autoSuggestion: s.promoted ? "promoted" : "retained",
       }));
       const res = await apiRequest("POST", "/api/teacher/promotion-decisions", {
         class: resClass, section: resSection, term: resTerm, lock, entries,

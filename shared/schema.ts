@@ -219,6 +219,10 @@ export const promotionDecisions = pgTable("promotion_decisions", {
   processedByTeacherId: integer("processed_by_teacher_id").references(() => teachers.id),
   locked: boolean("locked").notNull().default(false),
   lockedAt: timestamp("locked_at"),
+  autoSuggestion: text("auto_suggestion"),
+  manualIntervention: boolean("manual_intervention").notNull().default(false),
+  adminExecuted: boolean("admin_executed").notNull().default(false),
+  adminExecutedAt: timestamp("admin_executed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at"),
 });

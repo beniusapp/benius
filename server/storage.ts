@@ -3522,10 +3522,11 @@ export class DatabaseStorage {
   async savePromotionDecisions(
     schoolId: number, cls: string, section: string, term: string,
     teacherId: number, lock: boolean,
-    entries: Array<{ studentId: number; decision: string; targetClass: string; targetSection: string; editCount: number }>,
+    entries: Array<{ studentId: number; decision: string; targetClass: string; targetSection: string; editCount: number; autoSuggestion?: string }>,
   ): Promise<void> {
     const now = new Date();
     for (const e of entries) {
+      const isManual = !!e.autoSuggestion && e.autoSuggestion !== e.decision;
       await db.insert(promotionDecisions).values({
         schoolId, class: cls, section, term,
         studentId: e.studentId,
@@ -3536,6 +3537,8 @@ export class DatabaseStorage {
         processedByTeacherId: teacherId,
         locked: lock,
         lockedAt: lock ? now : null,
+        autoSuggestion: e.autoSuggestion ?? null,
+        manualIntervention: isManual,
         updatedAt: now,
       }).onConflictDoUpdate({
         target: [promotionDecisions.schoolId, promotionDecisions.class, promotionDecisions.section, promotionDecisions.term, promotionDecisions.studentId],
@@ -3547,10 +3550,85 @@ export class DatabaseStorage {
           processedByTeacherId: teacherId,
           locked: lock,
           lockedAt: lock ? now : null,
+          autoSuggestion: e.autoSuggestion ?? null,
+          manualIntervention: isManual,
           updatedAt: now,
         },
       });
     }
+  }
+
+  async getLedgerStatus(schoolId: number, term: string): Promise<Array<{
+    class: string; section: string; term: string;
+    status: "none" | "draft" | "locked";
+    totalStudents: number; lockedCount: number; manualInterventionCount: number;
+    teacherName: string | null; teacherId: number | null; lockedAt: Date | null;
+    adminExecuted: boolean;
+  }>> {
+    const rows = await db
+      .select({
+        class: promotionDecisions.class,
+        section: promotionDecisions.section,
+        term: promotionDecisions.term,
+        locked: promotionDecisions.locked,
+        lockedAt: promotionDecisions.lockedAt,
+        manualIntervention: promotionDecisions.manualIntervention,
+        teacherId: promotionDecisions.processedByTeacherId,
+        teacherName: teachers.name,
+        adminExecuted: promotionDecisions.adminExecuted,
+      })
+      .from(promotionDecisions)
+      .leftJoin(teachers, eq(promotionDecisions.processedByTeacherId, teachers.id))
+      .where(and(eq(promotionDecisions.schoolId, schoolId), eq(promotionDecisions.term, term)));
+
+    type AggBucket = {
+      class: string; section: string; term: string;
+      total: number; lockedCount: number; interventionCount: number;
+      teacherName: string | null; teacherId: number | null; lockedAt: Date | null;
+      anyExecuted: boolean;
+    };
+    const buckets: Record<string, AggBucket> = {};
+    for (const r of rows) {
+      const key = `${r.class}|${r.section}|${r.term}`;
+      if (!buckets[key]) {
+        buckets[key] = { class: r.class, section: r.section, term: r.term, total: 0, lockedCount: 0, interventionCount: 0, teacherName: r.teacherName ?? null, teacherId: r.teacherId ?? null, lockedAt: r.lockedAt ?? null, anyExecuted: false };
+      }
+      const b = buckets[key];
+      b.total++;
+      if (r.locked) b.lockedCount++;
+      if (r.manualIntervention) b.interventionCount++;
+      if (r.lockedAt && (!b.lockedAt || r.lockedAt > b.lockedAt)) b.lockedAt = r.lockedAt;
+      if (r.teacherName) b.teacherName = r.teacherName;
+      if (r.teacherId) b.teacherId = r.teacherId;
+      if (r.adminExecuted) b.anyExecuted = true;
+    }
+
+    return Object.values(buckets).map(b => ({
+      class: b.class, section: b.section, term: b.term,
+      status: b.lockedCount > 0 && b.lockedCount === b.total ? "locked" : b.total > 0 ? "draft" : "none",
+      totalStudents: b.total, lockedCount: b.lockedCount, manualInterventionCount: b.interventionCount,
+      teacherName: b.teacherName, teacherId: b.teacherId, lockedAt: b.lockedAt, adminExecuted: b.anyExecuted,
+    })).sort((a, b) => a.class.localeCompare(b.class) || a.section.localeCompare(b.section));
+  }
+
+  async markLedgerExecuted(schoolId: number, cls: string, section: string, term: string): Promise<void> {
+    await db.update(promotionDecisions)
+      .set({ adminExecuted: true, adminExecutedAt: new Date() })
+      .where(and(
+        eq(promotionDecisions.schoolId, schoolId),
+        eq(promotionDecisions.class, cls),
+        eq(promotionDecisions.section, section),
+        eq(promotionDecisions.term, term),
+      ));
+  }
+
+  async getDistinctLedgerTerms(schoolId: number): Promise<string[]> {
+    const rows = await db
+      .selectDistinct({ term: promotionDecisions.term })
+      .from(promotionDecisions)
+      .where(eq(promotionDecisions.schoolId, schoolId))
+      .orderBy(promotionDecisions.term);
+    return rows.map(r => r.term);
   }
 }
 
