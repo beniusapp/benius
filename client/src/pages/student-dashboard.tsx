@@ -108,6 +108,8 @@ export default function StudentDashboard() {
     queryKey: ["/api/student/notices/unread-count"],
     enabled: !!student,
     refetchInterval: 60000,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   const now = new Date();

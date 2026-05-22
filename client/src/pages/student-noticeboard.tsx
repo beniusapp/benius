@@ -81,6 +81,13 @@ export default function StudentNoticeboard() {
       queryClient.setQueryData<StudentNotice[]>(["/api/student/notices"], (old) =>
         old ? old.map(n => (ids as number[]).includes(n.id) ? { ...n, isRead: true } : n) : old
       );
+      queryClient.setQueryData<{ count: number }>(["/api/student/notices/unread-count"], (old) => {
+        if (!old) return old;
+        const readIds = ids as number[];
+        const currentNotices = queryClient.getQueryData<StudentNotice[]>(["/api/student/notices"]) ?? [];
+        const stillUnread = currentNotices.filter(n => !n.isRead && !readIds.includes(n.id)).length;
+        return { count: Math.max(0, stillUnread) };
+      });
       queryClient.invalidateQueries({ queryKey: ["/api/student/notices/unread-count"] });
     },
   });
