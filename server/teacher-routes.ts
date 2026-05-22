@@ -978,9 +978,30 @@ export function registerTeacherRoutes(app: Express) {
       storage.getClassSubjectsMap(schoolId),
       storage.getClassExamTypesMap(schoolId),
     ]);
+
+    // Derive classes: prefer the explicit flat list saved by the admin;
+    // fall back to the keys of the class-sections map (set in School Setup).
+    const rawClasses: string[] = meta.classes?.length
+      ? meta.classes
+      : Object.keys(classSections);
+
+    // Sort numerically where possible (e.g. "6","7","8") then alphabetically for non-numeric (LKG, UKG).
+    const classes = [...rawClasses].sort((a, b) => {
+      const na = parseInt(a, 10), nb = parseInt(b, 10);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      if (!isNaN(na)) return 1;   // numeric after alpha
+      if (!isNaN(nb)) return -1;
+      return a.localeCompare(b);
+    });
+
+    // Derive sections: prefer explicit flat list; fall back to union of all classSections values.
+    const rawSections: string[] = meta.sections?.length
+      ? meta.sections
+      : [...new Set(Object.values(classSections).flat())].sort();
+
     res.json({
-      classes: meta.classes || [],
-      sections: meta.sections || [],
+      classes,
+      sections: rawSections,
       subjects: meta.subjects || [],
       examTypes: meta.exam_types || [],
       classSections,
