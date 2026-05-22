@@ -1309,11 +1309,11 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
             {examType && selectedClass && selectedSection && !!totalMarks && students.length > 0 && (
               <>
                 <div className="overflow-x-auto rounded-xl border">
-                  <table className="w-full text-sm" data-testid="table-marks">
+                  <table className="w-full min-w-[560px] text-sm" data-testid="table-marks">
                     <thead>
                       <tr className="bg-muted/50 border-b">
                         {["#", "DSID", "Name", "Marks", "%", "Grade", "Ab"].map((h, i) => (
-                          <th key={i} className={`py-2.5 px-3 text-xs font-semibold text-muted-foreground ${i > 2 ? "text-center" : "text-left"} ${i === 0 ? "w-10" : i === 3 ? "w-24" : i === 4 || i === 5 ? "w-16" : i === 6 ? "w-12" : ""}`}>{h}</th>
+                          <th key={i} className={`py-2.5 px-3 text-xs font-semibold text-muted-foreground ${i > 2 ? "text-center" : "text-left"} ${i === 0 ? "w-8" : i === 1 ? "w-24" : i === 3 ? "w-24" : i === 4 || i === 5 ? "w-16" : i === 6 ? "w-10" : ""}`}>{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -1330,7 +1330,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                             <td className="py-2 px-3 text-xs text-muted-foreground">{idx + 1}</td>
                             <td className="py-2 px-3 font-mono text-xs">{s.dsid}</td>
                             <td className="py-2 px-3 text-sm font-medium">{s.name}</td>
-                            <td className="py-2 px-3 text-center">
+                            <td className="py-2 px-2 text-center w-24">
                               <Input
                                 ref={el => { inputRefs.current[s.studentId] = el; }}
                                 type="number" min={0} max={maxMarks}
@@ -1338,7 +1338,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                                 disabled={isAbsent}
                                 onChange={e => setMarks(prev => ({ ...prev, [s.studentId]: e.target.value }))}
                                 onKeyDown={e => handleTabNav(s.studentId, idx, e)}
-                                className={`w-full text-center h-8 text-sm ${isOverMax ? "border-red-400 focus-visible:ring-red-400" : ""}`}
+                                className={`w-full min-w-[72px] text-center h-8 text-sm ${isOverMax ? "border-red-400 focus-visible:ring-red-400" : ""}`}
                                 placeholder="—"
                                 data-testid={`input-marks-${s.studentId}`}
                               />
