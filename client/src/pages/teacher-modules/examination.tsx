@@ -1202,58 +1202,65 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                 ))}
               </div>
 
-              {/* ── Promotion Ledger control bar — always visible for every term ── */}
-              <div className="px-4 py-3 border-b border-[#1e293b] flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  {promoLocked && (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[11px] font-bold">
-                      🔒 Ledger Locked
-                    </span>
-                  )}
-                  {!isAssignedTeacher && (
-                    <span className="text-[11px] text-slate-500 italic">
-                      Read-only — you are not the assigned teacher for this class-section.
-                    </span>
-                  )}
-                </div>
-                {isAssignedTeacher && (
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {/* Unlock button — only visible when ledger is locked */}
+              {/* ── Promotion Ledger control bar ─────────────────────────── */}
+              {showCol.promotionGate && (
+                <div className="px-4 py-3 border-b border-[#1e293b] flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
                     {promoLocked && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[11px] font-bold">
+                        🔒 Ledger Locked
+                      </span>
+                    )}
+                    {!isPromotionTerm && (
+                      <span className="text-[11px] text-slate-500 italic">
+                        Promotion controls are only active on the final exam term.
+                      </span>
+                    )}
+                    {isPromotionTerm && !isAssignedTeacher && (
+                      <span className="text-[11px] text-slate-500 italic">
+                        Read-only — you are not the assigned teacher for this class-section.
+                      </span>
+                    )}
+                  </div>
+                  {isPromotionTerm && isAssignedTeacher && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* Unlock button — only visible when ledger is locked */}
+                      {promoLocked && (
+                        <button
+                          onClick={() => saveLedgerMutation.mutate(false)}
+                          disabled={saveLedgerMutation.isPending}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-400 text-xs font-semibold hover:bg-amber-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                          data-testid="btn-unlock-ledger">
+                          {saveLedgerMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span>🔓</span>}
+                          Unlock Ledger
+                        </button>
+                      )}
+                      <button
+                        onClick={runAutoSuggestion}
+                        disabled={promoLocked || allResults.length === 0}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold hover:bg-blue-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        data-testid="btn-auto-suggest">
+                        <TrendingUp className="w-3.5 h-3.5" /> Run Auto-Suggestion
+                      </button>
                       <button
                         onClick={() => saveLedgerMutation.mutate(false)}
-                        disabled={saveLedgerMutation.isPending}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-400 text-xs font-semibold hover:bg-amber-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                        data-testid="btn-unlock-ledger">
-                        {saveLedgerMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span>🔓</span>}
-                        Unlock Ledger
+                        disabled={promoLocked || saveLedgerMutation.isPending || allResults.length === 0}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs font-semibold hover:bg-yellow-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        data-testid="btn-save-ledger">
+                        {saveLedgerMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                        Save Draft
                       </button>
-                    )}
-                    <button
-                      onClick={runAutoSuggestion}
-                      disabled={promoLocked || allResults.length === 0}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold hover:bg-blue-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                      data-testid="btn-auto-suggest">
-                      <TrendingUp className="w-3.5 h-3.5" /> Run Auto-Suggestion
-                    </button>
-                    <button
-                      onClick={() => saveLedgerMutation.mutate(false)}
-                      disabled={promoLocked || saveLedgerMutation.isPending || allResults.length === 0}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs font-semibold hover:bg-yellow-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                      data-testid="btn-save-ledger">
-                      {saveLedgerMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                      Save Draft
-                    </button>
-                    <button
-                      onClick={() => saveLedgerMutation.mutate(true)}
-                      disabled={promoLocked || saveLedgerMutation.isPending || allResults.length === 0}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs font-semibold hover:bg-emerald-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                      data-testid="btn-lock-ledger">
-                      <GraduationCap className="w-3.5 h-3.5" /> Lock & Save Ledger
-                    </button>
-                  </div>
-                )}
-              </div>
+                      <button
+                        onClick={() => saveLedgerMutation.mutate(true)}
+                        disabled={promoLocked || saveLedgerMutation.isPending || allResults.length === 0}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs font-semibold hover:bg-emerald-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        data-testid="btn-lock-ledger">
+                        <GraduationCap className="w-3.5 h-3.5" /> Lock & Save Ledger
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="overflow-x-auto">
                 <table className="w-full text-sm" style={{ minWidth: "640px" }}>
@@ -1281,7 +1288,9 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       {showCol.attendance && (
                         <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Attendance</th>
                       )}
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Promotion Gate</th>
+                      {showCol.promotionGate && (
+                        <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Promotion Gate</th>
+                      )}
                       {showCol.cumulativeTotal && isCumulativeTerm && (
                         <th className="text-center py-3 px-4 text-xs font-semibold text-blue-400">
                           Cumulative Total %<br />
@@ -1402,20 +1411,22 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                             </td>
                           )}
 
-                          {/* Promotion Gate — interactive ledger cell — shown for every term */}
-                          <td className="py-3 px-4 text-center">
-                            <PromoCell
-                              studentId={student.studentId}
-                              entry={promoMap[student.studentId]}
-                              isLocked={promoLocked}
-                              canEdit={isAssignedTeacher}
-                              resClass={resClass}
-                              resSection={resSection}
-                              allSections={allSections}
-                              allClasses={classes}
-                              onChange={(id, next) => setPromoMap(prev => ({ ...prev, [id]: next }))}
-                            />
-                          </td>
+                          {/* Promotion Gate — interactive ledger cell */}
+                          {showCol.promotionGate && (
+                            <td className="py-3 px-4 text-center">
+                              <PromoCell
+                                studentId={student.studentId}
+                                entry={promoMap[student.studentId]}
+                                isLocked={promoLocked}
+                                canEdit={isPromotionTerm && isAssignedTeacher}
+                                resClass={resClass}
+                                resSection={resSection}
+                                allSections={allSections}
+                                allClasses={classes}
+                                onChange={(id, next) => setPromoMap(prev => ({ ...prev, [id]: next }))}
+                              />
+                            </td>
+                          )}
 
                           {/* Cumulative Total % — only shown when trigger term selected */}
                           {showCol.cumulativeTotal && isCumulativeTerm && (
@@ -1479,7 +1490,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
           term={resTerm}
           policy={policyTier}
           gradingRules={gradingRules}
-          showPromoVerdict={true}
+          showPromoVerdict={isPromotionTerm}
           promoEntry={promoMap[reportStudent.studentId]}
           onClose={() => setReportStudent(null)}
         />
