@@ -2105,6 +2105,7 @@ export function registerTeacherRoutes(app: Express) {
         isAbsent: z.boolean().default(false),
       })),
       passPercentage: z.number().min(0).max(100).optional(),
+      termAttendance: z.record(z.string(), z.number()).optional(),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
@@ -2115,7 +2116,7 @@ export function registerTeacherRoutes(app: Express) {
     const gradingTiers = await storage.getGradingTiers(schoolId);
     const matchingGradingTier = gradingTiers.find(t => (t.classes || []).includes(parsed.data.studentClass));
     const passPercentage = parsed.data.passPercentage ?? matchingGradingTier?.passPercentage ?? 35;
-    const result = evaluatePromotion(parsed.data.scores, matchingTier, passPercentage);
+    const result = evaluatePromotion(parsed.data.scores, matchingTier, passPercentage, parsed.data.termAttendance);
     res.json({ tier: matchingTier.tierName, passPercentage, ...result });
   });
 

@@ -3581,7 +3581,8 @@ export interface PromotionResult {
 export function evaluatePromotion(
   scores: StudentScoreForEngine[],
   tier: ExamPolicyTier,
-  passPercentage: number
+  passPercentage: number,
+  termAttendance?: Record<string, number>
 ): PromotionResult {
   let weights: Record<string, { source_exam: string; weight: number }[]> = {};
   let rules: {
@@ -3591,6 +3592,10 @@ export function evaluatePromotion(
       term?: string;
       max_fails?: number;
       rules?: { term: string; fail_count: number }[];
+    };
+    rule_attendance?: {
+      enabled?: boolean;
+      rules?: { term: string; min_pct: number }[];
     };
     composite_fail_rules?: {
       half_yearly_fails_threshold?: number;
@@ -3683,6 +3688,22 @@ export function evaluatePromotion(
     }
   }
 
+  // ── Rule 2: Minimum Attendance % ─────────────────────────────────────────
+  const ruleAtt = rules.rule_attendance;
+  const ruleAttEnabled = ruleAtt?.enabled === true;
+  if (ruleAttEnabled && termAttendance && Array.isArray(ruleAtt?.rules)) {
+    for (const ar of ruleAtt.rules) {
+      const pct = termAttendance[ar.term];
+      if (pct !== undefined && pct < ar.min_pct) {
+        return {
+          promoted: false,
+          reason: `Attendance in "${ar.term}" is ${pct.toFixed(1)}% — minimum required is ${ar.min_pct}%.`,
+          subjectAggregates,
+          termFailCounts,
+        };
+      }
+    }
+  }
 
   return {
     promoted: true,

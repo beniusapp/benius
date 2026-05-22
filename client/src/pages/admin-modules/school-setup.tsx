@@ -103,6 +103,7 @@ function defaultTermCols(): TermColsLocal {
 }
 interface CumulativeTermWeight { termName: string; weight: string; }
 interface MaxFailedRule { term: string; failCount: string; }
+interface AttendanceRule { term: string; minPct: string; }
 interface ExamPolicyTierLocal {
   id?: number;
   tempId: string;
@@ -112,6 +113,9 @@ interface ExamPolicyTierLocal {
   enableMaxFailed: boolean;
   /** Dynamic list — each entry defines a term + threshold pair for Rule 1. */
   maxFailedRules: MaxFailedRule[];
+  enableAttendanceRule: boolean;
+  /** Dynamic list — each entry defines a term + minimum attendance % for Rule 2. */
+  attendanceRules: AttendanceRule[];
   expanded: boolean;
   // Section C — per-term column visibility
   termColumnConfigs: Record<string, TermColsLocal>;
@@ -131,6 +135,8 @@ function emptyExamPolicyTier(): ExamPolicyTierLocal {
     targetTerms: [emptyTargetTerm()],
     enableMaxFailed: true,
     maxFailedRules: [{ term: "", failCount: "3" }],
+    enableAttendanceRule: false,
+    attendanceRules: [{ term: "", minPct: "75" }],
     expanded: true,
     termColumnConfigs: {},
     cumulativeEnabled: false,
@@ -158,11 +164,17 @@ function validateExamPolicyTiers(tiers: ExamPolicyTierLocal[]): string[] {
         if (!comp.sourceExam.trim()) errors.push(`"${t.tierName}" / "${term.targetName || "Unnamed term"}": A component is missing a source exam.`);
       }
     }
-    if (!t.enableMaxFailed) errors.push(`"${t.tierName}": The retention rule must be enabled.`);
+    if (!t.enableMaxFailed && !t.enableAttendanceRule) errors.push(`"${t.tierName}": Enable at least one retention rule.`);
     if (t.enableMaxFailed) {
-      if (t.maxFailedRules.length === 0) errors.push(`"${t.tierName}": Add at least one term rule.`);
+      if (t.maxFailedRules.length === 0) errors.push(`"${t.tierName}": Add at least one term rule for Rule 1.`);
       t.maxFailedRules.forEach((r, i) => {
-        if (!r.term) errors.push(`"${t.tierName}": Row ${i + 1} — select a term.`);
+        if (!r.term) errors.push(`"${t.tierName}": Rule 1 — Row ${i + 1} needs a term.`);
+      });
+    }
+    if (t.enableAttendanceRule) {
+      if (t.attendanceRules.length === 0) errors.push(`"${t.tierName}": Add at least one term rule for Rule 2.`);
+      t.attendanceRules.forEach((r, i) => {
+        if (!r.term) errors.push(`"${t.tierName}": Rule 2 — Row ${i + 1} needs a term.`);
       });
     }
   }
@@ -887,8 +899,80 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
               )}
             </div>
 
-            {!tier.enableMaxFailed && (
-              <p className="text-xs text-red-400/70 italic">⚠ Enable the retention rule before saving.</p>
+            {/* Rule 2 — Min Attendance % */}
+            <div className={`rounded-md border p-3 space-y-3 transition-colors ${tier.enableAttendanceRule ? "border-emerald-500/30 bg-emerald-500/5" : "border-white/10 bg-[#1A2942]/40"}`}>
+              <div className="flex items-center gap-3">
+                <button type="button"
+                  onClick={() => setField("enableAttendanceRule", !tier.enableAttendanceRule)}
+                  className={`w-9 h-5 rounded-full border-2 relative transition-colors shrink-0 ${tier.enableAttendanceRule ? "bg-emerald-500 border-emerald-500" : "bg-white/10 border-white/20"}`}
+                  data-testid={`toggle-enable-attendance-${tier.tempId}`}>
+                  <span className={`absolute top-0.5 w-3 h-3 rounded-full transition-transform ${tier.enableAttendanceRule ? "bg-[#0A1628] translate-x-4" : "bg-white/40 translate-x-0.5"}`} />
+                </button>
+                <div>
+                  <p className={`text-xs font-semibold ${tier.enableAttendanceRule ? "text-emerald-400" : "text-white/40"}`}>Rule 2 — Minimum Attendance %</p>
+                  <p className="text-[10px] text-white/30 mt-0.5">Student is retained if attendance in <span className="italic">any</span> configured term falls below the threshold.</p>
+                </div>
+              </div>
+
+              {tier.enableAttendanceRule && (
+                <div className="space-y-2 pl-1">
+                  <p className="text-xs text-white/50">Configure per-term attendance thresholds. Student is retained if <span className="text-white/70 font-medium">any</span> row is triggered.</p>
+
+                  {tier.attendanceRules.map((rule, idx) => (
+                    <div key={idx} className="flex flex-wrap items-center gap-2 bg-[#0A1628]/60 rounded-md px-3 py-2 border border-white/10">
+                      <div className="w-48 shrink-0">
+                        <TermSelect
+                          value={rule.term}
+                          onChange={v => {
+                            const next = tier.attendanceRules.map((r, i) => i === idx ? { ...r, term: v } : r);
+                            setField("attendanceRules", next);
+                          }}
+                          terms={termNames}
+                          placeholder="— pick term —"
+                          testId={`select-attendance-term-${tier.tempId}-${idx}`}
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-xs text-white/40">&lt;</span>
+                        <Input
+                          type="number" min="0" max="100"
+                          value={rule.minPct}
+                          onChange={e => {
+                            const next = tier.attendanceRules.map((r, i) => i === idx ? { ...r, minPct: e.target.value } : r);
+                            setField("attendanceRules", next);
+                          }}
+                          className="bg-[#0A1628] border-white/20 text-white text-sm h-8 w-16"
+                          data-testid={`input-attendance-pct-${tier.tempId}-${idx}`}
+                        />
+                        <span className="text-xs text-white/40">% attendance → retain</span>
+                      </div>
+
+                      {tier.attendanceRules.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setField("attendanceRules", tier.attendanceRules.filter((_, i) => i !== idx))}
+                          className="ml-auto shrink-0 text-red-400/70 hover:text-red-400 text-[10px] font-semibold px-2 py-0.5 rounded border border-red-400/20 hover:border-red-400/40 transition-colors"
+                          data-testid={`btn-remove-attendance-rule-${tier.tempId}-${idx}`}>
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  ))}
+
+                  <button
+                    type="button"
+                    onClick={() => setField("attendanceRules", [...tier.attendanceRules, { term: "", minPct: "75" }])}
+                    className="flex items-center gap-1.5 text-emerald-400 text-xs font-semibold hover:text-emerald-300 transition-colors mt-1"
+                    data-testid={`btn-add-attendance-rule-${tier.tempId}`}>
+                    <span className="text-base leading-none">+</span> Add Term
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {!tier.enableMaxFailed && !tier.enableAttendanceRule && (
+              <p className="text-xs text-red-400/70 italic">⚠ Enable at least one retention rule before saving.</p>
             )}
           </div>
 
@@ -1322,6 +1406,10 @@ export default function SchoolSetup({ schoolId }: Props) {
           maxFailedRules: Array.isArray(r1.rules) && r1.rules.length > 0
             ? r1.rules.map((r: any) => ({ term: r.term ?? "", failCount: String(r.fail_count ?? 3) }))
             : [{ term: r1.term ?? "", failCount: String(r1.max_fails ?? rules.max_failed_subjects_final ?? 3) }],
+          enableAttendanceRule: (rules as any).rule_attendance?.enabled === true,
+          attendanceRules: Array.isArray((rules as any).rule_attendance?.rules) && (rules as any).rule_attendance.rules.length > 0
+            ? (rules as any).rule_attendance.rules.map((r: any) => ({ term: r.term ?? "", minPct: String(r.min_pct ?? 75) }))
+            : [{ term: "", minPct: "75" }],
           expanded: false,
           termColumnConfigs,
           cumulativeEnabled: cumul.enabled === true,
@@ -1451,6 +1539,13 @@ export default function SchoolSetup({ schoolId }: Props) {
           rules: tier.maxFailedRules.map(r => ({
             term: r.term,
             fail_count: parseInt(r.failCount) || 0,
+          })),
+        },
+        rule_attendance: {
+          enabled: tier.enableAttendanceRule,
+          rules: tier.attendanceRules.map(r => ({
+            term: r.term,
+            min_pct: parseFloat(r.minPct) || 75,
           })),
         },
       };
