@@ -57,7 +57,9 @@ export function useSchoolConfigStrict(schoolId: number) {
   const classes = data?.classes ?? [];
   const sections = data?.sections ?? [];
   const subjects = data?.subjects ?? [];
-  const examTypes = data?.examTypes?.length ? data.examTypes : FALLBACK_EXAM_TYPES;
+  // Never substitute hardcoded fallbacks in the strict variant.
+  // An empty array means the school cleared their exam types; show nothing rather than wrong options.
+  const examTypes = data?.examTypes ?? [];
   const classSections: Record<string, string[]> = data?.classSections ?? {};
   const classSubjects: Record<string, string[]> = data?.classSubjects ?? {};
   const classExamTypes: Record<string, string[]> = data?.classExamTypes ?? {};
@@ -83,10 +85,16 @@ export function useSchoolConfigStrict(schoolId: number) {
     return subjects;
   }
 
-  /** Get exam types for a given className — from classExamTypes map if available, else all school exam types */
+  /** Get exam types for a given className — from classExamTypes map if available, else all school exam types.
+   *  Per-class entries are filtered against the global list so stale values removed from school setup
+   *  don't bleed through into teacher dropdowns. */
   function getExamTypesForClass(className: string): string[] {
     if (className && classExamTypes[className]?.length) {
-      return classExamTypes[className];
+      // Only keep per-class exam types that still exist in the current global list.
+      const valid = examTypes.length
+        ? classExamTypes[className].filter(et => examTypes.includes(et))
+        : classExamTypes[className];
+      return valid.length ? valid : examTypes;
     }
     return examTypes;
   }

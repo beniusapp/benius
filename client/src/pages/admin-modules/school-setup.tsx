@@ -1428,6 +1428,7 @@ export default function SchoolSetup({ schoolId }: Props) {
     onSuccess: () => {
       toast({ title: "Saved", description: "School configuration updated." });
       queryClient.invalidateQueries({ queryKey: ["/api/school-metadata", schoolId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/school-config"] });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
