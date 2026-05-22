@@ -134,31 +134,45 @@ function computeAllStudentResults(
       allTermFailCounts[termName] = subjectResults.filter(s => s.passed === false).length;
     }
 
-    // Apply promotion rules (new rule1/rule2 format) — trim term names for safety
-    const rule1 = rules.rule1 ?? {};
-    const rule2 = rules.rule2 ?? {};
+    // Apply promotion rules — handles both new array format (rule1.rules[]) and
+    // legacy single-field format (rule1.term + rule1.max_fails), plus rule_attendance.
+    const rule1   = rules.rule1   ?? {};
+    const ruleAtt = rules.rule_attendance ?? {};
     let promoted = true, promotionReason = "Meets all promotion criteria.";
 
+    // Rule 1: max failed subjects per term
     if (rule1.enabled !== false && termNames.length > 0) {
-      const r1Term = (rule1.term ?? termNames[termNames.length - 1]).trim();
-      const r1Max = parseInt(rule1.max_fails) || 3;
-      const r1Fails = allTermFailCounts[r1Term] ?? 0;
-      if (r1Fails >= r1Max) {
-        promoted = false;
-        promotionReason = `Failed ${r1Fails} subject(s) in "${r1Term}" — max allowed before retention is ${r1Max - 1}.`;
+      type TermRule = { term: string; fail_count: number };
+      const termRules: TermRule[] =
+        Array.isArray(rule1.rules) && rule1.rules.length > 0
+          // new array format: [{ term, fail_count }, ...]
+          ? (rule1.rules as any[]).map(r => ({ term: String(r.term ?? "").trim(), fail_count: Number(r.fail_count ?? 3) }))
+          // legacy single-field format
+          : rule1.term
+            ? [{ term: String(rule1.term).trim(), fail_count: Number(rule1.max_fails) || 3 }]
+            : [{ term: termNames[termNames.length - 1], fail_count: Number(rule1.max_fails) || 3 }];
+
+      for (const tr of termRules) {
+        if (tr.fail_count <= 0) continue; // 0 means "no restriction for this term"
+        const fails = allTermFailCounts[tr.term] ?? 0;
+        if (fails >= tr.fail_count) {
+          promoted = false;
+          promotionReason = `Failed ${fails} subject(s) in "${tr.term}" — max allowed is ${tr.fail_count - 1}.`;
+          break;
+        }
       }
     }
 
-    if (promoted && rule2.enabled === true) {
-      const t1 = (rule2.first_term ?? termNames[0]).trim();
-      const t2 = (rule2.second_term ?? termNames[termNames.length - 1]).trim();
-      const f1Thresh = parseInt(rule2.first_fails) || 5;
-      const f2Thresh = parseInt(rule2.second_fails) || 3;
-      const f1 = allTermFailCounts[t1] ?? 0;
-      const f2 = allTermFailCounts[t2] ?? 0;
-      if (f1 >= f1Thresh && f2 >= f2Thresh) {
-        promoted = false;
-        promotionReason = `Composite rule: ${f1} fail(s) in "${t1}" (≥${f1Thresh}) AND ${f2} fail(s) in "${t2}" (≥${f2Thresh}).`;
+    // Attendance rule: rule_attendance.rules[{ term, min_pct }]
+    // The frontend only has overall attendance %; we apply the highest min_pct as threshold.
+    if (promoted && ruleAtt.enabled === true && Array.isArray(ruleAtt.rules) && ruleAtt.rules.length > 0) {
+      const attPct = attendanceMap.get(student.studentId)?.attendancePct ?? null;
+      if (attPct !== null) {
+        const strictest = Math.max(...(ruleAtt.rules as any[]).map((r: any) => Number(r.min_pct ?? 0)));
+        if (strictest > 0 && attPct < strictest) {
+          promoted = false;
+          promotionReason = `Attendance ${attPct.toFixed(1)}% is below the minimum ${strictest}% required.`;
+        }
       }
     }
 

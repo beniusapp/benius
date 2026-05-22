@@ -64,7 +64,15 @@ function fmt(iso: string | null) {
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
 }
 
-function nxtCls(cls: string) {
+/** Returns the class that follows `cls` in the school's ordered class list.
+ *  Falls back to arithmetic (+1) only when `classList` is empty or `cls` is
+ *  not found in it (guarantees graceful degradation). */
+function nxtCls(cls: string, classList: string[]): string {
+  if (classList.length > 0) {
+    const idx = classList.findIndex(c => c.trim().toLowerCase() === cls.trim().toLowerCase());
+    if (idx !== -1 && idx < classList.length - 1) return classList[idx + 1];
+    if (idx === classList.length - 1) return cls; // already at the top class — keep same
+  }
   const n = parseInt(cls, 10);
   return isNaN(n) ? cls : String(n + 1);
 }
@@ -95,7 +103,7 @@ function LedgerBadge({ row }: { row: LedgerRow }) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ExamController({ examTypes }: Props) {
+export default function ExamController({ examTypes, classes: schoolClasses }: Props) {
   const { toast } = useToast();
 
   const [view, setView]                 = useState<"table"|"wizard">("table");
@@ -161,9 +169,9 @@ export default function ExamController({ examTypes }: Props) {
         const led = s.ledger;
         let nc: string, ns: string;
         if (ov?.status === "retain")        { nc = cohort.class;   ns = cohort.section; }
-        else if (ov)                         { nc = ov.nextClass || led?.targetClass || nxtCls(cohort.class); ns = ov.nextSection || led?.targetSection || cohort.section; }
+        else if (ov)                         { nc = ov.nextClass || led?.targetClass || nxtCls(cohort.class, schoolClasses); ns = ov.nextSection || led?.targetSection || cohort.section; }
         else if (led?.decision === "retained"){ nc = cohort.class;   ns = cohort.section; }
-        else                                 { nc = led?.targetClass || nxtCls(cohort.class); ns = led?.targetSection || cohort.section; }
+        else                                 { nc = led?.targetClass || nxtCls(cohort.class, schoolClasses); ns = led?.targetSection || cohort.section; }
         return {
           studentId: s.studentId, fromClass: cohort.class, fromSection: cohort.section,
           nextClass: nc, nextSection: ns, examType,
@@ -198,7 +206,7 @@ export default function ExamController({ examTypes }: Props) {
     setOverrides(prev => {
       if (prev[studentId]?.status === dec) { const n = { ...prev }; delete n[studentId]; return n; }
       const led = s.ledger;
-      const nc = dec === "retain" ? (cohort?.class ?? "") : (led?.targetClass || nxtCls(cohort?.class ?? ""));
+      const nc = dec === "retain" ? (cohort?.class ?? "") : (led?.targetClass || nxtCls(cohort?.class ?? "", schoolClasses));
       const ns = dec === "retain" ? (cohort?.section ?? "") : (led?.targetSection || (cohort?.section ?? ""));
       return { ...prev, [studentId]: { status: dec, nextClass: nc, nextSection: ns } };
     });
@@ -459,7 +467,7 @@ export default function ExamController({ examTypes }: Props) {
                   if (ov)                            fin = ov.status;
                   else if (led?.decision==="retained") fin = "retain";
                   else                               fin = "promote";
-                  const destCls = fin==="retain" ? cohort.class : (led?.targetClass || nxtCls(cohort.class));
+                  const destCls = fin==="retain" ? cohort.class : (led?.targetClass || nxtCls(cohort.class, schoolClasses));
                   const destLabel = fin==="retain"
                     ? `Retained in Class ${cohort.class}`
                     : `→ Class ${destCls}`;
