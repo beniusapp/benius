@@ -1156,7 +1156,18 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                     )}
                   </div>
                   {isPromotionTerm && isAssignedTeacher && (
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* Unlock button — only visible when ledger is locked */}
+                      {promoLocked && (
+                        <button
+                          onClick={() => saveLedgerMutation.mutate(false)}
+                          disabled={saveLedgerMutation.isPending}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-400 text-xs font-semibold hover:bg-amber-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                          data-testid="btn-unlock-ledger">
+                          {saveLedgerMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span>🔓</span>}
+                          Unlock Ledger
+                        </button>
+                      )}
                       <button
                         onClick={runAutoSuggestion}
                         disabled={promoLocked || allResults.length === 0}
