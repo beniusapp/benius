@@ -51,7 +51,7 @@ export function useSchoolConfigStrict(schoolId: number) {
       return res.json();
     },
     enabled: !!schoolId,
-    staleTime: 30_000,
+    staleTime: 0,
   });
 
   const classes = data?.classes ?? [];

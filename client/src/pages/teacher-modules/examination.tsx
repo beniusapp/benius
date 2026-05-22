@@ -594,8 +594,13 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
 
 // ── Promotion Ledger helpers ──────────────────────────────────────────────────
 
-/** Compute the next class name: "6" → "7"; returns same string for non-numeric classes. */
-function getNextClass(cls: string): string {
+/** Compute the next class using the school's ordered class list when available,
+ *  falling back to numeric increment (e.g. "6" → "7") for plain-number class names. */
+function getNextClass(cls: string, allClasses: string[] = []): string {
+  if (allClasses.length > 1) {
+    const idx = allClasses.indexOf(cls);
+    if (idx >= 0 && idx < allClasses.length - 1) return allClasses[idx + 1];
+  }
   const n = parseInt(cls, 10);
   return isNaN(n) ? cls : String(n + 1);
 }
@@ -626,7 +631,7 @@ function PromoCell({
   onChange: (id: number, next: PromoEntry) => void;
 }) {
   const decision = entry?.decision ?? "promoted";
-  const targetClass = entry?.targetClass ?? getNextClass(resClass);
+  const targetClass = entry?.targetClass ?? getNextClass(resClass, allClasses);
   const targetSection = entry?.targetSection ?? resSection;
 
   const [open, setOpen] = useState(false);
@@ -717,7 +722,7 @@ function PromoCell({
               <button key={d}
                 onClick={() => {
                   setDraftDecision(d);
-                  setDraftClass(d === "promoted" ? getNextClass(resClass) : resClass);
+                  setDraftClass(d === "promoted" ? getNextClass(resClass, allClasses) : resClass);
                   setDraftSection(resSection);
                 }}
                 className={`flex-1 py-1.5 rounded-lg border text-[11px] font-bold capitalize transition-colors
@@ -1009,7 +1014,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     for (const s of allResults) {
       next[s.studentId] = {
         decision: s.promoted ? "promoted" : "retained",
-        targetClass: s.promoted ? getNextClass(resClass) : resClass,
+        targetClass: s.promoted ? getNextClass(resClass, classes) : resClass,
         targetSection: resSection,
         // Preserve existing edit counts and trails; auto-suggest does not count as a manual edit
         editCount: promoMap[s.studentId]?.editCount ?? 0,
@@ -1025,7 +1030,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
       const entries = allResults.map(s => ({
         studentId: s.studentId,
         decision: promoMap[s.studentId]?.decision ?? "promoted",
-        targetClass: promoMap[s.studentId]?.targetClass ?? getNextClass(resClass),
+        targetClass: promoMap[s.studentId]?.targetClass ?? getNextClass(resClass, classes),
         targetSection: promoMap[s.studentId]?.targetSection ?? resSection,
         editCount: promoMap[s.studentId]?.editCount ?? 0,
         autoSuggestion: s.promoted ? "promoted" : "retained",
