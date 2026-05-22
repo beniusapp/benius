@@ -24,6 +24,7 @@ interface StudentInfo { studentId: number; name: string; dsid: string; }
 interface ExamScoreEntry {
   id: number; studentId: number; studentName: string; dsid: string;
   marks: number; totalMarks: number; isAbsent: boolean;
+  updatedBy?: string | null; updatedAt?: string | null;
 }
 interface StudentExamScore {
   id: number; subject: string; examType: string;
@@ -1164,6 +1165,15 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     enabled: tab === "view" && !!viewSubject && !!viewExamType && !!viewClass && !!viewSection,
   });
 
+  // Audit map: studentId → { updatedBy, updatedAt } for already-saved scores
+  const auditMap = useMemo(() => {
+    const map: Record<number, { updatedBy: string; updatedAt: string }> = {};
+    existingScores.forEach(s => {
+      if (s.updatedBy && s.updatedAt) map[s.studentId] = { updatedBy: s.updatedBy, updatedAt: s.updatedAt };
+    });
+    return map;
+  }, [existingScores]);
+
   useEffect(() => {
     const m: Record<number, string> = {};
     const a: Record<number, boolean> = {};
@@ -1329,7 +1339,15 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                             data-testid={`row-student-${s.studentId}`}>
                             <td className="py-2 px-3 text-xs text-muted-foreground">{idx + 1}</td>
                             <td className="py-2 px-3 font-mono text-xs">{s.dsid}</td>
-                            <td className="py-2 px-3 text-sm font-medium">{s.name}</td>
+                            <td className="py-2 px-3">
+                              <span className="text-sm font-medium block">{s.name}</span>
+                              {auditMap[s.studentId] && (
+                                <span className="flex items-center gap-1 mt-0.5 text-[10px] text-muted-foreground leading-tight">
+                                  <svg className="w-2.5 h-2.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                  {auditMap[s.studentId].updatedBy} · {new Date(auditMap[s.studentId].updatedAt).toLocaleString("en-GB", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" })}
+                                </span>
+                              )}
+                            </td>
                             <td className="py-2 px-2 text-center w-24">
                               <Input
                                 ref={el => { inputRefs.current[s.studentId] = el; }}

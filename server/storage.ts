@@ -938,11 +938,17 @@ export class DatabaseStorage {
             isAbsent: score.isAbsent,
             class: score.class ?? existing[0].class,
             section: score.section ?? existing[0].section,
+            updatedBy: score.updatedBy ?? null,
+            updatedAt: new Date(),
           })
           .where(eq(examScores.id, existing[0].id)).returning();
         results.push(updated);
       } else {
-        const [created] = await db.insert(examScores).values(score).returning();
+        const [created] = await db.insert(examScores).values({
+          ...score,
+          updatedBy: score.updatedBy ?? null,
+          updatedAt: new Date(),
+        }).returning();
         results.push(created);
       }
     }

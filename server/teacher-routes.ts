@@ -888,6 +888,7 @@ export function registerTeacherRoutes(app: Express) {
         isAbsent: !!s.isAbsent,
         class: resolvedClass || null,
         section: resolvedSection || null,
+        updatedBy: teacher.fullName,
       }));
 
       const saved = await storage.upsertExamScores(formattedScores);

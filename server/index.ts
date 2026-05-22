@@ -112,6 +112,8 @@ app.use((req, res, next) => {
     ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS class TEXT;
     ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS section TEXT;
     ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS published BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS updated_by TEXT;
+    ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP;
   `);
 
   await pool.query(`

@@ -201,6 +201,8 @@ export const examScores = pgTable("exam_scores", {
   section: text("section"),
   published: boolean("published").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at"),
 });
 
 export const galleryItems = pgTable("gallery_items", {
