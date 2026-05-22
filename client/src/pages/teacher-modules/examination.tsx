@@ -708,6 +708,7 @@ function PromoCell({
 
 // ── Results Tab ───────────────────────────────────────────────────────────────
 function ResultsTab({ teacher }: { teacher: TeacherMe }) {
+  const { toast } = useToast();
   const { classes, sections: allSections, getSectionsForClass } = useSchoolConfigStrict(teacher.schoolId);
   const [resClass, setResClass] = useState("");
   const [resSection, setResSection] = useState("");
