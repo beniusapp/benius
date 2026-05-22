@@ -3592,13 +3592,6 @@ export function evaluatePromotion(
       max_fails?: number;
       rules?: { term: string; fail_count: number }[];
     };
-    rule2?: {
-      enabled?: boolean;
-      first_term?: string;
-      first_fails?: number;
-      second_term?: string;
-      second_fails?: number;
-    };
     composite_fail_rules?: {
       half_yearly_fails_threshold?: number;
       final_fails_allowance_if_half_yearly_tripped?: number;
@@ -3663,9 +3656,7 @@ export function evaluatePromotion(
   }
 
   const rule1 = rules.rule1;
-  const rule2 = rules.rule2;
   const rule1Enabled = rule1?.enabled !== false;
-  const rule2Enabled = rule2?.enabled === true;
 
   // ── Rule 1: Max Failed Subjects — supports multiple term-threshold pairs ────
   if (rule1Enabled && termNames.length > 0) {
@@ -3692,26 +3683,6 @@ export function evaluatePromotion(
     }
   }
 
-  // ── Rule 2: Composite Overlap ─────────────────────────────────────────────
-  const halfYearlyThreshold = rule2?.first_fails ?? rules.composite_fail_rules?.half_yearly_fails_threshold ?? 5;
-  const finalAllowance = rule2?.second_fails ?? rules.composite_fail_rules?.final_fails_allowance_if_half_yearly_tripped ?? 3;
-  const halfYearlyTermName = rule2?.first_term
-    ?? termNames.find(n => n.toLowerCase().includes("half") || n.toLowerCase().includes("mid"))
-    ?? termNames[0];
-  const finalTermName = rule2?.second_term
-    ?? termNames.find(n => n.toLowerCase().includes("final"))
-    ?? termNames[termNames.length - 1];
-  const halfYearlyFails = termFailCounts[halfYearlyTermName] ?? 0;
-  const finalFails = termFailCounts[finalTermName] ?? 0;
-
-  if (rule2Enabled && termNames.length >= 2 && halfYearlyFails >= halfYearlyThreshold && finalFails >= finalAllowance) {
-    return {
-      promoted: false,
-      reason: `Composite rule triggered: ${halfYearlyFails} fail(s) in "${halfYearlyTermName}" (threshold: ${halfYearlyThreshold}) AND ${finalFails} fail(s) in "${finalTermName}" (allowance: ${finalAllowance}).`,
-      subjectAggregates,
-      termFailCounts,
-    };
-  }
 
   return {
     promoted: true,

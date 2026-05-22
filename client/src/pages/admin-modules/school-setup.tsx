@@ -112,11 +112,6 @@ interface ExamPolicyTierLocal {
   enableMaxFailed: boolean;
   /** Dynamic list — each entry defines a term + threshold pair for Rule 1. */
   maxFailedRules: MaxFailedRule[];
-  enableCompositeRule: boolean;
-  compositeHalfYearlyTerm: string;
-  halfYearlyFailsThreshold: string;
-  compositeFinalTerm: string;
-  finalFailsAllowance: string;
   expanded: boolean;
   // Section C — per-term column visibility
   termColumnConfigs: Record<string, TermColsLocal>;
@@ -136,11 +131,6 @@ function emptyExamPolicyTier(): ExamPolicyTierLocal {
     targetTerms: [emptyTargetTerm()],
     enableMaxFailed: true,
     maxFailedRules: [{ term: "", failCount: "3" }],
-    enableCompositeRule: false,
-    compositeHalfYearlyTerm: "",
-    halfYearlyFailsThreshold: "5",
-    compositeFinalTerm: "",
-    finalFailsAllowance: "3",
     expanded: true,
     termColumnConfigs: {},
     cumulativeEnabled: false,
@@ -168,16 +158,12 @@ function validateExamPolicyTiers(tiers: ExamPolicyTierLocal[]): string[] {
         if (!comp.sourceExam.trim()) errors.push(`"${t.tierName}" / "${term.targetName || "Unnamed term"}": A component is missing a source exam.`);
       }
     }
-    if (!t.enableMaxFailed && !t.enableCompositeRule) errors.push(`"${t.tierName}": At least one retention rule (Rule 1 or Composite) must be enabled.`);
+    if (!t.enableMaxFailed) errors.push(`"${t.tierName}": The retention rule must be enabled.`);
     if (t.enableMaxFailed) {
-      if (t.maxFailedRules.length === 0) errors.push(`"${t.tierName}": Add at least one term rule for Rule 1.`);
+      if (t.maxFailedRules.length === 0) errors.push(`"${t.tierName}": Add at least one term rule.`);
       t.maxFailedRules.forEach((r, i) => {
-        if (!r.term) errors.push(`"${t.tierName}": Rule 1 row ${i + 1} — select a term.`);
+        if (!r.term) errors.push(`"${t.tierName}": Row ${i + 1} — select a term.`);
       });
-    }
-    if (t.enableCompositeRule) {
-      if (!t.compositeHalfYearlyTerm) errors.push(`"${t.tierName}": Select a term for the Composite Rule first threshold.`);
-      if (!t.compositeFinalTerm) errors.push(`"${t.tierName}": Select a term for the Composite Rule second threshold.`);
     }
   }
   return Array.from(new Set(errors));
@@ -810,7 +796,7 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
             <div>
               <p className="text-sm font-semibold text-[#D4AF37]">Section B — Promotion & Failure Logic</p>
               <p className="text-xs text-white/40 mt-0.5">
-                Enable one or both retention rules. A student is retained if <span className="text-white/60 font-medium">any enabled rule</span> is triggered.
+                Student is retained if <span className="text-white/60 font-medium">any row</span> below is triggered.
                 Term names are pulled from Section A above.
               </p>
             </div>
@@ -838,7 +824,7 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
 
               {tier.enableMaxFailed && (
                 <div className="space-y-2 pl-1">
-                  <p className="text-xs text-white/50">Max failed subjects in</p>
+                  <p className="text-xs text-white/50">Configure per-term fail thresholds. Student is retained if <span className="text-white/70 font-medium">any</span> row is triggered.</p>
 
                   {/* Dynamic term rows */}
                   {tier.maxFailedRules.map((rule, idx) => (
@@ -849,27 +835,29 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
                           value={rule.term}
                           onChange={v => {
                             const next = tier.maxFailedRules.map((r, i) => i === idx ? { ...r, term: v } : r);
-                            updateExamPolicyTierFn(tier.tempId, { ...tier, maxFailedRules: next });
+                            setField("maxFailedRules", next);
                           }}
                           terms={termNames}
                           placeholder="— pick term —"
                           testId={`select-max-failed-term-${tier.tempId}-${idx}`}
                         />
                       </div>
-                      <span className="text-xs text-white/50 shrink-0">term:</span>
 
                       {/* Fail count */}
-                      <Input
-                        type="number" min="0" max="20"
-                        value={rule.failCount}
-                        onChange={e => {
-                          const next = tier.maxFailedRules.map((r, i) => i === idx ? { ...r, failCount: e.target.value } : r);
-                          updateExamPolicyTierFn(tier.tempId, { ...tier, maxFailedRules: next });
-                        }}
-                        className="bg-[#0A1628] border-white/20 text-white text-sm h-8 w-20 shrink-0"
-                        data-testid={`input-max-failed-count-${tier.tempId}-${idx}`}
-                      />
-                      <span className="text-xs text-white/40 flex-1">subjects — retain if fail count ≥ this value</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-xs text-white/40">≥</span>
+                        <Input
+                          type="number" min="0" max="99"
+                          value={rule.failCount}
+                          onChange={e => {
+                            const next = tier.maxFailedRules.map((r, i) => i === idx ? { ...r, failCount: e.target.value } : r);
+                            setField("maxFailedRules", next);
+                          }}
+                          className="bg-[#0A1628] border-white/20 text-white text-sm h-8 w-16"
+                          data-testid={`input-max-failed-count-${tier.tempId}-${idx}`}
+                        />
+                        <span className="text-xs text-white/40">subjects failed → retain</span>
+                      </div>
 
                       {/* Remove button — only shown when more than one row exists */}
                       {tier.maxFailedRules.length > 1 && (
@@ -877,9 +865,9 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
                           type="button"
                           onClick={() => {
                             const next = tier.maxFailedRules.filter((_, i) => i !== idx);
-                            updateExamPolicyTierFn(tier.tempId, { ...tier, maxFailedRules: next });
+                            setField("maxFailedRules", next);
                           }}
-                          className="shrink-0 text-red-400/70 hover:text-red-400 text-[10px] font-semibold px-2 py-0.5 rounded border border-red-400/20 hover:border-red-400/40 transition-colors"
+                          className="ml-auto shrink-0 text-red-400/70 hover:text-red-400 text-[10px] font-semibold px-2 py-0.5 rounded border border-red-400/20 hover:border-red-400/40 transition-colors"
                           data-testid={`btn-remove-max-failed-rule-${tier.tempId}-${idx}`}>
                           Remove
                         </button>
@@ -890,10 +878,7 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
                   {/* + Add Term */}
                   <button
                     type="button"
-                    onClick={() => {
-                      const next = [...tier.maxFailedRules, { term: "", failCount: "3" }];
-                      updateExamPolicyTierFn(tier.tempId, { ...tier, maxFailedRules: next });
-                    }}
+                    onClick={() => setField("maxFailedRules", [...tier.maxFailedRules, { term: "", failCount: "3" }])}
                     className="flex items-center gap-1.5 text-[#D4AF37] text-xs font-semibold hover:text-yellow-300 transition-colors mt-1"
                     data-testid={`btn-add-max-failed-rule-${tier.tempId}`}>
                     <span className="text-base leading-none">+</span> Add Term
@@ -902,67 +887,8 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
               )}
             </div>
 
-            {/* Rule 2: Composite Overlap */}
-            <div className={`rounded-md border p-3 space-y-3 transition-colors ${tier.enableCompositeRule ? "border-amber-500/30 bg-amber-500/5" : "border-white/10 bg-[#1A2942]/40"}`}>
-              <div className="flex items-center gap-3">
-                <button type="button"
-                  onClick={() => setField("enableCompositeRule", !tier.enableCompositeRule)}
-                  className={`w-9 h-5 rounded-full border-2 relative transition-colors shrink-0 ${tier.enableCompositeRule ? "bg-amber-500 border-amber-500" : "bg-white/10 border-white/20"}`}
-                  data-testid={`toggle-enable-composite-${tier.tempId}`}>
-                  <span className={`absolute top-0.5 w-3 h-3 rounded-full transition-transform ${tier.enableCompositeRule ? "bg-[#0A1628] translate-x-4" : "bg-white/40 translate-x-0.5"}`} />
-                </button>
-                <div>
-                  <p className={`text-xs font-semibold ${tier.enableCompositeRule ? "text-amber-400" : "text-white/40"}`}>Rule 2 — Composite Overlap Rule</p>
-                  <p className="text-[10px] text-white/30 mt-0.5">Retain if student fails ≥ X subjects in Term 1 AND ≥ Y subjects in Term 2.</p>
-                </div>
-              </div>
-              {tier.enableCompositeRule && (
-                <div className="space-y-3 pl-1">
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <label className="text-xs text-white/50 block">First term (Term 1)</label>
-                      <TermSelect
-                        value={tier.compositeHalfYearlyTerm}
-                        onChange={v => setField("compositeHalfYearlyTerm", v)}
-                        terms={termNames}
-                        placeholder="— pick term —"
-                        testId={`select-composite-hy-term-${tier.tempId}`}
-                      />
-                      <div className="flex items-center gap-2 mt-1">
-                        <Input type="number" min="0" max="20" value={tier.halfYearlyFailsThreshold}
-                          onChange={e => setField("halfYearlyFailsThreshold", e.target.value)}
-                          className="bg-[#0A1628] border-white/20 text-white text-sm h-9 w-20"
-                          data-testid={`input-hy-threshold-${tier.tempId}`} />
-                        <span className="text-xs text-white/40">fails threshold (X)</span>
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-xs text-white/50 block">Second term (Term 2)</label>
-                      <TermSelect
-                        value={tier.compositeFinalTerm}
-                        onChange={v => setField("compositeFinalTerm", v)}
-                        terms={termNames}
-                        placeholder="— pick term —"
-                        testId={`select-composite-final-term-${tier.tempId}`}
-                      />
-                      <div className="flex items-center gap-2 mt-1">
-                        <Input type="number" min="0" max="20" value={tier.finalFailsAllowance}
-                          onChange={e => setField("finalFailsAllowance", e.target.value)}
-                          className="bg-[#0A1628] border-white/20 text-white text-sm h-9 w-20"
-                          data-testid={`input-final-allowance-${tier.tempId}`} />
-                        <span className="text-xs text-white/40">fails threshold (Y)</span>
-                      </div>
-                    </div>
-                  </div>
-                  <p className="text-[10px] text-amber-400/50 italic">
-                    Retention triggered when: fails in "{tier.compositeHalfYearlyTerm || "Term 1"}" ≥ {tier.halfYearlyFailsThreshold || "X"} AND fails in "{tier.compositeFinalTerm || "Term 2"}" ≥ {tier.finalFailsAllowance || "Y"}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {!tier.enableMaxFailed && !tier.enableCompositeRule && (
-              <p className="text-xs text-red-400/70 italic">⚠ Enable at least one retention rule before saving.</p>
+            {!tier.enableMaxFailed && (
+              <p className="text-xs text-red-400/70 italic">⚠ Enable the retention rule before saving.</p>
             )}
           </div>
 
@@ -1365,7 +1291,6 @@ export default function SchoolSetup({ schoolId }: Props) {
           components: (comps as any[]).map(c => ({ sourceExam: c.source_exam ?? "", weight: String(c.weight ?? "") })),
         }));
         const r1 = rules.rule1 ?? {};
-        const r2 = rules.rule2 ?? {};
         const cumul = rc.cumulative ?? {};
         // Parse per-term column configs — new format only (termConfigs).
         // Deep-copy each entry individually to guarantee no shared references between terms.
@@ -1397,11 +1322,6 @@ export default function SchoolSetup({ schoolId }: Props) {
           maxFailedRules: Array.isArray(r1.rules) && r1.rules.length > 0
             ? r1.rules.map((r: any) => ({ term: r.term ?? "", failCount: String(r.fail_count ?? 3) }))
             : [{ term: r1.term ?? "", failCount: String(r1.max_fails ?? rules.max_failed_subjects_final ?? 3) }],
-          enableCompositeRule: r2.enabled === true,
-          compositeHalfYearlyTerm: r2.first_term ?? "",
-          halfYearlyFailsThreshold: String(r2.first_fails ?? rules.composite_fail_rules?.half_yearly_fails_threshold ?? 5),
-          compositeFinalTerm: r2.second_term ?? "",
-          finalFailsAllowance: String(r2.second_fails ?? rules.composite_fail_rules?.final_fails_allowance_if_half_yearly_tripped ?? 3),
           expanded: false,
           termColumnConfigs,
           cumulativeEnabled: cumul.enabled === true,
@@ -1530,15 +1450,8 @@ export default function SchoolSetup({ schoolId }: Props) {
           enabled: tier.enableMaxFailed,
           rules: tier.maxFailedRules.map(r => ({
             term: r.term,
-            fail_count: parseInt(r.failCount) || 3,
+            fail_count: parseInt(r.failCount) || 0,
           })),
-        },
-        rule2: {
-          enabled: tier.enableCompositeRule,
-          first_term: tier.compositeHalfYearlyTerm,
-          first_fails: parseInt(tier.halfYearlyFailsThreshold) || 5,
-          second_term: tier.compositeFinalTerm,
-          second_fails: parseInt(tier.finalFailsAllowance) || 3,
         },
       };
       const resultsConfig = {
