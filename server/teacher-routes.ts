@@ -2136,12 +2136,12 @@ export function registerTeacherRoutes(app: Express) {
     }
   });
 
-  // ── Available terms (from promotion_decisions) ───────────────────────────────
+  // ── Available terms (from exam policy config: only promotion-gated terms) ────
   app.get("/api/admin/ledger-terms", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
     try {
-      const rows = await storage.getDistinctLedgerTerms(req.session.schoolId!);
+      const rows = await storage.getPromotionGatedTerms(req.session.schoolId!);
       res.json(rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to fetch terms" });

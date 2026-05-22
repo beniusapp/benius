@@ -3631,6 +3631,39 @@ export class DatabaseStorage {
     return rows.map(r => r.term);
   }
 
+  async getPromotionGatedTerms(schoolId: number): Promise<string[]> {
+    // Source of truth: exam policy tier config, not stale promotion_decisions rows.
+    // Collect every term that has promotionGate: true across all tiers for this school.
+    const tiers = await db.select().from(examPolicyTiers)
+      .where(eq(examPolicyTiers.schoolId, schoolId));
+
+    const gatedTerms = new Set<string>();
+    for (const tier of tiers) {
+      let rc: Record<string, any> = {};
+      try { rc = JSON.parse(tier.resultsConfig ?? "{}"); } catch {}
+      const termConfigs: Record<string, any> = rc.termConfigs ?? {};
+      for (const [term, cfg] of Object.entries(termConfigs)) {
+        if ((cfg as any).promotionGate === true) gatedTerms.add(term);
+      }
+    }
+
+    if (gatedTerms.size === 0) return [];
+
+    // Preserve the school's configured exam-type order from school_metadata.
+    const metaRow = await db.select({ metaValue: schoolMetadata.metaValue })
+      .from(schoolMetadata)
+      .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, "exam_types")))
+      .limit(1);
+
+    let orderedTypes: string[] = [];
+    try { orderedTypes = JSON.parse(metaRow[0]?.metaValue ?? "[]"); } catch {}
+
+    // Return gated terms in the configured order; any not in the ordered list go last alphabetically.
+    const ordered = orderedTypes.filter(t => gatedTerms.has(t));
+    const remainder = [...gatedTerms].filter(t => !orderedTypes.includes(t)).sort();
+    return [...ordered, ...remainder];
+  }
+
   async deletePromotionDecisionsByTerm(schoolId: number, term: string): Promise<number> {
     const deleted = await db.delete(promotionDecisions)
       .where(and(
