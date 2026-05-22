@@ -3574,7 +3574,7 @@ export class DatabaseStorage {
         lockedAt: promotionDecisions.lockedAt,
         manualIntervention: promotionDecisions.manualIntervention,
         teacherId: promotionDecisions.processedByTeacherId,
-        teacherName: teachers.name,
+        teacherName: teachers.fullName,
         adminExecuted: promotionDecisions.adminExecuted,
       })
       .from(promotionDecisions)
