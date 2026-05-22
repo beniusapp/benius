@@ -3586,6 +3586,19 @@ export function evaluatePromotion(
   let weights: Record<string, { source_exam: string; weight: number }[]> = {};
   let rules: {
     max_failed_subjects_final?: number;
+    rule1?: {
+      enabled?: boolean;
+      term?: string;
+      max_fails?: number;
+      rules?: { term: string; fail_count: number }[];
+    };
+    rule2?: {
+      enabled?: boolean;
+      first_term?: string;
+      first_fails?: number;
+      second_term?: string;
+      second_fails?: number;
+    };
     composite_fail_rules?: {
       half_yearly_fails_threshold?: number;
       final_fails_allowance_if_half_yearly_tripped?: number;
@@ -3649,26 +3662,49 @@ export function evaluatePromotion(
     }).length;
   }
 
-  const maxFailedFinal = rules.max_failed_subjects_final ?? 3;
-  const halfYearlyThreshold = rules.composite_fail_rules?.half_yearly_fails_threshold ?? 5;
-  const finalAllowance = rules.composite_fail_rules?.final_fails_allowance_if_half_yearly_tripped ?? 3;
+  const rule1 = rules.rule1;
+  const rule2 = rules.rule2;
+  const rule1Enabled = rule1?.enabled !== false;
+  const rule2Enabled = rule2?.enabled === true;
 
-  const finalTermName = termNames.find(n => n.toLowerCase().includes("final")) ?? termNames[termNames.length - 1];
-  const halfYearlyTermName = termNames.find(n => n.toLowerCase().includes("half") || n.toLowerCase().includes("mid")) ?? termNames[0];
+  // ── Rule 1: Max Failed Subjects — supports multiple term-threshold pairs ────
+  if (rule1Enabled && termNames.length > 0) {
+    const termRules: { term: string; fail_count: number }[] =
+      Array.isArray(rule1?.rules) && rule1.rules.length > 0
+        ? rule1.rules
+        // backward-compat: legacy single-field format
+        : rule1?.term
+          ? [{ term: rule1.term, fail_count: rule1.max_fails ?? rules.max_failed_subjects_final ?? 3 }]
+          : rules.max_failed_subjects_final != null
+            ? [{ term: termNames[termNames.length - 1], fail_count: rules.max_failed_subjects_final }]
+            : [];
 
-  const finalFails = termFailCounts[finalTermName] ?? 0;
-  const halfYearlyFails = termFailCounts[halfYearlyTermName] ?? 0;
-
-  if (termNames.length > 0 && finalFails >= maxFailedFinal) {
-    return {
-      promoted: false,
-      reason: `Failed ${finalFails} subject(s) in "${finalTermName}" — maximum allowed before retention is ${maxFailedFinal - 1}.`,
-      subjectAggregates,
-      termFailCounts,
-    };
+    for (const tr of termRules) {
+      const fails = termFailCounts[tr.term] ?? 0;
+      if (fails >= tr.fail_count) {
+        return {
+          promoted: false,
+          reason: `Failed ${fails} subject(s) in "${tr.term}" — retention threshold is ${tr.fail_count}.`,
+          subjectAggregates,
+          termFailCounts,
+        };
+      }
+    }
   }
 
-  if (termNames.length >= 2 && halfYearlyFails >= halfYearlyThreshold && finalFails >= finalAllowance) {
+  // ── Rule 2: Composite Overlap ─────────────────────────────────────────────
+  const halfYearlyThreshold = rule2?.first_fails ?? rules.composite_fail_rules?.half_yearly_fails_threshold ?? 5;
+  const finalAllowance = rule2?.second_fails ?? rules.composite_fail_rules?.final_fails_allowance_if_half_yearly_tripped ?? 3;
+  const halfYearlyTermName = rule2?.first_term
+    ?? termNames.find(n => n.toLowerCase().includes("half") || n.toLowerCase().includes("mid"))
+    ?? termNames[0];
+  const finalTermName = rule2?.second_term
+    ?? termNames.find(n => n.toLowerCase().includes("final"))
+    ?? termNames[termNames.length - 1];
+  const halfYearlyFails = termFailCounts[halfYearlyTermName] ?? 0;
+  const finalFails = termFailCounts[finalTermName] ?? 0;
+
+  if (rule2Enabled && termNames.length >= 2 && halfYearlyFails >= halfYearlyThreshold && finalFails >= finalAllowance) {
     return {
       promoted: false,
       reason: `Composite rule triggered: ${halfYearlyFails} fail(s) in "${halfYearlyTermName}" (threshold: ${halfYearlyThreshold}) AND ${finalFails} fail(s) in "${finalTermName}" (allowance: ${finalAllowance}).`,

@@ -102,6 +102,7 @@ function defaultTermCols(): TermColsLocal {
   };
 }
 interface CumulativeTermWeight { termName: string; weight: string; }
+interface MaxFailedRule { term: string; failCount: string; }
 interface ExamPolicyTierLocal {
   id?: number;
   tempId: string;
@@ -109,8 +110,8 @@ interface ExamPolicyTierLocal {
   applicableClasses: string[];
   targetTerms: TargetTermLocal[];
   enableMaxFailed: boolean;
-  maxFailedTermName: string;
-  maxFailedSubjectsFinal: string;
+  /** Dynamic list — each entry defines a term + threshold pair for Rule 1. */
+  maxFailedRules: MaxFailedRule[];
   enableCompositeRule: boolean;
   compositeHalfYearlyTerm: string;
   halfYearlyFailsThreshold: string;
@@ -134,8 +135,7 @@ function emptyExamPolicyTier(): ExamPolicyTierLocal {
     applicableClasses: [],
     targetTerms: [emptyTargetTerm()],
     enableMaxFailed: true,
-    maxFailedTermName: "",
-    maxFailedSubjectsFinal: "3",
+    maxFailedRules: [{ term: "", failCount: "3" }],
     enableCompositeRule: false,
     compositeHalfYearlyTerm: "",
     halfYearlyFailsThreshold: "5",
@@ -169,7 +169,12 @@ function validateExamPolicyTiers(tiers: ExamPolicyTierLocal[]): string[] {
       }
     }
     if (!t.enableMaxFailed && !t.enableCompositeRule) errors.push(`"${t.tierName}": At least one retention rule (Rule 1 or Composite) must be enabled.`);
-    if (t.enableMaxFailed && !t.maxFailedTermName) errors.push(`"${t.tierName}": Select a term for Rule 1 (max failed subjects).`);
+    if (t.enableMaxFailed) {
+      if (t.maxFailedRules.length === 0) errors.push(`"${t.tierName}": Add at least one term rule for Rule 1.`);
+      t.maxFailedRules.forEach((r, i) => {
+        if (!r.term) errors.push(`"${t.tierName}": Rule 1 row ${i + 1} — select a term.`);
+      });
+    }
     if (t.enableCompositeRule) {
       if (!t.compositeHalfYearlyTerm) errors.push(`"${t.tierName}": Select a term for the Composite Rule first threshold.`);
       if (!t.compositeFinalTerm) errors.push(`"${t.tierName}": Select a term for the Composite Rule second threshold.`);
@@ -816,7 +821,7 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
               </div>
             )}
 
-            {/* Rule 1 */}
+            {/* Rule 1 — dynamic multi-term rows */}
             <div className={`rounded-md border p-3 space-y-3 transition-colors ${tier.enableMaxFailed ? "border-[#D4AF37]/30 bg-[#D4AF37]/5" : "border-white/10 bg-[#1A2942]/40"}`}>
               <div className="flex items-center gap-3">
                 <button type="button"
@@ -827,31 +832,72 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
                 </button>
                 <div>
                   <p className={`text-xs font-semibold ${tier.enableMaxFailed ? "text-[#D4AF37]" : "text-white/40"}`}>Rule 1 — Max Failed Subjects in a Term</p>
-                  <p className="text-[10px] text-white/30 mt-0.5">Student is retained if they fail ≥ N subjects in the selected term.</p>
+                  <p className="text-[10px] text-white/30 mt-0.5">Student is retained if they fail ≥ N subjects in <span className="italic">any</span> of the configured terms below.</p>
                 </div>
               </div>
+
               {tier.enableMaxFailed && (
                 <div className="space-y-2 pl-1">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-white/60">
-                    <span>Max failed subjects in</span>
-                    <div className="w-52">
-                      <TermSelect
-                        value={tier.maxFailedTermName}
-                        onChange={v => setField("maxFailedTermName", v)}
-                        terms={termNames}
-                        placeholder="— pick term from Section A —"
-                        testId={`select-max-failed-term-${tier.tempId}`}
+                  <p className="text-xs text-white/50">Max failed subjects in</p>
+
+                  {/* Dynamic term rows */}
+                  {tier.maxFailedRules.map((rule, idx) => (
+                    <div key={idx} className="flex flex-wrap items-center gap-2 bg-[#0A1628]/60 rounded-md px-3 py-2 border border-white/10">
+                      {/* Term picker */}
+                      <div className="w-48 shrink-0">
+                        <TermSelect
+                          value={rule.term}
+                          onChange={v => {
+                            const next = tier.maxFailedRules.map((r, i) => i === idx ? { ...r, term: v } : r);
+                            updateExamPolicyTierFn(tier.tempId, { ...tier, maxFailedRules: next });
+                          }}
+                          terms={termNames}
+                          placeholder="— pick term —"
+                          testId={`select-max-failed-term-${tier.tempId}-${idx}`}
+                        />
+                      </div>
+                      <span className="text-xs text-white/50 shrink-0">term:</span>
+
+                      {/* Fail count */}
+                      <Input
+                        type="number" min="0" max="20"
+                        value={rule.failCount}
+                        onChange={e => {
+                          const next = tier.maxFailedRules.map((r, i) => i === idx ? { ...r, failCount: e.target.value } : r);
+                          updateExamPolicyTierFn(tier.tempId, { ...tier, maxFailedRules: next });
+                        }}
+                        className="bg-[#0A1628] border-white/20 text-white text-sm h-8 w-20 shrink-0"
+                        data-testid={`input-max-failed-count-${tier.tempId}-${idx}`}
                       />
+                      <span className="text-xs text-white/40 flex-1">subjects — retain if fail count ≥ this value</span>
+
+                      {/* Remove button — only shown when more than one row exists */}
+                      {tier.maxFailedRules.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = tier.maxFailedRules.filter((_, i) => i !== idx);
+                            updateExamPolicyTierFn(tier.tempId, { ...tier, maxFailedRules: next });
+                          }}
+                          className="shrink-0 text-red-400/70 hover:text-red-400 text-[10px] font-semibold px-2 py-0.5 rounded border border-red-400/20 hover:border-red-400/40 transition-colors"
+                          data-testid={`btn-remove-max-failed-rule-${tier.tempId}-${idx}`}>
+                          Remove
+                        </button>
+                      )}
                     </div>
-                    <span>term:</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Input type="number" min="0" max="20" value={tier.maxFailedSubjectsFinal}
-                      onChange={e => setField("maxFailedSubjectsFinal", e.target.value)}
-                      className="bg-[#0A1628] border-white/20 text-white text-sm h-9 w-24"
-                      data-testid={`input-max-failed-count-${tier.tempId}`} />
-                    <span className="text-xs text-white/40">subjects — retain if fail count ≥ this value</span>
-                  </div>
+                  ))}
+
+                  {/* + Add Term */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = [...tier.maxFailedRules, { term: "", failCount: "3" }];
+                      updateExamPolicyTierFn(tier.tempId, { ...tier, maxFailedRules: next });
+                    }}
+                    className="flex items-center gap-1.5 text-[#D4AF37] text-xs font-semibold hover:text-yellow-300 transition-colors mt-1"
+                    data-testid={`btn-add-max-failed-rule-${tier.tempId}`}>
+                    <span className="text-base leading-none">+</span> Add Term
+                  </button>
                 </div>
               )}
             </div>
@@ -1348,8 +1394,9 @@ export default function SchoolSetup({ schoolId }: Props) {
           applicableClasses: t.applicableClasses || [],
           targetTerms: targetTerms.length > 0 ? targetTerms : [emptyTargetTerm()],
           enableMaxFailed: r1.enabled !== false,
-          maxFailedTermName: r1.term ?? "",
-          maxFailedSubjectsFinal: String(r1.max_fails ?? rules.max_failed_subjects_final ?? 3),
+          maxFailedRules: Array.isArray(r1.rules) && r1.rules.length > 0
+            ? r1.rules.map((r: any) => ({ term: r.term ?? "", failCount: String(r.fail_count ?? 3) }))
+            : [{ term: r1.term ?? "", failCount: String(r1.max_fails ?? rules.max_failed_subjects_final ?? 3) }],
           enableCompositeRule: r2.enabled === true,
           compositeHalfYearlyTerm: r2.first_term ?? "",
           halfYearlyFailsThreshold: String(r2.first_fails ?? rules.composite_fail_rules?.half_yearly_fails_threshold ?? 5),
@@ -1481,8 +1528,10 @@ export default function SchoolSetup({ schoolId }: Props) {
       const promotionFailRules = {
         rule1: {
           enabled: tier.enableMaxFailed,
-          term: tier.maxFailedTermName,
-          max_fails: parseInt(tier.maxFailedSubjectsFinal) || 3,
+          rules: tier.maxFailedRules.map(r => ({
+            term: r.term,
+            fail_count: parseInt(r.failCount) || 3,
+          })),
         },
         rule2: {
           enabled: tier.enableCompositeRule,
