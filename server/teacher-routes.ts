@@ -2148,6 +2148,20 @@ export function registerTeacherRoutes(app: Express) {
     }
   });
 
+  // ── Delete all promotion decisions for a term (purge old/stale ledger) ────────
+  app.delete("/api/admin/ledger-term/:term", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const term = decodeURIComponent(req.params.term);
+    if (!term) return res.status(400).json({ message: "term is required" });
+    try {
+      const deleted = await storage.deletePromotionDecisionsByTerm(req.session.schoolId!, term);
+      res.json({ deleted, message: `Removed ${deleted} promotion record(s) for "${term}"` });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to delete term ledger" });
+    }
+  });
+
   app.get("/api/admin/exam/aggregated", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });

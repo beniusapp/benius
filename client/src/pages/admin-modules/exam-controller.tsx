@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   GraduationCap, ChevronLeft, AlertTriangle, CheckCircle2,
   Clock, Lock, Shield, Users, TrendingUp, UserX, Award,
-  Loader2, Play, CheckSquare,
+  Loader2, Play, CheckSquare, RefreshCw, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -115,14 +115,15 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
   const [confirmed, setConfirmed]       = useState(false);
 
   // ── Fetch terms list ──────────────────────────────────────────────────────
-  const { data: terms = [] } = useQuery<string[]>({
+  const { data: terms = [], refetch: refetchTerms } = useQuery<string[]>({
     queryKey: ["/api/admin/ledger-terms"],
     staleTime: 0,
     refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
 
   // ── Fetch ledger status rows ──────────────────────────────────────────────
-  const { data: ledgerRows = [], isLoading: ledgerLoading } = useQuery<LedgerRow[]>({
+  const { data: ledgerRows = [], isLoading: ledgerLoading, refetch: refetchLedger } = useQuery<LedgerRow[]>({
     queryKey: ["/api/admin/ledger-status", selectedTerm],
     queryFn: async () => {
       if (!selectedTerm) return [];
@@ -131,6 +132,8 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
     },
     enabled: !!selectedTerm,
     staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
 
   // ── Fetch aggregated student data (wizard) ────────────────────────────────
@@ -144,7 +147,32 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
     },
     enabled: !!cohort && !!examType,
     staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
+
+  // ── Delete old term mutation ──────────────────────────────────────────────
+  const [termToDelete, setTermToDelete] = useState<string | null>(null);
+  const deleteTermMut = useMutation({
+    mutationFn: async (term: string) => {
+      const res = await apiRequest("DELETE", `/api/admin/ledger-term/${encodeURIComponent(term)}`);
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Failed to delete term"); }
+      return res.json();
+    },
+    onSuccess: (d, term) => {
+      toast({ title: "Term ledger purged", description: d.message, duration: 4000 });
+      if (selectedTerm === term) setSelectedTerm("");
+      setTermToDelete(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/ledger-terms"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/ledger-status"] });
+    },
+    onError: (e: Error) => toast({ title: "Delete failed", description: e.message, variant: "destructive" }),
+  });
+
+  function handleRefresh() {
+    refetchTerms();
+    if (selectedTerm) refetchLedger();
+  }
 
   // ── Dynamic counters for step 3 ───────────────────────────────────────────
   const counters = useMemo(() => {
@@ -541,20 +569,28 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
             <p className="text-xs text-slate-400">Oversee teacher ledgers and execute final academic advancement</p>
           </div>
         </div>
-        {selectedTerm && ledgerRows.length > 0 && (
-          <div className="flex gap-2">
-            <Chip c="emerald" icon={<Lock className="w-3 h-3"/>}          label={`${readyCount} Ready`} />
-            <Chip c="blue"    icon={<CheckCircle2 className="w-3 h-3"/>}   label={`${doneCount} Executed`} />
-          </div>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {selectedTerm && ledgerRows.length > 0 && (
+            <>
+              <Chip c="emerald" icon={<Lock className="w-3 h-3"/>}        label={`${readyCount} Ready`} />
+              <Chip c="blue"    icon={<CheckCircle2 className="w-3 h-3"/>} label={`${doneCount} Executed`} />
+            </>
+          )}
+          <Button variant="outline" size="sm"
+            onClick={handleRefresh}
+            className="border-[#1e2d44] text-slate-300 hover:bg-[#1A2942] h-8 px-3 text-xs"
+            data-testid="btn-refresh-ledger">
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5" />Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Term selector */}
       <div className="rounded-2xl border border-[#1e2d44] p-5" style={{ background:"#1A2942" }}>
         <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">Select Promotion Term</label>
-        <div className="flex items-center gap-4 flex-wrap">
-          <Select value={selectedTerm} onValueChange={setSelectedTerm}>
-            <SelectTrigger className="bg-[#0A1628] border-[#1e2d44] text-white h-10 w-80" data-testid="select-ledger-term">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Select value={selectedTerm} onValueChange={v => { setSelectedTerm(v); setTermToDelete(null); }}>
+            <SelectTrigger className="bg-[#0A1628] border-[#1e2d44] text-white h-10 w-72" data-testid="select-ledger-term">
               <SelectValue placeholder="Choose a term to view ledger status…" />
             </SelectTrigger>
             <SelectContent className="bg-[#1A2942] border-[#1e2d44]">
@@ -563,6 +599,29 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
           </Select>
           {terms.length === 0 && (
             <p className="text-xs text-slate-500 italic">No terms found — teachers must save promotion ledgers first.</p>
+          )}
+          {/* Delete stale term */}
+          {selectedTerm && (
+            termToDelete === selectedTerm ? (
+              <div className="flex items-center gap-2 bg-red-900/30 border border-red-500/40 rounded-lg px-3 py-2">
+                <span className="text-xs text-red-300">Delete all ledger data for <strong>"{selectedTerm}"</strong>?</span>
+                <button
+                  onClick={() => deleteTermMut.mutate(selectedTerm)}
+                  disabled={deleteTermMut.isPending}
+                  className="text-xs font-semibold text-red-300 hover:text-white border border-red-500/50 px-2 py-0.5 rounded"
+                  data-testid="btn-confirm-delete-term">
+                  {deleteTermMut.isPending ? "Deleting…" : "Yes, Delete"}
+                </button>
+                <button onClick={() => setTermToDelete(null)} className="text-xs text-slate-400 hover:text-white">Cancel</button>
+              </div>
+            ) : (
+              <Button variant="outline" size="sm"
+                onClick={() => setTermToDelete(selectedTerm)}
+                className="border-red-900/50 text-red-400 hover:bg-red-900/20 hover:text-red-300 h-9 px-3 text-xs"
+                data-testid="btn-delete-term">
+                <Trash2 className="w-3.5 h-3.5 mr-1.5" />Delete Term
+              </Button>
+            )
           )}
         </div>
       </div>

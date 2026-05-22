@@ -3630,6 +3630,16 @@ export class DatabaseStorage {
       .orderBy(promotionDecisions.term);
     return rows.map(r => r.term);
   }
+
+  async deletePromotionDecisionsByTerm(schoolId: number, term: string): Promise<number> {
+    const deleted = await db.delete(promotionDecisions)
+      .where(and(
+        eq(promotionDecisions.schoolId, schoolId),
+        eq(promotionDecisions.term, term),
+      ))
+      .returning();
+    return deleted.length;
+  }
 }
 
 export const storage = new DatabaseStorage();
