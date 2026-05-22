@@ -512,22 +512,16 @@ function ReportCardModal({ student, term, policy, gradingRules, onClose }: {
             </div>
           )}
 
-          {/* Promotion verdict */}
-          <div className={`rounded-xl p-4 border ${student.promoted ? "border-emerald-500/30 bg-emerald-500/10" : "border-red-500/30 bg-red-500/10"}`}>
-            <div className="flex items-center gap-2.5 mb-1">
-              {student.promoted
-                ? <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                : <XCircle className="w-5 h-5 text-red-400 shrink-0" />}
-              <span className={`text-sm font-bold ${student.promoted ? "text-emerald-300" : "text-red-300"}`}>
-                {student.promoted ? "Promoted to Next Class" : "Detained / Retained"}
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 pl-7">{student.promotionReason}</p>
+          {/* Policy criteria summary — final routing is set in the Promotion Ledger */}
+          <div className="rounded-xl p-4 border border-[#1e293b] bg-[#1e293b]/30">
+            <p className="text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
+              <TrendingUp className="w-3.5 h-3.5 text-yellow-400" /> Policy Criteria Assessment
+            </p>
+            <p className="text-xs text-slate-400">{student.promotionReason}</p>
             {student.attendancePct !== null && (
-              <p className="text-xs text-slate-500 pl-7 mt-1">
-                Attendance: <span className={`font-semibold ${student.attendancePct < 75 ? "text-red-400" : "text-emerald-400"}`}>{student.attendancePct}%</span>
-              </p>
+              <p className="text-xs text-slate-500 mt-1">Attendance: <span className={`font-semibold ${student.attendancePct < 75 ? "text-red-400" : "text-emerald-400"}`}>{student.attendancePct}%</span></p>
             )}
+            <p className="text-[10px] text-slate-600 italic mt-2">Class routing is set via the Promotion Ledger in the Results tab.</p>
           </div>
         </div>
       </div>
@@ -535,9 +529,186 @@ function ReportCardModal({ student, term, policy, gradingRules, onClose }: {
   );
 }
 
+// ── Promotion Ledger helpers ──────────────────────────────────────────────────
+
+/** Compute the next class name: "6" → "7"; returns same string for non-numeric classes. */
+function getNextClass(cls: string): string {
+  const n = parseInt(cls, 10);
+  return isNaN(n) ? cls : String(n + 1);
+}
+
+interface PromoEntry {
+  decision: "promoted" | "retained";
+  targetClass: string;
+  targetSection: string;
+  /** Number of manual edits made to this entry (auto-suggest does not increment). */
+  editCount: number;
+  /** Session-only trail of manual changes, shown on hover. */
+  editTrail: Array<{ ts: string; fromDecision: string; toDecision: string; toClass: string; toSection: string }>;
+}
+
+/** Interactive promotion status cell rendered inside the Promotion Gate column. */
+function PromoCell({
+  studentId, entry, isLocked, canEdit, resClass, resSection,
+  allSections, allClasses, onChange,
+}: {
+  studentId: number;
+  entry: PromoEntry | undefined;
+  isLocked: boolean;
+  canEdit: boolean;
+  resClass: string;
+  resSection: string;
+  allSections: string[];
+  allClasses: string[];
+  onChange: (id: number, next: PromoEntry) => void;
+}) {
+  const decision = entry?.decision ?? "promoted";
+  const targetClass = entry?.targetClass ?? getNextClass(resClass);
+  const targetSection = entry?.targetSection ?? resSection;
+
+  const [open, setOpen] = useState(false);
+  const [draftDecision, setDraftDecision] = useState<"promoted" | "retained">(decision);
+  const [draftClass, setDraftClass] = useState(targetClass);
+  const [draftSection, setDraftSection] = useState(targetSection);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close popover when clicking outside
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [open]);
+
+  function openPop() {
+    if (!canEdit || isLocked) return;
+    setDraftDecision(decision);
+    setDraftClass(targetClass);
+    setDraftSection(targetSection);
+    setOpen(true);
+  }
+
+  function apply() {
+    const trail = [...(entry?.editTrail ?? [])];
+    // Push a trail entry only when the teacher manually changes something
+    if (entry) {
+      trail.push({
+        ts: new Date().toISOString(),
+        fromDecision: entry.decision,
+        toDecision: draftDecision,
+        toClass: draftClass,
+        toSection: draftSection,
+      });
+    }
+    onChange(studentId, {
+      decision: draftDecision,
+      targetClass: draftClass,
+      targetSection: draftSection,
+      editCount: (entry?.editCount ?? 0) + (entry ? 1 : 0),
+      editTrail: trail,
+    });
+    setOpen(false);
+  }
+
+  const editCount = entry?.editCount ?? 0;
+  const tooltipText = entry?.editTrail
+    .map(e => `${new Date(e.ts).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })}: ${e.fromDecision} → ${e.toDecision} (${e.toClass}-${e.toSection})`)
+    .join("\n") ?? "";
+
+  return (
+    <div ref={ref} className="relative flex flex-col items-center gap-1">
+      {/* Decision badge — clickable when authorized and unlocked */}
+      <button
+        onClick={openPop}
+        disabled={!canEdit || isLocked}
+        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-bold border transition-all
+          ${decision === "promoted"
+            ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/25"
+            : "bg-red-500/15 border-red-500/30 text-red-400 hover:bg-red-500/25"}
+          ${(!canEdit || isLocked) ? "cursor-default opacity-80" : "cursor-pointer"}
+        `}
+        data-testid={`promo-badge-${studentId}`}
+        title={!canEdit ? "Read-only: you are not the assigned teacher for this class-section" : isLocked ? "Ledger is locked" : "Click to change"}>
+        {decision === "promoted"
+          ? <><CheckCircle2 className="w-3 h-3" />Promoted → {targetClass}-{targetSection}</>
+          : <><XCircle className="w-3 h-3" />Retained in {targetClass}-{targetSection}</>}
+      </button>
+
+      {/* Edit trail indicator */}
+      {editCount > 0 && (
+        <span className="text-[9px] text-slate-500 cursor-help" title={tooltipText}>
+          Edited: {editCount}×
+        </span>
+      )}
+
+      {/* Inline popover panel */}
+      {open && (
+        <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 z-50 w-64 rounded-xl border border-[#334155] bg-[#0f172a] shadow-2xl p-4 space-y-3">
+          <p className="text-[11px] font-bold text-white uppercase tracking-wide">Set Promotion Decision</p>
+
+          {/* Decision toggle */}
+          <div className="flex gap-2">
+            {(["promoted", "retained"] as const).map(d => (
+              <button key={d}
+                onClick={() => {
+                  setDraftDecision(d);
+                  setDraftClass(d === "promoted" ? getNextClass(resClass) : resClass);
+                  setDraftSection(resSection);
+                }}
+                className={`flex-1 py-1.5 rounded-lg border text-[11px] font-bold capitalize transition-colors
+                  ${draftDecision === d
+                    ? d === "promoted"
+                      ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
+                      : "bg-red-500/20 border-red-500/40 text-red-300"
+                    : "border-[#334155] text-slate-400 hover:border-[#4a5568]"}`}>
+                {d === "promoted" ? "🟢 Promoted" : "🔴 Retained"}
+              </button>
+            ))}
+          </div>
+
+          {/* Target class dropdown */}
+          <div>
+            <label className="text-[10px] text-slate-400 uppercase tracking-wide block mb-1">Target Class</label>
+            <select value={draftClass} onChange={e => setDraftClass(e.target.value)}
+              className="w-full h-8 rounded-lg border border-[#334155] bg-[#1e293b] text-white text-xs px-2 focus:outline-none"
+              style={{ colorScheme: "dark" }}>
+              {allClasses.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+
+          {/* Target section dropdown */}
+          <div>
+            <label className="text-[10px] text-slate-400 uppercase tracking-wide block mb-1">Target Section</label>
+            <select value={draftSection} onChange={e => setDraftSection(e.target.value)}
+              className="w-full h-8 rounded-lg border border-[#334155] bg-[#1e293b] text-white text-xs px-2 focus:outline-none"
+              style={{ colorScheme: "dark" }}>
+              {allSections.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+
+          {/* Action buttons */}
+          <div className="flex gap-2 pt-1">
+            <button onClick={() => setOpen(false)}
+              className="flex-1 py-1.5 rounded-lg border border-[#334155] text-slate-400 text-xs hover:border-[#4a5568] transition-colors">
+              Cancel
+            </button>
+            <button onClick={apply}
+              className="flex-1 py-1.5 rounded-lg bg-yellow-500/20 border border-yellow-500/30 text-yellow-300 text-[11px] font-semibold hover:bg-yellow-500/30 transition-colors"
+              data-testid={`promo-apply-${studentId}`}>
+              Apply Changes
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Results Tab ───────────────────────────────────────────────────────────────
 function ResultsTab({ teacher }: { teacher: TeacherMe }) {
-  const { classes, getSectionsForClass } = useSchoolConfigStrict(teacher.schoolId);
+  const { classes, sections: allSections, getSectionsForClass } = useSchoolConfigStrict(teacher.schoolId);
   const [resClass, setResClass] = useState("");
   const [resSection, setResSection] = useState("");
   const [resTerm, setResTerm] = useState("");
@@ -713,6 +884,108 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   const isLoading = policyLoading || scoresLoading;
   const ready = !!resClass && !!resSection && !!resTerm && !!policyTier;
 
+  // ── Promotion Ledger state ─────────────────────────────────────────────────
+
+  /** Whether the selected term has the Promotion Gate column enabled in policy. */
+  const isPromotionTerm = showCol.promotionGate;
+
+  /** True when the logged-in teacher has a faculty mapping for resClass + resSection. */
+  const isAssignedTeacher = useMemo(
+    () => !!teacher.mappings?.some(m => m.className === resClass && m.section === resSection),
+    [teacher.mappings, resClass, resSection],
+  );
+
+  const [promoMap, setPromoMap] = useState<Record<number, PromoEntry>>({});
+  const [promoLocked, setPromoLocked] = useState(false);
+
+  // Fetch any previously saved decisions for this class/section/term
+  const { data: savedDecisions = [] } = useQuery<Array<{
+    studentId: number; decision: string; targetClass: string;
+    targetSection: string; editCount: number; locked: boolean;
+  }>>({
+    queryKey: ["/api/teacher/promotion-decisions", resClass, resSection, resTerm],
+    queryFn: async () => {
+      const r = await fetch(
+        `/api/teacher/promotion-decisions/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}/${encodeURIComponent(resTerm)}`,
+        { credentials: "include" },
+      );
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!resClass && !!resSection && !!resTerm,
+    staleTime: 0,
+  });
+
+  // Reset local state whenever the class/section/term selection changes
+  useEffect(() => { setPromoMap({}); setPromoLocked(false); }, [resClass, resSection, resTerm]);
+
+  // Populate promoMap from DB on load; preserves any in-session edits already applied
+  useEffect(() => {
+    if (!savedDecisions.length) return;
+    setPromoLocked(savedDecisions.some(d => d.locked));
+    setPromoMap(prev => {
+      const next = { ...prev };
+      savedDecisions.forEach(d => {
+        if (!next[d.studentId]) {
+          next[d.studentId] = {
+            decision: d.decision as "promoted" | "retained",
+            targetClass: d.targetClass,
+            targetSection: d.targetSection,
+            editCount: d.editCount,
+            editTrail: [],
+          };
+        }
+      });
+      return next;
+    });
+  }, [savedDecisions]);
+
+  /** Fills promoMap for every student using the computed promotion algorithm as a starting suggestion. */
+  function runAutoSuggestion() {
+    const next: Record<number, PromoEntry> = {};
+    for (const s of allResults) {
+      next[s.studentId] = {
+        decision: s.promoted ? "promoted" : "retained",
+        targetClass: s.promoted ? getNextClass(resClass) : resClass,
+        targetSection: resSection,
+        // Preserve existing edit counts and trails; auto-suggest does not count as a manual edit
+        editCount: promoMap[s.studentId]?.editCount ?? 0,
+        editTrail: promoMap[s.studentId]?.editTrail ?? [],
+      };
+    }
+    setPromoMap(next);
+    toast({ title: "Auto-suggestion applied", description: `${allResults.length} student(s) pre-filled from policy engine. Review and adjust as needed.`, duration: 3000 });
+  }
+
+  const saveLedgerMutation = useMutation({
+    mutationFn: async (lock: boolean) => {
+      const entries = allResults.map(s => ({
+        studentId: s.studentId,
+        decision: promoMap[s.studentId]?.decision ?? "promoted",
+        targetClass: promoMap[s.studentId]?.targetClass ?? getNextClass(resClass),
+        targetSection: promoMap[s.studentId]?.targetSection ?? resSection,
+        editCount: promoMap[s.studentId]?.editCount ?? 0,
+      }));
+      const res = await apiRequest("POST", "/api/teacher/promotion-decisions", {
+        class: resClass, section: resSection, term: resTerm, lock, entries,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as any)?.message ?? "Save failed");
+      }
+      return res.json();
+    },
+    onSuccess: (_data, lock) => {
+      if (lock) setPromoLocked(true);
+      toast({
+        title: lock ? "🔒 Ledger Locked & Saved" : "✓ Draft Saved",
+        description: lock ? "Promotion decisions are now permanent." : "Ledger saved as draft. You can still edit.",
+        duration: 3000,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/promotion-decisions", resClass, resSection, resTerm] });
+    },
+    onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+  });
+
   return (
     <div className="space-y-5" data-testid="tab-results">
       {/* Filters */}
@@ -843,8 +1116,8 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-[#1e293b] border-b border-[#1e293b]">
                 {[
                   { label: "Total Students", value: filteredResults.length },
-                  { label: "Promoted", value: filteredResults.filter(r => r.promoted).length, color: "text-emerald-400" },
-                  { label: "Retained", value: filteredResults.filter(r => !r.promoted).length, color: "text-red-400" },
+                  { label: "Promoted", value: filteredResults.filter(r => promoMap[r.studentId]?.decision === "promoted").length, color: "text-emerald-400" },
+                  { label: "Retained", value: filteredResults.filter(r => promoMap[r.studentId]?.decision === "retained").length, color: "text-red-400" },
                   {
                     label: "Avg Attendance",
                     value: (() => {
@@ -861,6 +1134,55 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                   </div>
                 ))}
               </div>
+
+              {/* ── Promotion Ledger control bar ─────────────────────────── */}
+              {showCol.promotionGate && (
+                <div className="px-4 py-3 border-b border-[#1e293b] flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    {promoLocked && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[11px] font-bold">
+                        🔒 Ledger Locked
+                      </span>
+                    )}
+                    {!isPromotionTerm && (
+                      <span className="text-[11px] text-slate-500 italic">
+                        Promotion controls are only active on the final exam term.
+                      </span>
+                    )}
+                    {isPromotionTerm && !isAssignedTeacher && (
+                      <span className="text-[11px] text-slate-500 italic">
+                        Read-only — you are not the assigned teacher for this class-section.
+                      </span>
+                    )}
+                  </div>
+                  {isPromotionTerm && isAssignedTeacher && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={runAutoSuggestion}
+                        disabled={promoLocked || allResults.length === 0}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold hover:bg-blue-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        data-testid="btn-auto-suggest">
+                        <TrendingUp className="w-3.5 h-3.5" /> Run Auto-Suggestion
+                      </button>
+                      <button
+                        onClick={() => saveLedgerMutation.mutate(false)}
+                        disabled={promoLocked || saveLedgerMutation.isPending || allResults.length === 0}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs font-semibold hover:bg-yellow-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        data-testid="btn-save-ledger">
+                        {saveLedgerMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                        Save Draft
+                      </button>
+                      <button
+                        onClick={() => saveLedgerMutation.mutate(true)}
+                        disabled={promoLocked || saveLedgerMutation.isPending || allResults.length === 0}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs font-semibold hover:bg-emerald-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        data-testid="btn-lock-ledger">
+                        <GraduationCap className="w-3.5 h-3.5" /> Lock & Save Ledger
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="overflow-x-auto">
                 <table className="w-full text-sm" style={{ minWidth: "640px" }}>
@@ -1011,21 +1333,20 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                             </td>
                           )}
 
-                          {/* Promotion Gate */}
+                          {/* Promotion Gate — interactive ledger cell */}
                           {showCol.promotionGate && (
                             <td className="py-3 px-4 text-center">
-                              <div className="flex flex-col items-center gap-1">
-                                {student.promoted ? (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold">
-                                    <CheckCircle2 className="w-3 h-3" /> Promoted
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-500/15 border border-red-500/30 text-red-400 text-xs font-bold">
-                                    <XCircle className="w-3 h-3" /> Retained
-                                  </span>
-                                )}
-                                <span className="text-[9px] text-slate-600 leading-tight max-w-[140px] text-center">{student.promotionReason}</span>
-                              </div>
+                              <PromoCell
+                                studentId={student.studentId}
+                                entry={promoMap[student.studentId]}
+                                isLocked={promoLocked}
+                                canEdit={isPromotionTerm && isAssignedTeacher}
+                                resClass={resClass}
+                                resSection={resSection}
+                                allSections={allSections}
+                                allClasses={classes}
+                                onChange={(id, next) => setPromoMap(prev => ({ ...prev, [id]: next }))}
+                              />
                             </td>
                           )}
 

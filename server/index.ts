@@ -117,6 +117,27 @@ app.use((req, res, next) => {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS promotion_decisions (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      class TEXT NOT NULL,
+      section TEXT NOT NULL,
+      term TEXT NOT NULL,
+      student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      decision TEXT NOT NULL DEFAULT 'promoted',
+      target_class TEXT NOT NULL,
+      target_section TEXT NOT NULL,
+      edit_count INTEGER NOT NULL DEFAULT 0,
+      processed_by_teacher_id INTEGER REFERENCES teachers(id),
+      locked BOOLEAN NOT NULL DEFAULT FALSE,
+      locked_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP,
+      UNIQUE(school_id, class, section, term, student_id)
+    );
+  `);
+
+  await pool.query(`
     ALTER TABLE complaints ADD COLUMN IF NOT EXISTS complainant_student_id INTEGER REFERENCES students(id) ON DELETE CASCADE;
     ALTER TABLE complaints ADD COLUMN IF NOT EXISTS contact_number TEXT;
     ALTER TABLE complaints ADD COLUMN IF NOT EXISTS suggestions TEXT;

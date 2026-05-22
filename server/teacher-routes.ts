@@ -2918,4 +2918,51 @@ export function registerTeacherRoutes(app: Express) {
       res.json(summary);
     } catch { res.status(500).json({ message: "Failed to fetch attendance summary" }); }
   });
+
+  // ── Promotion Ledger ─────────────────────────────────────────────────────
+
+  /** GET /api/teacher/promotion-decisions/:class/:section/:term
+   *  Returns all stored promotion decisions for the given class/section/term.
+   *  Any authenticated teacher can view (read-only unless they are the assigned teacher). */
+  app.get("/api/teacher/promotion-decisions/:class/:section/:term", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    try {
+      const cls = decodeURIComponent(req.params.class);
+      const section = decodeURIComponent(req.params.section);
+      const term = decodeURIComponent(req.params.term);
+      const decisions = await storage.getPromotionDecisions(teacher.schoolId, cls, section, term);
+      res.json(decisions);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to fetch promotion decisions" });
+    }
+  });
+
+  /** POST /api/teacher/promotion-decisions
+   *  Bulk upserts promotion decisions for a class/section/term.
+   *  Body: { class, section, term, lock: boolean, entries: [...] }
+   *  Authorization: caller must have a faculty mapping for the given class-section. */
+  app.post("/api/teacher/promotion-decisions", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    try {
+      const { class: cls, section, term, lock, entries } = req.body;
+      if (!cls || !section || !term || !Array.isArray(entries)) {
+        return res.status(400).json({ message: "class, section, term, and entries are required" });
+      }
+      // Verify teacher is assigned to this class-section
+      const allMappings = await storage.getFacultyMappingsByTeacher(teacher.id);
+      const isAssigned = allMappings.some(m => m.className === cls && m.section === section)
+        || (teacher.assignedClass === cls && teacher.assignedSection === section);
+      if (!isAssigned) {
+        return res.status(403).json({ message: "Not authorized: you are not assigned to this class-section" });
+      }
+      await storage.savePromotionDecisions(teacher.schoolId, cls, section, term, teacher.id, !!lock, entries);
+      res.json({ message: lock ? "Ledger locked and saved" : "Ledger draft saved" });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to save promotion decisions" });
+    }
+  });
 }

@@ -6,7 +6,8 @@ import {
   studentLeaveRequests, auditLogs, visitorLogs, studentProfiles, teacherAllocations,
   promotionOverrides, gradingTiers, gradingRules, academicHistory,
   schoolAssets, assetLogs, verificationLogs, timetableStructure, securityAudit, leavePolicies,
-  nonTeachingStaff, facultyMappings, feeRecords, examPolicyTiers,
+  nonTeachingStaff, facultyMappings, feeRecords, examPolicyTiers, promotionDecisions,
+  type PromotionDecision,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
   type AttendanceRecord, type InsertAttendance,
@@ -3501,6 +3502,55 @@ export class DatabaseStorage {
       .where(and(eq(examPolicyTiers.id, id), eq(examPolicyTiers.schoolId, schoolId)))
       .returning();
     return result.length > 0;
+  }
+
+  // ── Promotion Ledger ──────────────────────────────────────────────────────
+
+  /** Fetch all saved promotion decisions for a class/section/term within a school. */
+  async getPromotionDecisions(schoolId: number, cls: string, section: string, term: string): Promise<PromotionDecision[]> {
+    return db.select().from(promotionDecisions).where(
+      and(
+        eq(promotionDecisions.schoolId, schoolId),
+        eq(promotionDecisions.class, cls),
+        eq(promotionDecisions.section, section),
+        eq(promotionDecisions.term, term),
+      )
+    );
+  }
+
+  /** Bulk upsert promotion decisions; optionally lock the ledger for this class/section/term. */
+  async savePromotionDecisions(
+    schoolId: number, cls: string, section: string, term: string,
+    teacherId: number, lock: boolean,
+    entries: Array<{ studentId: number; decision: string; targetClass: string; targetSection: string; editCount: number }>,
+  ): Promise<void> {
+    const now = new Date();
+    for (const e of entries) {
+      await db.insert(promotionDecisions).values({
+        schoolId, class: cls, section, term,
+        studentId: e.studentId,
+        decision: e.decision,
+        targetClass: e.targetClass,
+        targetSection: e.targetSection,
+        editCount: e.editCount,
+        processedByTeacherId: teacherId,
+        locked: lock,
+        lockedAt: lock ? now : null,
+        updatedAt: now,
+      }).onConflictDoUpdate({
+        target: [promotionDecisions.schoolId, promotionDecisions.class, promotionDecisions.section, promotionDecisions.term, promotionDecisions.studentId],
+        set: {
+          decision: e.decision,
+          targetClass: e.targetClass,
+          targetSection: e.targetSection,
+          editCount: e.editCount,
+          processedByTeacherId: teacherId,
+          locked: lock,
+          lockedAt: lock ? now : null,
+          updatedAt: now,
+        },
+      });
+    }
   }
 }
 

@@ -205,6 +205,25 @@ export const examScores = pgTable("exam_scores", {
   updatedAt: timestamp("updated_at"),
 });
 
+export const promotionDecisions = pgTable("promotion_decisions", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  class: text("class").notNull(),
+  section: text("section").notNull(),
+  term: text("term").notNull(),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  decision: text("decision").notNull().default("promoted"),
+  targetClass: text("target_class").notNull(),
+  targetSection: text("target_section").notNull(),
+  editCount: integer("edit_count").notNull().default(0),
+  processedByTeacherId: integer("processed_by_teacher_id").references(() => teachers.id),
+  locked: boolean("locked").notNull().default(false),
+  lockedAt: timestamp("locked_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at"),
+});
+export type PromotionDecision = typeof promotionDecisions.$inferSelect;
+
 export const galleryItems = pgTable("gallery_items", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
