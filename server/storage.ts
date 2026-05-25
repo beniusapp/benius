@@ -570,6 +570,53 @@ export class DatabaseStorage {
     return await db.select().from(notices).where(and(...conditions)).orderBy(desc(notices.createdAt));
   }
 
+  /**
+   * Returns teacher-targeted notices scoped strictly to this teacher's assigned
+   * class-section pairs (from both teachers.assignedClass/Section and faculty_mappings).
+   * Notices with a null targetClass are treated as school-wide broadcasts and always
+   * included.  Notices for class-sections this teacher is NOT assigned to are excluded.
+   */
+  async getTeacherScopedNotices(schoolId: number, teacherId: number): Promise<Notice[]> {
+    const [teacherRecord, mappings] = await Promise.all([
+      this.getTeacherById(teacherId),
+      this.getFacultyMappingsByTeacher(teacherId),
+    ]);
+
+    // Build the full set of class-section pairs this teacher covers
+    const assignments: Array<{ className: string; section: string }> = [];
+
+    // 1. Primary assignment stored directly on the teacher row
+    if (teacherRecord?.assignedClass && teacherRecord?.assignedSection) {
+      assignments.push({ className: teacherRecord.assignedClass, section: teacherRecord.assignedSection });
+    }
+
+    // 2. Faculty mapping rows (may include additional class-sections)
+    for (const m of mappings) {
+      const alreadyIn = assignments.some(
+        a => a.className === m.className && a.section === m.section
+      );
+      if (!alreadyIn) assignments.push({ className: m.className, section: m.section });
+    }
+
+    // Fetch all teacher-type notices for this school in one query
+    const allNotices = await db.select().from(notices)
+      .where(and(
+        eq(notices.schoolId, schoolId),
+        eq(notices.targetType, "teacher"),
+      ))
+      .orderBy(desc(notices.createdAt));
+
+    // Retain: school-wide broadcasts (no targetClass) OR matches any of this teacher's assignments
+    return allNotices.filter(notice => {
+      if (!notice.targetClass) return true;           // broadcast to all teachers
+      if (assignments.length === 0) return false;     // teacher has no known assignments
+      return assignments.some(
+        a => a.className === notice.targetClass &&
+          (!notice.targetSection || a.section === notice.targetSection)
+      );
+    });
+  }
+
   async getStudentNotices(studentId: number, schoolId: number, cls: string, section: string): Promise<(Notice & { isRead: boolean })[]> {
     const classMatch = or(
       isNull(notices.targetClass),

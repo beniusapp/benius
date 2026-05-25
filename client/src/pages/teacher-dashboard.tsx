@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useRoute } from "wouter";
 import {
@@ -83,6 +83,14 @@ const TILES: TileConfig[] = [
   { id: "timetable",       label: "Timetable",         emoji: "⏰", zone: "Administration", desc: "Your class periods and weekly schedule",     accentColor: "#fb7185" },
   { id: "student-profiles",label: "Approval Center",  emoji: "✅", zone: "Administration", desc: "Review and approve student profile edits",   accentColor: "#fb7185" },
 ];
+
+// ── Noticeboard unread tracking (mirrors noticeboard.tsx localStorage key) ──
+function getDashboardReadIds(teacherId: number): Set<number> {
+  try {
+    const raw = localStorage.getItem(`noticeReads_teacher_${teacherId}`);
+    return raw ? new Set(JSON.parse(raw) as number[]) : new Set();
+  } catch { return new Set(); }
+}
 
 const ZONE_ORDER = ["Classroom", "School Life", "Administration"];
 const ZONE_COLOR: Record<string, string> = {
@@ -225,6 +233,27 @@ export default function TeacherDashboard() {
     refetchInterval: 60000,
   });
   const pendingProfilesCount = pendingProfilesData?.count ?? 0;
+
+  // Fetch teacher-scoped admin notices to compute unread badge for the noticeboard tile
+  const { data: adminNoticesForBadge = [] } = useQuery<Array<{ id: number }>>({
+    queryKey: ["/api/notices", teacher?.schoolId, "teacher"],
+    queryFn: async () => {
+      if (!teacher) return [];
+      const res = await fetch(`/api/notices/${teacher.schoolId}?target=teacher`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!teacher,
+    staleTime: 30000,
+    refetchOnMount: "always",
+  });
+
+  // Unread count = notices whose IDs are not in the teacher's localStorage read-set
+  const noticeboardUnreadCount = useMemo(() => {
+    if (!teacher) return 0;
+    const readIds = getDashboardReadIds(teacher.id);
+    return adminNoticesForBadge.filter(n => !readIds.has(n.id)).length;
+  }, [adminNoticesForBadge, teacher?.id]);
 
   useEffect(() => {
     if (!isLoading && (isError || !teacher)) {
@@ -477,12 +506,19 @@ export default function TeacherDashboard() {
                     {zoneTiles.map((tile) => {
                       const isAttendance = tile.id === "attendance";
                       const isApproval = tile.id === "student-profiles";
+                      const isNoticeboard = tile.id === "noticeboard";
+
+                      const badge = isApproval && pendingProfilesCount > 0
+                        ? pendingProfilesCount
+                        : isNoticeboard && noticeboardUnreadCount > 0
+                          ? noticeboardUnreadCount
+                          : undefined;
 
                       return (
                         <TileCard
                           key={tile.id}
                           tile={tile}
-                          badge={isApproval && pendingProfilesCount > 0 ? pendingProfilesCount : undefined}
+                          badge={badge}
                           dotColor={isAttendance
                             ? (teacher.attendanceDoneToday ? "#10b981" : "#ef4444")
                             : undefined}

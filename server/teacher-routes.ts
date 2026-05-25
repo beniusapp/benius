@@ -519,6 +519,14 @@ export function registerTeacherRoutes(app: Express) {
     }
 
     const targetType = (req.query.target as string) || "teacher";
+
+    // When a teacher requests their own notices, scope strictly to their
+    // class-section assignments so they only see notices relevant to them.
+    if (targetType === "teacher" && req.session.teacherId) {
+      const list = await storage.getTeacherScopedNotices(sid, req.session.teacherId);
+      return res.json(list);
+    }
+
     const cls = req.query.class as string | undefined;
     const section = req.query.section as string | undefined;
     const list = await storage.getNoticesByTarget(sid, targetType, cls, section);
