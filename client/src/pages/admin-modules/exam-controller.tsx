@@ -121,45 +121,18 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
   const [remindingKey, setRemindingKey]     = useState("");
   const [termToDelete, setTermToDelete]     = useState<string | null>(null);
 
-  // ── Fetch terms list — live-synced with school setup ─────────────────────
-  // Source: getPromotionGatedTerms → reads examPolicyTiers (promotionGate=true)
-  // cross-referenced with exam_types metadata — strictly scoped by schoolId.
-  // If an admin removes a term from School Setup, it vanishes here on next poll.
+  // ── Fetch terms — all exam types from school setup (strictly school-scoped) ──
   const { data: terms = [], refetch: refetchTerms } = useQuery<string[]>({
     queryKey: ["/api/admin/ledger-terms"],
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
-    refetchInterval: 30_000,       // re-sync every 30 s while page is open
-    refetchIntervalInBackground: false,
   });
 
-  // ── Reactive term selection sync ──────────────────────────────────────────
-  // Runs whenever the live terms list changes (poll, refocus, manual refresh).
-  // Three cases handled:
-  //   1. No term selected yet → auto-select the first available term.
-  //   2. Selected term still present → keep selection, nothing to do.
-  //   3. Selected term was removed from school config → fall back gracefully.
+  // Auto-select first term when the list loads or changes
   useEffect(() => {
-    if (terms.length === 0) return;           // list still loading or truly empty
-    if (!selectedTerm) {
-      setSelectedTerm(terms[0]);              // case 1: initial selection
-      return;
-    }
-    if (!terms.includes(selectedTerm)) {
-      // case 3: selected term no longer exists in school setup
-      const fallback = terms[0];
-      setSelectedTerm(fallback);
-      setTermToDelete(null);                  // clear any pending delete confirmation
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/ledger-status"] });
-      toast({
-        title: "Term No Longer Available",
-        description: `"${selectedTerm}" was removed from school setup. Switched to "${fallback}".`,
-        duration: 5000,
-      });
-    }
-    // case 2: term still valid — no action needed
-  }, [terms]); // intentionally omit selectedTerm: we only want to react to list changes
+    if (!selectedTerm && terms.length > 0) setSelectedTerm(terms[0]);
+  }, [terms, selectedTerm]);
 
   // ── Fetch ledger status rows ──────────────────────────────────────────────
   const { data: ledgerRows = [], isLoading: ledgerLoading, refetch: refetchLedger } = useQuery<LedgerRow[]>({
