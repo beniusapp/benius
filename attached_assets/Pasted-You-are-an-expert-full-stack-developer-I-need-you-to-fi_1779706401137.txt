@@ -1,0 +1,23 @@
+You are an expert full-stack developer. I need you to fix a critical data-fetching bug in the "Exam Controller" dashboard of my multi-tenant school management system (`BENIUS`), referencing the attached UI layouts in "1000085708.png" and "1000085709.png".
+
+### 🔍 The Core Bug
+Currently, the KPI summary metric cards (Total Classes, Total Sections) and the Class/Section dropdown filters are only reflecting data for classes that already have a completed ledger (e.g., only 'Class 6' appears because its ledger is finished). 
+
+Instead, the dashboard should be pulling the master list of all configured classes and sections from the school setup route (`/admin-dashboard/school-setup`) and cross-referencing them against the ledger records.
+
+### 🛠️ Required Fixes & Logic
+
+1. **Master Data Hydration (Backend API Update):**
+   - Update the dashboard's initialization API. It must first fetch ALL active classes and assigned sections for the current tenant school from the master configuration (`/admin-dashboard/school-setup`).
+   - Perform a LEFT JOIN or aggregate check against the `ledgers` table for the selected term (e.g., Term 3).
+
+2. **KPI Metrics & Dropdown Filters (Image 1 Fix):**
+   - **Total Classes / Total Sections:** Must count *every* class and section configured in the school setup, not just active ledgers.
+   - **Dropdown Selectors:** The "Class" and "Section" filters must display all available options from the school setup so the administrator can search through empty or pending classes.
+
+3. **Status Aggregation Grid (Image 2 Fix):**
+   - Keep the clean accordion hierarchy layout for classes. 
+   - If a section has a completed ledger, display it normally with its status, teacher info, and the 'Review & Execute' button (as seen in `Class 6 - Sec A`).
+   - If a section from the master setup does NOT have a completed ledger record yet, it must still display in the accordion list. Set its badge status dynamically to 'Unready / Pending' or 'Not Started', hide the 'Review & Execute' button, and display a 'Send Reminder' action button instead.
+
+Please update the backend API query controller ensuring strict tenant-isolation, and modify the frontend components to handle this complete dataset seamlessly without breaking the existing dark-theme UI structure.
