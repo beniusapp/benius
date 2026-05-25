@@ -2162,6 +2162,64 @@ export function registerTeacherRoutes(app: Express) {
     }
   });
 
+  // ── Send ledger reminder to a specific teacher ────────────────────────────
+  app.post("/api/admin/send-ledger-reminder", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const { className, section, term } = req.body as Record<string, string>;
+    if (!className || !section || !term)
+      return res.status(400).json({ message: "className, section, and term are required" });
+    const schoolId = req.session.schoolId!;
+    try {
+      await storage.createNotice({
+        schoolId,
+        createdById: req.session.userId!,
+        creatorRole: "admin",
+        targetType: "class",
+        targetClass: className,
+        targetSection: section,
+        noticeType: "Urgent",
+        content: `📋 LEDGER REMINDER: Please complete and lock the Promotion Ledger for Class ${className} — Section ${section} (${term}). This is required for end-of-term advancement processing. Action needed urgently.`,
+      });
+      res.json({ message: `Reminder sent to teacher of Class ${className}-${section}` });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to send reminder" });
+    }
+  });
+
+  // ── Send reminders to ALL pending teachers in bulk ────────────────────────
+  app.post("/api/admin/send-ledger-reminder-all", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const { term } = req.body as Record<string, string>;
+    if (!term) return res.status(400).json({ message: "term is required" });
+    const schoolId = req.session.schoolId!;
+    try {
+      const statuses = await storage.getLedgerStatus(schoolId, term);
+      const pending = statuses.filter(s => s.status !== "locked" && !s.adminExecuted);
+      for (const row of pending) {
+        await storage.createNotice({
+          schoolId,
+          createdById: req.session.userId!,
+          creatorRole: "admin",
+          targetType: "class",
+          targetClass: row.class,
+          targetSection: row.section,
+          noticeType: "Urgent",
+          content: `📋 LEDGER REMINDER: Please complete and lock the Promotion Ledger for Class ${row.class} — Section ${row.section} (${term}). This is required for end-of-term advancement processing. Action needed urgently.`,
+        });
+      }
+      res.json({
+        count: pending.length,
+        message: pending.length > 0
+          ? `Reminders sent to ${pending.length} pending class-section(s)`
+          : "All ledgers are already locked — no reminders needed",
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to send reminders" });
+    }
+  });
+
   app.get("/api/admin/exam/aggregated", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });

@@ -3565,6 +3565,24 @@ export class DatabaseStorage {
     teacherName: string | null; teacherId: number | null; lockedAt: Date | null;
     adminExecuted: boolean;
   }>> {
+    // ── 1. School-configured class-sections + ordered class list ─────────────
+    const [csRows, classesRows] = await Promise.all([
+      db.select().from(schoolMetadata)
+        .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, "class_sections")))
+        .limit(1),
+      db.select().from(schoolMetadata)
+        .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, "classes")))
+        .limit(1),
+    ]);
+    let classSectionsMap: Record<string, string[]> = {};
+    let orderedClasses: string[] = [];
+    try {
+      const p = JSON.parse(csRows[0]?.metaValue ?? "{}");
+      if (p && typeof p === "object" && !Array.isArray(p)) classSectionsMap = p;
+    } catch {}
+    try { orderedClasses = JSON.parse(classesRows[0]?.metaValue ?? "[]"); } catch {}
+
+    // ── 2. Promotion decisions for this term ──────────────────────────────────
     const rows = await db
       .select({
         class: promotionDecisions.class,
@@ -3581,17 +3599,36 @@ export class DatabaseStorage {
       .leftJoin(teachers, eq(promotionDecisions.processedByTeacherId, teachers.id))
       .where(and(eq(promotionDecisions.schoolId, schoolId), eq(promotionDecisions.term, term)));
 
+    // ── 3. Faculty mappings → assigned teacher per class-section ─────────────
+    const mappingRows = await db
+      .select({
+        className: facultyMappings.className,
+        section: facultyMappings.section,
+        teacherName: teachers.fullName,
+        teacherId: teachers.id,
+      })
+      .from(facultyMappings)
+      .innerJoin(teachers, eq(facultyMappings.teacherId, teachers.id))
+      .where(eq(facultyMappings.schoolId, schoolId));
+
+    const mappedTeacher: Record<string, { name: string; id: number }> = {};
+    for (const m of mappingRows) {
+      const key = `${m.className}|${m.section}`;
+      if (!mappedTeacher[key]) mappedTeacher[key] = { name: m.teacherName, id: m.teacherId };
+    }
+
+    // ── 4. Aggregate promotion_decisions into per-class-section buckets ───────
     type AggBucket = {
-      class: string; section: string; term: string;
+      cls: string; sec: string;
       total: number; lockedCount: number; interventionCount: number;
       teacherName: string | null; teacherId: number | null; lockedAt: Date | null;
       anyExecuted: boolean;
     };
     const buckets: Record<string, AggBucket> = {};
     for (const r of rows) {
-      const key = `${r.class}|${r.section}|${r.term}`;
+      const key = `${r.class}|${r.section}`;
       if (!buckets[key]) {
-        buckets[key] = { class: r.class, section: r.section, term: r.term, total: 0, lockedCount: 0, interventionCount: 0, teacherName: r.teacherName ?? null, teacherId: r.teacherId ?? null, lockedAt: r.lockedAt ?? null, anyExecuted: false };
+        buckets[key] = { cls: r.class, sec: r.section, total: 0, lockedCount: 0, interventionCount: 0, teacherName: r.teacherName ?? null, teacherId: r.teacherId ?? null, lockedAt: r.lockedAt ?? null, anyExecuted: false };
       }
       const b = buckets[key];
       b.total++;
@@ -3603,12 +3640,59 @@ export class DatabaseStorage {
       if (r.adminExecuted) b.anyExecuted = true;
     }
 
-    return Object.values(buckets).map(b => ({
-      class: b.class, section: b.section, term: b.term,
-      status: b.lockedCount > 0 && b.lockedCount === b.total ? "locked" : b.total > 0 ? "draft" : "none",
-      totalStudents: b.total, lockedCount: b.lockedCount, manualInterventionCount: b.interventionCount,
-      teacherName: b.teacherName, teacherId: b.teacherId, lockedAt: b.lockedAt, adminExecuted: b.anyExecuted,
-    })).sort((a, b) => a.class.localeCompare(b.class) || a.section.localeCompare(b.section));
+    // ── 5. Merge: all configured class-sections + any extras from DB ──────────
+    type ResultRow = {
+      class: string; section: string; term: string;
+      status: "none" | "draft" | "locked";
+      totalStudents: number; lockedCount: number; manualInterventionCount: number;
+      teacherName: string | null; teacherId: number | null; lockedAt: Date | null;
+      adminExecuted: boolean;
+    };
+    const result: ResultRow[] = [];
+    const seen = new Set<string>();
+
+    for (const [cls, sections] of Object.entries(classSectionsMap)) {
+      for (const sec of (sections as string[])) {
+        const key = `${cls}|${sec}`;
+        seen.add(key);
+        const b = buckets[key];
+        const mapped = mappedTeacher[key];
+        result.push(b ? {
+          class: cls, section: sec, term,
+          status: b.lockedCount > 0 && b.lockedCount === b.total ? "locked" : b.total > 0 ? "draft" : "none",
+          totalStudents: b.total, lockedCount: b.lockedCount, manualInterventionCount: b.interventionCount,
+          teacherName: b.teacherName || mapped?.name || null,
+          teacherId: b.teacherId || mapped?.id || null,
+          lockedAt: b.lockedAt, adminExecuted: b.anyExecuted,
+        } : {
+          class: cls, section: sec, term,
+          status: "none",
+          totalStudents: 0, lockedCount: 0, manualInterventionCount: 0,
+          teacherName: mapped?.name || null, teacherId: mapped?.id || null,
+          lockedAt: null, adminExecuted: false,
+        });
+      }
+    }
+
+    // Include any class-sections from promotion_decisions not in the config map
+    for (const [key, b] of Object.entries(buckets)) {
+      if (!seen.has(key)) {
+        result.push({
+          class: b.cls, section: b.sec, term,
+          status: b.lockedCount > 0 && b.lockedCount === b.total ? "locked" : b.total > 0 ? "draft" : "none",
+          totalStudents: b.total, lockedCount: b.lockedCount, manualInterventionCount: b.interventionCount,
+          teacherName: b.teacherName, teacherId: b.teacherId,
+          lockedAt: b.lockedAt, adminExecuted: b.anyExecuted,
+        });
+      }
+    }
+
+    return result.sort((a, b) => {
+      const ia = orderedClasses.indexOf(a.class);
+      const ib = orderedClasses.indexOf(b.class);
+      const ca = (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+      return ca !== 0 ? ca : a.section.localeCompare(b.section);
+    });
   }
 
   async markLedgerExecuted(schoolId: number, cls: string, section: string, term: string): Promise<void> {

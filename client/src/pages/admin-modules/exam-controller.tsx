@@ -1,9 +1,10 @@
-import { useState, useMemo, type ReactNode } from "react";
+import { useState, useMemo, useEffect, type ReactNode } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   GraduationCap, ChevronLeft, AlertTriangle, CheckCircle2,
   Clock, Lock, Shield, Users, TrendingUp, UserX, Award,
   Loader2, Play, CheckSquare, RefreshCw, Trash2,
+  Bell, Search, ChevronDown, ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -64,14 +65,11 @@ function fmt(iso: string | null) {
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
 }
 
-/** Returns the class that follows `cls` in the school's ordered class list.
- *  Falls back to arithmetic (+1) only when `classList` is empty or `cls` is
- *  not found in it (guarantees graceful degradation). */
 function nxtCls(cls: string, classList: string[]): string {
   if (classList.length > 0) {
     const idx = classList.findIndex(c => c.trim().toLowerCase() === cls.trim().toLowerCase());
     if (idx !== -1 && idx < classList.length - 1) return classList[idx + 1];
-    if (idx === classList.length - 1) return cls; // already at the top class — keep same
+    if (idx === classList.length - 1) return cls;
   }
   const n = parseInt(cls, 10);
   return isNaN(n) ? cls : String(n + 1);
@@ -95,10 +93,10 @@ function Chip({ c, icon, label }: { c: ChipColor; icon?: ReactNode; label: strin
 }
 
 function LedgerBadge({ row }: { row: LedgerRow }) {
-  if (row.adminExecuted)  return <Chip c="blue"    icon={<CheckCircle2 className="w-3 h-3"/>} label="Executed" />;
-  if (row.status==="locked") return <Chip c="emerald" icon={<Lock className="w-3 h-3"/>}        label="Locked & Ready" />;
-  if (row.status==="draft")  return <Chip c="amber"   icon={<Clock className="w-3 h-3"/>}        label="Draft Saved" />;
-  return                          <Chip c="slate"   icon={<Clock className="w-3 h-3"/>}          label="Pending Marks" />;
+  if (row.adminExecuted)       return <Chip c="blue"    icon={<CheckCircle2 className="w-3 h-3"/>} label="Executed" />;
+  if (row.status === "locked") return <Chip c="emerald" icon={<Lock className="w-3 h-3"/>}         label="Locked & Ready" />;
+  if (row.status === "draft")  return <Chip c="amber"   icon={<Clock className="w-3 h-3"/>}         label="In Progress" />;
+  return                              <Chip c="slate"   icon={<Clock className="w-3 h-3"/>}         label="Not Started" />;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -106,6 +104,7 @@ function LedgerBadge({ row }: { row: LedgerRow }) {
 export default function ExamController({ examTypes, classes: schoolClasses }: Props) {
   const { toast } = useToast();
 
+  // ── Core view state ───────────────────────────────────────────────────────
   const [view, setView]                 = useState<"table"|"wizard">("table");
   const [selectedTerm, setSelectedTerm] = useState("");
   const [cohort, setCohort]             = useState<LedgerRow | null>(null);
@@ -114,6 +113,14 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
   const [overrides, setOverrides]       = useState<Record<number, AdminOverride>>({});
   const [confirmed, setConfirmed]       = useState(false);
 
+  // ── Filter + accordion state ──────────────────────────────────────────────
+  const [searchText, setSearchText]         = useState("");
+  const [filterClass, setFilterClass]       = useState("all");
+  const [filterSection, setFilterSection]   = useState("all");
+  const [expandedClasses, setExpandedClasses] = useState<Set<string>>(new Set());
+  const [remindingKey, setRemindingKey]     = useState("");
+  const [termToDelete, setTermToDelete]     = useState<string | null>(null);
+
   // ── Fetch terms list ──────────────────────────────────────────────────────
   const { data: terms = [], refetch: refetchTerms } = useQuery<string[]>({
     queryKey: ["/api/admin/ledger-terms"],
@@ -121,6 +128,11 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
   });
+
+  // Auto-select first term when terms load
+  useEffect(() => {
+    if (!selectedTerm && terms.length > 0) setSelectedTerm(terms[0]);
+  }, [terms, selectedTerm]);
 
   // ── Fetch ledger status rows ──────────────────────────────────────────────
   const { data: ledgerRows = [], isLoading: ledgerLoading, refetch: refetchLedger } = useQuery<LedgerRow[]>({
@@ -135,6 +147,15 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
   });
+
+  // Auto-expand classes that have pending sections when data loads
+  useEffect(() => {
+    if (ledgerRows.length === 0) return;
+    const pending = new Set(
+      ledgerRows.filter(r => r.status !== "locked" && !r.adminExecuted).map(r => r.class)
+    );
+    setExpandedClasses(pending.size > 0 ? pending : new Set(ledgerRows.map(r => r.class)));
+  }, [ledgerRows.length, selectedTerm]);
 
   // ── Fetch aggregated student data (wizard) ────────────────────────────────
   const { data: agg, isLoading: aggLoading } = useQuery<AggData | null>({
@@ -151,8 +172,7 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
     refetchOnWindowFocus: true,
   });
 
-  // ── Delete old term mutation ──────────────────────────────────────────────
-  const [termToDelete, setTermToDelete] = useState<string | null>(null);
+  // ── Delete term mutation ──────────────────────────────────────────────────
   const deleteTermMut = useMutation({
     mutationFn: async (term: string) => {
       const res = await apiRequest("DELETE", `/api/admin/ledger-term/${encodeURIComponent(term)}`);
@@ -169,24 +189,26 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
     onError: (e: Error) => toast({ title: "Delete failed", description: e.message, variant: "destructive" }),
   });
 
-  function handleRefresh() {
-    refetchTerms();
-    if (selectedTerm) refetchLedger();
-  }
+  // ── Reminder mutations ────────────────────────────────────────────────────
+  const reminderMut = useMutation({
+    mutationFn: async ({ className, section }: { className: string; section: string }) => {
+      const res = await apiRequest("POST", "/api/admin/send-ledger-reminder", { className, section, term: selectedTerm });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Failed"); }
+      return res.json();
+    },
+    onSuccess: (d) => { toast({ title: "✉ Reminder Sent", description: d.message }); setRemindingKey(""); },
+    onError: (e: Error) => { toast({ title: "Failed", description: e.message, variant: "destructive" }); setRemindingKey(""); },
+  });
 
-  // ── Dynamic counters for step 3 ───────────────────────────────────────────
-  const counters = useMemo(() => {
-    if (!agg) return { total: 0, promote: 0, retain: 0, grace: 0 };
-    let promote = 0, retain = 0, grace = 0;
-    for (const s of agg.students) {
-      const ov = overrides[s.studentId];
-      if (ov?.status === "retain")     { retain++; continue; }
-      if (ov?.status === "grace_pass") { grace++;  continue; }
-      if (ov?.status === "promote")    { promote++; continue; }
-      s.ledger?.decision === "retained" ? retain++ : promote++;
-    }
-    return { total: agg.students.length, promote, retain, grace };
-  }, [agg, overrides]);
+  const reminderAllMut = useMutation({
+    mutationFn: async (term: string) => {
+      const res = await apiRequest("POST", "/api/admin/send-ledger-reminder-all", { term });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Failed"); }
+      return res.json();
+    },
+    onSuccess: (d) => toast({ title: "✉ Bulk Reminders Sent", description: d.message }),
+    onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+  });
 
   // ── Execute mutation ──────────────────────────────────────────────────────
   const executeMut = useMutation({
@@ -196,10 +218,10 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
         const ov  = overrides[s.studentId];
         const led = s.ledger;
         let nc: string, ns: string;
-        if (ov?.status === "retain")        { nc = cohort.class;   ns = cohort.section; }
-        else if (ov)                         { nc = ov.nextClass || led?.targetClass || nxtCls(cohort.class, schoolClasses); ns = ov.nextSection || led?.targetSection || cohort.section; }
+        if (ov?.status === "retain")         { nc = cohort.class;   ns = cohort.section; }
+        else if (ov)                          { nc = ov.nextClass || led?.targetClass || nxtCls(cohort.class, schoolClasses); ns = ov.nextSection || led?.targetSection || cohort.section; }
         else if (led?.decision === "retained"){ nc = cohort.class;   ns = cohort.section; }
-        else                                 { nc = led?.targetClass || nxtCls(cohort.class, schoolClasses); ns = led?.targetSection || cohort.section; }
+        else                                  { nc = led?.targetClass || nxtCls(cohort.class, schoolClasses); ns = led?.targetSection || cohort.section; }
         return {
           studentId: s.studentId, fromClass: cohort.class, fromSection: cohort.section,
           nextClass: nc, nextSection: ns, examType,
@@ -220,12 +242,73 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
     onError: (e: Error) => toast({ title: "Execution failed", description: e.message, variant: "destructive" }),
   });
 
+  // ── KPI stats ─────────────────────────────────────────────────────────────
+  const kpi = useMemo(() => {
+    const totalClasses   = new Set(ledgerRows.map(r => r.class)).size;
+    const totalSections  = ledgerRows.length;
+    const lockedReady    = ledgerRows.filter(r => r.status === "locked" && !r.adminExecuted).length;
+    const executed       = ledgerRows.filter(r => r.adminExecuted).length;
+    const inProgress     = ledgerRows.filter(r => r.status === "draft").length;
+    const notStarted     = ledgerRows.filter(r => r.status === "none").length;
+    const pending        = inProgress + notStarted;
+    return { totalClasses, totalSections, lockedReady, executed, inProgress, notStarted, pending };
+  }, [ledgerRows]);
+
+  // ── Filter options ────────────────────────────────────────────────────────
+  const allClassOptions = useMemo(() => [...new Set(ledgerRows.map(r => r.class))], [ledgerRows]);
+  const allSectionOptions = useMemo(() => {
+    const base = filterClass === "all" ? ledgerRows : ledgerRows.filter(r => r.class === filterClass);
+    return [...new Set(base.map(r => r.section))].sort();
+  }, [ledgerRows, filterClass]);
+
+  // ── Filtered + grouped rows ───────────────────────────────────────────────
+  const filteredRows = useMemo(() => ledgerRows.filter(row => {
+    if (filterClass !== "all" && row.class !== filterClass) return false;
+    if (filterSection !== "all" && row.section !== filterSection) return false;
+    if (searchText.trim()) {
+      const q = searchText.toLowerCase();
+      if (!row.class.toLowerCase().includes(q) &&
+          !row.section.toLowerCase().includes(q) &&
+          !(row.teacherName?.toLowerCase().includes(q) ?? false)) return false;
+    }
+    return true;
+  }), [ledgerRows, filterClass, filterSection, searchText]);
+
+  const groupedRows = useMemo(() => {
+    const groups: Record<string, LedgerRow[]> = {};
+    for (const row of filteredRows) {
+      if (!groups[row.class]) groups[row.class] = [];
+      groups[row.class].push(row);
+    }
+    return groups;
+  }, [filteredRows]);
+
+  // ── Dynamic counters for step 3 ───────────────────────────────────────────
+  const counters = useMemo(() => {
+    if (!agg) return { total: 0, promote: 0, retain: 0, grace: 0 };
+    let promote = 0, retain = 0, grace = 0;
+    for (const s of agg.students) {
+      const ov = overrides[s.studentId];
+      if (ov?.status === "retain")     { retain++; continue; }
+      if (ov?.status === "grace_pass") { grace++;  continue; }
+      if (ov?.status === "promote")    { promote++; continue; }
+      s.ledger?.decision === "retained" ? retain++ : promote++;
+    }
+    return { total: agg.students.length, promote, retain, grace };
+  }, [agg, overrides]);
+
   // ── Helpers ───────────────────────────────────────────────────────────────
+  function handleRefresh() { refetchTerms(); if (selectedTerm) refetchLedger(); }
+  function toggleClass(cls: string) {
+    setExpandedClasses(prev => {
+      const next = new Set(prev);
+      if (next.has(cls)) next.delete(cls); else next.add(cls);
+      return next;
+    });
+  }
   function openWizard(row: LedgerRow) {
-    setCohort(row);
-    setExamType(examTypes[0] ?? "");
-    setOverrides({}); setConfirmed(false); setStep(1);
-    setView("wizard");
+    setCohort(row); setExamType(examTypes[0] ?? "");
+    setOverrides({}); setConfirmed(false); setStep(1); setView("wizard");
   }
   function closeWizard() {
     setView("table"); setCohort(null); setOverrides({}); setConfirmed(false); setStep(1);
@@ -314,9 +397,9 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
 
           <div className="grid grid-cols-3 gap-3 pt-1">
             {[
-              { label: "Total in Ledger",  val: cohort.totalStudents,         icon: <Users className="w-4 h-4 text-[#D4AF37]" /> },
-              { label: "Locked Entries",   val: cohort.lockedCount,            icon: <Lock className="w-4 h-4 text-emerald-400" /> },
-              { label: "Teacher Overrides",val: cohort.manualInterventionCount, icon: <AlertTriangle className="w-4 h-4 text-amber-400" /> },
+              { label: "Total in Ledger",   val: cohort.totalStudents,          icon: <Users className="w-4 h-4 text-[#D4AF37]" /> },
+              { label: "Locked Entries",    val: cohort.lockedCount,             icon: <Lock className="w-4 h-4 text-emerald-400" /> },
+              { label: "Teacher Overrides", val: cohort.manualInterventionCount, icon: <AlertTriangle className="w-4 h-4 text-amber-400" /> },
             ].map(({ label, val, icon }) => (
               <div key={label} className="rounded-xl border border-[#1e2d44] bg-[#0A1628]/50 p-3 flex items-center gap-2.5">
                 {icon}
@@ -381,11 +464,11 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
                   </thead>
                   <tbody>
                     {agg.students.map((s, idx) => {
-                      const led     = s.ledger;
-                      const ov      = overrides[s.studentId];
+                      const led      = s.ledger;
+                      const ov       = overrides[s.studentId];
                       const isManual = !!led?.manualIntervention;
-                      const thresh  = s.tierPassThreshold ?? agg.passThreshold;
-                      const passing = s.percentage >= thresh;
+                      const thresh   = s.tierPassThreshold ?? agg.passThreshold;
+                      const passing  = s.percentage >= thresh;
                       return (
                         <tr key={s.studentId}
                           className={`border-b border-[#1e2d44]/50 transition-colors ${isManual ? "bg-amber-500/5 hover:bg-amber-500/10" : idx%2===0 ? "hover:bg-[#0A1628]/30" : "bg-[#0A1628]/20 hover:bg-[#0A1628]/30"}`}
@@ -396,7 +479,7 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
                             {isManual && led && (
                               <p className="text-xs text-amber-400 mt-0.5 flex items-center gap-1">
                                 <AlertTriangle className="w-3 h-3" />
-                                Teacher changed system suggestion from{" "}
+                                Teacher changed from{" "}
                                 <strong className="capitalize">{led.autoSuggestion ?? "—"}</strong>
                                 {" to "}
                                 <strong className="capitalize">{led.decision}</strong>
@@ -433,7 +516,7 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
                                       :                      "bg-purple-500 border-purple-500 text-white"
                                       : "bg-transparent border-slate-600 text-slate-400 hover:border-slate-400 hover:text-white"
                                   }`}>
-                                  {dec==="promote" ? "Promote" : dec==="retain" ? "Retain" : "Grace"}
+                                  {dec === "promote" ? "↑ Promote" : dec === "retain" ? "↺ Retain" : "✦ Grace"}
                                 </button>
                               ))}
                             </div>
@@ -446,7 +529,7 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
               </div>
               <div className="px-5 py-4 border-t border-[#1e2d44] flex justify-between items-center">
                 <p className="text-xs text-slate-500">
-                  {agg.students.length} student(s) — click an override to change decision; click again to clear
+                  {agg.students.length} student(s) — click override to change; click again to clear
                 </p>
                 <Button onClick={() => setStep(3)}
                   className="h-9 px-6 font-semibold text-sm"
@@ -463,7 +546,6 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
       {/* ── STEP 3: Execute ───────────────────────────────────────────────── */}
       {step === 3 && (
         <div className="space-y-4">
-          {/* Aggregate counters */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {[
               { label:"Total Students",   val: counters.total,   color:"text-white",       icon:<Users      className="w-5 h-5 text-[#D4AF37]"     /> },
@@ -481,7 +563,6 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
             ))}
           </div>
 
-          {/* Per-student summary */}
           {agg && (
             <div className="rounded-2xl border border-[#1e2d44] p-5" style={{ background:"#1A2942" }}>
               <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
@@ -492,9 +573,9 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
                   const ov  = overrides[s.studentId];
                   const led = s.ledger;
                   let fin: AdminDecision;
-                  if (ov)                            fin = ov.status;
+                  if (ov)                             fin = ov.status;
                   else if (led?.decision==="retained") fin = "retain";
-                  else                               fin = "promote";
+                  else                                fin = "promote";
                   const destCls = fin==="retain" ? cohort.class : (led?.targetClass || nxtCls(cohort.class, schoolClasses));
                   const destLabel = fin==="retain"
                     ? `Retained in Class ${cohort.class}`
@@ -514,7 +595,6 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
             </div>
           )}
 
-          {/* Confirmation + execute button */}
           <div className="rounded-2xl border border-[#1e2d44] p-5 space-y-4" style={{ background:"#1A2942" }}>
             <div className="flex items-start gap-3">
               <Checkbox id="exec-confirm" checked={confirmed} onCheckedChange={v => setConfirmed(!!v)}
@@ -549,15 +629,12 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
   );
 
   // ────────────────────────────────────────────────────────────────────────────
-  // VIEW A — Global Class Status Table
+  // VIEW A — Ledger Tracking Dashboard
   // ────────────────────────────────────────────────────────────────────────────
-  const readyCount = ledgerRows.filter(r => r.status==="locked" && !r.adminExecuted).length;
-  const doneCount  = ledgerRows.filter(r => r.adminExecuted).length;
-
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
 
-      {/* Header */}
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
@@ -570,14 +647,14 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {selectedTerm && ledgerRows.length > 0 && (
+          {selectedTerm && (
             <>
-              <Chip c="emerald" icon={<Lock className="w-3 h-3"/>}        label={`${readyCount} Ready`} />
-              <Chip c="blue"    icon={<CheckCircle2 className="w-3 h-3"/>} label={`${doneCount} Executed`} />
+              {kpi.lockedReady > 0 && <Chip c="emerald" icon={<Lock className="w-3 h-3"/>}        label={`${kpi.lockedReady} Ready`} />}
+              {kpi.executed > 0    && <Chip c="blue"    icon={<CheckCircle2 className="w-3 h-3"/>} label={`${kpi.executed} Executed`} />}
+              {kpi.pending > 0     && <Chip c="amber"   icon={<Clock className="w-3 h-3"/>}        label={`${kpi.pending} Pending`} />}
             </>
           )}
-          <Button variant="outline" size="sm"
-            onClick={handleRefresh}
+          <Button variant="outline" size="sm" onClick={handleRefresh}
             className="border-[#1e2d44] text-slate-300 hover:bg-[#1A2942] h-8 px-3 text-xs"
             data-testid="btn-refresh-ledger">
             <RefreshCw className="w-3.5 h-3.5 mr-1.5" />Refresh
@@ -585,29 +662,26 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
         </div>
       </div>
 
-      {/* Term selector */}
-      <div className="rounded-2xl border border-[#1e2d44] p-5" style={{ background:"#1A2942" }}>
+      {/* ── Term Selector ──────────────────────────────────────────────────── */}
+      <div className="rounded-2xl border border-[#1e2d44] p-4" style={{ background:"#1A2942" }}>
         <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">Select Promotion Term</label>
         <div className="flex items-center gap-3 flex-wrap">
-          <Select value={selectedTerm} onValueChange={v => { setSelectedTerm(v); setTermToDelete(null); }}>
-            <SelectTrigger className="bg-[#0A1628] border-[#1e2d44] text-white h-10 w-72" data-testid="select-ledger-term">
-              <SelectValue placeholder="Choose a term to view ledger status…" />
+          <Select value={selectedTerm} onValueChange={v => { setSelectedTerm(v); setTermToDelete(null); setSearchText(""); setFilterClass("all"); setFilterSection("all"); }}>
+            <SelectTrigger className="bg-[#0A1628] border-[#1e2d44] text-white h-10 w-64" data-testid="select-ledger-term">
+              <SelectValue placeholder="Choose a term…" />
             </SelectTrigger>
             <SelectContent className="bg-[#1A2942] border-[#1e2d44]">
               {terms.map(t => <SelectItem key={t} value={t} className="text-white hover:bg-[#0A1628]">{t}</SelectItem>)}
             </SelectContent>
           </Select>
           {terms.length === 0 && (
-            <p className="text-xs text-slate-500 italic">No terms found — teachers must save promotion ledgers first.</p>
+            <p className="text-xs text-slate-500 italic">No promotion-gated terms — configure Exam Policy in School Setup.</p>
           )}
-          {/* Delete stale term */}
           {selectedTerm && (
             termToDelete === selectedTerm ? (
               <div className="flex items-center gap-2 bg-red-900/30 border border-red-500/40 rounded-lg px-3 py-2">
                 <span className="text-xs text-red-300">Delete all ledger data for <strong>"{selectedTerm}"</strong>?</span>
-                <button
-                  onClick={() => deleteTermMut.mutate(selectedTerm)}
-                  disabled={deleteTermMut.isPending}
+                <button onClick={() => deleteTermMut.mutate(selectedTerm)} disabled={deleteTermMut.isPending}
                   className="text-xs font-semibold text-red-300 hover:text-white border border-red-500/50 px-2 py-0.5 rounded"
                   data-testid="btn-confirm-delete-term">
                   {deleteTermMut.isPending ? "Deleting…" : "Yes, Delete"}
@@ -615,8 +689,7 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
                 <button onClick={() => setTermToDelete(null)} className="text-xs text-slate-400 hover:text-white">Cancel</button>
               </div>
             ) : (
-              <Button variant="outline" size="sm"
-                onClick={() => setTermToDelete(selectedTerm)}
+              <Button variant="outline" size="sm" onClick={() => setTermToDelete(selectedTerm)}
                 className="border-red-900/50 text-red-400 hover:bg-red-900/20 hover:text-red-300 h-9 px-3 text-xs"
                 data-testid="btn-delete-term">
                 <Trash2 className="w-3.5 h-3.5 mr-1.5" />Delete Term
@@ -626,94 +699,245 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
         </div>
       </div>
 
-      {/* Status table */}
       {selectedTerm && (
-        <div className="rounded-2xl border border-[#1e2d44] overflow-hidden" style={{ background:"#1A2942" }}>
-          <div className="px-5 py-4 border-b border-[#1e2d44] flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-              <GraduationCap className="w-4 h-4 text-[#D4AF37]" />
-              Ledger Status — {selectedTerm}
-            </h2>
-            <span className="text-xs text-slate-400">{ledgerRows.length} class-section(s) on record</span>
-          </div>
-
-          {ledgerLoading ? (
-            <div className="flex items-center justify-center py-16 gap-2 text-slate-400">
-              <Loader2 className="w-5 h-5 animate-spin" /><span className="text-sm">Loading…</span>
-            </div>
-          ) : ledgerRows.length === 0 ? (
-            <div className="text-center py-16 text-slate-500">
-              <Shield className="w-10 h-10 mx-auto mb-3 opacity-25" />
-              <p className="text-sm">No ledger entries found for <strong className="text-white">{selectedTerm}</strong>.</p>
-              <p className="text-xs mt-1">Teachers must run auto-suggestion and save their promotion ledgers first.</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[#1e2d44]">
-                    {["Class / Section","Ledger Status","Submitted By","Students","Interventions","Action"].map(h => (
-                      <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {ledgerRows.map((row, idx) => (
-                    <tr key={`${row.class}-${row.section}`}
-                      className={`border-b border-[#1e2d44]/50 ${idx%2!==0 ? "bg-[#0A1628]/25" : ""}`}
-                      data-testid={`row-ledger-${row.class}-${row.section}`}>
-                      <td className="px-5 py-3.5">
-                        <span className="font-semibold text-white">Class {row.class}</span>
-                        <span className="text-slate-400"> — Sec {row.section}</span>
-                      </td>
-                      <td className="px-5 py-3.5"><LedgerBadge row={row} /></td>
-                      <td className="px-5 py-3.5">
-                        {row.teacherName ? (
-                          <div>
-                            <p className="text-white text-xs font-medium">{row.teacherName}</p>
-                            <p className="text-slate-500 text-xs">{fmt(row.lockedAt)}</p>
-                          </div>
-                        ) : <span className="text-slate-500 text-xs">—</span>}
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <span className="text-white font-semibold">{row.lockedCount}</span>
-                        <span className="text-slate-500"> / {row.totalStudents}</span>
-                      </td>
-                      <td className="px-5 py-3.5">
-                        {row.manualInterventionCount > 0 ? (
-                          <Chip c="amber" icon={<AlertTriangle className="w-3 h-3"/>}
-                            label={`${row.manualInterventionCount} Override${row.manualInterventionCount>1?"s":""}`} />
-                        ) : <span className="text-slate-500 text-xs">None</span>}
-                      </td>
-                      <td className="px-5 py-3.5">
-                        {row.adminExecuted ? (
-                          <Button size="sm" variant="outline"
-                            className="border-blue-500/30 text-blue-300 hover:bg-blue-500/10 text-xs h-8"
-                            onClick={() => openWizard(row)}
-                            data-testid={`btn-view-${row.class}-${row.section}`}>
-                            View Results
-                          </Button>
-                        ) : row.status === "locked" ? (
-                          <Button size="sm" className="text-xs h-8 font-semibold px-4"
-                            style={{ background:"linear-gradient(135deg,#D4AF37,#b8972e)", color:"#0A1628" }}
-                            onClick={() => openWizard(row)}
-                            data-testid={`btn-review-${row.class}-${row.section}`}>
-                            <Play className="w-3 h-3 mr-1.5"/>Review & Execute
-                          </Button>
-                        ) : (
-                          <Button size="sm" disabled variant="outline"
-                            className="border-slate-700 text-slate-600 text-xs h-8"
-                            data-testid={`btn-awaiting-${row.class}-${row.section}`}>
-                            Awaiting Lock
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        <>
+          {/* ── KPI Summary Banner ──────────────────────────────────────────── */}
+          {!ledgerLoading && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { label: "Total Classes",    val: kpi.totalClasses,  color: "text-white",       icon: <GraduationCap className="w-5 h-5 text-[#D4AF37]" /> },
+                { label: "Total Sections",   val: kpi.totalSections, color: "text-white",       icon: <Users className="w-5 h-5 text-blue-400" /> },
+                { label: "Ready to Advance", val: kpi.lockedReady,   color: "text-emerald-400", icon: <Lock className="w-5 h-5 text-emerald-400" /> },
+                { label: "Pending Ledgers",  val: kpi.pending,       color: "text-amber-400",   icon: <AlertTriangle className="w-5 h-5 text-amber-400" /> },
+              ].map(({ label, val, color, icon }) => (
+                <div key={label} className="rounded-xl border border-[#1e2d44] p-4 flex items-center gap-3" style={{ background:"#1A2942" }}>
+                  {icon}
+                  <div>
+                    <p className={`text-2xl font-bold ${color}`}>{val}</p>
+                    <p className="text-xs text-slate-400">{label}</p>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
+
+          {/* ── Filter Row ──────────────────────────────────────────────────── */}
+          {!ledgerLoading && ledgerRows.length > 0 && (
+            <div className="rounded-2xl border border-[#1e2d44] p-3" style={{ background:"#1A2942" }}>
+              <div className="flex flex-wrap gap-2 items-center">
+                {/* Search */}
+                <div className="relative flex-1 min-w-[160px]">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                  <input value={searchText} onChange={e => setSearchText(e.target.value)}
+                    placeholder="Search class, section or teacher…"
+                    data-testid="input-ledger-search"
+                    className="w-full pl-9 pr-3 h-9 rounded-xl bg-[#0A1628] border border-[#1e2d44] text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#D4AF37]/50" />
+                </div>
+                {/* Class filter */}
+                <Select value={filterClass} onValueChange={v => { setFilterClass(v); setFilterSection("all"); }}>
+                  <SelectTrigger className="bg-[#0A1628] border-[#1e2d44] text-white h-9 w-36 text-xs" data-testid="select-filter-class">
+                    <SelectValue placeholder="All Classes" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1A2942] border-[#1e2d44]">
+                    <SelectItem value="all" className="text-white hover:bg-[#0A1628] text-xs">All Classes</SelectItem>
+                    {allClassOptions.map(c => (
+                      <SelectItem key={c} value={c} className="text-white hover:bg-[#0A1628] text-xs">Class {c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {/* Section filter */}
+                <Select value={filterSection} onValueChange={setFilterSection}>
+                  <SelectTrigger className="bg-[#0A1628] border-[#1e2d44] text-white h-9 w-32 text-xs" data-testid="select-filter-section">
+                    <SelectValue placeholder="All Sections" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1A2942] border-[#1e2d44]">
+                    <SelectItem value="all" className="text-white hover:bg-[#0A1628] text-xs">All Sections</SelectItem>
+                    {allSectionOptions.map(s => (
+                      <SelectItem key={s} value={s} className="text-white hover:bg-[#0A1628] text-xs">Sec {s}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {/* Send All Pending */}
+                {kpi.pending > 0 && (
+                  <Button size="sm" onClick={() => reminderAllMut.mutate(selectedTerm)}
+                    disabled={reminderAllMut.isPending}
+                    className="h-9 px-3 text-xs font-semibold ml-auto"
+                    style={{ background:"linear-gradient(135deg,#f59e0b,#d97706)", color:"#0A1628" }}
+                    data-testid="btn-send-reminder-all">
+                    {reminderAllMut.isPending
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                      : <Bell className="w-3.5 h-3.5 mr-1.5" />}
+                    Remind All Pending ({kpi.pending})
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── Accordion Ledger Grid ────────────────────────────────────────── */}
+          <div className="space-y-2">
+            {ledgerLoading ? (
+              <div className="rounded-2xl border border-[#1e2d44] flex items-center justify-center py-16 gap-2 text-slate-400" style={{ background:"#1A2942" }}>
+                <Loader2 className="w-5 h-5 animate-spin" /><span className="text-sm">Loading ledger…</span>
+              </div>
+            ) : Object.keys(groupedRows).length === 0 ? (
+              <div className="rounded-2xl border border-[#1e2d44] text-center py-16 text-slate-500" style={{ background:"#1A2942" }}>
+                <Shield className="w-10 h-10 mx-auto mb-3 opacity-25" />
+                <p className="text-sm">
+                  {searchText || filterClass !== "all" || filterSection !== "all"
+                    ? "No results match your filters."
+                    : "No class-sections found. Ensure School Setup → Class-Section mapping is configured."}
+                </p>
+              </div>
+            ) : (
+              Object.entries(groupedRows).map(([cls, rows]) => {
+                const isExpanded    = expandedClasses.has(cls);
+                const clsLocked     = rows.filter(r => r.status === "locked" || r.adminExecuted).length;
+                const clsInProgress = rows.filter(r => r.status === "draft").length;
+                const clsNotStarted = rows.filter(r => r.status === "none").length;
+
+                return (
+                  <div key={cls} className="rounded-2xl border border-[#1e2d44] overflow-hidden" style={{ background:"#1A2942" }}>
+
+                    {/* Class accordion header */}
+                    <button onClick={() => toggleClass(cls)}
+                      className="w-full flex items-center justify-between px-5 py-4 hover:bg-[#0A1628]/40 transition-colors text-left"
+                      data-testid={`accordion-class-${cls}`}>
+                      <div className="flex items-center gap-3">
+                        <GraduationCap className="w-4 h-4 text-[#D4AF37] shrink-0" />
+                        <span className="text-sm font-bold text-white">Class {cls}</span>
+                        <span className="text-xs text-slate-400">{rows.length} section{rows.length !== 1 ? "s" : ""}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                        {clsLocked > 0 && (
+                          <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            {clsLocked} Ready
+                          </span>
+                        )}
+                        {clsInProgress > 0 && (
+                          <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            {clsInProgress} In Progress
+                          </span>
+                        )}
+                        {clsNotStarted > 0 && (
+                          <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-slate-500/20 text-slate-400 border border-slate-500/30">
+                            {clsNotStarted} Not Started
+                          </span>
+                        )}
+                        {isExpanded
+                          ? <ChevronDown className="w-4 h-4 text-slate-400 ml-1" />
+                          : <ChevronRight className="w-4 h-4 text-slate-400 ml-1" />}
+                      </div>
+                    </button>
+
+                    {/* Expanded section rows */}
+                    {isExpanded && (
+                      <div className="border-t border-[#1e2d44]">
+                        {rows.map((row, idx) => {
+                          const isPending = row.status !== "locked" && !row.adminExecuted;
+                          const rKey = `${row.class}|${row.section}`;
+                          return (
+                            <div key={row.section}
+                              className={`flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3.5 border-b border-[#1e2d44]/50 last:border-b-0 ${idx%2!==0 ? "bg-[#0A1628]/20" : ""}`}
+                              data-testid={`row-ledger-${row.class}-${row.section}`}>
+
+                              {/* Section label */}
+                              <div className="w-16 shrink-0">
+                                <span className="text-xs text-slate-400">Sec </span>
+                                <span className="font-bold text-white text-sm">{row.section}</span>
+                              </div>
+
+                              {/* Status badge */}
+                              <div className="w-36 shrink-0">
+                                <LedgerBadge row={row} />
+                              </div>
+
+                              {/* Teacher */}
+                              <div className="flex-1 min-w-[120px]">
+                                {row.teacherName ? (
+                                  <div>
+                                    <p className="text-white text-xs font-medium">{row.teacherName}</p>
+                                    {row.lockedAt && <p className="text-slate-500 text-xs">{fmt(row.lockedAt)}</p>}
+                                  </div>
+                                ) : <span className="text-slate-500 text-xs italic">No teacher assigned</span>}
+                              </div>
+
+                              {/* Students */}
+                              <div className="w-14 text-right shrink-0">
+                                {row.totalStudents > 0 ? (
+                                  <>
+                                    <span className="text-white font-semibold text-sm">{row.lockedCount}</span>
+                                    <span className="text-slate-500 text-xs">/{row.totalStudents}</span>
+                                  </>
+                                ) : <span className="text-slate-500 text-xs">—</span>}
+                              </div>
+
+                              {/* Interventions */}
+                              <div className="w-24 shrink-0 text-center">
+                                {row.manualInterventionCount > 0 ? (
+                                  <Chip c="amber" icon={<AlertTriangle className="w-3 h-3"/>}
+                                    label={`${row.manualInterventionCount} Override${row.manualInterventionCount > 1 ? "s" : ""}`} />
+                                ) : row.status !== "none" ? (
+                                  <span className="text-slate-600 text-xs">None</span>
+                                ) : null}
+                              </div>
+
+                              {/* Actions */}
+                              <div className="flex items-center gap-2 ml-auto shrink-0">
+                                {isPending && (
+                                  <button
+                                    onClick={() => { setRemindingKey(rKey); reminderMut.mutate({ className: row.class, section: row.section }); }}
+                                    disabled={reminderMut.isPending && remindingKey === rKey}
+                                    className="flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-xs font-medium border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
+                                    title="Send reminder to teacher"
+                                    data-testid={`btn-remind-${row.class}-${row.section}`}>
+                                    {reminderMut.isPending && remindingKey === rKey
+                                      ? <Loader2 className="w-3 h-3 animate-spin" />
+                                      : <Bell className="w-3 h-3" />}
+                                    Remind
+                                  </button>
+                                )}
+                                {row.adminExecuted ? (
+                                  <Button size="sm" variant="outline"
+                                    className="border-blue-500/30 text-blue-300 hover:bg-blue-500/10 text-xs h-8"
+                                    onClick={() => openWizard(row)}
+                                    data-testid={`btn-view-${row.class}-${row.section}`}>
+                                    View Results
+                                  </Button>
+                                ) : row.status === "locked" ? (
+                                  <Button size="sm"
+                                    className="text-xs h-8 font-semibold px-3"
+                                    style={{ background:"linear-gradient(135deg,#D4AF37,#b8972e)", color:"#0A1628" }}
+                                    onClick={() => openWizard(row)}
+                                    data-testid={`btn-review-${row.class}-${row.section}`}>
+                                    <Play className="w-3 h-3 mr-1.5"/>Review & Execute
+                                  </Button>
+                                ) : (
+                                  <Button size="sm" disabled variant="outline"
+                                    className="border-slate-700 text-slate-600 text-xs h-8"
+                                    data-testid={`btn-awaiting-${row.class}-${row.section}`}>
+                                    Awaiting Lock
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Empty placeholder when no term selected */}
+      {!selectedTerm && !ledgerLoading && (
+        <div className="rounded-2xl border border-[#1e2d44] text-center py-16 text-slate-500" style={{ background:"#1A2942" }}>
+          <GraduationCap className="w-10 h-10 mx-auto mb-3 opacity-25" />
+          <p className="text-sm">Select a promotion term above to view the ledger status grid.</p>
         </div>
       )}
     </div>
