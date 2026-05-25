@@ -207,16 +207,6 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     onError: (e: Error) => { toast({ title: "Dispatch Failed", description: e.message, variant: "destructive" }); setRemindingKey(""); },
   });
 
-  const reminderAllMut = useMutation({
-    mutationFn: async (term: string) => {
-      const res = await apiRequest("POST", "/api/admin/send-ledger-reminder-all", { term });
-      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Failed"); }
-      return res.json();
-    },
-    onSuccess: (d) => toast({ title: "📨 Reminders Dispatched", description: d.message }),
-    onError: (e: Error) => toast({ title: "Dispatch Failed", description: e.message, variant: "destructive" }),
-  });
-
   // ── Execute mutation ──────────────────────────────────────────────────────
   const executeMut = useMutation({
     mutationFn: async () => {
@@ -822,19 +812,6 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                     ))}
                   </SelectContent>
                 </Select>
-                {/* Send All Pending */}
-                {kpi.pending > 0 && (
-                  <Button size="sm" onClick={() => reminderAllMut.mutate(selectedTerm)}
-                    disabled={reminderAllMut.isPending}
-                    className="h-9 px-3 text-xs font-semibold ml-auto"
-                    style={{ background:"linear-gradient(135deg,#f59e0b,#d97706)", color:"#0A1628" }}
-                    data-testid="btn-send-reminder-all">
-                    {reminderAllMut.isPending
-                      ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
-                      : <Bell className="w-3.5 h-3.5 mr-1.5" />}
-                    Remind All Pending ({kpi.pending})
-                  </Button>
-                )}
               </div>
             </div>
           )}
