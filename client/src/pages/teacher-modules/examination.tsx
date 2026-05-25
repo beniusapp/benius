@@ -1022,21 +1022,59 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     });
   }, [savedDecisions]);
 
-  /** Fills promoMap for every student using the computed promotion algorithm as a starting suggestion. */
+  /**
+   * Fills promoMap for every student using a two-layer policy engine:
+   *
+   * Layer 1 — Exam Aggregation & Promotion Policy (already in `s.promoted`):
+   *   Checks subject-failure-count thresholds and attendance rules from
+   *   the policy tier's promotionFailRules, applied across all configured terms.
+   *
+   * Layer 2 — Academic Policy pass percentage (gradingPassPct):
+   *   Independently checks whether the student's overall weighted average for
+   *   the *currently selected term* (resTerm) falls below the tier's passPercentage.
+   *   If so, the student is retained regardless of Layer 1 outcome, because a low
+   *   overall average is a school-level retention criterion even when the
+   *   subject-failure count does not exceed the configured limit.
+   */
   function runAutoSuggestion() {
     const next: Record<number, PromoEntry> = {};
+
     for (const s of allResults) {
+      // ── Layer 1: policy-engine decision (subject fail counts + attendance) ──
+      let decision: "promoted" | "retained" = s.promoted ? "promoted" : "retained";
+
+      // ── Layer 2: weighted-average gate from Academic Policy ──────────────────
+      // Use the exact same formula the UI table uses to display the Weighted Avg.
+      const termSubjects = s.termResults[resTerm] ?? [];
+      const scoredSubjects = termSubjects.filter(sub => sub.status === "scored");
+      const weightedAvg = scoredSubjects.length > 0
+        ? scoredSubjects.reduce((sum, sub) => sum + (sub.percentage ?? 0), 0) / scoredSubjects.length
+        : null;
+
+      // Override to retained if weighted avg is below the Academic Policy pass threshold
+      if (decision === "promoted" && weightedAvg !== null && weightedAvg < gradingPassPct) {
+        decision = "retained";
+      }
+
       next[s.studentId] = {
-        decision: s.promoted ? "promoted" : "retained",
-        targetClass: s.promoted ? getNextClass(resClass, classes) : resClass,
+        decision,
+        targetClass: decision === "promoted" ? getNextClass(resClass, classes) : resClass,
         targetSection: resSection,
         // Preserve existing edit counts and trails; auto-suggest does not count as a manual edit
         editCount: promoMap[s.studentId]?.editCount ?? 0,
         editTrail: promoMap[s.studentId]?.editTrail ?? [],
       };
     }
+
+    const promoted = Object.values(next).filter(e => e.decision === "promoted").length;
+    const retained = Object.values(next).filter(e => e.decision === "retained").length;
+
     setPromoMap(next);
-    toast({ title: "Auto-suggestion applied", description: `${allResults.length} student(s) pre-filled from policy engine. Review and adjust as needed.`, duration: 3000 });
+    toast({
+      title: "Auto-suggestion applied",
+      description: `${allResults.length} student(s) evaluated — ${promoted} to promote, ${retained} to retain. Review and adjust as needed.`,
+      duration: 4000,
+    });
   }
 
   const saveLedgerMutation = useMutation({
