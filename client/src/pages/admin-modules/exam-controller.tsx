@@ -203,8 +203,8 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Failed"); }
       return res.json();
     },
-    onSuccess: (d) => { toast({ title: "✉ Reminder Sent", description: d.message }); setRemindingKey(""); },
-    onError: (e: Error) => { toast({ title: "Failed", description: e.message, variant: "destructive" }); setRemindingKey(""); },
+    onSuccess: (d) => { toast({ title: "📨 Notice Dispatched", description: d.message }); setRemindingKey(""); },
+    onError: (e: Error) => { toast({ title: "Dispatch Failed", description: e.message, variant: "destructive" }); setRemindingKey(""); },
   });
 
   const reminderAllMut = useMutation({
@@ -213,8 +213,8 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Failed"); }
       return res.json();
     },
-    onSuccess: (d) => toast({ title: "✉ Bulk Reminders Sent", description: d.message }),
-    onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+    onSuccess: (d) => toast({ title: "📨 Reminders Dispatched", description: d.message }),
+    onError: (e: Error) => toast({ title: "Dispatch Failed", description: e.message, variant: "destructive" }),
   });
 
   // ── Execute mutation ──────────────────────────────────────────────────────

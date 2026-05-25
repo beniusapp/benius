@@ -2162,7 +2162,23 @@ export function registerTeacherRoutes(app: Express) {
     }
   });
 
-  // ── Send ledger reminder to a specific teacher ────────────────────────────
+  // ── Professional reminder notice copy ─────────────────────────────────────
+  function buildReminderNotice(className: string, section: string, term: string): string {
+    return `⚠️ URGENT: Marks Ledger Submission Pending — ${term}
+
+Dear Faculty Member,
+
+This is an official administrative reminder that the academic marks ledger for Class ${className} — Section ${section} for ${term} is currently incomplete or awaiting your final lock.
+
+Please review your grading data, complete any missing entries, and lock the ledger inside your workspace as soon as possible to prevent delays in final academic advancement processing.
+
+Thank you for your prompt attention to this matter.
+— School Administration`;
+  }
+
+  // ── Send ledger reminder to a specific teacher's noticeboard ──────────────
+  // Routes to teacher noticeboard via targetType:"teacher" + class+section scope.
+  // The teacher sees this notice when they open their Noticeboard in the dashboard.
   app.post("/api/admin/send-ledger-reminder", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
@@ -2175,19 +2191,22 @@ export function registerTeacherRoutes(app: Express) {
         schoolId,
         createdById: req.session.userId!,
         creatorRole: "admin",
-        targetType: "class",
+        targetType: "teacher",          // routes to teacher noticeboard, not students
         targetClass: className,
         targetSection: section,
         noticeType: "Urgent",
-        content: `📋 LEDGER REMINDER: Please complete and lock the Promotion Ledger for Class ${className} — Section ${section} (${term}). This is required for end-of-term advancement processing. Action needed urgently.`,
+        content: buildReminderNotice(className, section, term),
       });
-      res.json({ message: `Reminder sent to teacher of Class ${className}-${section}` });
+      res.json({ message: `Reminder dispatched to the noticeboard of Class ${className} — Sec ${section} teacher` });
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to send reminder" });
     }
   });
 
-  // ── Send reminders to ALL pending teachers in bulk ────────────────────────
+  // ── Bulk: send tailored notices to every pending teacher's noticeboard ────
+  // Identifies all class-sections still "In Progress" or "Not Started" for the
+  // given term, batch-inserts an individual notice per section, each scoped to
+  // the teacher's class+section so it appears only on their noticeboard.
   app.post("/api/admin/send-ledger-reminder-all", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
@@ -2197,22 +2216,22 @@ export function registerTeacherRoutes(app: Express) {
     try {
       const statuses = await storage.getLedgerStatus(schoolId, term);
       const pending = statuses.filter(s => s.status !== "locked" && !s.adminExecuted);
-      for (const row of pending) {
-        await storage.createNotice({
+      await Promise.all(pending.map(row =>
+        storage.createNotice({
           schoolId,
           createdById: req.session.userId!,
           creatorRole: "admin",
-          targetType: "class",
+          targetType: "teacher",        // routes to teacher noticeboard only
           targetClass: row.class,
           targetSection: row.section,
           noticeType: "Urgent",
-          content: `📋 LEDGER REMINDER: Please complete and lock the Promotion Ledger for Class ${row.class} — Section ${row.section} (${term}). This is required for end-of-term advancement processing. Action needed urgently.`,
-        });
-      }
+          content: buildReminderNotice(row.class, row.section, term),
+        })
+      ));
       res.json({
         count: pending.length,
         message: pending.length > 0
-          ? `Reminders sent to ${pending.length} pending class-section(s)`
+          ? `Reminders successfully dispatched to ${pending.length} teacher noticeboard(s)`
           : "All ledgers are already locked — no reminders needed",
       });
     } catch (err: any) {
