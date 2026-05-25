@@ -3658,10 +3658,10 @@ export class DatabaseStorage {
     let orderedTypes: string[] = [];
     try { orderedTypes = JSON.parse(metaRow[0]?.metaValue ?? "[]"); } catch {}
 
-    // Return gated terms in the configured order; any not in the ordered list go last alphabetically.
+    // Only show terms that are both promotion-gated AND still exist in the school's exam_types list.
+    // This ensures deleted exam types don't linger in the dropdown.
     const ordered = orderedTypes.filter(t => gatedTerms.has(t));
-    const remainder = [...gatedTerms].filter(t => !orderedTypes.includes(t)).sort();
-    return [...ordered, ...remainder];
+    return ordered;
   }
 
   async deletePromotionDecisionsByTerm(schoolId: number, term: string): Promise<number> {
