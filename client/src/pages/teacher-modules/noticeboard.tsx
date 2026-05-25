@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Loader2, Plus, FileDown, Upload, X, Megaphone, Calendar,
@@ -62,10 +62,31 @@ function getTargetLabel(entry: NoticeEntry): string {
   return `Class ${entry.targetClass}${entry.targetSection}`;
 }
 
+// ── Unread notice tracking (localStorage) ─────────────────────────────────
+function readKey(teacherId: number) { return `noticeReads_teacher_${teacherId}`; }
+
+function getReadIds(teacherId: number): Set<number> {
+  try {
+    const raw = localStorage.getItem(readKey(teacherId));
+    return raw ? new Set(JSON.parse(raw) as number[]) : new Set();
+  } catch { return new Set(); }
+}
+
+function markIdsRead(teacherId: number, ids: number[]) {
+  try {
+    const existing = getReadIds(teacherId);
+    ids.forEach(id => existing.add(id));
+    localStorage.setItem(readKey(teacherId), JSON.stringify([...existing]));
+  } catch {}
+}
+
 export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
   const { classes: CLASS_OPTIONS, sections: SECTION_OPTIONS, examTypes } = useSchoolConfig(teacher.schoolId);
   const [tab, setTab] = useState<"admin" | "student">("admin");
+
+  // Unread state — initialise from localStorage, re-computed when notices load
+  const [readIds, setReadIds] = useState<Set<number>>(() => getReadIds(teacher.id));
 
   const NOTICE_TYPES = (() => {
     const merged = [...DEFAULT_NOTICE_TYPES];
@@ -128,7 +149,24 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
       if (!res.ok) throw new Error("Failed to load");
       return res.json();
     },
+    staleTime: 0,
+    refetchOnMount: "always",
   });
+
+  // Count how many admin notices haven't been read yet
+  const unreadCount = useMemo(
+    () => adminNotices.filter(n => !readIds.has(n.id)).length,
+    [adminNotices, readIds]
+  );
+
+  // Auto-mark all currently visible admin notices as read when teacher is on the admin tab
+  useEffect(() => {
+    if (tab === "admin" && adminNotices.length > 0) {
+      const ids = adminNotices.map(n => n.id);
+      markIdsRead(teacher.id, ids);
+      setReadIds(getReadIds(teacher.id));
+    }
+  }, [tab, adminNotices, teacher.id]);
 
   const { data: studentNotices = [], isLoading: loadingStudent } = useQuery<NoticeEntry[]>({
     queryKey: ["/api/notices", teacher.schoolId, "student"],
@@ -228,13 +266,19 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
       <div className="flex gap-2 p-1 bg-muted/50 rounded-xl" data-testid="tabs-notice">
         <button
           onClick={() => setTab("admin")}
-          className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+          className={`relative flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
             tab === "admin" ? "bg-white dark:bg-gray-900 shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
           }`}
           data-testid="tab-admin"
         >
           <Bell className="w-4 h-4 inline mr-1.5" />
           From Admin
+          {unreadCount > 0 && tab !== "admin" && (
+            <span className="absolute top-1.5 right-2 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center shadow-sm"
+              data-testid="badge-unread-count">
+              {unreadCount > 99 ? "99+" : unreadCount}
+            </span>
+          )}
         </button>
         <button
           onClick={() => setTab("student")}
@@ -273,11 +317,18 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
               {adminNotices.map((n) => {
                 const nt = n.noticeType || "Routine";
                 const style = NOTICE_TYPE_STYLES[nt] || NOTICE_TYPE_STYLES.Routine;
+                const isUnread = !readIds.has(n.id);
                 return (
                   <div key={n.id}
-                    className={`rounded-xl border-2 ${style.border} ${style.bg} shadow-sm transition-all hover:shadow-md`}
+                    className={`relative rounded-xl border-2 ${style.border} ${style.bg} shadow-sm transition-all hover:shadow-md
+                      ${isUnread ? "ring-2 ring-red-400/40 shadow-red-100 dark:shadow-red-950/20" : ""}`}
                     data-testid={`card-admin-notice-${n.id}`}
                   >
+                    {/* Unread red dot */}
+                    {isUnread && (
+                      <span className="absolute top-3 right-3 w-2.5 h-2.5 rounded-full bg-red-500 shadow-sm animate-pulse"
+                        data-testid={`dot-unread-${n.id}`} />
+                    )}
                     <div className="p-4 sm:p-5">
                       <div className="flex items-center gap-2 mb-2 flex-wrap">
                         <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${style.pill}`}
@@ -289,6 +340,9 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
                           <Calendar className="w-3 h-3" />
                           {new Date(n.createdAt).toLocaleDateString("en-GB")}
                         </span>
+                        {isUnread && (
+                          <span className="text-[10px] font-bold text-red-500 uppercase tracking-wide ml-auto">New</span>
+                        )}
                       </div>
                       <p className="text-sm whitespace-pre-wrap leading-relaxed" data-testid={`text-notice-content-${n.id}`}>
                         {n.content}
