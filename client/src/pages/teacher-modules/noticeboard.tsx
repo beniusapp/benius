@@ -320,13 +320,15 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
                 const isUnread = !readIds.has(n.id) && tab !== "admin";
                 return (
                   <div key={n.id}
-                    className={`relative rounded-xl border-2 ${style.border} ${style.bg} shadow-sm transition-all hover:shadow-md
-                      ${isUnread ? "ring-2 ring-red-400/40 shadow-red-100 dark:shadow-red-950/20" : ""}`}
+                    className={`relative rounded-xl border border-border/60 bg-card shadow-sm transition-all hover:shadow-md overflow-hidden
+                      ${isUnread ? "ring-2 ring-blue-400/30" : ""}`}
                     data-testid={`card-admin-notice-${n.id}`}
                   >
-                    {/* Unread red dot */}
+                    {/* Coloured left-accent strip showing notice type */}
+                    <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${style.border.replace("border-", "bg-")}`} />
+                    {/* Unread blue dot — distinguishable from the card content */}
                     {isUnread && (
-                      <span className="absolute top-3 right-3 w-2.5 h-2.5 rounded-full bg-red-500 shadow-sm animate-pulse"
+                      <span className="absolute top-3 right-3 w-2.5 h-2.5 rounded-full bg-blue-500 shadow-sm animate-pulse"
                         data-testid={`dot-unread-${n.id}`} />
                     )}
                     <div className="p-4 sm:p-5">
