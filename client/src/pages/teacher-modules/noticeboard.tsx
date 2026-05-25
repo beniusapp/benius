@@ -339,6 +339,8 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
                         <span className="text-xs text-muted-foreground flex items-center gap-1">
                           <Calendar className="w-3 h-3" />
                           {new Date(n.createdAt).toLocaleDateString("en-GB")}
+                          &nbsp;·&nbsp;
+                          {new Date(n.createdAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
                         </span>
                         {isUnread && (
                           <span className="text-[10px] font-bold text-red-500 uppercase tracking-wide ml-auto">New</span>
