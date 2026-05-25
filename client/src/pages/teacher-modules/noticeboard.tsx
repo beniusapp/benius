@@ -317,7 +317,7 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
               {adminNotices.map((n) => {
                 const nt = n.noticeType || "Routine";
                 const style = NOTICE_TYPE_STYLES[nt] || NOTICE_TYPE_STYLES.Routine;
-                const isUnread = !readIds.has(n.id);
+                const isUnread = !readIds.has(n.id) && tab !== "admin";
                 return (
                   <div key={n.id}
                     className={`relative rounded-xl border-2 ${style.border} ${style.bg} shadow-sm transition-all hover:shadow-md
