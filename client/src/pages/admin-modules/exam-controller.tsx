@@ -84,9 +84,12 @@ const CHIP: Record<ChipColor, string> = {
   purple:  "bg-purple-500/20 text-purple-300 border-purple-500/30",
   red:     "bg-red-500/20 text-red-300 border-red-500/30",
 };
-function Chip({ c, icon, label }: { c: ChipColor; icon?: ReactNode; label: string }) {
+function Chip({ c, icon, label, onClick, active }: { c: ChipColor; icon?: ReactNode; label: string; onClick?: () => void; active?: boolean }) {
+  const base = `inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border ${CHIP[c]}`;
+  const interactive = onClick ? " cursor-pointer transition-all duration-150 hover:brightness-125 select-none" : "";
+  const ring = active ? " ring-2 ring-offset-1 ring-offset-[#0A1628] ring-current scale-105 shadow-lg" : "";
   return (
-    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border ${CHIP[c]}`}>
+    <span className={base + interactive + ring} onClick={onClick} role={onClick ? "button" : undefined}>
       {icon}{label}
     </span>
   );
@@ -117,9 +120,13 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   const [searchText, setSearchText]         = useState("");
   const [filterClass, setFilterClass]       = useState("all");
   const [filterSection, setFilterSection]   = useState("all");
+  const [statusFilter, setStatusFilter]     = useState<"all"|"ready"|"pending">("all");
   const [expandedClasses, setExpandedClasses] = useState<Set<string>>(new Set());
   const [remindingKey, setRemindingKey]     = useState("");
   const [termToDelete, setTermToDelete]     = useState<string | null>(null);
+
+  const toggleStatusFilter = (f: "ready"|"pending") =>
+    setStatusFilter(prev => prev === f ? "all" : f);
 
   // ── Fetch terms — all exam types from school setup (strictly school-scoped) ──
   const { data: terms = [], refetch: refetchTerms } = useQuery<string[]>({
@@ -272,6 +279,8 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   const filteredRows = useMemo(() => ledgerRows.filter(row => {
     if (filterClass !== "all" && row.class !== filterClass) return false;
     if (filterSection !== "all" && row.section !== filterSection) return false;
+    if (statusFilter === "ready"   && !(row.status === "locked" && !row.adminExecuted)) return false;
+    if (statusFilter === "pending" &&  (row.status === "locked" || row.adminExecuted))  return false;
     if (searchText.trim()) {
       const q = searchText.toLowerCase();
       if (!row.class.toLowerCase().includes(q) &&
@@ -279,7 +288,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
           !(row.teacherName?.toLowerCase().includes(q) ?? false)) return false;
     }
     return true;
-  }), [ledgerRows, filterClass, filterSection, searchText]);
+  }), [ledgerRows, filterClass, filterSection, statusFilter, searchText]);
 
   const groupedRows = useMemo(() => {
     const groups: Record<string, LedgerRow[]> = {};
@@ -656,9 +665,21 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
         <div className="flex items-center gap-2 flex-wrap">
           {selectedTerm && (
             <>
-              {kpi.lockedReady > 0 && <Chip c="emerald" icon={<Lock className="w-3 h-3"/>}        label={`${kpi.lockedReady} Ready`} />}
-              {kpi.executed > 0    && <Chip c="blue"    icon={<CheckCircle2 className="w-3 h-3"/>} label={`${kpi.executed} Executed`} />}
-              {kpi.pending > 0     && <Chip c="amber"   icon={<Clock className="w-3 h-3"/>}        label={`${kpi.pending} Pending`} />}
+              {kpi.lockedReady > 0 && (
+                <Chip c="emerald" icon={<Lock className="w-3 h-3"/>}
+                  label={`${kpi.lockedReady} Ready`}
+                  onClick={() => toggleStatusFilter("ready")}
+                  active={statusFilter === "ready"}
+                  data-testid="pill-filter-ready" />
+              )}
+              {kpi.executed > 0 && <Chip c="blue" icon={<CheckCircle2 className="w-3 h-3"/>} label={`${kpi.executed} Executed`} />}
+              {kpi.pending > 0 && (
+                <Chip c="amber" icon={<Clock className="w-3 h-3"/>}
+                  label={`${kpi.pending} Pending`}
+                  onClick={() => toggleStatusFilter("pending")}
+                  active={statusFilter === "pending"}
+                  data-testid="pill-filter-pending" />
+              )}
             </>
           )}
           <Button variant="outline" size="sm" onClick={handleRefresh}
@@ -673,7 +694,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       <div className="rounded-2xl border border-[#1e2d44] p-4" style={{ background:"#1A2942" }}>
         <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">Select Promotion Term</label>
         <div className="flex items-center gap-3 flex-wrap">
-          <Select value={selectedTerm} onValueChange={v => { setSelectedTerm(v); setTermToDelete(null); setSearchText(""); setFilterClass("all"); setFilterSection("all"); }}>
+          <Select value={selectedTerm} onValueChange={v => { setSelectedTerm(v); setTermToDelete(null); setSearchText(""); setFilterClass("all"); setFilterSection("all"); setStatusFilter("all"); }}>
             <SelectTrigger className="bg-[#0A1628] border-[#1e2d44] text-white h-10 w-64" data-testid="select-ledger-term">
               <SelectValue placeholder="Choose a term…" />
             </SelectTrigger>
@@ -711,20 +732,57 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
           {/* ── KPI Summary Banner ──────────────────────────────────────────── */}
           {!ledgerLoading && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[
-                { label: "Total Classes",    val: kpi.totalClasses,  color: "text-white",       icon: <GraduationCap className="w-5 h-5 text-[#D4AF37]" /> },
-                { label: "Total Sections",   val: kpi.totalSections, color: "text-white",       icon: <Users className="w-5 h-5 text-blue-400" /> },
-                { label: "Ready to Advance", val: kpi.lockedReady,   color: "text-emerald-400", icon: <Lock className="w-5 h-5 text-emerald-400" /> },
-                { label: "Pending Ledgers",  val: kpi.pending,       color: "text-amber-400",   icon: <AlertTriangle className="w-5 h-5 text-amber-400" /> },
-              ].map(({ label, val, color, icon }) => (
-                <div key={label} className="rounded-xl border border-[#1e2d44] p-4 flex items-center gap-3" style={{ background:"#1A2942" }}>
-                  {icon}
-                  <div>
-                    <p className={`text-2xl font-bold ${color}`}>{val}</p>
-                    <p className="text-xs text-slate-400">{label}</p>
-                  </div>
+              {/* Non-interactive cards */}
+              <div className="rounded-xl border border-[#1e2d44] p-4 flex items-center gap-3" style={{ background:"#1A2942" }}>
+                <GraduationCap className="w-5 h-5 text-[#D4AF37]" />
+                <div>
+                  <p className="text-2xl font-bold text-white">{kpi.totalClasses}</p>
+                  <p className="text-xs text-slate-400">Total Classes</p>
                 </div>
-              ))}
+              </div>
+              <div className="rounded-xl border border-[#1e2d44] p-4 flex items-center gap-3" style={{ background:"#1A2942" }}>
+                <Users className="w-5 h-5 text-blue-400" />
+                <div>
+                  <p className="text-2xl font-bold text-white">{kpi.totalSections}</p>
+                  <p className="text-xs text-slate-400">Total Sections</p>
+                </div>
+              </div>
+              {/* Interactive: Ready to Advance */}
+              <div
+                onClick={() => toggleStatusFilter("ready")}
+                data-testid="kpi-card-ready"
+                className={`rounded-xl border p-4 flex items-center gap-3 cursor-pointer select-none transition-all duration-150 hover:brightness-110
+                  ${statusFilter === "ready"
+                    ? "border-emerald-500/60 ring-2 ring-emerald-500/40 shadow-[0_0_12px_rgba(52,211,153,0.2)]"
+                    : "border-[#1e2d44] hover:border-emerald-500/30"}`}
+                style={{ background: statusFilter === "ready" ? "rgba(52,211,153,0.08)" : "#1A2942" }}>
+                <Lock className="w-5 h-5 text-emerald-400" />
+                <div>
+                  <p className="text-2xl font-bold text-emerald-400">{kpi.lockedReady}</p>
+                  <p className="text-xs text-slate-400">Ready to Advance</p>
+                </div>
+                {statusFilter === "ready" && (
+                  <span className="ml-auto text-[10px] font-bold text-emerald-400 bg-emerald-500/20 px-1.5 py-0.5 rounded-full">ON</span>
+                )}
+              </div>
+              {/* Interactive: Pending Ledgers */}
+              <div
+                onClick={() => toggleStatusFilter("pending")}
+                data-testid="kpi-card-pending"
+                className={`rounded-xl border p-4 flex items-center gap-3 cursor-pointer select-none transition-all duration-150 hover:brightness-110
+                  ${statusFilter === "pending"
+                    ? "border-amber-500/60 ring-2 ring-amber-500/40 shadow-[0_0_12px_rgba(251,191,36,0.2)]"
+                    : "border-[#1e2d44] hover:border-amber-500/30"}`}
+                style={{ background: statusFilter === "pending" ? "rgba(251,191,36,0.08)" : "#1A2942" }}>
+                <AlertTriangle className="w-5 h-5 text-amber-400" />
+                <div>
+                  <p className="text-2xl font-bold text-amber-400">{kpi.pending}</p>
+                  <p className="text-xs text-slate-400">Pending Ledgers</p>
+                </div>
+                {statusFilter === "pending" && (
+                  <span className="ml-auto text-[10px] font-bold text-amber-400 bg-amber-500/20 px-1.5 py-0.5 rounded-full">ON</span>
+                )}
+              </div>
             </div>
           )}
 
@@ -741,7 +799,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                     className="w-full pl-9 pr-3 h-9 rounded-xl bg-[#0A1628] border border-[#1e2d44] text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#D4AF37]/50" />
                 </div>
                 {/* Class filter */}
-                <Select value={filterClass} onValueChange={v => { setFilterClass(v); setFilterSection("all"); }}>
+                <Select value={filterClass} onValueChange={v => { setFilterClass(v); setFilterSection("all"); if (v === "all") setStatusFilter("all"); }}>
                   <SelectTrigger className="bg-[#0A1628] border-[#1e2d44] text-white h-9 w-36 text-xs" data-testid="select-filter-class">
                     <SelectValue placeholder="All Classes" />
                   </SelectTrigger>
