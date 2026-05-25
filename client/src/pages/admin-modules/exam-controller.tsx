@@ -101,7 +101,7 @@ function LedgerBadge({ row }: { row: LedgerRow }) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ExamController({ examTypes, classes: schoolClasses }: Props) {
+export default function ExamController({ examTypes, classes: schoolClasses, sections: schoolSections }: Props) {
   const { toast } = useToast();
 
   // ── Core view state ───────────────────────────────────────────────────────
@@ -254,12 +254,19 @@ export default function ExamController({ examTypes, classes: schoolClasses }: Pr
     return { totalClasses, totalSections, lockedReady, executed, inProgress, notStarted, pending };
   }, [ledgerRows]);
 
-  // ── Filter options ────────────────────────────────────────────────────────
-  const allClassOptions = useMemo(() => [...new Set(ledgerRows.map(r => r.class))], [ledgerRows]);
+  // ── Filter options — live from school setup (props from school_metadata) ──
+  // Classes: always use school-configured list, not ledger rows
+  const allClassOptions = useMemo(() => schoolClasses, [schoolClasses]);
+  // Sections: all school-configured sections when no class selected;
+  //           narrow to sections that exist for the chosen class in ledger rows
   const allSectionOptions = useMemo(() => {
-    const base = filterClass === "all" ? ledgerRows : ledgerRows.filter(r => r.class === filterClass);
-    return [...new Set(base.map(r => r.section))].sort();
-  }, [ledgerRows, filterClass]);
+    if (filterClass === "all") {
+      // Use school_metadata sections directly — the source of truth
+      return [...schoolSections].sort();
+    }
+    // For a specific class, only show sections that appear in ledger rows
+    return [...new Set(ledgerRows.filter(r => r.class === filterClass).map(r => r.section))].sort();
+  }, [ledgerRows, filterClass, schoolSections]);
 
   // ── Filtered + grouped rows ───────────────────────────────────────────────
   const filteredRows = useMemo(() => ledgerRows.filter(row => {
