@@ -4,7 +4,7 @@ import {
   GraduationCap, ChevronLeft, AlertTriangle, CheckCircle2,
   Clock, Lock, Shield, Users, TrendingUp, UserX, Award,
   Loader2, Play, CheckSquare, RefreshCw, Trash2,
-  Bell, Search, ChevronDown, ChevronRight,
+  Bell, Search, ChevronDown, ChevronRight, Filter, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -118,6 +118,12 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   const [selectedStudents, setSelectedStudents] = useState<Set<number>>(new Set());
   const [savingStudents,   setSavingStudents]   = useState<Set<number>>(new Set());
 
+  // ── Step-2 filter state ───────────────────────────────────────────────────
+  const [filterText,     setFilterText]     = useState("");
+  const [filterPctOp,    setFilterPctOp]    = useState<"gte"|"lte">("gte");
+  const [filterPctVal,   setFilterPctVal]   = useState("");
+  const [filterDecision, setFilterDecision] = useState<"all"|"promote"|"retain">("all");
+
   // ── Filter + accordion state ──────────────────────────────────────────────
   const [searchText, setSearchText]         = useState("");
   const [filterClass, setFilterClass]       = useState("all");
@@ -180,6 +186,31 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
   });
+
+  // ── Filtered student list (client-side, AND logic) ────────────────────────
+  const filteredStudents = useMemo(() => {
+    if (!agg) return [];
+    return agg.students.filter(s => {
+      if (filterText) {
+        const q = filterText.toLowerCase();
+        if (!s.name.toLowerCase().includes(q) && !s.dsid.toLowerCase().includes(q)) return false;
+      }
+      if (filterPctVal !== "") {
+        const pct = parseFloat(filterPctVal);
+        if (!isNaN(pct)) {
+          if (filterPctOp === "gte" && s.percentage < pct) return false;
+          if (filterPctOp === "lte" && s.percentage > pct) return false;
+        }
+      }
+      if (filterDecision !== "all") {
+        const dec = s.ledger?.decision;
+        if (filterDecision === "promote" && dec !== "promoted") return false;
+        if (filterDecision === "retain"  && dec === "promoted") return false;
+      }
+      return true;
+    });
+  }, [agg, filterText, filterPctOp, filterPctVal, filterDecision]);
+  const hasFilters = filterText !== "" || filterPctVal !== "" || filterDecision !== "all";
 
   // Seed overrides from DB when agg loads (only if local state is still empty)
   useEffect(() => {
@@ -379,16 +410,21 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       return next;
     });
   }
+  function resetAuditFilters() {
+    setFilterText(""); setFilterPctOp("gte"); setFilterPctVal(""); setFilterDecision("all");
+  }
   function openWizard(row: LedgerRow) {
     setCohort(row);
     setExamType(row.term);
     setOverrides({}); setConfirmed(false); setStep(1);
     setSelectedStudents(new Set()); setSavingStudents(new Set());
+    resetAuditFilters();
     setView("wizard");
   }
   function closeWizard() {
     setView("table"); setCohort(null); setOverrides({}); setConfirmed(false); setStep(1);
     setSelectedStudents(new Set()); setSavingStudents(new Set());
+    resetAuditFilters();
   }
   function toggleOverride(studentId: number, dec: AdminDecision, s: AggStudent) {
     setOverrides(prev => {
@@ -546,16 +582,81 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                   Missing subject data: {agg.missingSubjects.join(", ")}
                 </div>
               )}
+              {/* ── Filter bar ─────────────────────────────────────────────── */}
+              <div className="mx-5 mt-4 mb-1 flex flex-wrap items-center gap-2">
+                {/* Text search */}
+                <div className="relative flex-1 min-w-[180px]">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={filterText}
+                    onChange={e => setFilterText(e.target.value)}
+                    placeholder="Search by Name or DSID…"
+                    className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-[#1e2d44] bg-[#0A1628] text-white placeholder-slate-500 focus:outline-none focus:border-[#D4AF37]/50"
+                    data-testid="filter-text-input"
+                  />
+                </div>
+                {/* Percentage filter */}
+                <div className="flex items-center gap-1">
+                  <select
+                    value={filterPctOp}
+                    onChange={e => setFilterPctOp(e.target.value as "gte"|"lte")}
+                    className="px-2 py-1.5 text-xs rounded-lg border border-[#1e2d44] bg-[#0A1628] text-white focus:outline-none focus:border-[#D4AF37]/50"
+                    data-testid="filter-pct-op">
+                    <option value="gte">Above (≥)</option>
+                    <option value="lte">Below (≤)</option>
+                  </select>
+                  <input
+                    type="number"
+                    min={0} max={100}
+                    value={filterPctVal}
+                    onChange={e => setFilterPctVal(e.target.value)}
+                    placeholder="% Value"
+                    className="w-20 px-2 py-1.5 text-xs rounded-lg border border-[#1e2d44] bg-[#0A1628] text-white placeholder-slate-500 focus:outline-none focus:border-[#D4AF37]/50"
+                    data-testid="filter-pct-val"
+                  />
+                </div>
+                {/* Teacher decision */}
+                <select
+                  value={filterDecision}
+                  onChange={e => setFilterDecision(e.target.value as "all"|"promote"|"retain")}
+                  className="px-2 py-1.5 text-xs rounded-lg border border-[#1e2d44] bg-[#0A1628] text-white focus:outline-none focus:border-[#D4AF37]/50"
+                  data-testid="filter-decision">
+                  <option value="all">All Decisions</option>
+                  <option value="promote">Promote</option>
+                  <option value="retain">Retain</option>
+                </select>
+                {/* Reset */}
+                {hasFilters && (
+                  <button
+                    onClick={resetAuditFilters}
+                    className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg border border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/10 transition-colors"
+                    data-testid="btn-reset-filters">
+                    <X className="w-3 h-3" />Reset Filters
+                  </button>
+                )}
+                <div className="ml-auto text-xs text-slate-500 whitespace-nowrap">
+                  {hasFilters
+                    ? <span><span className="text-white font-semibold">{filteredStudents.length}</span> / {agg.students.length} shown</span>
+                    : <span><span className="text-white font-semibold">{agg.students.length}</span> student{agg.students.length !== 1 ? "s" : ""}</span>}
+                </div>
+              </div>
+
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[#1e2d44]">
                       <th className="px-4 py-3 w-10">
                         <Checkbox
-                          checked={agg.students.length > 0 && selectedStudents.size === agg.students.length}
-                          onCheckedChange={v => v
-                            ? setSelectedStudents(new Set(agg.students.map(s => s.studentId)))
-                            : setSelectedStudents(new Set())}
+                          checked={filteredStudents.length > 0 && filteredStudents.every(s => selectedStudents.has(s.studentId))}
+                          onCheckedChange={v => {
+                            setSelectedStudents(prev => {
+                              const n = new Set(prev);
+                              if (v) filteredStudents.forEach(s => n.add(s.studentId));
+                              else   filteredStudents.forEach(s => n.delete(s.studentId));
+                              return n;
+                            });
+                          }}
                           className="border-slate-500 data-[state=checked]:bg-[#D4AF37] data-[state=checked]:border-[#D4AF37]"
                           data-testid="checkbox-select-all"
                         />
@@ -566,7 +667,15 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                     </tr>
                   </thead>
                   <tbody>
-                    {agg.students.map((s, idx) => {
+                    {filteredStudents.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-500">
+                          <Filter className="w-6 h-6 mx-auto mb-2 opacity-30" />
+                          No students match the current filters.
+                          <button onClick={resetAuditFilters} className="ml-2 text-[#D4AF37] underline text-xs">Reset</button>
+                        </td>
+                      </tr>
+                    ) : filteredStudents.map((s, idx) => {
                       const led      = s.ledger;
                       const ov       = overrides[s.studentId];
                       const isManual = !!led?.manualIntervention;
@@ -643,7 +752,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                         </tr>
                       );
                     })}
-                  </tbody>
+                    </tbody>
                 </table>
               </div>
               <div className="px-5 py-4 border-t border-[#1e2d44] flex justify-between items-center">
