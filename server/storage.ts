@@ -2874,6 +2874,15 @@ export class DatabaseStorage {
       });
   }
 
+  async bulkUpsertPromotionOverrides(items: Array<{
+    schoolId: number; studentId: number; examType: string; class: string; section: string;
+    overrideStatus: string; nextClass: string; nextSection: string;
+  }>): Promise<void> {
+    for (const item of items) {
+      await this.upsertPromotionOverride(item);
+    }
+  }
+
   async deleteAllPromotionOverrides(data: {
     schoolId: number; class: string; section: string; examType: string;
   }): Promise<void> {

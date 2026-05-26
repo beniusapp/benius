@@ -306,6 +306,52 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     },
   });
 
+  // ── Bulk override (single atomic DB call for ALL selected students) ────────
+  const bulkOverrideMut = useMutation({
+    mutationFn: async ({ items }: {
+      items: Array<{ studentId: number; overrideStatus: string; nextClass: string; nextSection: string }>;
+    }) => {
+      if (!cohort) throw new Error("No cohort");
+      const res = await apiRequest("POST", "/api/admin/exam/override/bulk", {
+        items: items.map(i => ({
+          studentId: i.studentId,
+          examType,
+          class: cohort.class,
+          section: cohort.section,
+          overrideStatus: i.overrideStatus,
+          nextClass: i.nextClass,
+          nextSection: i.nextSection,
+        })),
+      });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Bulk save failed"); }
+      return res.json() as Promise<{ count: number }>;
+    },
+    onSuccess: (data, { items }) => {
+      // Post-execution cleanup: clear selection AFTER successful DB write
+      setSelectedStudents(new Set());
+      setSavingStudents(prev => {
+        const n = new Set(prev);
+        items.forEach(i => n.delete(i.studentId));
+        return n;
+      });
+      toast({
+        title: "Bulk override saved",
+        description: `${data.count} student${data.count !== 1 ? "s" : ""} updated in the database.`,
+        duration: 3000,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/exam/aggregated"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/exam-scores"] });
+    },
+    onError: (e: Error, { items }) => {
+      setSavingStudents(prev => {
+        const n = new Set(prev);
+        items.forEach(i => n.delete(i.studentId));
+        return n;
+      });
+      toast({ title: "Bulk save failed", description: e.message, variant: "destructive" });
+    },
+  });
+
   // ── Reset all overrides for a cohort ─────────────────────────────────────
   const resetAllMut = useMutation({
     mutationFn: async () => {
@@ -469,23 +515,36 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     });
   }
   function handleBulkOverride(dec: AdminDecision) {
-    if (!agg || !cohort || selectedStudents.size === 0) return;
+    if (!agg || !cohort || selectedStudents.size === 0 || bulkOverrideMut.isPending) return;
+
+    // ── Build execution list from ONLY the selected student IDs ──────────────
+    // Non-selected students are never iterated — strict isolation guaranteed.
+    const DEC_TO_STATUS_MAP: Record<AdminDecision, string> = { promote: "PASS", retain: "REPEAT", grace_pass: "GRACE_PASS" };
+    const payloadItems: Array<{ studentId: number; overrideStatus: string; nextClass: string; nextSection: string }> = [];
+    const optimisticPatch: Record<number, AdminOverride> = {};
+
     for (const studentId of selectedStudents) {
       const s = agg.students.find(st => st.studentId === studentId);
-      if (!s) continue;
+      if (!s) continue; // guard: skip any ID not present in current dataset
       const led = s.ledger;
       const nc = dec === "retain" ? cohort.class   : (led?.targetClass   || nxtCls(cohort.class,   schoolClasses));
       const ns = dec === "retain" ? cohort.section : (led?.targetSection || cohort.section);
-      setOverrides(prev => ({ ...prev, [studentId]: { status: dec, nextClass: nc, nextSection: ns } }));
-      setSavingStudents(ps => { const n = new Set(ps); n.add(studentId); return n; });
-      overrideSaveMut.mutate({ studentId, dec, s });
+      payloadItems.push({ studentId, overrideStatus: DEC_TO_STATUS_MAP[dec], nextClass: nc, nextSection: ns });
+      optimisticPatch[studentId] = { status: dec, nextClass: nc, nextSection: ns };
     }
-    toast({
-      title: "Bulk override applied",
-      description: `${selectedStudents.size} student(s) marked for ${dec === "promote" ? "promotion" : "retention"}.`,
-      duration: 3000,
+
+    if (payloadItems.length === 0) return;
+
+    // ── Optimistic local state update (UI responds instantly) ────────────────
+    setOverrides(prev => ({ ...prev, ...optimisticPatch }));
+    setSavingStudents(prev => {
+      const n = new Set(prev);
+      payloadItems.forEach(i => n.add(i.studentId));
+      return n;
     });
-    setSelectedStudents(new Set());
+
+    // ── Single DB call — selection cleared AFTER server confirms success ─────
+    bulkOverrideMut.mutate({ items: payloadItems });
   }
 
   // ────────────────────────────────────────────────────────────────────────────
@@ -860,14 +919,22 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                   </div>
                   <div className="flex gap-2">
                     <Button size="sm" onClick={() => handleBulkOverride("promote")}
-                      className="h-8 px-3 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white border-0"
+                      disabled={bulkOverrideMut.isPending}
+                      className="h-8 px-3 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white border-0 disabled:opacity-60"
                       data-testid="btn-bulk-promote">
-                      <TrendingUp className="w-3 h-3 mr-1.5" />Bulk Promote Selected
+                      {bulkOverrideMut.isPending
+                        ? <Loader2 className="w-3 h-3 animate-spin mr-1.5" />
+                        : <TrendingUp className="w-3 h-3 mr-1.5" />}
+                      Bulk Promote Selected
                     </Button>
                     <Button size="sm" onClick={() => handleBulkOverride("retain")}
-                      className="h-8 px-3 text-xs font-semibold bg-red-600 hover:bg-red-500 text-white border-0"
+                      disabled={bulkOverrideMut.isPending}
+                      className="h-8 px-3 text-xs font-semibold bg-red-600 hover:bg-red-500 text-white border-0 disabled:opacity-60"
                       data-testid="btn-bulk-retain">
-                      <UserX className="w-3 h-3 mr-1.5" />Bulk Retain Selected
+                      {bulkOverrideMut.isPending
+                        ? <Loader2 className="w-3 h-3 animate-spin mr-1.5" />
+                        : <UserX className="w-3 h-3 mr-1.5" />}
+                      Bulk Retain Selected
                     </Button>
                   </div>
                 </div>
