@@ -1075,10 +1075,14 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                   if (ov)                             fin = ov.status;
                   else if (led?.decision==="retained") fin = "retain";
                   else                                fin = "promote";
-                  const destCls = fin==="retain" ? cohort.class : (led?.targetClass || nxtCls(cohort.class, schoolClasses));
+                  // Priority: admin override → teacher ledger → cohort default
+                  const destCls = ov?.nextClass
+                    ?? (fin==="retain" ? cohort.class : (led?.targetClass || nxtCls(cohort.class, schoolClasses)));
+                  const destSec = ov?.nextSection
+                    ?? (fin==="retain" ? cohort.section : (led?.targetSection || cohort.section));
                   const destLabel = fin==="retain"
-                    ? `Retained in Class ${cohort.class}`
-                    : `→ Class ${destCls}`;
+                    ? `Retained in Class ${destCls} — ${destSec}`
+                    : `→ Class ${destCls} — ${destSec}`;
                   return (
                     <div key={s.studentId} className="flex items-center justify-between text-xs py-1.5 px-3 rounded-lg bg-[#0A1628]/50">
                       <span className="text-slate-300">{s.name} <span className="text-slate-500 font-mono">({s.dsid})</span></span>
