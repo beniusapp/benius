@@ -115,8 +115,9 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   const [step, setStep]                 = useState<1|2|3>(1);
   const [overrides, setOverrides]       = useState<Record<number, AdminOverride>>({});
   const [confirmed, setConfirmed]       = useState(false);
-  const [selectedStudents, setSelectedStudents] = useState<Set<number>>(new Set());
-  const [savingStudents,   setSavingStudents]   = useState<Set<number>>(new Set());
+  const [selectedStudents,  setSelectedStudents]  = useState<Set<number>>(new Set());
+  const [savingStudents,    setSavingStudents]    = useState<Set<number>>(new Set());
+  const [showResetConfirm, setShowResetConfirm]  = useState(false);
 
   // ── Step-2 filter state ───────────────────────────────────────────────────
   const [filterText,     setFilterText]     = useState("");
@@ -302,6 +303,30 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     onError: (e: Error, { studentId }) => {
       setSavingStudents(prev => { const n = new Set(prev); n.delete(studentId); return n; });
       toast({ title: "Clear failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  // ── Reset all overrides for a cohort ─────────────────────────────────────
+  const resetAllMut = useMutation({
+    mutationFn: async () => {
+      if (!cohort) throw new Error("No cohort");
+      const res = await apiRequest("DELETE", "/api/admin/exam/override/cohort", {
+        class: cohort.class, section: cohort.section, examType,
+      });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Reset failed"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      setOverrides({});
+      setSelectedStudents(new Set());
+      setShowResetConfirm(false);
+      toast({ title: "All overrides cleared", description: "Cohort reset to system baseline.", duration: 2500 });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/exam/aggregated"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/exam-scores"] });
+    },
+    onError: (e: Error) => {
+      setShowResetConfirm(false);
+      toast({ title: "Reset failed", description: e.message, variant: "destructive" });
     },
   });
 
@@ -626,7 +651,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                   <option value="promote">Promote</option>
                   <option value="retain">Retain</option>
                 </select>
-                {/* Reset */}
+                {/* Reset filters */}
                 {hasFilters && (
                   <button
                     onClick={resetAuditFilters}
@@ -635,6 +660,14 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                     <X className="w-3 h-3" />Reset Filters
                   </button>
                 )}
+                {/* Reset all overrides */}
+                <button
+                  onClick={() => setShowResetConfirm(true)}
+                  disabled={Object.keys(overrides).length === 0}
+                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
+                  data-testid="btn-reset-all-overrides">
+                  <RefreshCw className="w-3 h-3" />Reset All Overrides
+                </button>
                 <div className="ml-auto text-xs text-slate-500 whitespace-nowrap">
                   {hasFilters
                     ? <span><span className="text-white font-semibold">{filteredStudents.length}</span> / {agg.students.length} shown</span>
@@ -767,6 +800,47 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                   Next — Execute Promotion →
                 </Button>
               </div>
+
+              {/* ── Reset-all confirmation dialog ───────────────────────────── */}
+              {showResetConfirm && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+                  data-testid="reset-confirm-overlay">
+                  <div className="rounded-2xl border border-red-500/30 bg-[#1A2942] p-6 max-w-sm w-full mx-4 shadow-2xl">
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="w-10 h-10 rounded-full bg-red-500/15 flex items-center justify-center shrink-0">
+                        <RefreshCw className="w-5 h-5 text-red-400" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-white text-sm">Reset All Overrides?</h3>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          Class {cohort?.class}-{cohort?.section} · {examType}
+                        </p>
+                      </div>
+                    </div>
+                    <p className="text-sm text-slate-300 mb-5">
+                      Are you sure you want to clear all manual overrides for this cohort?
+                      Every student will revert to the system-calculated baseline.
+                    </p>
+                    <div className="flex gap-2 justify-end">
+                      <Button size="sm" variant="outline"
+                        onClick={() => setShowResetConfirm(false)}
+                        className="h-8 px-4 text-xs border-slate-600 text-slate-300 hover:text-white"
+                        data-testid="btn-reset-cancel">
+                        Cancel
+                      </Button>
+                      <Button size="sm"
+                        onClick={() => resetAllMut.mutate()}
+                        disabled={resetAllMut.isPending}
+                        className="h-8 px-4 text-xs bg-red-600 hover:bg-red-500 text-white border-0"
+                        data-testid="btn-reset-confirm">
+                        {resetAllMut.isPending
+                          ? <Loader2 className="w-3 h-3 animate-spin" />
+                          : "Yes, Clear All"}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* ── Batch action bar (slides in when rows are selected) ──────── */}
               {selectedStudents.size > 0 && (

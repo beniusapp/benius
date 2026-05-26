@@ -2322,6 +2322,20 @@ Thank you for your prompt attention to this matter.
     res.json({ message: "Override saved" });
   });
 
+  app.delete("/api/admin/exam/override/cohort", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schema = z.object({
+      class: z.string().min(1),
+      section: z.string().min(1),
+      examType: z.string().min(1),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    await storage.deleteAllPromotionOverrides({ ...parsed.data, schoolId: req.session.schoolId! });
+    res.json({ message: "All overrides cleared" });
+  });
+
   app.delete("/api/admin/exam/override", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
