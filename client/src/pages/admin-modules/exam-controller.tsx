@@ -166,6 +166,21 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     setExpandedClasses(pending.size > 0 ? pending : new Set(ledgerRows.map(r => r.class)));
   }, [ledgerRows.length, selectedTerm]);
 
+  // ── Fetch aggregated student data (wizard) ────────────────────────────────
+  const { data: agg, isLoading: aggLoading } = useQuery<AggData | null>({
+    queryKey: ["/api/admin/exam/aggregated", cohort?.class, cohort?.section, examType, cohort?.term],
+    queryFn: async () => {
+      if (!cohort || !examType) return null;
+      const p = new URLSearchParams({ class: cohort.class, section: cohort.section, examType, term: cohort.term });
+      const r = await fetch(`/api/admin/exam/aggregated?${p}`, { credentials: "include" });
+      return r.ok ? r.json() : null;
+    },
+    enabled: !!cohort && !!examType,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+  });
+
   // Seed overrides from DB when agg loads (only if local state is still empty)
   useEffect(() => {
     if (!agg?.overrides || agg.overrides.length === 0) return;
@@ -182,21 +197,6 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       return seed;
     });
   }, [agg]);
-
-  // ── Fetch aggregated student data (wizard) ────────────────────────────────
-  const { data: agg, isLoading: aggLoading } = useQuery<AggData | null>({
-    queryKey: ["/api/admin/exam/aggregated", cohort?.class, cohort?.section, examType, cohort?.term],
-    queryFn: async () => {
-      if (!cohort || !examType) return null;
-      const p = new URLSearchParams({ class: cohort.class, section: cohort.section, examType, term: cohort.term });
-      const r = await fetch(`/api/admin/exam/aggregated?${p}`, { credentials: "include" });
-      return r.ok ? r.json() : null;
-    },
-    enabled: !!cohort && !!examType,
-    staleTime: 0,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: true,
-  });
 
   // ── Delete term mutation ──────────────────────────────────────────────────
   const deleteTermMut = useMutation({
