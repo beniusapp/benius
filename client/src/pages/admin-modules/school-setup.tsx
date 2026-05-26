@@ -122,6 +122,8 @@ interface ExamPolicyTierLocal {
   cumulativeEnabled: boolean;
   cumulativeTriggerTerm: string;
   cumulativeTermWeights: CumulativeTermWeight[];
+  cumulativePromotionEnabled: boolean;
+  cumulativeMinPercent: string;
 }
 
 function emptyTargetTerm(): TargetTermLocal {
@@ -142,6 +144,8 @@ function emptyExamPolicyTier(): ExamPolicyTierLocal {
     cumulativeEnabled: false,
     cumulativeTriggerTerm: "",
     cumulativeTermWeights: [],
+    cumulativePromotionEnabled: false,
+    cumulativeMinPercent: "35",
   };
 }
 function validateExamPolicyTiers(tiers: ExamPolicyTierLocal[]): string[] {
@@ -1188,6 +1192,44 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
                             );
                           })()}
                         </div>
+
+                        {/* Promotion gate tied to cumulative percentage */}
+                        <div className="rounded-md border border-blue-400/15 bg-[#1A2942]/40 p-3 space-y-2.5">
+                          <div className="flex items-start gap-2.5">
+                            <input
+                              type="checkbox"
+                              id={`cumul-promo-${tier.tempId}`}
+                              checked={tier.cumulativePromotionEnabled}
+                              onChange={e => setField("cumulativePromotionEnabled", e.target.checked)}
+                              className="mt-0.5 shrink-0 accent-blue-500 cursor-pointer"
+                              data-testid={`checkbox-cumul-promotion-${tier.tempId}`}
+                            />
+                            <label htmlFor={`cumul-promo-${tier.tempId}`} className="text-[11px] text-white/70 leading-snug cursor-pointer select-none">
+                              Do you want to add this cumulative percentage to decide whether student needed to be promoted/detained?
+                            </label>
+                          </div>
+                          {tier.cumulativePromotionEnabled && (
+                            <div className="pl-5 space-y-1">
+                              <label className="text-[10px] text-white/50 uppercase tracking-wide">
+                                Minimum Cumulative Percentage Required
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  value={tier.cumulativeMinPercent}
+                                  onChange={e => setField("cumulativeMinPercent", e.target.value)}
+                                  placeholder="35"
+                                  className="bg-[#1A2942] border-white/20 text-white text-xs h-7 w-24"
+                                  data-testid={`input-cumul-min-pct-${tier.tempId}`}
+                                />
+                                <span className="text-[10px] text-white/40">%</span>
+                                <span className="text-[10px] text-white/30 italic">Students below this will be auto-retained.</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1415,6 +1457,8 @@ export default function SchoolSetup({ schoolId }: Props) {
           cumulativeEnabled: cumul.enabled === true,
           cumulativeTriggerTerm: cumul.triggerTerm ?? "",
           cumulativeTermWeights: Object.entries(cumul.termWeights ?? {}).map(([termName, w]) => ({ termName, weight: String(w) })),
+          cumulativePromotionEnabled: cumul.promotionEnabled === true,
+          cumulativeMinPercent: cumul.minPercent !== undefined ? String(cumul.minPercent) : "35",
         } as ExamPolicyTierLocal;
       }));
       setExamPolicyLoaded(true);
@@ -1558,6 +1602,8 @@ export default function SchoolSetup({ schoolId }: Props) {
           termWeights: Object.fromEntries(
             tier.cumulativeTermWeights.map(tw => [tw.termName, parseFloat(tw.weight) || 0])
           ),
+          promotionEnabled: tier.cumulativePromotionEnabled,
+          minPercent: parseFloat(tier.cumulativeMinPercent) || 35,
         },
       };
       const payload = {

@@ -886,7 +886,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
         subjectFails: true, attendance: true, promotionGate: true,
         reportCard: true, cumulativeTotal: false, finalGrade: false,
       },
-      cumulConfig: null as null | { enabled: boolean; triggerTerm: string; termWeights: Record<string, number> },
+      cumulConfig: null as null | { enabled: boolean; triggerTerm: string; termWeights: Record<string, number>; promotionEnabled?: boolean; minPercent?: number },
     };
     if (!policyTier?.resultsConfig) return defaults;
     try {
@@ -1035,6 +1035,12 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
    *   If so, the student is retained regardless of Layer 1 outcome, because a low
    *   overall average is a school-level retention criterion even when the
    *   subject-failure count does not exceed the configured limit.
+   *
+   * Layer 3 — Cumulative Performance Policy (conditional):
+   *   Active only when cumulative aggregation is ON, the admin has checked the
+   *   promotion-gate checkbox, AND the teacher is viewing the cumulative trigger term.
+   *   Retains any student whose year-end cumulative percentage (Σ termAvg × weight%)
+   *   falls below the admin-configured "Minimum Cumulative Percentage Required".
    */
   function runAutoSuggestion() {
     const next: Record<number, PromoEntry> = {};
@@ -1054,6 +1060,34 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
       // Override to retained if weighted avg is below the Academic Policy pass threshold
       if (decision === "promoted" && weightedAvg !== null && weightedAvg < gradingPassPct) {
         decision = "retained";
+      }
+
+      // ── Layer 3: cumulative year-end gate (conditional) ───────────────────────
+      // Runs only when: cumulativeEnabled + promotionEnabled + viewing trigger term.
+      if (
+        decision === "promoted" &&
+        isCumulativeTerm &&
+        cumulConfig?.enabled &&
+        cumulConfig?.promotionEnabled
+      ) {
+        const minPct = cumulConfig.minPercent ?? 0;
+        if (minPct > 0) {
+          const twEntries = Object.entries(cumulConfig.termWeights ?? {});
+          let totalContrib = 0;
+          let allHaveData = twEntries.length > 0;
+          for (const [termName, weight] of twEntries) {
+            const w = Number(weight);
+            const tSubjs = s.termResults[termName.trim()] ?? [];
+            const tScored = tSubjs.filter(sub => sub.status === "scored");
+            if (tScored.length === 0) { allHaveData = false; break; }
+            const termAvg = tScored.reduce((sum, sub) => sum + (sub.percentage ?? 0), 0) / tScored.length;
+            totalContrib += termAvg * (w / 100);
+          }
+          if (allHaveData) {
+            const cumulPct = Math.round(totalContrib * 10) / 10;
+            if (cumulPct < minPct) decision = "retained";
+          }
+        }
       }
 
       next[s.studentId] = {
