@@ -115,6 +115,8 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   const [step, setStep]                 = useState<1|2|3>(1);
   const [overrides, setOverrides]       = useState<Record<number, AdminOverride>>({});
   const [confirmed, setConfirmed]       = useState(false);
+  const [selectedStudents, setSelectedStudents] = useState<Set<number>>(new Set());
+  const [savingStudents,   setSavingStudents]   = useState<Set<number>>(new Set());
 
   // ── Filter + accordion state ──────────────────────────────────────────────
   const [searchText, setSearchText]         = useState("");
@@ -164,6 +166,23 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     setExpandedClasses(pending.size > 0 ? pending : new Set(ledgerRows.map(r => r.class)));
   }, [ledgerRows.length, selectedTerm]);
 
+  // Seed overrides from DB when agg loads (only if local state is still empty)
+  useEffect(() => {
+    if (!agg?.overrides || agg.overrides.length === 0) return;
+    setOverrides(prev => {
+      if (Object.keys(prev).length > 0) return prev;
+      const seed: Record<number, AdminOverride> = {};
+      for (const ov of agg.overrides) {
+        seed[ov.studentId] = {
+          status: ov.overrideStatus === "PASS" ? "promote" : ov.overrideStatus === "GRACE_PASS" ? "grace_pass" : "retain",
+          nextClass: ov.nextClass,
+          nextSection: ov.nextSection,
+        };
+      }
+      return seed;
+    });
+  }, [agg]);
+
   // ── Fetch aggregated student data (wizard) ────────────────────────────────
   const { data: agg, isLoading: aggLoading } = useQuery<AggData | null>({
     queryKey: ["/api/admin/exam/aggregated", cohort?.class, cohort?.section, examType, cohort?.term],
@@ -205,6 +224,54 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     },
     onSuccess: (d) => { toast({ title: "📨 Notice Dispatched", description: d.message }); setRemindingKey(""); },
     onError: (e: Error) => { toast({ title: "Dispatch Failed", description: e.message, variant: "destructive" }); setRemindingKey(""); },
+  });
+
+  // ── Instant per-student override save / clear ─────────────────────────────
+  const DEC_TO_STATUS: Record<AdminDecision, string> = { promote: "PASS", retain: "REPEAT", grace_pass: "GRACE_PASS" };
+
+  const overrideSaveMut = useMutation({
+    mutationFn: async ({ studentId, dec, s }: { studentId: number; dec: AdminDecision; s: AggStudent }) => {
+      if (!cohort) throw new Error("No cohort");
+      const led = s.ledger;
+      const nc = dec === "retain" ? cohort.class   : (led?.targetClass    || nxtCls(cohort.class,   schoolClasses));
+      const ns = dec === "retain" ? cohort.section : (led?.targetSection  || cohort.section);
+      const res = await apiRequest("POST", "/api/admin/exam/override", {
+        studentId, examType,
+        class: cohort.class, section: cohort.section,
+        overrideStatus: DEC_TO_STATUS[dec],
+        nextClass: nc, nextSection: ns,
+      });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Save failed"); }
+      return res.json();
+    },
+    onSuccess: (_, { studentId, dec }) => {
+      setSavingStudents(prev => { const n = new Set(prev); n.delete(studentId); return n; });
+      toast({ title: "Override saved", description: `Student marked for ${dec === "promote" ? "promotion" : dec === "grace_pass" ? "grace pass" : "retention"}.`, duration: 2000 });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/exam/aggregated"] });
+    },
+    onError: (e: Error, { studentId }) => {
+      setSavingStudents(prev => { const n = new Set(prev); n.delete(studentId); return n; });
+      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const overrideClearMut = useMutation({
+    mutationFn: async ({ studentId }: { studentId: number }) => {
+      if (!cohort) throw new Error("No cohort");
+      const res = await apiRequest("DELETE", "/api/admin/exam/override", {
+        studentId, examType, class: cohort.class, section: cohort.section,
+      });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Clear failed"); }
+      return res.json();
+    },
+    onSuccess: (_, { studentId }) => {
+      setSavingStudents(prev => { const n = new Set(prev); n.delete(studentId); return n; });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/exam/aggregated"] });
+    },
+    onError: (e: Error, { studentId }) => {
+      setSavingStudents(prev => { const n = new Set(prev); n.delete(studentId); return n; });
+      toast({ title: "Clear failed", description: e.message, variant: "destructive" });
+    },
   });
 
   // ── Execute mutation ──────────────────────────────────────────────────────
@@ -314,21 +381,50 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   }
   function openWizard(row: LedgerRow) {
     setCohort(row);
-    // Inherit the term selected on the dashboard as the exam type — no second selection needed
     setExamType(row.term);
-    setOverrides({}); setConfirmed(false); setStep(1); setView("wizard");
+    setOverrides({}); setConfirmed(false); setStep(1);
+    setSelectedStudents(new Set()); setSavingStudents(new Set());
+    setView("wizard");
   }
   function closeWizard() {
     setView("table"); setCohort(null); setOverrides({}); setConfirmed(false); setStep(1);
+    setSelectedStudents(new Set()); setSavingStudents(new Set());
   }
   function toggleOverride(studentId: number, dec: AdminDecision, s: AggStudent) {
     setOverrides(prev => {
-      if (prev[studentId]?.status === dec) { const n = { ...prev }; delete n[studentId]; return n; }
+      if (prev[studentId]?.status === dec) {
+        // Deselect — clear from DB
+        const n = { ...prev }; delete n[studentId];
+        setSavingStudents(ps => { const ns = new Set(ps); ns.add(studentId); return ns; });
+        overrideClearMut.mutate({ studentId });
+        return n;
+      }
       const led = s.ledger;
       const nc = dec === "retain" ? (cohort?.class ?? "") : (led?.targetClass || nxtCls(cohort?.class ?? "", schoolClasses));
       const ns = dec === "retain" ? (cohort?.section ?? "") : (led?.targetSection || (cohort?.section ?? ""));
+      setSavingStudents(ps => { const ns2 = new Set(ps); ns2.add(studentId); return ns2; });
+      overrideSaveMut.mutate({ studentId, dec, s });
       return { ...prev, [studentId]: { status: dec, nextClass: nc, nextSection: ns } };
     });
+  }
+  function handleBulkOverride(dec: AdminDecision) {
+    if (!agg || !cohort || selectedStudents.size === 0) return;
+    for (const studentId of selectedStudents) {
+      const s = agg.students.find(st => st.studentId === studentId);
+      if (!s) continue;
+      const led = s.ledger;
+      const nc = dec === "retain" ? cohort.class   : (led?.targetClass   || nxtCls(cohort.class,   schoolClasses));
+      const ns = dec === "retain" ? cohort.section : (led?.targetSection || cohort.section);
+      setOverrides(prev => ({ ...prev, [studentId]: { status: dec, nextClass: nc, nextSection: ns } }));
+      setSavingStudents(ps => { const n = new Set(ps); n.add(studentId); return n; });
+      overrideSaveMut.mutate({ studentId, dec, s });
+    }
+    toast({
+      title: "Bulk override applied",
+      description: `${selectedStudents.size} student(s) marked for ${dec === "promote" ? "promotion" : "retention"}.`,
+      duration: 3000,
+    });
+    setSelectedStudents(new Set());
   }
 
   // ────────────────────────────────────────────────────────────────────────────
@@ -454,6 +550,16 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[#1e2d44]">
+                      <th className="px-4 py-3 w-10">
+                        <Checkbox
+                          checked={agg.students.length > 0 && selectedStudents.size === agg.students.length}
+                          onCheckedChange={v => v
+                            ? setSelectedStudents(new Set(agg.students.map(s => s.studentId)))
+                            : setSelectedStudents(new Set())}
+                          className="border-slate-500 data-[state=checked]:bg-[#D4AF37] data-[state=checked]:border-[#D4AF37]"
+                          data-testid="checkbox-select-all"
+                        />
+                      </th>
                       {["DSID","Name","Marks","%","Teacher Decision","Admin Override"].map(h => (
                         <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                       ))}
@@ -468,8 +574,20 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                       const passing  = s.percentage >= thresh;
                       return (
                         <tr key={s.studentId}
-                          className={`border-b border-[#1e2d44]/50 transition-colors ${isManual ? "bg-amber-500/5 hover:bg-amber-500/10" : idx%2===0 ? "hover:bg-[#0A1628]/30" : "bg-[#0A1628]/20 hover:bg-[#0A1628]/30"}`}
+                          className={`border-b border-[#1e2d44]/50 transition-colors ${selectedStudents.has(s.studentId) ? "bg-[#D4AF37]/5" : isManual ? "bg-amber-500/5 hover:bg-amber-500/10" : idx%2===0 ? "hover:bg-[#0A1628]/30" : "bg-[#0A1628]/20 hover:bg-[#0A1628]/30"}`}
                           data-testid={`row-student-${s.studentId}`}>
+                          <td className="px-4 py-3 w-10">
+                            <Checkbox
+                              checked={selectedStudents.has(s.studentId)}
+                              onCheckedChange={v => setSelectedStudents(prev => {
+                                const n = new Set(prev);
+                                if (v) n.add(s.studentId); else n.delete(s.studentId);
+                                return n;
+                              })}
+                              className="border-slate-500 data-[state=checked]:bg-[#D4AF37] data-[state=checked]:border-[#D4AF37]"
+                              data-testid={`checkbox-select-${s.studentId}`}
+                            />
+                          </td>
                           <td className="px-4 py-3 font-mono text-xs text-slate-300">{s.dsid}</td>
                           <td className="px-4 py-3">
                             <p className="font-medium text-white">{s.name}</p>
@@ -501,12 +619,16 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                             ) : <span className="text-slate-500 text-xs">No ledger</span>}
                           </td>
                           <td className="px-4 py-3">
-                            <div className="flex gap-1.5">
+                            <div className="flex gap-1.5 items-center">
+                              {savingStudents.has(s.studentId) && (
+                                <Loader2 className="w-3 h-3 animate-spin text-[#D4AF37] shrink-0" />
+                              )}
                               {(["promote","retain","grace_pass"] as AdminDecision[]).map(dec => (
                                 <button key={dec}
                                   onClick={() => toggleOverride(s.studentId, dec, s)}
+                                  disabled={savingStudents.has(s.studentId)}
                                   data-testid={`btn-override-${dec}-${s.studentId}`}
-                                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all border ${
+                                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all border disabled:opacity-50 disabled:cursor-not-allowed ${
                                     ov?.status === dec
                                       ? dec==="promote"    ? "bg-emerald-500 border-emerald-500 text-white"
                                       : dec==="retain"     ? "bg-red-500 border-red-500 text-white"
@@ -527,6 +649,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
               <div className="px-5 py-4 border-t border-[#1e2d44] flex justify-between items-center">
                 <p className="text-xs text-slate-500">
                   {agg.students.length} student(s) — click override to change; click again to clear
+                  {selectedStudents.size > 0 && <span className="ml-2 text-[#D4AF37] font-semibold">· {selectedStudents.size} selected</span>}
                 </p>
                 <Button onClick={() => setStep(3)}
                   className="h-9 px-6 font-semibold text-sm"
@@ -535,6 +658,37 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                   Next — Execute Promotion →
                 </Button>
               </div>
+
+              {/* ── Batch action bar (slides in when rows are selected) ──────── */}
+              {selectedStudents.size > 0 && (
+                <div className="mx-1 mb-1 rounded-xl border border-[#D4AF37]/40 bg-[#0A1628] px-4 py-3 flex flex-wrap items-center justify-between gap-3"
+                  data-testid="batch-action-bar">
+                  <div className="flex items-center gap-2">
+                    <CheckSquare className="w-4 h-4 text-[#D4AF37]" />
+                    <span className="text-sm font-semibold text-white">
+                      {selectedStudents.size} student{selectedStudents.size !== 1 ? "s" : ""} selected
+                    </span>
+                    <button
+                      onClick={() => setSelectedStudents(new Set())}
+                      className="text-xs text-slate-400 hover:text-white transition-colors ml-1"
+                      data-testid="btn-clear-selection">
+                      Clear
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={() => handleBulkOverride("promote")}
+                      className="h-8 px-3 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white border-0"
+                      data-testid="btn-bulk-promote">
+                      <TrendingUp className="w-3 h-3 mr-1.5" />Bulk Promote Selected
+                    </Button>
+                    <Button size="sm" onClick={() => handleBulkOverride("retain")}
+                      className="h-8 px-3 text-xs font-semibold bg-red-600 hover:bg-red-500 text-white border-0"
+                      data-testid="btn-bulk-retain">
+                      <UserX className="w-3 h-3 mr-1.5" />Bulk Retain Selected
+                    </Button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>

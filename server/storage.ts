@@ -2874,6 +2874,18 @@ export class DatabaseStorage {
       });
   }
 
+  async deletePromotionOverride(data: {
+    schoolId: number; studentId: number; examType: string; class: string; section: string;
+  }): Promise<void> {
+    await db.delete(promotionOverrides).where(and(
+      eq(promotionOverrides.schoolId, data.schoolId),
+      eq(promotionOverrides.studentId, data.studentId),
+      eq(promotionOverrides.examType, data.examType),
+      eq(promotionOverrides.class, data.class),
+      eq(promotionOverrides.section, data.section),
+    ));
+  }
+
   async getPromotionOverrides(schoolId: number, cls: string, section: string, examType: string): Promise<PromotionOverride[]> {
     return await db.select().from(promotionOverrides).where(and(
       eq(promotionOverrides.schoolId, schoolId),
