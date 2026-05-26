@@ -124,6 +124,8 @@ interface ExamPolicyTierLocal {
   cumulativeTermWeights: CumulativeTermWeight[];
   cumulativePromotionEnabled: boolean;
   cumulativeMinPercent: string;
+  enableTermAvgRule: boolean;
+  termAvgMinPct: string;
 }
 
 function emptyTargetTerm(): TargetTermLocal {
@@ -146,6 +148,8 @@ function emptyExamPolicyTier(): ExamPolicyTierLocal {
     cumulativeTermWeights: [],
     cumulativePromotionEnabled: false,
     cumulativeMinPercent: "35",
+    enableTermAvgRule: false,
+    termAvgMinPct: "35",
   };
 }
 function validateExamPolicyTiers(tiers: ExamPolicyTierLocal[]): string[] {
@@ -168,7 +172,7 @@ function validateExamPolicyTiers(tiers: ExamPolicyTierLocal[]): string[] {
         if (!comp.sourceExam.trim()) errors.push(`"${t.tierName}" / "${term.targetName || "Unnamed term"}": A component is missing a source exam.`);
       }
     }
-    if (!t.enableMaxFailed && !t.enableAttendanceRule) errors.push(`"${t.tierName}": Enable at least one retention rule.`);
+    if (!t.enableMaxFailed && !t.enableAttendanceRule && !t.enableTermAvgRule && !t.cumulativePromotionEnabled) errors.push(`"${t.tierName}": Enable at least one retention rule.`);
     if (t.enableMaxFailed) {
       if (t.maxFailedRules.length === 0) errors.push(`"${t.tierName}": Add at least one term rule for Rule 1.`);
       t.maxFailedRules.forEach((r, i) => {
@@ -975,7 +979,85 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
               )}
             </div>
 
-            {!tier.enableMaxFailed && !tier.enableAttendanceRule && (
+            {/* Rule 3 — Minimum Term Weighted Average */}
+            <div className={`rounded-md border p-3 space-y-3 transition-colors ${tier.enableTermAvgRule ? "border-purple-500/30 bg-purple-500/5" : "border-white/10 bg-[#1A2942]/40"}`}>
+              <div className="flex items-center gap-3">
+                <button type="button"
+                  onClick={() => setField("enableTermAvgRule", !tier.enableTermAvgRule)}
+                  className={`w-9 h-5 rounded-full border-2 relative transition-colors shrink-0 ${tier.enableTermAvgRule ? "bg-purple-500 border-purple-500" : "bg-white/10 border-white/20"}`}
+                  data-testid={`toggle-enable-term-avg-${tier.tempId}`}>
+                  <span className={`absolute top-0.5 w-3 h-3 rounded-full transition-transform ${tier.enableTermAvgRule ? "bg-white translate-x-4" : "bg-white/40 translate-x-0.5"}`} />
+                </button>
+                <div>
+                  <p className={`text-xs font-semibold ${tier.enableTermAvgRule ? "text-purple-300" : "text-white/40"}`}>Rule 3 — Minimum Term Weighted Average Score</p>
+                  <p className="text-[10px] text-white/30 mt-0.5">Student is retained if the weighted average score for the selected term falls below the configured pass percentage threshold.</p>
+                </div>
+              </div>
+              {tier.enableTermAvgRule && (
+                <div className="pl-1 space-y-1.5">
+                  <label className="text-[10px] text-white/50 uppercase tracking-wide">Minimum Term Pass % Required</label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number" min="0" max="100"
+                      value={tier.termAvgMinPct}
+                      onChange={e => setField("termAvgMinPct", e.target.value)}
+                      placeholder="35"
+                      className="bg-[#0A1628] border-white/20 text-white text-sm h-8 w-16"
+                      data-testid={`input-term-avg-min-pct-${tier.tempId}`}
+                    />
+                    <span className="text-xs text-white/40">%</span>
+                    <span className="text-[10px] text-white/30 italic">Students with term average below this are retained.</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Rule 4 — Minimum Cumulative Percentage (only available when Section C cumulative is ON) */}
+            {tier.cumulativeEnabled ? (
+              <div className={`rounded-md border p-3 space-y-3 transition-colors ${tier.cumulativePromotionEnabled ? "border-blue-500/30 bg-blue-500/5" : "border-white/10 bg-[#1A2942]/40"}`}>
+                <div className="flex items-center gap-3">
+                  <button type="button"
+                    onClick={() => setField("cumulativePromotionEnabled", !tier.cumulativePromotionEnabled)}
+                    className={`w-9 h-5 rounded-full border-2 relative transition-colors shrink-0 ${tier.cumulativePromotionEnabled ? "bg-blue-500 border-blue-500" : "bg-white/10 border-white/20"}`}
+                    data-testid={`toggle-enable-cumul-promotion-${tier.tempId}`}>
+                    <span className={`absolute top-0.5 w-3 h-3 rounded-full transition-transform ${tier.cumulativePromotionEnabled ? "bg-white translate-x-4" : "bg-white/40 translate-x-0.5"}`} />
+                  </button>
+                  <div>
+                    <p className={`text-xs font-semibold ${tier.cumulativePromotionEnabled ? "text-blue-300" : "text-white/40"}`}>Rule 4 — Minimum Cumulative Percentage</p>
+                    <p className="text-[10px] text-white/30 mt-0.5">Student is retained if their year-end cumulative percentage across all weighted terms falls below the minimum required threshold.</p>
+                  </div>
+                </div>
+                {tier.cumulativePromotionEnabled && (
+                  <div className="pl-1 space-y-1.5">
+                    <label className="text-[10px] text-white/50 uppercase tracking-wide">Minimum Cumulative Percentage Required</label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number" min="0" max="100"
+                        value={tier.cumulativeMinPercent}
+                        onChange={e => setField("cumulativeMinPercent", e.target.value)}
+                        placeholder="35"
+                        className="bg-[#0A1628] border-white/20 text-white text-sm h-8 w-16"
+                        data-testid={`input-cumul-min-pct-${tier.tempId}`}
+                      />
+                      <span className="text-xs text-white/40">%</span>
+                      <span className="text-[10px] text-white/30 italic">Applies only on the cumulative trigger term.</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-md border border-white/10 bg-[#1A2942]/40 p-3 flex items-center gap-3 opacity-50">
+                <div className="w-9 h-5 rounded-full border-2 border-white/20 bg-white/10 shrink-0 relative">
+                  <span className="absolute top-0.5 w-3 h-3 rounded-full bg-white/40 translate-x-0.5" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-white/30">Rule 4 — Minimum Cumulative Percentage</p>
+                  <p className="text-[10px] text-white/20 mt-0.5">Enable Cumulative Aggregation in Section C to unlock this rule.</p>
+                </div>
+              </div>
+            )}
+
+            {!tier.enableMaxFailed && !tier.enableAttendanceRule && !tier.enableTermAvgRule && !tier.cumulativePromotionEnabled && (
               <p className="text-xs text-red-400/70 italic">⚠ Enable at least one retention rule before saving.</p>
             )}
           </div>
@@ -1193,43 +1275,7 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
                           })()}
                         </div>
 
-                        {/* Promotion gate tied to cumulative percentage */}
-                        <div className="rounded-md border border-blue-400/15 bg-[#1A2942]/40 p-3 space-y-2.5">
-                          <div className="flex items-start gap-2.5">
-                            <input
-                              type="checkbox"
-                              id={`cumul-promo-${tier.tempId}`}
-                              checked={tier.cumulativePromotionEnabled}
-                              onChange={e => setField("cumulativePromotionEnabled", e.target.checked)}
-                              className="mt-0.5 shrink-0 accent-blue-500 cursor-pointer"
-                              data-testid={`checkbox-cumul-promotion-${tier.tempId}`}
-                            />
-                            <label htmlFor={`cumul-promo-${tier.tempId}`} className="text-[11px] text-white/70 leading-snug cursor-pointer select-none">
-                              Do you want to add this cumulative percentage to decide whether student needed to be promoted/detained?
-                            </label>
-                          </div>
-                          {tier.cumulativePromotionEnabled && (
-                            <div className="pl-5 space-y-1">
-                              <label className="text-[10px] text-white/50 uppercase tracking-wide">
-                                Minimum Cumulative Percentage Required
-                              </label>
-                              <div className="flex items-center gap-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  max="100"
-                                  value={tier.cumulativeMinPercent}
-                                  onChange={e => setField("cumulativeMinPercent", e.target.value)}
-                                  placeholder="35"
-                                  className="bg-[#1A2942] border-white/20 text-white text-xs h-7 w-24"
-                                  data-testid={`input-cumul-min-pct-${tier.tempId}`}
-                                />
-                                <span className="text-[10px] text-white/40">%</span>
-                                <span className="text-[10px] text-white/30 italic">Students below this will be auto-retained.</span>
-                              </div>
-                            </div>
-                          )}
-                        </div>
+                        {/* Rule 4 minimum % is configured in Section B above */}
                       </div>
                     )}
                   </div>
@@ -1459,6 +1505,8 @@ export default function SchoolSetup({ schoolId }: Props) {
           cumulativeTermWeights: Object.entries(cumul.termWeights ?? {}).map(([termName, w]) => ({ termName, weight: String(w) })),
           cumulativePromotionEnabled: cumul.promotionEnabled === true,
           cumulativeMinPercent: cumul.minPercent !== undefined ? String(cumul.minPercent) : "35",
+          enableTermAvgRule: (rules as any).rule_term_avg?.enabled === true,
+          termAvgMinPct: (rules as any).rule_term_avg?.minPct !== undefined ? String((rules as any).rule_term_avg.minPct) : "35",
         } as ExamPolicyTierLocal;
       }));
       setExamPolicyLoaded(true);
@@ -1592,6 +1640,10 @@ export default function SchoolSetup({ schoolId }: Props) {
             term: r.term,
             min_pct: parseFloat(r.minPct) || 75,
           })),
+        },
+        rule_term_avg: {
+          enabled: tier.enableTermAvgRule,
+          minPct: parseFloat(tier.termAvgMinPct) || 35,
         },
       };
       const resultsConfig = {

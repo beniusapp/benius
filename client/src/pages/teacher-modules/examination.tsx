@@ -1025,45 +1025,57 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   /**
    * Fills promoMap for every student using a two-layer policy engine:
    *
-   * Layer 1 — Exam Aggregation & Promotion Policy (already in `s.promoted`):
-   *   Checks subject-failure-count thresholds and attendance rules from
-   *   the policy tier's promotionFailRules, applied across all configured terms.
+   * Four independently-toggled rules from Section B of the admin policy panel:
    *
-   * Layer 2 — Academic Policy pass percentage (gradingPassPct):
-   *   Independently checks whether the student's overall weighted average for
-   *   the *currently selected term* (resTerm) falls below the tier's passPercentage.
-   *   If so, the student is retained regardless of Layer 1 outcome, because a low
-   *   overall average is a school-level retention criterion even when the
-   *   subject-failure count does not exceed the configured limit.
+   * Rule 1 — Max Failed Subjects (s.promoted encodes this via computeAllStudentResults):
+   *   Enabled/disabled by the admin's Rule 1 toggle (rule1.enabled in promotionFailRules).
    *
-   * Layer 3 — Cumulative Performance Policy (conditional):
-   *   Active only when cumulative aggregation is ON, the admin has checked the
-   *   promotion-gate checkbox, AND the teacher is viewing the cumulative trigger term.
-   *   Retains any student whose year-end cumulative percentage (Σ termAvg × weight%)
-   *   falls below the admin-configured "Minimum Cumulative Percentage Required".
+   * Rule 2 — Minimum Attendance % (s.promoted encodes this via computeAllStudentResults):
+   *   Enabled/disabled by the admin's Rule 2 toggle (rule_attendance.enabled).
+   *
+   * Rule 3 — Minimum Term Weighted Average Score (applied here directly):
+   *   Enabled/disabled by the admin's Rule 3 toggle (rule_term_avg.enabled).
+   *   Student is retained if their term weighted avg < rule_term_avg.minPct.
+   *
+   * Rule 4 — Minimum Cumulative Percentage (applied here, trigger-term only):
+   *   Enabled/disabled by the admin's Rule 4 toggle (cumulativePromotionEnabled).
+   *   Only fires when the teacher is viewing the cumulative trigger term.
+   *   Student is retained if cumulative % < cumulConfig.minPercent.
+   *
+   * A student is retained if ANY enabled rule flags them.
    */
   function runAutoSuggestion() {
     const next: Record<number, PromoEntry> = {};
 
+    // Parse Rule 3 settings from the stored promotion policy
+    let ruleTermAvg: { enabled: boolean; minPct: number } = { enabled: false, minPct: 35 };
+    try {
+      const pr = JSON.parse(policyTier?.promotionFailRules || "{}");
+      const rta = pr.rule_term_avg ?? {};
+      ruleTermAvg = { enabled: rta.enabled === true, minPct: Number(rta.minPct ?? 35) };
+    } catch { /* leave default */ }
+
     for (const s of allResults) {
-      // ── Layer 1: policy-engine decision (subject fail counts + attendance) ──
+      // ── Rules 1 & 2: encoded in s.promoted by the policy engine ──────────────
+      // computeAllStudentResults already respects rule1.enabled and
+      // rule_attendance.enabled, so s.promoted correctly reflects both toggles.
       let decision: "promoted" | "retained" = s.promoted ? "promoted" : "retained";
 
-      // ── Layer 2: weighted-average gate from Academic Policy ──────────────────
-      // Use the exact same formula the UI table uses to display the Weighted Avg.
-      const termSubjects = s.termResults[resTerm] ?? [];
-      const scoredSubjects = termSubjects.filter(sub => sub.status === "scored");
-      const weightedAvg = scoredSubjects.length > 0
-        ? scoredSubjects.reduce((sum, sub) => sum + (sub.percentage ?? 0), 0) / scoredSubjects.length
-        : null;
-
-      // Override to retained if weighted avg is below the Academic Policy pass threshold
-      if (decision === "promoted" && weightedAvg !== null && weightedAvg < gradingPassPct) {
-        decision = "retained";
+      // ── Rule 3: term weighted-average gate ────────────────────────────────────
+      // Only fires when the admin has toggled Rule 3 ON in Section B.
+      if (decision === "promoted" && ruleTermAvg.enabled) {
+        const termSubjects = s.termResults[resTerm] ?? [];
+        const scoredSubjects = termSubjects.filter(sub => sub.status === "scored");
+        const weightedAvg = scoredSubjects.length > 0
+          ? scoredSubjects.reduce((sum, sub) => sum + (sub.percentage ?? 0), 0) / scoredSubjects.length
+          : null;
+        if (weightedAvg !== null && weightedAvg < ruleTermAvg.minPct) {
+          decision = "retained";
+        }
       }
 
-      // ── Layer 3: cumulative year-end gate (conditional) ───────────────────────
-      // Runs only when: cumulativeEnabled + promotionEnabled + viewing trigger term.
+      // ── Rule 4: cumulative year-end gate ──────────────────────────────────────
+      // Only fires when: cumulative aggregation ON + Rule 4 toggle ON + viewing trigger term.
       if (
         decision === "promoted" &&
         isCumulativeTerm &&
