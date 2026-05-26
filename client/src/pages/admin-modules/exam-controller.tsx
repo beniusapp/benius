@@ -290,6 +290,31 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     },
   });
 
+  // ── Destination class/section patch (dropdown saves) ─────────────────────
+  const destSaveMut = useMutation({
+    mutationFn: async ({ studentId, status, nextClass, nextSection }: {
+      studentId: number; status: AdminDecision; nextClass: string; nextSection: string;
+    }) => {
+      if (!cohort) throw new Error("No cohort");
+      const res = await apiRequest("POST", "/api/admin/exam/override", {
+        studentId, examType,
+        class: cohort.class, section: cohort.section,
+        overrideStatus: DEC_TO_STATUS[status],
+        nextClass, nextSection,
+      });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Save failed"); }
+      return res.json();
+    },
+    onSuccess: (_, { studentId }) => {
+      setSavingStudents(prev => { const n = new Set(prev); n.delete(studentId); return n; });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/exam/aggregated"] });
+    },
+    onError: (e: Error, { studentId }) => {
+      setSavingStudents(prev => { const n = new Set(prev); n.delete(studentId); return n; });
+      toast({ title: "Destination save failed", description: e.message, variant: "destructive" });
+    },
+  });
+
   const overrideClearMut = useMutation({
     mutationFn: async ({ studentId }: { studentId: number }) => {
       if (!cohort) throw new Error("No cohort");
@@ -510,6 +535,13 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     setExecutionScope(null);
     resetAuditFilters();
   }
+  function handleDestChange(studentId: number, field: "nextClass" | "nextSection", value: string, ov: AdminOverride) {
+    const updated: AdminOverride = { ...ov, [field]: value };
+    setOverrides(prev => ({ ...prev, [studentId]: updated }));
+    setSavingStudents(prev => { const n = new Set(prev); n.add(studentId); return n; });
+    destSaveMut.mutate({ studentId, status: updated.status, nextClass: updated.nextClass, nextSection: updated.nextSection });
+  }
+
   function toggleOverride(studentId: number, dec: AdminDecision, s: AggStudent) {
     setOverrides(prev => {
       if (prev[studentId]?.status === dec) {
@@ -825,33 +857,64 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                           </td>
                           <td className="px-4 py-3">
                             {led ? (
-                              <Chip
-                                c={led.decision === "promoted" ? "emerald" : "red"}
-                                icon={led.decision === "promoted" ? <TrendingUp className="w-3 h-3"/> : <UserX className="w-3 h-3"/>}
-                                label={led.decision === "promoted" ? "↑ Promote" : "↺ Retain"}
-                              />
+                              <div>
+                                <Chip
+                                  c={led.decision === "promoted" ? "emerald" : "red"}
+                                  icon={led.decision === "promoted" ? <TrendingUp className="w-3 h-3"/> : <UserX className="w-3 h-3"/>}
+                                  label={led.decision === "promoted" ? "↑ Promote" : "↺ Retain"}
+                                />
+                                <p className="text-xs text-slate-400 mt-1 pl-0.5 font-mono">
+                                  {led.decision === "promoted" ? "→" : "↺"} Class {led.targetClass} — {led.targetSection}
+                                </p>
+                              </div>
                             ) : <span className="text-slate-500 text-xs">No ledger</span>}
                           </td>
                           <td className="px-4 py-3">
-                            <div className="flex gap-1.5 items-center">
-                              {savingStudents.has(s.studentId) && (
-                                <Loader2 className="w-3 h-3 animate-spin text-[#D4AF37] shrink-0" />
+                            <div className="flex flex-col gap-1.5">
+                              <div className="flex gap-1.5 items-center flex-wrap">
+                                {savingStudents.has(s.studentId) && (
+                                  <Loader2 className="w-3 h-3 animate-spin text-[#D4AF37] shrink-0" />
+                                )}
+                                {(["promote","retain","grace_pass"] as AdminDecision[]).map(dec => (
+                                  <button key={dec}
+                                    onClick={() => toggleOverride(s.studentId, dec, s)}
+                                    disabled={savingStudents.has(s.studentId)}
+                                    data-testid={`btn-override-${dec}-${s.studentId}`}
+                                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all border disabled:opacity-50 disabled:cursor-not-allowed ${
+                                      ov?.status === dec
+                                        ? dec==="promote"    ? "bg-emerald-500 border-emerald-500 text-white"
+                                        : dec==="retain"     ? "bg-red-500 border-red-500 text-white"
+                                        :                      "bg-purple-500 border-purple-500 text-white"
+                                        : "bg-transparent border-slate-600 text-slate-400 hover:border-slate-400 hover:text-white"
+                                    }`}>
+                                    {dec === "promote" ? "↑ Promote" : dec === "retain" ? "↺ Retain" : "✦ Grace"}
+                                  </button>
+                                ))}
+                              </div>
+                              {/* ── Destination class/section dropdowns (shown when override is active) ── */}
+                              {ov && cohort && (
+                                <div className="flex gap-1.5 items-center flex-wrap pl-0.5" data-testid={`dest-selectors-${s.studentId}`}>
+                                  <select
+                                    value={ov.nextClass}
+                                    disabled={ov.status === "retain" || savingStudents.has(s.studentId)}
+                                    onChange={e => handleDestChange(s.studentId, "nextClass", e.target.value, ov)}
+                                    className="px-2 py-1 text-xs rounded-md border border-[#1e2d44] bg-[#0A1628] text-white focus:outline-none focus:border-[#D4AF37]/60 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    data-testid={`select-nextclass-${s.studentId}`}>
+                                    {ov.status === "retain"
+                                      ? <option value={cohort.class}>Class {cohort.class}</option>
+                                      : schoolClasses.map(c => <option key={c} value={c}>Class {c}</option>)
+                                    }
+                                  </select>
+                                  <select
+                                    value={ov.nextSection}
+                                    disabled={savingStudents.has(s.studentId)}
+                                    onChange={e => handleDestChange(s.studentId, "nextSection", e.target.value, ov)}
+                                    className="px-2 py-1 text-xs rounded-md border border-[#1e2d44] bg-[#0A1628] text-white focus:outline-none focus:border-[#D4AF37]/60 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    data-testid={`select-nextsection-${s.studentId}`}>
+                                    {schoolSections.map(sec => <option key={sec} value={sec}>Sec {sec}</option>)}
+                                  </select>
+                                </div>
                               )}
-                              {(["promote","retain","grace_pass"] as AdminDecision[]).map(dec => (
-                                <button key={dec}
-                                  onClick={() => toggleOverride(s.studentId, dec, s)}
-                                  disabled={savingStudents.has(s.studentId)}
-                                  data-testid={`btn-override-${dec}-${s.studentId}`}
-                                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all border disabled:opacity-50 disabled:cursor-not-allowed ${
-                                    ov?.status === dec
-                                      ? dec==="promote"    ? "bg-emerald-500 border-emerald-500 text-white"
-                                      : dec==="retain"     ? "bg-red-500 border-red-500 text-white"
-                                      :                      "bg-purple-500 border-purple-500 text-white"
-                                      : "bg-transparent border-slate-600 text-slate-400 hover:border-slate-400 hover:text-white"
-                                  }`}>
-                                  {dec === "promote" ? "↑ Promote" : dec === "retain" ? "↺ Retain" : "✦ Grace"}
-                                </button>
-                              ))}
                             </div>
                           </td>
                         </tr>
