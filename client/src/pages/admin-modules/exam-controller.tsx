@@ -118,6 +118,9 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   const [selectedStudents,  setSelectedStudents]  = useState<Set<number>>(new Set());
   const [savingStudents,    setSavingStudents]    = useState<Set<number>>(new Set());
   const [showResetConfirm, setShowResetConfirm]  = useState(false);
+  // Snapshot of which students are targeted for Step 3 execution.
+  // null = entire cohort; non-null Set = only those IDs.
+  const [executionScope, setExecutionScope]      = useState<Set<number> | null>(null);
 
   // ── Step-2 filter state ───────────────────────────────────────────────────
   const [filterText,     setFilterText]     = useState("");
@@ -380,7 +383,11 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   const executeMut = useMutation({
     mutationFn: async () => {
       if (!cohort || !agg) throw new Error("No cohort");
-      const items = agg.students.map(s => {
+      // Scope to selected students only, or full cohort if no selection was active
+      const targetStudents = executionScope !== null
+        ? agg.students.filter(s => executionScope.has(s.studentId))
+        : agg.students;
+      const items = targetStudents.map(s => {
         const ov  = overrides[s.studentId];
         const led = s.ledger;
         let nc: string, ns: string;
@@ -458,19 +465,23 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     return groups;
   }, [filteredRows]);
 
-  // ── Dynamic counters for step 3 ───────────────────────────────────────────
+  // ── Dynamic counters for step 3 (scoped to executionScope when active) ──────
   const counters = useMemo(() => {
     if (!agg) return { total: 0, promote: 0, retain: 0, grace: 0 };
+    // If a selection scope is set, only count those students
+    const students = executionScope !== null
+      ? agg.students.filter(s => executionScope.has(s.studentId))
+      : agg.students;
     let promote = 0, retain = 0, grace = 0;
-    for (const s of agg.students) {
+    for (const s of students) {
       const ov = overrides[s.studentId];
       if (ov?.status === "retain")     { retain++; continue; }
       if (ov?.status === "grace_pass") { grace++;  continue; }
       if (ov?.status === "promote")    { promote++; continue; }
       s.ledger?.decision === "retained" ? retain++ : promote++;
     }
-    return { total: agg.students.length, promote, retain, grace };
-  }, [agg, overrides]);
+    return { total: students.length, promote, retain, grace };
+  }, [agg, overrides, executionScope]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function handleRefresh() { refetchTerms(); if (selectedTerm) refetchLedger(); }
@@ -489,12 +500,14 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     setExamType(row.term);
     setOverrides({}); setConfirmed(false); setStep(1);
     setSelectedStudents(new Set()); setSavingStudents(new Set());
+    setExecutionScope(null);
     resetAuditFilters();
     setView("wizard");
   }
   function closeWizard() {
     setView("table"); setCohort(null); setOverrides({}); setConfirmed(false); setStep(1);
     setSelectedStudents(new Set()); setSavingStudents(new Set());
+    setExecutionScope(null);
     resetAuditFilters();
   }
   function toggleOverride(studentId: number, dec: AdminDecision, s: AggStudent) {
@@ -852,11 +865,19 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                   {agg.students.length} student(s) — click override to change; click again to clear
                   {selectedStudents.size > 0 && <span className="ml-2 text-[#D4AF37] font-semibold">· {selectedStudents.size} selected</span>}
                 </p>
-                <Button onClick={() => setStep(3)}
+                <Button
+                  onClick={() => {
+                    // Snapshot selection: if rows are checked, scope to them; else use full cohort
+                    setExecutionScope(selectedStudents.size > 0 ? new Set(selectedStudents) : null);
+                    setConfirmed(false);
+                    setStep(3);
+                  }}
                   className="h-9 px-6 font-semibold text-sm"
                   style={{ background: "linear-gradient(135deg,#D4AF37,#b8972e)", color: "#0A1628" }}
                   data-testid="btn-step2-next">
-                  Next — Execute Promotion →
+                  {selectedStudents.size > 0
+                    ? `Next — Execute for ${selectedStudents.size} Selected →`
+                    : "Next — Execute Promotion →"}
                 </Button>
               </div>
 
@@ -947,6 +968,17 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       {/* ── STEP 3: Execute ───────────────────────────────────────────────── */}
       {step === 3 && (
         <div className="space-y-4">
+          {/* Scope indicator — shown when executing a subset */}
+          {executionScope !== null && (
+            <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl border border-[#D4AF37]/30 bg-[#D4AF37]/5 text-xs text-[#D4AF37]"
+              data-testid="execution-scope-banner">
+              <CheckSquare className="w-3.5 h-3.5 shrink-0" />
+              <span>
+                Executing for <strong>{executionScope.size}</strong> selected student{executionScope.size !== 1 ? "s" : ""} only.
+                <span className="text-slate-400 ml-1">Unselected students will not be modified.</span>
+              </span>
+            </div>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {[
               { label:"Total Students",   val: counters.total,   color:"text-white",       icon:<Users      className="w-5 h-5 text-[#D4AF37]"     /> },
@@ -970,7 +1002,10 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                 <GraduationCap className="w-4 h-4 text-[#D4AF37]" />Final Promotion Summary
               </h3>
               <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
-                {agg.students.map(s => {
+                {(executionScope !== null
+                  ? agg.students.filter(s => executionScope.has(s.studentId))
+                  : agg.students
+                ).map(s => {
                   const ov  = overrides[s.studentId];
                   const led = s.ledger;
                   let fin: AdminDecision;
@@ -1013,7 +1048,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                 ← Back to Review
               </Button>
               <Button
-                disabled={!confirmed || executeMut.isPending || !agg || agg.students.length===0}
+                disabled={!confirmed || executeMut.isPending || !agg || counters.total === 0}
                 onClick={() => executeMut.mutate()}
                 className="h-9 px-8 font-bold text-sm"
                 style={{ background: confirmed ? "linear-gradient(135deg,#D4AF37,#b8972e)" : undefined, color: confirmed ? "#0A1628" : undefined }}
