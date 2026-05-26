@@ -188,6 +188,53 @@ function computeAllStudentResults(
   });
 }
 
+// ── Four-rule suggestion engine (module-level helper) ─────────────────────────
+// Called both by runAutoSuggestion() and saveLedgerMutation() so the saved
+// autoSuggestion field always matches what the run-button would produce.
+type CumulConfigShape = {
+  enabled: boolean; triggerTerm: string;
+  termWeights: Record<string, number>;
+  promotionEnabled?: boolean; minPercent?: number;
+} | null;
+
+function computeStudentSuggestion(
+  s: ComputedStudentResult,
+  resTerm: string,
+  ruleTermAvg: { enabled: boolean; minPct: number },
+  isCumulativeTerm: boolean,
+  cumulConfig: CumulConfigShape,
+): "promoted" | "retained" {
+  // Rules 1 & 2 are already encoded in s.promoted by computeAllStudentResults.
+  let decision: "promoted" | "retained" = s.promoted ? "promoted" : "retained";
+
+  // Rule 3: term weighted-average threshold (admin-configured, independent toggle)
+  if (decision === "promoted" && ruleTermAvg.enabled) {
+    const scoredSubjects = (s.termResults[resTerm] ?? []).filter(sub => sub.status === "scored");
+    const weightedAvg = scoredSubjects.length > 0
+      ? scoredSubjects.reduce((sum, sub) => sum + (sub.percentage ?? 0), 0) / scoredSubjects.length
+      : null;
+    if (weightedAvg !== null && weightedAvg < ruleTermAvg.minPct) decision = "retained";
+  }
+
+  // Rule 4: cumulative year-end threshold (trigger-term only, admin-configured)
+  if (decision === "promoted" && isCumulativeTerm && cumulConfig?.enabled && cumulConfig?.promotionEnabled) {
+    const minPct = cumulConfig.minPercent ?? 0;
+    if (minPct > 0) {
+      const twEntries = Object.entries(cumulConfig.termWeights ?? {});
+      let totalContrib = 0;
+      let allHaveData = twEntries.length > 0;
+      for (const [termName, weight] of twEntries) {
+        const tScored = (s.termResults[termName.trim()] ?? []).filter(sub => sub.status === "scored");
+        if (tScored.length === 0) { allHaveData = false; break; }
+        totalContrib += (tScored.reduce((sum, sub) => sum + (sub.percentage ?? 0), 0) / tScored.length) * (Number(weight) / 100);
+      }
+      if (allHaveData && Math.round(totalContrib * 10) / 10 < minPct) decision = "retained";
+    }
+  }
+
+  return decision;
+}
+
 // ── Grade types & helpers ─────────────────────────────────────────────────────
 interface GradingRuleClient {
   id: number; tierId: number; gradeLabel: string;
@@ -942,6 +989,15 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     return resTerm.trim() === cumulConfig.triggerTerm.trim();
   }, [cumulConfig, resTerm]);
 
+  // Parse Rule 3 settings once — used by both runAutoSuggestion and saveLedgerMutation
+  const ruleTermAvg = useMemo<{ enabled: boolean; minPct: number }>(() => {
+    try {
+      const pr = JSON.parse(policyTier?.promotionFailRules || "{}");
+      const rta = pr.rule_term_avg ?? {};
+      return { enabled: rta.enabled === true, minPct: Number(rta.minPct ?? 35) };
+    } catch { return { enabled: false, minPct: 35 }; }
+  }, [policyTier]);
+
   // Auto-select first term when policy loads
   useEffect(() => {
     if (termNames.length > 0 && !resTerm) setResTerm(termNames[0]);
@@ -1047,61 +1103,8 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   function runAutoSuggestion() {
     const next: Record<number, PromoEntry> = {};
 
-    // Parse Rule 3 settings from the stored promotion policy
-    let ruleTermAvg: { enabled: boolean; minPct: number } = { enabled: false, minPct: 35 };
-    try {
-      const pr = JSON.parse(policyTier?.promotionFailRules || "{}");
-      const rta = pr.rule_term_avg ?? {};
-      ruleTermAvg = { enabled: rta.enabled === true, minPct: Number(rta.minPct ?? 35) };
-    } catch { /* leave default */ }
-
     for (const s of allResults) {
-      // ── Rules 1 & 2: encoded in s.promoted by the policy engine ──────────────
-      // computeAllStudentResults already respects rule1.enabled and
-      // rule_attendance.enabled, so s.promoted correctly reflects both toggles.
-      let decision: "promoted" | "retained" = s.promoted ? "promoted" : "retained";
-
-      // ── Rule 3: term weighted-average gate ────────────────────────────────────
-      // Only fires when the admin has toggled Rule 3 ON in Section B.
-      if (decision === "promoted" && ruleTermAvg.enabled) {
-        const termSubjects = s.termResults[resTerm] ?? [];
-        const scoredSubjects = termSubjects.filter(sub => sub.status === "scored");
-        const weightedAvg = scoredSubjects.length > 0
-          ? scoredSubjects.reduce((sum, sub) => sum + (sub.percentage ?? 0), 0) / scoredSubjects.length
-          : null;
-        if (weightedAvg !== null && weightedAvg < ruleTermAvg.minPct) {
-          decision = "retained";
-        }
-      }
-
-      // ── Rule 4: cumulative year-end gate ──────────────────────────────────────
-      // Only fires when: cumulative aggregation ON + Rule 4 toggle ON + viewing trigger term.
-      if (
-        decision === "promoted" &&
-        isCumulativeTerm &&
-        cumulConfig?.enabled &&
-        cumulConfig?.promotionEnabled
-      ) {
-        const minPct = cumulConfig.minPercent ?? 0;
-        if (minPct > 0) {
-          const twEntries = Object.entries(cumulConfig.termWeights ?? {});
-          let totalContrib = 0;
-          let allHaveData = twEntries.length > 0;
-          for (const [termName, weight] of twEntries) {
-            const w = Number(weight);
-            const tSubjs = s.termResults[termName.trim()] ?? [];
-            const tScored = tSubjs.filter(sub => sub.status === "scored");
-            if (tScored.length === 0) { allHaveData = false; break; }
-            const termAvg = tScored.reduce((sum, sub) => sum + (sub.percentage ?? 0), 0) / tScored.length;
-            totalContrib += termAvg * (w / 100);
-          }
-          if (allHaveData) {
-            const cumulPct = Math.round(totalContrib * 10) / 10;
-            if (cumulPct < minPct) decision = "retained";
-          }
-        }
-      }
-
+      const decision = computeStudentSuggestion(s, resTerm, ruleTermAvg, isCumulativeTerm, cumulConfig);
       next[s.studentId] = {
         decision,
         targetClass: decision === "promoted" ? getNextClass(resClass, classes) : resClass,
@@ -1131,7 +1134,8 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
         targetClass: promoMap[s.studentId]?.targetClass ?? getNextClass(resClass, classes),
         targetSection: promoMap[s.studentId]?.targetSection ?? resSection,
         editCount: promoMap[s.studentId]?.editCount ?? 0,
-        autoSuggestion: s.promoted ? "promoted" : "retained",
+        // Use the full 4-rule engine so the saved baseline matches what runAutoSuggestion produces
+        autoSuggestion: computeStudentSuggestion(s, resTerm, ruleTermAvg, isCumulativeTerm, cumulConfig),
       }));
       const res = await apiRequest("POST", "/api/teacher/promotion-decisions", {
         class: resClass, section: resSection, term: resTerm, lock, entries,
