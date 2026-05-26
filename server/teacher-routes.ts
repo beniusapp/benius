@@ -2254,12 +2254,30 @@ Thank you for your prompt attention to this matter.
     if (!cls || !section || !examType)
       return res.status(400).json({ message: "class, section, and examType are required" });
     const schoolId = req.session.schoolId!;
-    const [studentsData, overrides, meta] = await Promise.all([
+    const [studentsData, overrides, meta, classSubjectsMap] = await Promise.all([
       storage.getExamAggregated(schoolId, cls, section, examType),
       storage.getPromotionOverrides(schoolId, cls, section, examType),
       storage.getAllSchoolMetadata(schoolId),
+      storage.getClassSubjectsMap(schoolId),
     ]);
-    const configuredSubjects: string[] = meta.subjects || [];
+
+    // Resolve the subjects that are actually mapped to this class.
+    // Keys in classSubjectsMap may be "Class 6" or "6" — normalise before comparing.
+    const clsNoPrefix = cls.trim().toLowerCase().replace(/^class\s+/, "");
+    let mappedSubjectsForClass: string[] | null = null;
+    for (const [key, subjects] of Object.entries(classSubjectsMap)) {
+      if (key.trim().toLowerCase().replace(/^class\s+/, "") === clsNoPrefix) {
+        mappedSubjectsForClass = subjects;
+        break;
+      }
+    }
+    // Audit only the subjects that are mapped to this class.
+    // Fall back to the school-wide list if no per-class mapping has been configured.
+    const configuredSubjects: string[] =
+      mappedSubjectsForClass !== null && mappedSubjectsForClass.length > 0
+        ? mappedSubjectsForClass
+        : (meta.subjects || []);
+
     const presentSubjects = Array.from(new Set(studentsData.flatMap(s => s.subjects)));
     const missingSubjects = configuredSubjects.filter(s => !presentSubjects.includes(s));
     const rawThreshold = meta.pass_threshold;
