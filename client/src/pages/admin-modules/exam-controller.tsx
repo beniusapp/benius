@@ -313,7 +313,9 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     });
   }
   function openWizard(row: LedgerRow) {
-    setCohort(row); setExamType(examTypes[0] ?? "");
+    setCohort(row);
+    // Inherit the term selected on the dashboard as the exam type — no second selection needed
+    setExamType(row.term);
     setOverrides({}); setConfirmed(false); setStep(1); setView("wizard");
   }
   function closeWizard() {
@@ -377,28 +379,17 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
           <h2 className="text-sm font-bold text-white flex items-center gap-2">
             <Users className="w-4 h-4 text-[#D4AF37]" />Cohort Details
           </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             {[
-              { label: "Class",   val: `Class ${cohort.class}` },
-              { label: "Section", val: `Section ${cohort.section}` },
-              { label: "Term",    val: cohort.term },
+              { label: "Class",              val: `Class ${cohort.class}` },
+              { label: "Section",            val: `Section ${cohort.section}` },
+              { label: "Target Term / Exam", val: cohort.term },
             ].map(({ label, val }) => (
               <div key={label} className="space-y-1.5">
                 <label className="text-xs font-medium text-slate-400">{label}</label>
                 <div className="h-10 px-3 rounded-xl border border-[#1e2d44] bg-[#0A1628] flex items-center text-white text-sm font-medium">{val}</div>
               </div>
             ))}
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-400">Exam Type <span className="text-amber-400">*</span></label>
-              <Select value={examType} onValueChange={setExamType}>
-                <SelectTrigger className="bg-[#0A1628] border-[#1e2d44] text-white h-10" data-testid="select-wizard-examtype">
-                  <SelectValue placeholder="Select exam type" />
-                </SelectTrigger>
-                <SelectContent className="bg-[#1A2942] border-[#1e2d44]">
-                  {examTypes.map(t => <SelectItem key={t} value={t} className="text-white hover:bg-[#0A1628]">{t}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
           </div>
 
           <div className="grid grid-cols-3 gap-3 pt-1">
