@@ -1,0 +1,31 @@
+Once the platform administrator explicitly reviews the cohort analytics and confirms the execution phase by checking the mandatory compliance box and clicking "Execute Promotion" within the Academic Advancement Wizard (Step 3 — Execute as shown in 1000086083_3.png), a multi-stage background engine must be automatically triggered.
+​To preserve institutional memory while optimizing ongoing database speeds, the platform must process an immutable historical archive and a system fallback backup before performing an intensive, destructive transactional reset across all application workspaces.
+​Part 1: Mandatory Pre-Reset Archival & Backup Pipelines
+​Before any production values are purged or reset to zero, the platform must guarantee data security using a two-tier transaction and storage isolation pattern:
+​1. Atomic Database Transaction Guard
+​Fail-Safe Isolation: Wrap the entirety of the archival writes and subsequent multi-module table updates into an isolated, single database transactional wrapper.
+​Automated Rollback Engine: If a network drop, timeout, or schema conflict occurs anywhere in the process, the entire lifecycle state must automatically perform a comprehensive rollback. The targeted student record (MIS-0011 as seen in 1000086083_3.png) must safely revert back to its previous un-promoted structural state.
+​2. Deep Cold-Storage Snapshot Serialization
+​Structural Profile Capture: Write an unalterable summary ledger object capturing final parameters including student_id, tenant_id (Mary Immaculate School), historical classroom context (Class 6 — Section A), and final progression designations.
+​Complete Academic History Document Compilation: Pack and compress all active multi-term values into an optimized historical JSON collection. This collection must securely pull from:
+​1000086084_2.png & 1000086085_2.png: Active current-term Homework files, Classwork activity items, and historical teacher grading parameters.
+​1000086086_2.png: Student-facing portal indices, current-term schedule matrix logs, and active transaction/fee billing ledgers.
+​1000086092.png: Final term totals, attendance averages, ledger lock statuses, and grade sheets calculation matrices (Term 1 × 33.333% + Term 2 × 33.333% + Term 3 × 33.333%).
+​Part 2: Total Cross-Platform Data Reset Requirements
+​Once the archive document is fully written to long-term storage, the platform must execute a global workspace wipe, ensuring that stale metrics from the old term do not contaminate the new school session.
+​1. Teacher Workspace Zeroing (1000086084_2.png & 1000086085_2.png)
+​Roster & Roll Clarification: Drop the student profile from the previous classroom tier registry.
+​Attendance Ledger Initialization: Completely wipe the active daily check-in logs for the student. Their new dashboard matrix inside the advanced classroom must instantly reset to exactly 0% attendance metrics across all parameters.
+​Task & Exam Grid Pruning: Flush all pending tasks inside the live Homework, Classwork, and Examination tracking views, leaving a blank slate for upcoming assignments.
+​2. Student Portal Reset (1000086086_2.png)
+​Counter Badges & Notices: Re-index active counter badges on the homepage view to clear out old items. Flush out previous class-specific postings from the live Noticeboard module.
+​Curricula & Schedule Mapping: Completely purge out the student’s old Class 6 timeline matrices inside the Timetable component, holding pages in an unmapped state until the new class scheduling records are published by administrators.
+​3. Administrative Operational Flushing (1000086088_2.png & 1000086089_2.png)
+​School Setup Utilization Updates: Recalculate physical workspace volume allocations inside the School Setup and Timetable Master managers to properly reflect newly admitted and newly promoted student arrays.
+​Approval & Tracking Resets: Close out and clear remaining class-specific adjustments, workflow changes, or historical behavioral submissions lingering within the Approval Center or the centralized Complaint Hub.
+​4. Enterprise Analytics & ID Card Re-Queuing (1000086090_2.png & 1000086091_2.png)
+​Print Pipeline Automation: Automatically direct the student profile inside the ID Card Gen tool to a "Pending Re-issuance" filter view. The smart template fields must auto-populate with the updated Class 7 — A string metadata.
+​Telemetry Segmentation: Reconfigure active charts inside the Performance Analytics ecosystem to display clean data fields for the incoming school session.
+​Part 3: Read-Only Query Layer Access Post-Reset
+​Retroactive Report Generation: Even though live views are reset, past records must remain accessible. Inside administrative portals, selecting past session options must pull directly from the read-only historical JSON tables without impacting operational current-term database speeds.
+​New Teacher Insights: Provide an operational review button on the new grade teacher dashboard, enabling them to pull up a snapshot of the student's past performance trends from their prior academic years.

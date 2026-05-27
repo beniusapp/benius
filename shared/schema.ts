@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, boolean, date, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, boolean, date, timestamp, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -44,6 +44,7 @@ export const students = pgTable("students", {
   gender: varchar("gender", { length: 10 }),
   rollNumber: integer("roll_number"),
   guardianName: text("guardian_name"),
+  idCardPendingReissue: boolean("id_card_pending_reissue").notNull().default(false),
 });
 
 export const teachers = pgTable("teachers", {
@@ -651,6 +652,7 @@ export const academicHistory = pgTable("academic_history", {
   gradeLabel: text("grade_label"),
   gradePoint: text("grade_point"),
   remarks: text("remarks"),
+  snapshotJson: jsonb("snapshot_json"),
   archivedAt: timestamp("archived_at").notNull().defaultNow(),
 });
 

@@ -1856,9 +1856,11 @@ export function registerTeacherRoutes(app: Express) {
   app.get("/api/schools/:schoolId/students/paginated", async (req, res) => {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
     if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
-    const { q, cls, section, page } = req.query;
+    const { q, cls, section, page, pendingReissue } = req.query;
     const result = await storage.getStudentsPaginated(parseInt(req.params.schoolId), {
-      q: q as string, cls: cls as string, section: section as string, page: page ? parseInt(page as string) : 1,
+      q: q as string, cls: cls as string, section: section as string,
+      page: page ? parseInt(page as string) : 1,
+      pendingReissue: pendingReissue === "true",
     });
     res.json(result);
   });
@@ -2397,38 +2399,69 @@ Thank you for your prompt attention to this matter.
     const adminId   = req.session.userId!;
     const items     = parsed.data.items;
     const studentIds = items.map(i => i.studentId);
+    const term      = parsed.data.term;
 
-    // ── 1. Fetch student DSID/name BEFORE the update (for accurate audit log) ─
-    const dsidMap = await storage.getStudentDsidMap(schoolId, studentIds);
+    // ── 1. Pre-fetch student DSID/name map AND exam scores BEFORE the transaction
+    //       (needed for accurate audit log + cold-storage snapshot JSON).         ─
+    const [dsidMap, rawScores] = await Promise.all([
+      storage.getStudentDsidMap(schoolId, studentIds),
+      storage.getExamScoresForStudents(schoolId, studentIds),
+    ]);
 
-    // ── 2. Archive academic history ───────────────────────────────────────────
-    const historyRecords = items.map(item => ({
-      schoolId,
-      studentId:    item.studentId,
-      fromClass:    item.fromClass,
-      fromSection:  item.fromSection,
-      toClass:      item.nextClass,
-      toSection:    item.nextSection,
-      examType:     item.examType,
-      totalObtained: item.totalObtained,
-      totalMax:     item.totalMax,
-      percentage:   item.percentage,
-      gradeLabel:   item.gradeLabel ?? null,
-      gradePoint:   item.gradePoint ?? null,
-      remarks:      item.gradeRemarks ?? null,
-    }));
-    await storage.archiveStudentHistory(historyRecords);
+    // ── 2. Build enriched academic history records with cold-storage snapshot ──
+    //       snapshotJson packs student metadata + per-subject score breakdown    ─
+    const historyRecords = items.map(item => {
+      const info = dsidMap[item.studentId];
+      const scoreBreakdown = rawScores
+        .filter(s => s.studentId === item.studentId)
+        .map(s => ({
+          subject: s.subject, examType: s.examType,
+          marks: s.marks, totalMarks: s.totalMarks, isAbsent: s.isAbsent,
+        }));
+      return {
+        schoolId,
+        studentId:     item.studentId,
+        fromClass:     item.fromClass,
+        fromSection:   item.fromSection,
+        toClass:       item.nextClass,
+        toSection:     item.nextSection,
+        examType:      item.examType,
+        totalObtained: item.totalObtained,
+        totalMax:      item.totalMax,
+        percentage:    item.percentage,
+        gradeLabel:    item.gradeLabel ?? null,
+        gradePoint:    item.gradePoint ?? null,
+        remarks:       item.gradeRemarks ?? null,
+        snapshotJson: {
+          archivedAt:    new Date().toISOString(),
+          adminId,
+          schoolId,
+          studentDsid:   info?.dsid ?? `ID:${item.studentId}`,
+          studentName:   info?.name ?? "Unknown",
+          fromClass:     item.fromClass,
+          fromSection:   item.fromSection,
+          toClass:       item.nextClass,
+          toSection:     item.nextSection,
+          examType:      item.examType,
+          term:          term ?? null,
+          totalObtained: item.totalObtained,
+          totalMax:      item.totalMax,
+          percentage:    item.percentage,
+          gradeLabel:    item.gradeLabel ?? null,
+          gradePoint:    item.gradePoint ?? null,
+          gradeRemarks:  item.gradeRemarks ?? null,
+          examBreakdown: scoreBreakdown,
+        },
+      };
+    });
 
-    // ── 3. Execute the class/section update in the DB ─────────────────────────
-    const promoted = await storage.bulkPromoteStudents(schoolId, items);
+    // ── 3. Execute atomic transaction: history + student update + ledger mark ──
+    //       Full automatic rollback on any failure — student records revert.     ─
+    const promoted = await storage.executePromotionTransaction(
+      schoolId, items, historyRecords, term,
+    );
 
-    // ── 4. Mark ledger as admin-executed ──────────────────────────────────────
-    if (parsed.data.term && items.length > 0) {
-      const { fromClass, fromSection } = items[0];
-      await storage.markLedgerExecuted(schoolId, fromClass, fromSection, parsed.data.term);
-    }
-
-    // ── 5. Respond immediately — post-pipeline runs without blocking client ───
+    // ── 4. Respond immediately — post-pipeline runs without blocking client ───
     res.json({ promoted, pipelineQueued: true });
 
     // ── 6. Async post-promotion pipeline (fire-and-forget after response) ─────
@@ -2464,6 +2497,17 @@ Thank you for your prompt attention to this matter.
         console.error("[promote pipeline]", pipelineErr);
       }
     })();
+  });
+
+  // ===== CLEAR ID CARD REISSUE FLAG =====
+  app.post("/api/admin/students/clear-reissue-flag", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const { studentIds } = req.body;
+    if (!Array.isArray(studentIds) || studentIds.length === 0)
+      return res.status(400).json({ message: "studentIds array required" });
+    await storage.clearIdCardReissueFlag(req.session.schoolId!, studentIds);
+    res.json({ cleared: studentIds.length });
   });
 
   // ===== PAGINATED TEACHERS (Big Data) =====

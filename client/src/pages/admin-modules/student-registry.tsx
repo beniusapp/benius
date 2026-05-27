@@ -547,7 +547,14 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
                           className="w-4 h-4 accent-[#10b981] cursor-pointer"
                         />
                       </td>
-                      <td className={`${cell} font-mono text-[#D4AF37] overflow-hidden text-ellipsis`}>{s.digitalStudentId}</td>
+                      <td className={`${cell} font-mono overflow-hidden`}>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[#D4AF37] truncate">{s.digitalStudentId}</span>
+                          {s.idCardPendingReissue && (
+                            <span className="text-[9px] font-semibold text-orange-400 leading-none">🔄 Reissue</span>
+                          )}
+                        </div>
+                      </td>
                       <td className={`${cell} text-white font-medium overflow-hidden text-ellipsis`}>{s.name}</td>
                       <td className={`${cell} text-white/50 font-mono`}>
                         {s.rollNumber != null ? <span className="text-white/80">{s.rollNumber}</span> : <span className="text-white/20">—</span>}

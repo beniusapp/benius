@@ -2233,13 +2233,14 @@ export class DatabaseStorage {
   }
 
   // ===== PAGINATED STUDENTS (Big Data) =====
-  async getStudentsPaginated(schoolId: number, opts: { q?: string; cls?: string; section?: string; page?: number }): Promise<{ data: Student[]; total: number }> {
-    const { q, cls, section, page = 1 } = opts;
+  async getStudentsPaginated(schoolId: number, opts: { q?: string; cls?: string; section?: string; page?: number; pendingReissue?: boolean }): Promise<{ data: Student[]; total: number }> {
+    const { q, cls, section, page = 1, pendingReissue } = opts;
     const limit = 50;
     const offset = (page - 1) * limit;
     const conditions = [eq(students.schoolId, schoolId), eq(students.isActive, true)];
     if (cls) conditions.push(eq(students.class, cls));
     if (section) conditions.push(eq(students.section, section));
+    if (pendingReissue) conditions.push(eq(students.idCardPendingReissue, true));
     if (q) conditions.push(or(ilike(students.name, `%${q}%`), ilike(students.digitalStudentId, `%${q}%`), ilike(students.phone, `%${q}%`))!);
     const [{ total }] = await db.select({ total: count() }).from(students).where(and(...conditions));
     const data = await db.select().from(students).where(and(...conditions)).orderBy(students.digitalStudentId).limit(limit).offset(offset);
@@ -2981,6 +2982,71 @@ export class DatabaseStorage {
   async archiveStudentHistory(records: InsertAcademicHistory[]): Promise<void> {
     if (records.length === 0) return;
     await db.insert(academicHistory).values(records);
+  }
+
+  /**
+   * Atomic promotion transaction — wraps all three critical writes in a single
+   * DB transaction. If any step fails the entire operation rolls back automatically:
+   *  1. Insert academic history snapshot records
+   *  2. Update each student's class/section + flag id_card_pending_reissue = true
+   *  3. Mark the promotion ledger as admin-executed
+   */
+  async executePromotionTransaction(
+    schoolId: number,
+    items: Array<{ studentId: number; nextClass: string; nextSection: string; fromClass: string; fromSection: string }>,
+    historyRecords: InsertAcademicHistory[],
+    term?: string,
+  ): Promise<number> {
+    let promoted = 0;
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      if (historyRecords.length > 0) {
+        await tx.insert(academicHistory).values(historyRecords);
+      }
+      for (const item of items) {
+        const updated = await tx.update(students)
+          .set({ class: item.nextClass, section: item.nextSection, idCardPendingReissue: true })
+          .where(and(eq(students.id, item.studentId), eq(students.schoolId, schoolId)))
+          .returning();
+        if (updated.length > 0) promoted++;
+      }
+      if (term && items.length > 0) {
+        const { fromClass, fromSection } = items[0];
+        await tx.update(promotionDecisions)
+          .set({ adminExecuted: true, adminExecutedAt: now })
+          .where(and(
+            eq(promotionDecisions.schoolId, schoolId),
+            eq(promotionDecisions.class, fromClass),
+            eq(promotionDecisions.section, fromSection),
+            eq(promotionDecisions.term, term),
+          ));
+      }
+    });
+    return promoted;
+  }
+
+  async clearIdCardReissueFlag(schoolId: number, studentIds: number[]): Promise<void> {
+    if (studentIds.length === 0) return;
+    await db.update(students)
+      .set({ idCardPendingReissue: false })
+      .where(and(eq(students.schoolId, schoolId), inArray(students.id, studentIds)));
+  }
+
+  async getExamScoresForStudents(
+    schoolId: number, studentIds: number[],
+  ): Promise<Array<{ studentId: number; subject: string; examType: string; marks: number; totalMarks: number; isAbsent: boolean }>> {
+    if (studentIds.length === 0) return [];
+    return db
+      .select({
+        studentId: examScores.studentId,
+        subject:   examScores.subject,
+        examType:  examScores.examType,
+        marks:     examScores.marks,
+        totalMarks: examScores.totalMarks,
+        isAbsent:  examScores.isAbsent,
+      })
+      .from(examScores)
+      .where(and(eq(examScores.schoolId, schoolId), inArray(examScores.studentId, studentIds)));
   }
 
   async getAcademicHistory(schoolId: number, studentId?: number): Promise<typeof academicHistory.$inferSelect[]> {
