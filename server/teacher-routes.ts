@@ -2392,30 +2392,78 @@ Thank you for your prompt attention to this matter.
     });
     const parsed = promoteSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-    const schoolId = req.session.schoolId!;
-    const historyRecords = parsed.data.items.map(item => ({
+
+    const schoolId  = req.session.schoolId!;
+    const adminId   = req.session.userId!;
+    const items     = parsed.data.items;
+    const studentIds = items.map(i => i.studentId);
+
+    // ── 1. Fetch student DSID/name BEFORE the update (for accurate audit log) ─
+    const dsidMap = await storage.getStudentDsidMap(schoolId, studentIds);
+
+    // ── 2. Archive academic history ───────────────────────────────────────────
+    const historyRecords = items.map(item => ({
       schoolId,
-      studentId: item.studentId,
-      fromClass: item.fromClass,
-      fromSection: item.fromSection,
-      toClass: item.nextClass,
-      toSection: item.nextSection,
-      examType: item.examType,
+      studentId:    item.studentId,
+      fromClass:    item.fromClass,
+      fromSection:  item.fromSection,
+      toClass:      item.nextClass,
+      toSection:    item.nextSection,
+      examType:     item.examType,
       totalObtained: item.totalObtained,
-      totalMax: item.totalMax,
-      percentage: item.percentage,
-      gradeLabel: item.gradeLabel ?? null,
-      gradePoint: item.gradePoint ?? null,
-      remarks: item.gradeRemarks ?? null,
+      totalMax:     item.totalMax,
+      percentage:   item.percentage,
+      gradeLabel:   item.gradeLabel ?? null,
+      gradePoint:   item.gradePoint ?? null,
+      remarks:      item.gradeRemarks ?? null,
     }));
     await storage.archiveStudentHistory(historyRecords);
-    const promoted = await storage.bulkPromoteStudents(schoolId, parsed.data.items);
-    // Mark ledger as admin-executed if term provided
-    if (parsed.data.term && parsed.data.items.length > 0) {
-      const { fromClass, fromSection } = parsed.data.items[0];
+
+    // ── 3. Execute the class/section update in the DB ─────────────────────────
+    const promoted = await storage.bulkPromoteStudents(schoolId, items);
+
+    // ── 4. Mark ledger as admin-executed ──────────────────────────────────────
+    if (parsed.data.term && items.length > 0) {
+      const { fromClass, fromSection } = items[0];
       await storage.markLedgerExecuted(schoolId, fromClass, fromSection, parsed.data.term);
     }
-    res.json({ promoted });
+
+    // ── 5. Respond immediately — post-pipeline runs without blocking client ───
+    res.json({ promoted, pipelineQueued: true });
+
+    // ── 6. Async post-promotion pipeline (fire-and-forget after response) ─────
+    // All mutations below are tenant-isolated via schoolId guard.
+    (async () => {
+      try {
+        const now = new Date();
+        const ts  = now.toISOString().replace("T", " ").slice(0, 19);
+        const examType = items[0]?.examType ?? parsed.data.term ?? "—";
+
+        // 6a. Structured audit log per student
+        // Format: [Timestamp] - Admin [ID] successfully updated Student DSID from Class X-A to Class Y-A via Manual Wizard Execution.
+        for (const item of items) {
+          const info = dsidMap[item.studentId];
+          const dsid = info?.dsid ?? `ID:${item.studentId}`;
+          const name = info?.name ?? "Unknown";
+          await storage.createAuditLog({
+            schoolId,
+            actionType:    "PROMOTION_EXECUTED",
+            entityType:    "student",
+            entityId:      item.studentId,
+            actionBy:      adminId,
+            actionByRole:  "admin",
+            details: `[${ts}] - Admin ${adminId} successfully updated Student ${dsid} (${name}) from Class ${item.fromClass}-${item.fromSection} to Class ${item.nextClass}-${item.nextSection} via Manual Wizard Execution. Exam: ${examType}. Marks: ${item.totalObtained}/${item.totalMax} (${item.percentage}%).`,
+          });
+        }
+
+        // 6b. Clean up executed promotion override records (stale data prevention)
+        await storage.deletePromotionOverridesByStudentIds(schoolId, studentIds, examType);
+
+      } catch (pipelineErr) {
+        // Pipeline errors are non-fatal — core promotion already succeeded
+        console.error("[promote pipeline]", pipelineErr);
+      }
+    })();
   });
 
   // ===== PAGINATED TEACHERS (Big Data) =====

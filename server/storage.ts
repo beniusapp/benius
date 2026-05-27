@@ -3774,6 +3774,28 @@ export class DatabaseStorage {
     });
   }
 
+  // ── Fetch DSID + name map for a set of student IDs (for audit logging) ────
+  async getStudentDsidMap(schoolId: number, studentIds: number[]): Promise<Record<number, { dsid: string; name: string }>> {
+    if (studentIds.length === 0) return {};
+    const rows = await db
+      .select({ id: students.id, dsid: students.digitalStudentId, name: students.name })
+      .from(students)
+      .where(and(eq(students.schoolId, schoolId), inArray(students.id, studentIds)));
+    const map: Record<number, { dsid: string; name: string }> = {};
+    for (const r of rows) map[r.id] = { dsid: r.dsid, name: r.name };
+    return map;
+  }
+
+  // ── Delete promotion overrides for a specific set of student IDs ──────────
+  async deletePromotionOverridesByStudentIds(schoolId: number, studentIds: number[], examType: string): Promise<void> {
+    if (studentIds.length === 0) return;
+    await db.delete(promotionOverrides).where(and(
+      eq(promotionOverrides.schoolId, schoolId),
+      eq(promotionOverrides.examType, examType),
+      inArray(promotionOverrides.studentId, studentIds),
+    ));
+  }
+
   async markLedgerExecuted(schoolId: number, cls: string, section: string, term: string): Promise<void> {
     await db.update(promotionDecisions)
       .set({ adminExecuted: true, adminExecutedAt: new Date() })
