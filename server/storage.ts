@@ -3604,6 +3604,23 @@ export class DatabaseStorage {
     entries: Array<{ studentId: number; decision: string; targetClass: string; targetSection: string; editCount: number; autoSuggestion?: string }>,
   ): Promise<void> {
     const now = new Date();
+
+    // When unlocking: bulk-clear ALL locked flags for this cohort first.
+    // This handles stale locked rows for students who were already promoted
+    // (their class is now different, so they are absent from `entries` but
+    // their old promotionDecision row still has locked=true and would
+    // re-trigger the UI lock on the next refetch).
+    if (!lock) {
+      await db.update(promotionDecisions)
+        .set({ locked: false, lockedAt: null, updatedAt: now })
+        .where(and(
+          eq(promotionDecisions.schoolId, schoolId),
+          eq(promotionDecisions.class, cls),
+          eq(promotionDecisions.section, section),
+          eq(promotionDecisions.term, term),
+        ));
+    }
+
     for (const e of entries) {
       const isManual = !!e.autoSuggestion && e.autoSuggestion !== e.decision;
       await db.insert(promotionDecisions).values({
