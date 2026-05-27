@@ -21,7 +21,13 @@ interface LedgerRow {
   status: "none" | "draft" | "locked";
   totalStudents: number; lockedCount: number; manualInterventionCount: number;
   teacherName: string | null; teacherId: number | null;
-  lockedAt: string | null; adminExecuted: boolean;
+  lockedAt: string | null;
+  // adminExecuted = true ONLY when ALL students in this cohort have been fully executed
+  adminExecuted: boolean;
+  // Tripartite student-level state counts
+  executedCount: number;  // admin finalized these students through wizard
+  readyCount: number;     // teacher-locked, awaiting admin action
+  pendingCount: number;   // no lock yet — teacher hasn't submitted
 }
 
 interface LedgerDecision {
@@ -95,11 +101,28 @@ function Chip({ c, icon, label, onClick, active }: { c: ChipColor; icon?: ReactN
   );
 }
 
-function LedgerBadge({ row }: { row: LedgerRow }) {
-  if (row.adminExecuted)       return <Chip c="blue"    icon={<CheckCircle2 className="w-3 h-3"/>} label="Executed" />;
-  if (row.status === "locked") return <Chip c="emerald" icon={<Lock className="w-3 h-3"/>}         label="Locked & Ready" />;
-  if (row.status === "draft")  return <Chip c="amber"   icon={<Clock className="w-3 h-3"/>}         label="In Progress" />;
-  return                              <Chip c="slate"   icon={<Clock className="w-3 h-3"/>}         label="Not Started" />;
+// ── Tripartite fractional pills for each section row ──────────────────────────
+// Shows up to 3 pills — one per occupied state bucket — so a partially-executed
+// cohort displays e.g. "1 Executed  1 Ready  38 Pending" side-by-side.
+function LedgerPills({ row }: { row: LedgerRow }) {
+  if (row.totalStudents === 0)
+    return <Chip c="slate" icon={<Clock className="w-3 h-3"/>} label="Not Started" />;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {row.executedCount > 0 && (
+        <Chip c="blue" icon={<CheckCircle2 className="w-3 h-3"/>}
+          label={`${row.executedCount} Executed`} />
+      )}
+      {row.readyCount > 0 && (
+        <Chip c="emerald" icon={<Lock className="w-3 h-3"/>}
+          label={`${row.readyCount} Ready`} />
+      )}
+      {row.pendingCount > 0 && (
+        <Chip c="amber" icon={<Clock className="w-3 h-3"/>}
+          label={`${row.pendingCount} Pending`} />
+      )}
+    </div>
+  );
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -440,16 +463,20 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     onError: (e: Error) => toast({ title: "Execution failed", description: e.message, variant: "destructive" }),
   });
 
-  // ── KPI stats ─────────────────────────────────────────────────────────────
+  // ── KPI stats — tripartite state machine ──────────────────────────────────
+  // lockedReady  = sections that have ≥1 locked-not-yet-executed student (ready for admin action)
+  // executed     = sections where EVERY student has been wizard-executed (fully done)
+  // pending      = sections with zero locked students and zero executed students (teacher hasn't locked yet)
   const kpi = useMemo(() => {
-    const totalClasses   = new Set(ledgerRows.map(r => r.class)).size;
-    const totalSections  = ledgerRows.length;
-    const lockedReady    = ledgerRows.filter(r => r.status === "locked" && !r.adminExecuted).length;
-    const executed       = ledgerRows.filter(r => r.adminExecuted).length;
-    const inProgress     = ledgerRows.filter(r => r.status === "draft").length;
-    const notStarted     = ledgerRows.filter(r => r.status === "none").length;
-    const pending        = inProgress + notStarted;
-    return { totalClasses, totalSections, lockedReady, executed, inProgress, notStarted, pending };
+    const totalClasses  = new Set(ledgerRows.map(r => r.class)).size;
+    const totalSections = ledgerRows.length;
+    const lockedReady   = ledgerRows.filter(r => r.readyCount > 0).length;
+    const executed      = ledgerRows.filter(r => r.adminExecuted).length;
+    // "Pending" = exclusively untouched or draft-only (no locked students, no executed students)
+    const pending       = ledgerRows.filter(r => r.readyCount === 0 && r.executedCount === 0).length;
+    const inProgress    = ledgerRows.filter(r => r.status === "draft").length;
+    const notStarted    = ledgerRows.filter(r => r.status === "none").length;
+    return { totalClasses, totalSections, lockedReady, executed, pending, inProgress, notStarted };
   }, [ledgerRows]);
 
   // ── Filter options — live from school setup (props from school_metadata) ──
@@ -470,8 +497,10 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   const filteredRows = useMemo(() => ledgerRows.filter(row => {
     if (filterClass !== "all" && row.class !== filterClass) return false;
     if (filterSection !== "all" && row.section !== filterSection) return false;
-    if (statusFilter === "ready"   && !(row.status === "locked" && !row.adminExecuted)) return false;
-    if (statusFilter === "pending" &&  (row.status === "locked" || row.adminExecuted))  return false;
+    // "ready"   = at least one locked-not-executed student (even if partially executed)
+    if (statusFilter === "ready"   && row.readyCount === 0) return false;
+    // "pending" = no locked students at all AND not executed — purely untouched/draft
+    if (statusFilter === "pending" && (row.readyCount > 0 || row.executedCount > 0)) return false;
     if (searchText.trim()) {
       const q = searchText.toLowerCase();
       if (!row.class.toLowerCase().includes(q) &&
@@ -1330,10 +1359,13 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
               </div>
             ) : (
               Object.entries(groupedRows).map(([cls, rows]) => {
-                const isExpanded    = expandedClasses.has(cls);
-                const clsLocked     = rows.filter(r => r.status === "locked" || r.adminExecuted).length;
-                const clsInProgress = rows.filter(r => r.status === "draft").length;
-                const clsNotStarted = rows.filter(r => r.status === "none").length;
+                const isExpanded = expandedClasses.has(cls);
+
+                // Class-level tripartite counters: sum student counts across all sections in this class
+                const clsTotalExecuted = rows.reduce((s, r) => s + r.executedCount, 0);
+                const clsTotalReady    = rows.reduce((s, r) => s + r.readyCount, 0);
+                const clsTotalPending  = rows.reduce((s, r) => s + r.pendingCount, 0);
+                const clsNotStarted    = rows.filter(r => r.totalStudents === 0).length;
 
                 return (
                   <div key={cls} className="rounded-2xl border border-[#1e2d44] overflow-hidden" style={{ background:"#1A2942" }}>
@@ -1348,19 +1380,24 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                         <span className="text-xs text-slate-400">{rows.length} section{rows.length !== 1 ? "s" : ""}</span>
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                        {clsLocked > 0 && (
+                        {clsTotalExecuted > 0 && (
+                          <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                            {clsTotalExecuted} Executed
+                          </span>
+                        )}
+                        {clsTotalReady > 0 && (
                           <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                            {clsLocked} Ready
+                            {clsTotalReady} Ready
                           </span>
                         )}
-                        {clsInProgress > 0 && (
+                        {clsTotalPending > 0 && (
                           <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                            {clsInProgress} In Progress
+                            {clsTotalPending} Pending
                           </span>
                         )}
-                        {clsNotStarted > 0 && (
+                        {clsNotStarted > 0 && clsTotalExecuted === 0 && clsTotalReady === 0 && clsTotalPending === 0 && (
                           <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-slate-500/20 text-slate-400 border border-slate-500/30">
-                            {clsNotStarted} Not Started
+                            Not Started
                           </span>
                         )}
                         {isExpanded
@@ -1373,7 +1410,9 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                     {isExpanded && (
                       <div className="border-t border-[#1e2d44]">
                         {rows.map((row, idx) => {
-                          const isPending = row.status !== "locked" && !row.adminExecuted;
+                          // "isPending" controls the Remind button:
+                          // show it only when no students are locked yet (teacher hasn't submitted any locks)
+                          const isPending = row.readyCount === 0 && !row.adminExecuted;
                           const rKey = `${row.class}|${row.section}`;
                           return (
                             <div key={row.section}
@@ -1386,9 +1425,9 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                                 <span className="font-bold text-white text-sm">{row.section}</span>
                               </div>
 
-                              {/* Status badge */}
-                              <div className="w-36 shrink-0">
-                                <LedgerBadge row={row} />
+                              {/* Tripartite state pills */}
+                              <div className="min-w-[160px] shrink-0">
+                                <LedgerPills row={row} />
                               </div>
 
                               {/* Teacher */}
@@ -1437,13 +1476,15 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                                   </button>
                                 )}
                                 {row.adminExecuted ? (
+                                  // All students fully executed — view-only mode
                                   <Button size="sm" variant="outline"
                                     className="border-blue-500/30 text-blue-300 hover:bg-blue-500/10 text-xs h-8"
                                     onClick={() => openWizard(row)}
                                     data-testid={`btn-view-${row.class}-${row.section}`}>
                                     View Results
                                   </Button>
-                                ) : row.status === "locked" ? (
+                                ) : row.readyCount > 0 ? (
+                                  // ≥1 locked student awaiting admin action (including partial-execution cohorts)
                                   <Button size="sm"
                                     className="text-xs h-8 font-semibold px-3"
                                     style={{ background:"linear-gradient(135deg,#D4AF37,#b8972e)", color:"#0A1628" }}
@@ -1452,6 +1493,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                                     <Play className="w-3 h-3 mr-1.5"/>Review & Execute
                                   </Button>
                                 ) : (
+                                  // No locked students yet — teacher hasn't locked the ledger
                                   <Button size="sm" disabled variant="outline"
                                     className="border-slate-700 text-slate-600 text-xs h-8"
                                     data-testid={`btn-awaiting-${row.class}-${row.section}`}>

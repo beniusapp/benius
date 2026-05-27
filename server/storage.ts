@@ -3780,26 +3780,50 @@ export class DatabaseStorage {
     }
 
     // ── 4. Aggregate promotion_decisions into per-class-section buckets ───────
+    //   Three student-level state buckets per section:
+    //   executedCount  — admin has run the wizard for this student (adminExecuted=true)
+    //   readyCount     — teacher locked this student, admin has NOT yet executed
+    //   pendingCount   — no lock at all (draft or untouched)
     type AggBucket = {
       cls: string; sec: string;
-      total: number; lockedCount: number; interventionCount: number;
+      total: number; interventionCount: number;
       teacherName: string | null; teacherId: number | null; lockedAt: Date | null;
-      anyExecuted: boolean;
+      executedCount: number;
+      readyCount: number;
+      pendingCount: number;
     };
     const buckets: Record<string, AggBucket> = {};
     for (const r of rows) {
       const key = `${r.class}|${r.section}`;
       if (!buckets[key]) {
-        buckets[key] = { cls: r.class, sec: r.section, total: 0, lockedCount: 0, interventionCount: 0, teacherName: r.teacherName ?? null, teacherId: r.teacherId ?? null, lockedAt: r.lockedAt ?? null, anyExecuted: false };
+        buckets[key] = {
+          cls: r.class, sec: r.section, total: 0, interventionCount: 0,
+          teacherName: r.teacherName ?? null, teacherId: r.teacherId ?? null,
+          lockedAt: r.lockedAt ?? null,
+          executedCount: 0, readyCount: 0, pendingCount: 0,
+        };
       }
       const b = buckets[key];
       b.total++;
-      if (r.locked) b.lockedCount++;
       if (r.manualIntervention) b.interventionCount++;
       if (r.lockedAt && (!b.lockedAt || r.lockedAt > b.lockedAt)) b.lockedAt = r.lockedAt;
       if (r.teacherName) b.teacherName = r.teacherName;
-      if (r.teacherId) b.teacherId = r.teacherId;
-      if (r.adminExecuted) b.anyExecuted = true;
+      if (r.teacherId)   b.teacherId   = r.teacherId;
+      if (r.adminExecuted) {
+        b.executedCount++;
+      } else if (r.locked) {
+        b.readyCount++;    // locked by teacher, awaiting admin action
+      } else {
+        b.pendingCount++;  // not locked — teacher hasn't finalised yet
+      }
+    }
+
+    // Helper: derive the section-level status from the three counts
+    function deriveStatus(b: AggBucket): "none" | "draft" | "locked" {
+      if (b.total === 0) return "none";
+      // "locked" = every recorded student is either executed or ready (none pending)
+      if (b.pendingCount === 0) return "locked";
+      return "draft";
     }
 
     // ── 5. Merge: all configured class-sections + any extras from DB ──────────
@@ -3808,7 +3832,11 @@ export class DatabaseStorage {
       status: "none" | "draft" | "locked";
       totalStudents: number; lockedCount: number; manualInterventionCount: number;
       teacherName: string | null; teacherId: number | null; lockedAt: Date | null;
+      // adminExecuted = true ONLY when ALL students in the cohort have been executed
       adminExecuted: boolean;
+      executedCount: number;
+      readyCount: number;
+      pendingCount: number;
     };
     const result: ResultRow[] = [];
     const seen = new Set<string>();
@@ -3821,17 +3849,24 @@ export class DatabaseStorage {
         const mapped = mappedTeacher[key];
         result.push(b ? {
           class: cls, section: sec, term,
-          status: b.lockedCount > 0 && b.lockedCount === b.total ? "locked" : b.total > 0 ? "draft" : "none",
-          totalStudents: b.total, lockedCount: b.lockedCount, manualInterventionCount: b.interventionCount,
+          status: deriveStatus(b),
+          totalStudents: b.total,
+          lockedCount: b.readyCount + b.executedCount,   // all processed rows
+          manualInterventionCount: b.interventionCount,
           teacherName: b.teacherName || mapped?.name || null,
-          teacherId: b.teacherId || mapped?.id || null,
-          lockedAt: b.lockedAt, adminExecuted: b.anyExecuted,
+          teacherId:   b.teacherId   || mapped?.id   || null,
+          lockedAt:    b.lockedAt,
+          adminExecuted: b.executedCount > 0 && b.readyCount === 0 && b.pendingCount === 0,
+          executedCount: b.executedCount,
+          readyCount:    b.readyCount,
+          pendingCount:  b.pendingCount,
         } : {
           class: cls, section: sec, term,
           status: "none",
           totalStudents: 0, lockedCount: 0, manualInterventionCount: 0,
           teacherName: mapped?.name || null, teacherId: mapped?.id || null,
           lockedAt: null, adminExecuted: false,
+          executedCount: 0, readyCount: 0, pendingCount: 0,
         });
       }
     }
@@ -3841,10 +3876,16 @@ export class DatabaseStorage {
       if (!seen.has(key)) {
         result.push({
           class: b.cls, section: b.sec, term,
-          status: b.lockedCount > 0 && b.lockedCount === b.total ? "locked" : b.total > 0 ? "draft" : "none",
-          totalStudents: b.total, lockedCount: b.lockedCount, manualInterventionCount: b.interventionCount,
+          status: deriveStatus(b),
+          totalStudents: b.total,
+          lockedCount: b.readyCount + b.executedCount,
+          manualInterventionCount: b.interventionCount,
           teacherName: b.teacherName, teacherId: b.teacherId,
-          lockedAt: b.lockedAt, adminExecuted: b.anyExecuted,
+          lockedAt: b.lockedAt,
+          adminExecuted: b.executedCount > 0 && b.readyCount === 0 && b.pendingCount === 0,
+          executedCount: b.executedCount,
+          readyCount:    b.readyCount,
+          pendingCount:  b.pendingCount,
         });
       }
     }
