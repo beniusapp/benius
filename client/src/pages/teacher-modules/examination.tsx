@@ -847,7 +847,8 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
   const resSections = useMemo(() => getSectionsForClass(resClass), [resClass, getSectionsForClass]);
 
-  // Policy fetch — React Query with staleTime:0 so admin saves immediately reflect here
+  // Policy fetch — staleTime:0 + 30s interval so admin saves always reflect here
+  const [isSyncingPolicy, setIsSyncingPolicy] = useState(false);
   const {
     data: policyTier = null,
     isLoading: policyLoading,
@@ -868,6 +869,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
+    refetchInterval: 30000,
     retry: false,
   });
   const policyError = policyIsError ? ((policyErrorRaw as Error)?.message ?? "Failed to load policy") : null;
@@ -1100,16 +1102,50 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
    *
    * A student is retained if ANY enabled rule flags them.
    */
-  function runAutoSuggestion() {
-    const next: Record<number, PromoEntry> = {};
+  async function runAutoSuggestion() {
+    // Always pull the latest policy from the server before computing
+    // so admin changes in school-setup are immediately reflected here
+    setIsSyncingPolicy(true);
+    let freshPolicy: ExamPolicyTier | null = policyTier;
+    try {
+      const result = await refetchPolicy();
+      freshPolicy = result.data ?? policyTier;
+    } catch {
+      /* use cached policyTier as fallback */
+    } finally {
+      setIsSyncingPolicy(false);
+    }
 
-    for (const s of allResults) {
-      const decision = computeStudentSuggestion(s, resTerm, ruleTermAvg, isCumulativeTerm, cumulConfig);
+    if (!freshPolicy) {
+      toast({ title: "No policy loaded", description: "Cannot run suggestion without an exam policy.", variant: "destructive" });
+      return;
+    }
+
+    // Re-derive rule settings from the freshly fetched policy
+    let freshRuleTermAvg = ruleTermAvg;
+    let freshCumulConfig = cumulConfig;
+    try {
+      const pr = JSON.parse(freshPolicy.promotionFailRules || "{}");
+      const rta = pr.rule_term_avg ?? {};
+      freshRuleTermAvg = { enabled: rta.enabled === true, minPct: Number(rta.minPct ?? 35) };
+      const rc = JSON.parse(freshPolicy.resultsConfig || "{}");
+      freshCumulConfig = rc.cumulative ?? null;
+    } catch { /* use existing derived values */ }
+
+    // Re-compute results using fresh policy (in case examWeights changed)
+    const freshResults = computeAllStudentResults(classScores, freshPolicy, attendanceSummary, gradingPassPct);
+
+    const freshIsCumulativeTerm = freshCumulConfig?.enabled && freshCumulConfig.triggerTerm
+      ? resTerm.trim() === freshCumulConfig.triggerTerm.trim()
+      : false;
+
+    const next: Record<number, PromoEntry> = {};
+    for (const s of freshResults) {
+      const decision = computeStudentSuggestion(s, resTerm, freshRuleTermAvg, freshIsCumulativeTerm, freshCumulConfig);
       next[s.studentId] = {
         decision,
         targetClass: decision === "promoted" ? getNextClass(resClass, classes) : resClass,
         targetSection: resSection,
-        // Preserve existing edit counts and trails; auto-suggest does not count as a manual edit
         editCount: promoMap[s.studentId]?.editCount ?? 0,
         editTrail: promoMap[s.studentId]?.editTrail ?? [],
       };
@@ -1121,7 +1157,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     setPromoMap(next);
     toast({
       title: "Auto-suggestion applied",
-      description: `${allResults.length} student(s) evaluated — ${promoted} to promote, ${retained} to retain. Review and adjust as needed.`,
+      description: `${freshResults.length} student(s) evaluated — ${promoted} to promote, ${retained} to retain. Review and adjust as needed.`,
       duration: 4000,
     });
   }
@@ -1345,10 +1381,12 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       )}
                       <button
                         onClick={runAutoSuggestion}
-                        disabled={promoLocked || allResults.length === 0}
+                        disabled={promoLocked || allResults.length === 0 || isSyncingPolicy}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold hover:bg-blue-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         data-testid="btn-auto-suggest">
-                        <TrendingUp className="w-3.5 h-3.5" /> Run Auto-Suggestion
+                        {isSyncingPolicy
+                          ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Syncing Policy…</>
+                          : <><TrendingUp className="w-3.5 h-3.5" /> Run Auto-Suggestion</>}
                       </button>
                       <button
                         onClick={() => saveLedgerMutation.mutate(false)}
