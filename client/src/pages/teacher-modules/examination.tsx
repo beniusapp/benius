@@ -1486,7 +1486,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       <button
                         onClick={runAutoSuggestion}
                         disabled={promoLocked || allResults.length === 0 || isSyncingPolicy}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold hover:bg-blue-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold hover:bg-blue-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed${(!promoLocked && allResults.length > 0 && !isSyncingPolicy) ? " animate-auto-suggest-pulse" : ""}`}
                         data-testid="btn-auto-suggest">
                         {isSyncingPolicy
                           ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Syncing Policy…</>

@@ -301,3 +301,18 @@
 .animate-pulse-border {
   animation: pulse-border 2s ease-in-out infinite;
 }
+
+/* ── Run Auto-Suggestion button — premium blue glow pulse ── */
+@keyframes auto-suggest-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.35), 0 0 6px 1px rgba(96, 165, 250, 0.12);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(96, 165, 250, 0), 0 0 18px 5px rgba(96, 165, 250, 0.28);
+  }
+}
+
+.animate-auto-suggest-pulse {
+  animation: auto-suggest-pulse 2.2s ease-in-out infinite;
+  will-change: box-shadow;
+}
