@@ -1719,6 +1719,157 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     onError: (error: Error) => toast({ title: "Error", description: error.message, variant: "destructive" }),
   });
 
+  function generateProgressReport() {
+    const scored = viewScores.filter(s => !s.isAbsent);
+    const absent = viewScores.filter(s => s.isAbsent);
+    const totalMax = viewScores[0]?.totalMarks ?? 0;
+
+    const gradedScores = scored.map(s => {
+      const pct = totalMax > 0 ? Math.round((s.marks / totalMax) * 100) : 0;
+      const g = computeGrade(pct, []);
+      return { ...s, pct, grade: g.label, remarks: g.remarks ?? "" };
+    }).sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
+
+    const passCount = gradedScores.filter(s => s.pct >= 33).length;
+    const failCount = gradedScores.filter(s => s.pct < 33).length;
+    const avgPct = scored.length > 0
+      ? Math.round(scored.reduce((sum, s) => sum + (totalMax > 0 ? (s.marks / totalMax) * 100 : 0), 0) / scored.length)
+      : 0;
+    const topper = gradedScores[0];
+    const generatedOn = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+
+    const rows = viewScores.map((s, idx) => {
+      if (s.isAbsent) {
+        return `<tr>
+          <td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td>
+          <td>—</td><td>—</td><td>—</td>
+          <td><span class="badge absent">ABSENT</span></td>
+          <td>—</td>
+        </tr>`;
+      }
+      const pct = totalMax > 0 ? Math.round((s.marks / totalMax) * 100) : 0;
+      const g = computeGrade(pct, []);
+      const isPass = pct >= 33;
+      return `<tr>
+        <td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td>
+        <td><strong>${s.marks}/${totalMax}</strong></td><td><strong>${pct}%</strong></td>
+        <td><span class="grade-badge grade-${g.label.replace("+", "plus")}">${g.label}</span></td>
+        <td><span class="badge ${isPass ? "pass" : "fail"}">${isPass ? "PASS" : "FAIL"}</span></td>
+        <td class="remarks">${g.remarks ?? ""}</td>
+      </tr>`;
+    });
+
+    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/>
+<title>Progress Report — ${viewSubject} ${viewExamType}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1a1a2e;background:#fff;padding:20px;}
+  @page{size:A4 portrait;margin:15mm 12mm;}
+  @media print{body{padding:0;}button{display:none!important;}}
+
+  .page-header{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #1e3a5f;padding-bottom:12px;margin-bottom:16px;}
+  .school-block{flex:1;}
+  .school-name{font-size:20px;font-weight:800;color:#1e3a5f;letter-spacing:0.3px;}
+  .school-code{font-size:10px;color:#64748b;margin-top:2px;}
+  .report-label{text-align:right;}
+  .report-label h1{font-size:15px;font-weight:700;color:#1e3a5f;}
+  .report-label p{font-size:10px;color:#64748b;margin-top:2px;}
+
+  .meta-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;background:#f0f4f8;border-radius:8px;padding:12px 16px;margin-bottom:16px;}
+  .meta-item label{font-size:9px;text-transform:uppercase;letter-spacing:0.8px;color:#64748b;display:block;}
+  .meta-item span{font-size:13px;font-weight:700;color:#1e3a5f;}
+
+  .stat-bar{display:flex;gap:10px;margin-bottom:16px;}
+  .stat-card{flex:1;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;text-align:center;}
+  .stat-card .val{font-size:20px;font-weight:800;color:#1e3a5f;}
+  .stat-card .lbl{font-size:9px;text-transform:uppercase;color:#64748b;letter-spacing:0.6px;margin-top:2px;}
+  .stat-card.green{border-color:#d1fae5;background:#f0fdf4;}.stat-card.green .val{color:#065f46;}
+  .stat-card.red{border-color:#fee2e2;background:#fff5f5;}.stat-card.red .val{color:#991b1b;}
+  .stat-card.blue{border-color:#dbeafe;background:#eff6ff;}.stat-card.blue .val{color:#1e40af;}
+  .stat-card.gold{border-color:#fef3c7;background:#fffbeb;}.stat-card.gold .val{color:#92400e;font-size:14px;}
+
+  table{width:100%;border-collapse:collapse;margin-bottom:16px;}
+  thead tr{background:#1e3a5f;color:#fff;}
+  th{padding:9px 10px;text-align:left;font-size:10px;font-weight:600;letter-spacing:0.5px;}
+  td{padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;vertical-align:middle;}
+  tr:nth-child(even) td{background:#f8fafc;}
+  tr:hover td{background:#f0f4ff;}
+  td.name{font-weight:600;color:#1e3a5f;}
+  td.remarks{color:#64748b;font-style:italic;}
+
+  .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:9px;font-weight:700;letter-spacing:0.5px;}
+  .badge.pass{background:#dcfce7;color:#166534;}
+  .badge.fail{background:#fee2e2;color:#991b1b;}
+  .badge.absent{background:#f1f5f9;color:#64748b;}
+
+  .grade-badge{display:inline-block;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:800;background:#e0f2fe;color:#0c4a6e;}
+
+  .footer{margin-top:30px;display:grid;grid-template-columns:repeat(3,1fr);gap:30px;padding-top:14px;border-top:1px solid #e2e8f0;}
+  .sig-block{text-align:center;}
+  .sig-line{border-bottom:1px dashed #94a3b8;height:32px;margin-bottom:6px;}
+  .sig-label{font-size:9px;text-transform:uppercase;color:#94a3b8;letter-spacing:0.6px;}
+
+  .print-btn{position:fixed;bottom:20px;right:20px;background:#1e3a5f;color:#fff;border:none;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,0.2);}
+  .print-btn:hover{background:#2d4f80;}
+</style>
+</head><body>
+
+<div class="page-header">
+  <div class="school-block">
+    <div class="school-name">${teacher.schoolName}</div>
+    <div class="school-code">Code: ${teacher.schoolCode}</div>
+  </div>
+  <div class="report-label">
+    <h1>Progress Report</h1>
+    <p>Generated: ${generatedOn}</p>
+  </div>
+</div>
+
+<div class="meta-grid">
+  <div class="meta-item"><label>Class</label><span>${viewClass}</span></div>
+  <div class="meta-item"><label>Section</label><span>${viewSection}</span></div>
+  <div class="meta-item"><label>Subject</label><span>${viewSubject}</span></div>
+  <div class="meta-item"><label>Exam</label><span>${viewExamType}</span></div>
+</div>
+
+<div class="stat-bar">
+  <div class="stat-card blue"><div class="val">${viewScores.length}</div><div class="lbl">Total Students</div></div>
+  <div class="stat-card green"><div class="val">${passCount}</div><div class="lbl">Passed</div></div>
+  <div class="stat-card red"><div class="val">${failCount}</div><div class="lbl">Failed</div></div>
+  <div class="stat-card"><div class="val">${absent.length}</div><div class="lbl">Absent</div></div>
+  <div class="stat-card blue"><div class="val">${scored.length > 0 ? avgPct + "%" : "—"}</div><div class="lbl">Class Average</div></div>
+  <div class="stat-card gold"><div class="val">${topper ? topper.studentName.split(" ")[0] + " · " + topper.pct + "%" : "—"}</div><div class="lbl">Class Topper</div></div>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th><th>DSID</th><th>Student Name</th>
+      <th>Marks</th><th>Score %</th><th>Grade</th><th>Result</th><th>Remarks</th>
+    </tr>
+  </thead>
+  <tbody>${rows.join("")}</tbody>
+</table>
+
+<div class="footer">
+  <div class="sig-block"><div class="sig-line"></div><div class="sig-label">Class Teacher: ${teacher.fullName}</div></div>
+  <div class="sig-block"><div class="sig-line"></div><div class="sig-label">Principal / H.O.D</div></div>
+  <div class="sig-block"><div class="sig-line"></div><div class="sig-label">Date &amp; Stamp</div></div>
+</div>
+
+<button class="print-btn" onclick="window.print()">🖨 Print / Save as PDF</button>
+<script>setTimeout(()=>window.print(),400);</script>
+</body></html>`;
+
+    const win = window.open("", "_blank", "width=900,height=700");
+    if (!win) {
+      toast({ title: "Popup blocked", description: "Please allow popups for this site to download reports.", variant: "destructive" });
+      return;
+    }
+    win.document.write(html);
+    win.document.close();
+  }
+
   const handleTabNav = useCallback((studentId: number, studentIndex: number, e: React.KeyboardEvent) => {
     if (e.key === "Tab") {
       e.preventDefault();
@@ -2013,10 +2164,10 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                     </tbody>
                   </table>
                 </div>
-                <Button variant="outline" className="rounded-xl"
-                  onClick={() => toast({ title: "Coming Soon", description: "PDF progress report generation will be available soon." })}
+                <Button variant="outline" className="rounded-xl gap-2"
+                  onClick={generateProgressReport}
                   data-testid="button-download-report">
-                  <Download className="w-4 h-4 mr-2" /> Download Progress Report
+                  <Download className="w-4 h-4" /> Download Progress Report
                 </Button>
               </>
             ) : null}
