@@ -417,6 +417,80 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
 }
 
 // ── Report Card Modal ─────────────────────────────────────────────────────────
+// ── Detention reason builder ───────────────────────────────────────────────────
+// Returns an array of explicit, reader-friendly sentence(s) explaining exactly
+// why the student was held back. Covers every policy rule that fired.
+function buildDetentionReasons(
+  student: ComputedStudentResult,
+  policy: ExamPolicyTier,
+  isManualOverride: boolean,
+): string[] {
+  const reasons: string[] = [];
+
+  // If a teacher manually overrode an otherwise-passing student, note it first.
+  if (isManualOverride) {
+    reasons.push(
+      "The teacher has manually designated this student as Detained, overriding the automated promotion criteria.",
+    );
+    return reasons;
+  }
+
+  let rule1: any = {}, ruleAtt: any = {};
+  try {
+    const parsed = JSON.parse(policy.promotionFailRules || "{}");
+    rule1   = parsed.rule1            ?? {};
+    ruleAtt = parsed.rule_attendance  ?? {};
+  } catch { /* silently fall back to empty */ }
+
+  // ── Rule 1: per-term max failing subjects ────────────────────────────────────
+  if (rule1.enabled !== false) {
+    type TR = { term: string; fail_count: number };
+    const termRules: TR[] =
+      Array.isArray(rule1.rules) && rule1.rules.length > 0
+        ? (rule1.rules as any[]).map((r: any) => ({ term: String(r.term ?? "").trim(), fail_count: Number(r.fail_count ?? 3) }))
+        : rule1.term
+          ? [{ term: String(rule1.term).trim(), fail_count: Number(rule1.max_fails) || 3 }]
+          : [];
+
+    for (const tr of termRules) {
+      if (tr.fail_count <= 0) continue; // 0 = no restriction for this term
+      const fails = student.allTermFailCounts[tr.term] ?? 0;
+      if (fails >= tr.fail_count) {
+        const failedSubjectNames = (student.termResults[tr.term] ?? [])
+          .filter(s => s.passed === false)
+          .map(s => s.subject);
+        const maxAllowed = tr.fail_count - 1;
+        const subjList = failedSubjectNames.length > 0
+          ? ` (${failedSubjectNames.join(", ")})`
+          : "";
+        reasons.push(
+          `The student failed ${fails} subject${fails !== 1 ? "s" : ""}${subjList} in ${tr.term}, which exceeds the maximum allowed limit of ${maxAllowed} failing subject${maxAllowed !== 1 ? "s" : ""} set by the school board.`,
+        );
+      }
+    }
+  }
+
+  // ── Rule 2: attendance ───────────────────────────────────────────────────────
+  if (ruleAtt.enabled === true && Array.isArray(ruleAtt.rules) && ruleAtt.rules.length > 0) {
+    const attPct = student.attendancePct;
+    if (attPct !== null) {
+      const strictest = Math.max(...(ruleAtt.rules as any[]).map((r: any) => Number(r.min_pct ?? 0)));
+      if (strictest > 0 && attPct < strictest) {
+        reasons.push(
+          `The student achieved an overall attendance rate of ${attPct.toFixed(1)}%, falling short of the mandatory minimum requirement of ${strictest}%.`,
+        );
+      }
+    }
+  }
+
+  // ── Fallback: use the engine-generated reason string ─────────────────────────
+  if (reasons.length === 0 && !student.promoted) {
+    reasons.push(student.promotionReason);
+  }
+
+  return reasons;
+}
+
 function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict, promoEntry, onClose }: {
   student: ComputedStudentResult;
   term: string;
@@ -432,6 +506,14 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
   let weights: Record<string, { source_exam: string; weight: number }[]> = {};
   try { weights = JSON.parse(policy.examWeights || "{}"); } catch {}
   const components = weights[term] ?? [];
+
+  // Pre-compute detention reasons for the DETAINED verdict block
+  const isDetained = promoEntry?.decision === "retained";
+  // "Manual override" = teacher says retained but policy engine says promoted
+  const isManualOverride = isDetained && student.promoted === true;
+  const detentionReasons = isDetained
+    ? buildDetentionReasons(student, policy, isManualOverride)
+    : [];
 
   const subjectsWithScores = termSubjects.filter(s => s.status === "scored");
   const overallAvg = subjectsWithScores.length > 0
@@ -604,12 +686,34 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
                   </span>
                 </div>
 
-                {/* Summary strip */}
+                {/* ── Reason for Detention block (DETAINED only) ───────────── */}
+                {isDetained && detentionReasons.length > 0 && (
+                  <div className="mx-5 mb-0 mt-0 rounded-lg border border-red-500/40 bg-red-950/40 px-4 py-3">
+                    <p className="flex items-center gap-1.5 text-xs font-bold text-red-300 uppercase tracking-wide mb-2">
+                      <XCircle className="w-3.5 h-3.5 shrink-0" />
+                      Reason{detentionReasons.length > 1 ? "s" : ""} for Detention
+                    </p>
+                    <ol className="space-y-1.5 list-none">
+                      {detentionReasons.map((reason, i) => (
+                        <li key={i} className="flex items-start gap-2 text-[12px] leading-relaxed text-red-100">
+                          {detentionReasons.length > 1 && (
+                            <span className="shrink-0 mt-0.5 w-4 h-4 rounded-full bg-red-500/30 border border-red-500/40 text-red-300 text-[9px] font-bold flex items-center justify-center">{i + 1}</span>
+                          )}
+                          <span>{reason}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+
+                {/* Summary strip — attendance + promoted-student-manual-override note */}
                 <div className="px-5 py-3 border-t border-[#1e293b] bg-[#0f172a] flex flex-wrap gap-4 text-xs text-slate-400">
                   {student.attendancePct !== null && (
                     <span>Attendance: <span className={`font-semibold ${student.attendancePct < 75 ? "text-red-400" : "text-emerald-400"}`}>{student.attendancePct}%</span></span>
                   )}
-                  <span className="text-slate-600 text-[10px] italic flex-1 text-right">{student.promotionReason}</span>
+                  {promoEntry.decision === "promoted" && (
+                    <span className="text-slate-600 text-[10px] italic flex-1 text-right">{student.promotionReason}</span>
+                  )}
                 </div>
 
                 {/* Signature placeholders */}
