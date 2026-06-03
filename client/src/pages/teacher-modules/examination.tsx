@@ -57,14 +57,21 @@ interface ComputedStudentResult {
   allTermFailCounts: Record<string, number>;
   attendancePct: number | null;
   promoted: boolean; promotionReason: string;
+  /** Every policy rule that fired against this student — all four rules evaluated independently. */
+  detentionViolations: string[];
 }
 
 // ── Promotion engine (runs on frontend) ───────────────────────────────────────
+// All four active rules are evaluated independently — every violation is collected
+// and stored in detentionViolations[]. A student is retained if ANY rule fires.
 function computeAllStudentResults(
   students: RawStudentScore[],
   policy: ExamPolicyTier,
   attendanceSummary: AttendanceSummary[],
   passPercentage: number = 35,
+  ruleTermAvg?: { enabled: boolean; minPct: number },
+  currentTerm?: string,
+  cumulConfig?: CumulConfigShape,
 ): ComputedStudentResult[] {
   let rawWeights: Record<string, { source_exam: string; weight: number }[]> = {};
   let rules: any = {};
@@ -134,47 +141,98 @@ function computeAllStudentResults(
       allTermFailCounts[termName] = subjectResults.filter(s => s.passed === false).length;
     }
 
-    // Apply promotion rules — handles both new array format (rule1.rules[]) and
-    // legacy single-field format (rule1.term + rule1.max_fails), plus rule_attendance.
+    // ── Multi-rule evaluation: ALL active rules run independently ─────────────
+    // Every violation is collected. A student is retained if ANY rule fires.
+    const violations: string[] = [];
     const rule1   = rules.rule1   ?? {};
     const ruleAtt = rules.rule_attendance ?? {};
-    let promoted = true, promotionReason = "Meets all promotion criteria.";
+    const attPct  = attendanceMap.get(student.studentId)?.attendancePct ?? null;
 
-    // Rule 1: max failed subjects per term
+    // ── Rule 1: Max Failed Subjects per Term ───────────────────────────────────
     if (rule1.enabled !== false && termNames.length > 0) {
       type TermRule = { term: string; fail_count: number };
       const termRules: TermRule[] =
         Array.isArray(rule1.rules) && rule1.rules.length > 0
-          // new array format: [{ term, fail_count }, ...]
-          ? (rule1.rules as any[]).map(r => ({ term: String(r.term ?? "").trim(), fail_count: Number(r.fail_count ?? 3) }))
-          // legacy single-field format
+          ? (rule1.rules as any[]).map((r: any) => ({ term: String(r.term ?? "").trim(), fail_count: Number(r.fail_count ?? 3) }))
           : rule1.term
             ? [{ term: String(rule1.term).trim(), fail_count: Number(rule1.max_fails) || 3 }]
             : [{ term: termNames[termNames.length - 1], fail_count: Number(rule1.max_fails) || 3 }];
 
+      // Evaluate EVERY term row — no break on first hit
       for (const tr of termRules) {
-        if (tr.fail_count <= 0) continue; // 0 means "no restriction for this term"
+        if (tr.fail_count <= 0) continue; // 0 = no restriction for this term
         const fails = allTermFailCounts[tr.term] ?? 0;
         if (fails >= tr.fail_count) {
-          promoted = false;
-          promotionReason = `Failed ${fails} subject(s) in "${tr.term}" — max allowed is ${tr.fail_count - 1}.`;
-          break;
+          const failedNames = (termResults[tr.term] ?? [])
+            .filter(s => s.passed === false)
+            .map(s => s.subject);
+          const maxAllowed = tr.fail_count - 1;
+          const nameList = failedNames.length > 0 ? ` (${failedNames.join(", ")})` : "";
+          violations.push(
+            `The student failed ${fails} subject${fails !== 1 ? "s" : ""}${nameList} in ${tr.term}, which exceeds the maximum allowed limit of ${maxAllowed} failing subject${maxAllowed !== 1 ? "s" : ""} set by the school board.`,
+          );
         }
       }
     }
 
-    // Attendance rule: rule_attendance.rules[{ term, min_pct }]
-    // The frontend only has overall attendance %; we apply the highest min_pct as threshold.
-    if (promoted && ruleAtt.enabled === true && Array.isArray(ruleAtt.rules) && ruleAtt.rules.length > 0) {
-      const attPct = attendanceMap.get(student.studentId)?.attendancePct ?? null;
-      if (attPct !== null) {
-        const strictest = Math.max(...(ruleAtt.rules as any[]).map((r: any) => Number(r.min_pct ?? 0)));
-        if (strictest > 0 && attPct < strictest) {
-          promoted = false;
-          promotionReason = `Attendance ${attPct.toFixed(1)}% is below the minimum ${strictest}% required.`;
+    // ── Rule 2: Minimum Attendance % ──────────────────────────────────────────
+    // Evaluated independently — fires even if Rule 1 already fired.
+    if (ruleAtt.enabled === true && Array.isArray(ruleAtt.rules) && ruleAtt.rules.length > 0 && attPct !== null) {
+      for (const r of ruleAtt.rules as any[]) {
+        const minPct = Number(r.min_pct ?? 0);
+        if (minPct <= 0) continue;
+        if (attPct < minPct) {
+          const termLabel = r.term ? ` in ${r.term}` : "";
+          violations.push(
+            `The student achieved an attendance rate of ${attPct.toFixed(1)}%${termLabel}, falling below the required minimum threshold of ${minPct}%.`,
+          );
+          break; // one attendance violation message is enough (most-strict row already caught)
         }
       }
     }
+
+    // ── Rule 3: Minimum Term Weighted Average Score ────────────────────────────
+    // Requires currentTerm to be known; evaluated only for the selected term.
+    if (ruleTermAvg?.enabled && currentTerm) {
+      const scoredSubjects = (termResults[currentTerm] ?? []).filter(s => s.status === "scored");
+      if (scoredSubjects.length > 0) {
+        const avg = scoredSubjects.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / scoredSubjects.length;
+        const rounded = Math.round(avg * 10) / 10;
+        if (rounded < ruleTermAvg.minPct) {
+          violations.push(
+            `The student's weighted average score for ${currentTerm} was ${rounded}%, which falls below the configured pass threshold of ${ruleTermAvg.minPct}%.`,
+          );
+        }
+      }
+    }
+
+    // ── Rule 4: Minimum Cumulative Percentage (trigger-term only) ─────────────
+    const isCumulTerm = cumulConfig?.enabled && cumulConfig.triggerTerm && currentTerm
+      ? currentTerm.trim() === cumulConfig.triggerTerm.trim()
+      : false;
+    if (isCumulTerm && cumulConfig?.promotionEnabled) {
+      const minPct = cumulConfig.minPercent ?? 0;
+      if (minPct > 0) {
+        const twEntries = Object.entries(cumulConfig.termWeights ?? {});
+        let totalContrib = 0, allHaveData = twEntries.length > 0;
+        for (const [termName, weight] of twEntries) {
+          const tScored = (termResults[termName.trim()] ?? []).filter(s => s.status === "scored");
+          if (tScored.length === 0) { allHaveData = false; break; }
+          totalContrib += (tScored.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / tScored.length) * (Number(weight) / 100);
+        }
+        if (allHaveData) {
+          const cumPct = Math.round(totalContrib * 10) / 10;
+          if (cumPct < minPct) {
+            violations.push(
+              `The student's cumulative year-end percentage of ${cumPct}% falls below the required minimum threshold of ${minPct}%.`,
+            );
+          }
+        }
+      }
+    }
+
+    const promoted = violations.length === 0;
+    const promotionReason = violations.length > 0 ? violations[0] : "Meets all promotion criteria.";
 
     return {
       studentId: student.studentId,
@@ -182,8 +240,9 @@ function computeAllStudentResults(
       digitalStudentId: student.digitalStudentId,
       rollNumber: student.rollNumber,
       termResults, allTermFailCounts,
-      attendancePct: attendanceMap.get(student.studentId)?.attendancePct ?? null,
+      attendancePct: attPct,
       promoted, promotionReason,
+      detentionViolations: violations,
     };
   });
 }
@@ -199,40 +258,14 @@ type CumulConfigShape = {
 
 function computeStudentSuggestion(
   s: ComputedStudentResult,
-  resTerm: string,
-  ruleTermAvg: { enabled: boolean; minPct: number },
-  isCumulativeTerm: boolean,
-  cumulConfig: CumulConfigShape,
+  _resTerm: string,
+  _ruleTermAvg: { enabled: boolean; minPct: number },
+  _isCumulativeTerm: boolean,
+  _cumulConfig: CumulConfigShape,
 ): "promoted" | "retained" {
-  // Rules 1 & 2 are already encoded in s.promoted by computeAllStudentResults.
-  let decision: "promoted" | "retained" = s.promoted ? "promoted" : "retained";
-
-  // Rule 3: term weighted-average threshold (admin-configured, independent toggle)
-  if (decision === "promoted" && ruleTermAvg.enabled) {
-    const scoredSubjects = (s.termResults[resTerm] ?? []).filter(sub => sub.status === "scored");
-    const weightedAvg = scoredSubjects.length > 0
-      ? scoredSubjects.reduce((sum, sub) => sum + (sub.percentage ?? 0), 0) / scoredSubjects.length
-      : null;
-    if (weightedAvg !== null && weightedAvg < ruleTermAvg.minPct) decision = "retained";
-  }
-
-  // Rule 4: cumulative year-end threshold (trigger-term only, admin-configured)
-  if (decision === "promoted" && isCumulativeTerm && cumulConfig?.enabled && cumulConfig?.promotionEnabled) {
-    const minPct = cumulConfig.minPercent ?? 0;
-    if (minPct > 0) {
-      const twEntries = Object.entries(cumulConfig.termWeights ?? {});
-      let totalContrib = 0;
-      let allHaveData = twEntries.length > 0;
-      for (const [termName, weight] of twEntries) {
-        const tScored = (s.termResults[termName.trim()] ?? []).filter(sub => sub.status === "scored");
-        if (tScored.length === 0) { allHaveData = false; break; }
-        totalContrib += (tScored.reduce((sum, sub) => sum + (sub.percentage ?? 0), 0) / tScored.length) * (Number(weight) / 100);
-      }
-      if (allHaveData && Math.round(totalContrib * 10) / 10 < minPct) decision = "retained";
-    }
-  }
-
-  return decision;
+  // All four rules are now evaluated inside computeAllStudentResults and encoded
+  // in s.promoted / s.detentionViolations. Simply reflect that result here.
+  return s.promoted ? "promoted" : "retained";
 }
 
 // ── Grade types & helpers ─────────────────────────────────────────────────────
@@ -418,77 +451,21 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
 
 // ── Report Card Modal ─────────────────────────────────────────────────────────
 // ── Detention reason builder ───────────────────────────────────────────────────
-// Returns an array of explicit, reader-friendly sentence(s) explaining exactly
-// why the student was held back. Covers every policy rule that fired.
+// All violation messages are pre-computed by computeAllStudentResults and stored
+// in student.detentionViolations. This function just surfaces them, plus handles
+// the manual-override case where a teacher detained an otherwise-passing student.
 function buildDetentionReasons(
   student: ComputedStudentResult,
-  policy: ExamPolicyTier,
   isManualOverride: boolean,
 ): string[] {
-  const reasons: string[] = [];
-
-  // If a teacher manually overrode an otherwise-passing student, note it first.
   if (isManualOverride) {
-    reasons.push(
-      "The teacher has manually designated this student as Detained, overriding the automated promotion criteria.",
-    );
-    return reasons;
+    return ["The teacher has manually designated this student as Detained, overriding the automated promotion criteria."];
   }
-
-  let rule1: any = {}, ruleAtt: any = {};
-  try {
-    const parsed = JSON.parse(policy.promotionFailRules || "{}");
-    rule1   = parsed.rule1            ?? {};
-    ruleAtt = parsed.rule_attendance  ?? {};
-  } catch { /* silently fall back to empty */ }
-
-  // ── Rule 1: per-term max failing subjects ────────────────────────────────────
-  if (rule1.enabled !== false) {
-    type TR = { term: string; fail_count: number };
-    const termRules: TR[] =
-      Array.isArray(rule1.rules) && rule1.rules.length > 0
-        ? (rule1.rules as any[]).map((r: any) => ({ term: String(r.term ?? "").trim(), fail_count: Number(r.fail_count ?? 3) }))
-        : rule1.term
-          ? [{ term: String(rule1.term).trim(), fail_count: Number(rule1.max_fails) || 3 }]
-          : [];
-
-    for (const tr of termRules) {
-      if (tr.fail_count <= 0) continue; // 0 = no restriction for this term
-      const fails = student.allTermFailCounts[tr.term] ?? 0;
-      if (fails >= tr.fail_count) {
-        const failedSubjectNames = (student.termResults[tr.term] ?? [])
-          .filter(s => s.passed === false)
-          .map(s => s.subject);
-        const maxAllowed = tr.fail_count - 1;
-        const subjList = failedSubjectNames.length > 0
-          ? ` (${failedSubjectNames.join(", ")})`
-          : "";
-        reasons.push(
-          `The student failed ${fails} subject${fails !== 1 ? "s" : ""}${subjList} in ${tr.term}, which exceeds the maximum allowed limit of ${maxAllowed} failing subject${maxAllowed !== 1 ? "s" : ""} set by the school board.`,
-        );
-      }
-    }
-  }
-
-  // ── Rule 2: attendance ───────────────────────────────────────────────────────
-  if (ruleAtt.enabled === true && Array.isArray(ruleAtt.rules) && ruleAtt.rules.length > 0) {
-    const attPct = student.attendancePct;
-    if (attPct !== null) {
-      const strictest = Math.max(...(ruleAtt.rules as any[]).map((r: any) => Number(r.min_pct ?? 0)));
-      if (strictest > 0 && attPct < strictest) {
-        reasons.push(
-          `The student achieved an overall attendance rate of ${attPct.toFixed(1)}%, falling short of the mandatory minimum requirement of ${strictest}%.`,
-        );
-      }
-    }
-  }
-
-  // ── Fallback: use the engine-generated reason string ─────────────────────────
-  if (reasons.length === 0 && !student.promoted) {
-    reasons.push(student.promotionReason);
-  }
-
-  return reasons;
+  // Return all violations collected across all four rules
+  if (student.detentionViolations.length > 0) return student.detentionViolations;
+  // Fallback: engine says retained but no violations listed (edge case)
+  if (!student.promoted) return [student.promotionReason];
+  return [];
 }
 
 function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict, promoEntry, onClose }: {
@@ -512,7 +489,7 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
   // "Manual override" = teacher says retained but policy engine says promoted
   const isManualOverride = isDetained && student.promoted === true;
   const detentionReasons = isDetained
-    ? buildDetentionReasons(student, policy, isManualOverride)
+    ? buildDetentionReasons(student, isManualOverride)
     : [];
 
   const subjectsWithScores = termSubjects.filter(s => s.status === "scored");
@@ -1109,11 +1086,14 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     if (termNames.length > 0 && !resTerm) setResTerm(termNames[0]);
   }, [termNames, resTerm]);
 
-  // Compute results — pass school's pass% to engine
+  // Compute results — all 4 rules baked in: pass ruleTermAvg, resTerm, cumulConfig
   const allResults = useMemo(() => {
     if (!policyTier || classScores.length === 0) return [];
-    return computeAllStudentResults(classScores, policyTier, attendanceSummary, gradingPassPct);
-  }, [policyTier, classScores, attendanceSummary, gradingPassPct]);
+    return computeAllStudentResults(
+      classScores, policyTier, attendanceSummary, gradingPassPct,
+      ruleTermAvg, resTerm || undefined, cumulConfig ?? undefined,
+    );
+  }, [policyTier, classScores, attendanceSummary, gradingPassPct, ruleTermAvg, resTerm, cumulConfig]);
 
   // Filter by search
   const filteredResults = useMemo(() => {
@@ -1236,16 +1216,16 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
       freshCumulConfig = rc.cumulative ?? null;
     } catch { /* use existing derived values */ }
 
-    // Re-compute results using fresh policy (in case examWeights changed)
-    const freshResults = computeAllStudentResults(classScores, freshPolicy, attendanceSummary, gradingPassPct);
-
-    const freshIsCumulativeTerm = freshCumulConfig?.enabled && freshCumulConfig.triggerTerm
-      ? resTerm.trim() === freshCumulConfig.triggerTerm.trim()
-      : false;
+    // Re-compute results using fresh policy + all 4 rules baked in
+    const freshResults = computeAllStudentResults(
+      classScores, freshPolicy, attendanceSummary, gradingPassPct,
+      freshRuleTermAvg, resTerm || undefined, freshCumulConfig ?? undefined,
+    );
 
     const next: Record<number, PromoEntry> = {};
     for (const s of freshResults) {
-      const decision = computeStudentSuggestion(s, resTerm, freshRuleTermAvg, freshIsCumulativeTerm, freshCumulConfig);
+      // computeStudentSuggestion now simply reads s.promoted (all rules in engine)
+      const decision = computeStudentSuggestion(s, resTerm, freshRuleTermAvg, false, freshCumulConfig);
       next[s.studentId] = {
         decision,
         targetClass: decision === "promoted" ? getNextClass(resClass, classes) : resClass,
