@@ -226,12 +226,12 @@ export default function StudentTimetable() {
                   onClick={() => setSelectedDay(day)}
                   className="flex-shrink-0 flex flex-col items-center px-3 py-2 rounded-xl min-w-[54px] transition-all"
                   style={{
-                    background: isSelected ? "#10b981" : "rgba(255,255,255,0.05)",
-                    border: isSelected ? "none" : "1px solid rgba(255,255,255,0.08)",
+                    background: isSelected ? "#10b981" : "rgba(100,116,139,0.08)",
+                    border: isSelected ? "none" : "1px solid rgba(100,116,139,0.15)",
                   }}
                   data-testid={`day-btn-${day}`}
                 >
-                  <span className="text-xs font-bold" style={{ color: isSelected ? "#fff" : "rgba(255,255,255,0.60)" }}>
+                  <span className="text-xs font-bold" style={{ color: isSelected ? "#fff" : "#4B5563" }}>
                     {DAY_LABELS[day]}
                   </span>
                   {isTodayDow && (
