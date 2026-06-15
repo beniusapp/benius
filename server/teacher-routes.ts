@@ -1713,7 +1713,8 @@ export function registerTeacherRoutes(app: Express) {
   // ===== ADMIN BATCH SAVE =====
   app.post("/api/timetable/admin/save-batch", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
-    const schoolId = req.session.schoolId!;
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(400).json({ message: "School session missing — please log in again" });
     const { changes } = req.body as {
       changes: Array<{
         dayOfWeek: number;
@@ -1730,28 +1731,34 @@ export function registerTeacherRoutes(app: Express) {
     const errors: string[] = [];
     for (const change of changes) {
       const { dayOfWeek, period, class: cls, section, teacherId, subject } = change;
-      if (change._delete) {
-        await storage.deleteTimetableSlot(schoolId, cls, section, dayOfWeek, period);
-        continue;
-      }
-      if (teacherId === null || !subject) {
-        errors.push(`Slot Day${dayOfWeek} P${period}: teacher and subject required`);
-        continue;
-      }
-      const teacher = await storage.getTeacherById(teacherId);
-      if (!teacher || teacher.schoolId !== schoolId) {
-        errors.push(`Slot Day${dayOfWeek} P${period}: teacher not found in your school`);
-        continue;
-      }
       try {
+        if (change._delete) {
+          await storage.deleteTimetableSlot(schoolId, cls, section, dayOfWeek, period);
+          continue;
+        }
+        // Guard: teacherId must be a valid integer
+        if (teacherId === null || teacherId === undefined || !Number.isInteger(teacherId)) {
+          errors.push(`Slot Day${dayOfWeek} P${period}: a valid teacher must be selected`);
+          continue;
+        }
+        if (!subject) {
+          errors.push(`Slot Day${dayOfWeek} P${period}: subject is required`);
+          continue;
+        }
+        const teacher = await storage.getTeacherById(teacherId);
+        if (!teacher || teacher.schoolId !== schoolId) {
+          errors.push(`Slot Day${dayOfWeek} P${period}: teacher not found in your school`);
+          continue;
+        }
         const entry = await storage.upsertTimetableSlot(schoolId, { dayOfWeek, period, class: cls, section, teacherId, subject });
         saved.push(entry);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes("unique") || msg.includes("duplicate")) {
-          errors.push(`Slot Day${dayOfWeek} P${period} (${cls}-${section}): slot conflict — another entry already occupies this slot`);
+        console.error(`[save-batch] slot Day${dayOfWeek} P${period} error:`, msg);
+        if (msg.includes("unique") || msg.includes("duplicate") || msg.includes("conflict")) {
+          errors.push(`Slot Day${dayOfWeek} P${period} (${cls}-${section}): conflict — slot already assigned`);
         } else {
-          errors.push(`Slot Day${dayOfWeek} P${period}: unexpected error saving slot`);
+          errors.push(`Slot Day${dayOfWeek} P${period}: ${msg}`);
         }
       }
     }
@@ -1818,7 +1825,8 @@ export function registerTeacherRoutes(app: Express) {
 
   app.post("/api/timetable/structure", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
-    const schoolId = req.session.schoolId!;
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(400).json({ message: "School session missing — please log in again" });
     const { class: cls, rows } = req.body as {
       class: string;
       rows: Array<{
@@ -1831,8 +1839,14 @@ export function registerTeacherRoutes(app: Express) {
       }>;
     };
     if (!cls || !Array.isArray(rows)) return res.status(400).json({ message: "class and rows required" });
-    const saved = await storage.saveTimetableStructure(schoolId, cls, rows);
-    res.json({ saved });
+    try {
+      const saved = await storage.saveTimetableStructure(schoolId, cls, rows);
+      res.json({ saved });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[timetable/structure POST] error:", msg);
+      res.status(500).json({ message: `Failed to save structure: ${msg}` });
+    }
   });
 
   app.delete("/api/timetable/structure/:id", async (req, res) => {

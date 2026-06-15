@@ -150,6 +150,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
 
   const saveStructMutation = useMutation({
     mutationFn: async () => {
+      if (!structClass) throw new Error("Please select a class before saving.");
       const rows = displayStructRows.map((r, i) => ({
         periodNumber: r.periodNumber,
         label: r.label,
@@ -159,7 +160,8 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
         sortOrder: i,
       }));
       const res = await apiRequest("POST", "/api/timetable/structure", { class: structClass, rows });
-      return (res as Response).json();
+      const data = await res.json();
+      return data as { saved: unknown[] };
     },
     onSuccess: () => {
       toast({ title: "Structure saved", description: `Bell schedule for Class ${structClass} has been saved.`, className: "border-emerald-500 bg-emerald-900/30 text-emerald-100" });
@@ -216,6 +218,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
 
   const saveMutation = useMutation({
     mutationFn: async (): Promise<{ saved: unknown[]; errors: string[] }> => {
+      if (!selectedClass || !selectedSection) throw new Error("Please select a class and section before saving.");
       const changes = Object.entries(draftMap).map(([key, draft]) => {
         const [day, period] = key.split("-").map(Number);
         if (draft === null) {
@@ -224,7 +227,8 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
         return { dayOfWeek: day, period, class: selectedClass, section: selectedSection, teacherId: draft.teacherId, subject: draft.subject };
       });
       const res = await apiRequest("POST", "/api/timetable/admin/save-batch", { changes });
-      return (res as Response).json();
+      const data = await res.json();
+      return data as { saved: unknown[]; errors: string[] };
     },
     onSuccess: (data: { saved: unknown[]; errors: string[] }) => {
       if (data.errors && data.errors.length > 0) {

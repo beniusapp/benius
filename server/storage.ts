@@ -1620,23 +1620,9 @@ export class DatabaseStorage {
     schoolId: number,
     opts: { dayOfWeek: number; period: number; class: string; section: string; teacherId: number; subject: string }
   ): Promise<TimetableEntry> {
-    const existing = await db.select().from(timetableEntries).where(
-      and(
-        eq(timetableEntries.schoolId, schoolId),
-        eq(timetableEntries.class, opts.class),
-        eq(timetableEntries.section, opts.section),
-        eq(timetableEntries.dayOfWeek, opts.dayOfWeek),
-        eq(timetableEntries.period, opts.period),
-      )
-    );
-    if (existing.length > 0) {
-      const [updated] = await db.update(timetableEntries)
-        .set({ teacherId: opts.teacherId, subject: opts.subject, status: "draft" })
-        .where(and(eq(timetableEntries.id, existing[0].id), eq(timetableEntries.schoolId, schoolId)))
-        .returning();
-      return updated;
-    }
-    const [created] = await db.insert(timetableEntries).values({
+    // Use ON CONFLICT DO UPDATE so the insert is atomic against the unique index
+    // timetable_class_slot_unique (school_id, class, section, day_of_week, period)
+    const [result] = await db.insert(timetableEntries).values({
       schoolId,
       teacherId: opts.teacherId,
       dayOfWeek: opts.dayOfWeek,
@@ -1645,8 +1631,23 @@ export class DatabaseStorage {
       section: opts.section,
       subject: opts.subject,
       status: "draft",
-    }).returning();
-    return created;
+    })
+    .onConflictDoUpdate({
+      target: [
+        timetableEntries.schoolId,
+        timetableEntries.class,
+        timetableEntries.section,
+        timetableEntries.dayOfWeek,
+        timetableEntries.period,
+      ],
+      set: {
+        teacherId: opts.teacherId,
+        subject: opts.subject,
+        status: "draft",
+      },
+    })
+    .returning();
+    return result;
   }
 
   async deleteTimetableSlot(schoolId: number, cls: string, section: string, dayOfWeek: number, period: number): Promise<boolean> {
