@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useMemo, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Users, UserX, Loader2, Calendar, Filter, CheckCircle, Search, Eye,
   ChevronRight, AlertTriangle, TrendingUp, X, Phone, MapPin, User,
@@ -162,6 +162,21 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   const [teacherSearch, setTeacherSearch] = useState("");
   const [selectedStudentId, setSelectedStudentId] = useState<number | null>(null);
 
+  const queryClient = useQueryClient();
+
+  // Force-invalidate all attendance caches whenever date / class / section change.
+  // This guarantees a real server round-trip and prevents stale React Query cache
+  // from showing fabricated "Present" statuses on days with no records.
+  useEffect(() => {
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/attendance/overview", date] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/attendance/teacher-summary", date] });
+    if (filterClass && filterSection) {
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/attendance/class-detail", filterClass, filterSection, date],
+      });
+    }
+  }, [date, filterClass, filterSection, queryClient]);
+
   // School config
   const { data: schoolConfig, isLoading: configLoading } = useQuery<SchoolConfig>({
     queryKey: ["/api/admin/school-config"],
@@ -214,29 +229,42 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
     refetchOnMount: "always",
   });
 
+  // ── SAFETY NET ──────────────────────────────────────────────────────────────
+  // If the school-wide overview confirms markedTotal === 0 (zero attendance
+  // records exist for this date), any "present" / "absent" status in studentData
+  // must be stale React Query cache from a previous date. Override everything to
+  // "not-marked" so the UI is always logically consistent with the real DB state.
+  const safeStudentData = useMemo<StudentAttendance[]>(() => {
+    const noRecordsExist = !overviewLoading && (overview?.markedTotal ?? 1) === 0;
+    if (noRecordsExist && studentData.some(s => s.status !== "not-marked")) {
+      return studentData.map(s => ({ ...s, status: "not-marked" as const }));
+    }
+    return studentData;
+  }, [studentData, overview, overviewLoading]);
+
   // Class stats
   // attendanceSubmitted = true only when at least one record exists (not-marked ≠ submitted)
   const classStats = useMemo(() => {
-    const total   = studentData.length;
-    const marked  = studentData.filter(s => s.status !== "not-marked").length;
-    const present = studentData.filter(s => s.status === "present").length;
-    const absent  = studentData.filter(s => s.status === "absent").length;
+    const total   = safeStudentData.length;
+    const marked  = safeStudentData.filter(s => s.status !== "not-marked").length;
+    const present = safeStudentData.filter(s => s.status === "present").length;
+    const absent  = safeStudentData.filter(s => s.status === "absent").length;
     // Use marked count as denominator so "not-marked" students don't dilute %
     const pct     = marked > 0 ? Math.round((present / marked) * 100) : 0;
     const attendanceSubmitted = marked > 0;
     return { total, present, absent, pct, attendanceSubmitted };
-  }, [studentData]);
+  }, [safeStudentData]);
 
   // Filtered student rows
   const filteredStudents = useMemo(() => {
     const q = studentSearch.trim().toLowerCase();
-    if (!q) return studentData;
-    return studentData.filter(s =>
+    if (!q) return safeStudentData;
+    return safeStudentData.filter(s =>
       s.name.toLowerCase().includes(q) ||
       s.rollNo.toLowerCase().includes(q) ||
       s.digitalStudentId.toLowerCase().includes(q)
     );
-  }, [studentData, studentSearch]);
+  }, [safeStudentData, studentSearch]);
 
   // Filtered teacher rows
   const filteredTeachers = useMemo(() => {

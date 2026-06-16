@@ -1964,6 +1964,7 @@ export async function registerRoutes(
     if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
     const { class: cls, section, date } = req.query as { class?: string; section?: string; date?: string };
     if (!cls || !section || !date) return res.status(400).json({ message: "class, section, and date are required" });
+    console.log(`[class-detail] schoolId=${schoolId} class=${cls} section=${section} date=${date}`);
     try {
       const { students: studentsTable } = await import("@shared/schema");
       // Fetch students with their rollNo via LEFT JOIN on student_profiles
@@ -1995,6 +1996,7 @@ export async function registerRoutes(
             )
           )
         : [];
+      console.log(`[class-detail] found ${studentRows.length} students, ${filteredRecords.length} attendance records for date=${date}`);
       const result = studentRows.map(student => {
         const record = filteredRecords.find(r => r.studentId === student.id);
         return {
