@@ -2201,8 +2201,9 @@ Thank you for your prompt attention to this matter.
   }
 
   // ── Send ledger reminder to a specific teacher's noticeboard ──────────────
-  // Routes to teacher noticeboard via targetType:"teacher" + class+section scope.
-  // The teacher sees this notice when they open their Noticeboard in the dashboard.
+  // Looks up the teacher assigned to className/section via faculty_mappings or
+  // teacher.assignedClass/Section, then pins the notice to that teacher's ID.
+  // targetType:"teacher" + targetTeacherId guarantee ZERO student leakage.
   app.post("/api/admin/send-ledger-reminder", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
@@ -2211,26 +2212,35 @@ Thank you for your prompt attention to this matter.
       return res.status(400).json({ message: "className, section, and term are required" });
     const schoolId = req.session.schoolId!;
     try {
+      // Look up the specific teacher assigned to this class-section
+      const assignedTeacher = await storage.getTeacherByClassSection(schoolId, className, section);
+
       await storage.createNotice({
         schoolId,
         createdById: req.session.userId!,
         creatorRole: "admin",
-        targetType: "teacher",          // routes to teacher noticeboard, not students
-        targetClass: className,
+        targetType: "teacher",            // hard-blocks student notice feeds
+        targetClass: className,           // retained for display / fallback context
         targetSection: section,
+        targetTeacherId: assignedTeacher?.id ?? null,  // strict pin — only this teacher sees it
         noticeType: "Urgent",
         content: buildReminderNotice(className, section, term),
       });
-      res.json({ message: `Reminder dispatched to the noticeboard of Class ${className} — Sec ${section} teacher` });
+
+      const recipient = assignedTeacher
+        ? `${assignedTeacher.fullName} (Class ${className}-${section})`
+        : `Class ${className}-${section} teacher (unassigned — notice stored for when teacher is mapped)`;
+
+      res.json({ message: `Reminder dispatched to ${recipient}` });
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to send reminder" });
     }
   });
 
   // ── Bulk: send tailored notices to every pending teacher's noticeboard ────
-  // Identifies all class-sections still "In Progress" or "Not Started" for the
-  // given term, batch-inserts an individual notice per section, each scoped to
-  // the teacher's class+section so it appears only on their noticeboard.
+  // For each pending class-section, resolves the assigned teacher and pins the
+  // notice directly to their ID.  Teachers with multiple pending ledgers each
+  // receive a separate notice per class-section they manage.
   app.post("/api/admin/send-ledger-reminder-all", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
@@ -2240,22 +2250,33 @@ Thank you for your prompt attention to this matter.
     try {
       const statuses = await storage.getLedgerStatus(schoolId, term);
       const pending = statuses.filter(s => s.status !== "locked" && !s.adminExecuted);
-      await Promise.all(pending.map(row =>
+
+      // Resolve teachers in parallel, then create one notice per pending ledger
+      const teacherLookups = await Promise.all(
+        pending.map(row => storage.getTeacherByClassSection(schoolId, row.class, row.section))
+      );
+
+      await Promise.all(pending.map((row, i) =>
         storage.createNotice({
           schoolId,
           createdById: req.session.userId!,
           creatorRole: "admin",
-          targetType: "teacher",        // routes to teacher noticeboard only
+          targetType: "teacher",              // hard-blocks student notice feeds
           targetClass: row.class,
           targetSection: row.section,
+          targetTeacherId: teacherLookups[i]?.id ?? null,  // strict per-teacher pin
           noticeType: "Urgent",
           content: buildReminderNotice(row.class, row.section, term),
         })
       ));
+
+      const assignedCount = teacherLookups.filter(Boolean).length;
+      const unassignedCount = pending.length - assignedCount;
+
       res.json({
         count: pending.length,
         message: pending.length > 0
-          ? `Reminders successfully dispatched to ${pending.length} teacher noticeboard(s)`
+          ? `Reminders dispatched to ${assignedCount} assigned teacher(s)${unassignedCount > 0 ? `; ${unassignedCount} section(s) have no teacher mapped yet` : ""}`
           : "All ledgers are already locked — no reminders needed",
       });
     } catch (err: any) {

@@ -135,6 +135,7 @@ export const notices = pgTable("notices", {
   targetType: text("target_type").notNull(),
   targetClass: varchar("target_class", { length: 50 }),
   targetSection: varchar("target_section", { length: 100 }),
+  targetTeacherId: integer("target_teacher_id").references(() => teachers.id, { onDelete: "set null" }),
   noticeType: varchar("notice_type", { length: 30 }).default("Routine"),
   content: text("content").notNull(),
   fileUrl: text("file_url"),

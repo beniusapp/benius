@@ -583,10 +583,58 @@ export class DatabaseStorage {
   }
 
   /**
-   * Returns teacher-targeted notices scoped strictly to this teacher's assigned
-   * class-section pairs (from both teachers.assignedClass/Section and faculty_mappings).
-   * Notices with a null targetClass are treated as school-wide broadcasts and always
-   * included.  Notices for class-sections this teacher is NOT assigned to are excluded.
+   * Look up the teacher assigned to a specific class-section within a school.
+   * Checks faculty_mappings first (explicit admin assignment), then falls back
+   * to the teacher's primary assignedClass/Section fields.
+   * Returns null when no teacher is mapped to that class-section.
+   */
+  async getTeacherByClassSection(schoolId: number, className: string, section: string): Promise<Teacher | null> {
+    // 1. Check faculty_mappings (admin-configured explicit mapping)
+    const [mapping] = await db
+      .select({ teacherId: facultyMappings.teacherId })
+      .from(facultyMappings)
+      .where(
+        and(
+          eq(facultyMappings.schoolId, schoolId),
+          eq(facultyMappings.className, className),
+          eq(facultyMappings.section, section),
+        )
+      )
+      .limit(1);
+
+    if (mapping) {
+      return this.getTeacherById(mapping.teacherId);
+    }
+
+    // 2. Fall back to primary assignment on teachers row
+    const [teacher] = await db
+      .select()
+      .from(teachers)
+      .where(
+        and(
+          eq(teachers.schoolId, schoolId),
+          eq(teachers.assignedClass, className),
+          eq(teachers.assignedSection, section),
+          eq(teachers.isActive, true),
+        )
+      )
+      .limit(1);
+
+    return teacher ?? null;
+  }
+
+  /**
+   * Returns teacher-targeted notices scoped strictly to this teacher.
+   *
+   * Priority rule:
+   *  • If a notice carries targetTeacherId, ONLY that specific teacher sees it —
+   *    this is the strict-pin path used by admin ledger reminders.
+   *  • If targetTeacherId is null (legacy / broadcast notices), fall back to
+   *    class-section matching against both teachers.assignedClass/Section and
+   *    faculty_mappings rows.
+   *
+   * Students can NEVER see these notices — the targetType:"teacher" filter in
+   * getStudentNotices only fetches targetType "whole_school" / "student" / "class".
    */
   async getTeacherScopedNotices(schoolId: number, teacherId: number): Promise<Notice[]> {
     const [teacherRecord, mappings] = await Promise.all([
@@ -618,8 +666,12 @@ export class DatabaseStorage {
       ))
       .orderBy(desc(notices.createdAt));
 
-    // Retain: school-wide broadcasts (no targetClass) OR matches any of this teacher's assignments
     return allNotices.filter(notice => {
+      // ── Strict pin: targetTeacherId set → only that exact teacher sees it ──
+      if (notice.targetTeacherId !== null && notice.targetTeacherId !== undefined) {
+        return notice.targetTeacherId === teacherId;
+      }
+      // ── Legacy / broadcast: match by class-section ──
       if (!notice.targetClass) return true;           // broadcast to all teachers
       if (assignments.length === 0) return false;     // teacher has no known assignments
       return assignments.some(
