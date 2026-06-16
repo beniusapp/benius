@@ -179,36 +179,39 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   const { data: overview, isLoading: overviewLoading } = useQuery<AttendanceOverview>({
     queryKey: ["/api/admin/attendance/overview", date],
     queryFn: async () => {
-      const r = await fetch(`/api/admin/attendance/overview?date=${date}`, { credentials: "include" });
+      const r = await fetch(`/api/admin/attendance/overview?date=${date}`, { credentials: "include", cache: "no-store" });
       return r.ok ? r.json() : { enrolledTotal: 0, markedTotal: 0, present: 0, absent: 0, leave: 0, percentage: 0 };
     },
     enabled: !!schoolId,
     staleTime: 0,
+    refetchOnMount: "always",
   });
 
   // Teacher summary (for quick-stat + Section B)
   const { data: teacherSummaryData, isLoading: teacherLoading } = useQuery<TeacherSummaryResponse>({
     queryKey: ["/api/admin/attendance/teacher-summary", date],
     queryFn: async () => {
-      const r = await fetch(`/api/admin/attendance/teacher-summary?date=${date}`, { credentials: "include" });
+      const r = await fetch(`/api/admin/attendance/teacher-summary?date=${date}`, { credentials: "include", cache: "no-store" });
       return r.ok ? r.json() : { summary: { totalFaculty: 0, marked: 0, notMarked: 0 }, teachers: [] };
     },
     enabled: !!schoolId,
     staleTime: 0,
+    refetchOnMount: "always",
   });
 
-  // Class-level student attendance — staleTime:0 so attendance changes always reflect immediately
+  // Class-level student attendance — always fetches live data, no caching at any layer
   const { data: studentData = [], isLoading: studentLoading } = useQuery<StudentAttendance[]>({
     queryKey: ["/api/admin/attendance/class-detail", filterClass, filterSection, date],
     queryFn: async () => {
       const r = await fetch(
         `/api/admin/attendance/class-detail?class=${encodeURIComponent(filterClass)}&section=${encodeURIComponent(filterSection)}&date=${date}`,
-        { credentials: "include" }
+        { credentials: "include", cache: "no-store" }
       );
       return r.ok ? r.json() : [];
     },
     enabled: !!filterClass && !!filterSection,
     staleTime: 0,
+    refetchOnMount: "always",
   });
 
   // Class stats

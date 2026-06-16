@@ -2002,10 +2002,14 @@ export async function registerRoutes(
           name: student.name,
           rollNo: student.rollNo ?? "",
           digitalStudentId: student.digitalStudentId,
-          // "not-marked" when no attendance record exists — never fabricate "present"
-          status: record?.status ?? "not-marked",
+          // Explicitly "not-marked" when no record — never fall back to "present"
+          status: (record && record.status) ? record.status : "not-marked",
         };
       });
+      // Prevent all layers of HTTP caching so the browser always gets live data
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
       res.json(result);
     } catch (err) {
       console.error("class-detail error:", err);
