@@ -1552,11 +1552,18 @@ export async function registerRoutes(
     const schoolId = req.session.schoolId!;
     const { title, description, eventType, startDate, endDate, isRecurring, colorCode, audienceScope, targetClass, targetSection } = req.body;
     if (!title || !eventType || !startDate) return res.status(400).json({ message: "title, eventType, startDate required" });
-    let scopeValue: "All_School" | "Entire_Class" | "Specific_Section" = "All_School";
-    if (targetClass && targetSection) scopeValue = "Specific_Section";
-    else if (targetClass) scopeValue = "Entire_Class";
-    else if (audienceScope === "Entire_Class") scopeValue = "Entire_Class";
-    else if (audienceScope === "Specific_Section") scopeValue = "Specific_Section";
+    let scopeValue: string = "All_School";
+    if (audienceScope === "Multi_Target") {
+      scopeValue = "Multi_Target";
+    } else if (targetClass && targetSection) {
+      scopeValue = "Specific_Section";
+    } else if (targetClass) {
+      scopeValue = "Entire_Class";
+    } else if (audienceScope === "Entire_Class") {
+      scopeValue = "Entire_Class";
+    } else if (audienceScope === "Specific_Section") {
+      scopeValue = "Specific_Section";
+    }
     if (scopeValue !== "All_School" && !targetClass) {
       return res.status(400).json({ message: "targetClass is required for class-targeted events" });
     }
@@ -1566,7 +1573,7 @@ export async function registerRoutes(
       schoolId, title, description: description || null, eventType, venue: null, colorCode: color,
       isRecurring: !!isRecurring, audienceScope: scopeValue,
       targetClass: scopeValue !== "All_School" ? (targetClass as string) : null,
-      targetSection: scopeValue === "Specific_Section" ? (targetSection as string) : null,
+      targetSection: (scopeValue === "Specific_Section" || scopeValue === "Multi_Target") ? (targetSection as string) : null,
     };
     const entries: { schoolId: number; title: string; description: string | null; eventType: string; venue: null; colorCode: string; isRecurring: boolean; date: string; audienceScope: string; targetClass: string | null; targetSection: string | null }[] = [];
 
@@ -1603,17 +1610,24 @@ export async function registerRoutes(
     if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
     const { title, description, eventType, date, venue, colorCode, isRecurring, audienceScope, targetClass, targetSection } = req.body;
     if (!title || !eventType || !date) return res.status(400).json({ message: "title, eventType, date required" });
-    let scopeValue: "All_School" | "Entire_Class" | "Specific_Section" = "All_School";
-    if (targetClass && targetSection) scopeValue = "Specific_Section";
-    else if (targetClass) scopeValue = "Entire_Class";
-    else if (audienceScope === "Entire_Class") scopeValue = "Entire_Class";
-    else if (audienceScope === "Specific_Section") scopeValue = "Specific_Section";
+    let scopeValue: string = "All_School";
+    if (audienceScope === "Multi_Target") {
+      scopeValue = "Multi_Target";
+    } else if (targetClass && targetSection) {
+      scopeValue = "Specific_Section";
+    } else if (targetClass) {
+      scopeValue = "Entire_Class";
+    } else if (audienceScope === "Entire_Class") {
+      scopeValue = "Entire_Class";
+    } else if (audienceScope === "Specific_Section") {
+      scopeValue = "Specific_Section";
+    }
     const color = colorCode || (eventType === "holiday" ? "#ef4444" : eventType === "examination" ? "#3b82f6" : "#10b981");
     const updated = await storage.updateCalendarEvent(id, schoolId, {
       title, description: description || null, eventType, date, venue: venue || null, colorCode: color,
       isRecurring: !!isRecurring, audienceScope: scopeValue,
       targetClass: scopeValue !== "All_School" ? (targetClass || null) : null,
-      targetSection: scopeValue === "Specific_Section" ? (targetSection || null) : null,
+      targetSection: (scopeValue === "Specific_Section" || scopeValue === "Multi_Target") ? (targetSection || null) : null,
     });
     if (!updated) return res.status(404).json({ message: "Event not found or access denied" });
     res.json(updated);

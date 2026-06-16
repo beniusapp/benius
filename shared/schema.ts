@@ -251,9 +251,9 @@ export const calendarEvents = pgTable("calendar_events", {
   description: text("description"),
   colorCode: text("color_code"),
   isRecurring: boolean("is_recurring").notNull().default(false),
-  audienceScope: varchar("audience_scope", { length: 20 }).notNull().default("All_School"),
-  targetClass: varchar("target_class", { length: 20 }),
-  targetSection: varchar("target_section", { length: 10 }),
+  audienceScope: varchar("audience_scope", { length: 30 }).notNull().default("All_School"),
+  targetClass: text("target_class"),
+  targetSection: text("target_section"),
 });
 
 export const libraryBooks = pgTable("library_books", {

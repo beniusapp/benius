@@ -62,6 +62,18 @@ function buildCalendarAudienceFilter(
         ) as SQL
       );
     }
+    // Multi_Target: targetClass is a JSON array of classIds; targetSection is a JSON map of classId→sectionIds[]
+    // Class matches if classId is in the JSON array.
+    // Section matches if sectionIds is empty (= entire class) OR contains the requested section.
+    clauses.push(
+      sql`CASE WHEN ${calendarEvents.audienceScope} = 'Multi_Target' THEN (
+        ${calendarEvents.targetClass}::jsonb @> ${JSON.stringify([cls])}::jsonb
+        AND (
+          COALESCE(jsonb_array_length(${calendarEvents.targetSection}::jsonb -> ${cls}), 0) = 0
+          ${sec ? sql`OR ${calendarEvents.targetSection}::jsonb -> ${cls} @> ${JSON.stringify([sec])}::jsonb` : sql``}
+        )
+      ) ELSE FALSE END` as unknown as SQL
+    );
   }
   return or(...clauses) as SQL;
 }
