@@ -574,9 +574,13 @@ export default function AdminDashboard() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [matchedModule, moduleParams] = useRoute("/admin-dashboard/:module");
-  const activeModule: ActiveModule = matchedModule && moduleParams?.module
+  const [matchedSetupSub, setupSubParams] = useRoute("/admin-dashboard/school-setup/:section");
+  const activeModule: ActiveModule = matchedSetupSub
+    ? "school-setup"
+    : matchedModule && moduleParams?.module
     ? (moduleParams.module as ActiveModule)
     : "grid";
+  const setupSection = matchedSetupSub ? (setupSubParams?.section ?? undefined) : undefined;
   const [showProfile, setShowProfile] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
     Foundation: true, Oversight: true, Management: true, Enterprise: true,
@@ -723,7 +727,7 @@ export default function AdminDashboard() {
 
   const renderModule = () => {
     switch (activeModule) {
-      case "school-setup":      return <SchoolSetup schoolId={me.schoolId} />;
+      case "school-setup":      return <SchoolSetup schoolId={me.schoolId} section={setupSection} onNavigateSection={(sec) => { if (sec === null) setLocation("/admin-dashboard/school-setup"); else setLocation(`/admin-dashboard/school-setup/${sec}`); }} />;
       case "student-registry":  return <StudentRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} />;
       case "faculty-mapping":   return <FacultyMapping schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
       case "teacher-registry":  return <TeacherRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} onNavigate={(mod) => goToModule(mod as ActiveModule)} />;
@@ -1193,16 +1197,32 @@ export default function AdminDashboard() {
               </div>
             ) : (
               <div>
-                <div className="mb-6 flex items-center gap-2">
+                <div className="mb-6 flex items-center gap-2 flex-wrap">
                   <button
-                    onClick={() => goToModule("grid")}
+                    onClick={() => setupSection ? setLocation("/admin-dashboard/school-setup") : goToModule("grid")}
                     className="text-white/40 hover:text-white text-sm flex items-center gap-1 transition-colors"
                     data-testid="breadcrumb-back"
                   >
                     <ChevronLeft className="w-4 h-4" /> Dashboard
                   </button>
                   <span className="text-white/15">/</span>
-                  <span className="text-white/65 text-sm">{TILES.find(t => t.id === activeModule)?.label ?? activeModule}</span>
+                  {setupSection ? (
+                    <>
+                      <button
+                        onClick={() => setLocation("/admin-dashboard/school-setup")}
+                        className="text-white/40 hover:text-white text-sm transition-colors"
+                        data-testid="breadcrumb-setup"
+                      >
+                        School Setup
+                      </button>
+                      <span className="text-white/15">/</span>
+                      <span className="text-white/65 text-sm capitalize">
+                        {setupSection.replace(/-/g, " ").replace(/\b(\w)/g, c => c.toUpperCase())}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-white/65 text-sm">{TILES.find(t => t.id === activeModule)?.label ?? activeModule}</span>
+                  )}
                 </div>
                 {renderModule()}
               </div>

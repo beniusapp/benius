@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Plus, X, Save, BookOpen, Grid3X3, FileText, ChevronDown, ChevronRight, Trash2, GraduationCap, AlertTriangle, CalendarClock, Check, ChevronsUpDown, Scale } from "lucide-react";
+import { Plus, X, Save, BookOpen, Grid3X3, FileText, ChevronDown, ChevronRight, ChevronLeft, Trash2, GraduationCap, AlertTriangle, CalendarClock, Check, ChevronsUpDown, Scale } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-interface Props { schoolId: number }
+interface Props { schoolId: number; section?: string; onNavigateSection?: (section: string | null) => void; }
 
 const CLASS_ORDER = ["LKG","UKG","1","2","3","4","5","6","7","8","9","10","11","12"];
 
@@ -1757,486 +1757,539 @@ export default function SchoolSetup({ schoolId }: Props) {
     ...classes.filter(c => !CLASS_ORDER.includes(c)),
   ];
 
+  const SETUP_SECTIONS = [
+    { id: "classes",                label: "Classes",                   icon: Grid3X3,       color: "#D4AF37", desc: "Add and manage class names used across your school (e.g. LKG, 1–12)." },
+    { id: "sections",               label: "Sections",                  icon: Grid3X3,       color: "#6366f1", desc: "Add and manage section labels assigned to each class (e.g. A, B, C)." },
+    { id: "subjects",               label: "Subjects",                  icon: BookOpen,      color: "#10b981", desc: "Define the subjects taught in your school." },
+    { id: "exam-types",             label: "Exam Types",                icon: FileText,      color: "#3b82f6", desc: "Define exam categories such as SA1, FA2, Half-Yearly, etc." },
+    { id: "class-section-mapping",  label: "Class–Section Mapping",     icon: Grid3X3,       color: "#6366f1", desc: "Specify which sections are available for each class." },
+    { id: "class-subject-mapping",  label: "Class–Subject Mapping",     icon: BookOpen,      color: "#10b981", desc: "Specify which subjects are taught in each class." },
+    { id: "class-examtype-mapping", label: "Class–Exam Type Mapping",   icon: FileText,      color: "#D4AF37", desc: "Specify which exam types apply to each class." },
+    { id: "grading",                label: "Academic Policy",           icon: GraduationCap, color: "#10b981", desc: "Define grading tiers, pass percentages, and grade brackets." },
+    { id: "exam-policy",            label: "Exam & Promotion Policy",   icon: Scale,         color: "#D4AF37", desc: "Configure exam weighting formulas and promotion rules." },
+    { id: "leave-policy",           label: "Leave Policy",              icon: CalendarClock, color: "#f59e0b", desc: "Set leave types, annual limits, renewal dates and expiry rules." },
+  ];
+
+  // ─── Landing page ───────────────────────────────────────────
+  if (!section) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-xl font-bold text-white">School Setup</h2>
+          <p className="text-white/50 text-sm">Select a category to configure your school's master lists, mappings and policies.</p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+          {SETUP_SECTIONS.map(s => (
+            <button
+              key={s.id}
+              onClick={() => onNavigateSection?.(s.id)}
+              className="rounded-xl border border-white/10 bg-[#1A2942] p-5 text-left hover:bg-[#243555] hover:border-white/20 transition-all"
+              data-testid={`setup-tile-${s.id}`}
+            >
+              <div className="flex items-start gap-3 mb-3">
+                <div className="p-2.5 rounded-xl flex-shrink-0" style={{ background: `${s.color}18` }}>
+                  <s.icon className="w-5 h-5" style={{ color: s.color }} />
+                </div>
+                <h3 className="font-bold text-white text-sm leading-tight pt-1">{s.label}</h3>
+              </div>
+              <p className="text-white/40 text-xs leading-relaxed mb-3">{s.desc}</p>
+              <div className="flex items-center gap-1 text-xs font-semibold" style={{ color: s.color }}>
+                Configure <ChevronRight className="w-3 h-3" />
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Per-section page ────────────────────────────────────────
+  const sectionMeta = SETUP_SECTIONS.find(s => s.id === section);
+  const SectionIcon = sectionMeta?.icon ?? Grid3X3;
+
   return (
     <div className="space-y-6">
-      <div className="mb-2">
-        <h2 className="text-xl font-bold text-white">School Setup</h2>
-        <p className="text-white/50 text-sm">Configure master lists for classes, sections, subjects and exam types.</p>
+
+      {/* Back button + section header */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => onNavigateSection?.(null)}
+          className="flex items-center justify-center w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 transition-colors border border-white/10 flex-shrink-0"
+          data-testid="btn-setup-back"
+        >
+          <ChevronLeft className="w-4 h-4 text-white/60" />
+        </button>
+        {sectionMeta && (
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg" style={{ background: `${sectionMeta.color}18` }}>
+              <SectionIcon className="w-4 h-4" style={{ color: sectionMeta.color }} />
+            </div>
+            <div>
+              <p className="text-[10px] text-white/35 leading-none">School Setup</p>
+              <h2 className="text-base font-bold text-white leading-tight mt-0.5">{sectionMeta.label}</h2>
+            </div>
+          </div>
+        )}
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+      {/* ─── classes ─── */}
+      {section === "classes" && (
         <MetaSection title="Classes" icon={Grid3X3} items={classes} input={classInput} setInput={setClassInput}
           onAdd={() => addTo(classes, setClasses, classInput, setClassInput)}
           onRemove={v => removeFrom(classes, setClasses, v)}
           onSave={() => saveMutation.mutate({ key: "classes", values: classes })}
           testId="classes" isPending={saveMutation.isPending} />
+      )}
+
+      {/* ─── sections ─── */}
+      {section === "sections" && (
         <MetaSection title="Sections" icon={Grid3X3} items={sections} input={sectionInput} setInput={setSectionInput}
           onAdd={() => addTo(sections, setSections, sectionInput, setSectionInput)}
           onRemove={v => removeFrom(sections, setSections, v)}
           onSave={() => saveMutation.mutate({ key: "sections", values: sections })}
           testId="sections" isPending={saveMutation.isPending} />
+      )}
+
+      {/* ─── subjects ─── */}
+      {section === "subjects" && (
         <MetaSection title="Subjects" icon={BookOpen} items={subjects} input={subjectInput} setInput={setSubjectInput}
           onAdd={() => addTo(subjects, setSubjects, subjectInput, setSubjectInput)}
           onRemove={v => removeFrom(subjects, setSubjects, v)}
           onSave={() => saveMutation.mutate({ key: "subjects", values: subjects })}
           testId="subjects" isPending={saveMutation.isPending} />
+      )}
+
+      {/* ─── exam-types ─── */}
+      {section === "exam-types" && (
         <MetaSection title="Exam Types" icon={FileText} items={examTypes} input={examInput} setInput={setExamInput}
           onAdd={() => addTo(examTypes, setExamTypes, examInput, setExamInput)}
           onRemove={v => removeFrom(examTypes, setExamTypes, v)}
           onSave={() => saveMutation.mutate({ key: "exam_types", values: examTypes })}
           testId="exam-types" isPending={saveMutation.isPending} />
-      </div>
+      )}
 
-      {/* ===== CLASS → SECTION ASSIGNMENT ===== */}
-      <div className="pt-2">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 rounded-lg bg-[#6366f1]/20">
-            <Grid3X3 className="w-5 h-5 text-[#6366f1]" />
-          </div>
-          <div>
-            <h3 className="font-bold text-white">Class-Section Mapping</h3>
-            <p className="text-white/40 text-xs">Define which sections belong to each class. Teachers will see only these sections when selecting a class.</p>
-          </div>
-        </div>
-        {classes.length === 0 || sections.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-white/10 p-6 text-center text-white/30 text-sm">
-            Add classes and sections above first, then map them here.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {classes.map(cls => (
-              <div key={cls} className="rounded-xl border border-white/10 bg-[#1A2942] px-4 py-3 flex flex-wrap items-center gap-3">
-                <span className="text-white font-semibold text-sm w-20 shrink-0">Class {cls}</span>
-                <div className="flex flex-wrap gap-2 flex-1">
-                  {sections.map(sec => {
-                    const active = (classSections[cls] || []).includes(sec);
-                    return (
-                      <button
-                        key={sec}
-                        onClick={() => toggleClassSection(cls, sec)}
-                        className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
-                          active
-                            ? "bg-[#6366f1] text-white border-[#6366f1]"
-                            : "border-white/20 text-white/40 hover:border-white/50 hover:text-white/70"
-                        }`}
-                        data-testid={`btn-toggle-section-${cls}-${sec}`}
-                      >
-                        {sec}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-            <Button
-              size="sm"
-              onClick={() => saveClassSectionsMutation.mutate()}
-              disabled={saveClassSectionsMutation.isPending}
-              className="mt-2 bg-[#6366f1] hover:bg-[#4f46e5] text-white font-semibold h-9"
-              data-testid="btn-save-class-sections"
-            >
-              <Save className="w-3.5 h-3.5 mr-1.5" />
-              {saveClassSectionsMutation.isPending ? "Saving…" : "Save Class-Section Mapping"}
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {/* ===== CLASS → SUBJECT ASSIGNMENT ===== */}
-      <div className="pt-2">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 rounded-lg bg-[#10b981]/20">
-            <BookOpen className="w-5 h-5 text-[#10b981]" />
-          </div>
-          <div>
-            <h3 className="font-bold text-white">Class-Subject Mapping</h3>
-            <p className="text-white/40 text-xs">Define which subjects are taught in each class. Teachers will see only these subjects when selecting a class.</p>
-          </div>
-        </div>
-        {classes.length === 0 || subjects.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-white/10 p-6 text-center text-white/30 text-sm">
-            Add classes and subjects above first, then map them here.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {classes.map(cls => (
-              <div key={cls} className="rounded-xl border border-white/10 bg-[#1A2942] px-4 py-3 flex flex-wrap items-center gap-3">
-                <span className="text-white font-semibold text-sm w-20 shrink-0">Class {cls}</span>
-                <div className="flex flex-wrap gap-2 flex-1">
-                  {subjects.map(sub => {
-                    const active = (classSubjects[cls] || []).includes(sub);
-                    return (
-                      <button
-                        key={sub}
-                        onClick={() => toggleClassSubject(cls, sub)}
-                        className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
-                          active
-                            ? "bg-[#10b981] text-white border-[#10b981]"
-                            : "border-white/20 text-white/40 hover:border-white/50 hover:text-white/70"
-                        }`}
-                        data-testid={`btn-toggle-subject-${cls}-${sub}`}
-                      >
-                        {sub}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-            <Button
-              size="sm"
-              onClick={() => saveClassSubjectsMutation.mutate()}
-              disabled={saveClassSubjectsMutation.isPending}
-              className="mt-2 bg-[#10b981] hover:bg-emerald-600 text-white font-semibold h-9"
-              data-testid="btn-save-class-subjects"
-            >
-              <Save className="w-3.5 h-3.5 mr-1.5" />
-              {saveClassSubjectsMutation.isPending ? "Saving…" : "Save Class-Subject Mapping"}
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {/* ===== CLASS → EXAM TYPE ASSIGNMENT ===== */}
-      <div className="pt-2">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 rounded-lg bg-[#D4AF37]/20">
-            <FileText className="w-5 h-5 text-[#D4AF37]" />
-          </div>
-          <div>
-            <h3 className="font-bold text-white">Class-Exam Type Mapping</h3>
-            <p className="text-white/40 text-xs">Define which exam types apply to each class. Teachers will see only these exam types when selecting a class.</p>
-          </div>
-        </div>
-        {classes.length === 0 || examTypes.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-white/10 p-6 text-center text-white/30 text-sm">
-            Add classes and exam types above first, then map them here.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {classes.map(cls => (
-              <div key={cls} className="rounded-xl border border-white/10 bg-[#1A2942] px-4 py-3 flex flex-wrap items-center gap-3">
-                <span className="text-white font-semibold text-sm w-20 shrink-0">Class {cls}</span>
-                <div className="flex flex-wrap gap-2 flex-1">
-                  {examTypes.map(et => {
-                    const active = (classExamTypes[cls] || []).includes(et);
-                    return (
-                      <button
-                        key={et}
-                        onClick={() => toggleClassExamType(cls, et)}
-                        className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
-                          active
-                            ? "bg-[#D4AF37] text-[#0A1628] border-[#D4AF37]"
-                            : "border-white/20 text-white/40 hover:border-white/50 hover:text-white/70"
-                        }`}
-                        data-testid={`btn-toggle-examtype-${cls}-${et}`}
-                      >
-                        {et}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-            <Button
-              size="sm"
-              onClick={() => saveClassExamTypesMutation.mutate()}
-              disabled={saveClassExamTypesMutation.isPending}
-              className="mt-2 bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-9"
-              data-testid="btn-save-class-exam-types"
-            >
-              <Save className="w-3.5 h-3.5 mr-1.5" />
-              {saveClassExamTypesMutation.isPending ? "Saving…" : "Save Class-Exam Type Mapping"}
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {/* ===== ACADEMIC POLICY ===== */}
-      <div className="pt-2">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 rounded-lg bg-[#10b981]/20">
-            <GraduationCap className="w-5 h-5 text-[#10b981]" />
-          </div>
-          <div>
-            <h3 className="font-bold text-white">Academic Policy</h3>
-            <p className="text-white/40 text-xs">
-              Define grading tiers for different class ranges. The <span className="text-[#D4AF37]/80 font-medium">From Class</span> and <span className="text-[#D4AF37]/80 font-medium">To Class</span> dropdowns are populated from your saved <span className="text-[#D4AF37]/80 font-medium">Classes</span> configuration above.
-            </p>
-          </div>
-          <Button size="sm" onClick={addTier}
-            className="ml-auto bg-[#10b981] hover:bg-emerald-600 text-white font-semibold h-9"
-            data-testid="btn-add-tier">
-            <Plus className="w-4 h-4 mr-1" /> Add Tier
-          </Button>
-        </div>
-
-        {policyErrors.length > 0 && (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 mb-3 flex gap-2">
-            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-            <div className="space-y-0.5">
-              {policyErrors.map((e, i) => <p key={i} className="text-red-300 text-xs">{e}</p>)}
+      {/* ─── class-section-mapping ─── */}
+      {section === "class-section-mapping" && (
+        <div>
+          <p className="text-white/40 text-xs mb-4">Define which sections belong to each class. Teachers will see only these sections when selecting a class.</p>
+          {classes.length === 0 || sections.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-white/10 p-6 text-center text-white/30 text-sm">
+              Configure classes and sections first, then return here to map them.
             </div>
-          </div>
-        )}
-
-        {tiers.length === 0 && (
-          <div className="rounded-xl border border-dashed border-white/10 p-8 text-center">
-            <GraduationCap className="w-8 h-8 mx-auto mb-2 text-white/20" />
-            <p className="text-white/30 text-sm">No grading tiers configured yet.</p>
-            <p className="text-white/20 text-xs mt-1">Click "Add Tier" to create your first grading group (e.g. Primary: Classes 1–5).</p>
-          </div>
-        )}
-
-        <div className="space-y-3">
-          {tiers.map(tier => (
-            <TierAccordion
-              key={tier.tempId}
-              tier={tier}
-              classesList={classesList}
-              onChange={updated => updateTier(tier.tempId, updated)}
-              onDelete={() => deleteTier(tier)}
-              onSave={() => saveTier(tier)}
-              isSaving={savingTierId === tier.tempId}
-            />
-          ))}
+          ) : (
+            <div className="space-y-2">
+              {classes.map(cls => (
+                <div key={cls} className="rounded-xl border border-white/10 bg-[#1A2942] px-4 py-3 flex flex-wrap items-center gap-3">
+                  <span className="text-white font-semibold text-sm w-20 shrink-0">Class {cls}</span>
+                  <div className="flex flex-wrap gap-2 flex-1">
+                    {sections.map(sec => {
+                      const active = (classSections[cls] || []).includes(sec);
+                      return (
+                        <button
+                          key={sec}
+                          onClick={() => toggleClassSection(cls, sec)}
+                          className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                            active
+                              ? "bg-[#6366f1] text-white border-[#6366f1]"
+                              : "border-white/20 text-white/40 hover:border-white/50 hover:text-white/70"
+                          }`}
+                          data-testid={`btn-toggle-section-${cls}-${sec}`}
+                        >
+                          {sec}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              <Button
+                size="sm"
+                onClick={() => saveClassSectionsMutation.mutate()}
+                disabled={saveClassSectionsMutation.isPending}
+                className="mt-2 bg-[#6366f1] hover:bg-[#4f46e5] text-white font-semibold h-9"
+                data-testid="btn-save-class-sections"
+              >
+                <Save className="w-3.5 h-3.5 mr-1.5" />
+                {saveClassSectionsMutation.isPending ? "Saving…" : "Save Class-Section Mapping"}
+              </Button>
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
-      {/* ===== EXAM AGGREGATION & PROMOTION POLICY ===== */}
-      <div className="pt-2">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 rounded-lg bg-[#D4AF37]/20">
-            <Scale className="w-5 h-5 text-[#D4AF37]" />
+      {/* ─── class-subject-mapping ─── */}
+      {section === "class-subject-mapping" && (
+        <div>
+          <p className="text-white/40 text-xs mb-4">Define which subjects are taught in each class. Teachers will see only these subjects when selecting a class.</p>
+          {classes.length === 0 || subjects.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-white/10 p-6 text-center text-white/30 text-sm">
+              Configure classes and subjects first, then return here to map them.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {classes.map(cls => (
+                <div key={cls} className="rounded-xl border border-white/10 bg-[#1A2942] px-4 py-3 flex flex-wrap items-center gap-3">
+                  <span className="text-white font-semibold text-sm w-20 shrink-0">Class {cls}</span>
+                  <div className="flex flex-wrap gap-2 flex-1">
+                    {subjects.map(sub => {
+                      const active = (classSubjects[cls] || []).includes(sub);
+                      return (
+                        <button
+                          key={sub}
+                          onClick={() => toggleClassSubject(cls, sub)}
+                          className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                            active
+                              ? "bg-[#10b981] text-white border-[#10b981]"
+                              : "border-white/20 text-white/40 hover:border-white/50 hover:text-white/70"
+                          }`}
+                          data-testid={`btn-toggle-subject-${cls}-${sub}`}
+                        >
+                          {sub}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              <Button
+                size="sm"
+                onClick={() => saveClassSubjectsMutation.mutate()}
+                disabled={saveClassSubjectsMutation.isPending}
+                className="mt-2 bg-[#10b981] hover:bg-emerald-600 text-white font-semibold h-9"
+                data-testid="btn-save-class-subjects"
+              >
+                <Save className="w-3.5 h-3.5 mr-1.5" />
+                {saveClassSubjectsMutation.isPending ? "Saving…" : "Save Class-Subject Mapping"}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── class-examtype-mapping ─── */}
+      {section === "class-examtype-mapping" && (
+        <div>
+          <p className="text-white/40 text-xs mb-4">Define which exam types apply to each class. Teachers will see only these exam types when selecting a class.</p>
+          {classes.length === 0 || examTypes.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-white/10 p-6 text-center text-white/30 text-sm">
+              Configure classes and exam types first, then return here to map them.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {classes.map(cls => (
+                <div key={cls} className="rounded-xl border border-white/10 bg-[#1A2942] px-4 py-3 flex flex-wrap items-center gap-3">
+                  <span className="text-white font-semibold text-sm w-20 shrink-0">Class {cls}</span>
+                  <div className="flex flex-wrap gap-2 flex-1">
+                    {examTypes.map(et => {
+                      const active = (classExamTypes[cls] || []).includes(et);
+                      return (
+                        <button
+                          key={et}
+                          onClick={() => toggleClassExamType(cls, et)}
+                          className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                            active
+                              ? "bg-[#D4AF37] text-[#0A1628] border-[#D4AF37]"
+                              : "border-white/20 text-white/40 hover:border-white/50 hover:text-white/70"
+                          }`}
+                          data-testid={`btn-toggle-examtype-${cls}-${et}`}
+                        >
+                          {et}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              <Button
+                size="sm"
+                onClick={() => saveClassExamTypesMutation.mutate()}
+                disabled={saveClassExamTypesMutation.isPending}
+                className="mt-2 bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-9"
+                data-testid="btn-save-class-exam-types"
+              >
+                <Save className="w-3.5 h-3.5 mr-1.5" />
+                {saveClassExamTypesMutation.isPending ? "Saving…" : "Save Class-Exam Type Mapping"}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── grading (Academic Policy) ─── */}
+      {section === "grading" && (
+        <div className="space-y-4">
+          <div className="flex items-start gap-3">
+            <p className="text-white/40 text-xs flex-1 pt-0.5">
+              Define grading tiers for different class ranges. The <span className="text-[#D4AF37]/80 font-medium">From Class</span> and <span className="text-[#D4AF37]/80 font-medium">To Class</span> dropdowns are populated from your saved Classes configuration.
+            </p>
+            <Button size="sm" onClick={addTier}
+              className="bg-[#10b981] hover:bg-emerald-600 text-white font-semibold h-9 shrink-0"
+              data-testid="btn-add-tier">
+              <Plus className="w-4 h-4 mr-1" /> Add Tier
+            </Button>
           </div>
-          <div>
-            <h3 className="font-bold text-white">Exam Aggregation & Promotion Policy</h3>
-            <p className="text-white/40 text-xs">
+
+          {policyErrors.length > 0 && (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 flex gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                {policyErrors.map((e, i) => <p key={i} className="text-red-300 text-xs">{e}</p>)}
+              </div>
+            </div>
+          )}
+
+          {tiers.length === 0 && (
+            <div className="rounded-xl border border-dashed border-white/10 p-8 text-center">
+              <GraduationCap className="w-8 h-8 mx-auto mb-2 text-white/20" />
+              <p className="text-white/30 text-sm">No grading tiers configured yet.</p>
+              <p className="text-white/20 text-xs mt-1">Click "Add Tier" to create your first grading group (e.g. Primary: Classes 1–5).</p>
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {tiers.map(tier => (
+              <TierAccordion
+                key={tier.tempId}
+                tier={tier}
+                classesList={classesList}
+                onChange={updated => updateTier(tier.tempId, updated)}
+                onDelete={() => deleteTier(tier)}
+                onSave={() => saveTier(tier)}
+                isSaving={savingTierId === tier.tempId}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ─── exam-policy ─── */}
+      {section === "exam-policy" && (
+        <div className="space-y-4">
+          <div className="flex items-start gap-3">
+            <p className="text-white/40 text-xs flex-1 pt-0.5">
               Configure how component exam scores are weighted into composite results, and define the subject-failure thresholds that gate student promotion.
             </p>
+            <Button size="sm" onClick={addExamPolicyTierFn}
+              className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-9 shrink-0"
+              data-testid="btn-add-exam-policy-tier">
+              <Plus className="w-4 h-4 mr-1" /> Add Policy
+            </Button>
           </div>
-          <Button size="sm" onClick={addExamPolicyTierFn}
-            className="ml-auto bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-9"
-            data-testid="btn-add-exam-policy-tier">
-            <Plus className="w-4 h-4 mr-1" /> Add Policy
-          </Button>
-        </div>
 
-        {examPolicyErrors.length > 0 && (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 mb-3 flex gap-2">
-            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-            <div className="space-y-0.5">
-              {examPolicyErrors.map((e, i) => <p key={i} className="text-red-300 text-xs">{e}</p>)}
+          {examPolicyErrors.length > 0 && (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 flex gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                {examPolicyErrors.map((e, i) => <p key={i} className="text-red-300 text-xs">{e}</p>)}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {examPolicyTierList.length === 0 && (
-          <div className="rounded-xl border border-dashed border-white/10 p-8 text-center">
-            <Scale className="w-8 h-8 mx-auto mb-2 text-white/20" />
-            <p className="text-white/30 text-sm">No exam policy tiers configured yet.</p>
-            <p className="text-white/20 text-xs mt-1">Click "Add Policy" to define how exams are weighted and how promotion is decided for each class group.</p>
-          </div>
-        )}
+          {examPolicyTierList.length === 0 && (
+            <div className="rounded-xl border border-dashed border-white/10 p-8 text-center">
+              <Scale className="w-8 h-8 mx-auto mb-2 text-white/20" />
+              <p className="text-white/30 text-sm">No exam policy tiers configured yet.</p>
+              <p className="text-white/20 text-xs mt-1">Click "Add Policy" to define how exams are weighted and how promotion is decided for each class group.</p>
+            </div>
+          )}
 
-        <div className="space-y-3">
-          {examPolicyTierList.map(tier => (
-            <ExamPolicyTierAccordion
-              key={tier.tempId}
-              tier={tier}
-              classesList={classesList}
-              examTypesList={examTypes}
-              onChange={updated => updateExamPolicyTierFn(tier.tempId, updated)}
-              onDelete={() => deleteExamPolicyTierFn(tier)}
-              onSave={() => saveExamPolicyTierFn(tier)}
-              isSaving={savingExamPolicyId === tier.tempId}
-              justSaved={savedExamPolicyId === tier.tempId}
-            />
-          ))}
+          <div className="space-y-3">
+            {examPolicyTierList.map(tier => (
+              <ExamPolicyTierAccordion
+                key={tier.tempId}
+                tier={tier}
+                classesList={classesList}
+                examTypesList={examTypes}
+                onChange={updated => updateExamPolicyTierFn(tier.tempId, updated)}
+                onDelete={() => deleteExamPolicyTierFn(tier)}
+                onSave={() => saveExamPolicyTierFn(tier)}
+                isSaving={savingExamPolicyId === tier.tempId}
+                justSaved={savedExamPolicyId === tier.tempId}
+              />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* ===== LEAVE POLICY ===== */}
-      <div className="pt-2">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 rounded-lg bg-[#D4AF37]/20">
-            <CalendarClock className="w-5 h-5 text-[#D4AF37]" />
+      {/* ─── leave-policy ─── */}
+      {section === "leave-policy" && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <p className="text-white/40 text-xs flex-1">Configure leave types, annual quotas, renewal dates and expiry rules for your school.</p>
+            <Button size="sm" onClick={() => setLeavePolicies(prev => [...prev, emptyPolicy()])}
+              className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-9 shrink-0"
+              data-testid="btn-add-leave-policy">
+              <Plus className="w-4 h-4 mr-1" /> Add Leave Type
+            </Button>
           </div>
-          <div>
-            <h3 className="font-bold text-white">Leave Policy</h3>
-            <p className="text-white/40 text-xs">Configure leave types, annual quotas, renewal dates and expiry rules for your school.</p>
-          </div>
-          <Button size="sm" onClick={() => setLeavePolicies(prev => [...prev, emptyPolicy()])}
-            className="ml-auto bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-9"
-            data-testid="btn-add-leave-policy">
-            <Plus className="w-4 h-4 mr-1" /> Add Leave Type
-          </Button>
-        </div>
 
-        {leavePolicies.length === 0 && (
-          <div className="rounded-xl border border-dashed border-gray-200 p-8 text-center">
-            <CalendarClock className="w-8 h-8 mx-auto mb-2 text-gray-300" />
-            <p className="text-gray-500 text-sm">No leave types configured yet.</p>
-            <p className="text-gray-400 text-xs mt-1">Click "Add Leave Type" to create your first leave policy (e.g. Sick Leave, 12 days).</p>
-          </div>
-        )}
+          {leavePolicies.length === 0 && (
+            <div className="rounded-xl border border-dashed border-gray-200 p-8 text-center">
+              <CalendarClock className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+              <p className="text-gray-500 text-sm">No leave types configured yet.</p>
+              <p className="text-gray-400 text-xs mt-1">Click "Add Leave Type" to create your first leave policy (e.g. Sick Leave, 12 days).</p>
+            </div>
+          )}
 
-        <div className="space-y-3">
-          {leavePolicies.map((policy, idx) => (
-            <div key={idx} className="rounded-xl border border-gray-200 bg-white overflow-hidden" data-testid={`leave-policy-card-${idx}`}>
-              {!policy.editing ? (
-                <div className="flex items-center gap-3 px-5 py-4">
-                  <div className="p-1.5 rounded-lg bg-[#D4AF37]/10">
-                    <CalendarClock className="w-4 h-4 text-[#D4AF37]" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-gray-900 text-sm">{policy.name}</p>
-                    <p className="text-gray-500 text-xs">
-                      {policy.annualLimit} days/year · Renews {MONTHS[parseInt(policy.renewalMonth) - 1]} {policy.renewalDay} · {policy.expiryBehavior === "carry_forward" ? "Carry forward" : "Expires"} · {policy.isActive ? "Active" : "Inactive"}
-                    </p>
-                  </div>
-                  <Button size="sm" variant="ghost" onClick={() => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, editing: true } : p))}
-                    className="text-gray-500 hover:text-gray-900 h-8 text-xs" data-testid={`btn-edit-leave-policy-${idx}`}>
-                    Edit
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={async () => {
-                    if (policy.id) {
-                      try {
-                        await apiRequest("DELETE", `/api/admin/leave-policies/${policy.id}`, undefined);
-                        queryClient.invalidateQueries({ queryKey: ["/api/admin/leave-policies"] });
-                        toast({ title: "Leave type deleted" });
-                      } catch {
-                        toast({ title: "Delete failed", variant: "destructive" });
-                        return;
-                      }
-                    }
-                    setLeavePolicies(prev => prev.filter((_, i) => i !== idx));
-                  }} className="text-red-400 hover:text-red-600 h-8" data-testid={`btn-delete-leave-policy-${idx}`}>
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-              ) : (
-                <div className="p-5 space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-medium text-gray-700 mb-1 block">Leave Type Name</label>
-                      <Input value={policy.name} onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, name: e.target.value } : p))}
-                        placeholder="e.g. Sick Leave" className="bg-white border-gray-300 text-gray-900 text-sm h-9"
-                        data-testid={`input-leave-name-${idx}`} />
+          <div className="space-y-3">
+            {leavePolicies.map((policy, idx) => (
+              <div key={idx} className="rounded-xl border border-gray-200 bg-white overflow-hidden" data-testid={`leave-policy-card-${idx}`}>
+                {!policy.editing ? (
+                  <div className="flex items-center gap-3 px-5 py-4">
+                    <div className="p-1.5 rounded-lg bg-[#D4AF37]/10">
+                      <CalendarClock className="w-4 h-4 text-[#D4AF37]" />
                     </div>
-                    <div>
-                      <label className="text-xs font-medium text-gray-700 mb-1 block">Annual Limit (days)</label>
-                      <Input type="number" min={1} max={365} value={policy.annualLimit}
-                        onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, annualLimit: e.target.value } : p))}
-                        placeholder="12" className="bg-white border-gray-300 text-gray-900 text-sm h-9"
-                        data-testid={`input-leave-limit-${idx}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-gray-900 text-sm">{policy.name}</p>
+                      <p className="text-gray-500 text-xs">
+                        {policy.annualLimit} days/year · Renews {MONTHS[parseInt(policy.renewalMonth) - 1]} {policy.renewalDay} · {policy.expiryBehavior === "carry_forward" ? "Carry forward" : "Expires"} · {policy.isActive ? "Active" : "Inactive"}
+                      </p>
                     </div>
-                    <div>
-                      <label className="text-xs font-medium text-gray-700 mb-1 block">Renewal Month</label>
-                      <select value={policy.renewalMonth}
-                        onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, renewalMonth: e.target.value } : p))}
-                        className="w-full h-9 rounded-md bg-white border border-gray-300 text-gray-900 text-sm px-3"
-                        data-testid={`select-renewal-month-${idx}`}>
-                        {MONTHS.map((m, mi) => <option key={mi} value={mi + 1}>{m}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-gray-700 mb-1 block">Renewal Day (1–28 for all months)</label>
-                      <Input type="number" min={1} max={31} value={policy.renewalDay}
-                        onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, renewalDay: e.target.value } : p))}
-                        placeholder="1" className="bg-white border-gray-300 text-gray-900 text-sm h-9"
-                        data-testid={`input-renewal-day-${idx}`} />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-gray-700 mb-1 block">Expiry Behaviour</label>
-                      <select value={policy.expiryBehavior}
-                        onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, expiryBehavior: e.target.value } : p))}
-                        className="w-full h-9 rounded-md bg-white border border-gray-300 text-gray-900 text-sm px-3"
-                        data-testid={`select-expiry-${idx}`}>
-                        <option value="expire">Expire unused days</option>
-                        <option value="carry_forward">Carry forward unused days</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-gray-700 mb-1 block">Target Roles</label>
-                      <select value={policy.targetRoles}
-                        onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, targetRoles: e.target.value } : p))}
-                        className="w-full h-9 rounded-md bg-white border border-gray-300 text-gray-900 text-sm px-3"
-                        data-testid={`select-target-roles-${idx}`}>
-                        <option value="all">All Staff</option>
-                        <option value="teacher">Teaching Staff</option>
-                        <option value="non_teaching">Non-Teaching Staff</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={policy.isActive}
-                        onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, isActive: e.target.checked } : p))}
-                        className="rounded" data-testid={`checkbox-active-${idx}`} />
-                      <span className="text-xs text-gray-600 font-medium">Active</span>
-                    </label>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" disabled={savingPolicyIdx === idx}
-                      className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-9"
-                      data-testid={`btn-save-leave-policy-${idx}`}
-                      onClick={async () => {
-                        if (!policy.name.trim()) { toast({ title: "Name required", variant: "destructive" }); return; }
-                        setSavingPolicyIdx(idx);
-                        try {
-                          const payload = {
-                            name: policy.name.trim(),
-                            annualLimit: parseInt(policy.annualLimit) || 12,
-                            targetRoles: policy.targetRoles,
-                            renewalMonth: parseInt(policy.renewalMonth) || 1,
-                            renewalDay: parseInt(policy.renewalDay) || 1,
-                            expiryBehavior: policy.expiryBehavior,
-                            isActive: policy.isActive,
-                          };
-                          if (policy.id) {
-                            await apiRequest("PATCH", `/api/admin/leave-policies/${policy.id}`, payload);
-                            setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, editing: false } : p));
-                          } else {
-                            const res = await apiRequest("POST", "/api/admin/leave-policies", payload);
-                            const created: LeavePolicyServerData = await res.json();
-                            setLeavePolicies(prev => prev.map((p, i) => i === idx ? {
-                              id: created.id, name: created.name, annualLimit: String(created.annualLimit),
-                              targetRoles: created.targetRoles, renewalMonth: String(created.renewalMonth),
-                              renewalDay: String(created.renewalDay), expiryBehavior: created.expiryBehavior,
-                              isActive: created.isActive, editing: false,
-                            } : p));
-                          }
-                          queryClient.invalidateQueries({ queryKey: ["/api/admin/leave-policies"] });
-                          toast({ title: "Leave policy saved", description: `"${policy.name.trim()}" updated.` });
-                        } catch (e) {
-                          toast({ title: "Save failed", description: e instanceof Error ? e.message : "An error occurred", variant: "destructive" });
-                        } finally {
-                          setSavingPolicyIdx(null);
-                        }
-                      }}>
-                      <Save className="w-3.5 h-3.5 mr-1.5" /> {savingPolicyIdx === idx ? "Saving…" : "Save"}
+                    <Button size="sm" variant="ghost" onClick={() => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, editing: true } : p))}
+                      className="text-gray-500 hover:text-gray-900 h-8 text-xs" data-testid={`btn-edit-leave-policy-${idx}`}>
+                      Edit
                     </Button>
-                    {policy.id && (
-                      <Button size="sm" variant="ghost"
-                        className="text-gray-500 hover:text-gray-700 h-9"
-                        onClick={() => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, editing: false } : p))}>
-                        Cancel
-                      </Button>
-                    )}
-                    {!policy.id && (
-                      <Button size="sm" variant="ghost"
-                        className="text-red-400 hover:text-red-600 h-9"
-                        onClick={() => setLeavePolicies(prev => prev.filter((_, i) => i !== idx))}>
-                        <Trash2 className="w-3.5 h-3.5 mr-1" /> Remove
-                      </Button>
-                    )}
+                    <Button size="sm" variant="ghost" onClick={async () => {
+                      if (policy.id) {
+                        try {
+                          await apiRequest("DELETE", `/api/admin/leave-policies/${policy.id}`, undefined);
+                          queryClient.invalidateQueries({ queryKey: ["/api/admin/leave-policies"] });
+                          toast({ title: "Leave type deleted" });
+                        } catch {
+                          toast({ title: "Delete failed", variant: "destructive" });
+                          return;
+                        }
+                      }
+                      setLeavePolicies(prev => prev.filter((_, i) => i !== idx));
+                    }} className="text-red-400 hover:text-red-600 h-8" data-testid={`btn-delete-leave-policy-${idx}`}>
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
                   </div>
-                </div>
-              )}
-            </div>
-          ))}
+                ) : (
+                  <div className="p-5 space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs font-medium text-gray-700 mb-1 block">Leave Type Name</label>
+                        <Input value={policy.name} onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, name: e.target.value } : p))}
+                          placeholder="e.g. Sick Leave" className="bg-white border-gray-300 text-gray-900 text-sm h-9"
+                          data-testid={`input-leave-name-${idx}`} />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-gray-700 mb-1 block">Annual Limit (days)</label>
+                        <Input type="number" min={1} max={365} value={policy.annualLimit}
+                          onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, annualLimit: e.target.value } : p))}
+                          placeholder="12" className="bg-white border-gray-300 text-gray-900 text-sm h-9"
+                          data-testid={`input-leave-limit-${idx}`} />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-gray-700 mb-1 block">Renewal Month</label>
+                        <select value={policy.renewalMonth}
+                          onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, renewalMonth: e.target.value } : p))}
+                          className="w-full h-9 rounded-md bg-white border border-gray-300 text-gray-900 text-sm px-3"
+                          data-testid={`select-renewal-month-${idx}`}>
+                          {MONTHS.map((m, mi) => <option key={mi} value={mi + 1}>{m}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-gray-700 mb-1 block">Renewal Day (1–28 for all months)</label>
+                        <Input type="number" min={1} max={31} value={policy.renewalDay}
+                          onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, renewalDay: e.target.value } : p))}
+                          placeholder="1" className="bg-white border-gray-300 text-gray-900 text-sm h-9"
+                          data-testid={`input-renewal-day-${idx}`} />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-gray-700 mb-1 block">Expiry Behaviour</label>
+                        <select value={policy.expiryBehavior}
+                          onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, expiryBehavior: e.target.value } : p))}
+                          className="w-full h-9 rounded-md bg-white border border-gray-300 text-gray-900 text-sm px-3"
+                          data-testid={`select-expiry-${idx}`}>
+                          <option value="expire">Expire unused days</option>
+                          <option value="carry_forward">Carry forward unused days</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-gray-700 mb-1 block">Target Roles</label>
+                        <select value={policy.targetRoles}
+                          onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, targetRoles: e.target.value } : p))}
+                          className="w-full h-9 rounded-md bg-white border border-gray-300 text-gray-900 text-sm px-3"
+                          data-testid={`select-target-roles-${idx}`}>
+                          <option value="all">All Staff</option>
+                          <option value="teacher">Teaching Staff</option>
+                          <option value="non_teaching">Non-Teaching Staff</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={policy.isActive}
+                          onChange={e => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, isActive: e.target.checked } : p))}
+                          className="rounded" data-testid={`checkbox-active-${idx}`} />
+                        <span className="text-xs text-gray-600 font-medium">Active</span>
+                      </label>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" disabled={savingPolicyIdx === idx}
+                        className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-9"
+                        data-testid={`btn-save-leave-policy-${idx}`}
+                        onClick={async () => {
+                          if (!policy.name.trim()) { toast({ title: "Name required", variant: "destructive" }); return; }
+                          setSavingPolicyIdx(idx);
+                          try {
+                            const payload = {
+                              name: policy.name.trim(),
+                              annualLimit: parseInt(policy.annualLimit) || 12,
+                              targetRoles: policy.targetRoles,
+                              renewalMonth: parseInt(policy.renewalMonth) || 1,
+                              renewalDay: parseInt(policy.renewalDay) || 1,
+                              expiryBehavior: policy.expiryBehavior,
+                              isActive: policy.isActive,
+                            };
+                            if (policy.id) {
+                              await apiRequest("PATCH", `/api/admin/leave-policies/${policy.id}`, payload);
+                              setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, editing: false } : p));
+                            } else {
+                              const res = await apiRequest("POST", "/api/admin/leave-policies", payload);
+                              const created: LeavePolicyServerData = await res.json();
+                              setLeavePolicies(prev => prev.map((p, i) => i === idx ? {
+                                id: created.id, name: created.name, annualLimit: String(created.annualLimit),
+                                targetRoles: created.targetRoles, renewalMonth: String(created.renewalMonth),
+                                renewalDay: String(created.renewalDay), expiryBehavior: created.expiryBehavior,
+                                isActive: created.isActive, editing: false,
+                              } : p));
+                            }
+                            queryClient.invalidateQueries({ queryKey: ["/api/admin/leave-policies"] });
+                            toast({ title: "Leave policy saved", description: `"${policy.name.trim()}" updated.` });
+                          } catch (e) {
+                            toast({ title: "Save failed", description: e instanceof Error ? e.message : "An error occurred", variant: "destructive" });
+                          } finally {
+                            setSavingPolicyIdx(null);
+                          }
+                        }}>
+                        <Save className="w-3.5 h-3.5 mr-1.5" /> {savingPolicyIdx === idx ? "Saving…" : "Save"}
+                      </Button>
+                      {policy.id && (
+                        <Button size="sm" variant="ghost"
+                          className="text-gray-500 hover:text-gray-700 h-9"
+                          onClick={() => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, editing: false } : p))}>
+                          Cancel
+                        </Button>
+                      )}
+                      {!policy.id && (
+                        <Button size="sm" variant="ghost"
+                          className="text-red-400 hover:text-red-600 h-9"
+                          onClick={() => setLeavePolicies(prev => prev.filter((_, i) => i !== idx))}>
+                          <Trash2 className="w-3.5 h-3.5 mr-1" /> Remove
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
     </div>
   );
 }
