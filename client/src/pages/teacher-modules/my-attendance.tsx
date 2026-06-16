@@ -204,11 +204,13 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   const corrMut = useMutation({
     mutationFn: () => apiRequest("POST", "/api/teacher/self-attendance/correction", { date: corrForm.date, requestedCheckIn: corrForm.checkIn, requestedCheckOut: corrForm.checkOut, reason: corrForm.reason }).then(r => r.json()),
     onSuccess: () => {
-      toast({ title: "Correction Submitted", description: "Your request is pending admin review." });
+      toast({ title: "✅ Attendance Corrected", description: "Your record has been updated immediately." });
       setShowModal(false); setCorrForm({ date: "", checkIn: "", checkOut: "", reason: "" });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/today"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/history"] });
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/corrections"] });
     },
-    onError: (e: Error) => toast({ title: "Submission failed", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Correction failed", description: e.message, variant: "destructive" }),
   });
 
   const [activeTab, setActiveTab] = useState<"timeline" | "calendar">("timeline");
@@ -230,7 +232,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
           <ArrowLeft className="w-4 h-4" /> Back
         </button>
         <button onClick={() => setShowModal(true)} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 text-white/70 hover:bg-white/10 transition-colors" data-testid="button-request-correction">
-          <Edit3 className="w-3.5 h-3.5" /> Request Correction
+          <Edit3 className="w-3.5 h-3.5" /> Correct Attendance
         </button>
       </div>
 
@@ -481,10 +483,10 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm px-4 pb-4" data-testid="modal-correction">
           <div className="w-full max-w-md rounded-2xl bg-[#0A1628] border border-white/15 p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="font-bold text-white">Request Correction</h3>
+              <h3 className="font-bold text-white">Correct Attendance</h3>
               <button onClick={() => setShowModal(false)} className="p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition-colors"><X className="w-4 h-4" /></button>
             </div>
-            <p className="text-xs text-white/40">Corrections are allowed within the last 7 days only.</p>
+            <p className="text-xs text-white/40">Changes apply immediately. Allowed within the last 7 days only.</p>
 
             <div className="space-y-3">
               <div>
@@ -527,7 +529,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
                 className="flex-1 py-2.5 rounded-xl bg-[#D4AF37] text-[#0A1628] font-bold text-sm hover:bg-[#c49f2e] transition-colors disabled:opacity-50"
                 data-testid="button-submit-correction"
               >
-                {corrMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : "Submit Request"}
+                {corrMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : "Apply Correction"}
               </button>
             </div>
           </div>

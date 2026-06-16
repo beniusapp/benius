@@ -3490,7 +3490,7 @@ Thank you for your prompt attention to this matter.
     }
   });
 
-  // POST correction request
+  // POST self-correction — applies immediately, no admin approval needed
   app.post("/api/teacher/self-attendance/correction", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
@@ -3501,13 +3501,44 @@ Thank you for your prompt attention to this matter.
         return res.status(400).json({ message: "All fields are required" });
       const diffDays = Math.floor((Date.now() - new Date(date + "T00:00:00").getTime()) / 86400000);
       if (diffDays < 0 || diffDays > 7) return res.status(400).json({ message: "Corrections only allowed within the last 7 days" });
+
+      // Parse times as IST (teachers enter local Indian time)
+      const checkInIST  = new Date(`${date}T${requestedCheckIn}:00+05:30`);
+      const checkOutIST = new Date(`${date}T${requestedCheckOut}:00+05:30`);
+      if (checkOutIST <= checkInIST) return res.status(400).json({ message: "Check-out must be after check-in" });
+
+      const [ciHour, ciMin] = requestedCheckIn.split(":").map(Number);
+      const workingMinutes = Math.floor((checkOutIST.getTime() - checkInIST.getTime()) / 60000);
+      const isLate = ciHour > 9 || (ciHour === 9 && ciMin > 0);
+      const status  = isLate ? "Late" : "Present";
+      const now = new Date();
+
+      // Upsert the attendance record — select first then insert or update
+      const [existing] = await db.select().from(teacherSelfAttendance).where(
+        and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), eq(teacherSelfAttendance.attendanceDate, date))
+      );
+      let attendanceRecord;
+      if (existing) {
+        [attendanceRecord] = await db.update(teacherSelfAttendance)
+          .set({ checkInTime: checkInIST, checkOutTime: checkOutIST, totalWorkingMinutes: workingMinutes, status, locationVerified: existing.locationVerified, updatedAt: now })
+          .where(eq(teacherSelfAttendance.id, existing.id)).returning();
+      } else {
+        [attendanceRecord] = await db.insert(teacherSelfAttendance).values({
+          teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: date,
+          checkInTime: checkInIST, checkOutTime: checkOutIST, totalWorkingMinutes: workingMinutes,
+          status, locationVerified: false,
+        }).returning();
+      }
+
+      // Log the correction as auto-approved for audit history
       const [correction] = await db.insert(attendanceCorrectionRequests).values({
         teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: date,
-        requestedCheckIn, requestedCheckOut, reason: reason.trim(), status: "Pending",
+        requestedCheckIn, requestedCheckOut, reason: reason.trim(), status: "Approved",
       }).returning();
-      res.json(correction);
+
+      res.json({ correction, attendanceRecord });
     } catch (err) {
-      res.status(500).json({ message: "Failed to submit correction" });
+      res.status(500).json({ message: "Failed to apply correction" });
     }
   });
 
