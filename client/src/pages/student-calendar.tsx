@@ -29,9 +29,9 @@ interface CalendarEvent {
 
 type View = "month" | "week" | "year";
 
-const DAYS       = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-const DAYS_FULL  = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
-const MONTHS     = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const DAYS        = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const DAYS_FULL   = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const MONTHS      = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 const EVENT_TYPES = [
@@ -71,9 +71,18 @@ function useIsMobile() {
 }
 
 /* ─────────────────────────────────────────────────────────
-   Premium event row — date box + details + pill badge
+   Premium event row — light theme
+   Left amber date box · centre details · right pill badge
 ───────────────────────────────────────────────────────── */
-function PremiumEventRow({ ev, onClick, isToday = false }: { ev: CalendarEvent; onClick?: () => void; isToday?: boolean }) {
+function PremiumEventRow({
+  ev,
+  onClick,
+  isToday = false,
+}: {
+  ev: CalendarEvent;
+  onClick?: () => void;
+  isToday?: boolean;
+}) {
   const color  = getColor(ev);
   const label  = getLabel(ev);
   const d      = new Date(ev.date.split("T")[0] + "T00:00:00");
@@ -85,10 +94,11 @@ function PremiumEventRow({ ev, onClick, isToday = false }: { ev: CalendarEvent; 
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2 }}
-      className="flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors cursor-pointer group"
+      className="flex items-center gap-3 px-3 py-2.5 rounded-xl border cursor-pointer group transition-colors hover:bg-slate-50"
       style={{
-        background: "rgba(26,41,66,0.85)",
-        borderColor: isToday ? "rgba(212,175,55,0.35)" : "rgba(255,255,255,0.07)",
+        background: isToday ? "#fffbeb" : "#ffffff",
+        borderColor: isToday ? "rgba(217,119,6,0.35)" : "#e2e8f0",
+        boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
       }}
       onClick={onClick}
       data-testid={`event-row-${ev.id}`}
@@ -97,18 +107,18 @@ function PremiumEventRow({ ev, onClick, isToday = false }: { ev: CalendarEvent; 
       <div
         className="flex-shrink-0 w-[52px] h-[52px] rounded-lg flex flex-col items-center justify-center"
         style={{
-          border: `2px solid ${isToday ? "#D4AF37" : "rgba(212,175,55,0.45)"}`,
-          background: "rgba(10,22,40,0.7)",
-          boxShadow: isToday ? "0 0 12px rgba(212,175,55,0.2)" : "none",
+          border: `2px solid ${isToday ? "#D97706" : "rgba(217,119,6,0.55)"}`,
+          background: isToday ? "#fef3c7" : "#fffbeb",
+          boxShadow: isToday ? "0 0 10px rgba(217,119,6,0.18)" : "none",
         }}
       >
-        <span className="text-xl font-black text-white leading-none">{dayNum}</span>
-        <span className="text-[9px] font-bold tracking-widest text-amber-400 uppercase mt-0.5">{monthA}</span>
+        <span className="text-xl font-black leading-none" style={{ color: "#92400e" }}>{dayNum}</span>
+        <span className="text-[9px] font-bold tracking-widest uppercase mt-0.5" style={{ color: "#b45309" }}>{monthA}</span>
       </div>
 
-      {/* Center: event details */}
+      {/* Centre: event details */}
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-white leading-snug truncate group-hover:text-amber-100 transition-colors">
+        <p className="text-sm font-semibold text-slate-800 leading-snug truncate group-hover:text-slate-900 transition-colors">
           {ev.title}
         </p>
         {ev.description ? (
@@ -116,12 +126,12 @@ function PremiumEventRow({ ev, onClick, isToday = false }: { ev: CalendarEvent; 
         ) : ev.venue ? (
           <p className="text-[11px] text-slate-400 mt-0.5 truncate">📍 {ev.venue}</p>
         ) : (
-          <p className="text-[11px] text-slate-500 mt-0.5">{DAYS_FULL[d.getDay()]}</p>
+          <p className="text-[11px] text-slate-400 mt-0.5">{DAYS_FULL[d.getDay()]}</p>
         )}
         {ev.isRecurring && (
           <div className="flex items-center gap-1 mt-1">
-            <Repeat className="w-2.5 h-2.5 text-slate-500" />
-            <span className="text-[9px] text-slate-500 tracking-wide">Recurring annually</span>
+            <Repeat className="w-2.5 h-2.5 text-slate-300" />
+            <span className="text-[9px] text-slate-400 tracking-wide">Recurring annually</span>
           </div>
         )}
       </div>
@@ -130,7 +140,7 @@ function PremiumEventRow({ ev, onClick, isToday = false }: { ev: CalendarEvent; 
       <div className="flex-shrink-0 ml-1">
         <span
           className="text-[10px] font-bold px-2.5 py-1 rounded-full whitespace-nowrap"
-          style={{ backgroundColor: `${color}22`, color, border: `1px solid ${color}40` }}
+          style={{ backgroundColor: `${color}18`, color, border: `1px solid ${color}40` }}
         >
           {label}
         </span>
@@ -140,7 +150,7 @@ function PremiumEventRow({ ev, onClick, isToday = false }: { ev: CalendarEvent; 
 }
 
 /* ─────────────────────────────────────────────────────────
-   Hover popover for month grid chips
+   Hover popover for month grid chips — light theme
 ───────────────────────────────────────────────────────── */
 function HoverEventPopover({ ev, onClose }: { ev: CalendarEvent; onClose: () => void }) {
   const color = getColor(ev);
@@ -151,24 +161,24 @@ function HoverEventPopover({ ev, onClose }: { ev: CalendarEvent; onClose: () => 
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.9, y: 4 }}
       transition={{ duration: 0.15 }}
-      className="absolute z-30 bottom-full left-0 mb-1 w-52 rounded-xl shadow-2xl p-3 text-left"
-      style={{ background: "#1A2942", border: "1px solid rgba(212,175,55,0.2)" }}
+      className="absolute z-30 bottom-full left-0 mb-1 w-52 rounded-xl shadow-xl p-3 text-left bg-white"
+      style={{ border: "1px solid #e2e8f0" }}
       onMouseLeave={onClose}
     >
       <div className="flex items-center gap-1.5 mb-2">
         <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
-        <p className="text-xs font-semibold text-white leading-tight">{ev.title}</p>
+        <p className="text-xs font-semibold text-slate-800 leading-tight">{ev.title}</p>
       </div>
       <p className="text-[10px] mb-1 capitalize font-medium" style={{ color }}>{label}</p>
       <p className="text-[10px] text-slate-400">{fmtDateLong(ev.date)}</p>
       {ev.isRecurring && (
         <div className="flex items-center gap-1 mt-1">
-          <Repeat className="w-2.5 h-2.5 text-slate-500" />
-          <span className="text-[9px] text-slate-500">Recurring annually</span>
+          <Repeat className="w-2.5 h-2.5 text-slate-300" />
+          <span className="text-[9px] text-slate-400">Recurring annually</span>
         </div>
       )}
       {ev.description && (
-        <p className="text-[10px] text-slate-400 mt-1 border-t border-white/10 pt-1">{ev.description}</p>
+        <p className="text-[10px] text-slate-500 mt-1 border-t border-slate-100 pt-1">{ev.description}</p>
       )}
     </motion.div>
   );
@@ -181,7 +191,7 @@ function EventChip({ ev }: { ev: CalendarEvent }) {
     <div className="relative">
       <div
         className="px-1 py-0.5 rounded text-[9px] truncate font-medium cursor-pointer"
-        style={{ backgroundColor: `${color}30`, color }}
+        style={{ backgroundColor: `${color}20`, color }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         data-testid={`event-chip-${ev.id}`}
@@ -255,7 +265,7 @@ export default function StudentCalendar() {
     }, {}), [events]);
 
   const calendarDays = useMemo(() => {
-    const firstDay = new Date(viewYear, viewMonth, 1).getDay();
+    const firstDay    = new Date(viewYear, viewMonth, 1).getDay();
     const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
     const days: (number | null)[] = [];
     for (let i = 0; i < firstDay; i++) days.push(null);
@@ -293,14 +303,14 @@ export default function StudentCalendar() {
     return map;
   }, [sortedMonthEvents]);
 
-  const agendaDates  = useMemo(() => Object.keys(agendaGrouped).sort(), [agendaGrouped]);
-  const todayKey     = buildKey(today.getFullYear(), today.getMonth(), today.getDate());
+  const agendaDates    = useMemo(() => Object.keys(agendaGrouped).sort(), [agendaGrouped]);
+  const todayKey       = buildKey(today.getFullYear(), today.getMonth(), today.getDate());
   const selectedEvents = selectedDay ? (eventsByDate[selectedDay] || []) : [];
 
-  function prevMonth()  { if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y-1); } else setViewMonth(m => m-1); setSelectedDay(null); }
-  function nextMonth()  { if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y+1); } else setViewMonth(m => m+1); setSelectedDay(null); }
-  function prevWeek()   { const s = new Date(weekStart); s.setDate(s.getDate()-7); setWeekStart(s); setViewYear(s.getFullYear()); setSelectedDay(null); }
-  function nextWeek()   { const s = new Date(weekStart); s.setDate(s.getDate()+7); setWeekStart(s); setViewYear(s.getFullYear()); setSelectedDay(null); }
+  function prevMonth() { if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y-1); } else setViewMonth(m => m-1); setSelectedDay(null); }
+  function nextMonth() { if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y+1); } else setViewMonth(m => m+1); setSelectedDay(null); }
+  function prevWeek()  { const s = new Date(weekStart); s.setDate(s.getDate()-7); setWeekStart(s); setViewYear(s.getFullYear()); setSelectedDay(null); }
+  function nextWeek()  { const s = new Date(weekStart); s.setDate(s.getDate()+7); setWeekStart(s); setViewYear(s.getFullYear()); setSelectedDay(null); }
   function switchView(v: View) {
     if (v === "week") { const ws = getWeekStart(new Date()); setWeekStart(ws); setViewYear(ws.getFullYear()); }
     setView(v); setSelectedDay(null);
@@ -327,8 +337,8 @@ export default function StudentCalendar() {
 
   if (studentLoading || !student) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "#0A1628" }}>
-        <Loader2 className="w-9 h-9 animate-spin text-amber-400" />
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <Loader2 className="w-9 h-9 animate-spin text-emerald-500" />
       </div>
     );
   }
@@ -336,8 +346,7 @@ export default function StudentCalendar() {
   /* ─── view switcher ─── */
   const viewSwitcher = (
     <div
-      className="flex items-center justify-center gap-0.5 rounded-xl p-1"
-      style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)" }}
+      className="flex items-center justify-center gap-0.5 rounded-xl p-1 bg-slate-100 border border-slate-200"
       data-testid="view-switcher"
     >
       {(["month","week","year"] as View[]).map(v => (
@@ -345,11 +354,11 @@ export default function StudentCalendar() {
           key={v}
           onClick={() => switchView(v)}
           data-testid={`button-view-${v}`}
-          className="px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all"
-          style={view === v
-            ? { background: "#D4AF37", color: "#0A1628" }
-            : { color: "rgba(255,255,255,0.5)" }
-          }
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all ${
+            view === v
+              ? "bg-white text-slate-800 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          }`}
         >
           {v}
         </button>
@@ -364,31 +373,30 @@ export default function StudentCalendar() {
       style={{
         backdropFilter: "blur(18px)",
         WebkitBackdropFilter: "blur(18px)",
-        background: "rgba(10,22,40,0.9)",
-        borderBottom: "1px solid rgba(212,175,55,0.15)",
-        boxShadow: "0 2px 24px rgba(0,0,0,0.4)",
+        background: "rgba(255,255,255,0.92)",
+        borderBottom: "1px solid #e2e8f0",
+        boxShadow: "0 1px 12px rgba(0,0,0,0.07)",
       }}
     >
       <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-3">
         <button
           onClick={() => setLocation("/student-dashboard")}
-          className="flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0"
-          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+          className="flex items-center justify-center w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 transition-colors hover:bg-slate-200 flex-shrink-0"
           data-testid="button-back"
           aria-label="Back"
         >
-          <ArrowLeft className="w-5 h-5 text-slate-300" />
+          <ArrowLeft className="w-5 h-5 text-slate-600" />
         </button>
 
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <div
             className="flex items-center justify-center w-8 h-8 rounded-xl flex-shrink-0"
-            style={{ background: "linear-gradient(135deg, #D4AF37, #10b981)" }}
+            style={{ background: "linear-gradient(135deg, #84cc16, #10b981)" }}
           >
             <CalendarDays className="w-4 h-4 text-white" />
           </div>
           <div className="leading-tight min-w-0">
-            <p className="font-bold text-sm text-white">School Calendar</p>
+            <p className="font-bold text-sm text-slate-800">School Calendar</p>
             <p className="text-[11px] text-slate-400 truncate">{student.schoolName}</p>
           </div>
         </div>
@@ -398,12 +406,11 @@ export default function StudentCalendar() {
         <button
           onClick={() => refetch()}
           disabled={isFetching}
-          className="w-10 h-10 flex items-center justify-center rounded-xl transition-colors disabled:opacity-50"
-          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+          className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100 border border-slate-200 transition-colors hover:bg-slate-200 disabled:opacity-50"
           data-testid="button-sync-now"
           aria-label="Sync"
         >
-          <RefreshCw className={`w-4 h-4 text-slate-300 ${isFetching ? "animate-spin" : ""}`} />
+          <RefreshCw className={`w-4 h-4 text-slate-500 ${isFetching ? "animate-spin" : ""}`} />
         </button>
       </div>
     </header>
@@ -411,36 +418,31 @@ export default function StudentCalendar() {
 
   /* ─── month/week nav bar ─── */
   const monthNav = (
-    <div
-      className="flex items-center justify-between px-4 py-3"
-      style={{ borderBottom: "1px solid rgba(255,255,255,0.07)", background: "rgba(26,41,66,0.6)" }}
-    >
+    <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-slate-100">
       <button
         onClick={view === "week" ? prevWeek : view === "year" ? () => { setViewYear(y => y-1); setSelectedDay(null); } : prevMonth}
-        className="w-10 h-10 flex items-center justify-center rounded-xl transition-colors"
-        style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
+        className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100 border border-slate-200 text-slate-600 transition-colors hover:bg-slate-200"
         data-testid={view === "week" ? "button-prev-week" : view === "year" ? "button-prev-year" : "button-prev-month"}
       >
-        <ChevronLeft className="w-5 h-5 text-slate-300" />
+        <ChevronLeft className="w-5 h-5" />
       </button>
       <div className="text-center">
-        <p className="text-white font-bold text-base" data-testid="text-month-year">{navTitle()}</p>
-        <button onClick={goToday} className="text-[10px] text-amber-400 hover:text-amber-300 transition-colors" data-testid="button-today">
+        <p className="text-slate-800 font-bold text-base" data-testid="text-month-year">{navTitle()}</p>
+        <button onClick={goToday} className="text-[10px] text-emerald-600 hover:text-emerald-700 transition-colors" data-testid="button-today">
           Today
         </button>
       </div>
       <button
         onClick={view === "week" ? nextWeek : view === "year" ? () => { setViewYear(y => y+1); setSelectedDay(null); } : nextMonth}
-        className="w-10 h-10 flex items-center justify-center rounded-xl transition-colors"
-        style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
+        className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100 border border-slate-200 text-slate-600 transition-colors hover:bg-slate-200"
         data-testid={view === "week" ? "button-next-week" : view === "year" ? "button-next-year" : "button-next-month"}
       >
-        <ChevronRight className="w-5 h-5 text-slate-300" />
+        <ChevronRight className="w-5 h-5" />
       </button>
     </div>
   );
 
-  /* ─── bottom sheet (mobile event detail) ─── */
+  /* ─── bottom sheet ─── */
   const bottomSheet = (
     <AnimatePresence>
       {bottomSheetOpen && selectedDay && (
@@ -448,37 +450,30 @@ export default function StudentCalendar() {
           className="fixed inset-0 z-50 flex flex-col justify-end"
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         >
-          <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.65)" }} onClick={() => setBottomSheetOpen(false)} />
+          <div className="absolute inset-0 bg-black/40" onClick={() => setBottomSheetOpen(false)} />
           <motion.div
-            className="relative rounded-t-2xl overflow-hidden shadow-2xl max-h-[75vh] overflow-y-auto"
-            style={{ background: "#0F1E33", border: "1px solid rgba(212,175,55,0.2)" }}
+            className="relative rounded-t-2xl overflow-hidden shadow-2xl max-h-[75vh] overflow-y-auto bg-white"
             initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
             data-testid="modal-event"
           >
-            {/* sheet header */}
-            <div
-              className="px-5 py-4 flex items-center justify-between sticky top-0"
-              style={{ background: "#0F1E33", borderBottom: "1px solid rgba(255,255,255,0.08)" }}
-            >
+            <div className="bg-white border-b border-slate-100 px-5 py-4 flex items-center justify-between sticky top-0">
               <div>
-                <p className="text-white font-bold text-base">{fmtDateLong(selectedDay)}</p>
+                <p className="text-slate-800 font-bold text-base">{fmtDateLong(selectedDay)}</p>
                 <p className="text-slate-400 text-xs">{DAYS_FULL[new Date(selectedDay + "T00:00:00").getDay()]}</p>
               </div>
               <button
                 onClick={() => setBottomSheetOpen(false)}
-                className="w-9 h-9 flex items-center justify-center rounded-xl transition-colors"
-                style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+                className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 border border-slate-200 text-slate-500 transition-colors"
                 data-testid="button-close-modal"
               >
-                <X className="w-4 h-4 text-slate-300" />
+                <X className="w-4 h-4" />
               </button>
             </div>
-
-            <div className="px-4 py-4 space-y-2.5">
+            <div className="px-4 py-4 space-y-2.5 bg-slate-50">
               {selectedEvents.length === 0 ? (
                 <div className="text-center py-10">
-                  <Calendar className="w-10 h-10 text-slate-600 mx-auto mb-3" />
+                  <Calendar className="w-10 h-10 text-slate-200 mx-auto mb-3" />
                   <p className="font-semibold text-slate-400">No events on this day</p>
                 </div>
               ) : selectedEvents.map(ev => (
@@ -486,7 +481,6 @@ export default function StudentCalendar() {
                   key={ev.id}
                   ev={ev}
                   isToday={selectedDay === todayKey}
-                  data-testid={`modal-event-detail-${ev.id}`}
                 />
               ))}
             </div>
@@ -499,15 +493,11 @@ export default function StudentCalendar() {
   /* ─── month grid ─── */
   const monthViewGrid = (
     <>
-      {/* day-of-week headers */}
-      <div
-        className="grid grid-cols-7"
-        style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
-      >
+      <div className="grid grid-cols-7 bg-white border-b border-slate-100">
         {DAYS.map(d => (
           <div
             key={d}
-            className={`py-2 text-center text-xs font-bold uppercase tracking-wide ${d === "Sun" ? "text-red-400" : "text-slate-500"}`}
+            className={`py-2 text-center text-xs font-bold uppercase tracking-wide ${d === "Sun" ? "text-red-400" : "text-slate-400"}`}
           >
             {d}
           </div>
@@ -515,50 +505,41 @@ export default function StudentCalendar() {
       </div>
 
       {eventsLoading ? (
-        <div className="flex items-center justify-center h-48">
-          <Loader2 className="w-7 h-7 animate-spin text-amber-400" />
+        <div className="flex items-center justify-center h-48 bg-white">
+          <Loader2 className="w-7 h-7 animate-spin text-emerald-500" />
         </div>
       ) : (
-        <div className="grid grid-cols-7">
+        <div className="grid grid-cols-7 bg-white">
           {calendarDays.map((day, i) => {
             if (day === null) return (
               <div
                 key={`e-${i}`}
-                className="min-h-[72px]"
-                style={{ borderRight: "1px solid rgba(255,255,255,0.05)", borderBottom: "1px solid rgba(255,255,255,0.05)", background: "rgba(0,0,0,0.1)" }}
+                className="min-h-[72px] bg-slate-50/70 border-r border-b border-slate-100"
               />
             );
-            const key = buildKey(viewYear, viewMonth, day);
-            const dayEvs      = eventsByDate[key] || [];
+            const key          = buildKey(viewYear, viewMonth, day);
+            const dayEvs       = eventsByDate[key] || [];
             const isCurrentDay = key === todayKey;
-            const isSunday    = new Date(viewYear, viewMonth, day).getDay() === 0;
-            const isHoliday   = dayEvs.some(e => e.eventType === "holiday");
-            const isSelected  = selectedDay === key;
+            const isSunday     = new Date(viewYear, viewMonth, day).getDay() === 0;
+            const isHoliday    = dayEvs.some(e => e.eventType === "holiday");
+            const isSelected   = selectedDay === key;
 
             return (
               <div
                 key={key}
                 onClick={() => handleDayClick(key)}
                 data-testid={`cell-day-${day}`}
-                className="min-h-[72px] p-1.5 cursor-pointer transition-colors"
-                style={{
-                  borderRight: "1px solid rgba(255,255,255,0.05)",
-                  borderBottom: "1px solid rgba(255,255,255,0.05)",
-                  background: isSelected
-                    ? "rgba(212,175,55,0.08)"
-                    : isHoliday
-                    ? "rgba(239,68,68,0.07)"
-                    : "transparent",
-                }}
+                className={`min-h-[72px] border-r border-b border-slate-100 p-1.5 cursor-pointer transition-colors
+                  ${isHoliday ? "bg-red-50/60" : ""}
+                  ${isSelected ? "bg-emerald-50" : "hover:bg-slate-50"}
+                `}
               >
                 <span
                   className="text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full mb-1"
                   style={
                     isCurrentDay
-                      ? { background: "#D4AF37", color: "#0A1628", boxShadow: "0 0 10px rgba(212,175,55,0.4)" }
-                      : isSunday || isHoliday
-                      ? { color: "#ef4444" }
-                      : { color: "rgba(255,255,255,0.65)" }
+                      ? { background: "#10b981", color: "#fff", boxShadow: "0 0 0 3px rgba(16,185,129,0.2), 0 0 10px rgba(16,185,129,0.3)" }
+                      : { color: isSunday || isHoliday ? "#ef4444" : "#475569" }
                   }
                   data-testid={`text-day-${day}`}
                 >
@@ -567,7 +548,7 @@ export default function StudentCalendar() {
                 <div className="space-y-0.5">
                   {dayEvs.slice(0, 2).map(ev => <EventChip key={ev.id} ev={ev} />)}
                   {dayEvs.length > 2 && (
-                    <div className="text-[9px] text-slate-500 pl-1">+{dayEvs.length - 2}</div>
+                    <div className="text-[9px] text-slate-400 pl-1">+{dayEvs.length - 2}</div>
                   )}
                 </div>
               </div>
@@ -581,8 +562,7 @@ export default function StudentCalendar() {
   /* ─── week view ─── */
   const weekViewGrid = (
     <div
-      className="rounded-2xl overflow-hidden"
-      style={{ background: "rgba(26,41,66,0.7)", border: "1px solid rgba(255,255,255,0.07)" }}
+      className="rounded-2xl overflow-hidden bg-white border border-slate-200 shadow-sm"
       data-testid="week-grid"
     >
       <div className="grid grid-cols-7">
@@ -596,35 +576,28 @@ export default function StudentCalendar() {
           return (
             <div
               key={key}
-              className="flex flex-col"
-              style={{
-                borderRight: "1px solid rgba(255,255,255,0.06)",
-                background: isSelected ? "rgba(212,175,55,0.07)" : "transparent",
-              }}
+              className={`flex flex-col border-r border-slate-100 last:border-0 ${isSelected ? "bg-emerald-50" : ""}`}
             >
-              {/* day header */}
               <div
-                className="py-2 px-1 text-center cursor-pointer transition-colors"
-                style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+                className={`py-2 px-1 text-center cursor-pointer transition-colors border-b border-slate-100 ${isToday ? "bg-emerald-50" : "hover:bg-slate-50"}`}
                 onClick={() => handleDayClick(key)}
               >
-                <p className={`text-[10px] font-bold uppercase tracking-wide ${isSunday ? "text-red-400" : "text-slate-500"}`}>
+                <p className={`text-[10px] font-bold uppercase tracking-wide ${isSunday ? "text-red-400" : "text-slate-400"}`}>
                   {DAYS[day.getDay()]}
                 </p>
                 <span
                   className="w-7 h-7 flex items-center justify-center mx-auto rounded-full text-sm font-black mt-0.5"
                   style={
                     isToday
-                      ? { background: "#D4AF37", color: "#0A1628", boxShadow: "0 0 10px rgba(212,175,55,0.4)" }
-                      : { color: isSunday ? "#ef4444" : "rgba(255,255,255,0.8)" }
+                      ? { background: "#10b981", color: "#fff", boxShadow: "0 0 0 3px rgba(16,185,129,0.2)" }
+                      : { color: isSunday ? "#ef4444" : "#334155" }
                   }
                 >
                   {day.getDate()}
                 </span>
-                <p className="text-[8px] text-slate-600 mt-0.5">{MONTHS_SHORT[day.getMonth()]}</p>
+                <p className="text-[8px] text-slate-300 mt-0.5">{MONTHS_SHORT[day.getMonth()]}</p>
               </div>
 
-              {/* events */}
               <div className="flex-1 p-1 space-y-1 min-h-[110px] cursor-pointer" onClick={() => handleDayClick(key)}>
                 {dayEvs.map(ev => {
                   const color = getColor(ev);
@@ -632,7 +605,7 @@ export default function StudentCalendar() {
                     <div
                       key={ev.id}
                       className="p-1.5 rounded-lg text-[10px] font-semibold truncate"
-                      style={{ backgroundColor: `${color}25`, color }}
+                      style={{ backgroundColor: `${color}18`, color }}
                       data-testid={`week-event-${ev.id}`}
                     >
                       {ev.title}
@@ -641,7 +614,7 @@ export default function StudentCalendar() {
                 })}
                 {dayEvs.length === 0 && (
                   <div className="flex items-center justify-center h-full pt-4">
-                    <span className="text-[9px] text-slate-700">—</span>
+                    <span className="text-[9px] text-slate-200">—</span>
                   </div>
                 )}
               </div>
@@ -655,40 +628,32 @@ export default function StudentCalendar() {
   /* ─── year / agenda view ─── */
   const yearViewAgenda = (
     <div
-      className="rounded-2xl overflow-hidden"
-      style={{ background: "rgba(26,41,66,0.5)", border: "1px solid rgba(255,255,255,0.07)" }}
+      className="rounded-2xl overflow-hidden bg-white border border-slate-200 shadow-sm divide-y divide-slate-100"
       data-testid="year-agenda"
     >
       {eventsLoading ? (
         <div className="flex justify-center py-12">
-          <Loader2 className="w-7 h-7 animate-spin text-amber-400" />
+          <Loader2 className="w-7 h-7 animate-spin text-emerald-500" />
         </div>
       ) : MONTHS.map((monthName, mi) => {
         const monthEvs = (yearGroupedByMonth[mi] || []).slice().sort((a, b) => a.date.localeCompare(b.date));
         return (
-          <div key={mi} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }} data-testid={`year-month-section-${mi}`}>
-            {/* month header */}
+          <div key={mi} data-testid={`year-month-section-${mi}`}>
             <div
-              className="sticky py-2.5 px-4 flex items-center gap-2.5"
-              style={{
-                top: "56px",
-                zIndex: 10,
-                background: "rgba(10,22,40,0.95)",
-                borderBottom: "1px solid rgba(255,255,255,0.06)",
-              }}
+              className="sticky py-2.5 px-4 flex items-center gap-2.5 bg-white/95"
+              style={{ top: "56px", zIndex: 10, borderBottom: "1px solid #f1f5f9" }}
               data-testid={`year-month-header-${mi}`}
             >
-              <span className="text-sm font-black text-white">{monthName}</span>
-              <span className="text-xs text-slate-500">{viewYear}</span>
-              <span className="ml-auto text-[10px] text-slate-600">
+              <span className="text-sm font-black text-slate-700">{monthName}</span>
+              <span className="text-xs text-slate-400">{viewYear}</span>
+              <span className="ml-auto text-[10px] text-slate-400">
                 {monthEvs.length} event{monthEvs.length !== 1 ? "s" : ""}
               </span>
             </div>
-
             {monthEvs.length === 0 ? (
-              <p className="text-slate-700 text-xs px-4 py-3 italic">No events scheduled</p>
+              <p className="text-slate-300 text-xs px-4 py-3 italic">No events scheduled</p>
             ) : (
-              <div className="px-3 py-2 space-y-2">
+              <div className="px-3 py-2 space-y-2 bg-slate-50/40">
                 {monthEvs.map(ev => {
                   const d = new Date(ev.date.split("T")[0] + "T00:00:00");
                   const isCurrentDay = isTodayFn(d.getFullYear(), d.getMonth(), d.getDate());
@@ -709,26 +674,21 @@ export default function StudentCalendar() {
     </div>
   );
 
-  /* ─────────────────────────────────────────────────────────
-     EVENT LEGEND
-  ───────────────────────────────────────────────────────── */
+  /* ─── event legend ─── */
   const eventLegend = (
-    <div
-      className="rounded-2xl px-4 py-3 flex flex-wrap items-center gap-x-5 gap-y-2"
-      style={{ background: "rgba(26,41,66,0.5)", border: "1px solid rgba(255,255,255,0.07)" }}
-    >
-      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mr-2 flex items-center gap-1.5">
-        <CalendarDays className="w-3 h-3 text-amber-500" /> Legend
+    <div className="rounded-2xl px-4 py-3 bg-white border border-slate-200 shadow-sm flex flex-wrap items-center gap-x-5 gap-y-2">
+      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mr-2 flex items-center gap-1.5">
+        <CalendarDays className="w-3 h-3 text-emerald-500" /> Legend
       </p>
       {EVENT_TYPES.map(t => (
         <div key={t.value} className="flex items-center gap-1.5">
           <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: t.color }} />
-          <span className="text-xs text-slate-400">{t.label}</span>
+          <span className="text-xs text-slate-500">{t.label}</span>
         </div>
       ))}
       <div className="flex items-center gap-1.5">
-        <span className="w-2.5 h-2.5 rounded-full bg-red-500" />
-        <span className="text-xs text-slate-400">Sunday</span>
+        <span className="w-2.5 h-2.5 rounded-full bg-red-400" />
+        <span className="text-xs text-slate-500">Sunday</span>
       </div>
     </div>
   );
@@ -738,11 +698,7 @@ export default function StudentCalendar() {
   ═══════════════════════════════════════════════════════ */
   if (isMobile) {
     return (
-      <div
-        className="min-h-screen flex flex-col"
-        style={{ background: "#0A1628" }}
-        data-testid="student-calendar-mobile"
-      >
+      <div className="min-h-screen flex flex-col bg-slate-50" data-testid="student-calendar-mobile">
         {topHeader}
         <motion.main
           className="flex-1 max-w-xl mx-auto w-full px-3 pb-8"
@@ -750,18 +706,10 @@ export default function StudentCalendar() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35, ease: "easeOut" }}
         >
-          {/* nav */}
-          <div
-            className="rounded-b-2xl overflow-hidden mb-4"
-            style={{ border: "1px solid rgba(255,255,255,0.07)", borderTop: "none" }}
-          >
+          {/* nav + optional grid */}
+          <div className="rounded-b-2xl overflow-hidden bg-white border border-slate-200 shadow-sm mb-4" style={{ borderTop: "none" }}>
             {monthNav}
-            {/* month grid for month view */}
-            {view === "month" && (
-              <div style={{ background: "rgba(26,41,66,0.5)" }}>
-                {monthViewGrid}
-              </div>
-            )}
+            {view === "month" && monthViewGrid}
           </div>
 
           <div className="space-y-3">
@@ -769,37 +717,24 @@ export default function StudentCalendar() {
             {view === "month" && (
               eventsLoading ? (
                 <div className="flex items-center justify-center h-32">
-                  <Loader2 className="w-7 h-7 animate-spin text-amber-400" />
+                  <Loader2 className="w-7 h-7 animate-spin text-emerald-500" />
                 </div>
               ) : agendaDates.length === 0 ? (
-                <div
-                  className="rounded-2xl p-10 text-center"
-                  style={{ background: "rgba(26,41,66,0.5)", border: "1px solid rgba(255,255,255,0.07)" }}
-                >
-                  <Calendar className="w-10 h-10 text-slate-600 mx-auto mb-3" />
+                <div className="rounded-2xl p-10 text-center bg-white border border-slate-200 shadow-sm">
+                  <Calendar className="w-10 h-10 text-slate-200 mx-auto mb-3" />
                   <p className="text-slate-400 font-medium">No events in {MONTHS[viewMonth]} {viewYear}</p>
                 </div>
               ) : (
-                <div
-                  className="rounded-2xl overflow-hidden"
-                  style={{ border: "1px solid rgba(255,255,255,0.07)" }}
-                >
-                  {/* section header */}
-                  <div
-                    className="px-4 py-2.5 flex items-center gap-2"
-                    style={{ background: "rgba(10,22,40,0.8)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}
-                  >
-                    <span className="text-xs font-black text-white uppercase tracking-widest">{MONTHS[viewMonth]} Events</span>
-                    <span
-                      className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full"
-                      style={{ background: "rgba(212,175,55,0.15)", color: "#D4AF37" }}
-                    >
+                <div className="rounded-2xl overflow-hidden bg-white border border-slate-200 shadow-sm">
+                  <div className="px-4 py-2.5 flex items-center gap-2 border-b border-slate-100 bg-white">
+                    <span className="text-xs font-black text-slate-700 uppercase tracking-widest">{MONTHS[viewMonth]} Events</span>
+                    <span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">
                       {sortedMonthEvents.length}
                     </span>
                   </div>
-                  <div className="p-3 space-y-2" style={{ background: "rgba(26,41,66,0.4)" }}>
+                  <div className="p-3 space-y-2 bg-slate-50/60">
                     {agendaDates.map(dateKey => {
-                      const dayEvs     = agendaGrouped[dateKey];
+                      const dayEvs       = agendaGrouped[dateKey];
                       const isCurrentDay = dateKey === todayKey;
                       return (
                         <div key={dateKey} data-testid={`agenda-group-${dateKey}`}>
@@ -820,8 +755,8 @@ export default function StudentCalendar() {
               )
             )}
 
-            {view === "week"  && weekViewGrid}
-            {view === "year"  && yearViewAgenda}
+            {view === "week" && weekViewGrid}
+            {view === "year" && yearViewAgenda}
             {eventLegend}
           </div>
         </motion.main>
@@ -834,11 +769,7 @@ export default function StudentCalendar() {
      DESKTOP LAYOUT
   ═══════════════════════════════════════════════════════ */
   return (
-    <div
-      className="min-h-screen flex flex-col"
-      style={{ background: "#0A1628" }}
-      data-testid="student-calendar-desktop"
-    >
+    <div className="min-h-screen flex flex-col bg-slate-50" data-testid="student-calendar-desktop">
       {topHeader}
       <motion.main
         className="flex-1 max-w-5xl mx-auto w-full px-4 py-5 space-y-4"
@@ -851,44 +782,31 @@ export default function StudentCalendar() {
         {view === "month" && (
           <div className="grid grid-cols-3 gap-5">
             {/* Calendar grid */}
-            <div
-              className="col-span-2 rounded-2xl overflow-hidden"
-              style={{ background: "rgba(26,41,66,0.7)", border: "1px solid rgba(255,255,255,0.07)" }}
-            >
+            <div className="col-span-2 rounded-2xl overflow-hidden bg-white border border-slate-200 shadow-sm">
               {monthNav}
               {monthViewGrid}
             </div>
 
-            {/* Right sidebar: event list */}
-            <div
-              className="rounded-2xl overflow-hidden flex flex-col"
-              style={{ background: "rgba(26,41,66,0.7)", border: "1px solid rgba(255,255,255,0.07)" }}
-            >
-              {/* sidebar header */}
-              <div
-                className="px-4 py-3 flex items-center gap-2 shrink-0"
-                style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
-              >
-                <CalendarDays className="w-4 h-4 text-amber-400" />
-                <span className="text-sm font-bold text-white">
+            {/* Right sidebar */}
+            <div className="rounded-2xl overflow-hidden flex flex-col bg-white border border-slate-200 shadow-sm">
+              <div className="px-4 py-3 flex items-center gap-2 border-b border-slate-100 shrink-0">
+                <CalendarDays className="w-4 h-4 text-emerald-500" />
+                <span className="text-sm font-bold text-slate-700">
                   {selectedDay ? fmtDateLong(selectedDay) : `${MONTHS[viewMonth]} Events`}
                 </span>
                 {!selectedDay && sortedMonthEvents.length > 0 && (
-                  <span
-                    className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full"
-                    style={{ background: "rgba(212,175,55,0.15)", color: "#D4AF37" }}
-                  >
+                  <span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">
                     {sortedMonthEvents.length}
                   </span>
                 )}
               </div>
 
-              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-slate-50/60">
                 {!selectedDay ? (
                   sortedMonthEvents.length === 0 ? (
                     <div className="text-center py-10">
-                      <Calendar className="w-8 h-8 text-slate-700 mx-auto mb-2" />
-                      <p className="text-slate-500 text-sm">No events this month</p>
+                      <Calendar className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                      <p className="text-slate-400 text-sm">No events this month</p>
                     </div>
                   ) : sortedMonthEvents.map(ev => (
                     <PremiumEventRow
@@ -900,8 +818,8 @@ export default function StudentCalendar() {
                   ))
                 ) : selectedEvents.length === 0 ? (
                   <div className="text-center py-10">
-                    <Calendar className="w-8 h-8 text-slate-700 mx-auto mb-2" />
-                    <p className="text-slate-500 text-sm">No events on this day</p>
+                    <Calendar className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                    <p className="text-slate-400 text-sm">No events on this day</p>
                   </div>
                 ) : selectedEvents.map(ev => (
                   <PremiumEventRow
@@ -915,8 +833,7 @@ export default function StudentCalendar() {
               {selectedDay && (
                 <button
                   onClick={() => setSelectedDay(null)}
-                  className="mx-3 mb-3 py-2 text-xs font-semibold rounded-xl transition-colors"
-                  style={{ background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.08)" }}
+                  className="mx-3 mb-3 py-2 text-xs font-semibold rounded-xl bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 transition-colors"
                   data-testid="button-back-to-month"
                 >
                   ← All {MONTHS[viewMonth]} Events
@@ -929,15 +846,12 @@ export default function StudentCalendar() {
         {/* ── WEEK VIEW ── */}
         {view === "week" && (
           <div className="space-y-4">
-            <div
-              className="rounded-2xl overflow-hidden"
-              style={{ background: "rgba(26,41,66,0.7)", border: "1px solid rgba(255,255,255,0.07)" }}
-            >
+            <div className="rounded-2xl overflow-hidden bg-white border border-slate-200 shadow-sm">
               {monthNav}
             </div>
             {eventsLoading ? (
               <div className="flex justify-center py-12">
-                <Loader2 className="w-7 h-7 animate-spin text-amber-400" />
+                <Loader2 className="w-7 h-7 animate-spin text-emerald-500" />
               </div>
             ) : weekViewGrid}
           </div>
@@ -946,10 +860,7 @@ export default function StudentCalendar() {
         {/* ── YEAR VIEW ── */}
         {view === "year" && (
           <div className="space-y-4">
-            <div
-              className="rounded-2xl overflow-hidden"
-              style={{ background: "rgba(26,41,66,0.7)", border: "1px solid rgba(255,255,255,0.07)" }}
-            >
+            <div className="rounded-2xl overflow-hidden bg-white border border-slate-200 shadow-sm">
               {monthNav}
             </div>
             {yearViewAgenda}
