@@ -113,11 +113,16 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   }, []);
 
   // ── Queries ──────────────────────────────────────────────────────────────────
-  const { data: todayRec, isLoading: todayLoading } = useQuery<SelfAttRecord | null>({
+  const { data: todayRaw, isLoading: todayLoading } = useQuery<SelfAttRecord | null>({
     queryKey: ["/api/teacher/self-attendance/today", today],
     queryFn: async () => { const r = await fetch("/api/teacher/self-attendance/today", { credentials: "include" }); return r.ok ? r.json() : null; },
     staleTime: 0, refetchOnMount: "always",
+    refetchInterval: 60000, // polling fallback — catches midnight if setTimeout missed (e.g. browser was suspended)
   });
+
+  // Date guard: only use a record if it truly belongs to today; this prevents stale
+  // cross-day data from ever rendering as the active shift after midnight
+  const todayRec = todayRaw?.attendanceDate === today ? todayRaw : null;
 
   const { data: history = [], isLoading: historyLoading } = useQuery<SelfAttRecord[]>({
     queryKey: ["/api/teacher/self-attendance/history"],
@@ -243,8 +248,6 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
     !todayRec || !todayRec.checkInTime ? "unmarked" :
     !todayRec.checkOutTime ? "active" : "done";
 
-  const sc = statusColors(todayRec?.status ?? "Not Marked");
-
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-5 pb-24" data-testid="view-my-attendance">
@@ -283,11 +286,9 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
       <div className="rounded-2xl border border-white/10 bg-[#1A2942] p-5 space-y-4" data-testid="card-shift">
         <div className="flex items-center justify-between">
           <p className="text-xs font-semibold text-white/50 uppercase tracking-wider">Today's Shift</p>
-          {todayRec && (
-            <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${sc.badge}`}>
-              {todayRec.status === "Present" && <CheckCircle className="w-3 h-3" />}
-              {todayRec.status === "Late"    && <AlertTriangle className="w-3 h-3" />}
-              {todayRec.status}
+          {todayRec?.checkInTime && (
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-emerald-500/20 text-emerald-300 border-emerald-500/30">
+              <CheckCircle className="w-3 h-3" /> Present
             </span>
           )}
         </div>
@@ -320,7 +321,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
                 <p className="text-lg font-bold text-sky-400 tabular-nums" data-testid="text-elapsed">{fmtElapsed(elapsed)}</p>
               </div>
             </div>
-            <div className="flex items-center gap-2 text-xs text-amber-400/80">
+            <div className="flex items-center gap-2 text-xs text-emerald-400/80">
               <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
               Shift Active
             </div>
@@ -362,7 +363,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
         {[
           { label: "Attendance Rate", value: `${kpi.rate}%`, icon: TrendingUp, color: "text-[#D4AF37]", bg: "bg-[#D4AF37]/10" },
           { label: "Present (Month)", value: kpi.present, icon: CheckCircle, color: "text-emerald-400", bg: "bg-emerald-500/10" },
-          { label: "Late Days",       value: kpi.late,    icon: Clock,       color: "text-amber-400",  bg: "bg-amber-500/10"  },
+          { label: "Absent Days",     value: kpi.absent,  icon: Clock,       color: "text-red-400",    bg: "bg-red-500/10"    },
           { label: "Avg Duration",    value: fmtDuration(kpi.avgDur), icon: BarChart2, color: "text-sky-400", bg: "bg-sky-500/10" },
         ].map(({ label, value, icon: Icon, color, bg }) => (
           <div key={label} className="rounded-xl border border-white/10 bg-[#1A2942] p-4" data-testid={`kpi-${label.toLowerCase().replace(/\s+/g, "-")}`}>

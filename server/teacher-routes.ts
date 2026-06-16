@@ -3429,12 +3429,7 @@ Thank you for your prompt attention to this matter.
       if (existing?.checkInTime) return res.status(400).json({ message: "Already checked in for today" });
 
       const now = new Date();
-      // Determine status: late if check-in is after 9:00 AM IST (3:30 AM UTC)
-      const istMs = now.getTime() + (5.5 * 3600000);
-      const istHour = new Date(istMs).getUTCHours();
-      const istMin  = new Date(istMs).getUTCMinutes();
-      const isLate  = istHour > 9 || (istHour === 9 && istMin > 0);
-      const status  = isLate ? "Late" : "Present";
+      const status = "Present";
 
       let record;
       if (existing) {
@@ -3510,10 +3505,8 @@ Thank you for your prompt attention to this matter.
       const checkOutIST = new Date(`${date}T${requestedCheckOut}:00+05:30`);
       if (checkOutIST <= checkInIST) return res.status(400).json({ message: "Check-out must be after check-in" });
 
-      const [ciHour, ciMin] = requestedCheckIn.split(":").map(Number);
       const workingMinutes = Math.floor((checkOutIST.getTime() - checkInIST.getTime()) / 60000);
-      const isLate = ciHour > 9 || (ciHour === 9 && ciMin > 0);
-      const status  = isLate ? "Late" : "Present";
+      const status = "Present";
       const now = new Date();
 
       // Upsert the attendance record — select first then insert or update
