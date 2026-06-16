@@ -747,3 +747,43 @@ export const examPolicyTiers = pgTable("exam_policy_tiers", {
 export const insertExamPolicyTierSchema = createInsertSchema(examPolicyTiers).omit({ id: true, createdAt: true });
 export type InsertExamPolicyTier = z.infer<typeof insertExamPolicyTierSchema>;
 export type ExamPolicyTier = typeof examPolicyTiers.$inferSelect;
+
+// ── TEACHER SELF ATTENDANCE ──────────────────────────────────────────────────
+export const teacherSelfAttendance = pgTable("teacher_self_attendance", {
+  id: serial("id").primaryKey(),
+  teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  attendanceDate: text("attendance_date").notNull(),
+  checkInTime: timestamp("check_in_time"),
+  checkOutTime: timestamp("check_out_time"),
+  status: text("status").notNull().default("Not Marked"),
+  totalWorkingMinutes: integer("total_working_minutes").notNull().default(0),
+  locationVerified: boolean("location_verified").notNull().default(false),
+  latitude: text("latitude"),
+  longitude: text("longitude"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [uniqueIndex("uq_teacher_self_attendance").on(t.teacherId, t.attendanceDate)]);
+
+export const insertTeacherSelfAttendanceSchema = createInsertSchema(teacherSelfAttendance).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertTeacherSelfAttendance = z.infer<typeof insertTeacherSelfAttendanceSchema>;
+export type TeacherSelfAttendance = typeof teacherSelfAttendance.$inferSelect;
+
+// ── ATTENDANCE CORRECTION REQUESTS ───────────────────────────────────────────
+export const attendanceCorrectionRequests = pgTable("attendance_correction_requests", {
+  id: serial("id").primaryKey(),
+  teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  attendanceDate: text("attendance_date").notNull(),
+  requestedCheckIn: text("requested_check_in").notNull(),
+  requestedCheckOut: text("requested_check_out").notNull(),
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default("Pending"),
+  reviewedBy: integer("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertAttendanceCorrectionSchema = createInsertSchema(attendanceCorrectionRequests).omit({ id: true, createdAt: true, reviewedAt: true, reviewedBy: true });
+export type InsertAttendanceCorrection = z.infer<typeof insertAttendanceCorrectionSchema>;
+export type AttendanceCorrectionRequest = typeof attendanceCorrectionRequests.$inferSelect;

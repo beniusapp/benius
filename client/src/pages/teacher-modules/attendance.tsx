@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
+import MyAttendanceModule from "./my-attendance";
 
 interface StudentAttendance {
   studentId: number;
@@ -346,22 +347,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
 
   /* ── MY ATTENDANCE ── */
   if (view === "my-attendance") {
-    return (
-      <div className="space-y-4" data-testid="view-my-attendance">
-        <button
-          onClick={() => navigateTo("landing")}
-          className="flex items-center gap-1.5 text-sm text-white/60 hover:text-white transition-colors"
-          data-testid="button-back"
-        >
-          <ArrowLeft className="w-4 h-4" /> Back
-        </button>
-        <div className="rounded-2xl border border-white/10 bg-white/5 py-12 text-center">
-          <User className="w-12 h-12 mx-auto text-white/20 mb-3" />
-          <h3 className="font-semibold text-lg text-white">My Attendance</h3>
-          <p className="text-sm text-white/50 mt-2">Coming Soon — Personal attendance log will be available here.</p>
-        </div>
-      </div>
-    );
+    return <MyAttendanceModule teacher={teacher} onBack={() => navigateTo("landing")} />;
   }
 
   /* ── CLASS MENU ── */

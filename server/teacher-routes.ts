@@ -7,6 +7,9 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import ExcelJS from "exceljs";
+import { db } from "./db";
+import { teacherSelfAttendance, attendanceCorrectionRequests } from "@shared/schema";
+import { eq, and, gte, lte, desc } from "drizzle-orm";
 
 const diskUpload = multer({
   storage: multer.diskStorage({
@@ -3387,6 +3390,137 @@ Thank you for your prompt attention to this matter.
       });
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to fetch promotion verdict" });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TEACHER SELF ATTENDANCE
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // GET today's self-attendance record
+  app.get("/api/teacher/self-attendance/today", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const [record] = await db.select().from(teacherSelfAttendance).where(
+        and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), eq(teacherSelfAttendance.attendanceDate, today))
+      );
+      res.json(record ?? null);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch today's record" });
+    }
+  });
+
+  // POST check-in
+  app.post("/api/teacher/self-attendance/check-in", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const today = new Date().toISOString().split("T")[0];
+      const { latitude, longitude, locationVerified } = req.body;
+
+      const [existing] = await db.select().from(teacherSelfAttendance).where(
+        and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), eq(teacherSelfAttendance.attendanceDate, today))
+      );
+      if (existing?.checkInTime) return res.status(400).json({ message: "Already checked in for today" });
+
+      const now = new Date();
+      // Determine status: late if check-in is after 9:00 AM IST (3:30 AM UTC)
+      const istMs = now.getTime() + (5.5 * 3600000);
+      const istHour = new Date(istMs).getUTCHours();
+      const istMin  = new Date(istMs).getUTCMinutes();
+      const isLate  = istHour > 9 || (istHour === 9 && istMin > 0);
+      const status  = isLate ? "Late" : "Present";
+
+      let record;
+      if (existing) {
+        [record] = await db.update(teacherSelfAttendance)
+          .set({ checkInTime: now, status, locationVerified: !!locationVerified, latitude: latitude?.toString() ?? null, longitude: longitude?.toString() ?? null, updatedAt: now })
+          .where(eq(teacherSelfAttendance.id, existing.id)).returning();
+      } else {
+        [record] = await db.insert(teacherSelfAttendance).values({
+          teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: today,
+          checkInTime: now, status, locationVerified: !!locationVerified,
+          latitude: latitude?.toString() ?? null, longitude: longitude?.toString() ?? null,
+        }).returning();
+      }
+      res.json(record);
+    } catch (err) {
+      res.status(500).json({ message: "Check-in failed" });
+    }
+  });
+
+  // POST check-out
+  app.post("/api/teacher/self-attendance/check-out", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const [existing] = await db.select().from(teacherSelfAttendance).where(
+        and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), eq(teacherSelfAttendance.attendanceDate, today))
+      );
+      if (!existing?.checkInTime) return res.status(400).json({ message: "Not checked in yet" });
+      if (existing.checkOutTime)  return res.status(400).json({ message: "Already checked out" });
+
+      const now = new Date();
+      const workingMinutes = Math.floor((now.getTime() - new Date(existing.checkInTime).getTime()) / 60000);
+      const [record] = await db.update(teacherSelfAttendance)
+        .set({ checkOutTime: now, totalWorkingMinutes: workingMinutes, updatedAt: now })
+        .where(eq(teacherSelfAttendance.id, existing.id)).returning();
+      res.json(record);
+    } catch (err) {
+      res.status(500).json({ message: "Check-out failed" });
+    }
+  });
+
+  // GET history (default last 30 days)
+  app.get("/api/teacher/self-attendance/history", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const days = Math.min(parseInt(req.query.days as string) || 30, 90);
+      const end = new Date().toISOString().split("T")[0];
+      const startObj = new Date(); startObj.setDate(startObj.getDate() - days + 1);
+      const start = startObj.toISOString().split("T")[0];
+      const records = await db.select().from(teacherSelfAttendance).where(
+        and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), gte(teacherSelfAttendance.attendanceDate, start), lte(teacherSelfAttendance.attendanceDate, end))
+      ).orderBy(desc(teacherSelfAttendance.attendanceDate));
+      res.json(records);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch history" });
+    }
+  });
+
+  // POST correction request
+  app.post("/api/teacher/self-attendance/correction", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const { date, requestedCheckIn, requestedCheckOut, reason } = req.body;
+      if (!date || !requestedCheckIn || !requestedCheckOut || !reason?.trim())
+        return res.status(400).json({ message: "All fields are required" });
+      const diffDays = Math.floor((Date.now() - new Date(date + "T00:00:00").getTime()) / 86400000);
+      if (diffDays < 0 || diffDays > 7) return res.status(400).json({ message: "Corrections only allowed within the last 7 days" });
+      const [correction] = await db.insert(attendanceCorrectionRequests).values({
+        teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: date,
+        requestedCheckIn, requestedCheckOut, reason: reason.trim(), status: "Pending",
+      }).returning();
+      res.json(correction);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to submit correction" });
+    }
+  });
+
+  // GET correction requests
+  app.get("/api/teacher/self-attendance/corrections", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const corrections = await db.select().from(attendanceCorrectionRequests)
+        .where(eq(attendanceCorrectionRequests.teacherId, req.session.teacherId))
+        .orderBy(desc(attendanceCorrectionRequests.createdAt)).limit(20);
+      res.json(corrections);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch corrections" });
     }
   });
 }
