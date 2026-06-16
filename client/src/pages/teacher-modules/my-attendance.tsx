@@ -60,7 +60,10 @@ function correctionStatusStyle(s: string) {
   return "bg-amber-500/20 text-amber-300 border-amber-500/30";
 }
 
-const TODAY = new Date().toISOString().split("T")[0];
+/** Returns today's date as YYYY-MM-DD in the browser's local timezone (IST for Indian users) */
+function getLocalDateStr(): string {
+  return new Date().toLocaleDateString("en-CA"); // en-CA locale → YYYY-MM-DD
+}
 
 function getDayLabel(dateStr: string): string {
   const d = new Date(dateStr + "T12:00:00");
@@ -74,6 +77,26 @@ function isWeekend(dateStr: string): boolean {
 
 export default function MyAttendanceModule({ teacher, onBack }: { teacher: TeacherMe; onBack: () => void }) {
   const { toast } = useToast();
+
+  // ── Reactive today date — updates automatically at local midnight ─────────────
+  const [today, setToday] = useState(getLocalDateStr);
+
+  useEffect(() => {
+    const now = new Date();
+    // Compute ms until next midnight in local (browser) timezone
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+    const msUntilMidnight = midnight.getTime() - now.getTime();
+
+    const id = setTimeout(() => {
+      // Date has rolled over — update state and flush all attendance caches
+      setToday(getLocalDateStr());
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/today"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/history"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/corrections"] });
+    }, msUntilMidnight);
+
+    return () => clearTimeout(id);
+  }, [today]); // re-schedules each time `today` changes (i.e., after each midnight tick)
 
   // ── Geolocation ─────────────────────────────────────────────────────────────
   const [geo, setGeo] = useState<{ lat: number | null; lng: number | null; verified: boolean }>({ lat: null, lng: null, verified: false });
@@ -91,7 +114,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
 
   // ── Queries ──────────────────────────────────────────────────────────────────
   const { data: todayRec, isLoading: todayLoading } = useQuery<SelfAttRecord | null>({
-    queryKey: ["/api/teacher/self-attendance/today"],
+    queryKey: ["/api/teacher/self-attendance/today", today],
     queryFn: async () => { const r = await fetch("/api/teacher/self-attendance/today", { credentials: "include" }); return r.ok ? r.json() : null; },
     staleTime: 0, refetchOnMount: "always",
   });
@@ -154,7 +177,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
     let streak = 0, longest = 0, cur = 0;
     let prevDate: string | null = null;
     for (const r of sorted) {
-      if (r.attendanceDate === TODAY) continue;
+      if (r.attendanceDate === today) continue;
       if (isWeekend(r.attendanceDate)) continue;
       const ok = r.status === "Present" || r.status === "Late";
       if (ok) {
@@ -165,7 +188,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
       prevDate = r.attendanceDate;
     }
     return { present, late, absent, rate, avgDur, streak, longest };
-  }, [history]);
+  }, [history, today]);
 
   function isPrevWorkday(earlier: string, later: string): boolean {
     const e = new Date(earlier + "T12:00:00"), l = new Date(later + "T12:00:00");
@@ -177,11 +200,11 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   const timeline = useMemo(() => {
     return Array.from({ length: 7 }, (_, i) => {
       const d = new Date(); d.setDate(d.getDate() - (6 - i));
-      const dateStr = d.toISOString().split("T")[0];
-      const rec = dateStr === TODAY ? todayRec ?? undefined : history.find(r => r.attendanceDate === dateStr);
-      return { dateStr, label: getDayLabel(dateStr), isToday: dateStr === TODAY, isWeekend: isWeekend(dateStr), rec };
+      const dateStr = d.toLocaleDateString("en-CA"); // YYYY-MM-DD in local timezone
+      const rec = dateStr === today ? todayRec ?? undefined : history.find(r => r.attendanceDate === dateStr);
+      return { dateStr, label: getDayLabel(dateStr), isToday: dateStr === today, isWeekend: isWeekend(dateStr), rec };
     });
-  }, [history, todayRec]);
+  }, [history, todayRec, today]);
 
   // ── Monthly calendar ─────────────────────────────────────────────────────────
   const calDays = useMemo(() => {
@@ -191,15 +214,15 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
     for (let i = 0; i < first.getDay(); i++) cells.push(null);
     for (let d = 1; d <= last.getDate(); d++) {
       const dateStr = `${yr}-${String(mo + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-      cells.push({ d, dateStr, rec: history.find(r => r.attendanceDate === dateStr), isToday: dateStr === TODAY, isWeekend: new Date(yr, mo, d).getDay() === 0 || new Date(yr, mo, d).getDay() === 6 });
+      cells.push({ d, dateStr, rec: history.find(r => r.attendanceDate === dateStr), isToday: dateStr === today, isWeekend: new Date(yr, mo, d).getDay() === 0 || new Date(yr, mo, d).getDay() === 6 });
     }
     return cells;
-  }, [history]);
+  }, [history, today]);
 
   // ── Correction modal ─────────────────────────────────────────────────────────
   const [showModal, setShowModal] = useState(false);
   const [corrForm, setCorrForm] = useState({ date: "", checkIn: "", checkOut: "", reason: "" });
-  const sevenAgo = useMemo(() => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().split("T")[0]; }, []);
+  const sevenAgo = useMemo(() => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toLocaleDateString("en-CA"); }, []);
 
   const corrMut = useMutation({
     mutationFn: () => apiRequest("POST", "/api/teacher/self-attendance/correction", { date: corrForm.date, requestedCheckIn: corrForm.checkIn, requestedCheckOut: corrForm.checkOut, reason: corrForm.reason }).then(r => r.json()),

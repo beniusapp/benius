@@ -3398,10 +3398,13 @@ Thank you for your prompt attention to this matter.
   // ═══════════════════════════════════════════════════════════════════════════
 
   // GET today's self-attendance record
+  /** IST-aware "today" date string — adds 5h30m to UTC so midnight in India rolls correctly */
+  const istToday = () => new Date(Date.now() + 19800000).toISOString().split("T")[0];
+
   app.get("/api/teacher/self-attendance/today", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
-      const today = new Date().toISOString().split("T")[0];
+      const today = istToday();
       const [record] = await db.select().from(teacherSelfAttendance).where(
         and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), eq(teacherSelfAttendance.attendanceDate, today))
       );
@@ -3417,7 +3420,7 @@ Thank you for your prompt attention to this matter.
     try {
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-      const today = new Date().toISOString().split("T")[0];
+      const today = istToday();
       const { latitude, longitude, locationVerified } = req.body;
 
       const [existing] = await db.select().from(teacherSelfAttendance).where(
@@ -3455,7 +3458,7 @@ Thank you for your prompt attention to this matter.
   app.post("/api/teacher/self-attendance/check-out", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
-      const today = new Date().toISOString().split("T")[0];
+      const today = istToday();
       const [existing] = await db.select().from(teacherSelfAttendance).where(
         and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), eq(teacherSelfAttendance.attendanceDate, today))
       );
@@ -3478,9 +3481,9 @@ Thank you for your prompt attention to this matter.
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
       const days = Math.min(parseInt(req.query.days as string) || 30, 90);
-      const end = new Date().toISOString().split("T")[0];
-      const startObj = new Date(); startObj.setDate(startObj.getDate() - days + 1);
-      const start = startObj.toISOString().split("T")[0];
+      const istNow = Date.now() + 19800000; // UTC → IST
+      const end   = new Date(istNow).toISOString().split("T")[0];
+      const start = new Date(istNow - (days - 1) * 86400000).toISOString().split("T")[0];
       const records = await db.select().from(teacherSelfAttendance).where(
         and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), gte(teacherSelfAttendance.attendanceDate, start), lte(teacherSelfAttendance.attendanceDate, end))
       ).orderBy(desc(teacherSelfAttendance.attendanceDate));
