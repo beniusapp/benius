@@ -108,7 +108,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function TeacherStatusBadge({ status, isLate }: { status: string; isLate: boolean }) {
+function TeacherStatusBadge({ status }: { status: string }) {
   if (status === "not-marked") {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-white/10 text-white/50 border border-white/10">
@@ -116,16 +116,9 @@ function TeacherStatusBadge({ status, isLate }: { status: string; isLate: boolea
       </span>
     );
   }
-  if (isLate) {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-orange-500/20 text-orange-400 border border-orange-500/30">
-        <AlertTriangle className="w-3 h-3" /> Late
-      </span>
-    );
-  }
   return (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-      <CheckCircle className="w-3 h-3" /> On Time
+      <CheckCircle className="w-3 h-3" /> Marked
     </span>
   );
 }
@@ -619,16 +612,6 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
           <div className="h-px flex-1 bg-white/10" />
         </div>
 
-        {/* Late-submission alert */}
-        {!teacherLoading && (teacherSummaryData?.teachers ?? []).some(t => t.isLate) && (
-          <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-orange-500/30 bg-orange-500/10" data-testid="alert-late-submissions">
-            <AlertTriangle className="w-4 h-4 text-orange-400 flex-shrink-0" />
-            <p className="text-xs text-orange-300">
-              <strong>{(teacherSummaryData?.teachers ?? []).filter(t => t.isLate).length}</strong> teacher{(teacherSummaryData?.teachers ?? []).filter(t => t.isLate).length !== 1 ? "s" : ""} submitted attendance late (after 9:00 AM).
-            </p>
-          </div>
-        )}
-
         {/* Teacher search */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40 pointer-events-none" />
@@ -671,11 +654,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
                     <tr
                       key={t.teacherId}
                       className={`border-b border-white/5 transition-colors ${
-                        t.isLate
-                          ? "bg-orange-500/5 hover:bg-orange-500/10"
-                          : idx % 2 === 0
-                            ? "bg-[#1A2942] hover:bg-white/5"
-                            : "bg-[#0A1628] hover:bg-white/5"
+                        idx % 2 === 0 ? "bg-[#1A2942] hover:bg-white/5" : "bg-[#0A1628] hover:bg-white/5"
                       }`}
                       data-testid={`row-teacher-${t.teacherId}`}
                     >
@@ -697,16 +676,13 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
                           : "—"}
                       </td>
                       <td className="px-3 py-3">
-                        <TeacherStatusBadge status={t.status} isLate={t.isLate} />
+                        <TeacherStatusBadge status={t.status} />
                       </td>
                       <td className="px-3 py-3">
                         {t.submittedAt ? (
                           <div className="flex items-center gap-1 text-xs text-white/50">
                             <Clock className="w-3.5 h-3.5 flex-shrink-0" />
-                            <span className={t.isLate ? "text-orange-400 font-medium" : ""}>
-                              {formatTime(t.submittedAt)}
-                            </span>
-                            {t.isLate && <span className="text-[10px] text-orange-500 font-bold">LATE</span>}
+                            <span>{formatTime(t.submittedAt)}</span>
                           </div>
                         ) : (
                           <span className="text-white/30 text-xs">—</span>
