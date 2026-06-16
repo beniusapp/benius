@@ -94,6 +94,13 @@ function StatusBadge({ status }: { status: string }) {
       </span>
     );
   }
+  if (status === "halfday") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-500/20 text-blue-400 border border-blue-500/30">
+        <Clock className="w-3 h-3" /> Half Day
+      </span>
+    );
+  }
   return (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-white/10 text-white/50 border border-white/10">
       Not Marked

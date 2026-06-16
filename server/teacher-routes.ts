@@ -278,10 +278,11 @@ export function registerTeacherRoutes(app: Express) {
         studentId: student.id,
         name: student.name,
         dsid: student.digitalStudentId,
-        status: record?.status || "present",
-        editCount: record?.editCount || 0,
-        markedBy: record?.markedBy || null,
-        markedAt: record?.markedAt || null,
+        // Never default to "present" — an unmarked student is "not-marked"
+        status: (record && record.status) ? record.status : "not-marked",
+        editCount: record?.editCount ?? 0,
+        markedBy: record?.markedBy ?? null,
+        markedAt: record?.markedAt ?? null,
         hasRecord: !!record,
       };
     });

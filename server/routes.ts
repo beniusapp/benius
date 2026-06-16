@@ -1996,7 +1996,6 @@ export async function registerRoutes(
             )
           )
         : [];
-      console.log(`[class-detail] found ${studentRows.length} students, ${filteredRecords.length} attendance records for date=${date}`);
       const result = studentRows.map(student => {
         const record = filteredRecords.find(r => r.studentId === student.id);
         return {
