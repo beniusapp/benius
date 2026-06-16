@@ -183,6 +183,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
       return r.ok ? r.json() : { enrolledTotal: 0, markedTotal: 0, present: 0, absent: 0, leave: 0, percentage: 0 };
     },
     enabled: !!schoolId,
+    staleTime: 0,
   });
 
   // Teacher summary (for quick-stat + Section B)
@@ -193,9 +194,10 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
       return r.ok ? r.json() : { summary: { totalFaculty: 0, marked: 0, notMarked: 0 }, teachers: [] };
     },
     enabled: !!schoolId,
+    staleTime: 0,
   });
 
-  // Class-level student attendance
+  // Class-level student attendance — staleTime:0 so attendance changes always reflect immediately
   const { data: studentData = [], isLoading: studentLoading } = useQuery<StudentAttendance[]>({
     queryKey: ["/api/admin/attendance/class-detail", filterClass, filterSection, date],
     queryFn: async () => {
@@ -206,6 +208,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
       return r.ok ? r.json() : [];
     },
     enabled: !!filterClass && !!filterSection,
+    staleTime: 0,
   });
 
   // Class stats
