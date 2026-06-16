@@ -4,7 +4,7 @@ import { fmtDateLong } from "@/lib/dateUtils";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, CalendarDays, Loader2,
   Calendar, Repeat, Flame, BookOpen, Award, Star, X, RefreshCw, Pencil,
-  AlertTriangle, Users, BookMarked, Tag,
+  AlertTriangle, Users, BookMarked, Tag, ChevronDown,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -30,6 +30,8 @@ interface SchoolConfigData {
   subjects: string[];
   classSections: Record<string, string[]>;
 }
+
+type ClassTarget = { classId: string; sectionIds: string[] };
 
 const MONTHS = [
   "January","February","March","April","May","June",
@@ -67,8 +69,7 @@ const EMPTY_FORM = {
   endDate: "",
   isRecurring: false,
   colorCode: "",
-  targetClass: "",
-  targetSection: "",
+  targets: [] as ClassTarget[],
 };
 
 const EMPTY_EDIT = {
@@ -78,9 +79,52 @@ const EMPTY_EDIT = {
   date: "",
   isRecurring: false,
   colorCode: "",
-  targetClass: "",
-  targetSection: "",
+  targets: [] as ClassTarget[],
 };
+
+function buildApiPayload(targeted: boolean, targets: ClassTarget[]) {
+  if (!targeted || targets.length === 0) {
+    return { audienceScope: "All_School", targetClass: "", targetSection: "" };
+  }
+  if (targets.length === 1 && targets[0].sectionIds.length === 0) {
+    return { audienceScope: "Entire_Class", targetClass: targets[0].classId, targetSection: "" };
+  }
+  if (targets.length === 1 && targets[0].sectionIds.length === 1) {
+    return { audienceScope: "Specific_Section", targetClass: targets[0].classId, targetSection: targets[0].sectionIds[0] };
+  }
+  const sectionMap: Record<string, string[]> = {};
+  targets.forEach(t => { sectionMap[t.classId] = t.sectionIds; });
+  return {
+    audienceScope: "Multi_Target",
+    targetClass: JSON.stringify(targets.map(t => t.classId)),
+    targetSection: JSON.stringify(sectionMap),
+  };
+}
+
+function parseTargetsFromEvent(ev: CalendarEvent): ClassTarget[] {
+  if (ev.audienceScope === "All_School") return [];
+  if (ev.audienceScope === "Entire_Class") return [{ classId: ev.targetClass || "", sectionIds: [] }];
+  if (ev.audienceScope === "Specific_Section") return [{ classId: ev.targetClass || "", sectionIds: ev.targetSection ? [ev.targetSection] : [] }];
+  if (ev.audienceScope === "Multi_Target") {
+    try {
+      const classes = JSON.parse(ev.targetClass || "[]") as string[];
+      const sectionMap = JSON.parse(ev.targetSection || "{}") as Record<string, string[]>;
+      return classes.map(c => ({ classId: c, sectionIds: sectionMap[c] || [] }));
+    } catch { return []; }
+  }
+  return [];
+}
+
+function getMultiTargetLabel(ev: CalendarEvent): string {
+  try {
+    const classes = JSON.parse(ev.targetClass || "[]") as string[];
+    const sectionMap = JSON.parse(ev.targetSection || "{}") as Record<string, string[]>;
+    const parts = classes.flatMap(c =>
+      sectionMap[c]?.length > 0 ? sectionMap[c].map(s => `${c}-${s}`) : [`Cl.${c}`]
+    );
+    return parts.slice(0, 3).join(", ") + (parts.length > 3 ? ` +${parts.length - 3}` : "");
+  } catch { return "Multi-class"; }
+}
 
 function invalidateAll() {
   queryClient.invalidateQueries({ queryKey: ["/api/admin/calendar"] });
@@ -89,6 +133,13 @@ function invalidateAll() {
 }
 
 function AudienceBadge({ ev }: { ev: CalendarEvent }) {
+  if (ev.audienceScope === "Multi_Target") {
+    return (
+      <span className="ml-1 px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[10px] normal-case font-medium">
+        {getMultiTargetLabel(ev)}
+      </span>
+    );
+  }
   if (ev.audienceScope === "Entire_Class") {
     return (
       <span className="ml-1 px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 text-[10px] normal-case font-medium">
@@ -110,25 +161,208 @@ function AudienceBadge({ ev }: { ev: CalendarEvent }) {
   );
 }
 
+function MultiTargetPicker({
+  targets,
+  onChange,
+  configClasses,
+  getSectionsFor,
+  testPrefix,
+}: {
+  targets: ClassTarget[];
+  onChange: (t: ClassTarget[]) => void;
+  configClasses: string[];
+  getSectionsFor: (cls: string) => string[];
+  testPrefix: string;
+}) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  const chips = targets.flatMap(t =>
+    t.sectionIds.length === 0
+      ? [{ label: `Class ${t.classId}`, cls: t.classId, sec: undefined as string | undefined }]
+      : t.sectionIds.map(s => ({ label: `${t.classId}-${s}`, cls: t.classId, sec: s }))
+  );
+
+  function removeChip(cls: string, sec?: string) {
+    if (!sec) {
+      onChange(targets.filter(t => t.classId !== cls));
+    } else {
+      onChange(
+        targets
+          .map(t => t.classId === cls ? { ...t, sectionIds: t.sectionIds.filter(s => s !== sec) } : t)
+          .filter(t => t.classId !== cls || t.sectionIds.length > 0 || targets.find(x => x.classId === cls)!.sectionIds.length > 1)
+      );
+    }
+  }
+
+  function isClassSelected(cls: string) {
+    return targets.some(t => t.classId === cls);
+  }
+
+  function toggleClass(cls: string) {
+    if (isClassSelected(cls)) {
+      onChange(targets.filter(t => t.classId !== cls));
+    } else {
+      onChange([...targets, { classId: cls, sectionIds: [] }]);
+      setExpanded(p => ({ ...p, [cls]: true }));
+    }
+  }
+
+  function toggleSection(cls: string, sec: string) {
+    const existing = targets.find(t => t.classId === cls);
+    if (!existing) {
+      onChange([...targets, { classId: cls, sectionIds: [sec] }]);
+    } else if (existing.sectionIds.includes(sec)) {
+      onChange(targets.map(t => t.classId === cls ? { ...t, sectionIds: t.sectionIds.filter(s => s !== sec) } : t));
+    } else {
+      onChange(targets.map(t => t.classId === cls ? { ...t, sectionIds: [...t.sectionIds, sec] } : t));
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      {chips.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 p-2.5 rounded-lg bg-[#0A1628]/80 border border-white/10 min-h-[40px]">
+          {chips.map((chip, i) => (
+            <span
+              key={i}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/25 border border-blue-500/40 text-blue-200 text-xs font-medium"
+              data-testid={`chip-target-${chip.label.replace(/\s/g, "-")}`}
+            >
+              {chip.label}
+              <button
+                type="button"
+                onClick={() => removeChip(chip.cls, chip.sec)}
+                className="ml-0.5 hover:text-white transition-colors"
+                data-testid={`button-remove-chip-${chip.label.replace(/\s/g, "-")}`}
+              >
+                <X className="w-2.5 h-2.5" />
+              </button>
+            </span>
+          ))}
+          {chips.length === 0 && (
+            <span className="text-xs text-white/20 self-center px-1">No targets selected</span>
+          )}
+        </div>
+      )}
+
+      {configClasses.length > 0 ? (
+        <div className="rounded-lg border border-white/10 overflow-hidden divide-y divide-white/5">
+          {configClasses.map(cls => {
+            const sections = getSectionsFor(cls);
+            const classTarget = targets.find(t => t.classId === cls);
+            const classChecked = !!classTarget;
+            const isOpen = expanded[cls] ?? classChecked;
+
+            return (
+              <div key={cls} className="bg-[#0A1628]/40">
+                <div className="flex items-center gap-2 px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={classChecked}
+                    onChange={() => toggleClass(cls)}
+                    className="w-3.5 h-3.5 rounded accent-[#D4AF37] shrink-0"
+                    data-testid={`${testPrefix}-class-checkbox-${cls}`}
+                  />
+                  <span className={`text-sm font-medium flex-1 ${classChecked ? "text-[#D4AF37]" : "text-white/60"}`}>
+                    Class {cls}
+                  </span>
+                  {classChecked && classTarget!.sectionIds.length === 0 && (
+                    <span className="text-[10px] text-white/30 mr-1">All sections</span>
+                  )}
+                  {classChecked && classTarget!.sectionIds.length > 0 && (
+                    <span className="text-[10px] text-blue-300/70 mr-1">
+                      {classTarget!.sectionIds.join(", ")}
+                    </span>
+                  )}
+                  {sections.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setExpanded(p => ({ ...p, [cls]: !isOpen }))}
+                      className="p-0.5 text-white/30 hover:text-white transition-colors"
+                      data-testid={`${testPrefix}-expand-class-${cls}`}
+                    >
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                    </button>
+                  )}
+                </div>
+
+                {isOpen && sections.length > 0 && (
+                  <div className="px-3 pb-2.5 pt-1 flex flex-wrap gap-1.5 border-t border-white/5">
+                    <span className="text-[10px] text-white/25 self-center w-full mb-1">
+                      {classChecked && classTarget!.sectionIds.length === 0
+                        ? "Targeting all sections — click a section to narrow down:"
+                        : "Pick specific sections:"}
+                    </span>
+                    {sections.map(sec => {
+                      const secSelected = classTarget?.sectionIds.includes(sec) ?? false;
+                      return (
+                        <button
+                          key={sec}
+                          type="button"
+                          onClick={() => toggleSection(cls, sec)}
+                          data-testid={`${testPrefix}-section-btn-${cls}-${sec}`}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
+                            secSelected
+                              ? "bg-blue-500/30 border-blue-400/60 text-blue-200 shadow-[0_0_8px_rgba(59,130,246,0.3)]"
+                              : "bg-white/5 border-white/10 text-white/40 hover:text-white/70 hover:border-white/25 hover:bg-white/10"
+                          }`}
+                        >
+                          {sec}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <label className="text-xs text-white/40 block">
+            Class <span className="text-red-400">*</span>
+          </label>
+          <input
+            placeholder="e.g. 6"
+            className={INPUT_CLS}
+            onKeyDown={e => {
+              if (e.key === "Enter") {
+                const val = (e.target as HTMLInputElement).value.trim();
+                if (val && !targets.find(t => t.classId === val)) {
+                  onChange([...targets, { classId: val, sectionIds: [] }]);
+                  (e.target as HTMLInputElement).value = "";
+                }
+              }
+            }}
+            data-testid={`${testPrefix}-free-class-input`}
+          />
+          <p className="text-[10px] text-white/20">Press Enter to add a class</p>
+        </div>
+      )}
+
+      {chips.length === 0 && (
+        <p className="text-[10px] text-white/25 text-center py-1">
+          Check classes to target specific audiences. Leave sections unselected to target all sections of a class.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function AudiencePicker({
   targeted, onToggle,
-  targetClass, onClassChange,
-  targetSection, onSectionChange,
+  targets, onTargetsChange,
   configClasses, getSectionsFor,
   testPrefix,
 }: {
   targeted: boolean;
   onToggle: (val: boolean) => void;
-  targetClass: string;
-  onClassChange: (val: string) => void;
-  targetSection: string;
-  onSectionChange: (val: string) => void;
+  targets: ClassTarget[];
+  onTargetsChange: (t: ClassTarget[]) => void;
   configClasses: string[];
   getSectionsFor: (cls: string) => string[];
   testPrefix: string;
 }) {
-  const sectionOptions = targetClass ? getSectionsFor(targetClass) : [];
-
   return (
     <div>
       <label className="text-xs text-white/50 uppercase tracking-wide block mb-2">Audience</label>
@@ -162,69 +396,23 @@ function AudiencePicker({
       </div>
 
       {targeted && (
-        <div className="space-y-2.5 p-3 bg-[#0A1628]/60 rounded-lg border border-white/5">
-          <div>
-            <label className="text-xs text-white/40 block mb-1">
-              Class <span className="text-red-400">*</span>
-            </label>
-            {configClasses.length > 0 ? (
-              <select
-                value={targetClass}
-                onChange={e => onClassChange(e.target.value)}
-                className={SELECT_CLS}
-                data-testid={`${testPrefix}-target-class`}
-              >
-                <option value="">— Select class —</option>
-                {configClasses.map(c => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            ) : (
-              <input
-                value={targetClass}
-                onChange={e => onClassChange(e.target.value)}
-                placeholder="e.g. 6"
-                className={INPUT_CLS}
-                data-testid={`${testPrefix}-target-class`}
-              />
+        <div className="p-3 bg-[#0A1628]/60 rounded-lg border border-white/5 space-y-2">
+          <div className="flex items-center gap-1.5 mb-1">
+            <Tag className="w-3 h-3 text-white/30" />
+            <span className="text-xs text-white/40">Select classes &amp; sections</span>
+            {targets.length > 0 && (
+              <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300">
+                {targets.length} class{targets.length !== 1 ? "es" : ""} selected
+              </span>
             )}
           </div>
-
-          {targetClass && (
-            <div>
-              <label className="text-xs text-white/40 block mb-1 flex items-center gap-1.5">
-                <Tag className="w-3 h-3" />
-                Section
-                <span className="text-white/25 font-normal">(optional — blank = entire class)</span>
-              </label>
-              {sectionOptions.length > 0 ? (
-                <select
-                  value={targetSection}
-                  onChange={e => onSectionChange(e.target.value)}
-                  className={SELECT_CLS}
-                  data-testid={`${testPrefix}-target-section`}
-                >
-                  <option value="">All sections of Class {targetClass}</option>
-                  {sectionOptions.map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  value={targetSection}
-                  onChange={e => onSectionChange(e.target.value)}
-                  placeholder="Optional — e.g. A"
-                  className={INPUT_CLS}
-                  data-testid={`${testPrefix}-target-section`}
-                />
-              )}
-              <p className="text-[10px] text-white/25 mt-1">
-                {targetSection
-                  ? `Only students in Class ${targetClass}-${targetSection} will see this event.`
-                  : `All students in Class ${targetClass} (every section) will see this event.`}
-              </p>
-            </div>
-          )}
+          <MultiTargetPicker
+            targets={targets}
+            onChange={onTargetsChange}
+            configClasses={configClasses}
+            getSectionsFor={getSectionsFor}
+            testPrefix={testPrefix}
+          />
         </div>
       )}
     </div>
@@ -277,7 +465,10 @@ export default function SchoolCalendar() {
   });
 
   const addMutation = useMutation({
-    mutationFn: (data: typeof form) => apiRequest("POST", "/api/admin/calendar", data),
+    mutationFn: (data: typeof form) => {
+      const payload = buildApiPayload(addTargeted, data.targets);
+      return apiRequest("POST", "/api/admin/calendar", { ...data, ...payload });
+    },
     onSuccess: () => {
       invalidateAll();
       closeAddModal();
@@ -287,8 +478,10 @@ export default function SchoolCalendar() {
   });
 
   const editMutation = useMutation({
-    mutationFn: (data: typeof editForm & { id: number }) =>
-      apiRequest("PATCH", `/api/admin/calendar/${data.id}`, data),
+    mutationFn: (data: typeof editForm & { id: number }) => {
+      const payload = buildApiPayload(editTargeted, data.targets);
+      return apiRequest("PATCH", `/api/admin/calendar/${data.id}`, { ...data, ...payload });
+    },
     onSuccess: () => {
       invalidateAll();
       closeEditModal();
@@ -376,7 +569,8 @@ export default function SchoolCalendar() {
 
   function openEdit(ev: CalendarEvent) {
     setEditingEvent(ev);
-    setEditTargeted(ev.audienceScope !== "All_School");
+    const isTargeted = ev.audienceScope !== "All_School";
+    setEditTargeted(isTargeted);
     setEditForm({
       title: ev.title,
       description: ev.description || "",
@@ -384,8 +578,7 @@ export default function SchoolCalendar() {
       date: ev.date.split("T")[0],
       isRecurring: ev.isRecurring,
       colorCode: ev.colorCode || "",
-      targetClass: ev.targetClass || "",
-      targetSection: ev.targetSection || "",
+      targets: parseTargetsFromEvent(ev),
     });
     setDeleteConfirm(false);
     setEditOpen(true);
@@ -400,6 +593,13 @@ export default function SchoolCalendar() {
   const monthEventCount = events.length;
   const holidayCount = events.filter(e => e.eventType === "holiday").length;
 
+  function eventAudienceShort(ev: CalendarEvent) {
+    if (ev.audienceScope === "Multi_Target") return getMultiTargetLabel(ev);
+    if (ev.audienceScope === "Entire_Class") return `Cl.${ev.targetClass}`;
+    if (ev.audienceScope === "Specific_Section") return `${ev.targetClass}-${ev.targetSection}`;
+    return null;
+  }
+
   const legend = (
     <div className="flex items-center gap-4 flex-wrap">
       {EVENT_TYPES.map(t => (
@@ -408,7 +608,7 @@ export default function SchoolCalendar() {
           <span className="text-xs text-white/50">{t.label}</span>
         </div>
       ))}
-      <div className="flex items-center gap-3 ml-auto">
+      <div className="flex items-center gap-3 ml-auto flex-wrap">
         <span className="flex items-center gap-1 text-[10px] text-white/30">
           <span className="w-2 h-2 rounded-full bg-white/20" />All School
         </span>
@@ -417,6 +617,9 @@ export default function SchoolCalendar() {
         </span>
         <span className="flex items-center gap-1 text-[10px] text-blue-400/70">
           <span className="w-2 h-2 rounded-full bg-blue-500/40" />Specific Section
+        </span>
+        <span className="flex items-center gap-1 text-[10px] text-indigo-300/70">
+          <span className="w-2 h-2 rounded-full bg-indigo-500/40" />Multi-target
         </span>
       </div>
     </div>
@@ -545,13 +748,11 @@ export default function SchoolCalendar() {
                             style={{ backgroundColor: `${getEventColor(ev)}25`, color: getEventColor(ev) }}
                             data-testid={`event-chip-${ev.id}`}
                             onClick={(e) => { e.stopPropagation(); openEdit(ev); }}
-                            title={`${ev.title}${ev.audienceScope === "Specific_Section" ? ` (Class ${ev.targetClass}-${ev.targetSection})` : ev.audienceScope === "Entire_Class" ? ` (Class ${ev.targetClass})` : ""}`}
+                            title={`${ev.title}${ev.audienceScope !== "All_School" ? ` (${eventAudienceShort(ev)})` : ""}`}
                           >
                             {ev.title}
                             {ev.audienceScope !== "All_School" && (
-                              <span className="opacity-50 ml-0.5">
-                                {ev.targetClass}{ev.targetSection ? `-${ev.targetSection}` : ""}
-                              </span>
+                              <span className="opacity-50 ml-0.5">{eventAudienceShort(ev)}</span>
                             )}
                           </div>
                         ))}
@@ -654,11 +855,10 @@ export default function SchoolCalendar() {
                       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getEventColor(ev) }} />
                       <span className="text-xs text-white/50 shrink-0">{new Date(ev.date + "T00:00:00").getDate()}</span>
                       <span className="text-xs text-white/70 truncate flex-1">{ev.title}</span>
-                      {ev.audienceScope === "Entire_Class" && (
-                        <span className="text-[9px] text-purple-400/70 shrink-0">Cl.{ev.targetClass}</span>
-                      )}
-                      {ev.audienceScope === "Specific_Section" && (
-                        <span className="text-[9px] text-blue-400/70 shrink-0">{ev.targetClass}-{ev.targetSection}</span>
+                      {ev.audienceScope !== "All_School" && (
+                        <span className={`text-[9px] shrink-0 ${ev.audienceScope === "Multi_Target" ? "text-indigo-300/70" : ev.audienceScope === "Entire_Class" ? "text-purple-400/70" : "text-blue-400/70"}`}>
+                          {eventAudienceShort(ev)}
+                        </span>
                       )}
                       {ev.isRecurring && <Repeat className="w-3 h-3 text-white/20 shrink-0" />}
                     </div>
@@ -748,12 +948,10 @@ export default function SchoolCalendar() {
                 targeted={addTargeted}
                 onToggle={(val) => {
                   setAddTargeted(val);
-                  if (!val) setForm(f => ({ ...f, targetClass: "", targetSection: "" }));
+                  if (!val) setForm(f => ({ ...f, targets: [] }));
                 }}
-                targetClass={form.targetClass}
-                onClassChange={(val) => setForm(f => ({ ...f, targetClass: val, targetSection: "" }))}
-                targetSection={form.targetSection}
-                onSectionChange={(val) => setForm(f => ({ ...f, targetSection: val }))}
+                targets={form.targets}
+                onTargetsChange={(t) => setForm(f => ({ ...f, targets: t }))}
                 configClasses={configClasses}
                 getSectionsFor={getSectionsFor}
                 testPrefix="button-add"
@@ -794,7 +992,7 @@ export default function SchoolCalendar() {
               </button>
               <button
                 onClick={() => addMutation.mutate(form)}
-                disabled={addMutation.isPending || !form.title || !form.startDate || (addTargeted && !form.targetClass)}
+                disabled={addMutation.isPending || !form.title || !form.startDate || (addTargeted && form.targets.length === 0)}
                 className="flex-1 py-2.5 rounded-lg bg-[#D4AF37] text-[#0A1628] text-sm font-bold hover:bg-[#D4AF37]/90 transition-colors disabled:opacity-60"
                 data-testid="button-confirm-add"
               >
@@ -901,12 +1099,10 @@ export default function SchoolCalendar() {
                     targeted={editTargeted}
                     onToggle={(val) => {
                       setEditTargeted(val);
-                      if (!val) setEditForm(f => ({ ...f, targetClass: "", targetSection: "" }));
+                      if (!val) setEditForm(f => ({ ...f, targets: [] }));
                     }}
-                    targetClass={editForm.targetClass}
-                    onClassChange={(val) => setEditForm(f => ({ ...f, targetClass: val, targetSection: "" }))}
-                    targetSection={editForm.targetSection}
-                    onSectionChange={(val) => setEditForm(f => ({ ...f, targetSection: val }))}
+                    targets={editForm.targets}
+                    onTargetsChange={(t) => setEditForm(f => ({ ...f, targets: t }))}
                     configClasses={configClasses}
                     getSectionsFor={getSectionsFor}
                     testPrefix="button-edit"
@@ -948,7 +1144,7 @@ export default function SchoolCalendar() {
                     </button>
                     <button
                       onClick={() => editMutation.mutate({ ...editForm, id: editingEvent.id })}
-                      disabled={editMutation.isPending || !editForm.title || !editForm.date || (editTargeted && !editForm.targetClass)}
+                      disabled={editMutation.isPending || !editForm.title || !editForm.date || (editTargeted && editForm.targets.length === 0)}
                       className="flex-1 py-2.5 rounded-lg bg-[#D4AF37] text-[#0A1628] text-sm font-bold hover:bg-[#D4AF37]/90 transition-colors disabled:opacity-60"
                       data-testid="button-submit-edit"
                     >
