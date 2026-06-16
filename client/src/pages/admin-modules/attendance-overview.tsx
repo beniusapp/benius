@@ -209,12 +209,16 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   });
 
   // Class stats
+  // attendanceSubmitted = true only when at least one record exists (not-marked ≠ submitted)
   const classStats = useMemo(() => {
-    const total = studentData.length;
+    const total   = studentData.length;
+    const marked  = studentData.filter(s => s.status !== "not-marked").length;
     const present = studentData.filter(s => s.status === "present").length;
-    const absent = studentData.filter(s => s.status === "absent").length;
-    const pct = total > 0 ? Math.round((present / total) * 100) : 0;
-    return { total, present, absent, pct };
+    const absent  = studentData.filter(s => s.status === "absent").length;
+    // Use marked count as denominator so "not-marked" students don't dilute %
+    const pct     = marked > 0 ? Math.round((present / marked) * 100) : 0;
+    const attendanceSubmitted = marked > 0;
+    return { total, present, absent, pct, attendanceSubmitted };
   }, [studentData]);
 
   // Filtered student rows
@@ -421,30 +425,58 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
                 {[1, 2, 3].map(i => <div key={i} className="h-24 rounded-xl bg-white/5 animate-pulse" />)}
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <StatCard label="Class Strength" value={classStats.total} color="text-blue-400" bg="bg-blue-500/20" icon={Users} />
-                {/* Combined Present / Absent */}
-                <div className="rounded-xl border border-white/10 bg-[#1A2942] p-4 min-w-0">
-                  <div className="flex gap-6">
-                    <div>
-                      <div className="inline-flex p-2 rounded-lg bg-emerald-500/20 mb-2">
-                        <CheckCircle className="w-5 h-5 text-emerald-400" />
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <StatCard label="Class Strength" value={classStats.total} color="text-blue-400" bg="bg-blue-500/20" icon={Users} />
+                  {/* Combined Present / Absent */}
+                  <div className="rounded-xl border border-white/10 bg-[#1A2942] p-4 min-w-0">
+                    <div className="flex gap-6">
+                      <div>
+                        <div className="inline-flex p-2 rounded-lg bg-emerald-500/20 mb-2">
+                          <CheckCircle className="w-5 h-5 text-emerald-400" />
+                        </div>
+                        <p
+                          className={`text-2xl font-bold ${classStats.attendanceSubmitted ? "text-emerald-400" : "text-white/30"}`}
+                          data-testid="stat-present"
+                        >
+                          {classStats.attendanceSubmitted ? classStats.present : "—"}
+                        </p>
+                        <p className="text-white/50 text-xs mt-1">Present</p>
                       </div>
-                      <p className="text-2xl font-bold text-emerald-400" data-testid="stat-present">{classStats.present}</p>
-                      <p className="text-white/50 text-xs mt-1">Present</p>
-                    </div>
-                    <div className="w-px bg-white/10 self-stretch" />
-                    <div>
-                      <div className="inline-flex p-2 rounded-lg bg-red-500/20 mb-2">
-                        <UserX className="w-5 h-5 text-red-400" />
+                      <div className="w-px bg-white/10 self-stretch" />
+                      <div>
+                        <div className="inline-flex p-2 rounded-lg bg-red-500/20 mb-2">
+                          <UserX className="w-5 h-5 text-red-400" />
+                        </div>
+                        <p
+                          className={`text-2xl font-bold ${classStats.attendanceSubmitted ? "text-red-400" : "text-white/30"}`}
+                          data-testid="stat-absent"
+                        >
+                          {classStats.attendanceSubmitted ? classStats.absent : "—"}
+                        </p>
+                        <p className="text-white/50 text-xs mt-1">Absent</p>
                       </div>
-                      <p className="text-2xl font-bold text-red-400" data-testid="stat-absent">{classStats.absent}</p>
-                      <p className="text-white/50 text-xs mt-1">Absent</p>
                     </div>
                   </div>
+                  <StatCard
+                    label="Attendance %"
+                    value={classStats.attendanceSubmitted ? `${classStats.pct}%` : "N/A"}
+                    color={classStats.attendanceSubmitted ? "text-[#D4AF37]" : "text-white/30"}
+                    bg="bg-yellow-500/20"
+                    icon={TrendingUp}
+                  />
                 </div>
-                <StatCard label="Attendance %" value={`${classStats.pct}%`} color="text-[#D4AF37]" bg="bg-yellow-500/20" icon={TrendingUp} />
-              </div>
+                {/* Not-marked alert banner — shown only when class is selected but no attendance submitted */}
+                {!classStats.attendanceSubmitted && classStats.total > 0 && (
+                  <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                    <p className="text-xs text-amber-300">
+                      Attendance for Class {filterClass}-{filterSection} on {displayDate} has not been submitted by the teacher yet.
+                      All {classStats.total} students are shown as <strong>Not Marked</strong>.
+                    </p>
+                  </div>
+                )}
+              </>
             )}
 
             {/* Search */}

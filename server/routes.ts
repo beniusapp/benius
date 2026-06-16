@@ -2002,7 +2002,8 @@ export async function registerRoutes(
           name: student.name,
           rollNo: student.rollNo ?? "",
           digitalStudentId: student.digitalStudentId,
-          status: record?.status ?? "present",
+          // "not-marked" when no attendance record exists — never fabricate "present"
+          status: record?.status ?? "not-marked",
         };
       });
       res.json(result);
