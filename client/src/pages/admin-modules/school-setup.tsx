@@ -1326,7 +1326,7 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
   );
 }
 
-export default function SchoolSetup({ schoolId }: Props) {
+export default function SchoolSetup({ schoolId, section, onNavigateSection }: Props) {
   const { toast } = useToast();
   const [classes, setClasses] = useState<string[]>([]);
   const [sections, setSections] = useState<string[]>([]);
