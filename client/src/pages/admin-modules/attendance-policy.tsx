@@ -33,9 +33,9 @@ interface ServerPolicy {
   updatedAt?: string;
 }
 
-function defaultForm(): PolicyForm {
+function defaultForm(role: "TEACHER" | "STUDENT" = "TEACHER"): PolicyForm {
   return {
-    policyName: "",
+    policyName: role === "TEACHER" ? "Teacher Attendance Policy" : "Student Attendance Policy",
     expectedArrivalTime: "09:00",
     gracePeriodMinutes: 0,
     halfDayCutoffTime: "12:00",
@@ -97,7 +97,7 @@ interface PolicySectionProps {
 
 function PolicySection({ role, serverPolicy, isLoaded, classes }: PolicySectionProps) {
   const { toast } = useToast();
-  const [form, setForm] = useState<PolicyForm>(defaultForm);
+  const [form, setForm] = useState<PolicyForm>(() => defaultForm(role));
   const [savedId, setSavedId] = useState<number | null>(null);
   const hasSynced = useRef(false);
 
