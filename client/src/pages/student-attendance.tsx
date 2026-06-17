@@ -69,6 +69,14 @@ interface StatsResponse {
   totalLeave: number;
 }
 
+interface StudentPolicy {
+  attendanceTarget: number;
+  expectedArrivalTime: string;
+  gracePeriodMinutes: number;
+  halfDayCutoffTime: string;
+  policyName?: string;
+}
+
 const MONTH_NAMES = [
   "January","February","March","April","May","June",
   "July","August","September","October","November","December",
@@ -139,6 +147,13 @@ export default function StudentAttendance() {
   const { data: student, isLoading: studentLoading } = useQuery<StudentMeResponse | null>({
     queryKey: ["/api/student-me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
+  });
+
+  const { data: policyData } = useQuery<StudentPolicy>({
+    queryKey: ["/api/student/attendance-policy"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!student,
+    staleTime: 300000,
   });
 
   const { data: statsData, isLoading: statsLoading } = useQuery<StatsResponse>({
@@ -336,10 +351,19 @@ export default function StudentAttendance() {
           ) : (
             <>
               <div className="flex-shrink-0 w-40 sm:w-auto rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center justify-center" data-testid="stat-overall-percent">
-                <p className="text-2xl sm:text-3xl font-extrabold text-emerald-500">
+                <p className={`text-2xl sm:text-3xl font-extrabold ${
+                  policyData && (statsData?.overallPercent ?? 0) < policyData.attendanceTarget
+                    ? "text-red-500"
+                    : "text-emerald-500"
+                }`}>
                   {statsData?.overallPercent ?? 0}%
                 </p>
                 <p className="text-[10px] sm:text-xs text-slate-500 font-medium mt-0.5 text-center">Overall Attendance</p>
+                {policyData && (
+                  <p className="text-[9px] text-slate-400 mt-0.5">
+                    Target: {policyData.attendanceTarget}%
+                  </p>
+                )}
               </div>
               <div className="flex-shrink-0 w-40 sm:w-auto rounded-2xl p-4 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center justify-center" data-testid="stat-working-days">
                 <p className="text-2xl sm:text-3xl font-extrabold text-slate-700">{statsData?.workingDays ?? 0}</p>

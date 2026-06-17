@@ -1323,6 +1323,22 @@ export async function registerRoutes(
     res.json({ schoolId: student.schoolId, studentId: student.id, startDate, ...stats });
   });
 
+  // GET resolved attendance policy for the current student
+  app.get("/api/student/attendance-policy", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const student = await storage.getStudentById(req.session.studentId);
+      if (!student) return res.status(401).json({ message: "Student not found" });
+      const policyRows = await db.select().from(attendancePolicies).where(
+        and(eq(attendancePolicies.schoolId, student.schoolId), eq(attendancePolicies.isActive, true))
+      );
+      const resolved = resolvePolicy(policyRows, "STUDENT", student.class ?? "");
+      res.json(resolved);
+    } catch {
+      res.json(DEFAULT_POLICY);
+    }
+  });
+
   // ===== STUDENT HOMEWORK ROUTES =====
   app.get("/api/student/homework", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
