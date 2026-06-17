@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useSchoolConfig } from "@/hooks/use-school-config";
 
 interface AttendancePolicy {
   id?: number;
@@ -70,7 +69,16 @@ function previewRows(policy: AttendancePolicy) {
 
 export function AttendancePolicySetup({ schoolId }: { schoolId: number }) {
   const { toast } = useToast();
-  const { classes } = useSchoolConfig(schoolId);
+  const { data: adminConfig } = useQuery<{ classes: string[] }>({
+    queryKey: ["/api/admin/school-config"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/school-config", { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load school config");
+      return r.json();
+    },
+    enabled: !!schoolId,
+  });
+  const classes = adminConfig?.classes ?? [];
   const [policies, setPolicies] = useState<AttendancePolicy[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [previewFor, setPreviewFor] = useState<number | null>(null);
@@ -269,7 +277,7 @@ export function AttendancePolicySetup({ schoolId }: { schoolId: number }) {
                     <Input
                       value={policy.policyName}
                       onChange={e => update(idx, { policyName: e.target.value })}
-                      placeholder="e.g. Standard Teacher Policy"
+                      placeholder={policy.targetRole === "STUDENT" ? "e.g. Standard Student Policy" : "e.g. Standard Teacher Policy"}
                       className="bg-[#0A1628] border-white/10 text-white text-sm h-9 placeholder:text-white/20"
                       data-testid={`input-policy-name-${idx}`}
                     />
@@ -317,18 +325,16 @@ export function AttendancePolicySetup({ schoolId }: { schoolId: number }) {
                       data-testid={`input-grace-${idx}`}
                     />
                   </div>
-                  {policy.targetRole === "TEACHER" && (
-                    <div>
-                      <label className="text-xs font-medium text-white/60 mb-1 block">Half-Day Cutoff (IST)</label>
-                      <Input
-                        type="time"
-                        value={policy.halfDayCutoffTime}
-                        onChange={e => update(idx, { halfDayCutoffTime: e.target.value })}
-                        className="bg-[#0A1628] border-white/10 text-white text-sm h-9"
-                        data-testid={`input-halfday-cutoff-${idx}`}
-                      />
-                    </div>
-                  )}
+                  <div>
+                    <label className="text-xs font-medium text-white/60 mb-1 block">Half-Day Cutoff (IST)</label>
+                    <Input
+                      type="time"
+                      value={policy.halfDayCutoffTime}
+                      onChange={e => update(idx, { halfDayCutoffTime: e.target.value })}
+                      className="bg-[#0A1628] border-white/10 text-white text-sm h-9"
+                      data-testid={`input-halfday-cutoff-${idx}`}
+                    />
+                  </div>
                 </div>
 
                 {/* Row 3: target % + active toggle */}
