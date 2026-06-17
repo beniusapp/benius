@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Plus, X, Save, BookOpen, Grid3X3, FileText, ChevronDown, ChevronRight, ChevronLeft, Trash2, GraduationCap, AlertTriangle, CalendarClock, Check, ChevronsUpDown, Scale } from "lucide-react";
+import { Plus, X, Save, BookOpen, Grid3X3, FileText, ChevronDown, ChevronRight, ChevronLeft, Trash2, GraduationCap, AlertTriangle, CalendarClock, Check, ChevronsUpDown, Scale, Timer } from "lucide-react";
+import { AttendancePolicySetup } from "./attendance-policy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -1768,6 +1769,7 @@ export default function SchoolSetup({ schoolId, section, onNavigateSection }: Pr
     { id: "grading",                label: "Academic Policy",           icon: GraduationCap, color: "#10b981", desc: "Define grading tiers, pass percentages, and grade brackets." },
     { id: "exam-policy",            label: "Exam & Promotion Policy",   icon: Scale,         color: "#D4AF37", desc: "Configure exam weighting formulas and promotion rules." },
     { id: "leave-policy",           label: "Leave Policy",              icon: CalendarClock, color: "#f59e0b", desc: "Set leave types, annual limits, renewal dates and expiry rules." },
+    { id: "attendance-policy",      label: "Attendance Policy",         icon: Timer,         color: "#8b5cf6", desc: "Configure arrival time thresholds, grace periods, half-day cutoffs and attendance targets." },
   ];
 
   // ─── Landing page ───────────────────────────────────────────
@@ -2112,6 +2114,10 @@ export default function SchoolSetup({ schoolId, section, onNavigateSection }: Pr
       )}
 
       {/* ─── leave-policy ─── */}
+      {section === "attendance-policy" && (
+        <AttendancePolicySetup schoolId={schoolId} />
+      )}
+
       {section === "leave-policy" && (
         <div className="space-y-4">
           <div className="flex items-center gap-3">

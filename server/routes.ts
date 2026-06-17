@@ -1,7 +1,8 @@
 import type { Express } from "express";
 import { type Server } from "http";
 import { storage } from "./storage";
-import { insertSchoolSchema, attendanceRecords, studentProfiles, students, schools, teacherSelfAttendance, attendanceCorrectionRequests, facultyMappings } from "@shared/schema";
+import { insertSchoolSchema, attendanceRecords, studentProfiles, students, schools, teacherSelfAttendance, attendanceCorrectionRequests, facultyMappings, attendancePolicies, insertAttendancePolicySchema } from "@shared/schema";
+import { resolvePolicy, isLateCheckIn, DEFAULT_POLICY } from "./attendance-policy-engine";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import multer from "multer";
@@ -2071,7 +2072,7 @@ export async function registerRoutes(
     const { date } = req.query as { date?: string };
     if (!date) return res.status(400).json({ message: "date is required" });
     try {
-      const [allTeachers, selfAttRows, mappingRows, corrRows, studentRecords] = await Promise.all([
+      const [allTeachers, selfAttRows, mappingRows, corrRows, studentRecords, policyRows] = await Promise.all([
         storage.getTeachersBySchool(schoolId),
         db.select().from(teacherSelfAttendance).where(
           and(eq(teacherSelfAttendance.schoolId, schoolId), eq(teacherSelfAttendance.attendanceDate, date))
@@ -2082,6 +2083,9 @@ export async function registerRoutes(
         ),
         db.select().from(attendanceRecords).where(
           and(eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.date, date))
+        ),
+        db.select().from(attendancePolicies).where(
+          and(eq(attendancePolicies.schoolId, schoolId), eq(attendancePolicies.isActive, true))
         ),
       ]);
 
@@ -2116,13 +2120,10 @@ export async function registerRoutes(
         const corrCount = corrMap.get(t.id) ?? 0;
         const studentMarkAt = markMap.get(t.id) ?? null;
 
-        // IST-aware late check (check-in after 09:00 IST = 03:30 UTC)
+        // Policy-driven late check — replaces hardcoded 09:00 IST threshold
+        const teacherPolicy = resolvePolicy(policyRows, "TEACHER", t.assignedClass ?? "");
         const isLate = selfRec?.checkInTime
-          ? (() => {
-              const ist = new Date((selfRec.checkInTime as Date).getTime() + 19800000);
-              const h = ist.getUTCHours(); const m = ist.getUTCMinutes();
-              return h > 9 || (h === 9 && m > 0);
-            })()
+          ? isLateCheckIn(selfRec.checkInTime as Date, teacherPolicy)
           : false;
 
         return {
@@ -2159,6 +2160,81 @@ export async function registerRoutes(
       console.error("teacher-summary error:", err);
       res.status(500).json({ message: "Failed to fetch teacher attendance summary" });
     }
+  });
+
+  // ===== ATTENDANCE POLICY ENGINE — CRUD =====
+
+  app.get("/api/admin/attendance-policies", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    try {
+      const rows = await db.select().from(attendancePolicies)
+        .where(eq(attendancePolicies.schoolId, schoolId))
+        .orderBy(attendancePolicies.id);
+      res.json(rows);
+    } catch { res.status(500).json({ message: "Failed to fetch policies" }); }
+  });
+
+  app.get("/api/admin/attendance-policies/resolve", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const { role, class: cls } = req.query as { role?: string; class?: string };
+    if (!role) return res.status(400).json({ message: "role is required" });
+    try {
+      const rows = await db.select().from(attendancePolicies)
+        .where(and(eq(attendancePolicies.schoolId, schoolId), eq(attendancePolicies.isActive, true)));
+      res.json(resolvePolicy(rows, role, cls ?? ""));
+    } catch { res.status(500).json({ message: "Failed to resolve policy" }); }
+  });
+
+  app.post("/api/admin/attendance-policies", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    try {
+      const parsed = insertAttendancePolicySchema.parse({ ...req.body, schoolId });
+      const [created] = await db.insert(attendancePolicies).values(parsed).returning();
+      res.status(201).json(created);
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation failed", errors: err.errors });
+      res.status(500).json({ message: "Failed to create policy" });
+    }
+  });
+
+  app.put("/api/admin/attendance-policies/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    try {
+      const [existing] = await db.select().from(attendancePolicies)
+        .where(and(eq(attendancePolicies.id, id), eq(attendancePolicies.schoolId, schoolId)));
+      if (!existing) return res.status(404).json({ message: "Policy not found" });
+      const { id: _id, schoolId: _sid, createdAt: _c, ...rest } = req.body;
+      const [updated] = await db.update(attendancePolicies)
+        .set({ ...rest, updatedAt: new Date() })
+        .where(and(eq(attendancePolicies.id, id), eq(attendancePolicies.schoolId, schoolId)))
+        .returning();
+      res.json(updated);
+    } catch { res.status(500).json({ message: "Failed to update policy" }); }
+  });
+
+  app.delete("/api/admin/attendance-policies/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    try {
+      const [deleted] = await db.delete(attendancePolicies)
+        .where(and(eq(attendancePolicies.id, id), eq(attendancePolicies.schoolId, schoolId)))
+        .returning();
+      if (!deleted) return res.status(404).json({ message: "Policy not found" });
+      res.json({ message: "Policy deleted" });
+    } catch { res.status(500).json({ message: "Failed to delete policy" }); }
   });
 
   // ===== ADMIN: EDIT STUDENT =====

@@ -8,8 +8,9 @@ import path from "path";
 import fs from "fs";
 import ExcelJS from "exceljs";
 import { db } from "./db";
-import { teacherSelfAttendance, attendanceCorrectionRequests } from "@shared/schema";
+import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies } from "@shared/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
+import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY } from "./attendance-policy-engine";
 
 const diskUpload = multer({
   storage: multer.diskStorage({
@@ -3414,6 +3415,22 @@ Thank you for your prompt attention to this matter.
     }
   });
 
+  // GET resolved attendance policy for the current teacher
+  app.get("/api/teacher/attendance-policy", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const policyRows = await db.select().from(attendancePolicies).where(
+        and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
+      );
+      const resolved = resolvePolicy(policyRows, "TEACHER", teacher.assignedClass ?? "");
+      res.json(resolved);
+    } catch {
+      res.json(DEFAULT_POLICY);
+    }
+  });
+
   // POST check-in
   app.post("/api/teacher/self-attendance/check-in", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
@@ -3429,7 +3446,14 @@ Thank you for your prompt attention to this matter.
       if (existing?.checkInTime) return res.status(400).json({ message: "Already checked in for today" });
 
       const now = new Date();
-      const status = "Present";
+
+      // Resolve policy and evaluate check-in status
+      const policyRows = await db.select().from(attendancePolicies).where(
+        and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
+      );
+      const policy = resolvePolicy(policyRows, "TEACHER", teacher.assignedClass ?? "");
+      const evalResult = evaluateAttendanceStatus(utcToISTHHMM(now), policy);
+      const status = evalResult.displayStatus; // "Present", "Late", or "Half Day"
 
       let record;
       if (existing) {

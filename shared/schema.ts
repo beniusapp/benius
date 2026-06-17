@@ -787,3 +787,23 @@ export const attendanceCorrectionRequests = pgTable("attendance_correction_reque
 export const insertAttendanceCorrectionSchema = createInsertSchema(attendanceCorrectionRequests).omit({ id: true, createdAt: true, reviewedAt: true, reviewedBy: true });
 export type InsertAttendanceCorrection = z.infer<typeof insertAttendanceCorrectionSchema>;
 export type AttendanceCorrectionRequest = typeof attendanceCorrectionRequests.$inferSelect;
+
+// ── ATTENDANCE POLICY ENGINE ──────────────────────────────────────────────────
+export const attendancePolicies = pgTable("attendance_policies", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  targetRole: varchar("target_role", { length: 20 }).notNull(), // "TEACHER" | "STUDENT"
+  policyName: text("policy_name").notNull(),
+  applicableClasses: text("applicable_classes").array().notNull().default([]),
+  expectedArrivalTime: varchar("expected_arrival_time", { length: 5 }).notNull().default("09:00"),
+  gracePeriodMinutes: integer("grace_period_minutes").notNull().default(0),
+  halfDayCutoffTime: varchar("half_day_cutoff_time", { length: 5 }).notNull().default("12:00"),
+  attendanceTarget: integer("attendance_target").notNull().default(85),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAttendancePolicySchema = createInsertSchema(attendancePolicies).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertAttendancePolicy = z.infer<typeof insertAttendancePolicySchema>;
+export type AttendancePolicy = typeof attendancePolicies.$inferSelect;

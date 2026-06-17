@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
-  ArrowLeft, MapPin, AlertTriangle, CheckCircle, Clock,
+  ArrowLeft, MapPin, AlertTriangle, CheckCircle, Clock, Timer,
   LogIn, LogOut, TrendingUp, Calendar, Edit3, ChevronDown,
   Loader2, Flame, BarChart2, X,
 } from "lucide-react";
@@ -14,9 +14,17 @@ interface SelfAttRecord {
   attendanceDate: string;
   checkInTime: string | null;
   checkOutTime: string | null;
-  status: "Present" | "Late" | "Absent" | "Not Marked";
+  status: "Present" | "Late" | "Half Day" | "Absent" | "Not Marked";
   totalWorkingMinutes: number;
   locationVerified: boolean;
+}
+
+interface AttendancePolicyInfo {
+  policyName: string;
+  expectedArrivalTime: string;
+  gracePeriodMinutes: number;
+  halfDayCutoffTime: string;
+  attendanceTarget: number;
 }
 
 interface CorrectionReq {
@@ -48,9 +56,10 @@ function fmtElapsed(secs: number): string {
 }
 
 function statusColors(status: string) {
-  if (status === "Present") return { dot: "bg-emerald-400", badge: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30", text: "text-emerald-400" };
-  if (status === "Late")    return { dot: "bg-amber-400",   badge: "bg-amber-500/20 text-amber-300 border-amber-500/30",   text: "text-amber-400"   };
-  if (status === "Absent")  return { dot: "bg-red-400",     badge: "bg-red-500/20 text-red-300 border-red-500/30",         text: "text-red-400"     };
+  if (status === "Present")  return { dot: "bg-emerald-400", badge: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30", text: "text-emerald-400" };
+  if (status === "Late")     return { dot: "bg-amber-400",   badge: "bg-amber-500/20 text-amber-300 border-amber-500/30",   text: "text-amber-400"   };
+  if (status === "Half Day") return { dot: "bg-orange-400",  badge: "bg-orange-500/20 text-orange-300 border-orange-500/30", text: "text-orange-400"  };
+  if (status === "Absent")   return { dot: "bg-red-400",     badge: "bg-red-500/20 text-red-300 border-red-500/30",         text: "text-red-400"     };
   return { dot: "bg-white/20", badge: "bg-white/10 text-white/40 border-white/10", text: "text-white/40" };
 }
 
@@ -135,6 +144,12 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
     queryFn: async () => { const r = await fetch("/api/teacher/self-attendance/corrections", { credentials: "include" }); return r.ok ? r.json() : []; },
   });
 
+  const { data: policy } = useQuery<AttendancePolicyInfo>({
+    queryKey: ["/api/teacher/attendance-policy"],
+    queryFn: async () => { const r = await fetch("/api/teacher/attendance-policy", { credentials: "include" }); return r.ok ? r.json() : null; },
+    staleTime: 300000,
+  });
+
   // ── Mutations ────────────────────────────────────────────────────────────────
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/today"] });
@@ -171,8 +186,9 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
     const workdays = history.filter(r => !isWeekend(r.attendanceDate));
     const present  = workdays.filter(r => r.status === "Present").length;
     const late     = workdays.filter(r => r.status === "Late").length;
+    const halfDay  = workdays.filter(r => r.status === "Half Day").length;
     const absent   = workdays.filter(r => r.status === "Absent").length;
-    const marked   = present + late;
+    const marked   = present + late + halfDay;
     const rate     = workdays.length > 0 ? Math.round((marked / workdays.length) * 100) : 0;
     const durations = history.filter(r => r.totalWorkingMinutes > 0).map(r => r.totalWorkingMinutes);
     const avgDur   = durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : 0;
@@ -184,7 +200,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
     for (const r of sorted) {
       if (r.attendanceDate === today) continue;
       if (isWeekend(r.attendanceDate)) continue;
-      const ok = r.status === "Present" || r.status === "Late";
+      const ok = r.status === "Present" || r.status === "Late" || r.status === "Half Day";
       if (ok) {
         cur++;
         if (cur > longest) longest = cur;
@@ -282,15 +298,29 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
         )}
       </div>
 
+      {/* Policy info strip */}
+      {policy && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 rounded-xl border border-[#8b5cf6]/20 bg-[#8b5cf6]/5 text-xs text-white/50" data-testid="banner-attendance-policy">
+          <span className="flex items-center gap-1.5 text-[#8b5cf6]"><Timer className="w-3.5 h-3.5" />{policy.policyName}</span>
+          <span>Expected: <strong className="text-white/70">{policy.expectedArrivalTime}</strong></span>
+          {policy.gracePeriodMinutes > 0 && <span>· Grace: <strong className="text-white/70">{policy.gracePeriodMinutes}m</strong></span>}
+          <span>· Half-day after: <strong className="text-white/70">{policy.halfDayCutoffTime}</strong></span>
+          <span>· Target: <strong className="text-white/70">{policy.attendanceTarget}%</strong></span>
+        </div>
+      )}
+
       {/* ── Today's Shift Card ── */}
       <div className="rounded-2xl border border-white/10 bg-[#1A2942] p-5 space-y-4" data-testid="card-shift">
         <div className="flex items-center justify-between">
           <p className="text-xs font-semibold text-white/50 uppercase tracking-wider">Today's Shift</p>
-          {todayRec?.checkInTime && (
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-emerald-500/20 text-emerald-300 border-emerald-500/30">
-              <CheckCircle className="w-3 h-3" /> Present
-            </span>
-          )}
+          {todayRec?.checkInTime && todayRec.status && (() => {
+            const sc = statusColors(todayRec.status);
+            return (
+              <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${sc.badge}`}>
+                <CheckCircle className="w-3 h-3" /> {todayRec.status}
+              </span>
+            );
+          })()}
         </div>
 
         {todayLoading ? (

@@ -267,6 +267,18 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
     refetchOnMount: "always",
   });
 
+  const { data: studentPolicy } = useQuery<{ attendanceTarget: number }>({
+    queryKey: ["/api/admin/attendance-policies/resolve", "STUDENT"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/attendance-policies/resolve?role=STUDENT", { credentials: "include" });
+      return r.ok ? r.json() : { attendanceTarget: 85 };
+    },
+    enabled: !!schoolId,
+    staleTime: 300000,
+  });
+
+  const studentAttTarget = studentPolicy?.attendanceTarget ?? 85;
+
   const studentData = classDetail?.students ?? [];
   const submissionMeta = classDetail?.meta ?? { isSubmitted: false, submittedBy: null, submittedAt: null, lastModifiedAt: null, modifiedBy: null };
 
@@ -413,7 +425,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
                 style={{ width: `${overview?.percentage ?? 0}%`, background: "linear-gradient(90deg, #D4AF37, #F4D03F)" }} />
             </div>
             <div className="flex justify-between mt-1 text-[10px] text-white/30">
-              <span>0%</span><span>Target: 85%</span><span>100%</span>
+              <span>0%</span><span>Target: {studentAttTarget}%</span><span>100%</span>
             </div>
           </div>
         )}
