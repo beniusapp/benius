@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { type Server } from "http";
 import { storage } from "./storage";
-import { insertSchoolSchema, attendanceRecords, studentProfiles, students, schools } from "@shared/schema";
+import { insertSchoolSchema, attendanceRecords, studentProfiles, students, schools, teacherSelfAttendance, attendanceCorrectionRequests, facultyMappings } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import multer from "multer";
@@ -2003,15 +2003,32 @@ export async function registerRoutes(
           name: student.name,
           rollNo: student.rollNo ?? "",
           digitalStudentId: student.digitalStudentId,
-          // Explicitly "not-marked" when no record — never fall back to "present"
           status: (record && record.status) ? record.status : "not-marked",
         };
       });
-      // Prevent all layers of HTTP caching so the browser always gets live data
+
+      // Build submission metadata from attendance_records
+      const submittedRecs = filteredRecords.filter(r => r.markedAt).sort(
+        (a, b) => new Date(a.markedAt as Date).getTime() - new Date(b.markedAt as Date).getTime()
+      );
+      const firstSubmitted = submittedRecs[0] ?? null;
+      const editedRecs = filteredRecords
+        .filter(r => (r.editCount ?? 0) > 0 && r.markedAt)
+        .sort((a, b) => new Date(b.markedAt as Date).getTime() - new Date(a.markedAt as Date).getTime());
+      const lastEdited = editedRecs[0] ?? null;
+
+      const meta = {
+        isSubmitted: filteredRecords.length > 0,
+        submittedBy: firstSubmitted?.markedBy ?? null,
+        submittedAt: firstSubmitted?.markedAt ? new Date(firstSubmitted.markedAt as Date).toISOString() : null,
+        lastModifiedAt: lastEdited?.markedAt ? new Date(lastEdited.markedAt as Date).toISOString() : null,
+        modifiedBy: lastEdited?.markedBy ?? null,
+      };
+
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
       res.setHeader("Pragma", "no-cache");
       res.setHeader("Expires", "0");
-      res.json(result);
+      res.json({ meta, students: result });
     } catch (err) {
       console.error("class-detail error:", err);
       res.status(500).json({ message: "Failed to fetch class attendance" });
@@ -2054,51 +2071,92 @@ export async function registerRoutes(
     const { date } = req.query as { date?: string };
     if (!date) return res.status(400).json({ message: "date is required" });
     try {
-      const allTeachers = await storage.getTeachersBySchool(schoolId);
-      const records = await db.select().from(attendanceRecords)
-        .where(and(eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.date, date)));
+      const [allTeachers, selfAttRows, mappingRows, corrRows, studentRecords] = await Promise.all([
+        storage.getTeachersBySchool(schoolId),
+        db.select().from(teacherSelfAttendance).where(
+          and(eq(teacherSelfAttendance.schoolId, schoolId), eq(teacherSelfAttendance.attendanceDate, date))
+        ),
+        db.select().from(facultyMappings).where(eq(facultyMappings.schoolId, schoolId)),
+        db.select().from(attendanceCorrectionRequests).where(
+          and(eq(attendanceCorrectionRequests.schoolId, schoolId), eq(attendanceCorrectionRequests.attendanceDate, date))
+        ),
+        db.select().from(attendanceRecords).where(
+          and(eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.date, date))
+        ),
+      ]);
 
-      const teacherMap = new Map<number, { firstMarkAt: Date | null }>();
-      for (const r of records) {
-        const existing = teacherMap.get(r.teacherId);
-        if (!existing) {
-          teacherMap.set(r.teacherId, { firstMarkAt: r.markedAt });
-        } else if (r.markedAt < (existing.firstMarkAt ?? r.markedAt)) {
-          existing.firstMarkAt = r.markedAt;
-        }
+      // Self-attendance map: teacherId → record
+      const selfMap = new Map<number, typeof selfAttRows[0]>();
+      for (const r of selfAttRows) selfMap.set(r.teacherId, r);
+
+      // Faculty mappings: teacherId → unique subjects array
+      const subjMap = new Map<number, Set<string>>();
+      for (const m of mappingRows) {
+        if (!subjMap.has(m.teacherId)) subjMap.set(m.teacherId, new Set());
+        if (m.subject) subjMap.get(m.teacherId)!.add(m.subject);
+      }
+
+      // Correction counts per teacher for this date
+      const corrMap = new Map<number, number>();
+      for (const c of corrRows) corrMap.set(c.teacherId, (corrMap.get(c.teacherId) ?? 0) + 1);
+
+      // Student-marking map: teacherId → earliest markedAt
+      const markMap = new Map<number, Date>();
+      for (const r of studentRecords) {
+        if (!r.markedAt) continue;
+        const existing = markMap.get(r.teacherId);
+        if (!existing || r.markedAt < existing) markMap.set(r.teacherId, r.markedAt);
       }
 
       const result = allTeachers.map(t => {
-        const markInfo = teacherMap.get(t.id);
-        const hasMarked = !!markInfo;
-        const firstMarkAt = markInfo?.firstMarkAt ?? null;
-        let status = "not-marked";
-        let isLate = false;
-        if (hasMarked && firstMarkAt) {
-          status = "marked";
-          const h = firstMarkAt.getHours();
-          const m = firstMarkAt.getMinutes();
-          if (h > 9 || (h === 9 && m > 0)) isLate = true;
-        }
+        const selfRec = selfMap.get(t.id) ?? null;
+        const subjectsFromMappings = Array.from(subjMap.get(t.id) ?? []);
+        const primarySubject = subjectsFromMappings[0] ?? t.subject ?? "";
+        const department = primarySubject || t.department || "";
+        const corrCount = corrMap.get(t.id) ?? 0;
+        const studentMarkAt = markMap.get(t.id) ?? null;
+
+        // IST-aware late check (check-in after 09:00 IST = 03:30 UTC)
+        const isLate = selfRec?.checkInTime
+          ? (() => {
+              const ist = new Date((selfRec.checkInTime as Date).getTime() + 19800000);
+              const h = ist.getUTCHours(); const m = ist.getUTCMinutes();
+              return h > 9 || (h === 9 && m > 0);
+            })()
+          : false;
+
         return {
           teacherId: t.id,
           name: t.fullName,
-          assignedClass: t.assignedClass,
-          assignedSection: t.assignedSection,
-          subject: t.subject,
-          department: t.department ?? "",
-          status,
+          assignedClass: t.assignedClass ?? "",
+          assignedSection: t.assignedSection ?? "",
+          subject: primarySubject,
+          department,
+          selfStatus: selfRec ? "Present" : "Not Marked",
+          selfCheckIn: selfRec?.checkInTime ? (selfRec.checkInTime as Date).toISOString() : null,
+          selfCheckOut: selfRec?.checkOutTime ? (selfRec.checkOutTime as Date).toISOString() : null,
+          selfWorkedMinutes: selfRec?.totalWorkingMinutes ?? 0,
           isLate,
-          submittedAt: firstMarkAt ? firstMarkAt.toISOString() : null,
+          hasCorrectionAudit: corrCount > 0,
+          correctionCount: corrCount,
+          studentMarkStatus: studentMarkAt ? "marked" : "not-marked",
+          submittedAt: studentMarkAt ? studentMarkAt.toISOString() : null,
         };
       });
 
       const totalFaculty = result.length;
-      const marked = result.filter(r => r.status === "marked").length;
-      const notMarked = result.filter(r => r.status === "not-marked").length;
+      const present = result.filter(r => r.selfStatus === "Present").length;
+      const notMarked = result.filter(r => r.selfStatus === "Not Marked").length;
+      const lateArrivals = result.filter(r => r.isLate).length;
+      const pendingCorrections = corrRows.filter(c => c.status === "Pending").length;
+      const totalCorrections = corrRows.length;
 
-      res.json({ summary: { totalFaculty, marked, notMarked }, teachers: result });
+      res.json({
+        summary: { totalFaculty, present, notMarked, lateArrivals, pendingCorrections, totalCorrections },
+        teachers: result,
+      });
     } catch (err) {
+      console.error("teacher-summary error:", err);
       res.status(500).json({ message: "Failed to fetch teacher attendance summary" });
     }
   });

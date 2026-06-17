@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Users, UserX, Loader2, Calendar, Filter, CheckCircle, Search, Eye,
   ChevronRight, AlertTriangle, TrendingUp, X, Phone, MapPin, User,
-  Clock, GraduationCap, BookOpen,
+  Clock, GraduationCap, BookOpen, PenLine, LogIn, LogOut, Timer,
+  FileWarning, ClipboardCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -45,7 +46,20 @@ interface StudentAttendance {
   name: string;
   rollNo: string;
   digitalStudentId: string;
-  status: "present" | "absent" | "leave" | "late" | "not-marked";
+  status: "present" | "absent" | "leave" | "late" | "halfday" | "not-marked";
+}
+
+interface SubmissionMeta {
+  isSubmitted: boolean;
+  submittedBy: string | null;
+  submittedAt: string | null;
+  lastModifiedAt: string | null;
+  modifiedBy: string | null;
+}
+
+interface ClassDetailResponse {
+  meta: SubmissionMeta;
+  students: StudentAttendance[];
 }
 
 interface TeacherRow {
@@ -55,52 +69,55 @@ interface TeacherRow {
   assignedSection: string;
   subject: string;
   department: string;
-  status: "marked" | "not-marked";
+  selfStatus: "Present" | "Not Marked";
+  selfCheckIn: string | null;
+  selfCheckOut: string | null;
+  selfWorkedMinutes: number;
   isLate: boolean;
+  hasCorrectionAudit: boolean;
+  correctionCount: number;
+  studentMarkStatus: "marked" | "not-marked";
   submittedAt: string | null;
 }
 
 interface TeacherSummaryResponse {
-  summary: { totalFaculty: number; marked: number; notMarked: number };
+  summary: {
+    totalFaculty: number;
+    present: number;
+    notMarked: number;
+    lateArrivals: number;
+    pendingCorrections: number;
+    totalCorrections: number;
+  };
   teachers: TeacherRow[];
 }
 
 function StatusBadge({ status }: { status: string }) {
-  if (status === "present") {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-        <CheckCircle className="w-3 h-3" /> Present
-      </span>
-    );
-  }
-  if (status === "absent") {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-500/20 text-red-400 border border-red-500/30">
-        <UserX className="w-3 h-3" /> Absent
-      </span>
-    );
-  }
-  if (status === "leave") {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">
-        <Calendar className="w-3 h-3" /> Leave
-      </span>
-    );
-  }
-  if (status === "late") {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-orange-500/20 text-orange-400 border border-orange-500/30">
-        <AlertTriangle className="w-3 h-3" /> Late
-      </span>
-    );
-  }
-  if (status === "halfday") {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-500/20 text-blue-400 border border-blue-500/30">
-        <Clock className="w-3 h-3" /> Half Day
-      </span>
-    );
-  }
+  if (status === "present") return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+      <CheckCircle className="w-3 h-3" /> Present
+    </span>
+  );
+  if (status === "absent") return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-500/20 text-red-400 border border-red-500/30">
+      <UserX className="w-3 h-3" /> Absent
+    </span>
+  );
+  if (status === "leave") return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+      <Calendar className="w-3 h-3" /> Leave
+    </span>
+  );
+  if (status === "late") return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-orange-500/20 text-orange-400 border border-orange-500/30">
+      <AlertTriangle className="w-3 h-3" /> Late
+    </span>
+  );
+  if (status === "halfday") return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-500/20 text-blue-400 border border-blue-500/30">
+      <Clock className="w-3 h-3" /> Half Day
+    </span>
+  );
   return (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-white/10 text-white/50 border border-white/10">
       Not Marked
@@ -108,17 +125,22 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function TeacherStatusBadge({ status }: { status: string }) {
-  if (status === "not-marked") {
+function TeacherSelfBadge({ status, isLate }: { status: string; isLate: boolean }) {
+  if (status === "Present") {
+    if (isLate) return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-orange-500/20 text-orange-400 border border-orange-500/30">
+        <AlertTriangle className="w-3 h-3" /> Late In
+      </span>
+    );
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-white/10 text-white/50 border border-white/10">
-        Not Marked
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+        <CheckCircle className="w-3 h-3" /> Present
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-      <CheckCircle className="w-3 h-3" /> Marked
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-white/10 text-white/50 border border-white/10">
+      Not Marked
     </span>
   );
 }
@@ -131,6 +153,20 @@ function StatCard({ label, value, color, bg, icon: Icon }: { label: string; valu
       </div>
       <p className={`text-2xl font-bold ${color}`} data-testid={`stat-${label.toLowerCase().replace(/\s+/g, "-")}`}>{value}</p>
       <p className="text-white/50 text-xs mt-1 truncate">{label}</p>
+    </div>
+  );
+}
+
+function MiniAnalyticsCard({ label, value, color, bg, icon: Icon }: { label: string; value: number | string; color: string; bg: string; icon: LucideIcon }) {
+  return (
+    <div className="flex-1 min-w-[100px] rounded-xl border border-white/10 p-3 flex items-center gap-3" style={{ background: "rgba(255,255,255,0.04)", backdropFilter: "blur(8px)" }}>
+      <div className={`p-2 rounded-lg flex-shrink-0 ${bg}`}>
+        <Icon className={`w-4 h-4 ${color}`} />
+      </div>
+      <div className="min-w-0">
+        <p className={`text-xl font-bold leading-none ${color}`} data-testid={`stat-teacher-${label.toLowerCase().replace(/\s+/g, "-")}`}>{value}</p>
+        <p className="text-white/40 text-[11px] mt-1 truncate">{label}</p>
+      </div>
     </div>
   );
 }
@@ -150,7 +186,15 @@ function SkeletonRow({ cols }: { cols: number }) {
 function formatTime(isoString: string | null): string {
   if (!isoString) return "—";
   const d = new Date(isoString);
-  return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+}
+
+function formatDateTime(isoString: string | null): string {
+  if (!isoString) return "—";
+  const d = new Date(isoString);
+  const date = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+  const time = d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+  return `${date}, ${time}`;
 }
 
 export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
@@ -160,13 +204,11 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   const [filterSection, setFilterSection] = useState("");
   const [studentSearch, setStudentSearch] = useState("");
   const [teacherSearch, setTeacherSearch] = useState("");
+  const [teacherStatusFilter, setTeacherStatusFilter] = useState<"all" | "Present" | "Not Marked" | "Late In" | "Corrections">("all");
   const [selectedStudentId, setSelectedStudentId] = useState<number | null>(null);
 
   const queryClient = useQueryClient();
 
-  // Force-invalidate all attendance caches whenever date / class / section change.
-  // This guarantees a real server round-trip and prevents stale React Query cache
-  // from showing fabricated "Present" statuses on days with no records.
   useEffect(() => {
     queryClient.invalidateQueries({ queryKey: ["/api/admin/attendance/overview", date] });
     queryClient.invalidateQueries({ queryKey: ["/api/admin/attendance/teacher-summary", date] });
@@ -177,7 +219,6 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
     }
   }, [date, filterClass, filterSection, queryClient]);
 
-  // School config
   const { data: schoolConfig, isLoading: configLoading } = useQuery<SchoolConfig>({
     queryKey: ["/api/admin/school-config"],
     queryFn: async () => {
@@ -190,7 +231,6 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   const hasClasses = (schoolConfig?.classes ?? []).length > 0;
   const hasSections = (schoolConfig?.sections ?? []).length > 0;
 
-  // School-wide enrollment-based overview
   const { data: overview, isLoading: overviewLoading } = useQuery<AttendanceOverview>({
     queryKey: ["/api/admin/attendance/overview", date],
     queryFn: async () => {
@@ -202,38 +242,34 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
     refetchOnMount: "always",
   });
 
-  // Teacher summary (for quick-stat + Section B)
   const { data: teacherSummaryData, isLoading: teacherLoading } = useQuery<TeacherSummaryResponse>({
     queryKey: ["/api/admin/attendance/teacher-summary", date],
     queryFn: async () => {
       const r = await fetch(`/api/admin/attendance/teacher-summary?date=${date}`, { credentials: "include", cache: "no-store" });
-      return r.ok ? r.json() : { summary: { totalFaculty: 0, marked: 0, notMarked: 0 }, teachers: [] };
+      return r.ok ? r.json() : { summary: { totalFaculty: 0, present: 0, notMarked: 0, lateArrivals: 0, pendingCorrections: 0, totalCorrections: 0 }, teachers: [] };
     },
     enabled: !!schoolId,
     staleTime: 0,
     refetchOnMount: "always",
   });
 
-  // Class-level student attendance — always fetches live data, no caching at any layer
-  const { data: studentData = [], isLoading: studentLoading } = useQuery<StudentAttendance[]>({
+  const { data: classDetail, isLoading: studentLoading } = useQuery<ClassDetailResponse>({
     queryKey: ["/api/admin/attendance/class-detail", filterClass, filterSection, date],
     queryFn: async () => {
       const r = await fetch(
         `/api/admin/attendance/class-detail?class=${encodeURIComponent(filterClass)}&section=${encodeURIComponent(filterSection)}&date=${date}`,
         { credentials: "include", cache: "no-store" }
       );
-      return r.ok ? r.json() : [];
+      return r.ok ? r.json() : { meta: { isSubmitted: false, submittedBy: null, submittedAt: null, lastModifiedAt: null, modifiedBy: null }, students: [] };
     },
     enabled: !!filterClass && !!filterSection,
     staleTime: 0,
     refetchOnMount: "always",
   });
 
-  // ── SAFETY NET ──────────────────────────────────────────────────────────────
-  // If the school-wide overview confirms markedTotal === 0 (zero attendance
-  // records exist for this date), any "present" / "absent" status in studentData
-  // must be stale React Query cache from a previous date. Override everything to
-  // "not-marked" so the UI is always logically consistent with the real DB state.
+  const studentData = classDetail?.students ?? [];
+  const submissionMeta = classDetail?.meta ?? { isSubmitted: false, submittedBy: null, submittedAt: null, lastModifiedAt: null, modifiedBy: null };
+
   const safeStudentData = useMemo<StudentAttendance[]>(() => {
     const noRecordsExist = !overviewLoading && (overview?.markedTotal ?? 1) === 0;
     if (noRecordsExist && studentData.some(s => s.status !== "not-marked")) {
@@ -242,20 +278,16 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
     return studentData;
   }, [studentData, overview, overviewLoading]);
 
-  // Class stats
-  // attendanceSubmitted = true only when at least one record exists (not-marked ≠ submitted)
   const classStats = useMemo(() => {
     const total   = safeStudentData.length;
     const marked  = safeStudentData.filter(s => s.status !== "not-marked").length;
     const present = safeStudentData.filter(s => s.status === "present").length;
     const absent  = safeStudentData.filter(s => s.status === "absent").length;
-    // Use marked count as denominator so "not-marked" students don't dilute %
     const pct     = marked > 0 ? Math.round((present / marked) * 100) : 0;
     const attendanceSubmitted = marked > 0;
     return { total, present, absent, pct, attendanceSubmitted };
   }, [safeStudentData]);
 
-  // Filtered student rows
   const filteredStudents = useMemo(() => {
     const q = studentSearch.trim().toLowerCase();
     if (!q) return safeStudentData;
@@ -266,19 +298,24 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
     );
   }, [safeStudentData, studentSearch]);
 
-  // Filtered teacher rows
   const filteredTeachers = useMemo(() => {
     const q = teacherSearch.trim().toLowerCase();
-    const rows = teacherSummaryData?.teachers ?? [];
+    let rows = teacherSummaryData?.teachers ?? [];
+
+    // Status filter
+    if (teacherStatusFilter === "Present") rows = rows.filter(t => t.selfStatus === "Present" && !t.isLate);
+    else if (teacherStatusFilter === "Not Marked") rows = rows.filter(t => t.selfStatus === "Not Marked");
+    else if (teacherStatusFilter === "Late In") rows = rows.filter(t => t.isLate);
+    else if (teacherStatusFilter === "Corrections") rows = rows.filter(t => t.hasCorrectionAudit);
+
     if (!q) return rows;
     return rows.filter(t =>
       t.name.toLowerCase().includes(q) ||
       (t.department ?? "").toLowerCase().includes(q) ||
       (t.subject ?? "").toLowerCase().includes(q)
     );
-  }, [teacherSummaryData, teacherSearch]);
+  }, [teacherSummaryData, teacherSearch, teacherStatusFilter]);
 
-  // Student detail query
   const { data: selectedStudentDetail, isLoading: studentDetailLoading } = useQuery<StudentSummary>({
     queryKey: ["/api/admin/students", selectedStudentId, "summary"],
     queryFn: async () => {
@@ -295,21 +332,18 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   );
 
   const displayDate = new Date(date).toLocaleDateString("en-GB");
-  const teacherSummary = teacherSummaryData?.summary ?? { totalFaculty: 0, marked: 0, notMarked: 0 };
+  const teacherSummary = teacherSummaryData?.summary ?? { totalFaculty: 0, present: 0, notMarked: 0, lateArrivals: 0, pendingCorrections: 0, totalCorrections: 0 };
 
   return (
     <div className="space-y-5">
-      {/* ── HEADER: left = title/subtitle, right = Teacher Quick-Stat + date picker ── */}
+      {/* ── HEADER ── */}
       <div className="flex items-start justify-between flex-wrap gap-4">
-        {/* Left */}
         <div>
           <h2 className="text-xl font-bold text-white" data-testid="text-attendance-title">Attendance Overview</h2>
           <p className="text-white/50 text-sm">School-wide daily attendance for {displayDate}</p>
         </div>
 
-        {/* Right: Teacher Quick-Stat box + date picker stacked */}
         <div className="flex flex-col items-end gap-3">
-          {/* Teacher Quick-Stat mini-card */}
           <div className="flex items-stretch gap-0 rounded-xl border border-white/10 overflow-hidden bg-[#1A2942]" data-testid="card-teacher-quickstat">
             <div className="flex items-center gap-2 px-4 py-2 border-r border-white/10">
               <GraduationCap className="w-4 h-4 text-[#D4AF37]" />
@@ -325,7 +359,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
               <div>
                 <p className="text-[10px] text-white/40 uppercase tracking-wider">Present</p>
                 <p className="text-lg font-bold text-emerald-400" data-testid="stat-faculty-present">
-                  {teacherLoading ? <span className="inline-block w-6 h-4 rounded bg-white/10 animate-pulse" /> : teacherSummary.marked}
+                  {teacherLoading ? <span className="inline-block w-6 h-4 rounded bg-white/10 animate-pulse" /> : teacherSummary.present}
                 </p>
               </div>
             </div>
@@ -333,14 +367,13 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
               <UserX className="w-4 h-4 text-red-400" />
               <div>
                 <p className="text-[10px] text-white/40 uppercase tracking-wider">Not Marked</p>
-                <p className="text-lg font-bold text-red-400" data-testid="stat-faculty-absent">
+                <p className="text-lg font-bold text-red-400" data-testid="stat-faculty-notmarked">
                   {teacherLoading ? <span className="inline-block w-6 h-4 rounded bg-white/10 animate-pulse" /> : teacherSummary.notMarked}
                 </p>
               </div>
             </div>
           </div>
 
-          {/* Date picker below Quick-Stat */}
           <div>
             <label className="block text-xs text-white/40 mb-1 text-right">Date</label>
             <input
@@ -355,14 +388,14 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
         </div>
       </div>
 
-      {/* ── STUDENT PULSE — School-Wide Master Summary ── */}
+      {/* ── STUDENT PULSE — School-Wide ── */}
       <div className="rounded-xl border border-white/10 bg-[#0A1628] p-4">
         <h3 className="text-xs font-bold text-[#D4AF37] uppercase tracking-wider mb-3 flex items-center gap-2">
           <TrendingUp className="w-3.5 h-3.5" /> Student Pulse — School-Wide
         </h3>
         {overviewLoading ? (
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-            {[1, 2, 3, 4, 5].map(i => <div key={i} className="h-20 rounded-xl bg-white/5 animate-pulse" />)}
+            {[1,2,3,4,5].map(i => <div key={i} className="h-20 rounded-xl bg-white/5 animate-pulse" />)}
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
@@ -376,10 +409,8 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
         {!overviewLoading && (
           <div className="mt-3">
             <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
-              <div
-                className="h-full rounded-full transition-all duration-700"
-                style={{ width: `${overview?.percentage ?? 0}%`, background: "linear-gradient(90deg, #D4AF37, #F4D03F)" }}
-              />
+              <div className="h-full rounded-full transition-all duration-700"
+                style={{ width: `${overview?.percentage ?? 0}%`, background: "linear-gradient(90deg, #D4AF37, #F4D03F)" }} />
             </div>
             <div className="flex justify-between mt-1 text-[10px] text-white/30">
               <span>0%</span><span>Target: 85%</span><span>100%</span>
@@ -394,7 +425,9 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
         )}
       </div>
 
-      {/* ── SECTION A: STUDENT ATTENDANCE ── */}
+      {/* ══════════════════════════════════════════════════════════
+          SECTION A — STUDENT ATTENDANCE
+          ══════════════════════════════════════════════════════════ */}
       <div className="space-y-4">
         <div className="flex items-center gap-2">
           <div className="h-px flex-1 bg-white/10" />
@@ -451,28 +484,76 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
           )}
         </div>
 
-        {/* Class-level detail (shown when class + section selected) */}
+        {/* Class-level detail */}
         {filterClass && filterSection && (
           <div className="space-y-4">
             {studentLoading ? (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {[1, 2, 3].map(i => <div key={i} className="h-24 rounded-xl bg-white/5 animate-pulse" />)}
+                {[1,2,3].map(i => <div key={i} className="h-24 rounded-xl bg-white/5 animate-pulse" />)}
               </div>
             ) : (
               <>
+                {/* ── Submission Metadata Header ── */}
+                {submissionMeta.isSubmitted ? (
+                  <div className="rounded-xl border border-white/10 bg-[#1A2942]/80 px-4 py-3 space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                      <div className="flex items-center gap-2 text-xs text-white/70">
+                        <ClipboardCheck className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                        <span>
+                          Submitted by:{" "}
+                          <span className="font-semibold text-white">
+                            {submissionMeta.submittedBy ? `Tr. ${submissionMeta.submittedBy}` : "Unknown"}
+                          </span>{" "}
+                          at{" "}
+                          <span className="font-semibold text-emerald-400">
+                            {formatTime(submissionMeta.submittedAt)}
+                          </span>
+                        </span>
+                      </div>
+                      {submissionMeta.lastModifiedAt && (
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400">
+                            <PenLine className="w-3 h-3" />
+                            Modified by{" "}
+                            <span className="font-semibold">{submissionMeta.modifiedBy ?? "Admin"}</span>{" "}
+                            on {formatDateTime(submissionMeta.lastModifiedAt)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : classStats.total > 0 ? (
+                  /* ── Unmarked Empty-State Banner ── */
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/8 p-5 text-center space-y-3">
+                    <div className="flex justify-center">
+                      <div className="p-3 rounded-full bg-amber-500/15 border border-amber-500/20">
+                        <FileWarning className="w-7 h-7 text-amber-400" />
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-amber-300 font-semibold text-sm">Attendance Not Submitted Yet</p>
+                      <p className="text-amber-400/70 text-xs mt-1">
+                        No records found for Class {filterClass}-{filterSection} on {displayDate}.
+                        <br />The assigned teacher has not submitted attendance logs for this session.
+                      </p>
+                    </div>
+                    <div className="inline-flex items-center gap-1.5 text-xs text-amber-400/60 bg-amber-500/10 px-3 py-1.5 rounded-lg border border-amber-500/20">
+                      <Users className="w-3.5 h-3.5" />
+                      {classStats.total} student{classStats.total !== 1 ? "s" : ""} — all shown as <strong className="ml-1">Not Marked</strong>
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* Class Stats */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <StatCard label="Class Strength" value={classStats.total} color="text-blue-400" bg="bg-blue-500/20" icon={Users} />
-                  {/* Combined Present / Absent */}
                   <div className="rounded-xl border border-white/10 bg-[#1A2942] p-4 min-w-0">
                     <div className="flex gap-6">
                       <div>
                         <div className="inline-flex p-2 rounded-lg bg-emerald-500/20 mb-2">
                           <CheckCircle className="w-5 h-5 text-emerald-400" />
                         </div>
-                        <p
-                          className={`text-2xl font-bold ${classStats.attendanceSubmitted ? "text-emerald-400" : "text-white/30"}`}
-                          data-testid="stat-present"
-                        >
+                        <p className={`text-2xl font-bold ${classStats.attendanceSubmitted ? "text-emerald-400" : "text-white/30"}`} data-testid="stat-present">
                           {classStats.attendanceSubmitted ? classStats.present : "—"}
                         </p>
                         <p className="text-white/50 text-xs mt-1">Present</p>
@@ -482,10 +563,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
                         <div className="inline-flex p-2 rounded-lg bg-red-500/20 mb-2">
                           <UserX className="w-5 h-5 text-red-400" />
                         </div>
-                        <p
-                          className={`text-2xl font-bold ${classStats.attendanceSubmitted ? "text-red-400" : "text-white/30"}`}
-                          data-testid="stat-absent"
-                        >
+                        <p className={`text-2xl font-bold ${classStats.attendanceSubmitted ? "text-red-400" : "text-white/30"}`} data-testid="stat-absent">
                           {classStats.attendanceSubmitted ? classStats.absent : "—"}
                         </p>
                         <p className="text-white/50 text-xs mt-1">Absent</p>
@@ -500,16 +578,6 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
                     icon={TrendingUp}
                   />
                 </div>
-                {/* Not-marked alert banner — shown only when class is selected but no attendance submitted */}
-                {!classStats.attendanceSubmitted && classStats.total > 0 && (
-                  <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10">
-                    <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                    <p className="text-xs text-amber-300">
-                      Attendance for Class {filterClass}-{filterSection} on {displayDate} has not been submitted by the teacher yet.
-                      All {classStats.total} students are shown as <strong>Not Marked</strong>.
-                    </p>
-                  </div>
-                )}
               </>
             )}
 
@@ -563,9 +631,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
                               <p className="text-white/30 text-xs">{s.digitalStudentId}</p>
                             </div>
                           </td>
-                          <td className="px-3 py-3">
-                            <StatusBadge status={s.status} />
-                          </td>
+                          <td className="px-3 py-3"><StatusBadge status={s.status} /></td>
                           <td className="px-3 py-3">
                             <button
                               title="View student detail"
@@ -602,7 +668,9 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
         )}
       </div>
 
-      {/* ── SECTION B: TEACHER ATTENDANCE ── */}
+      {/* ══════════════════════════════════════════════════════════
+          SECTION B — TEACHER ATTENDANCE
+          ══════════════════════════════════════════════════════════ */}
       <div className="space-y-4">
         <div className="flex items-center gap-2">
           <div className="h-px flex-1 bg-white/10" />
@@ -612,50 +680,84 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
           <div className="h-px flex-1 bg-white/10" />
         </div>
 
-        {/* Teacher search */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40 pointer-events-none" />
-          <input
-            type="text"
-            placeholder="Search teacher, department, or subject…"
-            value={teacherSearch}
-            onChange={e => setTeacherSearch(e.target.value)}
-            className="w-full h-11 pl-9 pr-4 rounded-xl border border-white/20 bg-[#1A2942] text-white text-sm placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
-            data-testid="input-teacher-search"
-          />
+        {/* ── Analytics Summary Cards ── */}
+        {teacherLoading ? (
+          <div className="flex gap-3 flex-wrap">
+            {[1,2,3,4].map(i => <div key={i} className="flex-1 min-w-[100px] h-16 rounded-xl bg-white/5 animate-pulse" />)}
+          </div>
+        ) : (
+          <div className="flex gap-3 flex-wrap" data-testid="section-b-analytics">
+            <MiniAnalyticsCard label="Total Present" value={teacherSummary.present} color="text-emerald-400" bg="bg-emerald-500/20" icon={CheckCircle} />
+            <MiniAnalyticsCard label="Not Marked" value={teacherSummary.notMarked} color="text-red-400" bg="bg-red-500/20" icon={UserX} />
+            <MiniAnalyticsCard label="Late Arrivals" value={teacherSummary.lateArrivals} color="text-orange-400" bg="bg-orange-500/20" icon={AlertTriangle} />
+            <MiniAnalyticsCard label="Corrections" value={teacherSummary.totalCorrections} color="text-purple-400" bg="bg-purple-500/20" icon={PenLine} />
+          </div>
+        )}
+
+        {/* ── Search + Status Filter row ── */}
+        <div className="flex gap-3 flex-wrap">
+          <div className="relative flex-1 min-w-[180px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search teacher, department, or subject…"
+              value={teacherSearch}
+              onChange={e => setTeacherSearch(e.target.value)}
+              className="w-full h-11 pl-9 pr-4 rounded-xl border border-white/20 bg-[#1A2942] text-white text-sm placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
+              data-testid="input-teacher-search"
+            />
+          </div>
+          <select
+            value={teacherStatusFilter}
+            onChange={e => setTeacherStatusFilter(e.target.value as typeof teacherStatusFilter)}
+            className="h-11 px-3 rounded-xl border border-white/20 bg-[#1A2942] text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
+            data-testid="select-teacher-status-filter"
+          >
+            <option value="all">All Status</option>
+            <option value="Present">Present</option>
+            <option value="Not Marked">Not Marked</option>
+            <option value="Late In">Late Arrivals</option>
+            <option value="Corrections">Has Corrections</option>
+          </select>
         </div>
 
-        {/* Teacher Table */}
+        {/* ── Teacher Table ── */}
         <div className="rounded-xl border border-white/10 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-sm min-w-[540px]">
+            <table className="w-full border-collapse text-sm min-w-[680px]">
               <thead>
                 <tr className="bg-[#0A1628]">
                   <th className="text-left px-3 py-3 text-xs font-bold text-white/50 uppercase tracking-wider border-b border-white/10">Teacher Name</th>
                   <th className="text-left px-3 py-3 text-xs font-bold text-white/50 uppercase tracking-wider border-b border-white/10">Department</th>
                   <th className="text-left px-3 py-3 text-xs font-bold text-white/50 uppercase tracking-wider border-b border-white/10">Assigned</th>
                   <th className="text-left px-3 py-3 text-xs font-bold text-white/50 uppercase tracking-wider border-b border-white/10">Status</th>
-                  <th className="text-left px-3 py-3 text-xs font-bold text-white/50 uppercase tracking-wider border-b border-white/10">Clock-In</th>
+                  <th className="text-left px-3 py-3 text-xs font-bold text-white/50 uppercase tracking-wider border-b border-white/10">
+                    <span className="flex items-center gap-1"><LogIn className="w-3 h-3" /> Clock-In</span>
+                  </th>
+                  <th className="text-left px-3 py-3 text-xs font-bold text-white/50 uppercase tracking-wider border-b border-white/10">
+                    <span className="flex items-center gap-1"><LogOut className="w-3 h-3" /> Clock-Out</span>
+                  </th>
+                  <th className="text-left px-3 py-3 text-xs font-bold text-white/50 uppercase tracking-wider border-b border-white/10">
+                    <span className="flex items-center gap-1"><Timer className="w-3 h-3" /> Hours</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {teacherLoading ? (
-                  Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} cols={5} />)
+                  Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} cols={7} />)
                 ) : filteredTeachers.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-3 py-12 text-center text-white/40 text-sm">
+                    <td colSpan={7} className="px-3 py-12 text-center text-white/40 text-sm">
                       {(teacherSummaryData?.teachers ?? []).length === 0
                         ? "No teachers found for this school"
-                        : "No teachers match your search"}
+                        : "No teachers match your search or filter"}
                     </td>
                   </tr>
                 ) : (
                   filteredTeachers.map((t, idx) => (
                     <tr
                       key={t.teacherId}
-                      className={`border-b border-white/5 transition-colors ${
-                        idx % 2 === 0 ? "bg-[#1A2942] hover:bg-white/5" : "bg-[#0A1628] hover:bg-white/5"
-                      }`}
+                      className={`border-b border-white/5 transition-colors ${idx % 2 === 0 ? "bg-[#1A2942] hover:bg-white/5" : "bg-[#0A1628] hover:bg-white/5"}`}
                       data-testid={`row-teacher-${t.teacherId}`}
                     >
                       <td className="px-3 py-3">
@@ -663,9 +765,16 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
                           <div className="w-7 h-7 rounded-full bg-[#D4AF37]/20 border border-[#D4AF37]/30 flex items-center justify-center flex-shrink-0">
                             <span className="text-[#D4AF37] font-bold text-xs">{t.name.charAt(0).toUpperCase()}</span>
                           </div>
-                          <div>
-                            <p className="text-white text-sm font-medium">{t.name}</p>
-                            {t.subject && <p className="text-white/30 text-xs flex items-center gap-1"><BookOpen className="w-3 h-3" />{t.subject}</p>}
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <p className="text-white text-sm font-medium">{t.name}</p>
+                              {t.hasCorrectionAudit && (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-purple-500/20 text-purple-400 border border-purple-500/30" title={`${t.correctionCount} correction(s) submitted`}>
+                                  <PenLine className="w-2.5 h-2.5" /> {t.correctionCount}
+                                </span>
+                              )}
+                            </div>
+                            {t.subject && <p className="text-white/30 text-xs flex items-center gap-1 mt-0.5"><BookOpen className="w-3 h-3" />{t.subject}</p>}
                           </div>
                         </div>
                       </td>
@@ -676,16 +785,36 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
                           : "—"}
                       </td>
                       <td className="px-3 py-3">
-                        <TeacherStatusBadge status={t.status} />
+                        <TeacherSelfBadge status={t.selfStatus} isLate={t.isLate} />
                       </td>
                       <td className="px-3 py-3">
-                        {t.submittedAt ? (
-                          <div className="flex items-center gap-1 text-xs text-white/50">
-                            <Clock className="w-3.5 h-3.5 flex-shrink-0" />
-                            <span>{formatTime(t.submittedAt)}</span>
+                        {t.selfCheckIn ? (
+                          <div className="flex items-center gap-1 text-xs text-emerald-400">
+                            <LogIn className="w-3.5 h-3.5 flex-shrink-0" />
+                            <span className="font-mono">{formatTime(t.selfCheckIn)}</span>
                           </div>
                         ) : (
-                          <span className="text-white/30 text-xs">—</span>
+                          <span className="text-white/25 text-xs">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3">
+                        {t.selfCheckOut ? (
+                          <div className="flex items-center gap-1 text-xs text-blue-400">
+                            <LogOut className="w-3.5 h-3.5 flex-shrink-0" />
+                            <span className="font-mono">{formatTime(t.selfCheckOut)}</span>
+                          </div>
+                        ) : (
+                          <span className="text-white/25 text-xs">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3">
+                        {t.selfWorkedMinutes > 0 ? (
+                          <div className="flex items-center gap-1 text-xs text-white/60">
+                            <Timer className="w-3.5 h-3.5 flex-shrink-0 text-[#D4AF37]" />
+                            <span>{Math.floor(t.selfWorkedMinutes / 60)}h {t.selfWorkedMinutes % 60}m</span>
+                          </div>
+                        ) : (
+                          <span className="text-white/25 text-xs">—</span>
                         )}
                       </td>
                     </tr>
@@ -698,14 +827,14 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
             <div className="px-3 py-2 bg-[#0A1628] border-t border-white/10 flex items-center justify-between">
               <p className="text-xs text-white/30">{filteredTeachers.length} teacher{filteredTeachers.length !== 1 ? "s" : ""} shown</p>
               <p className="text-xs text-white/30">
-                {teacherSummary.marked}/{teacherSummary.totalFaculty} marked attendance
+                {teacherSummary.present}/{teacherSummary.totalFaculty} checked in
               </p>
             </div>
           )}
         </div>
       </div>
 
-      {/* Student Detail Modal */}
+      {/* ── Student Detail Modal ── */}
       {selectedStudentId !== null && (
         <div
           className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
@@ -713,7 +842,6 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
           onClick={e => { if (e.target === e.currentTarget) setSelectedStudentId(null); }}
         >
           <div className="w-full max-w-md rounded-2xl bg-[#1A2942] border border-white/10 shadow-2xl overflow-hidden">
-            {/* Modal header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
               <div className="flex items-center gap-2">
                 <User className="w-4 h-4 text-[#D4AF37]" />
@@ -728,7 +856,6 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
               </button>
             </div>
 
-            {/* Modal body */}
             {studentDetailLoading ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-6 h-6 animate-spin text-[#D4AF37]" />
@@ -737,18 +864,12 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
               <div className="p-5 space-y-4">
                 <div className="flex items-start gap-3">
                   <div className="w-12 h-12 rounded-full bg-[#D4AF37]/20 border border-[#D4AF37]/30 flex items-center justify-center flex-shrink-0">
-                    <span className="text-[#D4AF37] font-bold text-lg">
-                      {selectedStudentDetail.name.charAt(0).toUpperCase()}
-                    </span>
+                    <span className="text-[#D4AF37] font-bold text-lg">{selectedStudentDetail.name.charAt(0).toUpperCase()}</span>
                   </div>
                   <div>
                     <p className="text-white font-semibold" data-testid="text-modal-student-name">{selectedStudentDetail.name}</p>
                     <p className="text-white/40 text-xs font-mono mt-0.5" data-testid="text-modal-student-dsid">{selectedStudentDetail.digitalStudentId}</p>
-                    {selectedStudentStatus && (
-                      <div className="mt-1">
-                        <StatusBadge status={selectedStudentStatus} />
-                      </div>
-                    )}
+                    {selectedStudentStatus && <div className="mt-1"><StatusBadge status={selectedStudentStatus} /></div>}
                   </div>
                 </div>
 
@@ -761,9 +882,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
                   </div>
                   <div className="bg-[#0A1628] rounded-lg p-3">
                     <p className="text-white/40 text-xs mb-1">Roll No</p>
-                    <p className="text-white font-medium" data-testid="text-modal-student-roll">
-                      {selectedStudentDetail.rollNo || "—"}
-                    </p>
+                    <p className="text-white font-medium" data-testid="text-modal-student-roll">{selectedStudentDetail.rollNo || "—"}</p>
                   </div>
                 </div>
 
