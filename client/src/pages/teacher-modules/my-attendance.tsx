@@ -462,7 +462,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
                   {s && !cell.isWeekend && (
                     <div className={`w-1.5 h-1.5 rounded-full mt-0.5 ${s.dot}`} />
                   )}
-                  {!s && !cell.isWeekend && cell.dateStr < TODAY && (
+                  {!s && !cell.isWeekend && cell.dateStr < today && (
                     <div className="w-1.5 h-1.5 rounded-full mt-0.5 bg-white/10" />
                   )}
                 </div>
@@ -515,7 +515,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
             <div className="space-y-3">
               <div>
                 <label className="text-xs text-white/60 mb-1 block">Attendance Date</label>
-                <input type="date" value={corrForm.date} min={sevenAgo} max={TODAY}
+                <input type="date" value={corrForm.date} min={sevenAgo} max={today}
                   onChange={e => setCorrForm(f => ({ ...f, date: e.target.value }))}
                   className="w-full rounded-xl bg-white/5 border border-white/15 text-white text-sm px-3 py-2 focus:outline-none focus:border-white/30"
                   style={{ colorScheme: "dark" }} data-testid="input-correction-date" />
