@@ -147,7 +147,9 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   const { data: policy } = useQuery<AttendancePolicyInfo>({
     queryKey: ["/api/teacher/attendance-policy"],
     queryFn: async () => { const r = await fetch("/api/teacher/attendance-policy", { credentials: "include" }); return r.ok ? r.json() : null; },
-    staleTime: 300000,
+    staleTime: 0,
+    refetchInterval: 60000,
+    refetchOnWindowFocus: true,
   });
 
   // ── Mutations ────────────────────────────────────────────────────────────────
@@ -299,15 +301,29 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
       </div>
 
       {/* Policy info strip */}
-      {policy && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 rounded-xl border border-[#8b5cf6]/20 bg-[#8b5cf6]/5 text-xs text-white/50" data-testid="banner-attendance-policy">
-          <span className="flex items-center gap-1.5 text-[#8b5cf6]"><Timer className="w-3.5 h-3.5" />{policy.policyName}</span>
-          <span>Expected: <strong className="text-white/70">{policy.expectedArrivalTime}</strong></span>
-          {policy.gracePeriodMinutes > 0 && <span>· Grace: <strong className="text-white/70">{policy.gracePeriodMinutes}m</strong></span>}
-          <span>· Half-day after: <strong className="text-white/70">{policy.halfDayCutoffTime}</strong></span>
-          <span>· Target: <strong className="text-white/70">{policy.attendanceTarget}%</strong></span>
-        </div>
-      )}
+      {policy && (() => {
+        const isDefault = policy.policyName === "System Default";
+        return (
+          <div
+            className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 rounded-xl border text-xs ${
+              isDefault
+                ? "border-amber-500/25 bg-amber-500/5 text-white/50"
+                : "border-[#8b5cf6]/20 bg-[#8b5cf6]/5 text-white/50"
+            }`}
+            data-testid="banner-attendance-policy"
+          >
+            <span className={`flex items-center gap-1.5 font-semibold ${isDefault ? "text-amber-400" : "text-[#8b5cf6]"}`}>
+              <Timer className="w-3.5 h-3.5" />
+              {policy.policyName}
+              {isDefault && <span className="font-normal text-amber-400/70 text-[10px]">(no policy set by admin)</span>}
+            </span>
+            <span>Expected: <strong className="text-white/70">{policy.expectedArrivalTime}</strong></span>
+            {policy.gracePeriodMinutes > 0 && <span>· Grace: <strong className="text-white/70">{policy.gracePeriodMinutes}m</strong></span>}
+            <span>· Half-day after: <strong className="text-white/70">{policy.halfDayCutoffTime}</strong></span>
+            <span>· Target: <strong className="text-white/70">{policy.attendanceTarget}%</strong></span>
+          </div>
+        );
+      })()}
 
       {/* ── Today's Shift Card ── */}
       <div className="rounded-2xl border border-white/10 bg-[#1A2942] p-5 space-y-4" data-testid="card-shift">

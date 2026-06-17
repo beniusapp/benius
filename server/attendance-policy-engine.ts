@@ -109,11 +109,20 @@ export function resolvePolicy(
 ): PolicyConfig {
   const active = policies.filter(p => p.isActive && p.targetRole === targetRole);
 
-  const exact = active.find(p => p.applicableClasses.includes(className));
-  if (exact) return toPolicyConfig(exact);
+  // 1. Exact class match (only when className is non-empty)
+  if (className) {
+    const exact = active.find(p => p.applicableClasses.includes(className));
+    if (exact) return toPolicyConfig(exact);
+  }
 
+  // 2. School-wide policy (empty applicableClasses = applies to all)
   const schoolWide = active.find(p => p.applicableClasses.length === 0);
   if (schoolWide) return toPolicyConfig(schoolWide);
+
+  // 3. Best-effort fallback: use first active policy for this role.
+  //    Covers teachers/students with no assigned class when only
+  //    class-specific policies exist in the DB.
+  if (active.length > 0) return toPolicyConfig(active[0]);
 
   return DEFAULT_POLICY;
 }
