@@ -2140,6 +2140,10 @@ export async function registerRoutes(
         const subjectsFromMappings = Array.from(subjMap.get(t.id) ?? []);
         const primarySubject = subjectsFromMappings[0] ?? t.subject ?? "";
         const department = primarySubject || t.department || "";
+        // All subjects across all faculty mappings for this teacher
+        const subjects = subjectsFromMappings.length > 0
+          ? subjectsFromMappings
+          : (t.subject ? [t.subject] : []);
         const corrCount = corrMap.get(t.id) ?? 0;
         const studentMarkAt = markMap.get(t.id) ?? null;
 
@@ -2159,6 +2163,7 @@ export async function registerRoutes(
           assignedSection: t.assignedSection ?? "",
           assignedClassSections,
           subject: primarySubject,
+          subjects,
           department,
           selfStatus: selfRec ? "Present" : "Not Marked",
           selfCheckIn: selfRec?.checkInTime ? (selfRec.checkInTime as Date).toISOString() : null,

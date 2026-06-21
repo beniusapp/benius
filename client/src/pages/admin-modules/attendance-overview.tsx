@@ -69,6 +69,7 @@ interface TeacherRow {
   assignedSection: string;
   assignedClassSections: string[];
   subject: string;
+  subjects: string[];
   department: string;
   selfStatus: "Present" | "Not Marked";
   selfCheckIn: string | null;
@@ -791,7 +792,21 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
                           </div>
                         </div>
                       </td>
-                      <td className="px-3 py-3 text-white/60 text-sm">{t.department || "—"}</td>
+                      <td className="px-3 py-3">
+                        {t.subjects && t.subjects.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {t.subjects.map(s => (
+                              <span key={s} className="text-xs text-white/70 font-medium">
+                                {s}
+                              </span>
+                            )).reduce((acc: React.ReactNode[], el, i) =>
+                              i === 0 ? [el] : [...acc, <span key={`sep-${i}`} className="text-white/25 text-xs">,</span>, el], []
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-white/25 text-xs">—</span>
+                        )}
+                      </td>
                       <td className="px-3 py-3">
                         {t.assignedClassSections && t.assignedClassSections.length > 0 ? (
                           <div className="flex flex-wrap gap-1">
