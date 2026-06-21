@@ -2116,6 +2116,13 @@ export async function registerRoutes(
         if (m.subject) subjMap.get(m.teacherId)!.add(m.subject);
       }
 
+      // Faculty mappings: teacherId → unique class-section pairs (e.g. ["6-A", "7-B"])
+      const csMap = new Map<number, Set<string>>();
+      for (const m of mappingRows) {
+        if (!csMap.has(m.teacherId)) csMap.set(m.teacherId, new Set());
+        csMap.get(m.teacherId)!.add(`${m.className}-${m.section}`);
+      }
+
       // Correction counts per teacher for this date
       const corrMap = new Map<number, number>();
       for (const c of corrRows) corrMap.set(c.teacherId, (corrMap.get(c.teacherId) ?? 0) + 1);
@@ -2142,11 +2149,15 @@ export async function registerRoutes(
           ? isLateCheckIn(selfRec.checkInTime as Date, teacherPolicy)
           : false;
 
+        // Collect all class-section assignments from faculty mappings
+        const assignedClassSections = Array.from(csMap.get(t.id) ?? []).sort();
+
         return {
           teacherId: t.id,
           name: t.fullName,
           assignedClass: t.assignedClass ?? "",
           assignedSection: t.assignedSection ?? "",
+          assignedClassSections,
           subject: primarySubject,
           department,
           selfStatus: selfRec ? "Present" : "Not Marked",

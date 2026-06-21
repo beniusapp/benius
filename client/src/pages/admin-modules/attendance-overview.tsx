@@ -67,6 +67,7 @@ interface TeacherRow {
   name: string;
   assignedClass: string;
   assignedSection: string;
+  assignedClassSections: string[];
   subject: string;
   department: string;
   selfStatus: "Present" | "Not Marked";
@@ -791,10 +792,21 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
                         </div>
                       </td>
                       <td className="px-3 py-3 text-white/60 text-sm">{t.department || "—"}</td>
-                      <td className="px-3 py-3 text-white/60 text-xs">
-                        {t.assignedClass && t.assignedSection
-                          ? `Class ${t.assignedClass}-${t.assignedSection}`
-                          : "—"}
+                      <td className="px-3 py-3">
+                        {t.assignedClassSections && t.assignedClassSections.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {t.assignedClassSections.map(cs => (
+                              <span
+                                key={cs}
+                                className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/15 text-indigo-300 border border-indigo-500/20"
+                              >
+                                {cs}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-white/25 text-xs">—</span>
+                        )}
                       </td>
                       <td className="px-3 py-3">
                         <TeacherSelfBadge status={t.selfStatus} isLate={t.isLate} />
