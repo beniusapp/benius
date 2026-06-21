@@ -16,6 +16,7 @@ interface PolicyForm {
   expectedArrivalTime: string;
   gracePeriodMinutes: number;
   halfDayCutoffTime: string;
+  schoolEndTime: string;
   attendanceTarget: number;
   isActive: boolean;
   applicableClasses: string[];
@@ -30,6 +31,7 @@ interface ServerPolicy {
   expectedArrivalTime: string;
   gracePeriodMinutes: number;
   halfDayCutoffTime: string;
+  schoolEndTime: string;
   attendanceTarget: number;
   isActive: boolean;
 }
@@ -50,6 +52,7 @@ function blankForm(): PolicyForm {
     expectedArrivalTime: "09:00",
     gracePeriodMinutes: 0,
     halfDayCutoffTime: "12:00",
+    schoolEndTime: "17:00",
     attendanceTarget: 85,
     isActive: true,
     applicableClasses: [],
@@ -62,6 +65,7 @@ function serverToForm(p: ServerPolicy): PolicyForm {
     expectedArrivalTime: p.expectedArrivalTime,
     gracePeriodMinutes:  p.gracePeriodMinutes,
     halfDayCutoffTime:   p.halfDayCutoffTime,
+    schoolEndTime:       p.schoolEndTime ?? "17:00",
     attendanceTarget:    p.attendanceTarget,
     isActive:            p.isActive,
     applicableClasses:   p.applicableClasses,
@@ -73,23 +77,28 @@ function serverToForm(p: ServerPolicy): PolicyForm {
 function previewRows(form: PolicyForm) {
   const [ah, am] = form.expectedArrivalTime.split(":").map(Number);
   const [hh, hm] = form.halfDayCutoffTime.split(":").map(Number);
+  const [eh, em] = (form.schoolEndTime || "17:00").split(":").map(Number);
   const arrMin  = ah * 60 + (am ?? 0);
   const halfMin = hh * 60 + (hm ?? 0);
+  const endMin  = eh * 60 + (em ?? 0);
   const grace   = form.gracePeriodMinutes;
 
   const samples = [
-    { label: "On time",       minutes: arrMin - 1 },
-    { label: `Grace (+${grace}m)`, minutes: arrMin + grace },
-    { label: "After grace",   minutes: arrMin + grace + 5 },
-    { label: "Half-day cutoff", minutes: halfMin },
-    { label: "After cutoff",  minutes: halfMin + 5 },
+    { label: "On time",             minutes: arrMin - 1 },
+    { label: `Grace (+${grace}m)`,  minutes: arrMin + grace },
+    { label: "After grace",         minutes: arrMin + grace + 5 },
+    { label: "Half-day cutoff",     minutes: halfMin },
+    { label: "After cutoff",        minutes: halfMin + 5 },
+    { label: "School end",          minutes: endMin },
+    { label: "After school end",    minutes: endMin + 5 },
   ].filter(s => s.minutes >= 0);
 
   return samples.map(s => {
     let status: string, color: string;
-    if (s.minutes <= arrMin + grace) { status = "Present";  color = "text-emerald-400"; }
-    else if (s.minutes <= halfMin)   { status = "Late";     color = "text-amber-400";   }
-    else                             { status = "Half Day"; color = "text-orange-400";  }
+    if (s.minutes > endMin)               { status = "Leave";    color = "text-red-400";    }
+    else if (s.minutes <= arrMin + grace) { status = "Present";  color = "text-emerald-400"; }
+    else if (s.minutes <= halfMin)        { status = "Late";     color = "text-amber-400";   }
+    else                                  { status = "Half Day"; color = "text-orange-400";  }
     const h = Math.floor(s.minutes / 60), m = s.minutes % 60;
     return { label: s.label, time: `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`, status, color };
   });
@@ -254,7 +263,7 @@ function PolicyCard({ card, classes, targetRole, onUpdate, onSaved, onDelete }: 
           </div>
 
           {/* Timing */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-white/50 mb-1 block">Expected Arrival (IST)</label>
               <Input
@@ -283,6 +292,19 @@ function PolicyCard({ card, classes, targetRole, onUpdate, onSaved, onDelete }: 
                 onChange={e => patchForm({ halfDayCutoffTime: e.target.value })}
                 className="bg-[#0A1628] border-white/10 text-white text-sm h-9"
                 data-testid={`input-halfday-${localId}`}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-white/50 mb-1 block">
+                School End Time (IST)
+                <span className="ml-1 text-red-400/60 font-normal text-[10px]">check-in after this → Leave</span>
+              </label>
+              <Input
+                type="time"
+                value={form.schoolEndTime}
+                onChange={e => patchForm({ schoolEndTime: e.target.value })}
+                className="bg-[#0A1628] border-red-500/20 text-white text-sm h-9"
+                data-testid={`input-school-end-${localId}`}
               />
             </div>
           </div>
@@ -573,7 +595,8 @@ export function AttendancePolicySetup({ schoolId }: { schoolId: number }) {
       <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
         <p className="text-xs text-white/25 leading-relaxed">
           <span className="text-white/40 font-medium">Resolution order</span> —
-          Class-specific policy → School-wide policy → System default (09:00 arrival, 12:00 half-day, 85% target).
+          Class-specific policy → School-wide policy → System default (09:00 arrival, 12:00 half-day, 17:00 school end, 85% target).
+          Check-in after school end time is recorded as <span className="text-red-400/70 font-medium">Leave</span>.
           Teacher and student policies are resolved independently.
         </p>
       </div>

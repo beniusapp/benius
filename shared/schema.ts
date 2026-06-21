@@ -798,6 +798,7 @@ export const attendancePolicies = pgTable("attendance_policies", {
   expectedArrivalTime: varchar("expected_arrival_time", { length: 5 }).notNull().default("09:00"),
   gracePeriodMinutes: integer("grace_period_minutes").notNull().default(0),
   halfDayCutoffTime: varchar("half_day_cutoff_time", { length: 5 }).notNull().default("12:00"),
+  schoolEndTime: varchar("school_end_time", { length: 5 }).notNull().default("17:00"),
   attendanceTarget: integer("attendance_target").notNull().default(85),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow(),

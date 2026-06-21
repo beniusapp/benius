@@ -14,7 +14,7 @@ interface SelfAttRecord {
   attendanceDate: string;
   checkInTime: string | null;
   checkOutTime: string | null;
-  status: "Present" | "Late" | "Half Day" | "Absent" | "Not Marked";
+  status: "Present" | "Late" | "Half Day" | "Absent" | "Not Marked" | "Leave";
   totalWorkingMinutes: number;
   locationVerified: boolean;
 }
@@ -24,6 +24,7 @@ interface AttendancePolicyInfo {
   expectedArrivalTime: string;
   gracePeriodMinutes: number;
   halfDayCutoffTime: string;
+  schoolEndTime: string;
   attendanceTarget: number;
 }
 
@@ -60,6 +61,7 @@ function statusColors(status: string) {
   if (status === "Late")     return { dot: "bg-amber-400",   badge: "bg-amber-500/20 text-amber-300 border-amber-500/30",   text: "text-amber-400"   };
   if (status === "Half Day") return { dot: "bg-orange-400",  badge: "bg-orange-500/20 text-orange-300 border-orange-500/30", text: "text-orange-400"  };
   if (status === "Absent")   return { dot: "bg-red-400",     badge: "bg-red-500/20 text-red-300 border-red-500/30",         text: "text-red-400"     };
+  if (status === "Leave")    return { dot: "bg-slate-400",   badge: "bg-slate-500/20 text-slate-300 border-slate-500/30",   text: "text-slate-300"   };
   return { dot: "bg-white/20", badge: "bg-white/10 text-white/40 border-white/10", text: "text-white/40" };
 }
 
@@ -160,8 +162,17 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
 
   const checkInMut = useMutation({
     mutationFn: () => apiRequest("POST", "/api/teacher/self-attendance/check-in", { latitude: geo.lat, longitude: geo.lng, locationVerified: geo.verified }).then(r => r.json()),
-    onSuccess: (d) => { toast({ title: d.status === "Late" ? "⚠️ Checked In — Late" : "✅ Checked In!", description: `Shift started at ${fmtTime(d.checkInTime)}` }); invalidate(); },
-    onError:   (e: Error) => toast({ title: "Check-in failed", description: e.message, variant: "destructive" }),
+    onSuccess: (d) => {
+      if (d.status === "Leave") {
+        toast({ title: "🏫 School Day Ended", description: `Attendance recorded as Leave. School ended at ${policy?.schoolEndTime ?? "—"}.`, variant: "destructive" });
+      } else if (d.status === "Late" || d.status === "Half Day") {
+        toast({ title: "⚠️ Checked In — Late", description: `Shift started at ${fmtTime(d.checkInTime)}` });
+      } else {
+        toast({ title: "✅ Checked In!", description: `Shift started at ${fmtTime(d.checkInTime)}` });
+      }
+      invalidate();
+    },
+    onError: (e: Error) => toast({ title: "Check-in failed", description: e.message, variant: "destructive" }),
   });
 
   const checkOutMut = useMutation({
@@ -262,9 +273,20 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   const [activeTab, setActiveTab] = useState<"timeline" | "calendar">("timeline");
 
   // ── Shift state ──────────────────────────────────────────────────────────────
-  const shiftState: "unmarked" | "active" | "done" =
+  const shiftState: "unmarked" | "active" | "done" | "leave" =
     !todayRec || !todayRec.checkInTime ? "unmarked" :
+    todayRec.status === "Leave" ? "leave" :
     !todayRec.checkOutTime ? "active" : "done";
+
+  // ── School-over detection (IST) ──────────────────────────────────────────────
+  const isSchoolOver = (() => {
+    if (!policy?.schoolEndTime) return false;
+    const now = new Date();
+    const istNow = new Date(now.getTime() + 19_800_000);
+    const hh = String(istNow.getUTCHours()).padStart(2, "0");
+    const mm = String(istNow.getUTCMinutes()).padStart(2, "0");
+    return `${hh}:${mm}` > policy.schoolEndTime;
+  })();
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
@@ -320,6 +342,9 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
             <span>Expected: <strong className="text-white/70">{policy.expectedArrivalTime}</strong></span>
             {policy.gracePeriodMinutes > 0 && <span>· Grace: <strong className="text-white/70">{policy.gracePeriodMinutes}m</strong></span>}
             <span>· Half-day after: <strong className="text-white/70">{policy.halfDayCutoffTime}</strong></span>
+            {policy.schoolEndTime && (
+              <span>· School ends: <strong className="text-red-400/80">{policy.schoolEndTime}</strong></span>
+            )}
             <span>· Target: <strong className="text-white/70">{policy.attendanceTarget}%</strong></span>
           </div>
         );
@@ -342,18 +367,43 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
         {todayLoading ? (
           <div className="h-24 animate-pulse rounded-xl bg-white/5" />
         ) : shiftState === "unmarked" ? (
-          <div className="text-center py-4">
-            <p className="text-white/40 text-sm mb-4">Not Checked In</p>
+          <div className="text-center py-4 space-y-3">
+            {isSchoolOver && (
+              <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-left mb-2">
+                <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-red-300">
+                  School day ended at <strong>{policy?.schoolEndTime}</strong>. Checking in now will record your attendance as <strong>Leave</strong>.
+                </p>
+              </div>
+            )}
+            <p className="text-white/40 text-sm">Not Checked In</p>
             <button
               onClick={() => checkInMut.mutate()}
               disabled={checkInMut.isPending}
-              className="relative inline-flex items-center gap-2 px-8 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-semibold text-sm transition-all active:scale-95 disabled:opacity-60"
+              className={`relative inline-flex items-center gap-2 px-8 py-3 rounded-xl font-semibold text-sm transition-all active:scale-95 disabled:opacity-60 ${
+                isSchoolOver
+                  ? "bg-slate-600 hover:bg-slate-500 text-white"
+                  : "bg-emerald-500 hover:bg-emerald-400 text-white"
+              }`}
               data-testid="button-check-in"
             >
-              <span className="absolute -inset-1 rounded-xl bg-emerald-500/30 animate-ping opacity-75" />
+              {!isSchoolOver && <span className="absolute -inset-1 rounded-xl bg-emerald-500/30 animate-ping opacity-75" />}
               {checkInMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
-              Check In
+              {isSchoolOver ? "Record as Leave" : "Check In"}
             </button>
+          </div>
+        ) : shiftState === "leave" ? (
+          <div className="text-center py-4 space-y-2">
+            <div className="w-12 h-12 mx-auto rounded-full bg-slate-500/10 flex items-center justify-center">
+              <LogOut className="w-5 h-5 text-slate-400" />
+            </div>
+            <p className="text-sm font-semibold text-slate-300">Marked as Leave</p>
+            <p className="text-xs text-white/30">
+              Check-in was recorded after school end time ({policy?.schoolEndTime ?? "—"}).
+            </p>
+            {todayRec?.checkInTime && (
+              <p className="text-[11px] text-white/20">Recorded at {fmtTime(todayRec.checkInTime)}</p>
+            )}
           </div>
         ) : shiftState === "active" ? (
           <div className="space-y-3">

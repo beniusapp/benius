@@ -3453,7 +3453,7 @@ Thank you for your prompt attention to this matter.
       );
       const policy = resolvePolicy(policyRows, "TEACHER", teacher.assignedClass ?? "");
       const evalResult = evaluateAttendanceStatus(utcToISTHHMM(now), policy);
-      const status = evalResult.displayStatus; // "Present", "Late", or "Half Day"
+      const status = evalResult.displayStatus; // "Present", "Late", "Half Day", or "Leave"
 
       let record;
       if (existing) {
