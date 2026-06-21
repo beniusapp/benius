@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { type Server } from "http";
 import { storage } from "./storage";
 import { insertSchoolSchema, attendanceRecords, studentProfiles, students, schools, teacherSelfAttendance, attendanceCorrectionRequests, facultyMappings, attendancePolicies, insertAttendancePolicySchema } from "@shared/schema";
-import { resolvePolicy, isLateCheckIn, DEFAULT_POLICY } from "./attendance-policy-engine";
+import { resolvePolicy, isLateCheckIn, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import multer from "multer";
@@ -2088,7 +2088,7 @@ export async function registerRoutes(
     const { date } = req.query as { date?: string };
     if (!date) return res.status(400).json({ message: "date is required" });
     try {
-      const [allTeachers, selfAttRows, mappingRows, corrRows, studentRecords] = await Promise.all([
+      const [allTeachers, selfAttRows, mappingRows, corrRows, studentRecords, policyRows] = await Promise.all([
         storage.getTeachersBySchool(schoolId),
         db.select().from(teacherSelfAttendance).where(
           and(eq(teacherSelfAttendance.schoolId, schoolId), eq(teacherSelfAttendance.attendanceDate, date))
@@ -2099,6 +2099,9 @@ export async function registerRoutes(
         ),
         db.select().from(attendanceRecords).where(
           and(eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.date, date))
+        ),
+        db.select().from(attendancePolicies).where(
+          and(eq(attendancePolicies.schoolId, schoolId), eq(attendancePolicies.isActive, true))
         ),
       ]);
 
@@ -2144,8 +2147,12 @@ export async function registerRoutes(
         const corrCount = corrMap.get(t.id) ?? 0;
         const studentMarkAt = markMap.get(t.id) ?? null;
 
-        // isLate: teacher checked in after grace but before half-day cutoff
-        const isLate = selfRec?.status === "Late";
+        // Re-evaluate status against current policy (heals stale records)
+        const teacherPolicy = resolvePolicy(policyRows, "TEACHER", t.assignedClass ?? "");
+        const selfStatus    = selfRec
+          ? recomputeStatus(selfRec, teacherPolicy)
+          : "Not Marked";
+        const isLate = selfStatus === "Late";
 
         // Collect all class-section assignments from faculty mappings
         const assignedClassSections = Array.from(csMap.get(t.id) ?? []).sort();
@@ -2159,7 +2166,7 @@ export async function registerRoutes(
           subject: primarySubject,
           subjects,
           department,
-          selfStatus: selfRec ? (selfRec.status ?? "Present") : "Not Marked",
+          selfStatus,
           selfCheckIn: selfRec?.checkInTime ? (selfRec.checkInTime as Date).toISOString() : null,
           selfCheckOut: selfRec?.checkOutTime ? (selfRec.checkOutTime as Date).toISOString() : null,
           selfWorkedMinutes: selfRec?.totalWorkingMinutes ?? 0,

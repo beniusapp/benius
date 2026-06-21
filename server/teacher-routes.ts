@@ -10,7 +10,7 @@ import ExcelJS from "exceljs";
 import { db } from "./db";
 import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies } from "@shared/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
-import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY } from "./attendance-policy-engine";
+import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 
 const diskUpload = multer({
   storage: multer.diskStorage({
@@ -3430,10 +3430,31 @@ Thank you for your prompt attention to this matter.
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
       const today = istToday();
-      const [record] = await db.select().from(teacherSelfAttendance).where(
-        and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), eq(teacherSelfAttendance.attendanceDate, today))
-      );
-      res.json(record ?? null);
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+      const [[record], policyRows] = await Promise.all([
+        db.select().from(teacherSelfAttendance).where(
+          and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), eq(teacherSelfAttendance.attendanceDate, today))
+        ),
+        db.select().from(attendancePolicies).where(
+          and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
+        ),
+      ]);
+
+      if (!record) return res.json(null);
+
+      // Re-evaluate status against current policy and heal stale records
+      const policy        = resolvePolicy(policyRows, "TEACHER", teacher.assignedClass ?? "");
+      const correctStatus = recomputeStatus(record, policy);
+      if (correctStatus !== record.status) {
+        const [updated] = await db.update(teacherSelfAttendance)
+          .set({ status: correctStatus, updatedAt: new Date() })
+          .where(eq(teacherSelfAttendance.id, record.id))
+          .returning();
+        return res.json(updated);
+      }
+      res.json(record);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch today's record" });
     }
@@ -3543,14 +3564,39 @@ Thank you for your prompt attention to this matter.
   app.get("/api/teacher/self-attendance/history", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
-      const days = Math.min(parseInt(req.query.days as string) || 30, 90);
-      const istNow = Date.now() + 19800000; // UTC → IST
-      const end   = new Date(istNow).toISOString().split("T")[0];
-      const start = new Date(istNow - (days - 1) * 86400000).toISOString().split("T")[0];
-      const records = await db.select().from(teacherSelfAttendance).where(
-        and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), gte(teacherSelfAttendance.attendanceDate, start), lte(teacherSelfAttendance.attendanceDate, end))
-      ).orderBy(desc(teacherSelfAttendance.attendanceDate));
-      res.json(records);
+      const days   = Math.min(parseInt(req.query.days as string) || 30, 90);
+      const istNow = Date.now() + 19800000;
+      const end    = new Date(istNow).toISOString().split("T")[0];
+      const start  = new Date(istNow - (days - 1) * 86400000).toISOString().split("T")[0];
+
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+      const [records, policyRows] = await Promise.all([
+        db.select().from(teacherSelfAttendance).where(
+          and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), gte(teacherSelfAttendance.attendanceDate, start), lte(teacherSelfAttendance.attendanceDate, end))
+        ).orderBy(desc(teacherSelfAttendance.attendanceDate)),
+        db.select().from(attendancePolicies).where(
+          and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
+        ),
+      ]);
+
+      const policy = resolvePolicy(policyRows, "TEACHER", teacher.assignedClass ?? "");
+      const now    = new Date();
+
+      // Re-evaluate and heal every record that has a check-in
+      const healed = await Promise.all(records.map(async r => {
+        if (!r.checkInTime) return r;
+        const correct = recomputeStatus(r, policy);
+        if (correct === r.status) return r;
+        const [updated] = await db.update(teacherSelfAttendance)
+          .set({ status: correct, updatedAt: now })
+          .where(eq(teacherSelfAttendance.id, r.id))
+          .returning();
+        return updated;
+      }));
+
+      res.json(healed);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch history" });
     }
@@ -3574,7 +3620,13 @@ Thank you for your prompt attention to this matter.
       if (checkOutIST <= checkInIST) return res.status(400).json({ message: "Check-out must be after check-in" });
 
       const workingMinutes = Math.floor((checkOutIST.getTime() - checkInIST.getTime()) / 60000);
-      const status = "Present";
+
+      // Evaluate status from corrected times using current policy
+      const corrPolicyRows = await db.select().from(attendancePolicies).where(
+        and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
+      );
+      const corrPolicy = resolvePolicy(corrPolicyRows, "TEACHER", teacher.assignedClass ?? "");
+      const status = recomputeStatus({ checkInTime: checkInIST, checkOutTime: checkOutIST }, corrPolicy);
       const now = new Date();
 
       // Upsert the attendance record — select first then insert or update
