@@ -5,7 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft, MapPin, AlertTriangle, CheckCircle, Clock, Timer,
   LogIn, LogOut, TrendingUp, Calendar, Edit3, ChevronDown,
-  Loader2, Flame, BarChart2, X,
+  Loader2, Flame, BarChart2, X, UserX,
 } from "lucide-react";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
 
@@ -221,7 +221,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
       } else { if (streak === 0) streak = 0; cur = 0; }
       prevDate = r.attendanceDate;
     }
-    return { present, late, absent, rate, avgDur, streak, longest };
+    return { present, late, halfDay, absent, rate, avgDur, streak, longest };
   }, [history, today]);
 
   function isPrevWorkday(earlier: string, later: string): boolean {
@@ -457,10 +457,12 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
       {/* ── KPI Row ── */}
       <div className="grid grid-cols-2 gap-3" data-testid="section-kpi">
         {[
-          { label: "Attendance Rate", value: `${kpi.rate}%`, icon: TrendingUp, color: "text-[#D4AF37]", bg: "bg-[#D4AF37]/10" },
-          { label: "Present (Month)", value: kpi.present, icon: CheckCircle, color: "text-emerald-400", bg: "bg-emerald-500/10" },
-          { label: "Absent Days",     value: kpi.absent,  icon: Clock,       color: "text-red-400",    bg: "bg-red-500/10"    },
-          { label: "Avg Duration",    value: fmtDuration(kpi.avgDur), icon: BarChart2, color: "text-sky-400", bg: "bg-sky-500/10" },
+          { label: "Attendance Rate", value: `${kpi.rate}%`,          icon: TrendingUp, color: "text-[#D4AF37]",  bg: "bg-[#D4AF37]/10"  },
+          { label: "Present (Month)", value: kpi.present,              icon: CheckCircle, color: "text-emerald-400", bg: "bg-emerald-500/10" },
+          { label: "Late Arrivals",   value: kpi.late,                 icon: AlertTriangle, color: "text-amber-400",  bg: "bg-amber-500/10"  },
+          { label: "Half Day",        value: kpi.halfDay,              icon: Clock,       color: "text-orange-400", bg: "bg-orange-500/10" },
+          { label: "Absent Days",     value: kpi.absent,               icon: UserX,       color: "text-red-400",    bg: "bg-red-500/10"    },
+          { label: "Avg Duration",    value: fmtDuration(kpi.avgDur),  icon: BarChart2,   color: "text-sky-400",    bg: "bg-sky-500/10"    },
         ].map(({ label, value, icon: Icon, color, bg }) => (
           <div key={label} className="rounded-xl border border-white/10 bg-[#1A2942] p-4" data-testid={`kpi-${label.toLowerCase().replace(/\s+/g, "-")}`}>
             <div className={`inline-flex p-2 rounded-lg ${bg} mb-2`}>
@@ -566,7 +568,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
             })}
           </div>
           <div className="flex flex-wrap gap-3 pt-1 justify-center">
-            {[["Present","bg-emerald-400"],["Late","bg-amber-400"],["Absent","bg-red-400"]].map(([label, cls]) => (
+            {[["Present","bg-emerald-400"],["Late","bg-amber-400"],["Half Day","bg-orange-400"],["Leave","bg-slate-400"],["Absent","bg-red-400"]].map(([label, cls]) => (
               <div key={label} className="flex items-center gap-1.5 text-[10px] text-white/50">
                 <div className={`w-2 h-2 rounded-full ${cls}`} /> {label}
               </div>
