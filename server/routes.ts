@@ -2088,7 +2088,7 @@ export async function registerRoutes(
     const { date } = req.query as { date?: string };
     if (!date) return res.status(400).json({ message: "date is required" });
     try {
-      const [allTeachers, selfAttRows, mappingRows, corrRows, studentRecords, policyRows] = await Promise.all([
+      const [allTeachers, selfAttRows, mappingRows, corrRows, studentRecords] = await Promise.all([
         storage.getTeachersBySchool(schoolId),
         db.select().from(teacherSelfAttendance).where(
           and(eq(teacherSelfAttendance.schoolId, schoolId), eq(teacherSelfAttendance.attendanceDate, date))
@@ -2099,9 +2099,6 @@ export async function registerRoutes(
         ),
         db.select().from(attendanceRecords).where(
           and(eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.date, date))
-        ),
-        db.select().from(attendancePolicies).where(
-          and(eq(attendancePolicies.schoolId, schoolId), eq(attendancePolicies.isActive, true))
         ),
       ]);
 
@@ -2147,11 +2144,8 @@ export async function registerRoutes(
         const corrCount = corrMap.get(t.id) ?? 0;
         const studentMarkAt = markMap.get(t.id) ?? null;
 
-        // Policy-driven late check — replaces hardcoded 09:00 IST threshold
-        const teacherPolicy = resolvePolicy(policyRows, "TEACHER", t.assignedClass ?? "");
-        const isLate = selfRec?.checkInTime
-          ? isLateCheckIn(selfRec.checkInTime as Date, teacherPolicy)
-          : false;
+        // isLate: teacher checked in after grace but before half-day cutoff
+        const isLate = selfRec?.status === "Late";
 
         // Collect all class-section assignments from faculty mappings
         const assignedClassSections = Array.from(csMap.get(t.id) ?? []).sort();
@@ -2165,7 +2159,7 @@ export async function registerRoutes(
           subject: primarySubject,
           subjects,
           department,
-          selfStatus: selfRec ? "Present" : "Not Marked",
+          selfStatus: selfRec ? (selfRec.status ?? "Present") : "Not Marked",
           selfCheckIn: selfRec?.checkInTime ? (selfRec.checkInTime as Date).toISOString() : null,
           selfCheckOut: selfRec?.checkOutTime ? (selfRec.checkOutTime as Date).toISOString() : null,
           selfWorkedMinutes: selfRec?.totalWorkingMinutes ?? 0,
@@ -2180,12 +2174,14 @@ export async function registerRoutes(
       const totalFaculty = result.length;
       const present = result.filter(r => r.selfStatus === "Present").length;
       const notMarked = result.filter(r => r.selfStatus === "Not Marked").length;
-      const lateArrivals = result.filter(r => r.isLate).length;
+      const lateArrivals = result.filter(r => r.selfStatus === "Late").length;
+      const onLeave = result.filter(r => r.selfStatus === "Leave").length;
+      const halfDay = result.filter(r => r.selfStatus === "Half Day").length;
       const pendingCorrections = corrRows.filter(c => c.status === "Pending").length;
       const totalCorrections = corrRows.length;
 
       res.json({
-        summary: { totalFaculty, present, notMarked, lateArrivals, pendingCorrections, totalCorrections },
+        summary: { totalFaculty, present, notMarked, lateArrivals, onLeave, halfDay, pendingCorrections, totalCorrections },
         teachers: result,
       });
     } catch (err) {

@@ -71,7 +71,7 @@ interface TeacherRow {
   subject: string;
   subjects: string[];
   department: string;
-  selfStatus: "Present" | "Not Marked";
+  selfStatus: "Present" | "Late" | "Half Day" | "Leave" | "Not Marked";
   selfCheckIn: string | null;
   selfCheckOut: string | null;
   selfWorkedMinutes: number;
@@ -88,6 +88,8 @@ interface TeacherSummaryResponse {
     present: number;
     notMarked: number;
     lateArrivals: number;
+    onLeave: number;
+    halfDay: number;
     pendingCorrections: number;
     totalCorrections: number;
   };
@@ -128,18 +130,26 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function TeacherSelfBadge({ status, isLate }: { status: string; isLate: boolean }) {
-  if (status === "Present") {
-    if (isLate) return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-orange-500/20 text-orange-400 border border-orange-500/30">
-        <AlertTriangle className="w-3 h-3" /> Late In
-      </span>
-    );
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-        <CheckCircle className="w-3 h-3" /> Present
-      </span>
-    );
-  }
+  if (status === "Late" || (status === "Present" && isLate)) return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-orange-500/20 text-orange-400 border border-orange-500/30">
+      <AlertTriangle className="w-3 h-3" /> Late In
+    </span>
+  );
+  if (status === "Present") return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+      <CheckCircle className="w-3 h-3" /> Present
+    </span>
+  );
+  if (status === "Half Day") return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-500/20 text-blue-400 border border-blue-500/30">
+      <Clock className="w-3 h-3" /> Half Day
+    </span>
+  );
+  if (status === "Leave") return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-500/20 text-slate-300 border border-slate-500/30">
+      <Calendar className="w-3 h-3" /> Leave
+    </span>
+  );
   return (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-white/10 text-white/50 border border-white/10">
       Not Marked
@@ -206,7 +216,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   const [filterSection, setFilterSection] = useState("");
   const [studentSearch, setStudentSearch] = useState("");
   const [teacherSearch, setTeacherSearch] = useState("");
-  const [teacherStatusFilter, setTeacherStatusFilter] = useState<"all" | "Present" | "Not Marked" | "Late In" | "Corrections">("all");
+  const [teacherStatusFilter, setTeacherStatusFilter] = useState<"all" | "Present" | "Not Marked" | "Late In" | "Corrections" | "Leave" | "Half Day">("all");
   const [selectedStudentId, setSelectedStudentId] = useState<number | null>(null);
 
   const queryClient = useQueryClient();
@@ -317,9 +327,11 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
     let rows = teacherSummaryData?.teachers ?? [];
 
     // Status filter
-    if (teacherStatusFilter === "Present") rows = rows.filter(t => t.selfStatus === "Present" && !t.isLate);
-    else if (teacherStatusFilter === "Not Marked") rows = rows.filter(t => t.selfStatus === "Not Marked");
-    else if (teacherStatusFilter === "Late In") rows = rows.filter(t => t.isLate);
+    if (teacherStatusFilter === "Present")    rows = rows.filter(t => t.selfStatus === "Present");
+    else if (teacherStatusFilter === "Not Marked")  rows = rows.filter(t => t.selfStatus === "Not Marked");
+    else if (teacherStatusFilter === "Late In")     rows = rows.filter(t => t.selfStatus === "Late" || t.isLate);
+    else if (teacherStatusFilter === "Half Day")    rows = rows.filter(t => t.selfStatus === "Half Day");
+    else if (teacherStatusFilter === "Leave")       rows = rows.filter(t => t.selfStatus === "Leave");
     else if (teacherStatusFilter === "Corrections") rows = rows.filter(t => t.hasCorrectionAudit);
 
     if (!q) return rows;
@@ -346,7 +358,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   );
 
   const displayDate = new Date(date).toLocaleDateString("en-GB");
-  const teacherSummary = teacherSummaryData?.summary ?? { totalFaculty: 0, present: 0, notMarked: 0, lateArrivals: 0, pendingCorrections: 0, totalCorrections: 0 };
+  const teacherSummary = teacherSummaryData?.summary ?? { totalFaculty: 0, present: 0, notMarked: 0, lateArrivals: 0, onLeave: 0, halfDay: 0, pendingCorrections: 0, totalCorrections: 0 };
 
   return (
     <div className="space-y-5">
@@ -704,6 +716,8 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
             <MiniAnalyticsCard label="Total Present" value={teacherSummary.present} color="text-emerald-400" bg="bg-emerald-500/20" icon={CheckCircle} />
             <MiniAnalyticsCard label="Not Marked" value={teacherSummary.notMarked} color="text-red-400" bg="bg-red-500/20" icon={UserX} />
             <MiniAnalyticsCard label="Late Arrivals" value={teacherSummary.lateArrivals} color="text-orange-400" bg="bg-orange-500/20" icon={AlertTriangle} />
+            <MiniAnalyticsCard label="Half Day" value={teacherSummary.halfDay} color="text-blue-400" bg="bg-blue-500/20" icon={Clock} />
+            <MiniAnalyticsCard label="On Leave" value={teacherSummary.onLeave} color="text-slate-300" bg="bg-slate-500/20" icon={Calendar} />
             <MiniAnalyticsCard label="Corrections" value={teacherSummary.totalCorrections} color="text-purple-400" bg="bg-purple-500/20" icon={PenLine} />
           </div>
         )}
@@ -731,6 +745,8 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
             <option value="Present">Present</option>
             <option value="Not Marked">Not Marked</option>
             <option value="Late In">Late Arrivals</option>
+            <option value="Half Day">Half Day</option>
+            <option value="Leave">Leave</option>
             <option value="Corrections">Has Corrections</option>
           </select>
         </div>

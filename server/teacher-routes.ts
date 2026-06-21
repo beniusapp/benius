@@ -1293,6 +1293,30 @@ export function registerTeacherRoutes(app: Express) {
       actionBy: req.session.userId!, actionByRole: "admin",
       details: `${status === "approved" ? "Approved" : "Rejected"} teacher leave request`,
     });
+
+    // When approved: sync attendance records as "Leave" for all leave dates
+    if (status === "approved" && leave.teacherId) {
+      const now = new Date();
+      const startD = new Date(leave.startDate + "T00:00:00Z");
+      const endD   = new Date(leave.endDate   + "T00:00:00Z");
+      for (let d = new Date(startD); d <= endD; d.setUTCDate(d.getUTCDate() + 1)) {
+        const dateStr = d.toISOString().split("T")[0];
+        const [existing] = await db.select().from(teacherSelfAttendance)
+          .where(and(eq(teacherSelfAttendance.teacherId, leave.teacherId), eq(teacherSelfAttendance.attendanceDate, dateStr)));
+        if (!existing) {
+          await db.insert(teacherSelfAttendance).values({
+            teacherId: leave.teacherId, schoolId: leave.schoolId,
+            attendanceDate: dateStr, status: "Leave",
+            totalWorkingMinutes: 0,
+          });
+        } else if (!["Present", "Late", "Half Day"].includes(existing.status ?? "")) {
+          await db.update(teacherSelfAttendance)
+            .set({ status: "Leave", updatedAt: now })
+            .where(eq(teacherSelfAttendance.id, existing.id));
+        }
+      }
+    }
+
     res.json(updated);
   });
 
@@ -3486,9 +3510,29 @@ Thank you for your prompt attention to this matter.
 
       const now = new Date();
       const workingMinutes = Math.floor((now.getTime() - new Date(existing.checkInTime).getTime()) / 60000);
-      const [record] = await db.update(teacherSelfAttendance)
+      let [record] = await db.update(teacherSelfAttendance)
         .set({ checkOutTime: now, totalWorkingMinutes: workingMinutes, updatedAt: now })
         .where(eq(teacherSelfAttendance.id, existing.id)).returning();
+
+      // Early check-out: if checkout time (IST) < halfDayCutoffTime → mark as Half Day
+      const teacher = await storage.getTeacherById(req.session.teacherId!);
+      if (teacher) {
+        const policyRowsCO = await db.select().from(attendancePolicies).where(
+          and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
+        );
+        const coPolicy = resolvePolicy(policyRowsCO, "TEACHER", teacher.assignedClass ?? "");
+        const coIST = utcToISTHHMM(now);
+        const [coh, com] = coIST.split(":").map(Number);
+        const coMin = coh * 60 + com;
+        const [hch, hcm] = (coPolicy.halfDayCutoffTime || "12:00").split(":").map(Number);
+        const halfMin = hch * 60 + hcm;
+        if (coMin < halfMin) {
+          [record] = await db.update(teacherSelfAttendance)
+            .set({ status: "Half Day", updatedAt: now })
+            .where(eq(teacherSelfAttendance.id, record.id)).returning();
+        }
+      }
+
       res.json(record);
     } catch (err) {
       res.status(500).json({ message: "Check-out failed" });
