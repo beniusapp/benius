@@ -107,7 +107,8 @@ export function resolvePolicy(
   targetRole: string,
   className: string,
 ): PolicyConfig {
-  const active = policies.filter(p => p.isActive && p.targetRole === targetRole);
+  // Match role-specific policies AND "ALL" role policies (applies to both teachers and students)
+  const active = policies.filter(p => p.isActive && (p.targetRole === targetRole || p.targetRole === "ALL"));
 
   // 1. Exact class match (only when className is non-empty)
   if (className) {
