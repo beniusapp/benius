@@ -837,7 +837,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
               ]).map(opt => (
                 <button
                   key={opt.key}
-                  onClick={() => { setComplaintType(opt.key); setSelectedStudents([]); setNotifyAdmin(false); }}
+                  onClick={() => { setComplaintType(opt.key); setSelectedStudents([]); setNotifyAdmin(false); setContent(""); clearFile(); }}
                   className={`flex-1 px-2 py-2 rounded-lg text-xs font-semibold transition-all ${
                     complaintType === opt.key
                       ? "bg-white dark:bg-gray-900 shadow-sm text-foreground"
