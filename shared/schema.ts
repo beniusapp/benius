@@ -188,6 +188,12 @@ export const complaintNotes = pgTable("complaint_notes", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const complaintStudents = pgTable("complaint_students", {
+  id: serial("id").primaryKey(),
+  complaintId: integer("complaint_id").notNull().references(() => complaints.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+});
+
 export const examScores = pgTable("exam_scores", {
   id: serial("id").primaryKey(),
   studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
@@ -480,6 +486,10 @@ export type Complaint = typeof complaints.$inferSelect;
 export const insertComplaintNoteSchema = createInsertSchema(complaintNotes).omit({ id: true, createdAt: true });
 export type InsertComplaintNote = z.infer<typeof insertComplaintNoteSchema>;
 export type ComplaintNote = typeof complaintNotes.$inferSelect;
+
+export const insertComplaintStudentSchema = createInsertSchema(complaintStudents).omit({ id: true });
+export type InsertComplaintStudent = z.infer<typeof insertComplaintStudentSchema>;
+export type ComplaintStudent = typeof complaintStudents.$inferSelect;
 
 export const insertExamScoreSchema = createInsertSchema(examScores).omit({ id: true, createdAt: true });
 export type InsertExamScore = z.infer<typeof insertExamScoreSchema>;

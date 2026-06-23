@@ -23,6 +23,7 @@ interface AdminComplaint {
   notifyAdmin: boolean;
   createdAt: string;
   studentName: string | null;
+  students?: { id: number; name: string; class: string | null; section: string | null }[];
   teacherName: string | null;
   complainantName: string | null;
   complainantClass: string | null;
@@ -93,10 +94,21 @@ function ComplaintCard({
               {c.complaintType === "teacher-to-admin" ? "From:" : "Against:"} {c.teacherName}
             </p>
           )}
-          {c.studentName && c.complaintType !== "student-to-staff" && (
+          {/* Multi-student display for teacher-to-student complaints */}
+          {c.complaintType !== "student-to-staff" && (c.students?.length ?? 0) > 0 && (
+            <div className="flex flex-wrap gap-1 mt-0.5" data-testid={`students-admin-${c.id}`}>
+              {c.students!.map((s, i) => (
+                <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-[11px] font-semibold text-rose-800">
+                  {s.name}{s.class ? ` · ${s.class}${s.section ? `-${s.section}` : ""}` : ""}
+                </span>
+              ))}
+            </div>
+          )}
+          {/* Fallback: legacy single studentName */}
+          {c.complaintType !== "student-to-staff" && (c.students?.length ?? 0) === 0 && c.studentName && (
             <p className="text-xs font-bold text-slate-800">Student: {c.studentName}</p>
           )}
-          {c.reportedStudentName && !c.studentName && (
+          {c.reportedStudentName && !c.studentName && (c.students?.length ?? 0) === 0 && (
             <p className="text-xs font-bold text-slate-800">Reported: {c.reportedStudentName}</p>
           )}
 

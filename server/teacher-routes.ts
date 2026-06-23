@@ -590,20 +590,28 @@ export function registerTeacherRoutes(app: Express) {
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
-    const { studentId, content, complaintType, reportedStudentName, notifyAdmin, batchId } = req.body;
+    const { content, complaintType, reportedStudentName, notifyAdmin } = req.body;
     if (!content) return res.status(400).json({ message: "Content required" });
-    if (complaintType !== "teacher-to-admin" && !studentId) return res.status(400).json({ message: "Student required for this complaint type" });
+
+    // Parse student IDs for teacher-to-student complaints (one complaint for all students)
+    let studentIds: number[] = [];
+    if ((complaintType || "teacher-to-student") !== "teacher-to-admin") {
+      try {
+        const raw = req.body.studentIds;
+        studentIds = raw ? JSON.parse(raw) : [];
+      } catch { studentIds = []; }
+      if (studentIds.length === 0) return res.status(400).json({ message: "At least one student required" });
+    }
 
     const ticketId = await storage.getNextTicketId(teacher.schoolId);
     const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
-    // notifyAdmin/escalatedToPrincipal only applies to teacher-to-student complaints
     const isTeacherToStudent = (complaintType || "teacher-to-student") === "teacher-to-student";
     const shouldNotifyAdmin = isTeacherToStudent && (notifyAdmin === "true" || notifyAdmin === true);
 
-    const complaint = await storage.createComplaint({
+    const complaint = await storage.createComplaintWithStudents({
       ticketId,
       teacherId: teacher.id,
-      studentId: complaintType === "teacher-to-admin" ? null : parseInt(studentId),
+      studentId: null,
       schoolId: teacher.schoolId,
       complaintType: complaintType || "teacher-to-student",
       content,
@@ -612,8 +620,9 @@ export function registerTeacherRoutes(app: Express) {
       escalatedToPrincipal: shouldNotifyAdmin,
       notifyAdmin: shouldNotifyAdmin,
       status: shouldNotifyAdmin ? "Escalated" : "Pending",
-      batchId: batchId || null,
-    });
+      batchId: null,
+    }, studentIds);
+
     res.status(201).json(complaint);
   });
 

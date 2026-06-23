@@ -32,6 +32,7 @@ interface ComplaintEntry {
   content: string;
   reportedStudentName: string | null;
   studentName: string | null;
+  students?: { id: number; name: string; class: string | null; section: string | null }[];
   fileUrl: string | null;
   createdAt: string;
   resolutionRemarks: string | null;
@@ -696,41 +697,22 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
 
   const submitMutation = useMutation({
     mutationFn: async () => {
-      if (complaintType === "teacher-to-admin") {
-        const fd = new FormData();
-        fd.append("content", content);
-        fd.append("complaintType", complaintType);
-        if (selectedFile) fd.append("file", selectedFile);
-        const res = await fetch("/api/complaints", { method: "POST", body: fd, credentials: "include" });
-        if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
-        return [await res.json()];
+      const fd = new FormData();
+      fd.append("content", content);
+      fd.append("complaintType", complaintType);
+      if (complaintType !== "teacher-to-admin") {
+        fd.append("studentIds", JSON.stringify(selectedStudents.map(s => s.id)));
+        if (notifyAdmin) fd.append("notifyAdmin", "true");
       }
-      const batchId = selectedStudents.length > 1
-        ? `batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-        : null;
-      const results = await Promise.all(
-        selectedStudents.map(async (student) => {
-          const fd = new FormData();
-          fd.append("content", content);
-          fd.append("complaintType", complaintType);
-          fd.append("studentId", String(student.id));
-          if (selectedFile) fd.append("file", selectedFile);
-          if (notifyAdmin) fd.append("notifyAdmin", "true");
-          if (batchId) fd.append("batchId", batchId);
-          const res = await fetch("/api/complaints", { method: "POST", body: fd, credentials: "include" });
-          if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
-          return res.json();
-        })
-      );
-      return results;
+      if (selectedFile) fd.append("file", selectedFile);
+      const res = await fetch("/api/complaints", { method: "POST", body: fd, credentials: "include" });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
+      return res.json();
     },
     onSuccess: (data) => {
-      const count = data.length;
       toast({
-        title: count > 1 ? `${count} Complaints Filed` : "Complaint Filed",
-        description: count > 1
-          ? `${count} separate tickets generated, one per student.`
-          : "A unique ticket ID has been generated.",
+        title: "Complaint Filed",
+        description: `Ticket ${data.ticketId} has been created.`,
       });
       setContent("");
       setSelectedStudents([]);
@@ -1003,10 +985,14 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
                       </span>
                     </div>
 
-                    {c.studentName && (
-                      <p className="text-xs text-muted-foreground mb-1">
-                        <span className="font-semibold text-foreground">{c.studentName}</span>
-                      </p>
+                    {(c.students?.length ?? 0) > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mb-2" data-testid={`students-involved-${c.id}`}>
+                        {c.students!.map((s, i) => (
+                          <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-[11px] font-semibold text-rose-800">
+                            {s.name}{s.class ? ` · ${s.class}${s.section ? `-${s.section}` : ""}` : ""}
+                          </span>
+                        ))}
+                      </div>
                     )}
 
                     {isEditing ? (

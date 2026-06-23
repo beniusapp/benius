@@ -1,7 +1,7 @@
 import {
   schools, students, users, teachers,
   attendanceRecords, homework, homeworkViews, homeworkSubmissions, classwork, notices, noticeReads,
-  complaints, complaintNotes, examScores, galleryItems, calendarEvents,
+  complaints, complaintNotes, complaintStudents, examScores, galleryItems, calendarEvents,
   libraryBooks, bookBorrows, leaveRequests, timetableEntries, schoolMetadata,
   studentLeaveRequests, auditLogs, visitorLogs, studentProfiles, teacherAllocations,
   promotionOverrides, gradingTiers, gradingRules, academicHistory,
@@ -742,8 +742,9 @@ export class DatabaseStorage {
 
   // ===== COMPLAINT METHODS =====
   async getNextTicketId(schoolId: number): Promise<string> {
-    const year = new Date().getFullYear();
-    const prefix = `#DISC-${year}-`;
+    const now = new Date();
+    const datePart = now.toISOString().slice(0, 10).replace(/-/g, "");
+    const prefix = `CMP-${datePart}-`;
     const result = await db.select({ ticketId: complaints.ticketId })
       .from(complaints)
       .where(and(eq(complaints.schoolId, schoolId), like(complaints.ticketId, `${prefix}%`)))
@@ -755,12 +756,31 @@ export class DatabaseStorage {
       const num = parseInt(last.split("-").pop() || "0");
       if (!isNaN(num)) seq = num + 1;
     }
-    return `${prefix}${String(seq).padStart(3, "0")}`;
+    return `${prefix}${String(seq).padStart(6, "0")}`;
   }
 
   async createComplaint(data: InsertComplaint): Promise<Complaint> {
     const [c] = await db.insert(complaints).values(data).returning();
     return c;
+  }
+
+  async createComplaintWithStudents(
+    data: InsertComplaint,
+    studentIds: number[]
+  ): Promise<Complaint & { students: { id: number; name: string; class: string | null; section: string | null }[] }> {
+    const [c] = await db.insert(complaints).values(data).returning();
+    if (studentIds.length > 0) {
+      await db.insert(complaintStudents).values(
+        studentIds.map(sid => ({ complaintId: c.id, studentId: sid }))
+      );
+    }
+    const studs = studentIds.length > 0
+      ? await db.select({ id: students.id, name: students.name, cls: students.class, sec: students.section })
+          .from(complaintStudents)
+          .innerJoin(students, eq(complaintStudents.studentId, students.id))
+          .where(eq(complaintStudents.complaintId, c.id))
+      : [];
+    return { ...c, students: studs.map(s => ({ id: s.id, name: s.name, class: s.cls, section: s.sec })) };
   }
 
   async getComplaintById(id: number): Promise<Complaint | undefined> {
@@ -796,6 +816,7 @@ export class DatabaseStorage {
     complainantClass: string | null;
     complainantSection: string | null;
     complainantPhone: string | null;
+    students: { id: number; name: string; class: string | null; section: string | null }[];
   })[]> {
     const complainantStudents = alias(students, "complainant_students");
     const result = await db.select({
@@ -815,18 +836,46 @@ export class DatabaseStorage {
       .leftJoin(complainantStudents, eq(complaints.complainantStudentId, complainantStudents.id))
       .where(and(eq(complaints.schoolId, schoolId), eq(complaints.isDeleted, false)))
       .orderBy(desc(complaints.createdAt));
-    return result.map(r => ({
-      ...r.complaint,
-      studentName: r.reportedStudent?.name ?? null,
-      teacherName: r.teacher?.fullName ?? null,
-      complainantName: r.complainant?.name ?? null,
-      complainantClass: r.complaint.complainantClass ?? r.complainant?.class ?? null,
-      complainantSection: r.complaint.complainantSection ?? r.complainant?.section ?? null,
-      complainantPhone: r.complaint.contactNumber ?? r.complainant?.phone ?? null,
-    }));
+
+    const complaintIds = result.map(r => r.complaint.id);
+    const studentsByComplaint = new Map<number, { id: number; name: string; class: string | null; section: string | null }[]>();
+    if (complaintIds.length > 0) {
+      const csRows = await db.select({
+        complaintId: complaintStudents.complaintId,
+        id: students.id,
+        name: students.name,
+        cls: students.class,
+        sec: students.section,
+      })
+        .from(complaintStudents)
+        .innerJoin(students, eq(complaintStudents.studentId, students.id))
+        .where(inArray(complaintStudents.complaintId, complaintIds));
+      for (const row of csRows) {
+        const list = studentsByComplaint.get(row.complaintId) ?? [];
+        list.push({ id: row.id, name: row.name, class: row.cls, section: row.sec });
+        studentsByComplaint.set(row.complaintId, list);
+      }
+    }
+
+    return result.map(r => {
+      const csStudents = studentsByComplaint.get(r.complaint.id) ?? [];
+      const legacyStudent = r.reportedStudent?.name
+        ? [{ id: r.complaint.studentId!, name: r.reportedStudent.name, class: null, section: null }]
+        : [];
+      return {
+        ...r.complaint,
+        studentName: r.reportedStudent?.name ?? (csStudents[0]?.name ?? null),
+        teacherName: r.teacher?.fullName ?? null,
+        complainantName: r.complainant?.name ?? null,
+        complainantClass: r.complaint.complainantClass ?? r.complainant?.class ?? null,
+        complainantSection: r.complaint.complainantSection ?? r.complainant?.section ?? null,
+        complainantPhone: r.complaint.contactNumber ?? r.complainant?.phone ?? null,
+        students: csStudents.length > 0 ? csStudents : legacyStudent,
+      };
+    });
   }
 
-  async getComplaintsByTeacher(teacherId: number, assignedClass?: string, assignedSection?: string, schoolId?: number): Promise<(Complaint & { studentName: string | null })[]> {
+  async getComplaintsByTeacher(teacherId: number, assignedClass?: string, assignedSection?: string, schoolId?: number): Promise<(Complaint & { studentName: string | null; students: { id: number; name: string; class: string | null; section: string | null }[] })[]> {
     const STUDENT_FILED_TYPES = ["student-to-staff", "student-peer-report"];
     const ownWhereConditions = [
       eq(complaints.teacherId, teacherId),
@@ -845,6 +894,8 @@ export class DatabaseStorage {
       ...r.complaints,
       studentName: r.students?.name || null,
     }));
+
+    let allResults = ownResults;
 
     if (assignedClass && assignedSection && schoolId) {
       const s2sFromOthers = await db.select().from(complaints)
@@ -869,7 +920,7 @@ export class DatabaseStorage {
       const merged = [...ownResults, ...s2sResults];
       merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       const seen = new Set<number>();
-      return merged.filter(c => {
+      allResults = merged.filter(c => {
         if (STUDENT_FILED_TYPES.includes(c.complaintType)) return false;
         if (seen.has(c.id)) return false;
         seen.add(c.id);
@@ -877,27 +928,84 @@ export class DatabaseStorage {
       });
     }
 
-    return ownResults;
+    // Fetch all students from junction table for these complaints
+    const ids = allResults.map(c => c.id);
+    const studentsByComplaint = new Map<number, { id: number; name: string; class: string | null; section: string | null }[]>();
+    if (ids.length > 0) {
+      const csRows = await db.select({
+        complaintId: complaintStudents.complaintId,
+        id: students.id,
+        name: students.name,
+        cls: students.class,
+        sec: students.section,
+      })
+        .from(complaintStudents)
+        .innerJoin(students, eq(complaintStudents.studentId, students.id))
+        .where(inArray(complaintStudents.complaintId, ids));
+      for (const row of csRows) {
+        const list = studentsByComplaint.get(row.complaintId) ?? [];
+        list.push({ id: row.id, name: row.name, class: row.cls, section: row.sec });
+        studentsByComplaint.set(row.complaintId, list);
+      }
+    }
+
+    return allResults.map(c => {
+      const csStudents = studentsByComplaint.get(c.id) ?? [];
+      const legacyList = c.studentName ? [{ id: c.studentId ?? 0, name: c.studentName, class: null, section: null }] : [];
+      return {
+        ...c,
+        students: csStudents.length > 0 ? csStudents : legacyList,
+      };
+    });
   }
 
-  async getStudentInboxComplaints(studentId: number, schoolId: number): Promise<(Complaint & { teacherName: string; studentName: string | null; studentClass: string | null; studentSection: string | null; batchPeers: { name: string; class: string | null; section: string | null }[] })[]> {
+  async getStudentInboxComplaints(studentId: number, schoolId: number): Promise<(Complaint & { teacherName: string; students: { id: number; name: string; class: string | null; section: string | null }[]; batchPeers: { name: string; class: string | null; section: string | null }[] })[]> {
+    // Find complaint IDs via junction table (new-style multi-student complaints)
+    const junctionRows = await db.select({ complaintId: complaintStudents.complaintId })
+      .from(complaintStudents)
+      .where(eq(complaintStudents.studentId, studentId));
+    const junctionIds = junctionRows.map(r => r.complaintId);
+
+    // Build WHERE: match either legacy complaints.studentId OR junction table
+    const baseConditions = [
+      eq(complaints.schoolId, schoolId),
+      eq(complaints.complaintType, "teacher-to-student"),
+      eq(complaints.isDeleted, false),
+    ] as const;
+
+    const studentMatch = junctionIds.length > 0
+      ? or(eq(complaints.studentId, studentId), inArray(complaints.id, junctionIds))!
+      : eq(complaints.studentId, studentId);
+
     const result = await db.select().from(complaints)
       .innerJoin(teachers, eq(complaints.teacherId, teachers.id))
-      .leftJoin(students, eq(complaints.studentId, students.id))
-      .where(and(
-        eq(complaints.studentId, studentId),
-        eq(complaints.schoolId, schoolId),
-        eq(complaints.complaintType, "teacher-to-student"),
-        eq(complaints.isDeleted, false),
-      ))
+      .where(and(...baseConditions, studentMatch))
       .orderBy(desc(complaints.createdAt));
 
-    // For complaints that have a batchId, fetch all sibling students in that batch
-    const batchIds = result
-      .map(r => r.complaints.batchId)
-      .filter((b): b is string => !!b);
+    // For each complaint, get all involved students from junction table
+    const complaintIds = result.map(r => r.complaints.id);
+    const studentsByComplaint = new Map<number, { id: number; name: string; class: string | null; section: string | null }[]>();
+    if (complaintIds.length > 0) {
+      const csRows = await db.select({
+        complaintId: complaintStudents.complaintId,
+        id: students.id,
+        name: students.name,
+        cls: students.class,
+        sec: students.section,
+      })
+        .from(complaintStudents)
+        .innerJoin(students, eq(complaintStudents.studentId, students.id))
+        .where(inArray(complaintStudents.complaintId, complaintIds));
+      for (const row of csRows) {
+        const list = studentsByComplaint.get(row.complaintId) ?? [];
+        list.push({ id: row.id, name: row.name, class: row.cls, section: row.sec });
+        studentsByComplaint.set(row.complaintId, list);
+      }
+    }
 
-    let batchPeerMap: Map<string, { name: string; class: string | null; section: string | null }[]> = new Map();
+    // For legacy batchId support, fetch sibling students by batchId
+    const batchIds = result.map(r => r.complaints.batchId).filter((b): b is string => !!b);
+    const batchPeerMap = new Map<string, { name: string; class: string | null; section: string | null }[]>();
     if (batchIds.length > 0) {
       const uniqueBatchIds = [...new Set(batchIds)];
       const siblings = await db.select({
@@ -909,11 +1017,7 @@ export class DatabaseStorage {
       })
         .from(complaints)
         .leftJoin(students, eq(complaints.studentId, students.id))
-        .where(and(
-          inArray(complaints.batchId, uniqueBatchIds),
-          eq(complaints.isDeleted, false),
-        ));
-
+        .where(and(inArray(complaints.batchId, uniqueBatchIds), eq(complaints.isDeleted, false)));
       for (const s of siblings) {
         if (!s.batchId || s.studentId === studentId) continue;
         const list = batchPeerMap.get(s.batchId) ?? [];
@@ -922,14 +1026,21 @@ export class DatabaseStorage {
       }
     }
 
-    return result.map(r => ({
-      ...r.complaints,
-      teacherName: r.teachers.fullName,
-      studentName: r.students?.name ?? null,
-      studentClass: r.students?.class ?? null,
-      studentSection: r.students?.section ?? null,
-      batchPeers: r.complaints.batchId ? (batchPeerMap.get(r.complaints.batchId) ?? []) : [],
-    }));
+    return result.map(r => {
+      const csStudents = studentsByComplaint.get(r.complaints.id) ?? [];
+      // For legacy single-student complaints (not in junction table), build from legacy fields
+      const legacyStudent = r.complaints.studentId && csStudents.length === 0
+        ? [{ id: r.complaints.studentId, name: "Student", class: null, section: null }]
+        : [];
+      const allStudents = csStudents.length > 0 ? csStudents : legacyStudent;
+      const batchPeers = r.complaints.batchId ? (batchPeerMap.get(r.complaints.batchId) ?? []) : [];
+      return {
+        ...r.complaints,
+        teacherName: r.teachers.fullName,
+        students: allStudents,
+        batchPeers,
+      };
+    });
   }
 
   async getStudentFiledComplaints(complainantStudentId: number, schoolId: number): Promise<(Complaint & { teacherName: string | null })[]> {

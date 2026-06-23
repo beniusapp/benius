@@ -65,6 +65,7 @@ interface ComplaintRecord {
   studentName?: string | null;
   studentClass?: string | null;
   studentSection?: string | null;
+  students?: { id: number; name: string; class: string | null; section: string | null }[];
   batchPeers?: { name: string; class: string | null; section: string | null }[];
 }
 
@@ -136,7 +137,9 @@ function InboxDetailDrawer({
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior }), 200);
   }, [notes.length]);
 
-  const peers = c.batchPeers ?? [];
+  // Build the full list of involved students, marking the current student as "You"
+  const allStudents = c.students && c.students.length > 0 ? c.students : [];
+  const legacyPeers = c.batchPeers ?? [];
 
   function roleAvatar(role: string, name: string) {
     const initials = name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase();
@@ -187,36 +190,59 @@ function InboxDetailDrawer({
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
 
           {/* Students in incident */}
-          {(c.studentName || c.studentClass || peers.length > 0) && (
+          {(allStudents.length > 0 || legacyPeers.length > 0 || c.studentName) && (
             <div>
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Students in this incident</p>
               <div className="flex flex-wrap gap-1.5">
-                <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-100 border border-red-200">
-                  <div className="w-4 h-4 rounded-full bg-red-300 flex items-center justify-center flex-shrink-0">
-                    <span className="text-[8px] font-bold text-red-800">
-                      {c.studentName ? c.studentName.charAt(0).toUpperCase() : "Y"}
-                    </span>
-                  </div>
-                  <span className="text-xs font-bold text-red-800">You</span>
-                  {c.studentClass && (
-                    <span className="text-[10px] font-semibold text-red-500">
-                      · Class {c.studentClass}{c.studentSection ? `-${c.studentSection}` : ""}
-                    </span>
-                  )}
-                </div>
-                {peers.map((peer, idx) => (
-                  <div key={idx} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-orange-50 border border-orange-200">
-                    <div className="w-4 h-4 rounded-full bg-orange-200 flex items-center justify-center flex-shrink-0">
-                      <span className="text-[8px] font-bold text-orange-800">{peer.name.charAt(0).toUpperCase()}</span>
+                {allStudents.length > 0 ? (
+                  // New-style: show all students from junction table, mark current student as "You"
+                  allStudents.map((s, idx) => {
+                    const isMe = s.id === student.id;
+                    return (
+                      <div key={idx} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border ${isMe ? "bg-red-100 border-red-200" : "bg-orange-50 border-orange-200"}`}>
+                        <div className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 ${isMe ? "bg-red-300" : "bg-orange-200"}`}>
+                          <span className={`text-[8px] font-bold ${isMe ? "text-red-800" : "text-orange-800"}`}>{s.name.charAt(0).toUpperCase()}</span>
+                        </div>
+                        <span className={`text-xs font-bold ${isMe ? "text-red-800" : "text-orange-800"}`}>{isMe ? "You" : s.name}</span>
+                        {s.class && (
+                          <span className={`text-[10px] font-semibold ${isMe ? "text-red-500" : "text-orange-500"}`}>
+                            · Class {s.class}{s.section ? `-${s.section}` : ""}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  // Legacy-style: show "You" chip + batchPeers
+                  <>
+                    <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-100 border border-red-200">
+                      <div className="w-4 h-4 rounded-full bg-red-300 flex items-center justify-center flex-shrink-0">
+                        <span className="text-[8px] font-bold text-red-800">
+                          {c.studentName ? c.studentName.charAt(0).toUpperCase() : "Y"}
+                        </span>
+                      </div>
+                      <span className="text-xs font-bold text-red-800">You</span>
+                      {c.studentClass && (
+                        <span className="text-[10px] font-semibold text-red-500">
+                          · Class {c.studentClass}{c.studentSection ? `-${c.studentSection}` : ""}
+                        </span>
+                      )}
                     </div>
-                    <span className="text-xs font-semibold text-orange-800">{peer.name}</span>
-                    {peer.class && (
-                      <span className="text-[10px] font-semibold text-orange-500">
-                        · Class {peer.class}{peer.section ? `-${peer.section}` : ""}
-                      </span>
-                    )}
-                  </div>
-                ))}
+                    {legacyPeers.map((peer, idx) => (
+                      <div key={idx} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-orange-50 border border-orange-200">
+                        <div className="w-4 h-4 rounded-full bg-orange-200 flex items-center justify-center flex-shrink-0">
+                          <span className="text-[8px] font-bold text-orange-800">{peer.name.charAt(0).toUpperCase()}</span>
+                        </div>
+                        <span className="text-xs font-semibold text-orange-800">{peer.name}</span>
+                        {peer.class && (
+                          <span className="text-[10px] font-semibold text-orange-500">
+                            · Class {peer.class}{peer.section ? `-${peer.section}` : ""}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -338,9 +364,11 @@ function InboxDetailDrawer({
   );
 }
 
-function InboxCard({ c, onOpen }: { c: ComplaintRecord & { teacherName: string }; onOpen: () => void }) {
-  const peers = c.batchPeers ?? [];
-  const isBatch = peers.length > 0;
+function InboxCard({ c, studentId, onOpen }: { c: ComplaintRecord & { teacherName: string }; studentId?: number; onOpen: () => void }) {
+  // Prefer new junction-table students[], fall back to legacy batchPeers
+  const allStudents = c.students && c.students.length > 0 ? c.students : null;
+  const legacyPeers = c.batchPeers ?? [];
+  const totalInvolved = allStudents ? allStudents.length : 1 + legacyPeers.length;
 
   return (
     <button
@@ -355,52 +383,56 @@ function InboxCard({ c, onOpen }: { c: ComplaintRecord & { teacherName: string }
         <div className="flex items-start justify-between gap-2 flex-wrap">
           <div>
             <p className="text-sm font-bold text-gray-800">{c.teacherName}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{fmtDateTimeAmPm(c.createdAt)} · #{c.ticketId}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{fmtDateTimeAmPm(c.createdAt)} · {c.ticketId}</p>
           </div>
           <StatusBadge status={c.status} />
         </div>
 
-        {/* Students complained about in this incident */}
+        {/* Students chips */}
         <div className="mt-2 mb-1 flex flex-wrap gap-1.5" data-testid={`chip-student-info-${c.id}`}>
-          {/* Viewing student — always shown as "You" */}
-          <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-100 border border-red-200">
-            <div className="w-4 h-4 rounded-full bg-red-300 flex items-center justify-center flex-shrink-0">
-              <span className="text-[8px] font-bold text-red-800">
-                {c.studentName ? c.studentName.charAt(0).toUpperCase() : "Y"}
-              </span>
-            </div>
-            <span className="text-xs font-bold text-red-800">You</span>
-            {c.studentClass && (
-              <span className="text-[10px] font-semibold text-red-500">
-                · Class {c.studentClass}{c.studentSection ? `-${c.studentSection}` : ""}
-              </span>
-            )}
-          </div>
-
-          {/* Co-complained peers (only present if teacher filed multiple students at once) */}
-          {isBatch && peers.map((peer, idx) => (
-            <div
-              key={idx}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-orange-50 border border-orange-200"
-              data-testid={`chip-peer-${c.id}-${idx}`}
-            >
-              <div className="w-4 h-4 rounded-full bg-orange-200 flex items-center justify-center flex-shrink-0">
-                <span className="text-[8px] font-bold text-orange-800">
-                  {peer.name.charAt(0).toUpperCase()}
-                </span>
+          {allStudents ? (
+            allStudents.map((s, idx) => {
+              const isMe = studentId ? s.id === studentId : false;
+              return (
+                <div key={idx} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border ${isMe ? "bg-red-100 border-red-200" : "bg-orange-50 border-orange-200"}`}>
+                  <div className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 ${isMe ? "bg-red-300" : "bg-orange-200"}`}>
+                    <span className={`text-[8px] font-bold ${isMe ? "text-red-800" : "text-orange-800"}`}>{s.name.charAt(0).toUpperCase()}</span>
+                  </div>
+                  <span className={`text-xs font-bold truncate max-w-[120px] ${isMe ? "text-red-800" : "text-orange-800"}`}>{isMe ? "You" : s.name}</span>
+                  {s.class && (
+                    <span className={`text-[10px] font-semibold ${isMe ? "text-red-500" : "text-orange-500"}`}>
+                      · {s.class}{s.section ? `-${s.section}` : ""}
+                    </span>
+                  )}
+                </div>
+              );
+            })
+          ) : (
+            <>
+              <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-100 border border-red-200">
+                <div className="w-4 h-4 rounded-full bg-red-300 flex items-center justify-center flex-shrink-0">
+                  <span className="text-[8px] font-bold text-red-800">{c.studentName ? c.studentName.charAt(0).toUpperCase() : "Y"}</span>
+                </div>
+                <span className="text-xs font-bold text-red-800">You</span>
+                {c.studentClass && (
+                  <span className="text-[10px] font-semibold text-red-500">· Class {c.studentClass}{c.studentSection ? `-${c.studentSection}` : ""}</span>
+                )}
               </div>
-              <span className="text-xs font-semibold text-orange-800 truncate max-w-[120px]">{peer.name}</span>
-              {peer.class && (
-                <span className="text-[10px] font-semibold text-orange-500">
-                  · Class {peer.class}{peer.section ? `-${peer.section}` : ""}
-                </span>
-              )}
-            </div>
-          ))}
+              {legacyPeers.map((peer, idx) => (
+                <div key={idx} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-orange-50 border border-orange-200" data-testid={`chip-peer-${c.id}-${idx}`}>
+                  <div className="w-4 h-4 rounded-full bg-orange-200 flex items-center justify-center flex-shrink-0">
+                    <span className="text-[8px] font-bold text-orange-800">{peer.name.charAt(0).toUpperCase()}</span>
+                  </div>
+                  <span className="text-xs font-semibold text-orange-800 truncate max-w-[120px]">{peer.name}</span>
+                  {peer.class && <span className="text-[10px] font-semibold text-orange-500">· Class {peer.class}{peer.section ? `-${peer.section}` : ""}</span>}
+                </div>
+              ))}
+            </>
+          )}
         </div>
-        {isBatch && (
+        {totalInvolved > 1 && (
           <p className="text-[10px] text-gray-400 mb-1.5">
-            This notice was issued to {peers.length + 1} students in the same incident.
+            This notice was issued to {totalInvolved} students in the same incident.
           </p>
         )}
 
@@ -784,7 +816,7 @@ export default function StudentComplaints() {
             ) : (
               <div className="space-y-3">
                 {inboxData.map(c => (
-                  <InboxCard key={c.id} c={c} onOpen={() => setSelectedInboxItem(c)} />
+                  <InboxCard key={c.id} c={c} studentId={student?.id} onOpen={() => setSelectedInboxItem(c)} />
                 ))}
               </div>
             )}
