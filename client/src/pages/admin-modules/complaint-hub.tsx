@@ -89,49 +89,59 @@ function ComplaintCard({
             </span>
             <StatusBadge status={c.status} />
           </div>
-          {c.teacherName && (
-            <p className="text-xs font-bold text-slate-800">
-              From: {c.teacherName}
-            </p>
-          )}
-          {/* Multi-student display for teacher-to-student complaints */}
-          {c.complaintType !== "student-to-staff" && (c.students?.length ?? 0) > 0 && (
-            <div className="mt-0.5" data-testid={`students-admin-${c.id}`}>
-              <span className="text-xs font-bold text-slate-500 mr-1">Against:</span>
-              <span className="inline-flex flex-wrap gap-1">
-                {c.students!.map((s, i) => (
-                  <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-[11px] font-semibold text-rose-800">
-                    {s.name}{s.class ? ` · ${s.class}${s.section ? `-${s.section}` : ""}` : ""}
+          {/* student-to-staff: Filed by → Against teacher */}
+          {(c.complaintType === "student-to-staff" || c.complaintType === "student-peer-report") ? (
+            <>
+              {c.complainantName && (
+                <div className="flex flex-col gap-0.5 border-l-2 border-blue-300 pl-2">
+                  <p className="text-xs font-bold text-slate-800">
+                    Filed by: <span className="text-blue-700">{c.complainantName}</span>
+                  </p>
+                  {(c.complainantClass || c.complainantSection) && (
+                    <p className="text-xs text-slate-500 font-semibold">
+                      Class {c.complainantClass ?? "—"} · Section {c.complainantSection ?? "—"}
+                    </p>
+                  )}
+                  {c.complainantPhone && (
+                    <p className="text-xs text-slate-500 font-semibold">
+                      Phone: {c.complainantPhone}
+                    </p>
+                  )}
+                </div>
+              )}
+              {c.teacherName && (
+                <p className="text-xs font-bold text-slate-800 mt-0.5">
+                  Against: <span className="text-rose-700">{c.teacherName}</span>
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              {/* teacher-to-student / teacher-to-admin: From teacher → Against students */}
+              {c.teacherName && (
+                <p className="text-xs font-bold text-slate-800">
+                  From: {c.teacherName}
+                </p>
+              )}
+              {(c.students?.length ?? 0) > 0 && (
+                <div className="mt-0.5" data-testid={`students-admin-${c.id}`}>
+                  <span className="text-xs font-bold text-slate-500 mr-1">Against:</span>
+                  <span className="inline-flex flex-wrap gap-1">
+                    {c.students!.map((s, i) => (
+                      <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-[11px] font-semibold text-rose-800">
+                        {s.name}{s.class ? ` · ${s.class}${s.section ? `-${s.section}` : ""}` : ""}
+                      </span>
+                    ))}
                   </span>
-                ))}
-              </span>
-            </div>
-          )}
-          {/* Fallback: legacy single studentName */}
-          {c.complaintType !== "student-to-staff" && (c.students?.length ?? 0) === 0 && c.studentName && (
-            <p className="text-xs font-bold text-slate-800">Against: {c.studentName}</p>
-          )}
-          {c.reportedStudentName && !c.studentName && (c.students?.length ?? 0) === 0 && (
-            <p className="text-xs font-bold text-slate-800">Against: {c.reportedStudentName}</p>
-          )}
-
-          {/* Reporter (student who filed the grievance) */}
-          {(c.complaintType === "student-to-staff" || c.complaintType === "student-peer-report") && c.complainantName && (
-            <div className="mt-1.5 flex flex-col gap-0.5 border-l-2 border-blue-300 pl-2">
-              <p className="text-xs font-bold text-slate-800">
-                Filed by: <span className="text-blue-700">{c.complainantName}</span>
-              </p>
-              {(c.complainantClass || c.complainantSection) && (
-                <p className="text-xs text-slate-500 font-semibold">
-                  Class {c.complainantClass ?? "—"} · Section {c.complainantSection ?? "—"}
-                </p>
+                </div>
               )}
-              {c.complainantPhone && (
-                <p className="text-xs text-slate-500 font-semibold">
-                  Phone: {c.complainantPhone}
-                </p>
+              {(c.students?.length ?? 0) === 0 && c.studentName && (
+                <p className="text-xs font-bold text-slate-800">Against: {c.studentName}</p>
               )}
-            </div>
+              {c.reportedStudentName && !c.studentName && (c.students?.length ?? 0) === 0 && (
+                <p className="text-xs font-bold text-slate-800">Against: {c.reportedStudentName}</p>
+              )}
+            </>
           )}
 
           <p className="text-slate-400 text-xs mt-0.5">{fmtDateTimeAmPm(c.createdAt)}</p>
