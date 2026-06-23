@@ -696,14 +696,31 @@ export class DatabaseStorage {
     });
   }
 
-  async getStudentNotices(studentId: number, schoolId: number, cls: string, section: string): Promise<(Notice & { isRead: boolean })[]> {
+  async getStudentNotices(studentId: number, schoolId: number, cls: string, section: string): Promise<(Notice & { isRead: boolean; creatorName: string | null })[]> {
     const classMatch = or(
       isNull(notices.targetClass),
       eq(notices.targetClass, cls),
       sql`${cls} = ANY(string_to_array(${notices.targetClass}, ','))`
     )!;
 
-    const rows = await db.select().from(notices)
+    const rows = await db
+      .select({
+        id: notices.id,
+        schoolId: notices.schoolId,
+        createdById: notices.createdById,
+        creatorRole: notices.creatorRole,
+        targetType: notices.targetType,
+        targetClass: notices.targetClass,
+        targetSection: notices.targetSection,
+        targetTeacherId: notices.targetTeacherId,
+        noticeType: notices.noticeType,
+        content: notices.content,
+        fileUrl: notices.fileUrl,
+        createdAt: notices.createdAt,
+        creatorName: teachers.fullName,
+      })
+      .from(notices)
+      .leftJoin(teachers, and(eq(notices.createdById, teachers.id), eq(notices.creatorRole, "teacher")))
       .where(and(
         eq(notices.schoolId, schoolId),
         or(
@@ -717,9 +734,6 @@ export class DatabaseStorage {
     if (rows.length === 0) return [];
 
     // Apply section filtering in application layer.
-    // targetClass may be a single class or a comma-separated list of classes.
-    // When targetSection is set, check if student's section is in the comma-separated list.
-    // When targetSection is null/empty, notice applies to all sections.
     const filtered = rows.filter(n => {
       if (n.targetType === "whole_school") return true;
       if (!n.targetClass) return true;

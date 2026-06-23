@@ -21,6 +21,7 @@ interface StudentNotice {
   content: string;
   noticeType: string | null;
   creatorRole: string;
+  creatorName: string | null;
   targetType: string;
   targetClass: string | null;
   targetSection: string | null;
@@ -43,10 +44,10 @@ function getTypeConfig(t: string | null) {
   return TYPE_CONFIG[t] || TYPE_CONFIG["Routine"];
 }
 
-function formatSender(role: string): string {
+function formatSender(role: string, creatorName?: string | null): string {
   if (!role) return "Notice";
   if (role === "admin") return "From Principal";
-  if (role === "teacher") return "From Teacher";
+  if (role === "teacher") return creatorName ? `From ${creatorName}` : "From Teacher";
   return `From ${role.charAt(0).toUpperCase() + role.slice(1)}`;
 }
 
@@ -208,7 +209,7 @@ export default function StudentNoticeboard() {
                         {cfg.label}
                       </span>
                       <span className="text-xs text-gray-400 font-medium" data-testid={`text-sender-${notice.id}`}>
-                        {formatSender(notice.creatorRole)}
+                        {formatSender(notice.creatorRole, notice.creatorName)}
                       </span>
                       {notice.targetType === "whole_school" && (
                         <span className="text-xs text-gray-300">· School-wide</span>
@@ -293,7 +294,7 @@ export default function StudentNoticeboard() {
                       </div>
                       <div>
                         <p className={`text-xs font-bold ${cfg.color}`}>{cfg.label}</p>
-                        <p className="text-[11px] text-gray-400">{formatSender(selectedNotice.creatorRole)}</p>
+                        <p className="text-[11px] text-gray-400">{formatSender(selectedNotice.creatorRole, selectedNotice.creatorName)}</p>
                       </div>
                     </div>
                     <button
