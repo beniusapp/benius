@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { fmtDateTime } from "@/lib/dateUtils";
 import {
@@ -53,7 +53,7 @@ const BULK_DELETE_OPTIONS: { label: string; days: number }[] = [
   { label: "Older than 60 days",  days: 60  },
   { label: "Older than 90 days",  days: 90  },
   { label: "Older than 180 days", days: 180 },
-  { label: "All notices",          days: 0   },
+  { label: "All notices",         days: 0   },
 ];
 
 function targetLabel(n: Notice): string {
@@ -88,9 +88,40 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
 
   // Bulk delete state
+  const [bulkPanelOpen, setBulkPanelOpen] = useState(false);
   const [bulkDays, setBulkDays] = useState(30);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingDays, setPendingDays] = useState<number | null>(null);
+
+  // Ref for outside-click detection (stats card + bulk panel)
+  const statsAreaRef = useRef<HTMLDivElement>(null);
+
+  // ── Close panel on back button ─────────────────────────────────────────────
+  useEffect(() => {
+    if (bulkPanelOpen) {
+      // Push a sentinel history entry so Back has something to pop
+      window.history.pushState({ bulkNoticePanel: true }, "");
+      const handlePop = () => setBulkPanelOpen(false);
+      window.addEventListener("popstate", handlePop);
+      return () => window.removeEventListener("popstate", handlePop);
+    }
+  }, [bulkPanelOpen]);
+
+  // ── Close panel on outside click ──────────────────────────────────────────
+  useEffect(() => {
+    if (!bulkPanelOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (statsAreaRef.current && !statsAreaRef.current.contains(e.target as Node)) {
+        setBulkPanelOpen(false);
+      }
+    };
+    // Delay so the toggle-button click that opened it doesn't immediately close it
+    const timerId = setTimeout(() => document.addEventListener("mousedown", handleClick), 0);
+    return () => {
+      clearTimeout(timerId);
+      document.removeEventListener("mousedown", handleClick);
+    };
+  }, [bulkPanelOpen]);
 
   // ── Data Fetch ────────────────────────────────────────────────────────────
   const { data: allNotices = [], isLoading } = useQuery<Notice[]>({
@@ -172,6 +203,7 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
       });
       setConfirmOpen(false);
       setPendingDays(null);
+      setBulkPanelOpen(false);   // auto-close panel on success
       invalidateNotices();
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -181,8 +213,8 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
   function cancelEdit() { setEditingId(null); setEditContent(""); }
 
   const ROLE_FILTERS: { value: RoleFilter; label: string; count: number; icon: typeof Bell; color: string }[] = [
-    { value: "all",     label: "All Notices",     count: totalCount,   icon: Bell,        color: "text-[#D4AF37]"    },
-    { value: "admin",   label: "Admin Notices",   count: adminCount,   icon: ShieldCheck, color: "text-amber-400"    },
+    { value: "all",     label: "All Notices",     count: totalCount,   icon: Bell,          color: "text-[#D4AF37]" },
+    { value: "admin",   label: "Admin Notices",   count: adminCount,   icon: ShieldCheck,   color: "text-amber-400" },
     { value: "teacher", label: "Teacher Notices", count: teacherCount, icon: GraduationCap, color: "text-blue-400"  },
   ];
 
@@ -267,60 +299,103 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
         </Button>
       </div>
 
-      {/* ── Notice Statistics ── */}
-      <div className="rounded-xl border border-white/10 bg-[#1A2942] p-4" data-testid="notice-stats">
-        <div className="flex items-center gap-2 mb-3">
-          <BarChart3 className="w-4 h-4 text-[#D4AF37]" />
-          <h3 className="text-sm font-bold text-white">Notice Statistics</h3>
-        </div>
-        {isLoading ? (
-          <div className="flex gap-4">
-            {[1,2,3].map(i => (
-              <div key={i} className="flex-1 h-14 rounded-lg bg-white/5 animate-pulse" />
-            ))}
-          </div>
-        ) : (
-          <div className="grid grid-cols-3 gap-3">
-            {[
-              { label: "Total Notices",   count: totalCount,   color: "text-[#D4AF37]", bg: "bg-[#D4AF37]/10 border-[#D4AF37]/20", testId: "stat-total"   },
-              { label: "Admin Notices",   count: adminCount,   color: "text-amber-400",  bg: "bg-amber-400/10 border-amber-400/20",  testId: "stat-admin"   },
-              { label: "Teacher Notices", count: teacherCount, color: "text-blue-400",   bg: "bg-blue-400/10 border-blue-400/20",    testId: "stat-teacher" },
-            ].map(stat => (
-              <div key={stat.label} className={`rounded-lg border ${stat.bg} p-3 text-center`} data-testid={stat.testId}>
-                <p className={`text-2xl font-black tabular-nums ${stat.color}`}>{stat.count}</p>
-                <p className="text-white/50 text-[11px] font-semibold mt-0.5 leading-tight">{stat.label}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      {/* ── Notice Statistics + collapsible Bulk Delete ── */}
+      <div ref={statsAreaRef} className="space-y-0">
 
-      {/* ── Manual Bulk Delete ── */}
-      <div className="rounded-xl border border-rose-500/20 bg-[#1A2942] p-4 space-y-3" data-testid="bulk-delete-panel">
-        <div className="flex items-center gap-2">
-          <Trash2 className="w-4 h-4 text-rose-400" />
-          <h3 className="text-[11px] font-bold text-rose-400 uppercase tracking-widest">Manual Bulk Delete</h3>
+        {/* Statistics card */}
+        <div
+          className={`rounded-xl border bg-[#1A2942] p-4 transition-all duration-200 ${
+            bulkPanelOpen
+              ? "border-rose-500/30 rounded-b-none border-b-0"
+              : "border-white/10"
+          }`}
+          data-testid="notice-stats"
+        >
+          {/* Header row */}
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-[#D4AF37]" />
+              <h3 className="text-sm font-bold text-white">Notice Statistics</h3>
+            </div>
+            {/* Bulk-delete toggle icon */}
+            <button
+              onClick={() => setBulkPanelOpen(prev => !prev)}
+              title={bulkPanelOpen ? "Close bulk delete" : "Bulk delete notices"}
+              data-testid="button-toggle-bulk-delete"
+              className={`p-1.5 rounded-lg transition-all duration-200 ${
+                bulkPanelOpen
+                  ? "bg-rose-500/20 text-rose-400 ring-1 ring-rose-500/40"
+                  : "text-white/25 hover:text-rose-400 hover:bg-rose-500/10"
+              }`}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Stat tiles */}
+          {isLoading ? (
+            <div className="flex gap-3">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="flex-1 h-14 rounded-lg bg-white/5 animate-pulse" />
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "Total Notices",   count: totalCount,   color: "text-[#D4AF37]", bg: "bg-[#D4AF37]/10 border-[#D4AF37]/20", testId: "stat-total"   },
+                { label: "Admin Notices",   count: adminCount,   color: "text-amber-400",  bg: "bg-amber-400/10 border-amber-400/20",  testId: "stat-admin"   },
+                { label: "Teacher Notices", count: teacherCount, color: "text-blue-400",   bg: "bg-blue-400/10 border-blue-400/20",    testId: "stat-teacher" },
+              ].map(stat => (
+                <div key={stat.label} className={`rounded-lg border ${stat.bg} p-3 text-center`} data-testid={stat.testId}>
+                  <p className={`text-2xl font-black tabular-nums ${stat.color}`}>{stat.count}</p>
+                  <p className="text-white/50 text-[11px] font-semibold mt-0.5 leading-tight">{stat.label}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-        <p className="text-white/40 text-xs">Permanently delete notices. This action is irreversible.</p>
-        <div className="flex items-center gap-2 flex-wrap">
-          <select
-            value={bulkDays}
-            onChange={e => setBulkDays(parseInt(e.target.value))}
-            className="flex-1 min-w-[170px] px-3 py-2 rounded-lg bg-[#0A1628] border border-white/10 text-white/80 text-xs font-semibold focus:outline-none focus:border-[#D4AF37]"
-            data-testid="select-bulk-notice-days"
-          >
-            {BULK_DELETE_OPTIONS.map(o => (
-              <option key={o.days} value={o.days}>{o.label}</option>
-            ))}
-          </select>
-          <Button
-            size="sm"
-            onClick={() => { setPendingDays(bulkDays); setConfirmOpen(true); }}
-            className="h-9 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg"
-            data-testid="button-bulk-notice-delete-open"
-          >
-            <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete
-          </Button>
+
+        {/* ── Collapsible Bulk Delete panel (accordion via CSS grid trick) ── */}
+        <div
+          className={`grid transition-[grid-template-rows] duration-250 ease-in-out ${
+            bulkPanelOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+          }`}
+        >
+          <div className="overflow-hidden min-h-0">
+            <div
+              className="rounded-b-xl border border-t-0 border-rose-500/30 bg-[#1A2942] px-4 pt-3 pb-4 space-y-3"
+              data-testid="bulk-delete-panel"
+            >
+              {/* Panel header */}
+              <div className="flex items-center gap-2">
+                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                <span className="text-[10px] font-bold text-rose-400 uppercase tracking-widest">Manual Bulk Delete</span>
+              </div>
+              <p className="text-white/40 text-xs">Permanently delete notices. This action is irreversible.</p>
+
+              {/* Controls */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  value={bulkDays}
+                  onChange={e => setBulkDays(parseInt(e.target.value))}
+                  className="flex-1 min-w-[170px] px-3 py-2 rounded-lg bg-[#0A1628] border border-white/10 text-white/80 text-xs font-semibold focus:outline-none focus:border-rose-500/60 transition-colors"
+                  data-testid="select-bulk-notice-days"
+                >
+                  {BULK_DELETE_OPTIONS.map(o => (
+                    <option key={o.days} value={o.days}>{o.label}</option>
+                  ))}
+                </select>
+                <Button
+                  size="sm"
+                  onClick={() => { setPendingDays(bulkDays); setConfirmOpen(true); }}
+                  className="h-9 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg shrink-0"
+                  data-testid="button-bulk-notice-delete-open"
+                >
+                  <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete
+                </Button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
