@@ -884,27 +884,7 @@ export function registerTeacherRoutes(app: Express) {
     res.json(updated);
   });
 
-  // ===== COMPLAINT RETENTION POLICY & BULK DELETE (Admin only) =====
-  app.get("/api/complaints/retention-policy", async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Admin only" });
-    const schoolId = req.session.schoolId;
-    if (!schoolId) return res.status(400).json({ message: "No school context" });
-    const tabKey = typeof req.query.tabKey === "string" ? req.query.tabKey : undefined;
-    const days = await storage.getRetentionPolicy(schoolId, tabKey);
-    res.json({ days });
-  });
-
-  app.post("/api/complaints/retention-policy", async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Admin only" });
-    const schoolId = req.session.schoolId;
-    if (!schoolId) return res.status(400).json({ message: "No school context" });
-    const { days, tabKey } = req.body;
-    if (typeof days !== "number") return res.status(400).json({ message: "days must be a number (-1 = never)" });
-    const user = await storage.getUserById(req.session.userId);
-    await storage.setRetentionPolicy(schoolId, days, req.session.userId, "admin", user?.email ?? "Admin", tabKey);
-    res.json({ message: "Retention policy updated", days });
-  });
-
+  // ===== COMPLAINT BULK DELETE (Admin only) =====
   app.delete("/api/admin/complaints/bulk", async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Admin only" });
     const schoolId = req.session.schoolId;

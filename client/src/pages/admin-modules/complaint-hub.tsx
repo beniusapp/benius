@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { fmtDateTimeAmPm } from "@/lib/dateUtils";
 import {
   MessageSquare, CheckCircle, Loader2, Lock, Shield, ArrowUpCircle,
-  AlertTriangle, ChevronDown, ChevronUp, Clock, ArrowUp, Settings, Trash2, Save, Filter, X,
+  AlertTriangle, ChevronDown, ChevronUp, Clock, ArrowUp, Settings, Trash2, Filter,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -40,15 +40,6 @@ const COMPLAINT_TYPES_BY_TAB: Record<TabKey, string[]> = {
   grievances: ["student-to-staff"],
   escalated:  ["student-peer-report", "teacher-to-student"],
 };
-
-const RETENTION_OPTIONS: { label: string; days: number }[] = [
-  { label: "30 days",    days: 30 },
-  { label: "60 days",    days: 60 },
-  { label: "90 days",    days: 90 },
-  { label: "180 days",   days: 180 },
-  { label: "1 year",     days: 365 },
-  { label: "Never",      days: -1 },
-];
 
 const BULK_DELETE_OPTIONS: { label: string; days: number }[] = [
   { label: "Resolved > 30 days ago",    days: 30 },
@@ -211,35 +202,8 @@ function TabSettings({ tabKey, schoolId, complaintTypes, onBulkDeleted }: {
 }) {
   const { toast } = useToast();
   const [bulkDays, setBulkDays] = useState(0);
-  const [localRetentionDays, setLocalRetentionDays] = useState<number | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingDays, setPendingDays] = useState<number | null>(null);
-
-  const { data: policyData, isLoading: policyLoading } = useQuery<{ days: number }>({
-    queryKey: ["/api/complaints/retention-policy", tabKey],
-    queryFn: async () => {
-      const r = await fetch(`/api/complaints/retention-policy?tabKey=${tabKey}`, { credentials: "include" });
-      return r.ok ? r.json() : { days: -1 };
-    },
-  });
-
-  const currentDays = localRetentionDays ?? policyData?.days ?? -1;
-
-  const saveRetentionMutation = useMutation({
-    mutationFn: (days: number) =>
-      apiRequest("POST", "/api/complaints/retention-policy", { days, tabKey }),
-    onSuccess: (_, days) => {
-      toast({
-        title: "Retention policy saved",
-        description: days === -1
-          ? "This section will never be auto-deleted."
-          : `Resolved complaints in this section older than ${days} days will be auto-deleted daily.`,
-      });
-      queryClient.invalidateQueries({ queryKey: ["/api/complaints/retention-policy", tabKey] });
-      setLocalRetentionDays(null);
-    },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
 
   const bulkDeleteMutation = useMutation({
     mutationFn: (olderThanDays: number) =>
@@ -259,55 +223,9 @@ function TabSettings({ tabKey, schoolId, complaintTypes, onBulkDeleted }: {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const selectedBulkOption = BULK_DELETE_OPTIONS.find(o => o.days === bulkDays) ?? BULK_DELETE_OPTIONS[BULK_DELETE_OPTIONS.length - 1];
-
   return (
     <>
       <div className="rounded-xl border border-white/10 bg-[#0A1628]/70 p-4 space-y-4" data-testid={`settings-panel-${tabKey}`}>
-        {/* Retention Policy */}
-        <div className="space-y-2">
-          <div className="flex items-center gap-1.5 mb-1">
-            <Save className="w-3 h-3 text-[#D4AF37]" />
-            <span className="text-[10px] font-bold text-[#D4AF37] uppercase tracking-widest">Auto-Delete Policy</span>
-          </div>
-          <p className="text-white/40 text-[11px]">Automatically delete <strong className="text-white/60">resolved</strong> complaints in this section after:</p>
-          {policyLoading ? (
-            <div className="flex items-center gap-2 text-white/30 text-xs"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
-          ) : (
-            <div className="flex flex-wrap gap-1.5" data-testid={`retention-options-${tabKey}`}>
-              {RETENTION_OPTIONS.map(opt => {
-                const isSelected = currentDays === opt.days;
-                return (
-                  <button
-                    key={opt.days}
-                    onClick={() => setLocalRetentionDays(opt.days)}
-                    data-testid={`retention-${tabKey}-${opt.days}`}
-                    className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all duration-150 ${
-                      isSelected
-                        ? "bg-[#D4AF37]/20 border-[#D4AF37] text-[#D4AF37]"
-                        : "bg-white/5 border-white/10 text-white/50 hover:border-white/30 hover:text-white/80"
-                    }`}
-                  >
-                    {isSelected && "✓ "}{opt.label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          <Button
-            size="sm"
-            disabled={saveRetentionMutation.isPending || policyLoading || localRetentionDays === null}
-            onClick={() => saveRetentionMutation.mutate(currentDays)}
-            className="h-7 px-3 bg-[#D4AF37] hover:bg-[#B8962E] text-black font-bold text-xs rounded-lg disabled:opacity-40"
-            data-testid={`button-save-retention-${tabKey}`}
-          >
-            {saveRetentionMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3 mr-1" />}
-            Save Policy
-          </Button>
-        </div>
-
-        <hr className="border-white/10" />
-
         {/* Manual Bulk Delete */}
         <div className="space-y-2">
           <div className="flex items-center gap-1.5 mb-1">

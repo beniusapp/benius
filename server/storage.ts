@@ -852,40 +852,6 @@ export class DatabaseStorage {
     return ids.length;
   }
 
-  async getRetentionPolicy(schoolId: number, tabKey?: string): Promise<number> {
-    const metaKey = tabKey ? `complaint_retention_days_${tabKey}` : "complaint_retention_days";
-    const val = await this.getSchoolMetadataRaw(schoolId, metaKey);
-    if (val === null || val === undefined) return -1;
-    return typeof val === "number" ? val : -1;
-  }
-
-  async setRetentionPolicy(schoolId: number, days: number, userId: number, role: string, actorName: string, tabKey?: string): Promise<void> {
-    const metaKey = tabKey ? `complaint_retention_days_${tabKey}` : "complaint_retention_days";
-    await this.setSchoolMetadataRaw(schoolId, metaKey, days);
-    const tabDesc = tabKey ? ` (tab: ${tabKey})` : "";
-    await db.insert(auditLogs).values({
-      schoolId, actionType: "update", entityType: "retention_policy", entityId: schoolId,
-      actionBy: userId, actionByRole: role,
-      details: `Complaint retention policy${tabDesc} updated to ${days === -1 ? "Never Delete" : `${days} days`} by ${actorName}`,
-    });
-  }
-
-  async runAutoCleanup(): Promise<void> {
-    const TAB_TYPES: Record<string, string[]> = {
-      private:   ["teacher-to-admin"],
-      grievances: ["student-to-staff"],
-      escalated: ["student-peer-report", "teacher-to-student"],
-    };
-    const allSchools = await db.select({ id: schools.id }).from(schools);
-    for (const school of allSchools) {
-      for (const [tabKey, types] of Object.entries(TAB_TYPES)) {
-        const days = await this.getRetentionPolicy(school.id, tabKey);
-        if (days === -1) continue;
-        await this.bulkDeleteComplaints(school.id, days, 0, "system", "Auto-cleanup (scheduled job)", types);
-      }
-    }
-  }
-
   async getComplaintsBySchool(schoolId: number): Promise<(Complaint & {
     studentName: string | null;
     teacherName: string | null;

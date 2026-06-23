@@ -340,19 +340,6 @@ app.use((req, res, next) => {
     await setupVite(httpServer, app);
   }
 
-  // ── Daily complaint auto-cleanup (based on per-school retention policy) ──
-  const { storage } = await import("./storage");
-  async function runDailyCleanup() {
-    try {
-      await storage.runAutoCleanup();
-      log("Complaint auto-cleanup completed", "cleanup");
-    } catch (e) {
-      log(`Complaint auto-cleanup error: ${e}`, "cleanup");
-    }
-  }
-  setTimeout(runDailyCleanup, 10_000);
-  setInterval(runDailyCleanup, 24 * 60 * 60 * 1000);
-
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Other ports are firewalled. Default to 5000 if not specified.
   // this serves both the API and the client.
