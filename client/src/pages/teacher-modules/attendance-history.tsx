@@ -47,7 +47,6 @@ interface DayEntry {
 }
 
 type TabView = "daily" | "weekly" | "monthly";
-type StatusFilter = "all" | "Present" | "Late" | "Half Day" | "Absent" | "Leave";
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 
@@ -102,9 +101,10 @@ function statusCfg(s: string) {
     case "Half Day":  return { dot: "bg-orange-400",  badge: "bg-orange-500/20  text-orange-300  border-orange-500/30",  rowBorder: "border-orange-500/10"  };
     case "Absent":    return { dot: "bg-red-400",     badge: "bg-red-500/20     text-red-300     border-red-500/30",     rowBorder: "border-red-500/10"     };
     case "Leave":     return { dot: "bg-slate-400",   badge: "bg-slate-500/20  text-slate-300   border-slate-500/30",   rowBorder: "border-slate-500/10"   };
-    case "Weekend":   return { dot: "bg-sky-400/30",  badge: "bg-sky-500/10    text-sky-300/60  border-sky-500/10",     rowBorder: "border-white/5"        };
-    case "Holiday":   return { dot: "bg-blue-400",    badge: "bg-blue-500/20   text-blue-300    border-blue-500/30",    rowBorder: "border-blue-500/10"    };
-    default:          return { dot: "bg-white/15",    badge: "bg-white/5       text-white/30    border-white/10",       rowBorder: "border-white/5"        };
+    case "Weekend":   return { dot: "bg-sky-400/30",    badge: "bg-sky-500/10    text-sky-300/60    border-sky-500/10",     rowBorder: "border-white/5"         };
+    case "Holiday":   return { dot: "bg-blue-400",     badge: "bg-blue-500/20   text-blue-300      border-blue-500/30",    rowBorder: "border-blue-500/10"    };
+    case "Scheduled": return { dot: "bg-violet-400/50",badge: "bg-violet-500/10 text-violet-300/70 border-violet-500/20",  rowBorder: "border-violet-500/5"   };
+    default:          return { dot: "bg-white/15",     badge: "bg-white/5       text-white/30      border-white/10",       rowBorder: "border-white/5"        };
   }
 }
 
@@ -247,11 +247,10 @@ function StatCard({ label, value, color, bg, icon: Icon }: {
 
 /* ── Day Card ─────────────────────────────────────────────────────── */
 function DayCard({ entry }: { entry: DayEntry }) {
-  const cfg  = statusCfg(entry.effectiveStatus);
-  const skip = entry.isWeekend || entry.isFuture;
+  const cfg = statusCfg(entry.effectiveStatus);
   return (
     <div
-      className={`rounded-2xl border ${cfg.rowBorder} bg-[#1A2942] p-4 transition-colors`}
+      className={`rounded-2xl border ${cfg.rowBorder} bg-[#1A2942] p-4 transition-colors ${entry.isFuture ? "opacity-60" : ""}`}
       data-testid={`hist-day-${entry.dateStr}`}
     >
       <div className="flex items-start gap-3">
@@ -266,7 +265,7 @@ function DayCard({ entry }: { entry: DayEntry }) {
               {entry.effectiveStatus}
             </span>
           </div>
-          {!skip && entry.record && (
+          {!entry.isWeekend && !entry.isFuture && entry.record && (
             <div className="flex flex-wrap gap-3 mt-2 text-xs text-white/45">
               <span className="flex items-center gap-1">
                 <Clock className="w-3 h-3" />
@@ -278,8 +277,11 @@ function DayCard({ entry }: { entry: DayEntry }) {
               )}
             </div>
           )}
-          {!skip && !entry.record && (
+          {!entry.isWeekend && !entry.isFuture && !entry.record && (
             <p className="mt-1.5 text-xs text-white/20">No check-in recorded</p>
+          )}
+          {entry.isFuture && !entry.isWeekend && (
+            <p className="mt-1.5 text-xs text-violet-300/40 italic">Upcoming school day</p>
           )}
         </div>
       </div>
@@ -348,13 +350,16 @@ function MonthCalendar({ year, month, dayList }: { year: number; month: number; 
 }
 
 /* ── Status Filter Pills ──────────────────────────────────────────── */
+type StatusFilter = "all" | "Present" | "Late" | "Half Day" | "Absent" | "Leave" | "Scheduled" | "Weekend";
+
 const STATUS_PILLS: { value: StatusFilter; label: string; active: string }[] = [
-  { value: "all",       label: "All",       active: "bg-white/20 text-white border-white/30" },
-  { value: "Present",   label: "Present",   active: "bg-emerald-500/30 text-emerald-200 border-emerald-500/50" },
-  { value: "Late",      label: "Late",      active: "bg-amber-500/30 text-amber-200 border-amber-500/50" },
-  { value: "Half Day",  label: "Half Day",  active: "bg-orange-500/30 text-orange-200 border-orange-500/50" },
-  { value: "Absent",    label: "Absent",    active: "bg-red-500/30 text-red-200 border-red-500/50" },
-  { value: "Leave",     label: "Leave",     active: "bg-slate-500/30 text-slate-200 border-slate-500/50" },
+  { value: "all",        label: "All",        active: "bg-white/20 text-white border-white/30" },
+  { value: "Present",    label: "Present",    active: "bg-emerald-500/30 text-emerald-200 border-emerald-500/50" },
+  { value: "Late",       label: "Late",       active: "bg-amber-500/30 text-amber-200 border-amber-500/50" },
+  { value: "Half Day",   label: "Half Day",   active: "bg-orange-500/30 text-orange-200 border-orange-500/50" },
+  { value: "Absent",     label: "Absent",     active: "bg-red-500/30 text-red-200 border-red-500/50" },
+  { value: "Leave",      label: "Leave",      active: "bg-slate-500/30 text-slate-200 border-slate-500/50" },
+  { value: "Scheduled",  label: "Upcoming",   active: "bg-violet-500/30 text-violet-200 border-violet-500/50" },
 ];
 
 /* ════════════════════════════════════════════════════════════════════
@@ -366,9 +371,12 @@ export default function AttendanceHistoryView({ teacher, onBack }: { teacher: Te
   const [tab, setTab]             = useState<TabView>("daily");
   const [statusFilter, setStatus] = useState<StatusFilter>("all");
 
-  /* Daily */
+  /* Daily — default: last 30 days → end of current month (includes future) */
   const [fromDate, setFromDate] = useState(() => addDays(today, -29));
-  const [toDate,   setToDate]   = useState(today);
+  const [toDate,   setToDate]   = useState(() => {
+    const n = new Date();
+    return new Date(n.getFullYear(), n.getMonth() + 1, 0).toLocaleDateString("en-CA");
+  });
 
   /* Weekly */
   const [weekStart, setWeekStart] = useState(() => weekMonday(today));
@@ -426,11 +434,10 @@ export default function AttendanceHistoryView({ teacher, onBack }: { teacher: Te
     return tot > 0 ? Math.round((att / tot) * 100) : 0;
   }, [clientSummary]);
 
-  /* Apply status filter */
+  /* Apply status filter — future "Scheduled" days are included and visible */
   const filteredDays = useMemo(() => {
-    const base = allDays.filter(d => !d.isFuture && d.effectiveStatus !== "Scheduled");
-    if (statusFilter === "all") return base;
-    return base.filter(d => d.effectiveStatus === statusFilter);
+    if (statusFilter === "all") return allDays;
+    return allDays.filter(d => d.effectiveStatus === statusFilter);
   }, [allDays, statusFilter]);
 
   const periodLabel = useMemo(() => {
@@ -439,13 +446,15 @@ export default function AttendanceHistoryView({ teacher, onBack }: { teacher: Te
     return new Date(selYear, selMonth - 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
   }, [tab, fromDate, toDate, weekStart, weekEnd, selMonth, selYear]);
 
-  /* ── Week navigation ── */
-  const canNextWeek  = addDays(weekStart, 7) <= today;
+  /* ── Week navigation — allow up to 3 months ahead ── */
+  const maxFutureWeek = addDays(today, 90);
+  const canNextWeek   = addDays(weekStart, 7) <= maxFutureWeek;
   function prevWeek() { setWeekStart(w => addDays(w, -7)); }
   function nextWeek() { if (canNextWeek) setWeekStart(w => addDays(w, 7)); }
 
-  /* ── Month navigation ── */
-  const canNextMonth = new Date(selYear, selMonth, 1) <= new Date();
+  /* ── Month navigation — allow up to 12 months ahead ── */
+  const maxFutureMonth = (() => { const d = new Date(); d.setMonth(d.getMonth() + 12); return d; })();
+  const canNextMonth   = new Date(selYear, selMonth, 1) <= maxFutureMonth;
   function prevMonth() {
     if (selMonth === 1) { setSelMonth(12); setSelYear(y => y - 1); }
     else setSelMonth(m => m - 1);
@@ -517,7 +526,7 @@ export default function AttendanceHistoryView({ teacher, onBack }: { teacher: Te
           </div>
           <div className="space-y-1.5">
             <label className="text-xs text-white/50 font-medium">To</label>
-            <input type="date" value={toDate} max={today}
+            <input type="date" value={toDate}
               onChange={e => setToDate(e.target.value)}
               className="w-full rounded-xl bg-white/5 border border-white/15 text-white text-sm px-3 py-2 focus:outline-none focus:border-[#D4AF37]/50"
               style={{ colorScheme: "dark" }} data-testid="input-history-to" />
