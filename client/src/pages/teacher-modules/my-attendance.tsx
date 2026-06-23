@@ -5,9 +5,10 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft, MapPin, AlertTriangle, CheckCircle, Clock, Timer,
   LogIn, LogOut, TrendingUp, Calendar, Edit3, ChevronDown,
-  Loader2, Flame, BarChart2, X, UserX,
+  Loader2, Flame, BarChart2, X, UserX, History, ChevronRight,
 } from "lucide-react";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
+import AttendanceHistoryView from "./attendance-history";
 
 interface SelfAttRecord {
   id: number;
@@ -271,6 +272,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   });
 
   const [activeTab, setActiveTab] = useState<"timeline" | "calendar">("timeline");
+  const [showHistory, setShowHistory] = useState(false);
 
   // ── Shift state ──────────────────────────────────────────────────────────────
   const shiftState: "unmarked" | "active" | "done" | "leave" =
@@ -289,6 +291,10 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   })();
 
   // ── Render ───────────────────────────────────────────────────────────────────
+  if (showHistory) {
+    return <AttendanceHistoryView teacher={teacher} onBack={() => setShowHistory(false)} />;
+  }
+
   return (
     <div className="space-y-5 pb-24" data-testid="view-my-attendance">
 
@@ -599,6 +605,24 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
           ))
         )}
       </div>
+
+      {/* ── Full Attendance History Entry Card ── */}
+      <button
+        onClick={() => setShowHistory(true)}
+        className="w-full rounded-2xl border border-indigo-500/25 bg-gradient-to-br from-indigo-500/10 to-violet-500/10 p-5 text-left transition-all hover:border-indigo-500/45 hover:shadow-lg hover:shadow-indigo-500/10 hover:-translate-y-0.5 active:scale-[0.98] group"
+        data-testid="card-view-full-history"
+      >
+        <div className="flex items-center gap-4">
+          <div className="rounded-2xl bg-indigo-500/20 p-3 group-hover:bg-indigo-500/30 transition-colors">
+            <History className="w-6 h-6 text-indigo-300" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-white text-sm">Full Attendance History</p>
+            <p className="text-xs text-white/50 mt-0.5">Daily · Weekly · Monthly views with export</p>
+          </div>
+          <ChevronRight className="w-5 h-5 text-white/30 group-hover:text-white/60 transition-colors flex-shrink-0" />
+        </div>
+      </button>
 
       {/* ── Correction Request Modal ── */}
       {showModal && (

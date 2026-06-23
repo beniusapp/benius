@@ -3670,4 +3670,104 @@ Thank you for your prompt attention to this matter.
       res.status(500).json({ message: "Failed to fetch corrections" });
     }
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // GET /api/teacher/attendance/history — paginated, policy-healed history
+  // Security: teacherId is ALWAYS taken from the authenticated session.
+  // ─────────────────────────────────────────────────────────────────────────
+  app.get("/api/teacher/attendance/history", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+      const {
+        fromDate, toDate,
+        status,
+        page     = "1",
+        pageSize = "200",
+      } = req.query as Record<string, string>;
+
+      // Build conditions — teacherId always comes from session, never from query params
+      const conditions: ReturnType<typeof eq>[] = [
+        eq(teacherSelfAttendance.teacherId, req.session.teacherId),
+        eq(teacherSelfAttendance.schoolId,  teacher.schoolId),
+      ];
+      if (fromDate) conditions.push(gte(teacherSelfAttendance.attendanceDate, fromDate) as any);
+      if (toDate)   conditions.push(lte(teacherSelfAttendance.attendanceDate, toDate) as any);
+      if (status && status !== "all") conditions.push(eq(teacherSelfAttendance.status, status) as any);
+
+      const [dbRecords, policyRows] = await Promise.all([
+        db.select().from(teacherSelfAttendance)
+          .where(and(...(conditions as any[])))
+          .orderBy(desc(teacherSelfAttendance.attendanceDate)),
+        db.select().from(attendancePolicies).where(
+          and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
+        ),
+      ]);
+
+      const policy = resolvePolicy(policyRows, "TEACHER", teacher.assignedClass ?? "");
+
+      // Heal stale statuses on the fly (no DB writes here — reads are fast)
+      const records = dbRecords.map(r => {
+        if (!r.checkInTime) return r;
+        const correct = recomputeStatus(r, policy);
+        return correct !== r.status ? { ...r, status: correct } : r;
+      });
+
+      // ── Summary (only over DB records — absent days are generated client-side) ──
+      const present  = records.filter(r => r.status === "Present").length;
+      const late     = records.filter(r => r.status === "Late").length;
+      const halfDay  = records.filter(r => r.status === "Half Day").length;
+      const absent   = records.filter(r => r.status === "Absent").length;
+      const leave    = records.filter(r => r.status === "Leave").length;
+      const totalWorkingMinutes = records.reduce((s, r) => s + (r.totalWorkingMinutes ?? 0), 0);
+      const workedCount         = records.filter(r => (r.totalWorkingMinutes ?? 0) > 0).length;
+      const avgWorkingMinutes   = workedCount > 0 ? Math.round(totalWorkingMinutes / workedCount) : 0;
+
+      const summary = { present, late, halfDay, absent, leave, totalWorkingMinutes, avgWorkingMinutes };
+
+      // ── Statistics ────────────────────────────────────────────────────────
+      const attended = present + late + halfDay;
+      const total    = attended + absent + leave;
+      const attendanceRate = total > 0 ? Math.round((attended / total) * 100) : 0;
+
+      // Streak: consecutive Present/Late/Half Day working days (most-recent first)
+      const sorted = [...records].sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate));
+      let streak = 0, longestStreak = 0, cur = 0;
+      for (const r of sorted) {
+        const dow = new Date(r.attendanceDate + "T12:00:00").getDay();
+        if (dow === 0 || dow === 6) continue;
+        const ok = r.status === "Present" || r.status === "Late" || r.status === "Half Day";
+        if (ok) { cur++; if (cur > longestStreak) longestStreak = cur; }
+        else    { if (streak === 0) streak = cur; cur = 0; }
+      }
+      if (streak === 0) streak = cur;
+
+      const statistics = {
+        attendanceRate,
+        streak,
+        longestStreak,
+        totalWorkingHours: +(totalWorkingMinutes / 60).toFixed(1),
+        avgDailyHours:     +(avgWorkingMinutes   / 60).toFixed(1),
+      };
+
+      // ── Pagination ────────────────────────────────────────────────────────
+      const pageNum     = Math.max(1, parseInt(page));
+      const pageSizeNum = Math.min(500, Math.max(1, parseInt(pageSize)));
+      const totalRecords = records.length;
+      const totalPages   = Math.ceil(totalRecords / pageSizeNum);
+      const paginatedRecords = records.slice((pageNum - 1) * pageSizeNum, pageNum * pageSizeNum);
+
+      res.json({
+        records: paginatedRecords,
+        summary,
+        statistics,
+        pagination: { page: pageNum, pageSize: pageSizeNum, totalRecords, totalPages },
+      });
+    } catch (err) {
+      console.error("[attendance/history]", err);
+      res.status(500).json({ message: "Failed to fetch attendance history" });
+    }
+  });
 }
