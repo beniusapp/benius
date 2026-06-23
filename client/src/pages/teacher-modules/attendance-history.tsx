@@ -111,7 +111,8 @@ function statusCfg(s: string) {
 /** Build a complete day-by-day list for the date range, filling absent/weekend entries */
 function buildDayList(from: string, to: string, dbRecords: HistRecord[]): DayEntry[] {
   const today  = localToday();
-  const recMap = new Map(dbRecords.map(r => [r.attendanceDate, r]));
+  // Normalize attendanceDate — defensive slice(0,10) handles any ISO datetime leak
+  const recMap = new Map(dbRecords.map(r => [String(r.attendanceDate).slice(0, 10), r]));
   const list: DayEntry[] = [];
 
   const start = new Date(from + "T12:00:00");
@@ -395,15 +396,14 @@ export default function AttendanceHistoryView({ teacher, onBack }: { teacher: Te
     return { eff_from: startM, eff_to: endM };
   }, [tab, fromDate, toDate, weekStart, weekEnd, selMonth, selYear]);
 
-  const { data, isLoading, refetch, isRefetching } = useQuery<HistResponse>({
-    queryKey: ["/api/teacher/attendance/history", eff_from, eff_to],
-    queryFn: async () => {
-      const p = new URLSearchParams({ fromDate: eff_from, toDate: eff_to, pageSize: "200" });
-      const r = await fetch(`/api/teacher/attendance/history?${p}`, { credentials: "include" });
-      if (!r.ok) throw new Error("Failed to load attendance history");
-      return r.json();
-    },
-    staleTime: 30_000,
+  // Use the default fetcher (queryKey[0] is the exact fetch URL) so credentials
+  // and error handling are handled uniformly. staleTime:0 ensures today's
+  // check-in is always reflected the moment the history view is opened.
+  const apiUrl = `/api/teacher/attendance/history?fromDate=${eff_from}&toDate=${eff_to}&pageSize=200`;
+
+  const { data, isLoading, isError, refetch, isRefetching } = useQuery<HistResponse>({
+    queryKey: [apiUrl],
+    staleTime: 0,
   });
 
   const dbRecords = data?.records ?? [];
@@ -603,7 +603,13 @@ export default function AttendanceHistoryView({ teacher, onBack }: { teacher: Te
       </div>
 
       {/* ── Content ── */}
-      {isLoading ? <HistSkeleton /> : (
+      {isError && (
+        <div className="rounded-2xl border border-red-500/25 bg-red-500/10 p-4 text-center space-y-2" data-testid="error-history">
+          <p className="text-sm text-red-300 font-medium">Failed to load attendance data</p>
+          <button onClick={() => refetch()} className="text-xs text-red-300/70 underline underline-offset-2">Tap to retry</button>
+        </div>
+      )}
+      {isLoading ? <HistSkeleton /> : isError ? null : (
 
         /* ═══════════════ DAILY VIEW ═══════════════ */
         tab === "daily" ? (

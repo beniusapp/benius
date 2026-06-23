@@ -3759,6 +3759,7 @@ Thank you for your prompt attention to this matter.
       const totalPages   = Math.ceil(totalRecords / pageSizeNum);
       const paginatedRecords = records.slice((pageNum - 1) * pageSizeNum, pageNum * pageSizeNum);
 
+      console.log(`[attendance/history] teacherId=${req.session.teacherId} from=${fromDate} to=${toDate} records=${paginatedRecords.length} dates=${paginatedRecords.map((r: any) => r.attendanceDate).join(",")}`);
       res.json({
         records: paginatedRecords,
         summary,
