@@ -673,11 +673,14 @@ export class DatabaseStorage {
       if (!alreadyIn) assignments.push({ className: m.className, section: m.section });
     }
 
-    // Fetch all teacher-type notices for this school in one query
+    // Fetch all teacher-type AND whole-school notices for this school in one query
     const allNotices = await db.select().from(notices)
       .where(and(
         eq(notices.schoolId, schoolId),
-        eq(notices.targetType, "teacher"),
+        or(
+          eq(notices.targetType, "teacher"),
+          eq(notices.targetType, "whole_school"),
+        ),
       ))
       .orderBy(desc(notices.createdAt));
 
@@ -686,9 +689,12 @@ export class DatabaseStorage {
       if (notice.targetTeacherId !== null && notice.targetTeacherId !== undefined) {
         return notice.targetTeacherId === teacherId;
       }
-      // ── Legacy / broadcast: match by class-section ──
-      if (!notice.targetClass) return true;           // broadcast to all teachers
-      if (assignments.length === 0) return false;     // teacher has no known assignments
+      // ── Whole-school notices are visible to every teacher ──
+      if (notice.targetType === "whole_school") return true;
+      // ── Teacher broadcast with no class restriction → all teachers see it ──
+      if (!notice.targetClass) return true;
+      // ── Class-restricted teacher notice: match assignments ──
+      if (assignments.length === 0) return false;
       return assignments.some(
         a => a.className === notice.targetClass &&
           (!notice.targetSection || a.section === notice.targetSection)

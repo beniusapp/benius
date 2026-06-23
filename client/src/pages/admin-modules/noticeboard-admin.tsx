@@ -38,7 +38,8 @@ const TARGET_TYPES = [
   { value: "whole_school", label: "Whole School" },
   { value: "teacher",      label: "All Teachers" },
   { value: "student",      label: "All Students" },
-  { value: "class",        label: "Specific Class" },
+  { value: "class_only",   label: "Class (All Sections)" },
+  { value: "class",        label: "Class + Section" },
 ];
 
 const NOTICE_TYPES = [
@@ -62,7 +63,7 @@ function targetLabel(n: Notice): string {
   if (n.targetType === "student") return "All Students";
   if (n.targetType === "class") {
     const c = n.targetClass ? `Class ${n.targetClass}` : "Class";
-    const s = n.targetSection ? ` – ${n.targetSection}` : "";
+    const s = n.targetSection ? ` – Sec ${n.targetSection}` : " (All Sections)";
     return c + s;
   }
   return n.targetType;
@@ -146,16 +147,26 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
   const invalidateNotices = () =>
     queryClient.invalidateQueries({ queryKey: ["/api/notices", schoolId, "all"] });
 
+  // "class_only" is a frontend-only sentinel; backend always receives "class"
+  const isClassTarget = targetType === "class" || targetType === "class_only";
+  const canPost = !!content.trim() &&
+    !(isClassTarget && !targetClass) &&
+    !(targetType === "class" && !targetSection);
+
   const postMutation = useMutation({
     mutationFn: async () => {
       const fd = new FormData();
       fd.append("content", content);
-      fd.append("targetType", targetType);
+      // Map frontend sentinel "class_only" → backend value "class" (no section)
+      fd.append("targetType", targetType === "class_only" ? "class" : targetType);
       fd.append("schoolId", String(schoolId));
       fd.append("noticeType", noticeType);
-      if (targetType === "class" && targetClass) {
+      if (isClassTarget && targetClass) {
         fd.append("targetClass", targetClass);
-        if (targetSection) fd.append("targetSection", targetSection);
+        // Only attach a specific section for "Class + Section" mode
+        if (targetType === "class" && targetSection && targetSection !== "all") {
+          fd.append("targetSection", targetSection);
+        }
       }
       const r = await fetch("/api/notices", { method: "POST", body: fd, credentials: "include" });
       if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
@@ -251,30 +262,29 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
             </SelectContent>
           </Select>
 
+          {isClassTarget && (
+            <Select value={targetClass} onValueChange={setTargetClass}>
+              <SelectTrigger className="w-28 bg-[#0A1628] border-white/20 text-white" data-testid="select-notice-class">
+                <SelectValue placeholder="Class *" />
+              </SelectTrigger>
+              <SelectContent>
+                {(classes.length > 0 ? classes : ["1","2","3","4","5","6","7","8","9","10","11","12"]).map(c => (
+                  <SelectItem key={c} value={c}>{c}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           {targetType === "class" && (
-            <>
-              <Select value={targetClass} onValueChange={setTargetClass}>
-                <SelectTrigger className="w-28 bg-[#0A1628] border-white/20 text-white" data-testid="select-notice-class">
-                  <SelectValue placeholder="Class" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(classes.length > 0 ? classes : ["1","2","3","4","5","6","7","8","9","10","11","12"]).map(c => (
-                    <SelectItem key={c} value={c}>{c}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={targetSection} onValueChange={setTargetSection}>
-                <SelectTrigger className="w-28 bg-[#0A1628] border-white/20 text-white" data-testid="select-notice-section">
-                  <SelectValue placeholder="Section (opt)" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Sections</SelectItem>
-                  {(sections.length > 0 ? sections : ["A","B","C","D"]).map(s => (
-                    <SelectItem key={s} value={s}>{s}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </>
+            <Select value={targetSection} onValueChange={setTargetSection}>
+              <SelectTrigger className="w-28 bg-[#0A1628] border-white/20 text-white" data-testid="select-notice-section">
+                <SelectValue placeholder="Section *" />
+              </SelectTrigger>
+              <SelectContent>
+                {(sections.length > 0 ? sections : ["A","B","C","D"]).map(s => (
+                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           )}
         </div>
 
@@ -287,7 +297,7 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
         />
 
         <Button
-          disabled={!content.trim() || postMutation.isPending}
+          disabled={!canPost || postMutation.isPending}
           onClick={() => postMutation.mutate()}
           className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
           data-testid="button-post-notice"
