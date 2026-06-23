@@ -506,9 +506,12 @@ export function registerTeacherRoutes(app: Express) {
     const createdById = req.session.teacherId || req.session.userId;
     const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
 
+    // Normalise section: empty string and the sentinel "all" both mean no section restriction
+    const resolvedSection = (targetSection && targetSection !== "all") ? targetSection : null;
+
     const notice = await storage.createNotice({
       schoolId: parseInt(schoolId), createdById: createdById!, creatorRole, targetType,
-      targetClass: targetClass || null, targetSection: targetSection || null,
+      targetClass: targetClass || null, targetSection: resolvedSection,
       noticeType: noticeType || "Routine", content, fileUrl,
     });
     res.status(201).json(notice);
