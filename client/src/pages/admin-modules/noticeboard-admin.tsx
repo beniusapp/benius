@@ -28,6 +28,7 @@ interface Notice {
   noticeType: string | null;
   creatorRole: string;
   createdById: number;
+  creatorName: string | null;
   fileUrl: string | null;
   createdAt: string;
 }
@@ -494,7 +495,7 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
                           ? "bg-blue-500/15 text-blue-400 border border-blue-500/20"
                           : "bg-amber-500/15 text-amber-400 border border-amber-500/20"
                       }`}>
-                        {isTeacher ? "Teacher" : "Admin"}
+                        {isTeacher ? (n.creatorName ?? "Teacher") : "Admin"}
                       </span>
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">

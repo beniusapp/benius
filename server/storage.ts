@@ -545,11 +545,29 @@ export class DatabaseStorage {
     return n;
   }
 
-  async getAllSchoolNotices(schoolId: number, limit = 500): Promise<Notice[]> {
-    return await db.select().from(notices)
+  async getAllSchoolNotices(schoolId: number, limit = 500): Promise<(Notice & { creatorName: string | null })[]> {
+    const rows = await db
+      .select({
+        id: notices.id,
+        schoolId: notices.schoolId,
+        createdById: notices.createdById,
+        creatorRole: notices.creatorRole,
+        targetType: notices.targetType,
+        targetClass: notices.targetClass,
+        targetSection: notices.targetSection,
+        targetTeacherId: notices.targetTeacherId,
+        noticeType: notices.noticeType,
+        content: notices.content,
+        fileUrl: notices.fileUrl,
+        createdAt: notices.createdAt,
+        creatorName: teachers.fullName,
+      })
+      .from(notices)
+      .leftJoin(teachers, and(eq(notices.createdById, teachers.id), eq(notices.creatorRole, "teacher")))
       .where(eq(notices.schoolId, schoolId))
       .orderBy(desc(notices.createdAt))
       .limit(limit);
+    return rows;
   }
 
   async bulkDeleteNotices(schoolId: number, olderThanDays: number): Promise<number> {
