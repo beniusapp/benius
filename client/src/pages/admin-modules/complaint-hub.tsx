@@ -91,25 +91,28 @@ function ComplaintCard({
           </div>
           {c.teacherName && (
             <p className="text-xs font-bold text-slate-800">
-              {c.complaintType === "teacher-to-admin" ? "From:" : "Against:"} {c.teacherName}
+              From: {c.teacherName}
             </p>
           )}
           {/* Multi-student display for teacher-to-student complaints */}
           {c.complaintType !== "student-to-staff" && (c.students?.length ?? 0) > 0 && (
-            <div className="flex flex-wrap gap-1 mt-0.5" data-testid={`students-admin-${c.id}`}>
-              {c.students!.map((s, i) => (
-                <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-[11px] font-semibold text-rose-800">
-                  {s.name}{s.class ? ` · ${s.class}${s.section ? `-${s.section}` : ""}` : ""}
-                </span>
-              ))}
+            <div className="mt-0.5" data-testid={`students-admin-${c.id}`}>
+              <span className="text-xs font-bold text-slate-500 mr-1">Against:</span>
+              <span className="inline-flex flex-wrap gap-1">
+                {c.students!.map((s, i) => (
+                  <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-[11px] font-semibold text-rose-800">
+                    {s.name}{s.class ? ` · ${s.class}${s.section ? `-${s.section}` : ""}` : ""}
+                  </span>
+                ))}
+              </span>
             </div>
           )}
           {/* Fallback: legacy single studentName */}
           {c.complaintType !== "student-to-staff" && (c.students?.length ?? 0) === 0 && c.studentName && (
-            <p className="text-xs font-bold text-slate-800">Student: {c.studentName}</p>
+            <p className="text-xs font-bold text-slate-800">Against: {c.studentName}</p>
           )}
           {c.reportedStudentName && !c.studentName && (c.students?.length ?? 0) === 0 && (
-            <p className="text-xs font-bold text-slate-800">Reported: {c.reportedStudentName}</p>
+            <p className="text-xs font-bold text-slate-800">Against: {c.reportedStudentName}</p>
           )}
 
           {/* Reporter (student who filed the grievance) */}
