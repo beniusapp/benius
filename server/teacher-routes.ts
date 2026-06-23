@@ -889,7 +889,8 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId) return res.status(401).json({ message: "Admin only" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(400).json({ message: "No school context" });
-    const days = await storage.getRetentionPolicy(schoolId);
+    const tabKey = typeof req.query.tabKey === "string" ? req.query.tabKey : undefined;
+    const days = await storage.getRetentionPolicy(schoolId, tabKey);
     res.json({ days });
   });
 
@@ -897,10 +898,10 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId) return res.status(401).json({ message: "Admin only" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(400).json({ message: "No school context" });
-    const { days } = req.body;
+    const { days, tabKey } = req.body;
     if (typeof days !== "number") return res.status(400).json({ message: "days must be a number (-1 = never)" });
     const user = await storage.getUserById(req.session.userId);
-    await storage.setRetentionPolicy(schoolId, days, req.session.userId, "admin", user?.email ?? "Admin");
+    await storage.setRetentionPolicy(schoolId, days, req.session.userId, "admin", user?.email ?? "Admin", tabKey);
     res.json({ message: "Retention policy updated", days });
   });
 
@@ -908,10 +909,11 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId) return res.status(401).json({ message: "Admin only" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(400).json({ message: "No school context" });
-    const { olderThanDays } = req.body;
-    if (typeof olderThanDays !== "number" || olderThanDays < 1) return res.status(400).json({ message: "Invalid olderThanDays" });
+    const { olderThanDays, complaintTypes } = req.body;
+    if (typeof olderThanDays !== "number" || olderThanDays < 0) return res.status(400).json({ message: "Invalid olderThanDays (0 = no age restriction)" });
     const user = await storage.getUserById(req.session.userId);
-    const deleted = await storage.bulkDeleteComplaints(schoolId, olderThanDays, req.session.userId, "admin", user?.email ?? "Admin");
+    const types = Array.isArray(complaintTypes) ? complaintTypes : undefined;
+    const deleted = await storage.bulkDeleteComplaints(schoolId, olderThanDays, req.session.userId, "admin", user?.email ?? "Admin", types);
     res.json({ deleted });
   });
 

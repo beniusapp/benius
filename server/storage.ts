@@ -810,54 +810,79 @@ export class DatabaseStorage {
     return c;
   }
 
-  async bulkDeleteComplaints(schoolId: number, olderThanDays: number, deletedByUserId: number, deletedByRole: string, deletedByName: string): Promise<number> {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - olderThanDays);
+  async bulkDeleteComplaints(
+    schoolId: number,
+    olderThanDays: number,
+    deletedByUserId: number,
+    deletedByRole: string,
+    deletedByName: string,
+    complaintTypes?: string[],
+  ): Promise<number> {
+    const conditions: ReturnType<typeof eq>[] = [
+      eq(complaints.schoolId, schoolId),
+      eq(complaints.status, "Resolved"),
+      eq(complaints.isDeleted, false),
+      isNull(complaints.deletedAt),
+    ] as any[];
+    if (olderThanDays > 0) {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - olderThanDays);
+      (conditions as any[]).push(lt(complaints.createdAt, cutoff));
+    }
+    if (complaintTypes && complaintTypes.length > 0) {
+      (conditions as any[]).push(inArray(complaints.complaintType, complaintTypes));
+    }
     const eligible = await db.select({ id: complaints.id })
       .from(complaints)
-      .where(and(
-        eq(complaints.schoolId, schoolId),
-        eq(complaints.status, "Resolved"),
-        eq(complaints.isDeleted, false),
-        isNull(complaints.deletedAt),
-        lt(complaints.createdAt, cutoff),
-      ));
+      .where(and(...(conditions as any[])));
     if (eligible.length === 0) return 0;
     const ids = eligible.map(r => r.id);
     await db.update(complaints)
       .set({ isDeleted: true, deletedAt: new Date(), deletedBy: deletedByUserId })
       .where(inArray(complaints.id, ids));
     if (deletedByUserId > 0) {
+      const typeDesc = complaintTypes?.length ? ` (types: ${complaintTypes.join(", ")})` : "";
+      const ageDesc = olderThanDays === 0 ? "any age" : `older than ${olderThanDays} days`;
       await db.insert(auditLogs).values({
         schoolId, actionType: "bulk_delete", entityType: "complaint", entityId: schoolId,
         actionBy: deletedByUserId, actionByRole: deletedByRole,
-        details: `${deletedByName} bulk-deleted ${ids.length} resolved complaint(s) older than ${olderThanDays} days`,
+        details: `${deletedByName} bulk-deleted ${ids.length} resolved complaint(s)${typeDesc} — ${ageDesc}`,
       });
     }
     return ids.length;
   }
 
-  async getRetentionPolicy(schoolId: number): Promise<number> {
-    const val = await this.getSchoolMetadataRaw(schoolId, "complaint_retention_days");
+  async getRetentionPolicy(schoolId: number, tabKey?: string): Promise<number> {
+    const metaKey = tabKey ? `complaint_retention_days_${tabKey}` : "complaint_retention_days";
+    const val = await this.getSchoolMetadataRaw(schoolId, metaKey);
     if (val === null || val === undefined) return -1;
     return typeof val === "number" ? val : -1;
   }
 
-  async setRetentionPolicy(schoolId: number, days: number, userId: number, role: string, actorName: string): Promise<void> {
-    await this.setSchoolMetadataRaw(schoolId, "complaint_retention_days", days);
+  async setRetentionPolicy(schoolId: number, days: number, userId: number, role: string, actorName: string, tabKey?: string): Promise<void> {
+    const metaKey = tabKey ? `complaint_retention_days_${tabKey}` : "complaint_retention_days";
+    await this.setSchoolMetadataRaw(schoolId, metaKey, days);
+    const tabDesc = tabKey ? ` (tab: ${tabKey})` : "";
     await db.insert(auditLogs).values({
       schoolId, actionType: "update", entityType: "retention_policy", entityId: schoolId,
       actionBy: userId, actionByRole: role,
-      details: `Complaint retention policy updated to ${days === -1 ? "Never Delete" : `${days} days`} by ${actorName}`,
+      details: `Complaint retention policy${tabDesc} updated to ${days === -1 ? "Never Delete" : `${days} days`} by ${actorName}`,
     });
   }
 
   async runAutoCleanup(): Promise<void> {
+    const TAB_TYPES: Record<string, string[]> = {
+      private:   ["teacher-to-admin"],
+      grievances: ["student-to-staff"],
+      escalated: ["student-peer-report", "teacher-to-student"],
+    };
     const allSchools = await db.select({ id: schools.id }).from(schools);
     for (const school of allSchools) {
-      const days = await this.getRetentionPolicy(school.id);
-      if (days === -1) continue;
-      await this.bulkDeleteComplaints(school.id, days, 0, "system", "Auto-cleanup (scheduled job)");
+      for (const [tabKey, types] of Object.entries(TAB_TYPES)) {
+        const days = await this.getRetentionPolicy(school.id, tabKey);
+        if (days === -1) continue;
+        await this.bulkDeleteComplaints(school.id, days, 0, "system", "Auto-cleanup (scheduled job)", types);
+      }
     }
   }
 
