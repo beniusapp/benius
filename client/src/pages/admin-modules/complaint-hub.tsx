@@ -3,7 +3,8 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { fmtDateTimeAmPm } from "@/lib/dateUtils";
 import {
   MessageSquare, CheckCircle, Loader2, Lock, Shield, ArrowUpCircle,
-  AlertTriangle, ChevronDown, ChevronUp, Clock, ArrowUp,
+  AlertTriangle, ChevronDown, ChevronUp, Clock, ArrowUp, Settings,
+  Trash2, X, Save, Filter,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -22,6 +23,7 @@ interface AdminComplaint {
   escalatedToPrincipal: boolean;
   notifyAdmin: boolean;
   createdAt: string;
+  resolvedAt: string | null;
   studentName: string | null;
   students?: { id: number; name: string; class: string | null; section: string | null }[];
   teacherName: string | null;
@@ -32,7 +34,24 @@ interface AdminComplaint {
 }
 
 type TabKey = "private" | "grievances" | "escalated";
+type StatusFilter = "all" | "Pending" | "Investigating" | "Resolved" | "Escalated";
 
+const RETENTION_OPTIONS: { label: string; days: number }[] = [
+  { label: "30 days", days: 30 },
+  { label: "60 days", days: 60 },
+  { label: "90 days", days: 90 },
+  { label: "180 days", days: 180 },
+  { label: "1 year", days: 365 },
+  { label: "Never delete", days: -1 },
+];
+
+const BULK_DELETE_OPTIONS: { label: string; days: number }[] = [
+  { label: "Resolved > 30 days ago", days: 30 },
+  { label: "Resolved > 60 days ago", days: 60 },
+  { label: "Resolved > 90 days ago", days: 90 },
+  { label: "Resolved > 180 days ago", days: 180 },
+  { label: "All resolved (any age)", days: 1 },
+];
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
@@ -80,7 +99,6 @@ function ComplaintCard({
       className="rounded-xl border border-slate-200 bg-white shadow-sm hover:shadow-md transition-shadow p-4 space-y-3"
       data-testid={`card-complaint-${c.id}`}
     >
-      {/* Header row */}
       <div className="flex items-start justify-between gap-2 flex-wrap">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1.5">
@@ -89,7 +107,7 @@ function ComplaintCard({
             </span>
             <StatusBadge status={c.status} />
           </div>
-          {/* student-to-staff: Filed by → Against teacher */}
+
           {(c.complaintType === "student-to-staff" || c.complaintType === "student-peer-report") ? (
             <>
               {c.complainantName && (
@@ -103,9 +121,7 @@ function ComplaintCard({
                     </p>
                   )}
                   {c.complainantPhone && (
-                    <p className="text-xs text-slate-500 font-semibold">
-                      Phone: {c.complainantPhone}
-                    </p>
+                    <p className="text-xs text-slate-500 font-semibold">Phone: {c.complainantPhone}</p>
                   )}
                 </div>
               )}
@@ -117,11 +133,8 @@ function ComplaintCard({
             </>
           ) : (
             <>
-              {/* teacher-to-student / teacher-to-admin: From teacher → Against students */}
               {c.teacherName && (
-                <p className="text-xs font-bold text-slate-800">
-                  From: {c.teacherName}
-                </p>
+                <p className="text-xs font-bold text-slate-800">From: {c.teacherName}</p>
               )}
               {(c.students?.length ?? 0) > 0 && (
                 <div className="mt-0.5" data-testid={`students-admin-${c.id}`}>
@@ -144,11 +157,15 @@ function ComplaintCard({
             </>
           )}
 
-          <p className="text-slate-400 text-xs mt-0.5">{fmtDateTimeAmPm(c.createdAt)}</p>
+          <p className="text-slate-400 text-xs mt-0.5">
+            {fmtDateTimeAmPm(c.createdAt)}
+            {c.resolvedAt && (
+              <span className="ml-2 text-emerald-500">· Resolved {fmtDateTimeAmPm(c.resolvedAt)}</span>
+            )}
+          </p>
         </div>
       </div>
 
-      {/* Content */}
       <p className={`text-sm text-slate-900 font-semibold leading-relaxed ${expanded ? "" : "line-clamp-2"}`}>
         {c.content}
       </p>
@@ -162,7 +179,6 @@ function ComplaintCard({
         </button>
       )}
 
-      {/* Principal's Remarks display */}
       {c.resolutionRemarks && (
         <div className="px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200">
           <p className="text-xs font-bold text-emerald-700">Principal's Remarks</p>
@@ -170,7 +186,6 @@ function ComplaintCard({
         </div>
       )}
 
-      {/* Actions */}
       {isActive && (
         <div className="flex flex-wrap gap-2 pt-1">
           {showRemarksInput && !showRemarks && (
@@ -207,7 +222,6 @@ function ComplaintCard({
         </div>
       )}
 
-      {/* Remarks textarea */}
       {showRemarksInput && showRemarks && isActive && (
         <div className="space-y-2 pt-1 border-t border-slate-200">
           <label className="text-xs font-bold text-slate-600">Principal's Remarks *</label>
@@ -257,58 +271,100 @@ function ComplaintCard({
 }
 
 function TabPanel({
-  items,
-  schoolId,
-  emptyIcon: EmptyIcon,
-  emptyMessage,
-  showRemarksInput,
+  items, schoolId, emptyIcon: EmptyIcon, emptyMessage, showRemarksInput,
+  statusFilter, onFilterChange,
 }: {
   items: AdminComplaint[];
   schoolId: number;
   emptyIcon: typeof Lock;
   emptyMessage: string;
   showRemarksInput?: boolean;
+  statusFilter: StatusFilter;
+  onFilterChange: (f: StatusFilter) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [atTop, setAtTop] = useState(true);
+
+  const filtered = statusFilter === "all"
+    ? items
+    : items.filter(c => c.status === statusFilter);
 
   function handleScroll() {
     if (scrollRef.current) setAtTop(scrollRef.current.scrollTop < 80);
   }
 
-  function scrollToTop() {
-    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+    { value: "all", label: "All" },
+    { value: "Pending", label: "Pending" },
+    { value: "Investigating", label: "Investigating" },
+    { value: "Resolved", label: "Resolved" },
+    { value: "Escalated", label: "Escalated" },
+  ];
+
+  const activeCounts: Partial<Record<StatusFilter, number>> = {};
+  for (const s of ["Pending", "Investigating", "Resolved", "Escalated"] as StatusFilter[]) {
+    activeCounts[s] = items.filter(c => c.status === s).length;
   }
 
   return (
-    <div className="relative">
-      <div
-        ref={scrollRef}
-        onScroll={handleScroll}
-        className="overflow-y-auto h-[520px] pr-1 space-y-3 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent"
-        data-testid="tab-panel-scroll"
-      >
-        {items.length === 0 ? (
-          <div className="rounded-xl border border-white/10 bg-[#1A2942]/60 py-12 text-center h-full flex flex-col items-center justify-center">
-            <EmptyIcon className="w-8 h-8 mb-2 text-white/20" />
-            <p className="text-white/30 text-xs font-semibold">{emptyMessage}</p>
-          </div>
-        ) : (
-          items.map(c => (
-            <ComplaintCard key={c.id} c={c} schoolId={schoolId} showRemarksInput={showRemarksInput} />
-          ))
-        )}
+    <div className="space-y-3">
+      {/* Filter bar */}
+      <div className="flex items-center gap-2 flex-wrap" data-testid="status-filter-bar">
+        <Filter className="w-3.5 h-3.5 text-white/40 flex-shrink-0" />
+        <span className="text-white/40 text-xs font-semibold mr-1">Filter:</span>
+        {STATUS_FILTERS.map(f => {
+          const cnt = f.value === "all" ? items.length : (activeCounts[f.value] ?? 0);
+          if (f.value !== "all" && cnt === 0) return null;
+          const isActive = statusFilter === f.value;
+          return (
+            <button
+              key={f.value}
+              onClick={() => onFilterChange(f.value)}
+              data-testid={`filter-${f.value}`}
+              className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all duration-150 ${
+                isActive
+                  ? "bg-[#D4AF37] text-black shadow-sm"
+                  : "bg-white/10 text-white/50 hover:bg-white/20 hover:text-white/80"
+              }`}
+            >
+              {f.label}
+              {cnt > 0 && <span className="ml-1 opacity-70">({cnt})</span>}
+            </button>
+          );
+        })}
       </div>
 
-      {/* Scroll to Top button */}
-      <button
-        onClick={scrollToTop}
-        className={`absolute bottom-3 right-3 p-2 rounded-full bg-[#D4AF37] text-black shadow-lg transition-all duration-300 ${atTop ? "opacity-0 pointer-events-none scale-90" : "opacity-100 scale-100"}`}
-        title="Scroll to top"
-        data-testid="button-scroll-to-top"
-      >
-        <ArrowUp className="w-4 h-4" />
-      </button>
+      {/* Scrollable list */}
+      <div className="relative">
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="overflow-y-auto h-[500px] pr-1 space-y-3 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent"
+          data-testid="tab-panel-scroll"
+        >
+          {filtered.length === 0 ? (
+            <div className="rounded-xl border border-white/10 bg-[#1A2942]/60 py-12 text-center h-full flex flex-col items-center justify-center">
+              <EmptyIcon className="w-8 h-8 mb-2 text-white/20" />
+              <p className="text-white/30 text-xs font-semibold">
+                {statusFilter !== "all" ? `No ${statusFilter} complaints` : emptyMessage}
+              </p>
+            </div>
+          ) : (
+            filtered.map(c => (
+              <ComplaintCard key={c.id} c={c} schoolId={schoolId} showRemarksInput={showRemarksInput} />
+            ))
+          )}
+        </div>
+
+        <button
+          onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
+          className={`absolute bottom-3 right-3 p-2 rounded-full bg-[#D4AF37] text-black shadow-lg transition-all duration-300 ${atTop ? "opacity-0 pointer-events-none scale-90" : "opacity-100 scale-100"}`}
+          title="Scroll to top"
+          data-testid="button-scroll-to-top"
+        >
+          <ArrowUp className="w-4 h-4" />
+        </button>
+      </div>
     </div>
   );
 }
@@ -361,8 +417,215 @@ const TAB_CONFIG: {
   },
 ];
 
+function SettingsPanel({
+  schoolId,
+  onClose,
+}: {
+  schoolId: number;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [bulkDays, setBulkDays] = useState(30);
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false);
+  const [pendingBulkDays, setPendingBulkDays] = useState<number | null>(null);
+  const [localRetentionDays, setLocalRetentionDays] = useState<number | null>(null);
+
+  const { data: policyData, isLoading: policyLoading } = useQuery<{ days: number }>({
+    queryKey: ["/api/complaints/retention-policy"],
+    queryFn: async () => {
+      const r = await fetch("/api/complaints/retention-policy", { credentials: "include" });
+      return r.ok ? r.json() : { days: -1 };
+    },
+    enabled: !!schoolId,
+  });
+
+  const currentDays = localRetentionDays ?? policyData?.days ?? -1;
+
+  const saveRetentionMutation = useMutation({
+    mutationFn: (days: number) =>
+      apiRequest("POST", "/api/complaints/retention-policy", { days }),
+    onSuccess: (_, days) => {
+      toast({ title: "Retention policy saved", description: days === -1 ? "Complaints will never be auto-deleted." : `Resolved complaints older than ${days} days will be auto-deleted daily.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/complaints/retention-policy"] });
+      setLocalRetentionDays(null);
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: (olderThanDays: number) =>
+      apiRequest("DELETE", "/api/complaints/bulk", { olderThanDays }),
+    onSuccess: (data: { deleted: number }) => {
+      toast({
+        title: "Bulk delete complete",
+        description: data.deleted === 0
+          ? "No eligible complaints found to delete."
+          : `${data.deleted} resolved complaint(s) permanently deleted.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/complaints/school", schoolId] });
+      setShowBulkConfirm(false);
+      setPendingBulkDays(null);
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  function handleBulkDeleteClick() {
+    setPendingBulkDays(bulkDays);
+    setShowBulkConfirm(true);
+  }
+
+  return (
+    <>
+      <div className="rounded-2xl border border-white/10 bg-[#1A2942] p-5 space-y-6" data-testid="settings-panel">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Settings className="w-4 h-4 text-[#D4AF37]" />
+            <h3 className="text-sm font-bold text-white">Complaint Hub Settings</h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-lg text-white/40 hover:text-white/80 hover:bg-white/10 transition-colors"
+            data-testid="button-close-settings"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <hr className="border-white/10" />
+
+        {/* Retention Policy */}
+        <div className="space-y-3">
+          <div>
+            <h4 className="text-xs font-bold text-[#D4AF37] uppercase tracking-widest mb-0.5">Retention Policy</h4>
+            <p className="text-white/40 text-xs">Auto-delete resolved complaints after this period. Runs daily.</p>
+          </div>
+          {policyLoading ? (
+            <div className="flex items-center gap-2 text-white/30 text-xs"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2" data-testid="retention-options">
+              {RETENTION_OPTIONS.map(opt => {
+                const isSelected = currentDays === opt.days;
+                return (
+                  <button
+                    key={opt.days}
+                    onClick={() => setLocalRetentionDays(opt.days)}
+                    data-testid={`retention-option-${opt.days}`}
+                    className={`px-3 py-2 rounded-lg text-xs font-bold border transition-all duration-150 text-left ${
+                      isSelected
+                        ? "bg-[#D4AF37]/20 border-[#D4AF37] text-[#D4AF37]"
+                        : "bg-[#0A1628]/60 border-white/10 text-white/50 hover:border-white/30 hover:text-white/80"
+                    }`}
+                  >
+                    {isSelected && <span className="mr-1">✓</span>}
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <Button
+            size="sm"
+            disabled={saveRetentionMutation.isPending || policyLoading || localRetentionDays === null}
+            onClick={() => saveRetentionMutation.mutate(currentDays)}
+            className="h-8 px-4 bg-[#D4AF37] hover:bg-[#B8962E] text-black font-bold text-xs rounded-lg disabled:opacity-40"
+            data-testid="button-save-retention"
+          >
+            {saveRetentionMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3 mr-1" />}
+            Save Policy
+          </Button>
+        </div>
+
+        <hr className="border-white/10" />
+
+        {/* Manual Bulk Delete */}
+        <div className="space-y-3">
+          <div>
+            <h4 className="text-xs font-bold text-rose-400 uppercase tracking-widest mb-0.5">Manual Bulk Delete</h4>
+            <p className="text-white/40 text-xs">Permanently delete <strong className="text-white/60">resolved</strong> complaints matching the selected age. This action is irreversible.</p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              value={bulkDays}
+              onChange={e => setBulkDays(parseInt(e.target.value))}
+              className="flex-1 min-w-[180px] px-3 py-1.5 rounded-lg bg-[#0A1628]/80 border border-white/10 text-white/80 text-xs font-semibold focus:outline-none focus:border-[#D4AF37]"
+              data-testid="select-bulk-days"
+            >
+              {BULK_DELETE_OPTIONS.map(o => (
+                <option key={o.days} value={o.days}>{o.label}</option>
+              ))}
+            </select>
+            <Button
+              size="sm"
+              onClick={handleBulkDeleteClick}
+              className="h-8 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg"
+              data-testid="button-bulk-delete-open"
+            >
+              <Trash2 className="w-3 h-3 mr-1" /> Delete Selected
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Bulk Delete Confirmation Modal */}
+      {showBulkConfirm && pendingBulkDays !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" data-testid="bulk-delete-modal">
+          <div className="bg-[#1A2942] border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl mx-4 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-rose-500/20">
+                <AlertTriangle className="w-5 h-5 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">Confirm Bulk Deletion</h3>
+                <p className="text-white/50 text-xs mt-0.5">This action cannot be undone</p>
+              </div>
+            </div>
+            <div className="px-4 py-3 rounded-xl bg-rose-900/20 border border-rose-500/30">
+              <p className="text-xs text-white/80 font-semibold">
+                You are about to permanently delete all <span className="text-rose-300 font-bold">Resolved</span> complaints{" "}
+                {pendingBulkDays === 1
+                  ? <span className="text-rose-300 font-bold">regardless of age</span>
+                  : <>older than <span className="text-rose-300 font-bold">{pendingBulkDays} days</span></>
+                }.
+              </p>
+              <p className="text-xs text-white/50 mt-1">An audit log entry will be created recording this deletion.</p>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => { setShowBulkConfirm(false); setPendingBulkDays(null); }}
+                className="flex-1 h-9 text-white/60 hover:text-white font-bold text-xs border border-white/10 rounded-xl"
+                data-testid="button-bulk-cancel"
+                disabled={bulkDeleteMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => bulkDeleteMutation.mutate(pendingBulkDays)}
+                disabled={bulkDeleteMutation.isPending}
+                className="flex-1 h-9 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl"
+                data-testid="button-bulk-confirm"
+              >
+                {bulkDeleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Trash2 className="w-3.5 h-3.5 mr-1" /> Yes, Delete Permanently</>}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function ComplaintHub({ schoolId }: Props) {
   const [activeTab, setActiveTab] = useState<TabKey>("private");
+  const [showSettings, setShowSettings] = useState(false);
+  const [tabFilters, setTabFilters] = useState<Record<TabKey, StatusFilter>>({
+    private: "all",
+    grievances: "all",
+    escalated: "all",
+  });
 
   const { data: all = [], isLoading } = useQuery<AdminComplaint[]>({
     queryKey: ["/api/complaints/school", schoolId],
@@ -373,9 +636,9 @@ export default function ComplaintHub({ schoolId }: Props) {
     enabled: !!schoolId,
   });
 
-  const privateTeacher  = all.filter(c => c.complaintType === "teacher-to-admin");
+  const privateTeacher    = all.filter(c => c.complaintType === "teacher-to-admin");
   const studentGrievances = all.filter(c => c.complaintType === "student-to-staff");
-  const escalated = all.filter(c =>
+  const escalated         = all.filter(c =>
     (c.complaintType === "student-peer-report" && c.escalatedToPrincipal) ||
     (c.complaintType === "teacher-to-student" && c.notifyAdmin)
   );
@@ -402,6 +665,10 @@ export default function ComplaintHub({ schoolId }: Props) {
 
   const activeConfig = TAB_CONFIG.find(t => t.key === activeTab)!;
 
+  function setFilterForTab(tab: TabKey, filter: StatusFilter) {
+    setTabFilters(prev => ({ ...prev, [tab]: filter }));
+  }
+
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-2">
@@ -425,15 +692,32 @@ export default function ComplaintHub({ schoolId }: Props) {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {TAB_CONFIG.map(t => (
+          {TAB_CONFIG.map(t =>
             activeByKey[t.key] > 0 && (
               <span key={t.key} className={`text-xs font-bold px-2 py-0.5 rounded-full ${t.badgeBg}`}>
                 {activeByKey[t.key]} active
               </span>
             )
-          ))}
+          )}
+          <button
+            onClick={() => setShowSettings(v => !v)}
+            data-testid="button-toggle-settings"
+            className={`p-2 rounded-xl border transition-all duration-200 ${
+              showSettings
+                ? "bg-[#D4AF37]/20 border-[#D4AF37] text-[#D4AF37]"
+                : "bg-white/5 border-white/10 text-white/40 hover:text-white/80 hover:border-white/30"
+            }`}
+            title="Complaint Settings"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
         </div>
       </div>
+
+      {/* ── Settings Panel ── */}
+      {showSettings && (
+        <SettingsPanel schoolId={schoolId} onClose={() => setShowSettings(false)} />
+      )}
 
       {/* ── Tab Navigation ── */}
       <div className="flex gap-1 p-1 rounded-xl bg-[#0A1628] border border-white/10" role="tablist" data-testid="complaint-tabs">
@@ -475,11 +759,11 @@ export default function ComplaintHub({ schoolId }: Props) {
         </span>
       </div>
 
-      {/* ── Tab Panels with independent scroll ── */}
+      {/* ── Tab Panels ── */}
       {TAB_CONFIG.map(tab => (
         <div
           key={tab.key}
-          className={`transition-all duration-200 ${activeTab === tab.key ? "opacity-100" : "hidden opacity-0"}`}
+          className={activeTab === tab.key ? "block" : "hidden"}
           role="tabpanel"
           data-testid={`panel-${tab.key}`}
         >
@@ -489,6 +773,8 @@ export default function ComplaintHub({ schoolId }: Props) {
             emptyIcon={tab.icon}
             emptyMessage={tab.emptyMessage}
             showRemarksInput={tab.showRemarksInput}
+            statusFilter={tabFilters[tab.key]}
+            onFilterChange={f => setFilterForTab(tab.key, f)}
           />
         </div>
       ))}

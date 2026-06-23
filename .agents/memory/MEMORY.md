@@ -1,2 +1,3 @@
 - [Attendance Policy Engine](attendance-policy-engine.md) — centralized timing rules for teacher check-in status (Present/Late/Half Day) and student attendance targets; replaces all hardcoded thresholds.
 - [Drizzle Push Interactive Prompt](drizzle-push-workaround.md) — `npx drizzle-kit push` hangs on interactive table-creation prompt; use direct `node -e` SQL via pg Pool as a workaround.
+- [Complaint Hub Enhancements](complaint-hub-enhancements.md) — bulk-delete, retention policy, per-tab status filters, soft-delete fields (deletedAt/deletedBy/resolvedAt), audit logs, and daily auto-cleanup all implemented.

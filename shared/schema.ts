@@ -176,6 +176,9 @@ export const complaints = pgTable("complaints", {
   notifyAdmin: boolean("notify_admin").notNull().default(false),
   batchId: varchar("batch_id", { length: 50 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at"),
+  deletedAt: timestamp("deleted_at"),
+  deletedBy: integer("deleted_by"),
 });
 
 export const complaintNotes = pgTable("complaint_notes", {

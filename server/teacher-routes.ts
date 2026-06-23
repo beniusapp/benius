@@ -884,6 +884,37 @@ export function registerTeacherRoutes(app: Express) {
     res.json(updated);
   });
 
+  // ===== COMPLAINT RETENTION POLICY & BULK DELETE (Admin only) =====
+  app.get("/api/complaints/retention-policy", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Admin only" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(400).json({ message: "No school context" });
+    const days = await storage.getRetentionPolicy(schoolId);
+    res.json({ days });
+  });
+
+  app.post("/api/complaints/retention-policy", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Admin only" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(400).json({ message: "No school context" });
+    const { days } = req.body;
+    if (typeof days !== "number") return res.status(400).json({ message: "days must be a number (-1 = never)" });
+    const user = await storage.getUserById(req.session.userId);
+    await storage.setRetentionPolicy(schoolId, days, req.session.userId, "admin", user?.email ?? "Admin");
+    res.json({ message: "Retention policy updated", days });
+  });
+
+  app.delete("/api/complaints/bulk", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Admin only" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(400).json({ message: "No school context" });
+    const { olderThanDays } = req.body;
+    if (typeof olderThanDays !== "number" || olderThanDays < 1) return res.status(400).json({ message: "Invalid olderThanDays" });
+    const user = await storage.getUserById(req.session.userId);
+    const deleted = await storage.bulkDeleteComplaints(schoolId, olderThanDays, req.session.userId, "admin", user?.email ?? "Admin");
+    res.json({ deleted });
+  });
+
   // ===== EXAMINATION =====
   app.post("/api/exam-scores", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
