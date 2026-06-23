@@ -904,7 +904,7 @@ export function registerTeacherRoutes(app: Express) {
     res.json({ message: "Retention policy updated", days });
   });
 
-  app.delete("/api/complaints/bulk", async (req, res) => {
+  app.delete("/api/admin/complaints/bulk", async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Admin only" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(400).json({ message: "No school context" });

@@ -454,7 +454,7 @@ function SettingsPanel({
 
   const bulkDeleteMutation = useMutation({
     mutationFn: (olderThanDays: number) =>
-      apiRequest("DELETE", "/api/complaints/bulk", { olderThanDays }),
+      apiRequest("DELETE", "/api/admin/complaints/bulk", { olderThanDays }).then(r => r.json() as Promise<{ deleted: number }>),
     onSuccess: (data: { deleted: number }) => {
       toast({
         title: "Bulk delete complete",
