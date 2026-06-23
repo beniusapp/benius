@@ -3,7 +3,8 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { fmtDateTime } from "@/lib/dateUtils";
 import {
   Bell, Send, Loader2, Pencil, Trash2, Check, X,
-  Megaphone, BookOpen, AlertTriangle, Info,
+  Megaphone, BookOpen, AlertTriangle, Info, Filter,
+  ShieldCheck, GraduationCap, BarChart3,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -31,6 +32,8 @@ interface Notice {
   createdAt: string;
 }
 
+type RoleFilter = "all" | "admin" | "teacher";
+
 const TARGET_TYPES = [
   { value: "whole_school", label: "Whole School" },
   { value: "teacher",      label: "All Teachers" },
@@ -45,6 +48,14 @@ const NOTICE_TYPES = [
   { value: "Urgent",   label: "Urgent",   icon: AlertTriangle, color: "text-red-400" },
 ];
 
+const BULK_DELETE_OPTIONS: { label: string; days: number }[] = [
+  { label: "Older than 30 days",  days: 30  },
+  { label: "Older than 60 days",  days: 60  },
+  { label: "Older than 90 days",  days: 90  },
+  { label: "Older than 180 days", days: 180 },
+  { label: "All notices",          days: 0   },
+];
+
 function targetLabel(n: Notice): string {
   if (n.targetType === "whole_school") return "Whole School";
   if (n.targetType === "teacher") return "All Teachers";
@@ -57,18 +68,14 @@ function targetLabel(n: Notice): string {
   return n.targetType;
 }
 
-function senderLabel(n: Notice): string {
-  return n.creatorRole === "teacher" ? "Teacher" : "Admin";
-}
-
-
 function getTypeStyle(t: string | null) {
-  const cfg = NOTICE_TYPES.find(x => x.value === t) || NOTICE_TYPES[0];
-  return cfg;
+  return NOTICE_TYPES.find(x => x.value === t) || NOTICE_TYPES[0];
 }
 
 export default function NoticeboardAdmin({ schoolId, classes, sections, adminUserId }: Props) {
   const { toast } = useToast();
+
+  // Form state
   const [content, setContent] = useState("");
   const [targetType, setTargetType] = useState("whole_school");
   const [targetClass, setTargetClass] = useState("");
@@ -77,6 +84,15 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editContent, setEditContent] = useState("");
 
+  // Filter state
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
+
+  // Bulk delete state
+  const [bulkDays, setBulkDays] = useState(30);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingDays, setPendingDays] = useState<number | null>(null);
+
+  // ── Data Fetch ────────────────────────────────────────────────────────────
   const { data: allNotices = [], isLoading } = useQuery<Notice[]>({
     queryKey: ["/api/notices", schoolId, "all"],
     queryFn: async () => {
@@ -85,6 +101,19 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
     },
     enabled: !!schoolId,
   });
+
+  // ── Computed counts ───────────────────────────────────────────────────────
+  const totalCount   = allNotices.length;
+  const adminCount   = allNotices.filter(n => n.creatorRole === "admin").length;
+  const teacherCount = allNotices.filter(n => n.creatorRole === "teacher").length;
+
+  const filteredNotices = roleFilter === "all"
+    ? allNotices
+    : allNotices.filter(n => n.creatorRole === roleFilter);
+
+  // ── Mutations ─────────────────────────────────────────────────────────────
+  const invalidateNotices = () =>
+    queryClient.invalidateQueries({ queryKey: ["/api/notices", schoolId, "all"] });
 
   const postMutation = useMutation({
     mutationFn: async () => {
@@ -102,10 +131,8 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
     },
     onSuccess: () => {
       toast({ title: "Notice Posted", description: "Your notice has been published." });
-      setContent("");
-      setTargetClass("");
-      setTargetSection("");
-      queryClient.invalidateQueries({ queryKey: ["/api/notices", schoolId, "all"] });
+      setContent(""); setTargetClass(""); setTargetSection("");
+      invalidateNotices();
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -115,10 +142,7 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
       const r = await apiRequest("DELETE", `/api/notices/${id}`, undefined);
       if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
     },
-    onSuccess: () => {
-      toast({ title: "Notice Deleted" });
-      queryClient.invalidateQueries({ queryKey: ["/api/notices", schoolId, "all"] });
-    },
+    onSuccess: () => { toast({ title: "Notice Deleted" }); invalidateNotices(); },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
@@ -129,22 +153,38 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
     },
     onSuccess: () => {
       toast({ title: "Notice Updated" });
-      setEditingId(null);
-      setEditContent("");
-      queryClient.invalidateQueries({ queryKey: ["/api/notices", schoolId, "all"] });
+      setEditingId(null); setEditContent("");
+      invalidateNotices();
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  function startEdit(n: Notice) {
-    setEditingId(n.id);
-    setEditContent(n.content);
-  }
+  const bulkDeleteMutation = useMutation({
+    mutationFn: (olderThanDays: number) =>
+      apiRequest("DELETE", "/api/admin/notices/bulk", { olderThanDays })
+        .then(r => r.json() as Promise<{ deleted: number }>),
+    onSuccess: (data) => {
+      toast({
+        title: "Bulk Delete Complete",
+        description: data.deleted === 0
+          ? "No notices found for deletion."
+          : `${data.deleted} notice(s) permanently deleted.`,
+      });
+      setConfirmOpen(false);
+      setPendingDays(null);
+      invalidateNotices();
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
 
-  function cancelEdit() {
-    setEditingId(null);
-    setEditContent("");
-  }
+  function startEdit(n: Notice) { setEditingId(n.id); setEditContent(n.content); }
+  function cancelEdit() { setEditingId(null); setEditContent(""); }
+
+  const ROLE_FILTERS: { value: RoleFilter; label: string; count: number; icon: typeof Bell; color: string }[] = [
+    { value: "all",     label: "All Notices",     count: totalCount,   icon: Bell,        color: "text-[#D4AF37]"    },
+    { value: "admin",   label: "Admin Notices",   count: adminCount,   icon: ShieldCheck, color: "text-amber-400"    },
+    { value: "teacher", label: "Teacher Notices", count: teacherCount, icon: GraduationCap, color: "text-blue-400"  },
+  ];
 
   return (
     <div className="space-y-5">
@@ -161,7 +201,6 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
         </h3>
 
         <div className="flex gap-3 flex-wrap">
-          {/* Target */}
           <Select value={targetType} onValueChange={v => { setTargetType(v); setTargetClass(""); setTargetSection(""); }}>
             <SelectTrigger className="w-44 bg-[#0A1628] border-white/20 text-white" data-testid="select-notice-target">
               <SelectValue />
@@ -171,7 +210,6 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
             </SelectContent>
           </Select>
 
-          {/* Type */}
           <Select value={noticeType} onValueChange={setNoticeType}>
             <SelectTrigger className="w-36 bg-[#0A1628] border-white/20 text-white" data-testid="select-notice-type">
               <SelectValue />
@@ -181,7 +219,6 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
             </SelectContent>
           </Select>
 
-          {/* Class + Section (when class selected) */}
           {targetType === "class" && (
             <>
               <Select value={targetClass} onValueChange={setTargetClass}>
@@ -230,32 +267,127 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
         </Button>
       </div>
 
-      {/* ── Last 50 Notices Feed ── */}
+      {/* ── Notice Statistics ── */}
+      <div className="rounded-xl border border-white/10 bg-[#1A2942] p-4" data-testid="notice-stats">
+        <div className="flex items-center gap-2 mb-3">
+          <BarChart3 className="w-4 h-4 text-[#D4AF37]" />
+          <h3 className="text-sm font-bold text-white">Notice Statistics</h3>
+        </div>
+        {isLoading ? (
+          <div className="flex gap-4">
+            {[1,2,3].map(i => (
+              <div key={i} className="flex-1 h-14 rounded-lg bg-white/5 animate-pulse" />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: "Total Notices",   count: totalCount,   color: "text-[#D4AF37]", bg: "bg-[#D4AF37]/10 border-[#D4AF37]/20", testId: "stat-total"   },
+              { label: "Admin Notices",   count: adminCount,   color: "text-amber-400",  bg: "bg-amber-400/10 border-amber-400/20",  testId: "stat-admin"   },
+              { label: "Teacher Notices", count: teacherCount, color: "text-blue-400",   bg: "bg-blue-400/10 border-blue-400/20",    testId: "stat-teacher" },
+            ].map(stat => (
+              <div key={stat.label} className={`rounded-lg border ${stat.bg} p-3 text-center`} data-testid={stat.testId}>
+                <p className={`text-2xl font-black tabular-nums ${stat.color}`}>{stat.count}</p>
+                <p className="text-white/50 text-[11px] font-semibold mt-0.5 leading-tight">{stat.label}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Manual Bulk Delete ── */}
+      <div className="rounded-xl border border-rose-500/20 bg-[#1A2942] p-4 space-y-3" data-testid="bulk-delete-panel">
+        <div className="flex items-center gap-2">
+          <Trash2 className="w-4 h-4 text-rose-400" />
+          <h3 className="text-[11px] font-bold text-rose-400 uppercase tracking-widest">Manual Bulk Delete</h3>
+        </div>
+        <p className="text-white/40 text-xs">Permanently delete notices. This action is irreversible.</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select
+            value={bulkDays}
+            onChange={e => setBulkDays(parseInt(e.target.value))}
+            className="flex-1 min-w-[170px] px-3 py-2 rounded-lg bg-[#0A1628] border border-white/10 text-white/80 text-xs font-semibold focus:outline-none focus:border-[#D4AF37]"
+            data-testid="select-bulk-notice-days"
+          >
+            {BULK_DELETE_OPTIONS.map(o => (
+              <option key={o.days} value={o.days}>{o.label}</option>
+            ))}
+          </select>
+          <Button
+            size="sm"
+            onClick={() => { setPendingDays(bulkDays); setConfirmOpen(true); }}
+            className="h-9 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg"
+            data-testid="button-bulk-notice-delete-open"
+          >
+            <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete
+          </Button>
+        </div>
+      </div>
+
+      {/* ── Recent Notices Feed ── */}
       <div className="rounded-xl border border-white/10 bg-[#1A2942] overflow-hidden">
-        <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
-          <h3 className="font-semibold text-white text-sm flex items-center gap-2">
-            <Bell className="w-4 h-4 text-[#D4AF37]" />
-            Recent Notices
-            <span className="text-white/40 font-normal text-xs">(last 50)</span>
-          </h3>
-          {!isLoading && (
-            <span className="text-white/30 text-xs">{allNotices.length} notice{allNotices.length !== 1 ? "s" : ""}</span>
-          )}
+        {/* Card Header */}
+        <div className="px-4 py-3 border-b border-white/10">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-white text-sm flex items-center gap-2">
+              <Bell className="w-4 h-4 text-[#D4AF37]" />
+              Recent Notices
+            </h3>
+            {!isLoading && (
+              <span className="text-white/30 text-xs tabular-nums">
+                {filteredNotices.length} of {totalCount} notice{totalCount !== 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+
+          {/* Role Filter Chips */}
+          <div className="flex items-center gap-1.5 flex-wrap" data-testid="notice-filter-bar">
+            <Filter className="w-3.5 h-3.5 text-white/30 flex-shrink-0" />
+            {ROLE_FILTERS.map(f => {
+              const isActive = roleFilter === f.value;
+              const Icon = f.icon;
+              return (
+                <button
+                  key={f.value}
+                  onClick={() => setRoleFilter(f.value)}
+                  data-testid={`filter-notice-${f.value}`}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold border transition-all duration-150 ${
+                    isActive
+                      ? "bg-[#D4AF37] border-[#D4AF37] text-[#0A1628] shadow-sm"
+                      : "bg-white/5 border-white/10 text-white/50 hover:border-white/30 hover:text-white/80"
+                  }`}
+                >
+                  <Icon className={`w-3 h-3 ${isActive ? "text-[#0A1628]" : f.color}`} />
+                  {f.label}
+                  <span className={`ml-0.5 ${isActive ? "opacity-70" : "opacity-50"}`}>({f.count})</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        <div className="overflow-y-auto max-h-[520px] divide-y divide-white/5" data-testid="notice-feed-scroll">
+        {/* Notice List */}
+        <div className="overflow-y-auto max-h-[540px] divide-y divide-white/5" data-testid="notice-feed-scroll">
           {isLoading ? (
             <div className="flex justify-center py-10">
               <Loader2 className="w-5 h-5 animate-spin text-white/40" />
             </div>
-          ) : allNotices.length === 0 ? (
-            <p className="text-center text-white/30 py-10 text-sm">No notices posted yet</p>
+          ) : filteredNotices.length === 0 ? (
+            <div className="text-center py-12 px-4">
+              <Bell className="w-8 h-8 text-white/10 mx-auto mb-2" />
+              <p className="text-white/30 text-sm font-semibold">
+                {roleFilter !== "all"
+                  ? `No ${roleFilter === "admin" ? "Admin" : "Teacher"} notices posted`
+                  : "No notices posted yet"}
+              </p>
+            </div>
           ) : (
-            allNotices.map(n => {
+            filteredNotices.map(n => {
               const typeCfg = getTypeStyle(n.noticeType);
               const TypeIcon = typeCfg.icon;
               const isOwn = n.creatorRole === "admin" && n.createdById === adminUserId;
               const isEditing = editingId === n.id;
+              const isTeacher = n.creatorRole === "teacher";
 
               return (
                 <div
@@ -263,7 +395,6 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
                   className="px-4 py-3 hover:bg-white/5 transition-colors"
                   data-testid={`card-notice-${n.id}`}
                 >
-                  {/* Header row */}
                   <div className="flex items-start justify-between gap-2 mb-1.5">
                     <div className="flex items-center gap-2 flex-wrap">
                       <TypeIcon className={`w-3.5 h-3.5 flex-shrink-0 ${typeCfg.color}`} strokeWidth={2} />
@@ -273,7 +404,13 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
                       <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${typeCfg.color} bg-white/5`}>
                         {typeCfg.label}
                       </span>
-                      <span className="text-white/30 text-xs">by {senderLabel(n)}</span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${
+                        isTeacher
+                          ? "bg-blue-500/15 text-blue-400 border border-blue-500/20"
+                          : "bg-amber-500/15 text-amber-400 border border-amber-500/20"
+                      }`}>
+                        {isTeacher ? "Teacher" : "Admin"}
+                      </span>
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <span className="text-white/25 text-xs tabular-nums">{fmtDateTime(n.createdAt)}</span>
@@ -304,7 +441,6 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
                     </div>
                   </div>
 
-                  {/* Content / edit area */}
                   {isEditing ? (
                     <div className="space-y-2 mt-1">
                       <Textarea
@@ -329,8 +465,7 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
                           className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-semibold transition-colors"
                           data-testid={`button-cancel-edit-notice-${n.id}`}
                         >
-                          <X className="w-3 h-3" />
-                          Cancel
+                          <X className="w-3 h-3" /> Cancel
                         </button>
                       </div>
                     </div>
@@ -354,6 +489,62 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
           )}
         </div>
       </div>
+
+      {/* ── Bulk Delete Confirmation Modal ── */}
+      {confirmOpen && pendingDays !== null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          data-testid="bulk-notice-delete-modal"
+        >
+          <div className="bg-[#1A2942] border border-white/10 rounded-2xl p-6 w-full max-w-sm shadow-2xl mx-4 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-full bg-rose-500/20 flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">Confirm Bulk Deletion</h3>
+                <p className="text-white/40 text-xs mt-0.5">This action cannot be undone</p>
+              </div>
+            </div>
+
+            <div className="px-4 py-3 rounded-xl bg-rose-900/20 border border-rose-500/30 space-y-1">
+              <p className="text-xs text-white/80 font-semibold">
+                Are you sure you want to permanently delete{" "}
+                {pendingDays === 0
+                  ? <span className="text-rose-300 font-bold">all notices</span>
+                  : <>notices <span className="text-rose-300 font-bold">older than {pendingDays} days</span></>
+                }?
+              </p>
+              <p className="text-[11px] text-white/40">This action cannot be undone.</p>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => { setConfirmOpen(false); setPendingDays(null); }}
+                disabled={bulkDeleteMutation.isPending}
+                className="flex-1 h-9 text-white/60 hover:text-white font-bold text-xs border border-white/10 rounded-xl"
+                data-testid="button-bulk-notice-cancel"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => bulkDeleteMutation.mutate(pendingDays)}
+                disabled={bulkDeleteMutation.isPending}
+                className="flex-1 h-9 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl"
+                data-testid="button-bulk-notice-confirm"
+              >
+                {bulkDeleteMutation.isPending
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <><Trash2 className="w-3.5 h-3.5 mr-1" /> Yes, Delete</>
+                }
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -545,11 +545,26 @@ export class DatabaseStorage {
     return n;
   }
 
-  async getAllSchoolNotices(schoolId: number, limit = 50): Promise<Notice[]> {
+  async getAllSchoolNotices(schoolId: number, limit = 500): Promise<Notice[]> {
     return await db.select().from(notices)
       .where(eq(notices.schoolId, schoolId))
       .orderBy(desc(notices.createdAt))
       .limit(limit);
+  }
+
+  async bulkDeleteNotices(schoolId: number, olderThanDays: number): Promise<number> {
+    const conditions: any[] = [eq(notices.schoolId, schoolId)];
+    if (olderThanDays > 0) {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - olderThanDays);
+      conditions.push(lt(notices.createdAt, cutoff));
+    }
+    const eligible = await db.select({ id: notices.id })
+      .from(notices)
+      .where(and(...conditions));
+    if (eligible.length === 0) return 0;
+    await db.delete(notices).where(inArray(notices.id, eligible.map(r => r.id)));
+    return eligible.length;
   }
 
   async getNoticesByTeacher(teacherId: number, limit = 50): Promise<Notice[]> {

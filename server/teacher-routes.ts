@@ -541,8 +541,18 @@ export function registerTeacherRoutes(app: Express) {
   app.get("/api/notices/:schoolId/all", async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const sid = parseInt(req.params.schoolId);
-    const list = await storage.getAllSchoolNotices(sid, 50);
+    const list = await storage.getAllSchoolNotices(sid, 500);
     res.json(list);
+  });
+
+  app.delete("/api/admin/notices/bulk", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Admin only" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(400).json({ message: "No school context" });
+    const { olderThanDays } = req.body;
+    if (typeof olderThanDays !== "number" || olderThanDays < 0) return res.status(400).json({ message: "Invalid olderThanDays (0 = delete all)" });
+    const deleted = await storage.bulkDeleteNotices(schoolId, olderThanDays);
+    res.json({ deleted });
   });
 
   app.get("/api/notices/teacher/mine", async (req, res) => {
