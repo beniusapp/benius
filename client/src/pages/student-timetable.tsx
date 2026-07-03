@@ -44,9 +44,10 @@ interface CalendarEvent {
   title: string;
 }
 
-const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const DAYS = [1, 2, 3, 4, 5, 6]; // Mon=1 to Sat=6
+// Admin/teacher grid stores Mon=0, Tue=1 … Sat=5 — student view must match exactly.
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DAY_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const DAYS = [0, 1, 2, 3, 4, 5]; // Mon=0 to Sat=5 — matches admin dayOfWeek storage
 
 function getCurrentMinutes(): number {
   const now = new Date();
@@ -66,9 +67,10 @@ function formatTime(t: string | null): string {
   return `${hr}:${String(m || 0).padStart(2, "0")} ${ampm}`;
 }
 
+// Returns today's day in admin convention: Mon=0 … Sat=5. Sunday defaults to 0 (Mon).
 function todayDayOfWeek(): number {
-  const d = new Date().getDay();
-  return d === 0 ? 6 : d;
+  const d = new Date().getDay(); // JS: 0=Sun, 1=Mon … 6=Sat
+  return d === 0 ? 0 : d - 1;   // admin: Mon=0 … Sat=5
 }
 
 function todayDateStr(): string {
@@ -76,11 +78,12 @@ function todayDateStr(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function weekDateFor(dayOfWeek: number): string {
+// adminDay is 0=Mon … 5=Sat; convert to JS weekday (1=Mon … 6=Sat) for date arithmetic.
+function weekDateFor(adminDay: number): string {
   const today = new Date();
-  const todayDow = today.getDay();
-  const targetDow = dayOfWeek === 6 ? 6 : dayOfWeek;
-  const diff = targetDow - todayDow;
+  const todayJsDow = today.getDay();        // 0=Sun … 6=Sat
+  const targetJsDow = adminDay + 1;         // 0→1(Mon), 5→6(Sat)
+  const diff = targetJsDow - todayJsDow;
   const target = new Date(today);
   target.setDate(today.getDate() + diff);
   return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
@@ -111,8 +114,8 @@ function getSubjectColor(subject: string): string {
 export default function StudentTimetable() {
   const [, setLocation] = useLocation();
   const initialDay = (() => {
-    const d = new Date().getDay();
-    return d === 0 ? 1 : d;
+    const d = new Date().getDay(); // JS: 0=Sun, 1=Mon … 6=Sat
+    return d === 0 ? 0 : d - 1;   // admin: Mon=0 … Sat=5; Sunday defaults to Mon
   })();
   const [selectedDay, setSelectedDay] = useState<number>(initialDay);
   const [currentMinutes, setCurrentMinutes] = useState(getCurrentMinutes());
@@ -219,7 +222,7 @@ export default function StudentTimetable() {
               const isSelected = day === selectedDay;
               const dateStr = weekDateFor(day);
               const isHoliday = calEvents.some(e => e.date === dateStr && e.eventType.toLowerCase() === "holiday");
-              const isTodayDow = new Date().getDay() === day;
+              const isTodayDow = todayDayOfWeek() === day;
               return (
                 <button
                   key={day}
