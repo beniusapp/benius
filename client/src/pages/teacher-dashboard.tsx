@@ -401,8 +401,12 @@ export default function TeacherDashboard() {
                 color: "rgba(255,255,255,0.65)",
               }}
             >
-              <LogOut className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Logout</span>
+              {logoutMutation.isPending
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <LogOut className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">
+                {logoutMutation.isPending ? "Logging out…" : "Logout"}
+              </span>
             </button>
           </div>
         </div>
