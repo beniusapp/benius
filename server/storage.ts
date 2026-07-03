@@ -1723,9 +1723,9 @@ export class DatabaseStorage {
 
   async getTimetableBySchool(schoolId: number): Promise<(TimetableEntry & { teacherName: string })[]> {
     const result = await db.select().from(timetableEntries)
-      .innerJoin(teachers, eq(timetableEntries.teacherId, teachers.id))
+      .leftJoin(teachers, eq(timetableEntries.teacherId, teachers.id))
       .where(eq(timetableEntries.schoolId, schoolId));
-    return result.map(r => ({ ...r.timetable_entries, teacherName: r.teachers.fullName }));
+    return result.map(r => ({ ...r.timetable_entries, teacherName: r.teachers?.fullName ?? "" }));
   }
 
   async deleteTimetableEntry(id: number, schoolId?: number): Promise<boolean> {

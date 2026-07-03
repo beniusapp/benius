@@ -1695,8 +1695,10 @@ export async function registerRoutes(
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
     const all = await storage.getTimetableBySchool(student.schoolId);
+    // Show all configured entries (draft + published) — students should see
+    // their schedule as soon as it is set up, regardless of publish status.
     const entries = all.filter(e =>
-      e.class === student.class && e.section === student.section && e.status === "published"
+      e.class === student.class && e.section === student.section
     );
     const structure = await storage.getTimetableStructure(student.schoolId, student.class || "");
     res.json({ entries, structure });
