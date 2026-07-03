@@ -118,6 +118,18 @@ interface PolicyCardProps {
 function PolicyCard({ card, classes, targetRole, onUpdate, onSaved, onDelete }: PolicyCardProps) {
   const { toast } = useToast();
   const { form, expanded, serverId, localId } = card;
+
+  // Local string state for grace period — lets the user clear/retype freely;
+  // the numeric form value is only updated on blur so the controlled input
+  // never snaps back to "0" while the user is mid-edit.
+  const [graceStr, setGraceStr] = useState(() => String(form.gracePeriodMinutes));
+  const prevGrace = useRef(form.gracePeriodMinutes);
+  useEffect(() => {
+    if (form.gracePeriodMinutes !== prevGrace.current) {
+      prevGrace.current = form.gracePeriodMinutes;
+      setGraceStr(String(form.gracePeriodMinutes));
+    }
+  }, [form.gracePeriodMinutes]);
   const isSchoolWide = form.applicableClasses.length === 0;
 
   // Colour palette: teachers use gold, students use cyan
@@ -278,8 +290,13 @@ function PolicyCard({ card, classes, targetRole, onUpdate, onSaved, onDelete }: 
               <label className="text-xs font-medium text-white/50 mb-1 block">Grace Period (min)</label>
               <Input
                 type="number" min={0} max={120}
-                value={form.gracePeriodMinutes}
-                onChange={e => patchForm({ gracePeriodMinutes: parseInt(e.target.value) || 0 })}
+                value={graceStr}
+                onChange={e => setGraceStr(e.target.value)}
+                onBlur={() => {
+                  const n = Math.max(0, Math.min(120, parseInt(graceStr, 10) || 0));
+                  setGraceStr(String(n));
+                  patchForm({ gracePeriodMinutes: n });
+                }}
                 className="bg-[#0A1628] border-white/10 text-white text-sm h-9"
                 data-testid={`input-grace-${localId}`}
               />
