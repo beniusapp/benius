@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient, getQueryFn, setViewSessionId } from "@/lib/queryClient";
+import { apiRequest, queryClient, getQueryFn, setViewSessionId, sessionFetch } from "@/lib/queryClient";
 import { SessionViewContext, type AcademicSession } from "@/contexts/session-view-context";
 
 const SchoolSetup         = lazy(() => import("./admin-modules/school-setup"));
@@ -689,6 +689,11 @@ export default function AdminDashboard() {
   });
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 640);
 
+  // Hoisted here (before the data queries) so that selectedViewSession.id can
+  // be included in every session-scoped queryKey.  The default is null; the
+  // useEffect below sets it to the active session once sessions data loads.
+  const [selectedViewSession, setSelectedViewSession] = useState<AcademicSession | null>(null);
+
   useEffect(() => {
     const handleResize = () => {
       if (window.innerWidth < 640) setSidebarOpen(false);
@@ -727,22 +732,31 @@ export default function AdminDashboard() {
     enabled: !!me?.schoolId,
   });
 
+  // sessionFetch is used for every custom queryFn so that x-view-session-id is
+  // automatically attached to the request and the backend checkSessionContext
+  // middleware can set req.viewSessionId for any optional session-scoped filtering.
+
   const { data: teachersList = [] } = useQuery<unknown[]>({
     queryKey: ["/api/schools", me?.schoolId, "teachers"],
     queryFn: async () => {
       if (!me?.schoolId) return [];
-      const r = await fetch(`/api/schools/${me.schoolId}/teachers`, { credentials: "include" });
+      const r = await sessionFetch(`/api/schools/${me.schoolId}/teachers`);
       return r.ok ? r.json() : [];
     },
     enabled: !!me?.schoolId,
   });
 
   const today = new Date().toISOString().split("T")[0];
+
+  // selectedViewSession?.id is included in the queryKey so React Query creates
+  // a separate cache entry for each academic year and triggers a fresh fetch
+  // whenever the admin switches sessions.  The backend will receive
+  // x-view-session-id via sessionFetch and can scope the response accordingly.
   const { data: dailySummary } = useQuery<{ total: number; present: number; percentage: number }>({
-    queryKey: ["/api/attendance/daily-summary", me?.schoolId, today],
+    queryKey: ["/api/attendance/daily-summary", me?.schoolId, today, selectedViewSession?.id],
     queryFn: async () => {
       if (!me?.schoolId) return { total: 0, present: 0, percentage: 0 };
-      const r = await fetch(`/api/attendance/daily-summary/${me.schoolId}/${today}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/attendance/daily-summary/${me.schoolId}/${today}`);
       return r.ok ? r.json() : { total: 0, present: 0, percentage: 0 };
     },
     enabled: !!me?.schoolId,
@@ -752,7 +766,7 @@ export default function AdminDashboard() {
     queryKey: ["/api/leave/school", me?.schoolId],
     queryFn: async () => {
       if (!me?.schoolId) return [];
-      const r = await fetch(`/api/leave/school/${me.schoolId}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/leave/school/${me.schoolId}`);
       return r.ok ? r.json() : [];
     },
     enabled: !!me?.schoolId,
@@ -762,7 +776,7 @@ export default function AdminDashboard() {
     queryKey: ["/api/gallery", me?.schoolId, "all"],
     queryFn: async () => {
       if (!me?.schoolId) return [];
-      const r = await fetch(`/api/gallery/${me.schoolId}?all=true`, { credentials: "include" });
+      const r = await sessionFetch(`/api/gallery/${me.schoolId}?all=true`);
       return r.ok ? r.json() : [];
     },
     enabled: !!me?.schoolId,
@@ -772,7 +786,7 @@ export default function AdminDashboard() {
     queryKey: ["/api/library/books", me?.schoolId, "pending"],
     queryFn: async () => {
       if (!me?.schoolId) return [];
-      const r = await fetch(`/api/library/books/${me.schoolId}/pending`, { credentials: "include" });
+      const r = await sessionFetch(`/api/library/books/${me.schoolId}/pending`);
       return r.ok ? r.json() : [];
     },
     enabled: !!me?.schoolId,
@@ -782,7 +796,7 @@ export default function AdminDashboard() {
     queryKey: ["/api/complaints/school", me?.schoolId],
     queryFn: async () => {
       if (!me?.schoolId) return [];
-      const r = await fetch(`/api/complaints/school/${me.schoolId}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/complaints/school/${me.schoolId}`);
       return r.ok ? r.json() : [];
     },
     enabled: !!me?.schoolId,
@@ -797,8 +811,6 @@ export default function AdminDashboard() {
     },
     enabled: !!me?.schoolId,
   });
-
-  const [selectedViewSession, setSelectedViewSession] = useState<AcademicSession | null>(null);
 
   useEffect(() => {
     if (sessions.length > 0 && !selectedViewSession) {

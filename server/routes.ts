@@ -142,44 +142,70 @@ function parseDate(value: string): string | null {
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /**
- * archiveGuard — rejects any mutation request whose x-view-session-id header
- * points to a non-active (archived) session for this school.
- * Safe to run on every request: GET/HEAD requests pass through immediately,
- * requests with no header pass through, and any DB error fails open.
+ * checkSessionContext — global middleware that runs on EVERY incoming request.
+ *
+ * For ALL request methods (GET included):
+ *   Reads x-view-session-id from the request headers and attaches its parsed
+ *   integer value to (req as any).viewSessionId.  Route handlers can then
+ *   optionally scope their database queries:
+ *     WHERE session_id = req.viewSessionId
+ *
+ * For mutation methods (POST / PUT / PATCH / DELETE) only:
+ *   Validates the session against the database.  If the referenced session is
+ *   archived (is_active = false for that school), the request is aborted with
+ *   403 so historical data can never be accidentally overwritten through the UI.
+ *
+ * Fails open on any database error so that a middleware issue never blocks
+ * legitimate traffic.
  */
-async function archiveGuard(
+async function checkSessionContext(
   req: import("express").Request,
   res: import("express").Response,
   next: import("express").NextFunction
 ) {
-  if (!MUTATION_METHODS.has(req.method)) return next();
-
   const rawHeader = req.headers["x-view-session-id"];
-  if (!rawHeader || !req.session?.schoolId) return next();
 
-  const sid = parseInt(Array.isArray(rawHeader) ? rawHeader[0] : rawHeader, 10);
-  if (isNaN(sid)) return next();
-
-  try {
-    const activeSession = await storage.getActiveSession(req.session.schoolId);
-    if (activeSession && activeSession.id !== sid) {
-      return res.status(403).json({
-        error: "Write operations are disabled for archived sessions.",
-        code: "ARCHIVE_READ_ONLY",
-      });
+  // ── Step 1: Attach viewSessionId to the request for every HTTP method ────
+  // This allows any downstream route handler — GET or mutation — to read
+  // req.viewSessionId and append a session-scoped WHERE clause to its query.
+  if (rawHeader) {
+    const sid = parseInt(Array.isArray(rawHeader) ? rawHeader[0] : rawHeader, 10);
+    if (!isNaN(sid)) {
+      (req as any).viewSessionId = sid;
     }
-    next();
-  } catch {
-    next(); // fail open — do not block on DB errors
   }
+
+  // ── Step 2: Archive write guard (mutations only) ──────────────────────────
+  // If the admin is viewing an archived session and attempts any write, reject
+  // it immediately before it reaches any route handler.
+  if (
+    MUTATION_METHODS.has(req.method) &&
+    (req as any).viewSessionId &&
+    req.session?.schoolId
+  ) {
+    try {
+      const activeSession = await storage.getActiveSession(req.session.schoolId);
+      if (activeSession && activeSession.id !== (req as any).viewSessionId) {
+        return res.status(403).json({
+          error:
+            "This academic session is locked. Historical archive data cannot be modified.",
+          code: "ARCHIVE_READ_ONLY",
+        });
+      }
+    } catch {
+      // Fail open — never let a middleware DB error block legitimate traffic.
+    }
+  }
+
+  next();
 }
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  /* ── Archive-session guard: applied globally to all mutation routes ── */
-  app.use(archiveGuard);
+  /* ── Session context middleware: applied globally to ALL routes ── */
+  app.use(checkSessionContext);
 
   app.get("/api/schools", async (_req, res) => {
     const schools = await storage.getSchools();

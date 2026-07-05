@@ -12,7 +12,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
+import { useSessionView } from "@/contexts/session-view-context";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -130,6 +131,11 @@ function LedgerPills({ row }: { row: LedgerRow }) {
 export default function ExamController({ examTypes, classes: schoolClasses, sections: schoolSections }: Props) {
   const { toast } = useToast();
 
+  // ── Session context — drives archive-mode lockdown and query scoping ────────
+  // selectedSession.id is added to every queryKey so React Query automatically
+  // invalidates and re-fetches when the admin switches the active view session.
+  const { isArchiveMode, selectedSession } = useSessionView();
+
   // ── Core view state ───────────────────────────────────────────────────────
   const [view, setView]                 = useState<"table"|"wizard">("table");
   const [selectedTerm, setSelectedTerm] = useState("");
@@ -163,9 +169,12 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   const toggleStatusFilter = (f: "ready"|"pending") =>
     setStatusFilter(prev => prev === f ? "all" : f);
 
-  // ── Fetch terms — all exam types from school setup (strictly school-scoped) ──
+  // ── Fetch terms — exam types from school setup, scoped to the active session ──
+  // selectedSession?.id is included in the queryKey so React Query creates a
+  // separate cache entry per academic year and automatically re-fetches when
+  // the admin switches from the current session to an archived one.
   const { data: terms = [], refetch: refetchTerms } = useQuery<string[]>({
-    queryKey: ["/api/admin/ledger-terms"],
+    queryKey: ["/api/admin/ledger-terms", selectedSession?.id],
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
@@ -177,11 +186,14 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   }, [terms, selectedTerm]);
 
   // ── Fetch ledger status rows ──────────────────────────────────────────────
+  // sessionFetch automatically injects x-view-session-id so the backend
+  // checkSessionContext middleware attaches req.viewSessionId, allowing the
+  // route handler to optionally scope its query to the chosen academic year.
   const { data: ledgerRows = [], isLoading: ledgerLoading, refetch: refetchLedger } = useQuery<LedgerRow[]>({
-    queryKey: ["/api/admin/ledger-status", selectedTerm],
+    queryKey: ["/api/admin/ledger-status", selectedTerm, selectedSession?.id],
     queryFn: async () => {
       if (!selectedTerm) return [];
-      const r = await fetch(`/api/admin/ledger-status?term=${encodeURIComponent(selectedTerm)}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/admin/ledger-status?term=${encodeURIComponent(selectedTerm)}`);
       return r.ok ? r.json() : [];
     },
     enabled: !!selectedTerm,
@@ -200,12 +212,14 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   }, [ledgerRows.length, selectedTerm]);
 
   // ── Fetch aggregated student data (wizard) ────────────────────────────────
+  // selectedSession?.id in queryKey ensures historical exam data re-fetches
+  // when the admin navigates to an archived year's Exam Controller view.
   const { data: agg, isLoading: aggLoading } = useQuery<AggData | null>({
-    queryKey: ["/api/admin/exam/aggregated", cohort?.class, cohort?.section, examType, cohort?.term],
+    queryKey: ["/api/admin/exam/aggregated", cohort?.class, cohort?.section, examType, cohort?.term, selectedSession?.id],
     queryFn: async () => {
       if (!cohort || !examType) return null;
       const p = new URLSearchParams({ class: cohort.class, section: cohort.section, examType, term: cohort.term });
-      const r = await fetch(`/api/admin/exam/aggregated?${p}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/admin/exam/aggregated?${p}`);
       return r.ok ? r.json() : null;
     },
     enabled: !!cohort && !!examType,
@@ -639,6 +653,18 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
         </div>
       </div>
 
+      {/* Archive-mode read-only banner — hidden for the active session */}
+      {isArchiveMode && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex items-center gap-3"
+          data-testid="archive-banner-wizard">
+          <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+          <p className="text-sm text-amber-200">
+            <strong className="text-white">Archived session — read-only view.</strong>{" "}
+            Grade submissions, overrides, and promotion execution are disabled for past academic years.
+          </p>
+        </div>
+      )}
+
       {/* Verified banner */}
       {cohort.teacherName && (
         <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 flex items-center gap-3">
@@ -1002,8 +1028,8 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                       </Button>
                       <Button size="sm"
                         onClick={() => resetAllMut.mutate()}
-                        disabled={resetAllMut.isPending}
-                        className="h-8 px-4 text-xs bg-red-600 hover:bg-red-500 text-white border-0"
+                        disabled={resetAllMut.isPending || isArchiveMode}
+                        className="h-8 px-4 text-xs bg-red-600 hover:bg-red-500 text-white border-0 disabled:opacity-50"
                         data-testid="btn-reset-confirm">
                         {resetAllMut.isPending
                           ? <Loader2 className="w-3 h-3 animate-spin" />
@@ -1032,7 +1058,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                   </div>
                   <div className="flex gap-2">
                     <Button size="sm" onClick={() => handleBulkOverride("promote")}
-                      disabled={bulkOverrideMut.isPending}
+                      disabled={bulkOverrideMut.isPending || isArchiveMode}
                       className="h-8 px-3 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white border-0 disabled:opacity-60"
                       data-testid="btn-bulk-promote">
                       {bulkOverrideMut.isPending
@@ -1041,7 +1067,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                       Bulk Promote Selected
                     </Button>
                     <Button size="sm" onClick={() => handleBulkOverride("retain")}
-                      disabled={bulkOverrideMut.isPending}
+                      disabled={bulkOverrideMut.isPending || isArchiveMode}
                       className="h-8 px-3 text-xs font-semibold bg-red-600 hover:bg-red-500 text-white border-0 disabled:opacity-60"
                       data-testid="btn-bulk-retain">
                       {bulkOverrideMut.isPending
@@ -1144,7 +1170,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                 ← Back to Review
               </Button>
               <Button
-                disabled={!confirmed || executeMut.isPending || !agg || counters.total === 0}
+                disabled={!confirmed || executeMut.isPending || !agg || counters.total === 0 || isArchiveMode}
                 onClick={() => executeMut.mutate()}
                 className="h-9 px-8 font-bold text-sm"
                 style={{ background: confirmed ? "linear-gradient(135deg,#D4AF37,#b8972e)" : undefined, color: confirmed ? "#0A1628" : undefined }}
@@ -1165,6 +1191,19 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   // ────────────────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
+
+      {/* ── Archive-mode read-only banner ───────────────────────────────────── */}
+      {isArchiveMode && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex items-center gap-3"
+          data-testid="archive-banner-ledger">
+          <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+          <p className="text-sm text-amber-200">
+            <strong className="text-white">Archived session — read-only view.</strong>{" "}
+            All write actions (ledger deletion, promotion execution, grade overrides) are disabled for past academic years.
+            Historical report cards and ledger records are available in read-only mode.
+          </p>
+        </div>
+      )}
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -1225,8 +1264,8 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
             termToDelete === selectedTerm ? (
               <div className="flex items-center gap-2 bg-red-900/30 border border-red-500/40 rounded-lg px-3 py-2">
                 <span className="text-xs text-red-300">Delete all ledger data for <strong>"{selectedTerm}"</strong>?</span>
-                <button onClick={() => deleteTermMut.mutate(selectedTerm)} disabled={deleteTermMut.isPending}
-                  className="text-xs font-semibold text-red-300 hover:text-white border border-red-500/50 px-2 py-0.5 rounded"
+                <button onClick={() => deleteTermMut.mutate(selectedTerm)} disabled={deleteTermMut.isPending || isArchiveMode}
+                  className="text-xs font-semibold text-red-300 hover:text-white border border-red-500/50 px-2 py-0.5 rounded disabled:opacity-40"
                   data-testid="btn-confirm-delete-term">
                   {deleteTermMut.isPending ? "Deleting…" : "Yes, Delete"}
                 </button>
@@ -1234,7 +1273,8 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
               </div>
             ) : (
               <Button variant="outline" size="sm" onClick={() => setTermToDelete(selectedTerm)}
-                className="border-red-900/50 text-red-400 hover:bg-red-900/20 hover:text-red-300 h-9 px-3 text-xs"
+                disabled={isArchiveMode}
+                className="border-red-900/50 text-red-400 hover:bg-red-900/20 hover:text-red-300 h-9 px-3 text-xs disabled:opacity-40"
                 data-testid="btn-delete-term">
                 <Trash2 className="w-3.5 h-3.5 mr-1.5" />Delete Term
               </Button>
@@ -1465,7 +1505,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                                 {isPending && (
                                   <button
                                     onClick={() => { setRemindingKey(rKey); reminderMut.mutate({ className: row.class, section: row.section }); }}
-                                    disabled={reminderMut.isPending && remindingKey === rKey}
+                                    disabled={(reminderMut.isPending && remindingKey === rKey) || isArchiveMode}
                                     className="flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-xs font-medium border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
                                     title="Send reminder to teacher"
                                     data-testid={`btn-remind-${row.class}-${row.section}`}>
