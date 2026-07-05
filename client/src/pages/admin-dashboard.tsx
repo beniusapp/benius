@@ -595,7 +595,7 @@ function SessionSwitcher({
   const label = selected ? selected.sessionName : (isLoading ? "Loading…" : "No Session");
 
   return (
-    <div ref={ref} className="relative hidden sm:block" data-testid="session-switcher">
+    <div ref={ref} className="relative" data-testid="session-switcher">
       <button
         onClick={() => setOpen(v => !v)}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150"
