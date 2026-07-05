@@ -17,7 +17,13 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import type { Student } from "@shared/schema";
 import DeactivationModal from "@/components/deactivation-modal";
 
-interface Props { schoolId: number; classes: string[]; sections: string[] }
+interface Props {
+  schoolId: number;
+  classes: string[];
+  sections: string[];
+  viewSessionId?: number;
+  isArchiveMode?: boolean;
+}
 
 const PAGE_SIZE = 50;
 
@@ -67,7 +73,7 @@ function GenderBadge({ gender }: { gender: string | null | undefined }) {
   );
 }
 
-export default function StudentRegistry({ schoolId, classes, sections }: Props) {
+export default function StudentRegistry({ schoolId, classes, sections, viewSessionId, isArchiveMode }: Props) {
   const { toast } = useToast();
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
@@ -126,10 +132,14 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
   if (section) params.set("section", section);
   params.set("page", String(page));
 
+  const sessionHeaders: HeadersInit = viewSessionId
+    ? { "x-view-session-id": String(viewSessionId) }
+    : {};
+
   const { data, isLoading } = useQuery<{ data: Student[]; total: number }>({
-    queryKey: ["/api/schools", schoolId, "students", "paginated", debouncedQ, cls, section, page],
+    queryKey: ["/api/schools", schoolId, "students", "paginated", debouncedQ, cls, section, page, viewSessionId],
     queryFn: async () => {
-      const r = await fetch(`/api/schools/${schoolId}/students/paginated?${params}`, { credentials: "include" });
+      const r = await fetch(`/api/schools/${schoolId}/students/paginated?${params}`, { credentials: "include", headers: sessionHeaders });
       if (!r.ok) throw new Error("Failed");
       return r.json();
     },
@@ -141,9 +151,9 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
   if (section) statsParams.set("section", section);
 
   const { data: stats } = useQuery<{ total: number; boys: number; girls: number }>({
-    queryKey: ["/api/schools", schoolId, "students", "stats", cls, section],
+    queryKey: ["/api/schools", schoolId, "students", "stats", cls, section, viewSessionId],
     queryFn: async () => {
-      const r = await fetch(`/api/schools/${schoolId}/students/stats?${statsParams}`, { credentials: "include" });
+      const r = await fetch(`/api/schools/${schoolId}/students/stats?${statsParams}`, { credentials: "include", headers: sessionHeaders });
       if (!r.ok) throw new Error("Failed");
       return r.json();
     },
@@ -295,6 +305,23 @@ export default function StudentRegistry({ schoolId, classes, sections }: Props) 
 
   return (
     <div className="space-y-4">
+
+      {/* Archive mode notice */}
+      {isArchiveMode && (
+        <div
+          className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-semibold"
+          style={{
+            background: "rgba(251,191,36,0.08)",
+            border: "1px solid rgba(251,191,36,0.22)",
+            color: "#fbbf24",
+          }}
+          data-testid="registry-archive-notice"
+        >
+          <span role="img" aria-label="archive">⚠️</span>
+          <span>Archive View — this roster reflects session data only. Write operations are disabled.</span>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>

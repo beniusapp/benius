@@ -11,12 +11,14 @@ import {
   TrendingUp, MessageSquare, CalendarDays, ChevronLeft, Loader2,
   ArrowRight, AlertTriangle, UserCircle2, X, KeyRound, Lock, Phone, Mail,
   CheckCircle2, ChevronDown, PanelLeftClose, PanelLeftOpen, Menu,
+  CalendarRange, Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
+import { SessionViewContext, type AcademicSession } from "@/contexts/session-view-context";
 
 import SchoolSetup from "./admin-modules/school-setup";
 import StudentRegistry from "./admin-modules/student-registry";
@@ -570,6 +572,106 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
   );
 }
 
+function SessionSwitcher({
+  sessions, selected, onSelect, isLoading,
+}: {
+  sessions: AcademicSession[];
+  selected: AcademicSession | null;
+  onSelect: (s: AcademicSession) => void;
+  isLoading: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, []);
+
+  const isArchive = selected ? !selected.isActive : false;
+  const label = selected ? selected.sessionName : (isLoading ? "Loading…" : "No Session");
+
+  return (
+    <div ref={ref} className="relative hidden sm:block" data-testid="session-switcher">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150"
+        style={{
+          background: isArchive ? "rgba(251,191,36,0.12)" : "rgba(34,211,238,0.10)",
+          border: `1px solid ${isArchive ? "rgba(251,191,36,0.30)" : "rgba(34,211,238,0.22)"}`,
+          color: isArchive ? "#fbbf24" : "#22d3ee",
+          backdropFilter: "blur(8px)",
+        }}
+        data-testid="button-session-switcher"
+      >
+        <CalendarRange className="w-3.5 h-3.5 flex-shrink-0" />
+        <span className="max-w-[180px] truncate">
+          Session: {label}{selected?.isActive ? " (Active)" : ""}
+        </span>
+        <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <div
+          className="absolute right-0 top-full mt-2 w-64 rounded-xl overflow-hidden z-50"
+          style={{
+            background: "rgba(10,22,40,0.98)",
+            backdropFilter: "blur(24px)",
+            WebkitBackdropFilter: "blur(24px)",
+            border: "1px solid rgba(255,255,255,0.10)",
+            boxShadow: "0 20px 60px rgba(0,0,0,0.70), 0 0 0 1px rgba(34,211,238,0.07)",
+          }}
+          data-testid="session-switcher-dropdown"
+        >
+          <div
+            className="px-4 py-2.5 border-b"
+            style={{ borderColor: "rgba(255,255,255,0.06)" }}
+          >
+            <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest">Switch View Session</p>
+          </div>
+
+          {sessions.length === 0 ? (
+            <div className="px-4 py-6 text-center text-sm text-white/30">
+              {isLoading ? "Fetching sessions…" : "No sessions found"}
+            </div>
+          ) : (
+            <div className="py-1">
+              {sessions.map(s => {
+                const isSel = selected?.id === s.id;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => { onSelect(s); setOpen(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-white/5"
+                    data-testid={`session-option-${s.id}`}
+                  >
+                    <span
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ background: s.isActive ? "#22d3ee" : "rgba(255,255,255,0.18)", boxShadow: s.isActive ? "0 0 6px #22d3ee88" : "none" }}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-semibold truncate ${isSel ? "text-white" : "text-white/65"}`}>
+                        {s.sessionName}
+                      </p>
+                      <p className="text-[10px] mt-0.5" style={{ color: s.isActive ? "#22d3ee99" : "rgba(255,255,255,0.28)" }}>
+                        {s.isActive ? "● Active Session" : "⊘ Archived"}
+                      </p>
+                    </div>
+                    {isSel && <Check className="w-3.5 h-3.5 flex-shrink-0 text-cyan-400" />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -686,6 +788,27 @@ export default function AdminDashboard() {
     enabled: !!me?.schoolId,
   });
 
+  const { data: sessions = [], isLoading: isSessionsLoading } = useQuery<AcademicSession[]>({
+    queryKey: ["/api/admin/academic-sessions", me?.schoolId],
+    queryFn: async () => {
+      if (!me?.schoolId) return [];
+      const r = await fetch("/api/admin/academic-sessions", { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!me?.schoolId,
+  });
+
+  const [selectedViewSession, setSelectedViewSession] = useState<AcademicSession | null>(null);
+
+  useEffect(() => {
+    if (sessions.length > 0 && !selectedViewSession) {
+      const active = sessions.find(s => s.isActive) ?? sessions[0];
+      setSelectedViewSession(active);
+    }
+  }, [sessions, selectedViewSession]);
+
+  const isArchiveMode = selectedViewSession ? !selectedViewSession.isActive : false;
+
   const pendingLeavesCount   = (pendingLeaves  as { status: string }[]).filter(l => l.status === "pending").length;
   const pendingGalleryCount  = (galleryItems   as { approved: boolean }[]).filter(g => !g.approved).length;
   const openComplaintsCount  = (complaints     as { status: string }[]).filter(c => c.status === "open" || c.status === "in_progress").length;
@@ -728,7 +851,7 @@ export default function AdminDashboard() {
   const renderModule = () => {
     switch (activeModule) {
       case "school-setup":      return <SchoolSetup schoolId={me.schoolId} section={setupSection} onNavigateSection={(sec) => { if (sec === null) setLocation("/admin-dashboard/school-setup"); else setLocation(`/admin-dashboard/school-setup/${sec}`); }} />;
-      case "student-registry":  return <StudentRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} />;
+      case "student-registry":  return <StudentRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} viewSessionId={selectedViewSession?.id} isArchiveMode={isArchiveMode} />;
       case "faculty-mapping":   return <FacultyMapping schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
       case "teacher-registry":  return <TeacherRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} onNavigate={(mod) => goToModule(mod as ActiveModule)} />;
       case "non-teaching-staff":return <NonTeachingStaff schoolId={me.schoolId} />;
@@ -753,6 +876,13 @@ export default function AdminDashboard() {
   const attendanceTotal   = dailySummary?.total   ?? 0;
 
   return (
+    <SessionViewContext.Provider value={{
+      sessions,
+      selectedSession: selectedViewSession,
+      setSelectedSession: setSelectedViewSession,
+      isArchiveMode,
+      isSessionsLoading,
+    }}>
     <div className="min-h-screen text-white flex flex-col" style={{ background: "#0f172a" }}>
 
       {/* ── Decorative background radial blobs ── */}
@@ -806,6 +936,15 @@ export default function AdminDashboard() {
             </div>
           </div>
 
+          <div className="flex-1 flex justify-center">
+            <SessionSwitcher
+              sessions={sessions}
+              selected={selectedViewSession}
+              onSelect={setSelectedViewSession}
+              isLoading={isSessionsLoading}
+            />
+          </div>
+
           <div className="flex items-center gap-1 sm:gap-2">
             <span className="hidden sm:block text-sm text-white/35 font-medium" data-testid="text-user-email">{me.email}</span>
             <Button
@@ -829,6 +968,24 @@ export default function AdminDashboard() {
             </Button>
           </div>
         </div>
+
+        {/* ── Archive Mode Banner ── */}
+        {isArchiveMode && selectedViewSession && (
+          <div
+            className="flex items-center justify-center gap-2.5 py-2 text-xs font-bold tracking-wide"
+            style={{
+              background: "linear-gradient(90deg, rgba(251,191,36,0.08) 0%, rgba(251,191,36,0.16) 50%, rgba(251,191,36,0.08) 100%)",
+              borderTop: "1px solid rgba(251,191,36,0.22)",
+              color: "#fbbf24",
+            }}
+            data-testid="banner-archive-mode"
+          >
+            <span role="img" aria-label="warning">⚠️</span>
+            <span>Viewing Archive Mode (Read-Only)</span>
+            <span className="opacity-40">·</span>
+            <span className="font-semibold opacity-80">{selectedViewSession.sessionName}</span>
+          </div>
+        )}
       </header>
 
       {/* ══════════ PREMIUM STATS BAR ══════════ */}
@@ -1244,5 +1401,6 @@ export default function AdminDashboard() {
 
       {showProfile && <AdminProfilePanel me={me} onClose={() => setShowProfile(false)} />}
     </div>
+    </SessionViewContext.Provider>
   );
 }
