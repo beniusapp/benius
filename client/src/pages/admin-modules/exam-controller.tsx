@@ -12,8 +12,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
-import { useSessionView } from "@/contexts/session-view-context";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -131,11 +130,6 @@ function LedgerPills({ row }: { row: LedgerRow }) {
 export default function ExamController({ examTypes, classes: schoolClasses, sections: schoolSections }: Props) {
   const { toast } = useToast();
 
-  // ── Session context — query scoping per academic year ────────────────────────
-  // selectedSession.id is added to every queryKey so React Query automatically
-  // invalidates and re-fetches when the admin switches the active view session.
-  const { selectedSession } = useSessionView();
-
   // ── Core view state ───────────────────────────────────────────────────────
   const [view, setView]                 = useState<"table"|"wizard">("table");
   const [selectedTerm, setSelectedTerm] = useState("");
@@ -169,12 +163,9 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   const toggleStatusFilter = (f: "ready"|"pending") =>
     setStatusFilter(prev => prev === f ? "all" : f);
 
-  // ── Fetch terms — exam types from school setup, scoped to the active session ──
-  // selectedSession?.id is included in the queryKey so React Query creates a
-  // separate cache entry per academic year and automatically re-fetches when
-  // the admin switches from the current session to an archived one.
+  // ── Fetch terms — all exam types from school setup (strictly school-scoped) ──
   const { data: terms = [], refetch: refetchTerms } = useQuery<string[]>({
-    queryKey: ["/api/admin/ledger-terms", selectedSession?.id],
+    queryKey: ["/api/admin/ledger-terms"],
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
@@ -186,14 +177,11 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   }, [terms, selectedTerm]);
 
   // ── Fetch ledger status rows ──────────────────────────────────────────────
-  // sessionFetch automatically injects x-view-session-id so the backend
-  // checkSessionContext middleware attaches req.viewSessionId, allowing the
-  // route handler to optionally scope its query to the chosen academic year.
   const { data: ledgerRows = [], isLoading: ledgerLoading, refetch: refetchLedger } = useQuery<LedgerRow[]>({
-    queryKey: ["/api/admin/ledger-status", selectedTerm, selectedSession?.id],
+    queryKey: ["/api/admin/ledger-status", selectedTerm],
     queryFn: async () => {
       if (!selectedTerm) return [];
-      const r = await sessionFetch(`/api/admin/ledger-status?term=${encodeURIComponent(selectedTerm)}`);
+      const r = await fetch(`/api/admin/ledger-status?term=${encodeURIComponent(selectedTerm)}`, { credentials: "include" });
       return r.ok ? r.json() : [];
     },
     enabled: !!selectedTerm,
@@ -212,14 +200,12 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   }, [ledgerRows.length, selectedTerm]);
 
   // ── Fetch aggregated student data (wizard) ────────────────────────────────
-  // selectedSession?.id in queryKey ensures historical exam data re-fetches
-  // when the admin navigates to an archived year's Exam Controller view.
   const { data: agg, isLoading: aggLoading } = useQuery<AggData | null>({
-    queryKey: ["/api/admin/exam/aggregated", cohort?.class, cohort?.section, examType, cohort?.term, selectedSession?.id],
+    queryKey: ["/api/admin/exam/aggregated", cohort?.class, cohort?.section, examType, cohort?.term],
     queryFn: async () => {
       if (!cohort || !examType) return null;
       const p = new URLSearchParams({ class: cohort.class, section: cohort.section, examType, term: cohort.term });
-      const r = await sessionFetch(`/api/admin/exam/aggregated?${p}`);
+      const r = await fetch(`/api/admin/exam/aggregated?${p}`, { credentials: "include" });
       return r.ok ? r.json() : null;
     },
     enabled: !!cohort && !!examType,
