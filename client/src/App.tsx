@@ -62,23 +62,21 @@ function Router() {
         <Route path="/admin-dashboard/:module" component={AdminDashboard} />
         <Route path="/register" component={Register} />
         <Route path="/student-login" component={StudentLogin} />
-        <StudentSessionProvider>
-          <Route path="/student-dashboard" component={StudentDashboard} />
-          <Route path="/student-profile" component={StudentProfilePage} />
-          <Route path="/student/attendance" component={StudentAttendance} />
-          <Route path="/student/homework" component={StudentHomework} />
-          <Route path="/student/classwork" component={StudentClasswork} />
-          <Route path="/student/examination" component={StudentExamination} />
-          <Route path="/student/complaints" component={StudentComplaints} />
-          <Route path="/student/gallery" component={StudentGallery} />
-          <Route path="/student/faculty" component={StudentFaculty} />
-          <Route path="/student/calendar" component={StudentCalendar} />
-          <Route path="/student/timetable" component={StudentTimetable} />
-          <Route path="/student/leave" component={StudentLeave} />
-          <Route path="/student/noticeboard" component={StudentNoticeboard} />
-          <Route path="/student/fees" component={StudentFees} />
-          <Route path="/student/archives" component={StudentArchives} />
-        </StudentSessionProvider>
+        <Route path="/student-dashboard" component={StudentDashboard} />
+        <Route path="/student-profile" component={StudentProfilePage} />
+        <Route path="/student/attendance" component={StudentAttendance} />
+        <Route path="/student/homework" component={StudentHomework} />
+        <Route path="/student/classwork" component={StudentClasswork} />
+        <Route path="/student/examination" component={StudentExamination} />
+        <Route path="/student/complaints" component={StudentComplaints} />
+        <Route path="/student/gallery" component={StudentGallery} />
+        <Route path="/student/faculty" component={StudentFaculty} />
+        <Route path="/student/calendar" component={StudentCalendar} />
+        <Route path="/student/timetable" component={StudentTimetable} />
+        <Route path="/student/leave" component={StudentLeave} />
+        <Route path="/student/noticeboard" component={StudentNoticeboard} />
+        <Route path="/student/fees" component={StudentFees} />
+        <Route path="/student/archives" component={StudentArchives} />
         <Route path="/teacher-login" component={TeacherLogin} />
         <Route path="/teacher-dashboard" component={TeacherDashboard} />
         <Route path="/teacher-dashboard/:module" component={TeacherDashboard} />
@@ -99,7 +97,9 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
-        <Router />
+        <StudentSessionProvider>
+          <Router />
+        </StudentSessionProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );
