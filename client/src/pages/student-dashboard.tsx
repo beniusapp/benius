@@ -376,8 +376,8 @@ export default function StudentDashboard() {
         >
           {TILES.map((tile) => {
             const showPulse =
-              ("noticeKey" in tile && tile.noticeKey && unreadCount > 0) ||
-              (tile.pulse && !("noticeKey" in tile && tile.noticeKey) && (pendingHwCount ?? 0) > 0);
+              (tile.noticeKey && unreadCount > 0) ||
+              (tile.pulse && !tile.noticeKey && (pendingHwCount ?? 0) > 0);
 
             return (
               <motion.button
@@ -468,92 +468,6 @@ export default function StudentDashboard() {
               </motion.button>
             );
           })}
-
-          {/* ── My Archives — premium full-width tile ── */}
-          <motion.button
-            variants={cardVariants}
-            whileHover={{
-              scale: 1.03,
-              boxShadow: "0 0 0 2.5px #7c3aed88, 0 16px 48px rgba(124,58,237,0.32)",
-              transition: { duration: 0.18, ease: "easeOut" },
-            }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => handleTileClick("My Archives", "/student/archives")}
-            className="col-span-2 md:col-span-3 lg:col-span-4 relative text-left focus:outline-none"
-            style={{
-              background: "linear-gradient(135deg, rgba(245,243,255,0.95) 0%, rgba(237,233,254,0.95) 50%, rgba(221,214,254,0.92) 100%)",
-              backdropFilter: "blur(14px)",
-              WebkitBackdropFilter: "blur(14px)",
-              borderRadius: "20px",
-              border: "1.5px solid #c4b5fd",
-              boxShadow: "0 4px 24px rgba(124,58,237,0.13)",
-              cursor: "pointer",
-              padding: "20px 24px",
-              minHeight: "110px",
-              display: "flex",
-              flexDirection: "row",
-              alignItems: "center",
-              gap: "20px",
-            }}
-            data-testid="tile-archives"
-            aria-label="My Archives — view past academic records"
-          >
-            {/* Vault icon */}
-            <div
-              style={{
-                width: 68,
-                height: 68,
-                borderRadius: "18px",
-                background: "rgba(124,58,237,0.12)",
-                border: "2px solid rgba(124,58,237,0.28)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 34,
-                flexShrink: 0,
-                boxShadow: "0 6px 18px rgba(124,58,237,0.18)",
-              }}
-              role="img"
-              aria-label="archive vault"
-            >
-              🗄️
-            </div>
-
-            {/* Text */}
-            <div className="flex-1 min-w-0">
-              <span
-                className="block text-base sm:text-lg font-extrabold leading-tight mb-1"
-                style={{ color: "#4c1d95" }}
-              >
-                My Archives
-              </span>
-              <span
-                className="block text-xs sm:text-sm font-medium leading-snug"
-                style={{ color: "#7c3aed", opacity: 0.85 }}
-              >
-                View past transcripts, receipts, and performance stats.
-              </span>
-            </div>
-
-            {/* Arrow badge */}
-            <div
-              style={{
-                flexShrink: 0,
-                width: 36,
-                height: 36,
-                borderRadius: "50%",
-                background: "rgba(124,58,237,0.14)",
-                border: "1.5px solid rgba(124,58,237,0.3)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 16,
-              }}
-              aria-hidden
-            >
-              →
-            </div>
-          </motion.button>
         </motion.div>
 
         {/* ── Footer ── */}
