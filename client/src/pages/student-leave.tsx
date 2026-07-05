@@ -5,10 +5,11 @@ import { motion } from "framer-motion";
 import { fmtDate } from "@/lib/dateUtils";
 import {
   ArrowLeft, FileText, PlusCircle, X, Loader2, Clock, CheckCircle2, XCircle, Forward,
-  CalendarDays, Trash2,
+  CalendarDays, Trash2, Lock,
 } from "lucide-react";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useSessionView } from "@/contexts/session-view-context";
 
 interface StudentMe {
   id: number;
@@ -58,6 +59,7 @@ function daysBetween(start: string, end: string): number {
 export default function StudentLeave() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const { isArchiveMode } = useSessionView();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [category, setCategory] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -177,13 +179,17 @@ export default function StudentLeave() {
             </div>
           </div>
           <button
-            onClick={() => setDrawerOpen(true)}
-            className="flex items-center gap-1.5 px-3 h-9 rounded-xl text-sm font-semibold transition-colors flex-shrink-0"
+            onClick={() => !isArchiveMode && setDrawerOpen(true)}
+            disabled={isArchiveMode}
+            className={`flex items-center gap-1.5 px-3 h-9 rounded-xl text-sm font-semibold transition-colors flex-shrink-0 ${
+              isArchiveMode ? "opacity-40 pointer-events-none cursor-not-allowed" : ""
+            }`}
             style={{ background: "linear-gradient(135deg, #10b981, #3b82f6)", color: "#fff" }}
             data-testid="button-apply-leave"
+            title={isArchiveMode ? "Leave applications are locked in Archive Mode" : "Apply for Leave"}
           >
-            <PlusCircle className="w-4 h-4" />
-            <span className="hidden sm:inline">Apply</span>
+            {isArchiveMode ? <Lock className="w-4 h-4" /> : <PlusCircle className="w-4 h-4" />}
+            <span className="hidden sm:inline">{isArchiveMode ? "Locked" : "Apply"}</span>
           </button>
         </div>
       </header>
@@ -210,14 +216,33 @@ export default function StudentLeave() {
           ))}
         </div>
 
+        {/* ── Archive Mode Banner ── */}
+        {isArchiveMode && (
+          <div
+            className="flex items-center gap-3 px-4 py-3 rounded-2xl"
+            style={{ background: "#fefce8", border: "1.5px solid #fde68a" }}
+            data-testid="banner-archive-leave"
+          >
+            <Lock className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            <p className="text-xs font-semibold text-amber-800">
+              Archive Mode — Read Only. Switch to the active session to apply for leave or delete requests.
+            </p>
+          </div>
+        )}
+
         {/* ── Mobile Apply Button ── */}
         <button
-          onClick={() => setDrawerOpen(true)}
-          className="sm:hidden w-full h-12 rounded-2xl bg-[#10b981] hover:bg-[#059669] text-white font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors"
+          onClick={() => !isArchiveMode && setDrawerOpen(true)}
+          disabled={isArchiveMode}
+          className={`sm:hidden w-full h-12 rounded-2xl text-white font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors ${
+            isArchiveMode
+              ? "bg-gray-300 opacity-40 pointer-events-none cursor-not-allowed"
+              : "bg-[#10b981] hover:bg-[#059669]"
+          }`}
           data-testid="button-apply-leave-mobile"
         >
-          <PlusCircle className="w-5 h-5" />
-          Apply for Leave
+          {isArchiveMode ? <Lock className="w-5 h-5" /> : <PlusCircle className="w-5 h-5" />}
+          {isArchiveMode ? "Locked in Archive Mode" : "Apply for Leave"}
         </button>
 
         {/* ── Leave History ── */}
@@ -268,7 +293,7 @@ export default function StudentLeave() {
                         <Icon className="w-3 h-3" />
                         {cfg.label}
                       </span>
-                      {leave.status === "pending" && (
+                      {leave.status === "pending" && !isArchiveMode && (
                         <button
                           onClick={() => deleteLeaveMutation.mutate(leave.id)}
                           disabled={deleteLeaveMutation.isPending}

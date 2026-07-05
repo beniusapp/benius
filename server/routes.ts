@@ -1795,6 +1795,20 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
+
+    // Archive-mode guard: block submissions for non-active sessions
+    const viewSessionId = req.headers["x-view-session-id"];
+    if (viewSessionId) {
+      const sessionId = parseInt(viewSessionId as string, 10);
+      if (!isNaN(sessionId)) {
+        const sessions = await storage.getAcademicSessions(student.schoolId);
+        const targetSession = sessions.find(s => s.id === sessionId);
+        if (targetSession && !targetSession.isActive) {
+          return res.status(403).json({ error: "Security Block: Leave applications cannot be submitted for historical academic terms." });
+        }
+      }
+    }
+
     const { startDate, endDate, reason, category, attachmentUrl } = req.body;
     if (!startDate || !endDate || !reason) return res.status(400).json({ message: "startDate, endDate, and reason are required" });
     const leave = await storage.createStudentLeaveRequest({
