@@ -924,6 +924,15 @@ export function registerTeacherRoutes(app: Express) {
       const resolvedSection = section || teacher.assignedSection || null;
       const maxMarks = parseInt(totalMarks) || 100;
       const pMarks = parseInt(passMarks) || 33;
+      // Tag each score with the academic session. Prefer the header value
+      // (admin previewing an archived year); otherwise resolve the school's
+      // active session so teacher-submitted scores are always year-tagged.
+      const activeSessionForTag = (req as any).viewSessionId
+        ? null
+        : await storage.getActiveSession(teacher.schoolId);
+      const scoreSessionId: number | null =
+        (req as any).viewSessionId ?? activeSessionForTag?.id ?? null;
+
       const formattedScores = scores.map((s: any) => ({
         studentId: parseInt(s.studentId),
         teacherId: teacher.id,
@@ -937,6 +946,7 @@ export function registerTeacherRoutes(app: Express) {
         class: resolvedClass || null,
         section: resolvedSection || null,
         updatedBy: teacher.fullName,
+        sessionId: scoreSessionId,
       }));
 
       const saved = await storage.upsertExamScores(formattedScores);
@@ -963,7 +973,7 @@ export function registerTeacherRoutes(app: Express) {
       } else if (req.session.schoolId !== sid) {
         return res.status(403).json({ message: "Not authorized for this school" });
       }
-      const count = await storage.publishExamScores(sid, cls, section, examType);
+      const count = await storage.publishExamScores(sid, cls, section, examType, (req as any).viewSessionId ?? undefined);
       res.json({ message: `Published ${count} scores`, count });
     } catch (err: any) {
       console.error("POST /api/exam-scores/publish error:", err);
@@ -1006,7 +1016,7 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
       const { schoolId, subject, examType, class: cls, section } = req.params;
-      const list = await storage.getExamScores(parseInt(schoolId), decodeURIComponent(subject), decodeURIComponent(examType), cls, section);
+      const list = await storage.getExamScores(parseInt(schoolId), decodeURIComponent(subject), decodeURIComponent(examType), cls, section, (req as any).viewSessionId ?? undefined);
       res.json(list);
     } catch (err: any) {
       console.error("GET /api/exam-scores error:", err);
@@ -2217,7 +2227,9 @@ export function registerTeacherRoutes(app: Express) {
     const { term } = req.query as Record<string, string>;
     if (!term) return res.status(400).json({ message: "term is required" });
     try {
-      const data = await storage.getLedgerStatus(req.session.schoolId!, term);
+      // Forward the view session so getLedgerStatus scopes promotion decisions
+      // to the correct academic year when the admin is browsing an archived session.
+      const data = await storage.getLedgerStatus(req.session.schoolId!, term, (req as any).viewSessionId ?? undefined);
       res.json(data);
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to fetch ledger status" });
@@ -2355,8 +2367,11 @@ Thank you for your prompt attention to this matter.
     if (!cls || !section || !examType)
       return res.status(400).json({ message: "class, section, and examType are required" });
     const schoolId = req.session.schoolId!;
+    // Extract the view session so both score aggregation and ledger decisions
+    // are scoped to the same academic year when the admin is in archive mode.
+    const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
     const [studentsData, overrides, meta, classSubjectsMap] = await Promise.all([
-      storage.getExamAggregated(schoolId, cls, section, examType),
+      storage.getExamAggregated(schoolId, cls, section, examType, viewSessionId),
       storage.getPromotionOverrides(schoolId, cls, section, examType),
       storage.getAllSchoolMetadata(schoolId),
       storage.getClassSubjectsMap(schoolId),
@@ -2394,7 +2409,7 @@ Thank you for your prompt attention to this matter.
     // If a term is provided, enrich each student with their ledger row
     let ledgerDecisions: import("../shared/schema").PromotionDecision[] = [];
     if (term) {
-      ledgerDecisions = await storage.getPromotionDecisions(schoolId, cls, section, term);
+      ledgerDecisions = await storage.getPromotionDecisions(schoolId, cls, section, term, viewSessionId);
     }
     const ledgerMap = new Map(ledgerDecisions.map(d => [d.studentId, d]));
     const studentsEnriched = studentsWithGrades.map(s => ({
@@ -3354,7 +3369,7 @@ Thank you for your prompt attention to this matter.
       const cls = decodeURIComponent(req.params.class);
       const section = decodeURIComponent(req.params.section);
       const term = decodeURIComponent(req.params.term);
-      const decisions = await storage.getPromotionDecisions(teacher.schoolId, cls, section, term);
+      const decisions = await storage.getPromotionDecisions(teacher.schoolId, cls, section, term, (req as any).viewSessionId ?? undefined);
       res.json(decisions);
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to fetch promotion decisions" });
@@ -3381,7 +3396,16 @@ Thank you for your prompt attention to this matter.
       if (!isAssigned) {
         return res.status(403).json({ message: "Not authorized: you are not assigned to this class-section" });
       }
-      await storage.savePromotionDecisions(teacher.schoolId, cls, section, term, teacher.id, !!lock, entries);
+      // Tag the ledger with the academic session. Prefer the header value
+      // (admin previewing a session); otherwise resolve the active session
+      // so teacher-submitted decisions are always year-tagged correctly.
+      const activeSessForTag = (req as any).viewSessionId
+        ? null
+        : await storage.getActiveSession(teacher.schoolId);
+      const ledgerSessionId: number | null =
+        (req as any).viewSessionId ?? activeSessForTag?.id ?? null;
+
+      await storage.savePromotionDecisions(teacher.schoolId, cls, section, term, teacher.id, !!lock, entries, ledgerSessionId ?? undefined);
       res.json({ message: lock ? "Ledger locked and saved" : "Ledger draft saved" });
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to save promotion decisions" });

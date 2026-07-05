@@ -1242,6 +1242,9 @@ export class DatabaseStorage {
   async upsertExamScores(scores: InsertExamScore[]): Promise<ExamScore[]> {
     const results: ExamScore[] = [];
     for (const score of scores) {
+      // ── Deduplication: match on student+subject+examType+class+section.
+      // When a sessionId is present, also scope the lookup to that session so
+      // records from different academic years never overwrite each other.
       const conditions: SQL<unknown>[] = [
         eq(examScores.studentId, score.studentId),
         eq(examScores.subject, score.subject),
@@ -1249,6 +1252,7 @@ export class DatabaseStorage {
       ];
       if (score.class != null) conditions.push(eq(examScores.class, score.class));
       if (score.section != null) conditions.push(eq(examScores.section, score.section));
+      if (score.sessionId != null) conditions.push(eq(examScores.sessionId, score.sessionId));
 
       const existing = await db.select().from(examScores).where(and(...conditions));
       if (existing.length > 0) {
@@ -1262,6 +1266,8 @@ export class DatabaseStorage {
             section: score.section ?? existing[0].section,
             updatedBy: score.updatedBy ?? null,
             updatedAt: new Date(),
+            // Preserve the original sessionId tag (never overwrite with null)
+            sessionId: score.sessionId ?? existing[0].sessionId,
           })
           .where(eq(examScores.id, existing[0].id)).returning();
         results.push(updated);
@@ -1277,31 +1283,34 @@ export class DatabaseStorage {
     return results;
   }
 
-  async publishExamScores(schoolId: number, cls: string, section: string, examType: string): Promise<number> {
+  async publishExamScores(schoolId: number, cls: string, section: string, examType: string, sessionId?: number): Promise<number> {
+    // When a sessionId is supplied, publish only records for that academic year.
+    const conditions = [
+      eq(examScores.schoolId, schoolId),
+      eq(examScores.class, cls),
+      eq(examScores.section, section),
+      eq(examScores.examType, examType),
+      ...(sessionId != null ? [eq(examScores.sessionId, sessionId)] : []),
+    ];
     const updated = await db.update(examScores)
       .set({ published: true })
-      .where(and(
-        eq(examScores.schoolId, schoolId),
-        eq(examScores.class, cls),
-        eq(examScores.section, section),
-        eq(examScores.examType, examType),
-      ))
+      .where(and(...conditions))
       .returning();
     return updated.length;
   }
 
-  async getExamScores(schoolId: number, subject: string, examType: string, cls: string, section: string): Promise<(ExamScore & { studentName: string; dsid: string })[]> {
+  async getExamScores(schoolId: number, subject: string, examType: string, cls: string, section: string, sessionId?: number): Promise<(ExamScore & { studentName: string; dsid: string })[]> {
+    // When a sessionId is provided, strictly filter to that academic year's records.
     const result = await db.select().from(examScores)
       .innerJoin(students, eq(examScores.studentId, students.id))
-      .where(
-        and(
-          eq(examScores.schoolId, schoolId),
-          eq(examScores.subject, subject),
-          eq(examScores.examType, examType),
-          eq(students.class, cls),
-          eq(students.section, section)
-        )
-      );
+      .where(and(
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.subject, subject),
+        eq(examScores.examType, examType),
+        eq(students.class, cls),
+        eq(students.section, section),
+        ...(sessionId != null ? [eq(examScores.sessionId, sessionId)] : []),
+      ));
     return result.map(r => ({
       ...r.exam_scores,
       studentName: r.students.name,
@@ -3106,10 +3115,11 @@ export class DatabaseStorage {
 
   // ===== ACADEMIC ADVANCEMENT WIZARD =====
 
-  async getExamAggregated(schoolId: number, cls: string, section: string, examType: string): Promise<{
+  async getExamAggregated(schoolId: number, cls: string, section: string, examType: string, sessionId?: number): Promise<{
     studentId: number; dsid: string; name: string;
     totalObtained: number; totalMax: number; percentage: number; subjects: string[];
   }[]> {
+    // When a sessionId is provided, only aggregate scores from that academic year.
     const rows = await db.select().from(examScores)
       .innerJoin(students, and(eq(examScores.studentId, students.id), eq(students.schoolId, schoolId)))
       .where(and(
@@ -3117,6 +3127,7 @@ export class DatabaseStorage {
         eq(examScores.class, cls),
         eq(examScores.section, section),
         eq(examScores.examType, examType),
+        ...(sessionId != null ? [eq(examScores.sessionId, sessionId)] : []),
       ));
 
     const byStudent: Record<number, { dsid: string; name: string; obtained: number; total: number; subjects: string[] }> = {};
@@ -3926,23 +3937,27 @@ export class DatabaseStorage {
 
   // ── Promotion Ledger ──────────────────────────────────────────────────────
 
-  /** Fetch all saved promotion decisions for a class/section/term within a school. */
-  async getPromotionDecisions(schoolId: number, cls: string, section: string, term: string): Promise<PromotionDecision[]> {
+  /** Fetch all saved promotion decisions for a class/section/term within a school.
+   *  When sessionId is provided, results are strictly scoped to that academic year. */
+  async getPromotionDecisions(schoolId: number, cls: string, section: string, term: string, sessionId?: number): Promise<PromotionDecision[]> {
     return db.select().from(promotionDecisions).where(
       and(
         eq(promotionDecisions.schoolId, schoolId),
         eq(promotionDecisions.class, cls),
         eq(promotionDecisions.section, section),
         eq(promotionDecisions.term, term),
+        ...(sessionId != null ? [eq(promotionDecisions.sessionId, sessionId)] : []),
       )
     );
   }
 
-  /** Bulk upsert promotion decisions; optionally lock the ledger for this class/section/term. */
+  /** Bulk upsert promotion decisions; optionally lock the ledger for this class/section/term.
+   *  sessionId tags every record to the correct academic year for session-scoped isolation. */
   async savePromotionDecisions(
     schoolId: number, cls: string, section: string, term: string,
     teacherId: number, lock: boolean,
     entries: Array<{ studentId: number; decision: string; targetClass: string; targetSection: string; editCount: number; autoSuggestion?: string }>,
+    sessionId?: number,
   ): Promise<void> {
     const now = new Date();
 
@@ -3977,6 +3992,9 @@ export class DatabaseStorage {
         autoSuggestion: e.autoSuggestion ?? null,
         manualIntervention: isManual,
         updatedAt: now,
+        // Tag the record with the academic session so future GET queries can
+        // apply strict session-scoped WHERE session_id = ? filtering.
+        sessionId: sessionId ?? null,
       }).onConflictDoUpdate({
         target: [promotionDecisions.schoolId, promotionDecisions.class, promotionDecisions.section, promotionDecisions.term, promotionDecisions.studentId],
         set: {
@@ -3990,12 +4008,13 @@ export class DatabaseStorage {
           autoSuggestion: e.autoSuggestion ?? null,
           manualIntervention: isManual,
           updatedAt: now,
+          sessionId: sessionId ?? null,
         },
       });
     }
   }
 
-  async getLedgerStatus(schoolId: number, term: string): Promise<Array<{
+  async getLedgerStatus(schoolId: number, term: string, sessionId?: number): Promise<Array<{
     class: string; section: string; term: string;
     status: "none" | "draft" | "locked";
     totalStudents: number; lockedCount: number; manualInterventionCount: number;
@@ -4034,7 +4053,12 @@ export class DatabaseStorage {
       })
       .from(promotionDecisions)
       .leftJoin(teachers, eq(promotionDecisions.processedByTeacherId, teachers.id))
-      .where(and(eq(promotionDecisions.schoolId, schoolId), eq(promotionDecisions.term, term)));
+      .where(and(
+        eq(promotionDecisions.schoolId, schoolId),
+        eq(promotionDecisions.term, term),
+        // When sessionId is supplied, restrict to that academic year's decisions only.
+        ...(sessionId != null ? [eq(promotionDecisions.sessionId, sessionId)] : []),
+      ));
 
     // ── 3. Faculty mappings → assigned teacher per class-section ─────────────
     const mappingRows = await db

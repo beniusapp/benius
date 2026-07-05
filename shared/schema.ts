@@ -214,6 +214,7 @@ export const examScores = pgTable("exam_scores", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedBy: text("updated_by"),
   updatedAt: timestamp("updated_at"),
+  sessionId: integer("session_id").references(() => academicSessions.id),
 });
 
 export const promotionDecisions = pgTable("promotion_decisions", {
@@ -236,6 +237,7 @@ export const promotionDecisions = pgTable("promotion_decisions", {
   adminExecutedAt: timestamp("admin_executed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at"),
+  sessionId: integer("session_id").references(() => academicSessions.id),
 });
 export type PromotionDecision = typeof promotionDecisions.$inferSelect;
 
