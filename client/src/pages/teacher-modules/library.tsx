@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSchoolConfig } from "@/hooks/use-school-config";
-import type { TeacherMe } from "@/pages/teacher-dashboard";
+import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
 
 interface BookEntry {
   id: number;
@@ -61,6 +61,7 @@ function AvailabilityBadge({ available, total }: { available: number; total: num
 }
 
 export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
+  const isArchiveMode = useArchiveMode();
   const { toast } = useToast();
   const { classes } = useSchoolConfig(teacher.schoolId);
   const [searchQuery, setSearchQuery] = useState("");
@@ -150,6 +151,7 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
 
   function handleEbookSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (isArchiveMode) return;
     if (!ebookTitle.trim() || !ebookAuthor.trim()) {
       toast({ title: "Validation Error", description: "Title and Author are required.", variant: "destructive" });
       return;
@@ -233,7 +235,7 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                           {book.totalCopies > 0 && book.verificationStatus === "approved" && (
                             <Button
                               size="sm"
-                              disabled={book.availableCopies <= 0 || borrowMutation.isPending}
+                              disabled={isArchiveMode || book.availableCopies <= 0 || borrowMutation.isPending}
                               onClick={() => borrowMutation.mutate(book.id)}
                               data-testid={`button-borrow-${book.id}`}
                             >
@@ -270,6 +272,11 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
               </CardTitle>
             </CardHeader>
             <CardContent>
+              {isArchiveMode && (
+                <div className="flex items-center gap-2 mb-4 px-3 py-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 text-amber-700 dark:text-amber-400 text-xs font-semibold" data-testid="banner-archive-mode">
+                  ⚠️ Form Locked: You cannot upload new resources to an archived academic session.
+                </div>
+              )}
               <form onSubmit={handleEbookSubmit} className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="ebook-title">Title *</Label>
@@ -278,6 +285,7 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                     placeholder="Enter book title"
                     value={ebookTitle}
                     onChange={(e) => setEbookTitle(e.target.value)}
+                    disabled={isArchiveMode}
                     data-testid="input-ebook-title"
                   />
                 </div>
@@ -288,13 +296,14 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                     placeholder="Enter author name"
                     value={ebookAuthor}
                     onChange={(e) => setEbookAuthor(e.target.value)}
+                    disabled={isArchiveMode}
                     data-testid="input-ebook-author"
                   />
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>Target Class</Label>
-                    <Select value={ebookTargetClass} onValueChange={setEbookTargetClass}>
+                    <Select value={ebookTargetClass} onValueChange={setEbookTargetClass} disabled={isArchiveMode}>
                       <SelectTrigger data-testid="select-ebook-class">
                         <SelectValue placeholder="Select class" />
                       </SelectTrigger>
@@ -307,7 +316,7 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                   </div>
                   <div className="space-y-2">
                     <Label>Category</Label>
-                    <Select value={ebookCategory} onValueChange={setEbookCategory}>
+                    <Select value={ebookCategory} onValueChange={setEbookCategory} disabled={isArchiveMode}>
                       <SelectTrigger data-testid="select-ebook-category">
                         <SelectValue placeholder="Select category" />
                       </SelectTrigger>
@@ -327,6 +336,7 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                     type="file"
                     accept=".pdf,.epub"
                     onChange={(e) => setEbookFile(e.target.files?.[0] || null)}
+                    disabled={isArchiveMode}
                     data-testid="input-ebook-file"
                   />
                   {ebookFile && (
@@ -343,7 +353,8 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                 </div>
                 <Button
                   type="submit"
-                  disabled={uploadMutation.isPending}
+                  disabled={isArchiveMode || uploadMutation.isPending}
+                  className={isArchiveMode ? "opacity-50 pointer-events-none cursor-not-allowed" : undefined}
                   data-testid="button-upload-ebook"
                 >
                   {uploadMutation.isPending ? (
@@ -402,7 +413,7 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                           size="sm"
                           variant="outline"
                           onClick={() => returnMutation.mutate(b.id)}
-                          disabled={returnMutation.isPending}
+                          disabled={isArchiveMode || returnMutation.isPending}
                           data-testid={`button-return-${b.id}`}
                         >
                           {returnMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5 mr-1" />}
