@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Plus, X, Save, BookOpen, Grid3X3, FileText, ChevronDown, ChevronRight, ChevronLeft, Trash2, GraduationCap, AlertTriangle, CalendarClock, Check, ChevronsUpDown, Scale, Timer } from "lucide-react";
+import { Plus, X, Save, BookOpen, Grid3X3, FileText, ChevronDown, ChevronRight, ChevronLeft, Trash2, GraduationCap, AlertTriangle, CalendarClock, Check, ChevronsUpDown, Scale, Timer, CalendarRange } from "lucide-react";
 import { AttendancePolicySetup } from "./attendance-policy";
+import AcademicSessions from "./academic-sessions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -1759,6 +1760,7 @@ export default function SchoolSetup({ schoolId, section, onNavigateSection }: Pr
   ];
 
   const SETUP_SECTIONS = [
+    { id: "academic-sessions",      label: "Academic Sessions",         icon: CalendarRange, color: "#22d3ee", desc: "Define academic years (e.g. 2026–2027), set active session, and manage enrollment periods." },
     { id: "classes",                label: "Classes",                   icon: Grid3X3,       color: "#D4AF37", desc: "Add and manage class names used across your school (e.g. LKG, 1–12)." },
     { id: "sections",               label: "Sections",                  icon: Grid3X3,       color: "#6366f1", desc: "Add and manage section labels assigned to each class (e.g. A, B, C)." },
     { id: "subjects",               label: "Subjects",                  icon: BookOpen,      color: "#10b981", desc: "Define the subjects taught in your school." },
@@ -1835,6 +1837,19 @@ export default function SchoolSetup({ schoolId, section, onNavigateSection }: Pr
       </div>
 
       {/* ─── classes ─── */}
+      {section === "academic-sessions" && (
+        <div
+          className="rounded-2xl p-6"
+          style={{
+            background: "rgba(255,255,255,0.04)",
+            backdropFilter: "blur(12px)",
+            border: "1px solid rgba(34,211,238,0.15)",
+          }}
+        >
+          <AcademicSessions schoolId={schoolId} />
+        </div>
+      )}
+
       {section === "classes" && (
         <MetaSection title="Classes" icon={Grid3X3} items={classes} input={classInput} setInput={setClassInput}
           onAdd={() => addTo(classes, setClasses, classInput, setClassInput)}

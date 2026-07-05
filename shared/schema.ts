@@ -821,3 +821,44 @@ export const attendancePolicies = pgTable("attendance_policies", {
 export const insertAttendancePolicySchema = createInsertSchema(attendancePolicies).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertAttendancePolicy = z.infer<typeof insertAttendancePolicySchema>;
 export type AttendancePolicy = typeof attendancePolicies.$inferSelect;
+
+// ── ACADEMIC SESSIONS ─────────────────────────────────────────────────────────
+// One school (tenant) can have many sessions (e.g. 2025-2026, 2026-2027).
+// Only one session per school may have isActive = true at any time;
+// the activation route enforces this via a DB transaction.
+export const academicSessions = pgTable("academic_sessions", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionName: varchar("session_name", { length: 50 }).notNull(), // e.g. "2026-2027"
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  isActive: boolean("is_active").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAcademicSessionSchema = createInsertSchema(academicSessions).omit({ id: true, createdAt: true });
+export type InsertAcademicSession = z.infer<typeof insertAcademicSessionSchema>;
+export type AcademicSession = typeof academicSessions.$inferSelect;
+
+// ── ENROLLMENTS ───────────────────────────────────────────────────────────────
+// Links a student to an academic session with their class/section for that year.
+// Unique constraint on (schoolId, studentId, sessionId) prevents double-enrollment
+// in the same session. Created automatically on student add (active session is used).
+export const enrollments = pgTable("enrollments", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").notNull().references(() => academicSessions.id, { onDelete: "cascade" }),
+  className: varchar("class_name", { length: 20 }).notNull(),
+  sectionName: varchar("section_name", { length: 10 }).notNull(),
+  rollNo: integer("roll_no"),
+  status: varchar("status", { length: 20 }).notNull().default("Active"),
+}, (table) => ({
+  uniqueStudentSession: uniqueIndex("enrollments_student_session_uidx").on(
+    table.schoolId, table.studentId, table.sessionId,
+  ),
+}));
+
+export const insertEnrollmentSchema = createInsertSchema(enrollments).omit({ id: true });
+export type InsertEnrollment = z.infer<typeof insertEnrollmentSchema>;
+export type Enrollment = typeof enrollments.$inferSelect;

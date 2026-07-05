@@ -719,6 +719,27 @@ export async function registerRoutes(
         ...(guardianName ? { guardianName } : {}),
       });
 
+      // Auto-enrollment: silently attach the student to the currently active
+      // academic session for this school. If no session is active yet, skip
+      // gracefully — enrollment can be assigned later when a session is created.
+      try {
+        const activeSession = await storage.getActiveSession(schoolId);
+        if (activeSession) {
+          await storage.createEnrollment({
+            schoolId,
+            studentId: student.id,
+            sessionId: activeSession.id,
+            className: cls,
+            sectionName: section,
+            ...(rollNumber ? { rollNo: rollNumber } : {}),
+            status: "Active",
+          });
+        }
+      } catch (enrollErr) {
+        // Non-fatal: student row was created successfully; log and continue.
+        console.warn("Auto-enrollment skipped:", enrollErr);
+      }
+
       res.status(201).json(student);
     } catch (error: any) {
       console.error("Manual student add error:", error);
@@ -2196,6 +2217,84 @@ export async function registerRoutes(
     } catch (err) {
       console.error("teacher-summary error:", err);
       res.status(500).json({ message: "Failed to fetch teacher attendance summary" });
+    }
+  });
+
+  // ===== ACADEMIC SESSIONS API =====
+  // All routes are admin-only and strictly scoped to req.session.schoolId (tenant isolation).
+
+  app.get("/api/admin/academic-sessions", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    try {
+      const rows = await storage.getAcademicSessions(schoolId);
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to fetch sessions" });
+    }
+  });
+
+  app.post("/api/admin/academic-sessions", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    try {
+      const schema = z.object({
+        sessionName: z.string().min(1, "Session name is required"),
+        startDate:   z.string().min(1, "Start date is required"),
+        endDate:     z.string().min(1, "End date is required"),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success)
+        return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+      const session = await storage.createAcademicSession({
+        schoolId,
+        sessionName: parsed.data.sessionName.trim(),
+        startDate:   parsed.data.startDate,
+        endDate:     parsed.data.endDate,
+        isActive:    false, // always starts inactive; admin must explicitly activate
+      });
+      res.status(201).json(session);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to create session" });
+    }
+  });
+
+  /**
+   * Activate a session — atomically deactivates all sibling sessions for this
+   * school before marking the target active (see storage.activateAcademicSession).
+   */
+  app.patch("/api/admin/academic-sessions/:id/activate", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid session ID" });
+    try {
+      const updated = await storage.activateAcademicSession(id, schoolId);
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to activate session" });
+    }
+  });
+
+  app.delete("/api/admin/academic-sessions/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid session ID" });
+    try {
+      await storage.deleteAcademicSession(id, schoolId);
+      res.json({ message: "Session deleted" });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to delete session" });
     }
   });
 

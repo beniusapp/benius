@@ -7,6 +7,7 @@ import {
   promotionOverrides, gradingTiers, gradingRules, academicHistory,
   schoolAssets, assetLogs, verificationLogs, timetableStructure, securityAudit, leavePolicies,
   nonTeachingStaff, facultyMappings, feeRecords, examPolicyTiers, promotionDecisions,
+  academicSessions, enrollments,
   type PromotionDecision,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
@@ -37,6 +38,8 @@ import {
   type FacultyMapping, type InsertFacultyMapping,
   type FeeRecord, type InsertFeeRecord,
   type ExamPolicyTier, type InsertExamPolicyTier,
+  type AcademicSession, type InsertAcademicSession,
+  type Enrollment, type InsertEnrollment,
 } from "@shared/schema";
 import { db } from "./db";
 import { pool } from "./db";
@@ -4253,6 +4256,86 @@ export class DatabaseStorage {
       ))
       .returning();
     return deleted.length;
+  }
+
+  // ── ACADEMIC SESSIONS ───────────────────────────────────────────────────────
+  // All methods are tenant-scoped by schoolId to enforce multi-tenant isolation.
+
+  /** Return all sessions for a school, newest first. */
+  async getAcademicSessions(schoolId: number): Promise<AcademicSession[]> {
+    return await db
+      .select()
+      .from(academicSessions)
+      .where(eq(academicSessions.schoolId, schoolId))
+      .orderBy(desc(academicSessions.createdAt));
+  }
+
+  /** Return the single active session for a school (or undefined if none set). */
+  async getActiveSession(schoolId: number): Promise<AcademicSession | undefined> {
+    const [session] = await db
+      .select()
+      .from(academicSessions)
+      .where(and(eq(academicSessions.schoolId, schoolId), eq(academicSessions.isActive, true)));
+    return session;
+  }
+
+  /** Insert a new academic session. isActive defaults to false from schema. */
+  async createAcademicSession(data: InsertAcademicSession): Promise<AcademicSession> {
+    const [session] = await db.insert(academicSessions).values(data).returning();
+    return session;
+  }
+
+  /** Hard-delete a session. Cascades to enrollments via FK. */
+  async deleteAcademicSession(id: number, schoolId: number): Promise<void> {
+    await db
+      .delete(academicSessions)
+      .where(and(eq(academicSessions.id, id), eq(academicSessions.schoolId, schoolId)));
+  }
+
+  /**
+   * Atomically activate one session for a school.
+   * CRITICAL MULTI-TENANT LOGIC:
+   *   Step 1 — set isActive = false for ALL sessions of this schoolId.
+   *   Step 2 — set isActive = true for the target id (same schoolId guard).
+   * Both steps run inside a single DB transaction so there is never a window
+   * where two sessions are active or no session is active mid-request.
+   */
+  async activateAcademicSession(id: number, schoolId: number): Promise<AcademicSession> {
+    return await db.transaction(async (tx) => {
+      await tx
+        .update(academicSessions)
+        .set({ isActive: false })
+        .where(eq(academicSessions.schoolId, schoolId));
+
+      const [updated] = await tx
+        .update(academicSessions)
+        .set({ isActive: true })
+        .where(and(eq(academicSessions.id, id), eq(academicSessions.schoolId, schoolId)))
+        .returning();
+
+      if (!updated) throw new Error("Session not found or access denied");
+      return updated;
+    });
+  }
+
+  // ── ENROLLMENTS ─────────────────────────────────────────────────────────────
+
+  /**
+   * Create a single enrollment record.
+   * Called automatically from the student-creation route using the active session.
+   * If no active session exists the call is skipped gracefully (non-blocking).
+   */
+  async createEnrollment(data: InsertEnrollment): Promise<Enrollment> {
+    const [enrollment] = await db.insert(enrollments).values(data).returning();
+    return enrollment;
+  }
+
+  /** List all enrollments for a given session in a school. */
+  async getEnrollmentsBySession(schoolId: number, sessionId: number): Promise<Enrollment[]> {
+    return await db
+      .select()
+      .from(enrollments)
+      .where(and(eq(enrollments.schoolId, schoolId), eq(enrollments.sessionId, sessionId)));
   }
 }
 
