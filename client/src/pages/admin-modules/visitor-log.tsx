@@ -6,12 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useSessionView } from "@/contexts/session-view-context";
 
 interface Props { schoolId: number }
 
 
 export default function VisitorLog({ schoolId }: Props) {
   const { toast } = useToast();
+  const { isArchiveMode } = useSessionView();
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [purpose, setPurpose] = useState("");
@@ -88,7 +90,7 @@ export default function VisitorLog({ schoolId }: Props) {
               </div>
             ))}
             <div className="flex items-end">
-              <Button disabled={!name || !purpose || !host || checkinMutation.isPending}
+              <Button disabled={isArchiveMode || !name || !purpose || !host || checkinMutation.isPending}
                 onClick={() => checkinMutation.mutate()}
                 className="w-full bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold" data-testid="button-submit-checkin">
                 {checkinMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <><UserCheck className="w-4 h-4 mr-1" /> Check In</>}

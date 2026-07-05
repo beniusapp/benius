@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useSessionView } from "@/contexts/session-view-context";
 
 interface CalendarEvent {
   id: number;
@@ -421,6 +422,7 @@ function AudiencePicker({
 
 export default function SchoolCalendar() {
   const { toast } = useToast();
+  const { isArchiveMode } = useSessionView();
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth());
   const [year, setYear] = useState(now.getFullYear());
@@ -651,7 +653,8 @@ export default function SchoolCalendar() {
               setAddOpen(true);
             }}
             data-testid="button-add-event"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#D4AF37]/15 border border-[#D4AF37]/30 text-[#D4AF37] text-sm font-medium hover:bg-[#D4AF37]/25 transition-colors"
+            disabled={isArchiveMode}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#D4AF37]/15 border border-[#D4AF37]/30 text-[#D4AF37] text-sm font-medium hover:bg-[#D4AF37]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Plus className="w-3.5 h-3.5" />
             Add Event
@@ -781,7 +784,8 @@ export default function SchoolCalendar() {
                 <p className="text-white/30 text-sm mb-3">No events on this day</p>
                 <button
                   onClick={() => openAddForDay(selectedDay)}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-[#D4AF37]/15 border border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/25 transition-colors"
+                  disabled={isArchiveMode}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-[#D4AF37]/15 border border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   data-testid="button-add-for-selected-day"
                 >
                   <Plus className="w-3 h-3 inline mr-1" />Add Event
@@ -992,7 +996,7 @@ export default function SchoolCalendar() {
               </button>
               <button
                 onClick={() => addMutation.mutate(form)}
-                disabled={addMutation.isPending || !form.title || !form.startDate || (addTargeted && form.targets.length === 0)}
+                disabled={isArchiveMode || addMutation.isPending || !form.title || !form.startDate || (addTargeted && form.targets.length === 0)}
                 className="flex-1 py-2.5 rounded-lg bg-[#D4AF37] text-[#0A1628] text-sm font-bold hover:bg-[#D4AF37]/90 transition-colors disabled:opacity-60"
                 data-testid="button-confirm-add"
               >
@@ -1042,7 +1046,7 @@ export default function SchoolCalendar() {
                   </button>
                   <button
                     onClick={() => deleteMutation.mutate(editingEvent.id)}
-                    disabled={deleteMutation.isPending}
+                    disabled={isArchiveMode || deleteMutation.isPending}
                     className="flex-1 py-2.5 rounded-lg bg-red-500 text-white text-sm font-bold hover:bg-red-600 transition-colors disabled:opacity-60"
                     data-testid="button-confirm-delete"
                   >
@@ -1144,7 +1148,7 @@ export default function SchoolCalendar() {
                     </button>
                     <button
                       onClick={() => editMutation.mutate({ ...editForm, id: editingEvent.id })}
-                      disabled={editMutation.isPending || !editForm.title || !editForm.date || (editTargeted && editForm.targets.length === 0)}
+                      disabled={isArchiveMode || editMutation.isPending || !editForm.title || !editForm.date || (editTargeted && editForm.targets.length === 0)}
                       className="flex-1 py-2.5 rounded-lg bg-[#D4AF37] text-[#0A1628] text-sm font-bold hover:bg-[#D4AF37]/90 transition-colors disabled:opacity-60"
                       data-testid="button-submit-edit"
                     >

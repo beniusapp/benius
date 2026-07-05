@@ -11,6 +11,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import type { Teacher } from "@shared/schema";
+import { useSessionView } from "@/contexts/session-view-context";
 
 interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[]; onNavigate?: (module: string) => void }
 type TeacherWithEmail = Teacher & { email: string; mappings: { className: string; section: string }[] };
@@ -47,6 +48,7 @@ function SkeletonRow() {
 
 export default function TeacherRegistry({ schoolId, classes, sections, onNavigate }: Props) {
   const { toast } = useToast();
+  const { isArchiveMode } = useSessionView();
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [filterClass, setFilterClass] = useState("");
@@ -187,6 +189,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
           size="sm"
           className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
           onClick={() => setShowForm(!showForm)}
+          disabled={isArchiveMode}
           data-testid="button-add-teacher-toggle"
         >
           <UserPlus className="w-4 h-4 mr-1" /> Add Teacher
@@ -226,7 +229,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
               <div className="flex items-end col-span-2 md:col-span-3">
                 <Button
                   type="submit"
-                  disabled={addMutation.isPending}
+                  disabled={isArchiveMode || addMutation.isPending}
                   className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
                   data-testid="button-submit-register-teacher"
                 >
@@ -347,11 +350,11 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-1">
                           <Button variant="ghost" size="icon" className="text-[#D4AF37] hover:text-yellow-300 hover:bg-yellow-400/10 h-8 w-8"
-                            onClick={() => setEditTarget(t)} data-testid={`button-edit-teacher-reg-${t.id}`} title="Edit">
+                            onClick={() => setEditTarget(t)} disabled={isArchiveMode} data-testid={`button-edit-teacher-reg-${t.id}`} title="Edit">
                             <Pencil className="w-3.5 h-3.5" />
                           </Button>
                           <Button variant="ghost" size="icon" className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-8 w-8"
-                            onClick={() => setDeleteTarget(t)} data-testid={`button-delete-teacher-reg-${t.id}`} title="Remove">
+                            onClick={() => setDeleteTarget(t)} disabled={isArchiveMode} data-testid={`button-delete-teacher-reg-${t.id}`} title="Remove">
                             <Trash2 className="w-3.5 h-3.5" />
                           </Button>
                         </div>
@@ -424,7 +427,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
                     )} />
                   </div>
                   <div className="flex gap-2 pt-2">
-                    <Button type="submit" disabled={editMutation.isPending} className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold flex-1" data-testid="button-save-edit-teacher-registry">
+                    <Button type="submit" disabled={isArchiveMode || editMutation.isPending} className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold flex-1" data-testid="button-save-edit-teacher-registry">
                       {editMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
                       Save Changes
                     </Button>
@@ -451,7 +454,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
             <div className="flex gap-2">
               <Button
                 onClick={() => deleteMutation.mutate(deleteTarget.id)}
-                disabled={deleteMutation.isPending}
+                disabled={isArchiveMode || deleteMutation.isPending}
                 className="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold"
                 data-testid="button-confirm-delete-teacher-registry"
               >

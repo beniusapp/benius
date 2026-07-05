@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
+import { apiRequest, queryClient, getQueryFn, setViewSessionId } from "@/lib/queryClient";
 import { SessionViewContext, type AcademicSession } from "@/contexts/session-view-context";
 
 import SchoolSetup from "./admin-modules/school-setup";
@@ -808,6 +808,10 @@ export default function AdminDashboard() {
   }, [sessions, selectedViewSession]);
 
   const isArchiveMode = selectedViewSession ? !selectedViewSession.isActive : false;
+
+  useEffect(() => {
+    setViewSessionId(selectedViewSession?.id ?? null);
+  }, [selectedViewSession]);
 
   const pendingLeavesCount   = (pendingLeaves  as { status: string }[]).filter(l => l.status === "pending").length;
   const pendingGalleryCount  = (galleryItems   as { approved: boolean }[]).filter(g => !g.approved).length;

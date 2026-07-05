@@ -139,10 +139,48 @@ function parseDate(value: string): string | null {
   return null;
 }
 
+const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/**
+ * archiveGuard — rejects any mutation request whose x-view-session-id header
+ * points to a non-active (archived) session for this school.
+ * Safe to run on every request: GET/HEAD requests pass through immediately,
+ * requests with no header pass through, and any DB error fails open.
+ */
+async function archiveGuard(
+  req: import("express").Request,
+  res: import("express").Response,
+  next: import("express").NextFunction
+) {
+  if (!MUTATION_METHODS.has(req.method)) return next();
+
+  const rawHeader = req.headers["x-view-session-id"];
+  if (!rawHeader || !req.session?.schoolId) return next();
+
+  const sid = parseInt(Array.isArray(rawHeader) ? rawHeader[0] : rawHeader, 10);
+  if (isNaN(sid)) return next();
+
+  try {
+    const activeSession = await storage.getActiveSession(req.session.schoolId);
+    if (activeSession && activeSession.id !== sid) {
+      return res.status(403).json({
+        error: "Write operations are disabled for archived sessions.",
+        code: "ARCHIVE_READ_ONLY",
+      });
+    }
+    next();
+  } catch {
+    next(); // fail open — do not block on DB errors
+  }
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  /* ── Archive-session guard: applied globally to all mutation routes ── */
+  app.use(archiveGuard);
+
   app.get("/api/schools", async (_req, res) => {
     const schools = await storage.getSchools();
     const counts = await storage.getActiveStudentCountsBySchools();

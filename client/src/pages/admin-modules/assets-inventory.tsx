@@ -10,6 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useSessionView } from "@/contexts/session-view-context";
 
 interface Props { schoolId: number }
 
@@ -40,6 +41,7 @@ const CONDITION_BADGE: Record<string, string> = {
 
 export default function AssetsInventory({ schoolId: _schoolId }: Props) {
   const { toast } = useToast();
+  const { isArchiveMode } = useSessionView();
 
   const [search, setSearch] = useState("");
   const [filterCondition, setFilterCondition] = useState("all");
@@ -161,6 +163,7 @@ export default function AssetsInventory({ schoolId: _schoolId }: Props) {
           size="sm"
           className="bg-[#10b981] hover:bg-[#059669] text-white font-semibold"
           onClick={() => setShowAddForm(v => !v)}
+          disabled={isArchiveMode}
           data-testid="button-add-asset"
         >
           <Plus className="w-4 h-4 mr-1" /> Add Asset
@@ -225,7 +228,7 @@ export default function AssetsInventory({ schoolId: _schoolId }: Props) {
             </div>
             <div className="flex items-end">
               <Button
-                disabled={!addName.trim() || !addCategory || !addQty || createMutation.isPending}
+                disabled={isArchiveMode || !addName.trim() || !addCategory || !addQty || createMutation.isPending}
                 onClick={handleAdd}
                 className="w-full bg-[#10b981] hover:bg-[#059669] text-white font-semibold"
                 data-testid="button-submit-asset"
@@ -433,7 +436,7 @@ export default function AssetsInventory({ schoolId: _schoolId }: Props) {
             </Button>
             <Button
               onClick={handleSaveEdit}
-              disabled={updateMutation.isPending}
+              disabled={isArchiveMode || updateMutation.isPending}
               className="bg-[#10b981] hover:bg-[#059669] text-white"
               data-testid="button-save-edit"
             >
@@ -458,7 +461,7 @@ export default function AssetsInventory({ schoolId: _schoolId }: Props) {
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
-              disabled={deleteMutation.isPending}
+              disabled={isArchiveMode || deleteMutation.isPending}
               className="bg-rose-600 hover:bg-rose-700 text-white"
               data-testid="button-confirm-delete"
             >

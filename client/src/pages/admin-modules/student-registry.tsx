@@ -346,13 +346,13 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
             {isExporting ? "Exporting…" : "Export"}
           </Button>
           <Button size="sm" variant="outline" className="border-[#D4AF37]/40 text-[#D4AF37] hover:bg-[#D4AF37]/10 h-11"
-            onClick={() => uploadRef.current?.click()} data-testid="button-upload-csv" disabled={uploadMutation.isPending}>
+            onClick={() => uploadRef.current?.click()} data-testid="button-upload-csv" disabled={isArchiveMode || uploadMutation.isPending}>
             <Upload className="w-4 h-4 mr-1" /> {uploadMutation.isPending ? "Uploading…" : "Bulk CSV"}
           </Button>
           <input ref={el => uploadRef.current = el} type="file" accept=".csv,.xlsx" className="hidden"
             onChange={e => { const f = e.target.files?.[0]; if (f) uploadMutation.mutate(f); }} />
           <Button size="sm" className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-11"
-            onClick={() => setShowForm(!showForm)} data-testid="button-add-student-toggle">
+            onClick={() => setShowForm(!showForm)} disabled={isArchiveMode} data-testid="button-add-student-toggle">
             <UserPlus className="w-4 h-4 mr-1" /> Add Student
           </Button>
         </div>
@@ -495,7 +495,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
           <Button size="sm" variant="outline"
             className="border-[#10b981]/40 text-[#10b981] hover:bg-[#10b981]/10 h-11"
             onClick={() => autoAssignMutation.mutate()}
-            disabled={autoAssignMutation.isPending}
+            disabled={isArchiveMode || autoAssignMutation.isPending}
             data-testid="button-auto-assign-roll"
             title={`Auto-assign roll numbers to all students in ${cls}-${section} alphabetically`}>
             {autoAssignMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Hash className="w-3.5 h-3.5 mr-1.5" />}
@@ -506,6 +506,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
           <Button size="sm" variant="outline"
             className="border-red-400/40 text-red-400 hover:bg-red-400/10 h-11"
             onClick={() => setShowBulkConfirm(true)}
+            disabled={isArchiveMode}
             data-testid="button-bulk-deactivate">
             <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Deactivate {selected.size} Selected
           </Button>
@@ -602,6 +603,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                           <Button variant="ghost" size="icon"
                             className="text-[#10b981] hover:text-emerald-300 hover:bg-[#10b981]/10 h-9 w-9 shrink-0"
                             onClick={() => setEditTarget(s)}
+                            disabled={isArchiveMode}
                             data-testid={`button-edit-student-${s.id}`}
                             title="Edit student">
                             <Pencil className="w-3.5 h-3.5" />
@@ -609,6 +611,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                           <Button variant="ghost" size="icon"
                             className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-9 w-9 shrink-0"
                             onClick={() => setDeactivateTarget(s)}
+                            disabled={isArchiveMode}
                             data-testid={`button-deactivate-student-${s.id}`}
                             title="Deactivate student">
                             <UserX className="w-3.5 h-3.5" />

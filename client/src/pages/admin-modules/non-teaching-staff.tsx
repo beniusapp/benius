@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useSessionView } from "@/contexts/session-view-context";
 import { useForm, UseFormReturn } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -39,6 +40,7 @@ function SkeletonRow() {
 
 export default function NonTeachingStaffModule({ schoolId }: Props) {
   const { toast } = useToast();
+  const { isArchiveMode } = useSessionView();
   const [showForm, setShowForm] = useState(false);
   const [editTarget, setEditTarget] = useState<NonTeachingStaff | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<NonTeachingStaff | null>(null);
@@ -189,6 +191,7 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
           size="sm"
           className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
           onClick={() => setShowForm(!showForm)}
+          disabled={isArchiveMode}
           data-testid="button-add-nts-toggle"
         >
           <UserPlus className="w-4 h-4 mr-1" /> Add Staff
@@ -206,7 +209,7 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
             <form onSubmit={addForm.handleSubmit(d => addMutation.mutate(d))} className="space-y-3">
               <StaffFormFields form={addForm} />
               <div className="flex gap-2 pt-1">
-                <Button type="submit" disabled={addMutation.isPending} className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold" data-testid="button-submit-nts">
+                <Button type="submit" disabled={isArchiveMode || addMutation.isPending} className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold" data-testid="button-submit-nts">
                   {addMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <UserPlus className="w-4 h-4 mr-1" />}
                   Register
                 </Button>
@@ -260,11 +263,11 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-1">
                           <Button variant="ghost" size="icon" className="text-[#D4AF37] hover:text-yellow-300 hover:bg-yellow-400/10 h-8 w-8"
-                            onClick={() => setEditTarget(s)} data-testid={`button-edit-nts-${s.id}`} title="Edit">
+                            onClick={() => setEditTarget(s)} disabled={isArchiveMode} data-testid={`button-edit-nts-${s.id}`} title="Edit">
                             <Pencil className="w-3.5 h-3.5" />
                           </Button>
                           <Button variant="ghost" size="icon" className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-8 w-8"
-                            onClick={() => setDeleteTarget(s)} data-testid={`button-delete-nts-${s.id}`} title="Remove">
+                            onClick={() => setDeleteTarget(s)} disabled={isArchiveMode} data-testid={`button-delete-nts-${s.id}`} title="Remove">
                             <Trash2 className="w-3.5 h-3.5" />
                           </Button>
                         </div>
@@ -294,7 +297,7 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
                 <form onSubmit={editForm.handleSubmit(d => editMutation.mutate(d))} className="space-y-3">
                   <StaffFormFields form={editForm} isEdit />
                   <div className="flex gap-2 pt-2">
-                    <Button type="submit" disabled={editMutation.isPending} className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold flex-1" data-testid="button-save-edit-nts">
+                    <Button type="submit" disabled={isArchiveMode || editMutation.isPending} className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold flex-1" data-testid="button-save-edit-nts">
                       {editMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
                       Save Changes
                     </Button>
@@ -318,7 +321,7 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
               This will remove <span className="text-white font-medium">{deleteTarget.fullName}</span> ({deleteTarget.designation}) from the registry.
             </p>
             <div className="flex gap-2">
-              <Button onClick={() => deleteMutation.mutate(deleteTarget.id)} disabled={deleteMutation.isPending}
+              <Button onClick={() => deleteMutation.mutate(deleteTarget.id)} disabled={isArchiveMode || deleteMutation.isPending}
                 className="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold" data-testid="button-confirm-delete-nts">
                 {deleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Trash2 className="w-4 h-4 mr-1" />}
                 Remove

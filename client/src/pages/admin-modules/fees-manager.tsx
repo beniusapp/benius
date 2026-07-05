@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useSessionView } from "@/contexts/session-view-context";
 
 interface StudentItem {
   id: number;
@@ -81,6 +82,7 @@ type FeeFormValues = z.infer<typeof feeFormSchema>;
 
 export default function FeesManager({ schoolId }: { schoolId: number }) {
   const { toast } = useToast();
+  const { isArchiveMode } = useSessionView();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [showForm, setShowForm] = useState(false);
@@ -227,7 +229,7 @@ export default function FeesManager({ schoolId }: { schoolId: number }) {
             <p className="text-xs text-slate-400">Manage student fee records and payment history</p>
           </div>
         </div>
-        <Button onClick={openCreate} className="flex items-center gap-2 text-sm" data-testid="button-add-fee">
+        <Button onClick={openCreate} disabled={isArchiveMode} className="flex items-center gap-2 text-sm" data-testid="button-add-fee">
           <Plus className="w-4 h-4" /> Add Fee Record
         </Button>
       </div>
@@ -332,7 +334,7 @@ export default function FeesManager({ schoolId }: { schoolId: number }) {
                   className="p-2 rounded-lg hover:bg-red-50 transition-colors"
                   data-testid={`button-delete-fee-${rec.id}`}
                   title="Delete"
-                  disabled={deleteMutation.isPending}
+                  disabled={isArchiveMode || deleteMutation.isPending}
                 >
                   <Trash2 className="w-4 h-4 text-red-400" />
                 </button>
@@ -470,7 +472,7 @@ export default function FeesManager({ schoolId }: { schoolId: number }) {
                 <Button type="button" variant="outline" onClick={() => { setShowForm(false); setEditing(null); form.reset(); }}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending} data-testid="button-submit-fee">
+                <Button type="submit" disabled={isArchiveMode || createMutation.isPending || updateMutation.isPending} data-testid="button-submit-fee">
                   {(createMutation.isPending || updateMutation.isPending) ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                   {editing ? "Save Changes" : "Create Record"}
                 </Button>
