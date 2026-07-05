@@ -126,6 +126,7 @@ export const classwork = pgTable("classwork", {
   content: text("content").notNull(),
   fileUrl: text("file_url"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  sessionId: integer("session_id").references(() => academicSessions.id),
 });
 
 export const notices = pgTable("notices", {

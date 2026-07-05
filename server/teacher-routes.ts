@@ -458,9 +458,11 @@ export function registerTeacherRoutes(app: Express) {
     if (!content || !cls || !section) return res.status(400).json({ message: "Content, class, and section required" });
 
     const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
+    const activeSession = await storage.getActiveSession(teacher.schoolId);
     const cw = await storage.createClasswork({
       teacherId: teacher.id, schoolId: teacher.schoolId, class: cls, section,
       subject: subject || "General", content, fileUrl,
+      sessionId: activeSession?.id ?? null,
     });
     res.status(201).json(cw);
   });
@@ -474,7 +476,8 @@ export function registerTeacherRoutes(app: Express) {
 
     const cls = req.params.class;
     const section = req.params.section;
-    const list = await storage.getClassworkByClass(sid, cls, section);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getClassworkByClass(sid, cls, section, viewSessionId ?? undefined);
 
     const teacherCache = new Map<number, string>();
     const enriched = await Promise.all(list.map(async (cw) => {

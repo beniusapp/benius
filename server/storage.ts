@@ -545,9 +545,14 @@ export class DatabaseStorage {
     return cw;
   }
 
-  async getClassworkByClass(schoolId: number, cls: string, section: string): Promise<Classwork[]> {
+  async getClassworkByClass(schoolId: number, cls: string, section: string, sessionId?: number): Promise<Classwork[]> {
     return await db.select().from(classwork).where(
-      and(eq(classwork.schoolId, schoolId), eq(classwork.class, cls), eq(classwork.section, section))
+      and(
+        eq(classwork.schoolId, schoolId),
+        eq(classwork.class, cls),
+        eq(classwork.section, section),
+        ...(sessionId != null ? [eq(classwork.sessionId, sessionId)] : []),
+      )
     ).orderBy(desc(classwork.createdAt));
   }
 
