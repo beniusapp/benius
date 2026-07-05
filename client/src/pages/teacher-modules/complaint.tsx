@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
-import type { TeacherMe } from "@/pages/teacher-dashboard";
+import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
 
 interface SearchResult {
   id: number;
@@ -82,6 +82,7 @@ const TYPE_PILLS: Record<string, string> = {
 };
 
 function ResolutionThread({ complaintId, teacherId }: { complaintId: number; teacherId: number }) {
+  const isArchiveMode = useArchiveMode();
   const { toast } = useToast();
   const [noteContent, setNoteContent] = useState("");
   const [expanded, setExpanded] = useState(false);
@@ -164,7 +165,7 @@ function ResolutionThread({ complaintId, teacherId }: { complaintId: number; tea
             <Button
               size="sm"
               onClick={() => addNoteMutation.mutate()}
-              disabled={!noteContent.trim() || addNoteMutation.isPending}
+              disabled={isArchiveMode || !noteContent.trim() || addNoteMutation.isPending}
               className="h-8 px-3 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-xs"
               data-testid={`button-add-note-${complaintId}`}
             >
@@ -451,7 +452,7 @@ function ClassFeedDrawer({
                   <Button
                     size="sm"
                     onClick={() => resolveMutation.mutate()}
-                    disabled={!resolveRemarks.trim() || resolveMutation.isPending}
+                    disabled={isArchiveMode || !resolveRemarks.trim() || resolveMutation.isPending}
                     className="rounded-xl bg-emerald-400 hover:bg-emerald-500 text-black font-bold flex-1"
                     data-testid="button-confirm-resolve"
                   >
@@ -468,7 +469,8 @@ function ClassFeedDrawer({
                 <Button
                   size="sm"
                   onClick={() => setShowResolveBox(true)}
-                  className="rounded-xl bg-emerald-400 hover:bg-emerald-500 text-black font-bold flex-1"
+                  disabled={isArchiveMode}
+                  className="rounded-xl bg-emerald-400 hover:bg-emerald-500 text-black font-bold flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
                   data-testid="button-resolve"
                 >
                   <CheckCircle className="w-4 h-4 mr-1" /> Mark as Solved
@@ -476,7 +478,7 @@ function ClassFeedDrawer({
                 <Button
                   size="sm"
                   onClick={() => escalateMutation.mutate()}
-                  disabled={escalateMutation.isPending || !!entry.escalatedToPrincipal}
+                  disabled={isArchiveMode || escalateMutation.isPending || !!entry.escalatedToPrincipal}
                   className="rounded-xl bg-amber-400 hover:bg-amber-500 text-black font-bold flex-1"
                   data-testid="button-escalate"
                 >
@@ -647,6 +649,7 @@ function ClassFeedTab({ teacher }: { teacher: TeacherMe }) {
 }
 
 export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
+  const isArchiveMode = useArchiveMode();
   const { toast } = useToast();
   const [activeView, setActiveView] = useState<"my" | "feed">("my");
 
@@ -777,6 +780,11 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
 
   return (
     <div className="space-y-6">
+      {isArchiveMode && (
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 text-amber-700 dark:text-amber-400 text-xs font-semibold" data-testid="banner-archive-mode">
+          🔒 Archive Mode — This is a read-only historical session. No changes can be saved.
+        </div>
+      )}
       {/* Tab switcher */}
       <div className="flex gap-1 p-1 bg-muted/50 rounded-xl" data-testid="complaint-view-toggle">
         <button
@@ -913,7 +921,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
 
           <Button
             onClick={() => submitMutation.mutate()}
-            disabled={!canPost || submitMutation.isPending}
+            disabled={isArchiveMode || !canPost || submitMutation.isPending}
             className={`w-full h-12 rounded-xl text-sm font-semibold transition-all ${
               canPost
                 ? "bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white shadow-md active:scale-[0.98]"
@@ -1006,7 +1014,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
                         />
                         <div className="flex gap-2">
                           <Button size="sm" onClick={() => updateMutation.mutate(c.id)}
-                            disabled={updateMutation.isPending}
+                            disabled={isArchiveMode || updateMutation.isPending}
                             className="rounded-lg bg-gradient-to-r from-red-600 to-rose-600 text-white"
                             data-testid={`button-save-edit-${c.id}`}>
                             {updateMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
@@ -1059,7 +1067,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
                           <Button
                             size="sm"
                             onClick={() => selfResolveMutation.mutate(c.id)}
-                            disabled={selfResolveMutation.isPending}
+                            disabled={isArchiveMode || selfResolveMutation.isPending}
                             className="h-7 px-3 rounded-lg bg-emerald-400 hover:bg-emerald-500 text-black font-bold text-xs"
                             data-testid={`button-self-resolve-${c.id}`}
                           >
@@ -1074,7 +1082,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
                               <>
                                 <span className="text-xs text-destructive mr-1">Delete?</span>
                                 <Button size="sm" variant="destructive" className="h-7 px-2 rounded-lg text-xs"
-                                  onClick={() => deleteMutation.mutate(c.id)} disabled={deleteMutation.isPending}
+                                  onClick={() => deleteMutation.mutate(c.id)} disabled={isArchiveMode || deleteMutation.isPending}
                                   data-testid={`button-confirm-delete-${c.id}`}>
                                   {deleteMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Yes"}
                                 </Button>

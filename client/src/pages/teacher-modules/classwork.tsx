@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
-import type { TeacherMe } from "@/pages/teacher-dashboard";
+import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 
 interface ClassworkEntry {
@@ -66,6 +66,7 @@ function getAvatarColor(name: string): string {
 }
 
 export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
+  const isArchiveMode = useArchiveMode();
   const { toast } = useToast();
   const {
     classes,
@@ -233,6 +234,11 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
 
   return (
     <div className="space-y-6">
+      {isArchiveMode && (
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 text-amber-700 dark:text-amber-400 text-xs font-semibold" data-testid="banner-archive-mode">
+          🔒 Archive Mode — This is a read-only historical session. No changes can be saved.
+        </div>
+      )}
       <Card className="rounded-2xl shadow-lg border-0 bg-white dark:bg-gray-950" data-testid="card-create-classwork">
         <CardContent className="p-5 sm:p-6 space-y-5">
           <div className="flex items-center gap-2 mb-1">
@@ -350,7 +356,7 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
 
           <Button
             onClick={() => createMutation.mutate()}
-            disabled={!canPost || createMutation.isPending}
+            disabled={isArchiveMode || !canPost || createMutation.isPending}
             className={`w-full h-12 rounded-xl text-sm font-semibold transition-all ${
               canPost
                 ? "bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-md active:scale-[0.98]"
@@ -452,7 +458,7 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
                           <Button
                             size="sm"
                             onClick={() => updateMutation.mutate(entry.id)}
-                            disabled={updateMutation.isPending}
+                            disabled={isArchiveMode || updateMutation.isPending}
                             className="rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white"
                             data-testid={`button-save-edit-${entry.id}`}
                           >
@@ -494,7 +500,7 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
                               <span className="text-xs text-destructive mr-1">Delete?</span>
                               <Button size="sm" variant="destructive" className="h-7 px-2 rounded-lg text-xs"
                                 onClick={() => deleteMutation.mutate(entry.id)}
-                                disabled={deleteMutation.isPending}
+                                disabled={isArchiveMode || deleteMutation.isPending}
                                 data-testid={`button-confirm-delete-${entry.id}`}
                               >
                                 {deleteMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Yes"}

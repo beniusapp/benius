@@ -14,7 +14,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSchoolConfig } from "@/hooks/use-school-config";
-import type { TeacherMe } from "@/pages/teacher-dashboard";
+import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
 
 interface NoticeEntry {
   id: number;
@@ -81,6 +81,7 @@ function markIdsRead(teacherId: number, ids: number[]) {
 }
 
 export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
+  const isArchiveMode = useArchiveMode();
   const { toast } = useToast();
   const { classes: CLASS_OPTIONS, sections: SECTION_OPTIONS, examTypes } = useSchoolConfig(teacher.schoolId);
   const [tab, setTab] = useState<"admin" | "student">("admin");
@@ -263,6 +264,11 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
 
   return (
     <div className="space-y-6">
+      {isArchiveMode && (
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 text-amber-700 dark:text-amber-400 text-xs font-semibold" data-testid="banner-archive-mode">
+          🔒 Archive Mode — This is a read-only historical session. No changes can be saved.
+        </div>
+      )}
       <div className="flex gap-2 p-1 bg-muted/50 rounded-xl" data-testid="tabs-notice">
         <button
           onClick={() => setTab("admin")}
@@ -564,7 +570,7 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
 
               <Button
                 onClick={() => postMutation.mutate()}
-                disabled={!canPost || postMutation.isPending}
+                disabled={isArchiveMode || !canPost || postMutation.isPending}
                 className={`w-full h-12 rounded-xl text-sm font-semibold transition-all ${
                   canPost
                     ? "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white shadow-md active:scale-[0.98]"
@@ -644,7 +650,7 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
                               </button>
                               <button
                                 onClick={() => deleteMutation.mutate(n.id)}
-                                disabled={deleteMutation.isPending}
+                                disabled={isArchiveMode || deleteMutation.isPending}
                                 className="p-1.5 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-40"
                                 title="Delete notice"
                                 data-testid={`button-delete-my-notice-${n.id}`}
@@ -672,7 +678,7 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
                           <div className="flex gap-2">
                             <button
                               onClick={() => editMutation.mutate({ id: n.id, content: editContent })}
-                              disabled={!editContent.trim() || editMutation.isPending}
+                              disabled={isArchiveMode || !editContent.trim() || editMutation.isPending}
                               className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold disabled:opacity-50 transition-colors"
                               data-testid={`button-save-my-notice-${n.id}`}
                             >

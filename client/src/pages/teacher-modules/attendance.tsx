@@ -8,7 +8,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
-import type { TeacherMe } from "@/pages/teacher-dashboard";
+import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
 import MyAttendanceModule from "./my-attendance";
 
 interface StudentAttendance {
@@ -156,6 +156,7 @@ function DarkInput({
 }
 
 export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
+  const isArchiveMode = useArchiveMode();
   const { toast } = useToast();
   const {
     classes,
@@ -572,10 +573,15 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
 
   /* ── MARK ATTENDANCE ── */
   const allAtLimit = students.length > 0 && students.every(s => s.editCount >= 3);
-  const canSave = isEditable && !allAtLimit && students.length > 0 && !isHolidayDate;
+  const canSave = !isArchiveMode && isEditable && !allAtLimit && students.length > 0 && !isHolidayDate;
 
   return (
     <div className="space-y-4 pb-24" data-testid="view-mark">
+      {isArchiveMode && (
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs font-semibold" data-testid="banner-archive-mode">
+          🔒 Archive Mode — This attendance session is read-only. No changes can be saved.
+        </div>
+      )}
       <button
         onClick={() => navigateTo("class-menu")}
         className="flex items-center gap-1.5 text-sm text-white/60 hover:text-white transition-colors"
@@ -700,7 +706,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                       return (
                         <button
                           key={opt.value}
-                          disabled={locked || !isEditable || isDisabledByAbsent}
+                          disabled={isArchiveMode || locked || !isEditable || isDisabledByAbsent}
                           onClick={() => setStatus(student.studentId, opt.value)}
                           className={`
                             w-10 h-10 rounded-full text-xs font-bold transition-all duration-200 flex items-center justify-center
@@ -745,7 +751,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
           <div className="max-w-2xl mx-auto pointer-events-auto">
             <button
               onClick={() => saveMutation.mutate()}
-              disabled={!canSave || saveMutation.isPending}
+              disabled={isArchiveMode || !canSave || saveMutation.isPending}
               className="w-full h-14 rounded-2xl text-base font-semibold shadow-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] transition-all text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               data-testid="button-save-attendance"
             >

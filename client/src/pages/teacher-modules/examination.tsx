@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { TeacherMe } from "@/pages/teacher-dashboard";
+import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -772,6 +772,7 @@ function PromoCell({
   allClasses: string[];
   onChange: (id: number, next: PromoEntry) => void;
 }) {
+  const isArchiveMode = useArchiveMode();
   const decision = entry?.decision ?? "promoted";
   const targetClass = entry?.targetClass ?? getNextClass(resClass, allClasses);
   const targetSection = entry?.targetSection ?? resSection;
@@ -832,7 +833,7 @@ function PromoCell({
       {/* Decision badge — clickable when authorized and unlocked */}
       <button
         onClick={openPop}
-        disabled={!canEdit || isLocked}
+        disabled={isArchiveMode || !canEdit || isLocked}
         className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-bold border transition-all
           ${decision === "promoted"
             ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/25"
@@ -918,6 +919,7 @@ function PromoCell({
 
 // ── Results Tab ───────────────────────────────────────────────────────────────
 function ResultsTab({ teacher }: { teacher: TeacherMe }) {
+  const isArchiveMode = useArchiveMode();
   const { toast } = useToast();
   const { classes, sections: allSections, getSectionsForClass } = useSchoolConfigStrict(teacher.schoolId);
   const [resClass, setResClass] = useState("");
@@ -1456,7 +1458,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       {promoLocked && (
                         <button
                           onClick={() => saveLedgerMutation.mutate(false)}
-                          disabled={saveLedgerMutation.isPending}
+                          disabled={isArchiveMode || saveLedgerMutation.isPending}
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-400 text-xs font-semibold hover:bg-amber-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                           data-testid="btn-unlock-ledger">
                           {saveLedgerMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span>🔓</span>}
@@ -1465,7 +1467,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       )}
                       <button
                         onClick={runAutoSuggestion}
-                        disabled={promoLocked || allResults.length === 0 || isSyncingPolicy}
+                        disabled={isArchiveMode || promoLocked || allResults.length === 0 || isSyncingPolicy}
                         className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold hover:bg-blue-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed${(!promoLocked && allResults.length > 0 && !isSyncingPolicy) ? " animate-auto-suggest-pulse" : ""}`}
                         data-testid="btn-auto-suggest">
                         {isSyncingPolicy
@@ -1474,7 +1476,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       </button>
                       <button
                         onClick={() => saveLedgerMutation.mutate(false)}
-                        disabled={promoLocked || saveLedgerMutation.isPending || allResults.length === 0}
+                        disabled={isArchiveMode || promoLocked || saveLedgerMutation.isPending || allResults.length === 0}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs font-semibold hover:bg-yellow-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         data-testid="btn-save-ledger">
                         {saveLedgerMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
@@ -1482,7 +1484,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       </button>
                       <button
                         onClick={() => saveLedgerMutation.mutate(true)}
-                        disabled={promoLocked || saveLedgerMutation.isPending || allResults.length === 0}
+                        disabled={isArchiveMode || promoLocked || saveLedgerMutation.isPending || allResults.length === 0}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs font-semibold hover:bg-emerald-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         data-testid="btn-lock-ledger">
                         <GraduationCap className="w-3.5 h-3.5" /> Lock & Save Ledger
@@ -1731,6 +1733,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
 // ── Main Examination Module ───────────────────────────────────────────────────
 export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
+  const isArchiveMode = useArchiveMode();
   const { toast } = useToast();
   const {
     classes, subjects, examTypes, isLoading: configLoading,
@@ -2019,6 +2022,11 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
 
   return (
     <div className="space-y-6">
+      {isArchiveMode && (
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 text-amber-700 dark:text-amber-400 text-xs font-semibold" data-testid="banner-archive-mode">
+          🔒 Archive Mode — This is a read-only historical session. No changes can be saved.
+        </div>
+      )}
       {/* Tab bar */}
       <div className="flex gap-1.5 p-1 bg-[#020617] border border-[#1e293b] rounded-2xl" data-testid="tabs-exam">
         {([
@@ -2135,7 +2143,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                                 ref={el => { inputRefs.current[s.studentId] = el; }}
                                 type="number" min={0} max={maxMarks}
                                 value={isAbsent ? "" : (marks[s.studentId] ?? "")}
-                                disabled={isAbsent}
+                                disabled={isArchiveMode || isAbsent}
                                 onChange={e => setMarks(prev => ({ ...prev, [s.studentId]: e.target.value }))}
                                 onKeyDown={e => handleTabNav(s.studentId, idx, e)}
                                 className={`w-full min-w-[72px] text-center h-8 text-sm ${isOverMax ? "border-red-400 focus-visible:ring-red-400" : ""}`}
@@ -2174,7 +2182,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                   </div>
                 )}
 
-                <Button onClick={() => saveMutation.mutate()} disabled={!readyToSave || saveMutation.isPending}
+                <Button onClick={() => saveMutation.mutate()} disabled={isArchiveMode || !readyToSave || saveMutation.isPending}
                   className={`w-full h-12 rounded-xl text-sm font-semibold transition-all ${readyToSave ? "bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white shadow-md active:scale-[0.98]" : "opacity-50 cursor-not-allowed bg-gradient-to-r from-indigo-600 to-purple-600 text-white"}`}
                   data-testid="button-save-scores">
                   {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}

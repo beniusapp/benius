@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, createContext, useContext } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useRoute } from "wouter";
 import {
@@ -30,6 +30,13 @@ interface AcademicSessionItem {
   startDate: string | null;
   endDate: string | null;
 }
+
+// ── Archive Mode Context ────────────────────────────────────────────────────
+// Provides a boolean to every teacher sub-module without prop drilling.
+// true  → viewing an archived/historical session (all writes are blocked)
+// false → normal active session (default)
+export const ArchiveModeContext = createContext<boolean>(false);
+export function useArchiveMode(): boolean { return useContext(ArchiveModeContext); }
 
 export interface TeacherMe {
   id: number;
@@ -548,7 +555,9 @@ export default function TeacherDashboard() {
       <div className="relative z-10 pt-16">
         {ActiveComponent ? (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 text-foreground">
-            <ActiveComponent teacher={teacher} />
+            <ArchiveModeContext.Provider value={viewingSessionId != null}>
+              <ActiveComponent teacher={teacher} />
+            </ArchiveModeContext.Provider>
           </div>
         ) : (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">

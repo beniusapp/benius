@@ -188,7 +188,7 @@ async function checkSessionContext(
       if (activeSession && activeSession.id !== (req as any).viewSessionId) {
         // Give teachers a role-specific message; admins get the general archive message.
         return res.status(403).json({
-          error: "This academic session is locked. Historical data cannot be modified or added.",
+          error: "Security Restriction: Write operations are strictly blocked for archived school years.",
           code: "ARCHIVE_READ_ONLY",
         });
       }
