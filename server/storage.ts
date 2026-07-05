@@ -371,10 +371,33 @@ export class DatabaseStorage {
     return hw;
   }
 
-  async getHomeworkByClass(schoolId: number, cls: string, section: string): Promise<Homework[]> {
+  async getHomeworkByClass(schoolId: number, cls: string, section: string, sessionId?: number): Promise<Homework[]> {
+    // When sessionId is provided, strictly scope results to that academic year.
     return await db.select().from(homework).where(
-      and(eq(homework.schoolId, schoolId), eq(homework.class, cls), eq(homework.section, section))
+      and(
+        eq(homework.schoolId, schoolId),
+        eq(homework.class, cls),
+        eq(homework.section, section),
+        ...(sessionId != null ? [eq(homework.sessionId, sessionId)] : []),
+      )
     ).orderBy(desc(homework.createdAt));
+  }
+
+  /** Returns the student roster for a specific academic session via the enrollments table.
+   *  Used by teacher attendance/roster lookups in archive (look-back) mode. */
+  async getStudentsByClassSectionInSession(schoolId: number, cls: string, section: string, sessionId: number): Promise<Student[]> {
+    const rows = await db
+      .select({ student: students })
+      .from(students)
+      .innerJoin(enrollments, and(
+        eq(enrollments.studentId, students.id),
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+        eq(enrollments.className, cls),
+        eq(enrollments.sectionName, section),
+      ))
+      .where(eq(students.schoolId, schoolId));
+    return rows.map(r => r.student);
   }
 
   async updateHomework(id: number, data: { content: string; subject: string; fileUrl: string | null; dueDate?: string | null }): Promise<Homework> {

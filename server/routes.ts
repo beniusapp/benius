@@ -186,9 +186,12 @@ async function checkSessionContext(
     try {
       const activeSession = await storage.getActiveSession(req.session.schoolId);
       if (activeSession && activeSession.id !== (req as any).viewSessionId) {
+        // Give teachers a role-specific message; admins get the general archive message.
+        const isTeacherRequest = !!(req.session as any).teacherId;
         return res.status(403).json({
-          error:
-            "This academic session is locked. Historical archive data cannot be modified.",
+          error: isTeacherRequest
+            ? "Teachers cannot modify historical session data."
+            : "This academic session is locked. Historical archive data cannot be modified.",
           code: "ARCHIVE_READ_ONLY",
         });
       }

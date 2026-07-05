@@ -1,12 +1,12 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useRoute } from "wouter";
 import {
-  GraduationCap, Loader2, LogOut, ArrowLeft, ArrowRight,
+  GraduationCap, Loader2, LogOut, ArrowLeft, ArrowRight, History, ChevronDown,
 } from "lucide-react";
 import { motion, useMotionValue, useTransform } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
+import { apiRequest, queryClient, getQueryFn, setViewSessionId } from "@/lib/queryClient";
 
 import ProfileModule from "@/pages/teacher-modules/profile";
 import AttendanceModule from "@/pages/teacher-modules/attendance";
@@ -22,6 +22,14 @@ import LibraryModule from "@/pages/teacher-modules/library";
 import LeaveModule from "@/pages/teacher-modules/leave";
 import TimetableModule from "@/pages/teacher-modules/timetable";
 import StudentProfilesModule from "@/pages/teacher-modules/student-profiles";
+
+interface AcademicSessionItem {
+  id: number;
+  sessionName: string;
+  isActive: boolean;
+  startDate: string | null;
+  endDate: string | null;
+}
 
 export interface TeacherMe {
   id: number;
@@ -221,6 +229,13 @@ export default function TeacherDashboard() {
   const [matched, params] = useRoute("/teacher-dashboard/:module");
   const activeModule = matched ? params?.module : null;
 
+  // ── Session look-back state ──────────────────────────────────────────────
+  // null  → teacher is viewing the active/current session (default)
+  // number → teacher is in archive mode viewing that past session's data
+  const [viewingSessionId, setViewingSessionId] = useState<number | null>(null);
+  const [sessionDropdownOpen, setSessionDropdownOpen] = useState(false);
+  const sessionDropdownRef = useRef<HTMLDivElement>(null);
+
   const { data: teacher, isLoading, isError } = useQuery<TeacherMe | null>({
     queryKey: ["/api/teacher-me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
@@ -255,6 +270,40 @@ export default function TeacherDashboard() {
     return adminNoticesForBadge.filter(n => !readIds.has(n.id)).length;
   }, [adminNoticesForBadge, teacher?.id]);
 
+  // ── Academic sessions for look-back picker ─────────────────────────────
+  const { data: allSessions = [] } = useQuery<AcademicSessionItem[]>({
+    queryKey: ["/api/teacher/academic-sessions"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!teacher,
+    staleTime: 60000,
+  });
+  const activeSession = allSessions.find(s => s.isActive) ?? null;
+  const viewingSession = viewingSessionId != null
+    ? (allSessions.find(s => s.id === viewingSessionId) ?? null)
+    : null;
+
+  // Sync viewingSessionId → global queryClient header whenever it changes.
+  useEffect(() => {
+    setViewSessionId(viewingSessionId);
+  }, [viewingSessionId]);
+
+  // On unmount (logout / route away), always reset the global session context.
+  useEffect(() => {
+    return () => { setViewSessionId(null); };
+  }, []);
+
+  // Close session dropdown on outside click.
+  useEffect(() => {
+    if (!sessionDropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (sessionDropdownRef.current && !sessionDropdownRef.current.contains(e.target as Node)) {
+        setSessionDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [sessionDropdownOpen]);
+
   useEffect(() => {
     if (!isLoading && (isError || !teacher)) {
       setLocation("/teacher-login");
@@ -269,6 +318,7 @@ export default function TeacherDashboard() {
       await apiRequest("POST", "/api/teacher-logout");
     },
     onSuccess: () => {
+      setViewSessionId(null);
       queryClient.invalidateQueries({ queryKey: ["/api/teacher-me"] });
       setLocation("/teacher-login");
     },
@@ -360,6 +410,88 @@ export default function TeacherDashboard() {
             </div>
           </div>
 
+          {/* Centre: Session look-back picker (only when sessions exist) */}
+          {allSessions.length > 1 && (
+            <div className="flex-1 flex justify-center" ref={sessionDropdownRef}>
+              <div className="relative">
+                <button
+                  onClick={() => setSessionDropdownOpen(prev => !prev)}
+                  data-testid="button-session-picker"
+                  className="flex items-center gap-2 text-[11px] font-semibold px-3 py-1.5 rounded-full transition-all duration-200"
+                  style={{
+                    background: viewingSessionId
+                      ? "rgba(251,191,36,0.12)"
+                      : "rgba(20,184,166,0.10)",
+                    border: viewingSessionId
+                      ? "1px solid rgba(251,191,36,0.35)"
+                      : "1px solid rgba(20,184,166,0.25)",
+                    color: viewingSessionId ? "#fbbf24" : "rgba(94,234,212,0.9)",
+                  }}
+                >
+                  {viewingSessionId
+                    ? <History className="w-3 h-3 flex-shrink-0" />
+                    : <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse flex-shrink-0" style={{ boxShadow: "0 0 6px #14b8a6" }} />}
+                  <span className="hidden sm:inline">
+                    {viewingSession
+                      ? `${viewingSession.sessionName} · Archive`
+                      : activeSession
+                        ? `${activeSession.sessionName} · Active`
+                        : "Current Session"}
+                  </span>
+                  <ChevronDown
+                    className="w-3 h-3 transition-transform"
+                    style={{ transform: sessionDropdownOpen ? "rotate(180deg)" : "rotate(0deg)" }}
+                  />
+                </button>
+
+                {sessionDropdownOpen && (
+                  <div
+                    className="absolute top-full mt-2 left-1/2 z-[60] rounded-xl overflow-hidden"
+                    style={{
+                      transform: "translateX(-50%)",
+                      minWidth: "220px",
+                      background: "rgba(15,23,42,0.97)",
+                      backdropFilter: "blur(20px)",
+                      border: "1px solid rgba(255,255,255,0.10)",
+                      boxShadow: "0 16px 48px rgba(0,0,0,0.7)",
+                    }}
+                  >
+                    <div className="px-3 py-2 border-b" style={{ borderColor: "rgba(255,255,255,0.07)" }}>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-white/30">Academic Sessions</p>
+                    </div>
+                    {allSessions.map(s => (
+                      <button
+                        key={s.id}
+                        data-testid={`session-option-${s.id}`}
+                        onClick={() => {
+                          setViewingSessionId(s.isActive ? null : s.id);
+                          setSessionDropdownOpen(false);
+                          queryClient.invalidateQueries({ queryKey: ["/api/homework"] });
+                          queryClient.invalidateQueries({ queryKey: ["/api/attendance"] });
+                          queryClient.invalidateQueries({ queryKey: ["/api/exam-scores"] });
+                        }}
+                        className="w-full flex items-center justify-between px-3 py-2.5 transition-colors text-left"
+                        style={{
+                          background: (s.isActive ? !viewingSessionId : viewingSessionId === s.id)
+                            ? "rgba(255,255,255,0.05)"
+                            : "transparent",
+                          borderBottom: "1px solid rgba(255,255,255,0.04)",
+                        }}
+                      >
+                        <span className="text-xs font-medium text-white/80">{s.sessionName}</span>
+                        {s.isActive
+                          ? <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold" style={{ background: "rgba(20,184,166,0.15)", color: "#14b8a6" }}>Active</span>
+                          : (viewingSessionId === s.id)
+                            ? <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold" style={{ background: "rgba(251,191,36,0.15)", color: "#fbbf24" }}>Viewing</span>
+                            : <History className="w-3 h-3 text-white/25" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Right: avatar + name + logout */}
           <div className="flex items-center gap-3">
             {teacher.profileImageUrl ? (
@@ -420,6 +552,40 @@ export default function TeacherDashboard() {
           </div>
         ) : (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+
+            {/* ── Archive mode banner ─────────────────────────────────── */}
+            {viewingSession && (
+              <div
+                className="mb-6 flex items-center gap-3 px-4 py-3 rounded-xl"
+                data-testid="banner-archive-mode"
+                style={{
+                  background: "rgba(251,191,36,0.07)",
+                  border: "1px solid rgba(251,191,36,0.25)",
+                }}
+              >
+                <History className="w-4 h-4 flex-shrink-0" style={{ color: "#fbbf24" }} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold" style={{ color: "#fbbf24" }}>
+                    Archive Mode — Viewing {viewingSession.sessionName}
+                  </p>
+                  <p className="text-[11px] text-white/40 mt-0.5">
+                    All Attendance, Homework, and Marks data shown is from this past session. Edits are disabled.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setViewingSessionId(null)}
+                  data-testid="button-exit-archive"
+                  className="flex-shrink-0 text-[11px] font-semibold px-3 py-1.5 rounded-lg transition-all"
+                  style={{
+                    background: "rgba(251,191,36,0.15)",
+                    border: "1px solid rgba(251,191,36,0.30)",
+                    color: "#fbbf24",
+                  }}
+                >
+                  Return to Active
+                </button>
+              </div>
+            )}
 
             {/* Hero greeting */}
             <div className="mb-8 text-center">

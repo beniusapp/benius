@@ -171,6 +171,17 @@ export function registerTeacherRoutes(app: Express) {
     });
   });
 
+  // ── ACADEMIC SESSIONS (read-only for teachers) ────────────────────────────
+  // Returns all sessions for the teacher's school, newest first.
+  // Lets the frontend populate the "View Past Records" session picker.
+  app.get("/api/teacher/academic-sessions", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const sessions = await storage.getAcademicSessions(teacher.schoolId);
+    res.json(sessions);
+  });
+
   app.post("/api/teacher/change-password", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const parsed = changePasswordSchema.safeParse(req.body);
@@ -272,8 +283,13 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const { schoolId, class: cls, section, date } = req.params;
     const sid = parseInt(schoolId);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
 
-    const studentList = await storage.getStudentsByClassSection(sid, cls, section);
+    // Archive look-back: resolve roster via enrollments for the viewed session.
+    // Active-session view: use current student fields (class/section/isActive).
+    const studentList = viewSessionId
+      ? await storage.getStudentsByClassSectionInSession(sid, cls, section, viewSessionId)
+      : await storage.getStudentsByClassSection(sid, cls, section);
     const records = await storage.getAttendanceForStudentsOnDate(studentList.map(s => s.id), date);
 
     const result = studentList.map(student => {
@@ -375,8 +391,10 @@ export function registerTeacherRoutes(app: Express) {
     if (!content || !cls || !section) return res.status(400).json({ message: "Content, class, and section required" });
 
     const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
+    const activeSession = await storage.getActiveSession(teacher.schoolId);
     const hw = await storage.createHomework({
       teacherId: teacher.id, schoolId: teacher.schoolId, class: cls, section, subject: subject || "General", content, fileUrl, dueDate: dueDate || null,
+      sessionId: activeSession?.id ?? null,
     });
     res.status(201).json(hw);
   });
@@ -391,7 +409,8 @@ export function registerTeacherRoutes(app: Express) {
 
     const cls = req.params.class;
     const section = req.params.section;
-    const list = await storage.getHomeworkByClass(sid, cls, section);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getHomeworkByClass(sid, cls, section, viewSessionId ?? undefined);
     const totalStudents = await storage.getStudentCountByClassSection(sid, cls, section);
 
     const teacherCache = new Map<number, string>();

@@ -93,6 +93,7 @@ export const homework = pgTable("homework", {
   fileUrl: text("file_url"),
   dueDate: date("due_date"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  sessionId: integer("session_id").references(() => academicSessions.id),
 });
 
 export const homeworkViews = pgTable("homework_views", {
