@@ -2587,6 +2587,14 @@ export async function registerRoutes(
   });
 
   // ===== STUDENT: VIEW OWN FEES =====
+  app.get("/api/student/academic-sessions", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const sessions = await storage.getAcademicSessions(student.schoolId);
+    res.json(sessions);
+  });
+
   app.get("/api/student/fees", async (req, res) => {
     if (!req.session.studentId) return res.status(403).json({ message: "Student access required" });
     const student = await storage.getStudentById(req.session.studentId);
