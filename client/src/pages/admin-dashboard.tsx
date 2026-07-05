@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useRoute } from "wouter";
 import { useForm } from "react-hook-form";
@@ -20,24 +20,24 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, getQueryFn, setViewSessionId } from "@/lib/queryClient";
 import { SessionViewContext, type AcademicSession } from "@/contexts/session-view-context";
 
-import SchoolSetup from "./admin-modules/school-setup";
-import StudentRegistry from "./admin-modules/student-registry";
-import FacultyMapping from "./admin-modules/faculty-mapping";
-import TeacherRegistry from "./admin-modules/teacher-registry";
-import NonTeachingStaff from "./admin-modules/non-teaching-staff";
-import ApprovalCenter from "./admin-modules/approval-center";
-import AuditLogsModule from "./admin-modules/audit-logs";
-import VisitorLogModule from "./admin-modules/visitor-log";
-import AttendanceOverview from "./admin-modules/attendance-overview";
-import PerformanceAnalytics from "./admin-modules/performance-analytics";
-import ExamController from "./admin-modules/exam-controller";
-import ComplaintHub from "./admin-modules/complaint-hub";
-import NoticeboardAdmin from "./admin-modules/noticeboard-admin";
-import TimetableMaster from "./admin-modules/timetable-master";
-import IdCardGen from "./admin-modules/id-card-gen";
-import AssetsInventory from "./admin-modules/assets-inventory";
-import SchoolCalendar from "./admin-modules/school-calendar";
-import FeesManager from "./admin-modules/fees-manager";
+const SchoolSetup         = lazy(() => import("./admin-modules/school-setup"));
+const StudentRegistry     = lazy(() => import("./admin-modules/student-registry"));
+const FacultyMapping      = lazy(() => import("./admin-modules/faculty-mapping"));
+const TeacherRegistry     = lazy(() => import("./admin-modules/teacher-registry"));
+const NonTeachingStaff    = lazy(() => import("./admin-modules/non-teaching-staff"));
+const ApprovalCenter      = lazy(() => import("./admin-modules/approval-center"));
+const AuditLogsModule     = lazy(() => import("./admin-modules/audit-logs"));
+const VisitorLogModule    = lazy(() => import("./admin-modules/visitor-log"));
+const AttendanceOverview  = lazy(() => import("./admin-modules/attendance-overview"));
+const PerformanceAnalytics= lazy(() => import("./admin-modules/performance-analytics"));
+const ExamController      = lazy(() => import("./admin-modules/exam-controller"));
+const ComplaintHub        = lazy(() => import("./admin-modules/complaint-hub"));
+const NoticeboardAdmin    = lazy(() => import("./admin-modules/noticeboard-admin"));
+const TimetableMaster     = lazy(() => import("./admin-modules/timetable-master"));
+const IdCardGen           = lazy(() => import("./admin-modules/id-card-gen"));
+const AssetsInventory     = lazy(() => import("./admin-modules/assets-inventory"));
+const SchoolCalendar      = lazy(() => import("./admin-modules/school-calendar"));
+const FeesManager         = lazy(() => import("./admin-modules/fees-manager"));
 
 interface MeResponse {
   id: number; email: string; role: string;
@@ -1385,7 +1385,13 @@ export default function AdminDashboard() {
                     <span className="text-white/65 text-sm">{TILES.find(t => t.id === activeModule)?.label ?? activeModule}</span>
                   )}
                 </div>
-                {renderModule()}
+                <Suspense fallback={
+                  <div className="flex items-center justify-center py-24">
+                    <Loader2 className="w-7 h-7 animate-spin text-indigo-400" />
+                  </div>
+                }>
+                  {renderModule()}
+                </Suspense>
               </div>
             )}
           </div>
