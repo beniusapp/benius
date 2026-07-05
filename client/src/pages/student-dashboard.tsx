@@ -2,9 +2,10 @@ import { useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { GraduationCap, Loader2, LogOut } from "lucide-react";
+import { GraduationCap, Loader2, LogOut, Lock } from "lucide-react";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useSessionView } from "@/contexts/session-view-context";
 
 interface StudentMeResponse {
   id: number;
@@ -62,21 +63,32 @@ interface HomeworkItem {
   submission: HomeworkSubmission | null;
 }
 
-const TILES = [
+interface Tile {
+  id: string;
+  label: string;
+  emoji: string;
+  accent: string;
+  bg: string;
+  route: string | null;
+  pulse: boolean;
+  noticeKey?: boolean;
+}
+
+const TILES: Tile[] = [
   { id: "profile",          label: "Profile",          emoji: "🎓", accent: "#3b82f6", bg: "#eff6ff", route: "/student-profile",      pulse: false },
   { id: "attendance",       label: "Attendance",       emoji: "✅", accent: "#10b981", bg: "#f0fdf4", route: "/student/attendance",    pulse: false },
   { id: "homework",         label: "Homework",         emoji: "📝", accent: "#f59e0b", bg: "#fffbeb", route: "/student/homework",      pulse: true  },
-  { id: "classwork",        label: "Classwork",        emoji: "📚", accent: "#8b5cf6", bg: "#f5f3ff", route: "/student/classwork",    pulse: false },
+  { id: "classwork",        label: "Classwork",        emoji: "📚", accent: "#8b5cf6", bg: "#f5f3ff", route: "/student/classwork",     pulse: false },
   { id: "noticeboard",      label: "Noticeboard",      emoji: "🔔", accent: "#ef4444", bg: "#fef2f2", route: "/student/noticeboard",  pulse: true, noticeKey: true },
   { id: "fees",             label: "Fees",             emoji: "💳", accent: "#06b6d4", bg: "#ecfeff", route: "/student/fees",          pulse: false },
-  { id: "examination",      label: "Examination",      emoji: "🏆", accent: "#f97316", bg: "#fff7ed", route: "/student/examination", pulse: false },
+  { id: "examination",      label: "Examination",      emoji: "🏆", accent: "#f97316", bg: "#fff7ed", route: "/student/examination",  pulse: false },
   { id: "complaints",       label: "Complaints",       emoji: "🎭", accent: "#ec4899", bg: "#fdf2f8", route: "/student/complaints",   pulse: false },
   { id: "gallery",          label: "Gallery",          emoji: "🎨", accent: "#6366f1", bg: "#eef2ff", route: "/student/gallery",      pulse: false },
   { id: "faculty-info",     label: "Faculty Info",     emoji: "👨‍🏫", accent: "#14b8a6", bg: "#f0fdfa", route: "/student/faculty",     pulse: false },
   { id: "school-calendar",  label: "School Calendar",  emoji: "📅", accent: "#84cc16", bg: "#f7fee7", route: "/student/calendar",    pulse: false },
   { id: "leave",            label: "Leave",            emoji: "🌴", accent: "#a78bfa", bg: "#faf5ff", route: "/student/leave",        pulse: false },
   { id: "timetable",        label: "Timetable",        emoji: "🗓️", accent: "#0ea5e9", bg: "#f0f9ff", route: "/student/timetable",   pulse: false },
-] as const;
+];
 
 const containerVariants = {
   hidden: {},
@@ -98,6 +110,7 @@ function getGreeting() {
 export default function StudentDashboard() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const { sessions, selectedSession, setSelectedSession, isArchiveMode, isSessionsLoading } = useSessionView();
 
   const { data: student, isLoading, isError } = useQuery<StudentMeResponse | null>({
     queryKey: ["/api/student-me"],
@@ -237,6 +250,42 @@ export default function StudentDashboard() {
             </div>
           </div>
 
+          {/* ── Academic Session Switcher ── */}
+          {!isSessionsLoading && sessions.length > 1 && (
+            <div className="flex items-center gap-2">
+              {isArchiveMode && (
+                <span
+                  className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold"
+                  style={{ background: "#fefce8", color: "#b45309", border: "1px solid #fde68a" }}
+                  data-testid="badge-archive-mode"
+                >
+                  🔒 Archive
+                </span>
+              )}
+              <select
+                value={selectedSession?.id ?? ""}
+                onChange={(e) => {
+                  const found = sessions.find((s) => s.id === parseInt(e.target.value));
+                  if (found) setSelectedSession(found);
+                }}
+                className="text-[11px] font-semibold rounded-full px-3 py-1.5 focus:outline-none cursor-pointer appearance-none"
+                style={{
+                  background: isArchiveMode ? "#fefce8" : "#f0fdf4",
+                  border: isArchiveMode ? "1.5px solid #fde68a" : "1.5px solid #bbf7d0",
+                  color: isArchiveMode ? "#b45309" : "#15803d",
+                }}
+                data-testid="select-academic-session"
+                aria-label="Select academic session"
+              >
+                {sessions.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.sessionName}{!s.isActive ? " · Archive" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <button
             onClick={() => logoutMutation.mutate()}
             disabled={logoutMutation.isPending}
@@ -358,6 +407,32 @@ export default function StudentDashboard() {
         </motion.div>
 
         {/* ── Section heading ── */}
+        {/* ── Archive Mode Banner ── */}
+        {isArchiveMode && selectedSession && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="flex items-center gap-3 rounded-2xl px-4 py-3"
+            style={{
+              background: "#fefce8",
+              border: "1.5px solid #fde68a",
+              boxShadow: "0 2px 10px rgba(234,179,8,0.14)",
+            }}
+            data-testid="banner-archive-dashboard"
+          >
+            <Lock className="w-4 h-4 text-amber-500 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-amber-800 leading-tight">
+                Viewing Archive Mode — Read Only
+              </p>
+              <p className="text-xs text-amber-600 mt-0.5 leading-snug">
+                Browsing <span className="font-semibold">{selectedSession.sessionName}</span>. All submission and payment actions are locked.
+              </p>
+            </div>
+          </motion.div>
+        )}
+
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}

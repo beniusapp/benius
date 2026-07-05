@@ -2,8 +2,9 @@ import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, GraduationCap, Loader2, CreditCard, CheckCircle2, Clock, AlertTriangle, Receipt, Download } from "lucide-react";
+import { ArrowLeft, GraduationCap, Loader2, CreditCard, CheckCircle2, Clock, AlertTriangle, Receipt, Download, Lock } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
+import { useSessionView } from "@/contexts/session-view-context";
 
 interface StudentMeResponse {
   id: number;
@@ -76,6 +77,7 @@ function StatusChip({ status }: { status: string }) {
 
 export default function StudentFees() {
   const [, setLocation] = useLocation();
+  const { isArchiveMode, selectedSession } = useSessionView();
 
   const { data: student, isLoading: studentLoading, isError } = useQuery<StudentMeResponse | null>({
     queryKey: ["/api/student-me"],
@@ -152,6 +154,24 @@ export default function StudentFees() {
         transition={{ duration: 0.35, ease: "easeOut" }}
         className="relative z-10 max-w-4xl mx-auto w-full px-4 sm:px-6 pt-24 pb-12 space-y-6"
       >
+
+        {/* Archive mode banner */}
+        {isArchiveMode && selectedSession && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+            className="flex items-center gap-3 rounded-2xl px-4 py-3"
+            style={{ background: "#fefce8", border: "1.5px solid #fde68a", boxShadow: "0 2px 10px rgba(234,179,8,0.12)" }}
+            data-testid="banner-archive-fees"
+          >
+            <Lock className="w-4 h-4 text-amber-500 flex-shrink-0" />
+            <div>
+              <p className="text-sm font-bold text-amber-800">Archive Mode — Read Only</p>
+              <p className="text-xs text-amber-600 mt-0.5">Viewing fee records for <span className="font-semibold">{selectedSession.sessionName}</span>. No payments can be processed.</p>
+            </div>
+          </motion.div>
+        )}
 
         {/* Summary cards */}
         <motion.div

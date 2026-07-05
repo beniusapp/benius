@@ -6,10 +6,11 @@ import { fmtDate } from "@/lib/dateUtils";
 import {
   ArrowLeft, BookOpen, GraduationCap, Loader2, Calendar,
   ChevronLeft, ChevronRight, Upload, X, FileText, AlertCircle,
-  CheckCircle, Clock, ExternalLink, Send, RefreshCw, Pencil,
+  CheckCircle, Clock, ExternalLink, Send, RefreshCw, Pencil, Lock,
 } from "lucide-react";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useSessionView } from "@/contexts/session-view-context";
 
 interface StudentMeResponse {
   id: number;
@@ -197,6 +198,7 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
   hw: HomeworkItem; studentId: number; onClose: () => void; onSuccess: () => void;
 }) {
   const { toast } = useToast();
+  const { isArchiveMode } = useSessionView();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -340,8 +342,22 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
             </div>
           )}
 
-          {/* Submission form */}
-          {!isApproved && (
+          {/* Submission form — archive lock */}
+          {!isApproved && isArchiveMode && (
+            <div
+              className="flex items-center gap-3 px-4 py-3 rounded-xl"
+              style={{ background: "#fefce8", border: "1.5px solid #fde68a" }}
+              data-testid="banner-archive-hw"
+            >
+              <Lock className="w-4 h-4 text-amber-600 flex-shrink-0" />
+              <p className="text-xs font-semibold text-amber-800">
+                Submissions are locked in Archive Mode. Switch to the active session to submit.
+              </p>
+            </div>
+          )}
+
+          {/* Submission form — live mode */}
+          {!isApproved && !isArchiveMode && (
             <div>
               <h3 className="text-sm font-semibold text-slate-700 mb-3">
                 {hw.submission ? "Update Submission" : "Submit Homework"}
@@ -431,8 +447,8 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
           )}
         </div>
 
-        {/* Footer */}
-        {!isApproved && (
+        {/* Footer — hidden in archive mode */}
+        {!isApproved && !isArchiveMode && (
           <div className="px-5 py-4 border-t border-slate-100 flex-shrink-0">
             <button
               onClick={() => submitMutation.mutate()}

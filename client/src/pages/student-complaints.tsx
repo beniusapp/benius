@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { getQueryFn, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useSessionView } from "@/contexts/session-view-context";
 
 interface StudentMe {
   id: number;
@@ -101,6 +102,7 @@ function InboxDetailDrawer({
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { isArchiveMode } = useSessionView();
   const [commentText, setCommentText] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -328,6 +330,16 @@ function InboxDetailDrawer({
         </div>
 
         {/* Comment input */}
+        {isArchiveMode ? (
+          <div
+            className="flex-shrink-0 px-4 py-3 border-t border-gray-100 bg-white rounded-b-3xl flex items-center justify-center gap-2"
+            style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}
+            data-testid="banner-archive-comments"
+          >
+            <Lock className="w-3.5 h-3.5 text-amber-500" />
+            <p className="text-xs font-semibold text-amber-700">Read-only in Archive Mode</p>
+          </div>
+        ) : (
         <div className="flex-shrink-0 px-4 py-3 border-t border-gray-100 bg-white rounded-b-3xl" style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
           <div className="flex gap-2 items-end">
             <textarea
@@ -359,6 +371,7 @@ function InboxDetailDrawer({
             </button>
           </div>
         </div>
+        )}
       </div>
     </div>
   );
@@ -617,6 +630,7 @@ export default function StudentComplaints() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { isArchiveMode } = useSessionView();
   const [activeTab, setActiveTab] = useState<TabId>("inbox");
   const [selectedInboxItem, setSelectedInboxItem] = useState<(ComplaintRecord & { teacherName: string }) | null>(null);
 
@@ -826,6 +840,14 @@ export default function StudentComplaints() {
         {/* ── Tab: Staff Grievance ── */}
         {activeTab === "staff" && (
           <div className="space-y-4">
+            {isArchiveMode ? (
+              <div className="rounded-2xl p-5 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center gap-3 text-center" data-testid="banner-archive-staff">
+                <Lock className="w-8 h-8 text-amber-400" />
+                <p className="text-sm font-bold text-amber-800">Archive Mode — Read Only</p>
+                <p className="text-xs text-amber-600 max-w-xs">Switch to the active session to file a new staff grievance. You can still view previously filed grievances below.</p>
+              </div>
+            ) : (
+            <>
             <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 flex items-start gap-3">
               <Lock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
               <div>
@@ -903,6 +925,8 @@ export default function StudentComplaints() {
                 </button>
               </form>
             </div>
+            </>
+            )}
 
             {filedLoading ? (
               <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-[#10b981]" /></div>
@@ -918,6 +942,13 @@ export default function StudentComplaints() {
         {/* ── Tab: Peer Reports ── */}
         {activeTab === "peer" && (
           <div className="space-y-4">
+            {isArchiveMode ? (
+              <div className="rounded-2xl p-5 bg-white/80 border border-white/70 shadow-sm flex flex-col items-center gap-3 text-center" data-testid="banner-archive-peer">
+                <Lock className="w-8 h-8 text-amber-400" />
+                <p className="text-sm font-bold text-amber-800">Archive Mode — Read Only</p>
+                <p className="text-xs text-amber-600 max-w-xs">Switch to the active session to file a new peer report. Your past reports are shown below.</p>
+              </div>
+            ) : (
             <div className="rounded-2xl p-5 bg-white/80 border border-white/70 shadow-sm" data-testid="form-peer-report">
               <h2 className="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2">
                 <UserX className="w-4 h-4 text-[#10b981]" /> Report Peer Misconduct
@@ -994,6 +1025,7 @@ export default function StudentComplaints() {
                 </button>
               </form>
             </div>
+            )}
 
             {/* History */}
             {filedLoading ? (
