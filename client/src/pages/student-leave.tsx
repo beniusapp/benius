@@ -377,7 +377,7 @@ export default function StudentLeave() {
               </button>
             </div>
 
-            {/* Form */}
+            {/* Form + Submit — single scrollable column so Submit is always reachable even when the keyboard is open */}
             <div className="px-5 py-4 space-y-4 overflow-y-auto max-h-[70vh]">
               {/* Category */}
               <div>
@@ -468,23 +468,25 @@ export default function StudentLeave() {
                   </label>
                 )}
               </div>
-            </div>
 
-            {/* Submit */}
-            <div className="px-5 pb-6 pt-3 border-t border-emerald-50">
-              <button
-                onClick={() => submitMutation.mutate()}
-                disabled={!canSubmit || submitMutation.isPending}
-                className="w-full h-12 rounded-xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-sm flex items-center justify-center gap-2 transition-colors"
-                data-testid="button-submit-leave"
-              >
-                {submitMutation.isPending ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <FileText className="w-5 h-5" />
-                )}
-                {submitMutation.isPending ? "Submitting..." : "Submit Leave Request"}
-              </button>
+              {/* Submit — inside the scroll so it's always reachable above the keyboard */}
+              <div className="pt-2 pb-4">
+                <button
+                  onClick={() => submitMutation.mutate()}
+                  disabled={!canSubmit || submitMutation.isPending}
+                  className="w-full h-12 rounded-xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-sm flex items-center justify-center gap-2 transition-colors"
+                  data-testid="button-submit-leave"
+                >
+                  {submitMutation.isPending ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <FileText className="w-5 h-5" />
+                  )}
+                  {submitMutation.isPending
+                    ? attachmentFile ? "Uploading & submitting…" : "Submitting…"
+                    : "Submit Leave Request"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
