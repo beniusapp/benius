@@ -75,7 +75,7 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
 
   const [ebookTitle, setEbookTitle] = useState("");
   const [ebookAuthor, setEbookAuthor] = useState("");
-  const [ebookTargetClass, setEbookTargetClass] = useState("");
+  const [ebookTargetClasses, setEbookTargetClasses] = useState<string[]>([]);
   const [ebookCategory, setEbookCategory] = useState("");
   const [ebookFile, setEbookFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -138,7 +138,7 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
     },
     onSuccess: () => {
       toast({ title: "E-Book Uploaded", description: "Your e-book has been submitted for verification." });
-      setEbookTitle(""); setEbookAuthor(""); setEbookTargetClass(""); setEbookCategory(""); setEbookFile(null);
+      setEbookTitle(""); setEbookAuthor(""); setEbookTargetClasses([]); setEbookCategory(""); setEbookFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       queryClient.invalidateQueries({ queryKey: ["/api/library/books", teacher.schoolId] });
       queryClient.invalidateQueries({ queryKey: ["/api/library/my-ebooks"] });
@@ -158,7 +158,7 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
     const formData = new FormData();
     formData.append("title", ebookTitle.trim());
     formData.append("author", ebookAuthor.trim());
-    if (ebookTargetClass) formData.append("targetClass", ebookTargetClass);
+    if (ebookTargetClasses.length > 0) formData.append("targetClass", ebookTargetClasses.join(","));
     if (ebookCategory) formData.append("category", ebookCategory);
     formData.append("file", ebookFile);
     uploadMutation.mutate(formData);
@@ -278,13 +278,13 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                           <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(255,255,255,0.50)" }}>{book.author}</p>
 
                           <div className="flex flex-wrap gap-1.5 mt-2">
-                            {book.targetClass && (
-                              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                            {book.targetClass && book.targetClass.split(",").map(cls => cls.trim()).filter(Boolean).map(cls => (
+                              <span key={cls} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold"
                                 style={{ background: "rgba(20,184,166,0.12)", color: "#5eead4", border: "1px solid rgba(20,184,166,0.22)" }}
-                                data-testid={`badge-class-${book.id}`}>
-                                <GraduationCap className="w-2.5 h-2.5" />Class {book.targetClass}
+                                data-testid={`badge-class-${book.id}-${cls}`}>
+                                <GraduationCap className="w-2.5 h-2.5" />Class {cls}
                               </span>
-                            )}
+                            ))}
                             {book.category && (
                               <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold"
                                 style={{ background: `${catColor}18`, color: catColor, border: `1px solid ${catColor}35` }}
@@ -415,20 +415,48 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold" style={{ color: "rgba(255,255,255,0.55)" }}>Target Class</label>
-                  <Select value={ebookTargetClass} onValueChange={setEbookTargetClass} disabled={isArchiveMode}>
-                    <SelectTrigger
-                      className="rounded-xl"
-                      style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }}
-                      data-testid="select-ebook-class"
-                    >
-                      <SelectValue placeholder="Select class" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {classes.map(cls => <SelectItem key={cls} value={cls}>{cls}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <label className="text-xs font-semibold" style={{ color: "rgba(255,255,255,0.55)" }}>
+                    Target Classes
+                    {ebookTargetClasses.length > 0 && (
+                      <span className="ml-2 px-1.5 py-0.5 rounded-full text-[10px]"
+                        style={{ background: "rgba(20,184,166,0.20)", color: "#5eead4" }}>
+                        {ebookTargetClasses.length} selected
+                      </span>
+                    )}
+                  </label>
+                  <div
+                    className="flex flex-wrap gap-2 p-3 rounded-xl"
+                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.10)" }}
+                    data-testid="multiselect-ebook-class"
+                  >
+                    {classes.map(cls => {
+                      const checked = ebookTargetClasses.includes(cls);
+                      return (
+                        <button
+                          key={cls}
+                          type="button"
+                          disabled={isArchiveMode}
+                          onClick={() => {
+                            if (isArchiveMode) return;
+                            setEbookTargetClasses(prev =>
+                              checked ? prev.filter(c => c !== cls) : [...prev, cls]
+                            );
+                          }}
+                          className="px-3 py-1.5 rounded-full text-xs font-semibold transition-all disabled:opacity-50"
+                          style={{
+                            background: checked ? "rgba(20,184,166,0.22)" : "rgba(255,255,255,0.06)",
+                            color: checked ? "#5eead4" : "rgba(255,255,255,0.50)",
+                            border: checked ? "1px solid rgba(20,184,166,0.45)" : "1px solid rgba(255,255,255,0.10)",
+                            boxShadow: checked ? "0 0 8px rgba(20,184,166,0.20)" : "none",
+                          }}
+                          data-testid={`class-pill-${cls}`}
+                        >
+                          {checked && <span className="mr-1">✓</span>}Class {cls}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold" style={{ color: "rgba(255,255,255,0.55)" }}>Category</label>
@@ -534,12 +562,12 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                         <p className="text-sm font-semibold text-white truncate" data-testid={`history-title-${book.id}`}>{book.title}</p>
                         <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(255,255,255,0.45)" }}>{book.author}</p>
                         <div className="flex flex-wrap gap-1.5 mt-1.5">
-                          {book.targetClass && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+                          {book.targetClass && book.targetClass.split(",").map(c => c.trim()).filter(Boolean).map(c => (
+                            <span key={c} className="text-[10px] px-2 py-0.5 rounded-full font-medium"
                               style={{ background: "rgba(20,184,166,0.10)", color: "#5eead4" }}>
-                              Class {book.targetClass}
+                              Class {c}
                             </span>
-                          )}
+                          ))}
                           {book.category && (
                             <span className="text-[10px] px-2 py-0.5 rounded-full font-medium"
                               style={{ background: `${catColor}15`, color: catColor }}>
