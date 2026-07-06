@@ -283,6 +283,8 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const { schoolId, class: cls, section, date } = req.params;
     const sid = parseInt(schoolId);
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
 
     // Archive look-back: resolve roster via enrollments for the viewed session.
@@ -364,6 +366,8 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const { schoolId, class: cls, section, startDate, endDate } = req.params;
     const sid = parseInt(schoolId);
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
     try {
       const records = await storage.getAttendanceHistory(sid, cls, section, startDate, endDate);
       res.json(records);
@@ -374,10 +378,10 @@ export function registerTeacherRoutes(app: Express) {
 
   app.get("/api/attendance/status/:teacherId", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacherId = parseInt(req.params.teacherId);
-    const teacher = await storage.getTeacherById(teacherId);
+    if (req.session.teacherId !== parseInt(req.params.teacherId)) return res.status(403).json({ message: "Not authorized" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(404).json({ message: "Teacher not found" });
-    const done = await storage.hasAttendanceToday(teacherId, teacher.assignedClass, teacher.assignedSection, teacher.schoolId);
+    const done = await storage.hasAttendanceToday(teacher.id, teacher.assignedClass, teacher.assignedSection, teacher.schoolId);
     res.json({ done });
   });
 
