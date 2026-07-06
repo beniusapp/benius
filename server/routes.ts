@@ -1791,46 +1791,19 @@ export async function registerRoutes(
 
   // ===== STUDENT LEAVE ROUTES =====
 
-  // Leave attachment file upload
-  const leaveAttachUpload = multer({
-    storage: multer.diskStorage({
-      destination: (_req, _file, cb) => {
-        const path = require("path");
-        const fs = require("fs");
-        const dir = path.join(process.cwd(), "uploads", "leave-attachments");
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        cb(null, dir);
-      },
-      filename: (_req, file, cb) => {
-        const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
-        const ext = require("path").extname(file.originalname) || ".bin";
-        cb(null, unique + ext);
-      },
-    }),
+  // Memory-storage multer — avoids diskStorage callback complexity that prevented req.body from being populated
+  const leaveMemUpload = multer({
+    storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 },
-    fileFilter: (_req, file, cb) => {
-      const allowed = ["image/jpeg","image/jpg","image/png","image/webp","image/gif",
-                       "application/pdf","application/msword",
-                       "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
-      if (allowed.includes(file.mimetype)) cb(null, true);
-      else cb(new Error("Only images, PDF, and DOC files are allowed"));
-    },
   });
 
-  app.post("/api/student/leave/upload", leaveAttachUpload.single("file"), async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
-    const url = `/uploads/leave-attachments/${req.file.filename}`;
-    res.json({ url });
-  });
-
-  // Accepts multipart/form-data (with optional file) — multer used directly as middleware
-  app.post("/api/student/leave", leaveAttachUpload.single("file"), async (req, res) => {
+  // Single atomic endpoint: fields + optional file arrive together, file written to disk from buffer
+  app.post("/api/student/leave", leaveMemUpload.single("file"), async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
 
-    // Archive-mode guard: block submissions for non-active sessions
+    // Archive-mode guard
     const viewSessionId = req.headers["x-view-session-id"];
     if (viewSessionId) {
       const sessionId = parseInt(viewSessionId as string, 10);
@@ -1843,13 +1816,24 @@ export async function registerRoutes(
       }
     }
 
-    const { startDate, endDate, reason, category } = req.body || {};
-    if (!startDate || !endDate || !reason) return res.status(400).json({ message: "startDate, endDate, and reason are required" });
+    const startDate  = req.body?.startDate  ?? req.body?.start_date;
+    const endDate    = req.body?.endDate    ?? req.body?.end_date;
+    const reason     = req.body?.reason;
+    const category   = req.body?.category;
 
-    // Derive attachment URL from uploaded file (if any)
+    if (!startDate || !endDate || !reason) {
+      return res.status(400).json({ message: "startDate, endDate, and reason are required" });
+    }
+
+    // Save uploaded file buffer to disk (if any)
     let attachmentUrl: string | null = null;
-    if (req.file) {
-      attachmentUrl = `/uploads/leave-attachments/${req.file.filename}`;
+    if (req.file?.buffer) {
+      const dir = path.join(process.cwd(), "uploads", "leave-attachments");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const ext = path.extname(req.file.originalname) || ".bin";
+      const filename = `${Date.now()}-${Math.round(Math.random() * 1e6)}${ext}`;
+      fs.writeFileSync(path.join(dir, filename), req.file.buffer);
+      attachmentUrl = `/uploads/leave-attachments/${filename}`;
     }
 
     const leave = await storage.createStudentLeaveRequest({
