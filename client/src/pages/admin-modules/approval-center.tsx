@@ -247,7 +247,12 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
     queryKey: ["/api/admin/gallery", schoolId],
     queryFn: async () => {
       const r = await fetch(`/api/admin/gallery/${schoolId}`, { credentials: "include" });
-      return r.ok ? r.json() : [];
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ message: r.statusText }));
+        console.error("[GalleryHub] API error", r.status, err);
+        return [];
+      }
+      return r.json();
     },
     enabled: !!schoolId,
   });

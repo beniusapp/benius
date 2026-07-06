@@ -1205,11 +1205,16 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.get("/api/admin/gallery/:schoolId", async (req, res) => {
-    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
-    const schoolId = parseInt(req.params.schoolId);
-    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
-    const items = await storage.getAdminGalleryItems(schoolId);
-    res.json(items);
+    try {
+      if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+      const schoolId = parseInt(req.params.schoolId);
+      if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+      const items = await storage.getAdminGalleryItems(schoolId);
+      res.json(items);
+    } catch (e: any) {
+      console.error("[admin/gallery] Error:", e.message);
+      res.status(500).json({ message: e.message });
+    }
   });
 
   app.delete("/api/gallery/:id", async (req, res) => {
