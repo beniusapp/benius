@@ -5,6 +5,7 @@ import {
   CalendarOff, ImageOff, BookMarked, Users, Inbox, Eye, Paperclip, UserCircle2,
   History, CheckCircle2, XCircle, Camera, Plus, Trash2, MapPin, Images,
   ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon, ArrowLeft,
+  Upload, FileText, Download, User,
 } from "lucide-react";
 import { fmtDate } from "@/lib/dateUtils";
 import { Button } from "@/components/ui/button";
@@ -13,8 +14,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useSchoolConfig } from "@/hooks/use-school-config";
 
 interface Props { schoolId: number }
 
@@ -1226,12 +1229,25 @@ function SectionHeader({
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
+const EBOOK_CATEGORIES = ["Fiction", "Non-Fiction", "Science", "Mathematics", "History", "Literature", "Technology", "Arts", "Reference", "Other"];
+
 export default function ApprovalCenter({ schoolId }: Props) {
   const { toast } = useToast();
   const [activeSection, setActiveSection] = useState<ActiveSection>(null);
   const [selectedLeave, setSelectedLeave] = useState<any | null>(null);
   const [adminComment, setAdminComment] = useState("");
   const [showHistory, setShowHistory] = useState(false);
+
+  // E-Book Library state
+  const [ebookTab, setEbookTab] = useState<"catalog" | "verification" | "upload">("catalog");
+  const [adminEbookTitle, setAdminEbookTitle] = useState("");
+  const [adminEbookAuthor, setAdminEbookAuthor] = useState("");
+  const [adminEbookClasses, setAdminEbookClasses] = useState<string[]>([]);
+  const [adminEbookCategory, setAdminEbookCategory] = useState("");
+  const [adminEbookFile, setAdminEbookFile] = useState<File | null>(null);
+  const adminEbookFileRef = useRef<HTMLInputElement>(null);
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const { classes: schoolClasses } = useSchoolConfig(schoolId);
 
   const { data: historyData, isLoading: historyLoading } = useQuery<any>({
     queryKey: ["/api/approval-history", schoolId],
@@ -1258,6 +1274,39 @@ export default function ApprovalCenter({ schoolId }: Props) {
       return r.ok ? r.json() : [];
     },
     enabled: !!schoolId,
+  });
+
+  const { data: allBooks = [], isLoading: allBooksLoading } = useQuery<any[]>({
+    queryKey: ["/api/library/books", schoolId],
+    queryFn: async () => {
+      const r = await fetch(`/api/library/books/${schoolId}`, { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!schoolId,
+  });
+
+  const approvedBooks = allBooks.filter((b: any) => b.verificationStatus === "approved");
+  const filteredCatalog = catalogSearch.trim()
+    ? approvedBooks.filter((b: any) =>
+        b.title.toLowerCase().includes(catalogSearch.toLowerCase()) ||
+        b.author.toLowerCase().includes(catalogSearch.toLowerCase())
+      )
+    : approvedBooks;
+
+  const adminEbookUploadMutation = useMutation({
+    mutationFn: async (formData: FormData) => {
+      const r = await fetch("/api/library/ebooks/admin", { method: "POST", body: formData, credentials: "include" });
+      if (!r.ok) { const e = await r.json().catch(() => ({ message: "Upload failed" })); throw new Error(e.message); }
+      return r.json();
+    },
+    onSuccess: () => {
+      toast({ title: "E-Book Uploaded", description: "Book added to catalog directly." });
+      setAdminEbookTitle(""); setAdminEbookAuthor(""); setAdminEbookClasses([]); setAdminEbookCategory(""); setAdminEbookFile(null);
+      if (adminEbookFileRef.current) adminEbookFileRef.current.value = "";
+      queryClient.invalidateQueries({ queryKey: ["/api/library/books", schoolId] });
+      setEbookTab("catalog");
+    },
+    onError: (e: Error) => toast({ title: "Upload Failed", description: e.message, variant: "destructive" }),
   });
 
   const { data: studentLeaves = [], isLoading: sleavesLoading } = useQuery<any[]>({
@@ -1718,36 +1767,293 @@ export default function ApprovalCenter({ schoolId }: Props) {
             icon={BookOpen}
             gradient="linear-gradient(135deg,#f59e0b,#f97316)"
             glow="rgba(245,158,11,0.25)"
-            onBack={() => setActiveSection(null)}
+            onBack={() => { setActiveSection(null); setEbookTab("catalog"); }}
             badge={pendingEbooks.length}
           />
-          <Section title="E-Book Verifications" icon={BookOpen} badge={pendingEbooks.length} variant="ebook">
-            {ebooksLoading ? <Spinner /> :
-              pendingEbooks.length === 0
-                ? <EmptyState label="No pending e-books" variant="ebook" />
+
+          {/* Tab bar */}
+          <div className="flex gap-2 mb-4">
+            {([
+              { key: "catalog",      label: "Catalog",      icon: <BookOpen className="w-3.5 h-3.5" /> },
+              { key: "verification", label: "Verification", icon: <CheckCircle2 className="w-3.5 h-3.5" />, badge: pendingEbooks.length },
+              { key: "upload",       label: "Upload E-Book", icon: <Upload className="w-3.5 h-3.5" /> },
+            ] as const).map(t => (
+              <button
+                key={t.key}
+                onClick={() => setEbookTab(t.key)}
+                data-testid={`tab-ebook-${t.key}`}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs font-semibold transition-all relative"
+                style={{
+                  background: ebookTab === t.key ? "rgba(245,158,11,0.18)" : "rgba(255,255,255,0.05)",
+                  color: ebookTab === t.key ? "#fbbf24" : "rgba(255,255,255,0.50)",
+                  border: ebookTab === t.key ? "1px solid rgba(245,158,11,0.40)" : "1px solid rgba(255,255,255,0.08)",
+                }}
+              >
+                {t.icon}{t.label}
+                {"badge" in t && t.badge > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full text-[10px] font-bold flex items-center justify-center text-white"
+                    style={{ background: "linear-gradient(135deg,#f59e0b,#f97316)" }}>
+                    {t.badge}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* ── Catalog tab ── */}
+          {ebookTab === "catalog" && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 px-4 py-3 rounded-2xl" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <BookOpen className="w-5 h-5 flex-shrink-0" style={{ color: "#f59e0b" }} />
+                <div>
+                  <p className="font-bold text-white text-sm">Library Catalog</p>
+                  <p className="text-xs" style={{ color: "rgba(255,255,255,0.40)" }}>{approvedBooks.length} approved book{approvedBooks.length !== 1 ? "s" : ""} in your school</p>
+                </div>
+              </div>
+              <div className="relative">
+                <input
+                  value={catalogSearch}
+                  onChange={e => setCatalogSearch(e.target.value)}
+                  placeholder="Search by title, author…"
+                  className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm outline-none"
+                  style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", color: "white" }}
+                  data-testid="input-catalog-search"
+                />
+                <BookOpen className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5" style={{ color: "rgba(255,255,255,0.30)" }} />
+              </div>
+              {allBooksLoading ? <Spinner /> : filteredCatalog.length === 0
+                ? <EmptyState label="No approved books yet" variant="ebook" />
                 : (
                   <div className="space-y-2">
-                    {pendingEbooks.map((b: any) => (
-                      <ItemRow key={b.id} testId={`card-ebook-${b.id}`}>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-white font-semibold text-sm">{b.title}</p>
-                          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
-                            by {b.author} · {b.category} · Class {b.targetClass}
-                          </p>
+                    {filteredCatalog.map((b: any) => {
+                      const initials = b.title.charAt(0).toUpperCase();
+                      const classes = b.targetClass ? b.targetClass.split(",").map((c: string) => c.trim()).filter(Boolean) : [];
+                      return (
+                        <div key={b.id} data-testid={`card-catalog-${b.id}`}
+                          className="flex gap-3 p-3 rounded-xl"
+                          style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                          <div className="w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold flex-shrink-0"
+                            style={{ background: "linear-gradient(135deg,#f59e0b,#f97316)", color: "white" }}>
+                            {initials}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-white font-semibold text-sm leading-tight">{b.title}</p>
+                            <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.50)" }}>{b.author}</p>
+                            <div className="flex flex-wrap gap-1 mt-1.5">
+                              {classes.map((c: string) => (
+                                <span key={c} className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(20,184,166,0.15)", color: "#5eead4", border: "1px solid rgba(20,184,166,0.25)" }}>Class {c}</span>
+                              ))}
+                              {b.category && <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(245,158,11,0.15)", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.25)" }}>{b.category}</span>}
+                              {b.fileType && <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase" style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.50)", border: "1px solid rgba(255,255,255,0.10)" }}>{b.fileType}</span>}
+                            </div>
+                            {b.uploaderName && (
+                              <p className="flex items-center gap-1 text-[10px] mt-1" style={{ color: "rgba(255,255,255,0.35)" }}>
+                                <User className="w-2.5 h-2.5" />Uploaded by {b.uploaderName}
+                              </p>
+                            )}
+                          </div>
+                          {b.fileUrl && (
+                            <div className="flex flex-col gap-1.5 flex-shrink-0">
+                              <button onClick={() => window.open(b.fileUrl, "_blank")}
+                                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold"
+                                style={{ background: "rgba(20,184,166,0.15)", color: "#5eead4", border: "1px solid rgba(20,184,166,0.28)" }}
+                                data-testid={`button-read-catalog-${b.id}`}>
+                                <Eye className="w-3 h-3" /> Read
+                              </button>
+                              <button onClick={() => {
+                                const a = document.createElement("a");
+                                a.href = b.fileUrl; a.download = `${b.title}.${b.fileType ?? "pdf"}`;
+                                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                              }}
+                                className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold"
+                                style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.55)", border: "1px solid rgba(255,255,255,0.10)" }}
+                                data-testid={`button-download-catalog-${b.id}`}>
+                                <Download className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )}
                         </div>
-                        <ActionButtons
-                          disabled={ebookVerifyMutation.isPending}
-                          onApprove={() => ebookVerifyMutation.mutate({ id: b.id, status: "approved" })}
-                          onReject={() => ebookVerifyMutation.mutate({ id: b.id, status: "rejected" })}
-                          approveTestId={`button-approve-ebook-${b.id}`}
-                          rejectTestId={`button-reject-ebook-${b.id}`}
-                        />
-                      </ItemRow>
-                    ))}
+                      );
+                    })}
                   </div>
                 )
-            }
-          </Section>
+              }
+            </div>
+          )}
+
+          {/* ── Verification tab ── */}
+          {ebookTab === "verification" && (
+            <Section title="E-Book Verifications" icon={CheckCircle2} badge={pendingEbooks.length} variant="ebook">
+              {ebooksLoading ? <Spinner /> :
+                pendingEbooks.length === 0
+                  ? <EmptyState label="No pending e-books" variant="ebook" />
+                  : (
+                    <div className="space-y-2">
+                      {pendingEbooks.map((b: any) => {
+                        const classes = b.targetClass ? b.targetClass.split(",").map((c: string) => c.trim()).filter(Boolean) : [];
+                        return (
+                          <ItemRow key={b.id} testId={`card-ebook-${b.id}`}>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-white font-semibold text-sm">{b.title}</p>
+                              <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>by {b.author}</p>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {classes.map((c: string) => (
+                                  <span key={c} className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(20,184,166,0.15)", color: "#5eead4", border: "1px solid rgba(20,184,166,0.25)" }}>Class {c}</span>
+                                ))}
+                                {b.category && <span className="px-2 py-0.5 rounded-full text-[10px]" style={{ color: "rgba(255,255,255,0.45)" }}>{b.category}</span>}
+                              </div>
+                              {b.fileUrl && (
+                                <button onClick={() => window.open(b.fileUrl, "_blank")}
+                                  className="mt-1.5 flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold"
+                                  style={{ background: "rgba(20,184,166,0.10)", color: "#5eead4", border: "1px solid rgba(20,184,166,0.20)" }}
+                                  data-testid={`button-preview-ebook-${b.id}`}>
+                                  <Eye className="w-2.5 h-2.5" /> Preview
+                                </button>
+                              )}
+                            </div>
+                            <ActionButtons
+                              disabled={ebookVerifyMutation.isPending}
+                              onApprove={() => ebookVerifyMutation.mutate({ id: b.id, status: "approved" })}
+                              onReject={() => ebookVerifyMutation.mutate({ id: b.id, status: "rejected" })}
+                              approveTestId={`button-approve-ebook-${b.id}`}
+                              rejectTestId={`button-reject-ebook-${b.id}`}
+                            />
+                          </ItemRow>
+                        );
+                      })}
+                    </div>
+                  )
+              }
+            </Section>
+          )}
+
+          {/* ── Upload E-Book tab ── */}
+          {ebookTab === "upload" && (
+            <div className="rounded-2xl p-5 space-y-4" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(245,158,11,0.15)" }}>
+              <div className="flex items-center gap-3 mb-1">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ background: "linear-gradient(135deg,#f59e0b,#f97316)", boxShadow: "0 0 16px rgba(245,158,11,0.25)" }}>
+                  <Upload className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <h2 className="font-bold text-white text-base">Upload E-Book</h2>
+                  <p className="text-xs" style={{ color: "rgba(255,255,255,0.40)" }}>Admin uploads go directly to the catalog</p>
+                </div>
+              </div>
+
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                if (!adminEbookTitle.trim() || !adminEbookAuthor.trim()) {
+                  toast({ title: "Validation Error", description: "Title and Author are required.", variant: "destructive" }); return;
+                }
+                if (!adminEbookFile) {
+                  toast({ title: "Validation Error", description: "Please select a PDF or EPUB file.", variant: "destructive" }); return;
+                }
+                const fd = new FormData();
+                fd.append("title", adminEbookTitle.trim());
+                fd.append("author", adminEbookAuthor.trim());
+                if (adminEbookClasses.length > 0) fd.append("targetClass", adminEbookClasses.join(","));
+                if (adminEbookCategory) fd.append("category", adminEbookCategory);
+                fd.append("file", adminEbookFile);
+                adminEbookUploadMutation.mutate(fd);
+              }} className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold" style={{ color: "rgba(255,255,255,0.55)" }}>Title *</label>
+                    <input value={adminEbookTitle} onChange={e => setAdminEbookTitle(e.target.value)}
+                      placeholder="Enter book title"
+                      className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                      style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }}
+                      data-testid="input-admin-ebook-title" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold" style={{ color: "rgba(255,255,255,0.55)" }}>Author *</label>
+                    <input value={adminEbookAuthor} onChange={e => setAdminEbookAuthor(e.target.value)}
+                      placeholder="Enter author name"
+                      className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                      style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }}
+                      data-testid="input-admin-ebook-author" />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold" style={{ color: "rgba(255,255,255,0.55)" }}>
+                    Target Classes
+                    {adminEbookClasses.length > 0 && (
+                      <span className="ml-2 px-1.5 py-0.5 rounded-full text-[10px]"
+                        style={{ background: "rgba(245,158,11,0.20)", color: "#fbbf24" }}>
+                        {adminEbookClasses.length} selected
+                      </span>
+                    )}
+                  </label>
+                  <div className="flex flex-wrap gap-2 p-3 rounded-xl"
+                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.10)" }}
+                    data-testid="multiselect-admin-ebook-class">
+                    {schoolClasses.map(cls => {
+                      const checked = adminEbookClasses.includes(cls);
+                      return (
+                        <button key={cls} type="button"
+                          onClick={() => setAdminEbookClasses(prev => checked ? prev.filter(c => c !== cls) : [...prev, cls])}
+                          className="px-3 py-1.5 rounded-full text-xs font-semibold transition-all"
+                          style={{
+                            background: checked ? "rgba(245,158,11,0.22)" : "rgba(255,255,255,0.06)",
+                            color: checked ? "#fbbf24" : "rgba(255,255,255,0.50)",
+                            border: checked ? "1px solid rgba(245,158,11,0.45)" : "1px solid rgba(255,255,255,0.10)",
+                          }}
+                          data-testid={`admin-class-pill-${cls}`}>
+                          {checked && <span className="mr-1">✓</span>}Class {cls}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold" style={{ color: "rgba(255,255,255,0.55)" }}>Category</label>
+                  <Select value={adminEbookCategory} onValueChange={setAdminEbookCategory}>
+                    <SelectTrigger className="rounded-xl"
+                      style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }}
+                      data-testid="select-admin-ebook-category">
+                      <SelectValue placeholder="Select category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {EBOOK_CATEGORIES.map(cat => <SelectItem key={cat} value={cat}>{cat}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold" style={{ color: "rgba(255,255,255,0.55)" }}>File (PDF/EPUB) *</label>
+                  <label className="flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer transition-all hover:brightness-110"
+                    style={{ background: "rgba(255,255,255,0.04)", border: "2px dashed rgba(245,158,11,0.28)" }}>
+                    <FileText className="w-5 h-5 flex-shrink-0" style={{ color: "#f59e0b" }} />
+                    <span className="text-sm" style={{ color: adminEbookFile ? "white" : "rgba(255,255,255,0.40)" }}>
+                      {adminEbookFile ? `${adminEbookFile.name} (${(adminEbookFile.size / 1024 / 1024).toFixed(2)} MB)` : "Choose PDF or EPUB file…"}
+                    </span>
+                    <input ref={adminEbookFileRef} type="file" accept=".pdf,.epub" className="hidden"
+                      onChange={e => setAdminEbookFile(e.target.files?.[0] || null)}
+                      data-testid="input-admin-ebook-file" />
+                  </label>
+                </div>
+
+                <div className="px-3 py-2.5 rounded-xl text-xs"
+                  style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.14)", color: "rgba(255,255,255,0.45)" }}>
+                  <CheckCircle2 className="w-3 h-3 inline-block mr-1.5" style={{ color: "#f59e0b" }} />
+                  Admin uploads are <span style={{ color: "#fbbf24" }}>automatically approved</span> and appear in the catalog immediately.
+                </div>
+
+                <button type="submit" disabled={adminEbookUploadMutation.isPending}
+                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+                  style={{ background: "linear-gradient(135deg,#d97706,#f59e0b)", color: "white" }}
+                  data-testid="button-admin-upload-ebook">
+                  {adminEbookUploadMutation.isPending
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Uploading…</>
+                    : <><Upload className="w-4 h-4" /> Upload E-Book</>
+                  }
+                </button>
+              </form>
+            </div>
+          )}
         </>
       )}
 

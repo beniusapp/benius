@@ -1356,6 +1356,27 @@ export function registerTeacherRoutes(app: Express) {
     res.json(mine);
   });
 
+  app.post("/api/library/ebooks/admin", diskUpload.single("file"), async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!req.file) return res.status(400).json({ message: "File required" });
+    const { title, author, targetClass, category } = req.body;
+    if (!title || !author) return res.status(400).json({ message: "Title and author required" });
+    const ext = req.file.originalname.split(".").pop()?.toLowerCase();
+    const book = await storage.createLibraryBook({
+      schoolId: req.session.schoolId!, title, author, isbn: null,
+      targetClass: targetClass || null, category: category || null,
+      fileUrl: `/uploads/${req.file.filename}`, fileType: ext || "pdf",
+      uploadedById: null, verificationStatus: "approved",
+      totalCopies: 0, availableCopies: 0,
+    });
+    await storage.createAuditLog({
+      schoolId: req.session.schoolId!, actionType: "upload", entityType: "ebook", entityId: book.id,
+      actionBy: req.session.userId!, actionByRole: "admin",
+      details: `Admin uploaded e-book: ${title} by ${author}`,
+    });
+    res.status(201).json(book);
+  });
+
   app.delete("/api/library/books/:id", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
     await storage.deleteLibraryBook(parseInt(req.params.id));
