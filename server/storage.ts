@@ -2278,6 +2278,47 @@ export class DatabaseStorage {
     }));
   }
 
+  // Returns all pending_teacher leaves from every class-section a teacher is mapped to.
+  // Uses faculty_mappings (the admin-configured multi-class assignment) rather than the
+  // single assignedClass/assignedSection field, so multi-class teachers see all their students.
+  async getStudentLeavesByTeacher(teacherId: number, schoolId: number): Promise<(StudentLeaveRequest & { studentName: string; dsid: string; class: string; section: string })[]> {
+    // 1. Get all class-sections this teacher is mapped to
+    const mappings = await db
+      .select({ className: facultyMappings.className, section: facultyMappings.section })
+      .from(facultyMappings)
+      .where(and(eq(facultyMappings.teacherId, teacherId), eq(facultyMappings.schoolId, schoolId)));
+
+    if (mappings.length === 0) return [];
+
+    // 2. Build OR conditions for each class+section pair
+    const classConditions = mappings.map(m =>
+      and(eq(students.class, m.className), eq(students.section, m.section))
+    );
+
+    const result = await db.select().from(studentLeaveRequests)
+      .innerJoin(students, eq(studentLeaveRequests.studentId, students.id))
+      .where(
+        and(
+          eq(studentLeaveRequests.schoolId, schoolId),
+          eq(studentLeaveRequests.status, "pending_teacher"),
+          or(...classConditions)
+        )
+      )
+      .orderBy(desc(studentLeaveRequests.createdAt));
+
+    // Deduplicate in case a student appears in multiple mappings for the same teacher
+    const seen = new Set<number>();
+    return result
+      .filter(r => { if (seen.has(r.student_leave_requests.id)) return false; seen.add(r.student_leave_requests.id); return true; })
+      .map(r => ({
+        ...r.student_leave_requests,
+        studentName: r.students.name,
+        dsid: r.students.digitalStudentId,
+        class: r.students.class,
+        section: r.students.section,
+      }));
+  }
+
   async updateStudentLeaveStatus(id: number, status: string, reviewedBy: number, reviewerRole: string, rejectionReason?: string): Promise<StudentLeaveRequest> {
     const updateData: Record<string, unknown> = { status, reviewedBy, reviewerRole };
     if (rejectionReason !== undefined) updateData.rejectionReason = rejectionReason;

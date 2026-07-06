@@ -118,12 +118,9 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const { data: studentLeaves = [], isLoading: studentLeavesLoading } = useQuery<StudentLeaveEntry[]>({
-    queryKey: ["/api/student-leaves", teacher.schoolId, teacher.assignedClass, teacher.assignedSection],
+    queryKey: ["/api/student-leaves/teacher/mine"],
     queryFn: async () => {
-      const res = await fetch(
-        `/api/student-leaves/${teacher.schoolId}/${encodeURIComponent(teacher.assignedClass)}/${encodeURIComponent(teacher.assignedSection)}`,
-        { credentials: "include" }
-      );
+      const res = await fetch("/api/student-leaves/teacher/mine", { credentials: "include" });
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
@@ -156,7 +153,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
     },
     onSuccess: () => {
       toast({ title: "Leave Approved", description: "Attendance has been auto-synced for the leave dates." });
-      queryClient.invalidateQueries({ queryKey: ["/api/student-leaves", teacher.schoolId, teacher.assignedClass, teacher.assignedSection] });
+      queryClient.invalidateQueries({ queryKey: ["/api/student-leaves/teacher/mine"] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -169,7 +166,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
     },
     onSuccess: () => {
       toast({ title: "Leave Forwarded", description: "Leave request forwarded to principal." });
-      queryClient.invalidateQueries({ queryKey: ["/api/student-leaves", teacher.schoolId, teacher.assignedClass, teacher.assignedSection] });
+      queryClient.invalidateQueries({ queryKey: ["/api/student-leaves/teacher/mine"] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -202,7 +199,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
       toast({ title: "Leave Rejected", description: "The student has been notified." });
       setRejectingId(null);
       setRejectionReason("");
-      queryClient.invalidateQueries({ queryKey: ["/api/student-leaves", teacher.schoolId, teacher.assignedClass, teacher.assignedSection] });
+      queryClient.invalidateQueries({ queryKey: ["/api/student-leaves/teacher/mine"] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });

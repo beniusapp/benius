@@ -1,10 +1,12 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useState } from "react";
 import {
   Check, X, BookOpen, Image, UserCheck, Loader2,
-  CalendarOff, ImageOff, BookMarked, Users, Inbox,
+  CalendarOff, ImageOff, BookMarked, Users, Inbox, Eye, Paperclip,
 } from "lucide-react";
 import { fmtDate } from "@/lib/dateUtils";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
@@ -201,6 +203,7 @@ function ActionButtons({
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function ApprovalCenter({ schoolId }: Props) {
   const { toast } = useToast();
+  const [selectedLeave, setSelectedLeave] = useState<any | null>(null);
 
   const { data: leaveRequests = [], isLoading: leavesLoading } = useQuery<any[]>({
     queryKey: ["/api/leave/school", schoolId],
@@ -340,7 +343,7 @@ export default function ApprovalCenter({ schoolId }: Props) {
         }
       </Section>
 
-      {/* ── Student Leave Requests (forwarded) ── */}
+      {/* ── Student Leave Requests (forwarded by teacher) ── */}
       <Section
         title="Student Leave Requests (Forwarded by Teacher)"
         icon={Users}
@@ -367,31 +370,141 @@ export default function ApprovalCenter({ schoolId }: Props) {
                       <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(255,255,255,0.45)" }}>
                         {l.reason}
                       </p>
-                      <span
-                        className="inline-block mt-1 text-[10px] px-2 py-0.5 rounded-full font-semibold"
-                        style={{ background: "rgba(234,179,8,0.15)", color: "#fbbf24" }}
-                      >
-                        {l.status}
-                      </span>
                     </div>
-                    <ActionButtons
-                      disabled={isPending}
-                      onApprove={() =>
-                        studentLeaveApproveMutation.mutate({ id: l.id, action: "admin-approve" })
-                      }
-                      onReject={() =>
-                        studentLeaveApproveMutation.mutate({ id: l.id, action: "reject" })
-                      }
-                      approveLabel="Approve + Sync"
-                      approveTestId={`button-approve-student-leave-${l.id}`}
-                      rejectTestId={`button-reject-student-leave-${l.id}`}
-                    />
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => setSelectedLeave(l)}
+                        className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors"
+                        style={{ background: "rgba(99,102,241,0.15)", color: "#818cf8" }}
+                        data-testid={`button-view-student-leave-${l.id}`}
+                        title="View details"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                      <ActionButtons
+                        disabled={isPending}
+                        onApprove={() =>
+                          studentLeaveApproveMutation.mutate({ id: l.id, action: "admin-approve" })
+                        }
+                        onReject={() =>
+                          studentLeaveApproveMutation.mutate({ id: l.id, action: "reject" })
+                        }
+                        approveLabel="Approve + Sync"
+                        approveTestId={`button-approve-student-leave-${l.id}`}
+                        rejectTestId={`button-reject-student-leave-${l.id}`}
+                      />
+                    </div>
                   </ItemRow>
                 ))}
               </div>
             )
         }
       </Section>
+
+      {/* ── Student Leave Detail Modal ── */}
+      {selectedLeave && (
+        <Dialog open={!!selectedLeave} onOpenChange={() => setSelectedLeave(null)}>
+          <DialogContent
+            className="max-w-md"
+            style={{ background: "#1A2942", border: "1px solid rgba(99,102,241,0.30)", color: "white" }}
+          >
+            <DialogHeader>
+              <DialogTitle className="text-white text-lg font-bold">Student Leave Request</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
+              <div className="flex items-center justify-between">
+                <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Student</span>
+                <span className="font-semibold text-white text-sm">
+                  {selectedLeave.studentName}
+                  <span className="ml-1.5 font-normal" style={{ color: "rgba(255,255,255,0.45)", fontSize: "0.7rem" }}>
+                    ({selectedLeave.dsid})
+                  </span>
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Class</span>
+                <span className="text-white text-sm">{selectedLeave.class}-{selectedLeave.section}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Dates</span>
+                <span className="text-white text-sm">
+                  {fmtDate(selectedLeave.startDate)} – {fmtDate(selectedLeave.endDate)}
+                </span>
+              </div>
+              {selectedLeave.category && (
+                <div className="flex items-center justify-between">
+                  <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Category</span>
+                  <span className="text-white text-sm">{selectedLeave.category}</span>
+                </div>
+              )}
+              <div className="flex items-start justify-between gap-4">
+                <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }} className="mt-0.5 flex-shrink-0">Reason</span>
+                <span className="text-white text-sm text-right leading-relaxed">{selectedLeave.reason}</span>
+              </div>
+              {selectedLeave.attachmentUrl && (
+                <div className="flex items-center justify-between">
+                  <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Attachment</span>
+                  <a
+                    href={selectedLeave.attachmentUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 text-indigo-300 hover:text-indigo-100 text-sm transition-colors"
+                    data-testid={`link-leave-attachment-${selectedLeave.id}`}
+                  >
+                    <Paperclip className="w-3 h-3" /> View file
+                  </a>
+                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Submitted</span>
+                <span className="text-white text-sm">{fmtDate(selectedLeave.createdAt)}</span>
+              </div>
+              <div className="pt-1">
+                <span
+                  className="inline-block text-[10px] px-2.5 py-1 rounded-full font-semibold"
+                  style={{ background: "rgba(99,102,241,0.20)", color: "#818cf8" }}
+                >
+                  Forwarded by Teacher — Awaiting Principal Approval
+                </span>
+              </div>
+            </div>
+            <DialogFooter className="gap-2 mt-1">
+              <Button
+                variant="outline"
+                onClick={() => setSelectedLeave(null)}
+                className="border-white/20 text-white hover:bg-white/10"
+                data-testid="button-close-leave-detail"
+              >
+                Close
+              </Button>
+              <button
+                disabled={isPending}
+                onClick={() => {
+                  studentLeaveApproveMutation.mutate({ id: selectedLeave.id, action: "reject" });
+                  setSelectedLeave(null);
+                }}
+                className="px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
+                style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", border: "1px solid rgba(239,68,68,0.25)" }}
+                data-testid={`button-detail-reject-${selectedLeave.id}`}
+              >
+                ✕ Reject
+              </button>
+              <button
+                disabled={isPending}
+                onClick={() => {
+                  studentLeaveApproveMutation.mutate({ id: selectedLeave.id, action: "admin-approve" });
+                  setSelectedLeave(null);
+                }}
+                className="px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
+                style={{ background: "linear-gradient(135deg,#22c55e,#16a34a)", color: "white" }}
+                data-testid={`button-detail-approve-${selectedLeave.id}`}
+              >
+                ✓ Approve + Sync
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* ── Gallery Approvals ── */}
       <Section title="Gallery Approvals" icon={Image} badge={pendingGallery.length} variant="gallery">

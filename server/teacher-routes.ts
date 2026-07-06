@@ -1502,14 +1502,21 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   // ===== STUDENT LEAVE REQUESTS =====
+  // Returns all pending_teacher student leave requests for all classes the teacher is mapped to.
+  app.get("/api/student-leaves/teacher/mine", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const list = await storage.getStudentLeavesByTeacher(teacher.id, teacher.schoolId);
+    res.json(list);
+  });
+
+  // Legacy per-class route — kept for backwards-compat but new UI uses /teacher/mine
   app.get("/api/student-leaves/:schoolId/:class/:section", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     const sid = parseInt(req.params.schoolId);
     if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
-    if (teacher.assignedClass !== req.params.class || teacher.assignedSection !== req.params.section) {
-      return res.status(403).json({ message: "Not authorized for this class/section" });
-    }
     const list = await storage.getStudentLeavesByClassSection(sid, req.params.class, req.params.section);
     res.json(list);
   });
@@ -2695,6 +2702,7 @@ Thank you for your prompt attention to this matter.
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
     if (!leave || leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    if (leave.status !== "forwarded_to_admin") return res.status(409).json({ message: "Only leaves forwarded by a teacher can be approved here" });
     const updated = await storage.updateStudentLeaveStatus(leave.id, "approved", req.session.userId!, "admin");
     // Look up student's class teacher to use as the FK-valid teacherId for attendance records.
     // If no teacher found for that class/section, pass null — existing records are updated, new ones skipped.

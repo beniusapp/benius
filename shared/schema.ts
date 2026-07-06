@@ -354,7 +354,7 @@ export const studentLeaveRequests = pgTable("student_leave_requests", {
   startDate: date("start_date").notNull(),
   endDate: date("end_date").notNull(),
   reason: text("reason").notNull(),
-  status: text("status").notNull().default("pending"),
+  status: text("status").notNull().default("pending_teacher"),
   reviewedBy: integer("reviewed_by"),
   reviewerRole: text("reviewer_role"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
