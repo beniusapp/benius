@@ -36,6 +36,7 @@ const StudentLeave        = lazy(() => import("@/pages/student-leave"));
 const StudentNoticeboard  = lazy(() => import("@/pages/student-noticeboard"));
 const StudentFees         = lazy(() => import("@/pages/student-fees"));
 const StudentArchives     = lazy(() => import("@/pages/student-archives"));
+const StudentLibrary      = lazy(() => import("@/pages/student-library"));
 
 function PageLoader() {
   return (
@@ -80,6 +81,7 @@ function Router() {
         <Route path="/student/noticeboard" component={StudentNoticeboard} />
         <Route path="/student/fees" component={StudentFees} />
         <Route path="/student/archives" component={StudentArchives} />
+        <Route path="/student/library" component={StudentLibrary} />
         <Route path="/teacher-login" component={TeacherLogin} />
         <Route path="/teacher-dashboard" component={TeacherDashboard} />
         <Route path="/teacher-dashboard/:module" component={TeacherDashboard} />

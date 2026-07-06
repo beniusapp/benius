@@ -88,6 +88,7 @@ const TILES: Tile[] = [
   { id: "school-calendar",  label: "School Calendar",  emoji: "📅", accent: "#84cc16", bg: "#f7fee7", route: "/student/calendar",    pulse: false },
   { id: "leave",            label: "Leave",            emoji: "🌴", accent: "#a78bfa", bg: "#faf5ff", route: "/student/leave",        pulse: false },
   { id: "timetable",        label: "Timetable",        emoji: "🗓️", accent: "#0ea5e9", bg: "#f0f9ff", route: "/student/timetable",   pulse: false },
+  { id: "e-library",        label: "E-Library",        emoji: "📖", accent: "#10b981", bg: "#f0fdf4", route: "/student/library",      pulse: false },
 ];
 
 const containerVariants = {

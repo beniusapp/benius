@@ -1613,6 +1613,16 @@ export async function registerRoutes(
     res.json(items);
   });
 
+  // ===== STUDENT LIBRARY =====
+
+  app.get("/api/student/library", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const books = await storage.getLibraryBooksWithUploaderNames(student.schoolId);
+    res.json(books.filter(b => b.verificationStatus === "approved"));
+  });
+
   // ===== STUDENT FACULTY ROUTES =====
 
   app.get("/api/student/faculty", async (req, res) => {
