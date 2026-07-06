@@ -1287,11 +1287,25 @@ export default function ApprovalCenter({ schoolId }: Props) {
 
   const approvedBooks = allBooks.filter((b: any) => b.verificationStatus === "approved");
   const filteredCatalog = catalogSearch.trim()
-    ? approvedBooks.filter((b: any) =>
-        b.title.toLowerCase().includes(catalogSearch.toLowerCase()) ||
-        b.author.toLowerCase().includes(catalogSearch.toLowerCase())
-      )
+    ? approvedBooks.filter((b: any) => {
+        const q = catalogSearch.toLowerCase();
+        return (
+          b.title.toLowerCase().includes(q) ||
+          b.author.toLowerCase().includes(q) ||
+          (b.targetClass && b.targetClass.toLowerCase().includes(q))
+        );
+      })
     : approvedBooks;
+
+  const ebookDeleteMutation = useMutation({
+    mutationFn: async (id: number) => { await apiRequest("DELETE", `/api/library/books/${id}`); },
+    onSuccess: () => {
+      toast({ title: "Book Deleted", description: "Removed from all views." });
+      queryClient.invalidateQueries({ queryKey: ["/api/library/books", schoolId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/library/books", schoolId, "pending"] });
+    },
+    onError: (e: Error) => toast({ title: "Delete Failed", description: e.message, variant: "destructive" }),
+  });
 
   const adminEbookUploadMutation = useMutation({
     mutationFn: async (formData: FormData) => {
@@ -1814,7 +1828,7 @@ export default function ApprovalCenter({ schoolId }: Props) {
                 <input
                   value={catalogSearch}
                   onChange={e => setCatalogSearch(e.target.value)}
-                  placeholder="Search by title, author…"
+                  placeholder="Search by title, author, class…"
                   className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm outline-none"
                   style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", color: "white" }}
                   data-testid="input-catalog-search"
@@ -1852,8 +1866,8 @@ export default function ApprovalCenter({ schoolId }: Props) {
                               </p>
                             )}
                           </div>
-                          {b.fileUrl && (
-                            <div className="flex flex-col gap-1.5 flex-shrink-0">
+                          <div className="flex flex-col gap-1.5 flex-shrink-0">
+                            {b.fileUrl && (<>
                               <button onClick={() => window.open(b.fileUrl, "_blank")}
                                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold"
                                 style={{ background: "rgba(20,184,166,0.15)", color: "#5eead4", border: "1px solid rgba(20,184,166,0.28)" }}
@@ -1865,13 +1879,21 @@ export default function ApprovalCenter({ schoolId }: Props) {
                                 a.href = b.fileUrl; a.download = `${b.title}.${b.fileType ?? "pdf"}`;
                                 document.body.appendChild(a); a.click(); document.body.removeChild(a);
                               }}
-                                className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold"
+                                className="flex items-center justify-center px-2.5 py-1.5 rounded-lg text-xs font-semibold"
                                 style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.55)", border: "1px solid rgba(255,255,255,0.10)" }}
                                 data-testid={`button-download-catalog-${b.id}`}>
                                 <Download className="w-3 h-3" />
                               </button>
-                            </div>
-                          )}
+                            </>)}
+                            <button
+                              onClick={() => { if (confirm(`Delete "${b.title}"? This removes it for all teachers and students.`)) ebookDeleteMutation.mutate(b.id); }}
+                              disabled={ebookDeleteMutation.isPending}
+                              className="flex items-center justify-center px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-125 disabled:opacity-50"
+                              style={{ background: "rgba(239,68,68,0.10)", color: "#f87171", border: "1px solid rgba(239,68,68,0.22)" }}
+                              data-testid={`button-delete-catalog-${b.id}`}>
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
                         </div>
                       );
                     })}
