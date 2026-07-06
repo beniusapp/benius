@@ -231,6 +231,7 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [viewGroup, setViewGroup] = useState<GalleryItemWithTeacher[] | null>(null);
   const [lightboxIdx, setLightboxIdx] = useState(0);
+  const [previewItem, setPreviewItem] = useState<GalleryItemWithTeacher | null>(null);
 
   const [title, setTitle] = useState("");
   const [eventName, setEventName] = useState("");
@@ -518,85 +519,63 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
                         }
                       }}
                     >
-                      {/* Image */}
-                      <div className="relative h-44 overflow-hidden">
+                      {/* Image — click to preview */}
+                      <div
+                        className="relative h-44 overflow-hidden cursor-zoom-in"
+                        onClick={() => setPreviewItem(item)}
+                      >
                         <img
                           src={item.imageUrl}
                           alt={item.title}
                           className="w-full h-full object-cover transition-transform duration-400 group-hover:scale-[1.06]"
                         />
 
-                        {/* Selection overlay */}
-                        <div
-                          className="absolute inset-0 transition-opacity duration-200"
-                          style={{
-                            background: sel
-                              ? "rgba(168,85,247,0.22)"
-                              : "rgba(0,0,0,0)",
-                            opacity: 1,
-                          }}
-                        />
+                        {/* Selection tint */}
+                        {sel && (
+                          <div
+                            className="absolute inset-0"
+                            style={{ background: "rgba(168,85,247,0.18)" }}
+                          />
+                        )}
 
                         {/* Hover gradient (bottom-up) */}
                         <div
                           className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
-                          style={{ background: "linear-gradient(to top, rgba(0,0,0,0.70) 0%, transparent 55%)" }}
+                          style={{ background: "linear-gradient(to top, rgba(0,0,0,0.65) 0%, transparent 50%)" }}
                         />
 
-                        {/* Top-right: trash + select ring */}
-                        <div className="absolute top-2 right-2 flex items-center gap-1.5 z-10">
-                          {/* Trash icon — always visible, subtle */}
-                          <button
-                            onClick={e => { e.stopPropagation(); toggleSelect(item.id); }}
-                            data-testid={`button-gallery-trash-${item.id}`}
-                            title={sel ? "Deselect" : "Mark for deletion"}
-                            className="flex items-center justify-center w-7 h-7 rounded-full transition-all duration-200
-                              hover:scale-110 active:scale-95"
-                            style={{
-                              background: sel
-                                ? "rgba(239,68,68,0.85)"
-                                : "rgba(0,0,0,0.55)",
-                              backdropFilter: "blur(4px)",
-                              border: sel
-                                ? "1.5px solid rgba(239,68,68,0.90)"
-                                : "1.5px solid rgba(255,255,255,0.25)",
-                              boxShadow: sel ? "0 0 12px rgba(239,68,68,0.50)" : "none",
-                            }}
-                          >
-                            <Trash2
-                              className="w-3.5 h-3.5 transition-colors"
-                              style={{ color: sel ? "#fff" : "rgba(255,255,255,0.75)" }}
-                            />
-                          </button>
-
-                          {/* Selection ring */}
-                          <div
-                            onClick={() => toggleSelect(item.id)}
-                            className="flex items-center justify-center w-7 h-7 rounded-full transition-all duration-200 cursor-pointer"
-                            style={{
-                              background: sel ? "#a855f7" : "rgba(0,0,0,0.50)",
-                              backdropFilter: "blur(4px)",
-                              border: `2px solid ${sel ? "#c084fc" : "rgba(255,255,255,0.40)"}`,
-                              boxShadow: sel ? "0 0 12px rgba(168,85,247,0.55)" : "none",
-                            }}
-                          >
-                            {sel && <Check className="w-3.5 h-3.5 text-white" />}
-                          </div>
-                        </div>
-
-                        {/* Bottom info strip — visible on hover via group */}
-                        <div
-                          className="absolute bottom-0 left-0 right-0 px-3 py-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+                        {/* Trash — hover-only (always shown when selected) */}
+                        <button
+                          onClick={e => { e.stopPropagation(); toggleSelect(item.id); }}
+                          data-testid={`button-gallery-trash-${item.id}`}
+                          title={sel ? "Deselect" : "Mark for deletion"}
+                          className={`absolute top-2 right-2 flex items-center justify-center w-7 h-7 rounded-full
+                            transition-all duration-200 hover:scale-110 active:scale-95 z-10
+                            ${sel ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+                          style={{
+                            background: sel ? "rgba(239,68,68,0.90)" : "rgba(0,0,0,0.60)",
+                            backdropFilter: "blur(6px)",
+                            border: sel ? "1.5px solid rgba(239,68,68,0.95)" : "1.5px solid rgba(255,255,255,0.30)",
+                            boxShadow: sel ? "0 0 14px rgba(239,68,68,0.55)" : "none",
+                          }}
                         >
-                          {item.eventTag && (
+                          <Trash2
+                            className="w-3.5 h-3.5"
+                            style={{ color: "#fff" }}
+                          />
+                        </button>
+
+                        {/* Event tag pill — hover only */}
+                        {item.eventTag && (
+                          <div className="absolute bottom-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
                             <span
-                              className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold mb-1"
-                              style={{ background: "rgba(168,85,247,0.70)", color: "#f0e6ff" }}
+                              className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                              style={{ background: "rgba(168,85,247,0.80)", color: "#f0e6ff", backdropFilter: "blur(4px)" }}
                             >
                               {item.eventTag}
                             </span>
-                          )}
-                        </div>
+                          </div>
+                        )}
                       </div>
 
                       {/* Caption bar */}
@@ -754,6 +733,119 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
           </div>
         )}
       </div>
+
+      {/* ── Single Image Preview Modal ── */}
+      {previewItem && (
+        <Dialog open={!!previewItem} onOpenChange={v => { if (!v) setPreviewItem(null); }}>
+          <DialogContent
+            className="max-w-2xl max-h-[92vh] flex flex-col p-0 overflow-hidden"
+            style={{ background: "#070d1a", border: "1px solid rgba(168,85,247,0.30)" }}
+          >
+            {/* Full image */}
+            <div className="relative flex-shrink-0" style={{ maxHeight: "65vh" }}>
+              <img
+                src={previewItem.imageUrl}
+                alt={previewItem.title}
+                className="w-full object-contain"
+                style={{ maxHeight: "65vh", background: "#000" }}
+              />
+              {/* Close button */}
+              <button
+                onClick={() => setPreviewItem(null)}
+                className="absolute top-3 right-3 flex items-center justify-center w-8 h-8 rounded-full z-20
+                  transition-all hover:scale-110 active:scale-95"
+                style={{ background: "rgba(0,0,0,0.70)", border: "1px solid rgba(255,255,255,0.20)" }}
+                data-testid="button-preview-close"
+              >
+                <X className="w-4 h-4 text-white" />
+              </button>
+              {/* Event tag overlay */}
+              {previewItem.eventTag && (
+                <div className="absolute bottom-3 left-3">
+                  <span
+                    className="px-3 py-1 rounded-full text-xs font-bold"
+                    style={{ background: "rgba(168,85,247,0.85)", color: "#f0e6ff", backdropFilter: "blur(6px)" }}
+                  >
+                    {previewItem.eventTag}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Metadata panel */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+              <div>
+                <h3 className="text-white font-bold text-base leading-snug">{previewItem.title}</h3>
+                {previewItem.description && (
+                  <p className="text-sm mt-1 leading-relaxed" style={{ color: "rgba(255,255,255,0.60)" }}>
+                    {previewItem.description}
+                  </p>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {previewItem.capturedDate && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-xl"
+                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <CalendarIcon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#c084fc" }} />
+                    <div>
+                      <p className="text-[10px]" style={{ color: "rgba(255,255,255,0.40)" }}>Date</p>
+                      <p className="text-xs text-white font-medium">{fmtDate(previewItem.capturedDate)}</p>
+                    </div>
+                  </div>
+                )}
+                {previewItem.capturedTime && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-xl"
+                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <Clock className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#c084fc" }} />
+                    <div>
+                      <p className="text-[10px]" style={{ color: "rgba(255,255,255,0.40)" }}>Time</p>
+                      <p className="text-xs text-white font-medium">{previewItem.capturedTime}</p>
+                    </div>
+                  </div>
+                )}
+                {previewItem.location && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-xl col-span-2"
+                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <MapPin className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#c084fc" }} />
+                    <div>
+                      <p className="text-[10px]" style={{ color: "rgba(255,255,255,0.40)" }}>Venue</p>
+                      <p className="text-xs text-white font-medium">{previewItem.location}</p>
+                    </div>
+                  </div>
+                )}
+                {previewItem.teacherName && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-xl col-span-2"
+                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <UserCheck className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#c084fc" }} />
+                    <div>
+                      <p className="text-[10px]" style={{ color: "rgba(255,255,255,0.40)" }}>Uploaded by</p>
+                      <p className="text-xs text-white font-medium">{previewItem.teacherName}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+              {/* Delete this image */}
+              <button
+                onClick={() => {
+                  batchDeleteMutation.mutate({ ids: [previewItem.id] });
+                  setPreviewItem(null);
+                }}
+                disabled={batchDeleteMutation.isPending}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold
+                  transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+                style={{
+                  background: "rgba(239,68,68,0.10)",
+                  color: "#f87171",
+                  border: "1px solid rgba(239,68,68,0.28)",
+                }}
+                data-testid={`button-preview-delete-${previewItem.id}`}
+              >
+                <Trash2 className="w-4 h-4" /> Delete this photo
+              </button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* ── Upload Dialog ── */}
       <Dialog open={showUpload} onOpenChange={v => { if (!v) resetForm(); setShowUpload(v); }}>
