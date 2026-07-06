@@ -1276,10 +1276,10 @@ export function registerTeacherRoutes(app: Express) {
   // ===== LIBRARY =====
   app.post("/api/library/books", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
-    const { title, author, isbn, totalCopies, schoolId } = req.body;
-    if (!title || !author || !schoolId) return res.status(400).json({ message: "Title, author, and schoolId required" });
+    const { title, author, isbn, totalCopies } = req.body;
+    if (!title || !author) return res.status(400).json({ message: "Title and author required" });
     const copies = parseInt(totalCopies) || 1;
-    const book = await storage.createLibraryBook({ schoolId: parseInt(schoolId), title, author, isbn: isbn || null, totalCopies: copies, availableCopies: copies });
+    const book = await storage.createLibraryBook({ schoolId: req.session.schoolId!, title, author, isbn: isbn || null, totalCopies: copies, availableCopies: copies });
     res.status(201).json(book);
   });
 
@@ -1344,6 +1344,8 @@ export function registerTeacherRoutes(app: Express) {
     if (!bookId) return res.status(400).json({ message: "bookId required" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const book = await storage.getLibraryBookById(parseInt(bookId));
+    if (!book || book.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Not authorized" });
     const borrow = await storage.borrowBook(parseInt(bookId), teacher.id, "teacher", teacher.schoolId);
     if (!borrow) return res.status(400).json({ message: "Book not available" });
     res.status(201).json(borrow);
@@ -1351,6 +1353,11 @@ export function registerTeacherRoutes(app: Express) {
 
   app.post("/api/library/return/:borrowId", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const borrows = await storage.getMyBorrowedBooks(teacher.id, "teacher");
+    const owns = borrows.some(b => b.id === parseInt(req.params.borrowId));
+    if (!owns) return res.status(403).json({ message: "Not authorized" });
     await storage.returnBook(parseInt(req.params.borrowId));
     res.json({ message: "Book returned" });
   });
