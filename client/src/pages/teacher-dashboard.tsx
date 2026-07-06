@@ -326,7 +326,7 @@ export default function TeacherDashboard() {
     },
     onSuccess: () => {
       setViewSessionId(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/teacher-me"] });
+      queryClient.clear();
       setLocation("/teacher-login");
     },
     onError: (error: Error) => {

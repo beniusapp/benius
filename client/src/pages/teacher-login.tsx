@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 type Step = "login" | "change-password" | "forgot-password" | "verify-otp" | "reset-password";
 
@@ -39,6 +39,7 @@ export default function TeacherLogin() {
       return res.json();
     },
     onSuccess: (data) => {
+      queryClient.clear();
       if (data.mustChangePassword) {
         setStep("change-password");
         toast({ title: "First Login", description: "Please change your password to continue." });
