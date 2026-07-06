@@ -1445,7 +1445,8 @@ export function registerTeacherRoutes(app: Express) {
 
   app.get("/api/leave/teacher/:teacherId", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const list = await storage.getLeaveRequestsByTeacher(parseInt(req.params.teacherId));
+    if (req.session.teacherId !== parseInt(req.params.teacherId)) return res.status(403).json({ message: "Not authorized" });
+    const list = await storage.getLeaveRequestsByTeacher(req.session.teacherId);
     res.json(list);
   });
 
