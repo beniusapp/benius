@@ -643,7 +643,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                 <span className="text-gray-900 text-sm">{fmtDate(selectedLeave.createdAt)}</span>
               </div>
             </div>
-            <DialogFooter className="gap-2 mt-1">
+            <DialogFooter className="gap-2 mt-1 flex-wrap">
               <Button variant="outline" onClick={() => setSelectedLeave(null)} data-testid="button-close-leave-detail">
                 Close
               </Button>
@@ -652,15 +652,33 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                   <Button
                     variant="outline"
                     className="border-red-200 text-red-600 hover:bg-red-50"
-                    onClick={() => { setRejectingId(selectedLeave.id); setRejectionReason(""); setSelectedLeave(null); }}
+                    onClick={() => {
+                      setPendingAction({ id: selectedLeave.id, type: "reject" });
+                      setActionComment("");
+                      setSelectedLeave(null);
+                    }}
                     data-testid={`button-detail-reject-${selectedLeave.id}`}
                   >
                     <XCircle className="w-3.5 h-3.5 mr-1" /> Reject
                   </Button>
                   <Button
+                    variant="outline"
+                    onClick={() => {
+                      setPendingAction({ id: selectedLeave.id, type: "escalate" });
+                      setActionComment("");
+                      setSelectedLeave(null);
+                    }}
+                    data-testid={`button-detail-escalate-${selectedLeave.id}`}
+                  >
+                    <Forward className="w-3.5 h-3.5 mr-1" /> Escalate
+                  </Button>
+                  <Button
                     className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                    onClick={() => { approveMutation.mutate(selectedLeave.id); setSelectedLeave(null); }}
-                    disabled={approveMutation.isPending}
+                    onClick={() => {
+                      setPendingAction({ id: selectedLeave.id, type: "approve" });
+                      setActionComment("");
+                      setSelectedLeave(null);
+                    }}
                     data-testid={`button-detail-approve-${selectedLeave.id}`}
                   >
                     <CheckCircle className="w-3.5 h-3.5 mr-1" /> Approve
