@@ -1181,8 +1181,6 @@ export async function registerRoutes(
   const profileDiskUpload = multer({
     storage: multer.diskStorage({
       destination: (_req, _file, cb) => {
-        const path = require("path");
-        const fs = require("fs");
         const dir = path.join(process.cwd(), "uploads", "student-photos");
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         cb(null, dir);
