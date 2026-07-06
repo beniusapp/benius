@@ -328,7 +328,14 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                           )}
                           {book.fileUrl && (
                             <button
-                              onClick={() => window.open(book.fileUrl!, "_blank")}
+                              onClick={() => {
+                                const a = document.createElement("a");
+                                a.href = book.fileUrl!;
+                                a.download = `${book.title}.${book.fileType ?? "pdf"}`;
+                                document.body.appendChild(a);
+                                a.click();
+                                document.body.removeChild(a);
+                              }}
                               className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-110"
                               style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.60)", border: "1px solid rgba(255,255,255,0.10)" }}
                               data-testid={`button-download-${book.id}`}
