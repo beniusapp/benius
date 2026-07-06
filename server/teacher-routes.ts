@@ -1193,9 +1193,17 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.get("/api/gallery/:schoolId", async (req, res) => {
-    if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const sid = parseInt(req.params.schoolId);
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
+    } else if (req.session.userId) {
+      if (req.session.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
+    } else {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
     const approvedOnly = req.query.all !== "true";
-    const list = await storage.getGalleryItems(parseInt(req.params.schoolId), approvedOnly);
+    const list = await storage.getGalleryItems(sid, approvedOnly);
     res.json(list);
   });
 
