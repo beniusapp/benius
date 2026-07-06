@@ -10,15 +10,18 @@ import { StudentSessionProvider } from "@/contexts/student-session-provider";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 
-const SuperMaster      = lazy(() => import("@/pages/super-master"));
-const Login            = lazy(() => import("@/pages/login"));
-const AdminDashboard   = lazy(() => import("@/pages/admin-dashboard"));
-const Register         = lazy(() => import("@/pages/register"));
-const AdminSetup       = lazy(() => import("@/pages/admin-setup"));
-const StudentLogin     = lazy(() => import("@/pages/student-login"));
-const StudentDashboard = lazy(() => import("@/pages/student-dashboard"));
-const TeacherLogin     = lazy(() => import("@/pages/teacher-login"));
-const TeacherDashboard = lazy(() => import("@/pages/teacher-dashboard"));
+// Core dashboards — eager-loaded so there is zero Suspense delay after login
+import AdminDashboard  from "@/pages/admin-dashboard";
+import TeacherDashboard from "@/pages/teacher-dashboard";
+import Login           from "@/pages/login";
+import StudentLogin    from "@/pages/student-login";
+import TeacherLogin    from "@/pages/teacher-login";
+
+// Everything else stays lazy — only downloaded when first visited
+const SuperMaster         = lazy(() => import("@/pages/super-master"));
+const Register            = lazy(() => import("@/pages/register"));
+const AdminSetup          = lazy(() => import("@/pages/admin-setup"));
+const StudentDashboard    = lazy(() => import("@/pages/student-dashboard"));
 const StudentProfilePage  = lazy(() => import("@/pages/student-profile"));
 const StudentAttendance   = lazy(() => import("@/pages/student-attendance"));
 const StudentHomework     = lazy(() => import("@/pages/student-homework"));
