@@ -1284,9 +1284,16 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.get("/api/library/books/:schoolId", async (req, res) => {
-    if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const q = req.query.q as string;
     const sid = parseInt(req.params.schoolId);
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
+    } else if (req.session.userId) {
+      if (req.session.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
+    } else {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const q = req.query.q as string;
     const list = q ? await storage.searchLibraryBooksAdvanced(sid, q) : await storage.getLibraryBooksWithUploaderNames(sid);
     res.json(list);
   });
@@ -1385,6 +1392,9 @@ export function registerTeacherRoutes(app: Express) {
 
   app.delete("/api/library/books/:id", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const book = await storage.getLibraryBookById(parseInt(req.params.id));
+    if (!book) return res.status(404).json({ message: "Book not found" });
+    if (book.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
     await storage.deleteLibraryBook(parseInt(req.params.id));
     res.json({ message: "Book deleted" });
   });
