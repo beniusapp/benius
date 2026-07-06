@@ -17,7 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useSchoolConfig } from "@/hooks/use-school-config";
+import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 
 interface Props { schoolId: number }
 
@@ -1247,7 +1247,7 @@ export default function ApprovalCenter({ schoolId }: Props) {
   const [adminEbookFile, setAdminEbookFile] = useState<File | null>(null);
   const adminEbookFileRef = useRef<HTMLInputElement>(null);
   const [catalogSearch, setCatalogSearch] = useState("");
-  const { classes: schoolClasses } = useSchoolConfig(schoolId);
+  const { classes: schoolClasses, isLoading: schoolConfigLoading } = useSchoolConfigStrict(schoolId);
 
   const { data: historyData, isLoading: historyLoading } = useQuery<any>({
     queryKey: ["/api/approval-history", schoolId],
@@ -1989,6 +1989,9 @@ export default function ApprovalCenter({ schoolId }: Props) {
                   <div className="flex flex-wrap gap-2 p-3 rounded-xl"
                     style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.10)" }}
                     data-testid="multiselect-admin-ebook-class">
+                    {schoolConfigLoading && (
+                      <span className="text-xs" style={{ color: "rgba(255,255,255,0.35)" }}>Loading classes…</span>
+                    )}
                     {schoolClasses.map(cls => {
                       const checked = adminEbookClasses.includes(cls);
                       return (

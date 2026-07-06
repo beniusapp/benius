@@ -1048,10 +1048,16 @@ export function registerTeacherRoutes(app: Express) {
 
   // ===== SCHOOL CONFIG (Teacher Read-Only) =====
   app.get("/api/school-config/:schoolId", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const isTeacher = !!req.session.teacherId;
+    const isAdmin = !!req.session.userId && req.session.userRole !== "teacher";
+    if (!isTeacher && !isAdmin) return res.status(401).json({ message: "Not authenticated" });
     const schoolId = parseInt(req.params.schoolId);
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher || teacher.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    if (isTeacher) {
+      const teacher = await storage.getTeacherById(req.session.teacherId!);
+      if (!teacher || teacher.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    } else {
+      if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    }
     const [meta, classSections, classSubjects, classExamTypes] = await Promise.all([
       storage.getAllSchoolMetadata(schoolId),
       storage.getClassSectionsMap(schoolId),
