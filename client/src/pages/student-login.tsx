@@ -33,7 +33,7 @@ export default function StudentLogin() {
     },
     onSuccess: () => {
       setErrorMessage("");
-      queryClient.invalidateQueries({ queryKey: ["/api/student-me"] });
+      queryClient.clear();
       setLocation("/student-dashboard");
     },
     onError: (error: Error) => {

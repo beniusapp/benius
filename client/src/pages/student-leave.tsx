@@ -77,7 +77,12 @@ export default function StudentLeave() {
   }, [studentLoading, student, setLocation]);
 
   const { data: leaves = [], isLoading: leavesLoading } = useQuery<StudentLeaveRequest[]>({
-    queryKey: ["/api/student/leave"],
+    queryKey: ["/api/student/leave", student?.id],
+    queryFn: async () => {
+      const res = await fetch("/api/student/leave", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load leaves");
+      return res.json();
+    },
     enabled: !!student,
   });
 

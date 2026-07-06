@@ -162,7 +162,7 @@ export default function StudentDashboard() {
   const logoutMutation = useMutation({
     mutationFn: async () => { await apiRequest("POST", "/api/student-logout"); },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/student-me"] });
+      queryClient.clear();
       setLocation("/student-login");
     },
     onError: (error: Error) => {
