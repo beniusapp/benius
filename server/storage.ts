@@ -2319,9 +2319,10 @@ export class DatabaseStorage {
       }));
   }
 
-  async updateStudentLeaveStatus(id: number, status: string, reviewedBy: number, reviewerRole: string, rejectionReason?: string): Promise<StudentLeaveRequest> {
+  async updateStudentLeaveStatus(id: number, status: string, reviewedBy: number, reviewerRole: string, rejectionReason?: string, adminComment?: string): Promise<StudentLeaveRequest> {
     const updateData: Record<string, unknown> = { status, reviewedBy, reviewerRole };
     if (rejectionReason !== undefined) updateData.rejectionReason = rejectionReason;
+    if (adminComment !== undefined) updateData.adminComment = adminComment;
     const [req] = await db.update(studentLeaveRequests)
       .set(updateData)
       .where(eq(studentLeaveRequests.id, id)).returning();
@@ -2784,14 +2785,19 @@ export class DatabaseStorage {
   }
 
   // ===== STUDENT LEAVES FOR ADMIN (forwarded_to_admin only — teacher tier stays hidden) =====
-  async getStudentLeavesForAdmin(schoolId: number): Promise<(StudentLeaveRequest & { studentName: string; dsid: string; class: string; section: string })[]> {
+  async getStudentLeavesForAdmin(schoolId: number): Promise<(StudentLeaveRequest & { studentName: string; dsid: string; class: string; section: string; forwardedByTeacherName: string | null })[]> {
     const leaves = await db.select().from(studentLeaveRequests).where(
       and(eq(studentLeaveRequests.schoolId, schoolId), eq(studentLeaveRequests.status, "forwarded_to_admin"))
     ).orderBy(desc(studentLeaveRequests.createdAt));
     const result = [];
     for (const l of leaves) {
       const s = await this.getStudentById(l.studentId);
-      result.push({ ...l, studentName: s?.name ?? "Unknown", dsid: s?.digitalStudentId ?? "", class: s?.class ?? "", section: s?.section ?? "" });
+      let forwardedByTeacherName: string | null = null;
+      if (l.reviewedBy && l.reviewerRole === "teacher") {
+        const t = await this.getTeacherById(l.reviewedBy);
+        forwardedByTeacherName = t?.name ?? null;
+      }
+      result.push({ ...l, studentName: s?.name ?? "Unknown", dsid: s?.digitalStudentId ?? "", class: s?.class ?? "", section: s?.section ?? "", forwardedByTeacherName });
     }
     return result;
   }

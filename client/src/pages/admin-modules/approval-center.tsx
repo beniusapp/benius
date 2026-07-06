@@ -2,10 +2,11 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import {
   Check, X, BookOpen, Image, UserCheck, Loader2,
-  CalendarOff, ImageOff, BookMarked, Users, Inbox, Eye, Paperclip,
+  CalendarOff, ImageOff, BookMarked, Users, Inbox, Eye, Paperclip, UserCircle2,
 } from "lucide-react";
 import { fmtDate } from "@/lib/dateUtils";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -204,6 +205,7 @@ function ActionButtons({
 export default function ApprovalCenter({ schoolId }: Props) {
   const { toast } = useToast();
   const [selectedLeave, setSelectedLeave] = useState<any | null>(null);
+  const [adminComment, setAdminComment] = useState("");
 
   const { data: leaveRequests = [], isLoading: leavesLoading } = useQuery<any[]>({
     queryKey: ["/api/leave/school", schoolId],
@@ -275,8 +277,8 @@ export default function ApprovalCenter({ schoolId }: Props) {
   });
 
   const studentLeaveApproveMutation = useMutation({
-    mutationFn: async ({ id, action }: { id: number; action: "admin-approve" | "reject" }) => {
-      await apiRequest("PATCH", `/api/student-leaves/${id}/${action}`, {});
+    mutationFn: async ({ id, action, comment }: { id: number; action: "admin-approve" | "reject"; comment?: string }) => {
+      await apiRequest("PATCH", `/api/student-leaves/${id}/${action}`, { adminComment: comment || undefined });
     },
     onSuccess: (_, vars) => {
       toast({
@@ -384,10 +386,10 @@ export default function ApprovalCenter({ schoolId }: Props) {
                       <ActionButtons
                         disabled={isPending}
                         onApprove={() =>
-                          studentLeaveApproveMutation.mutate({ id: l.id, action: "admin-approve" })
+                          studentLeaveApproveMutation.mutate({ id: l.id, action: "admin-approve", comment: undefined })
                         }
                         onReject={() =>
-                          studentLeaveApproveMutation.mutate({ id: l.id, action: "reject" })
+                          studentLeaveApproveMutation.mutate({ id: l.id, action: "reject", comment: undefined })
                         }
                         approveLabel="Approve + Sync"
                         approveTestId={`button-approve-student-leave-${l.id}`}
@@ -403,7 +405,7 @@ export default function ApprovalCenter({ schoolId }: Props) {
 
       {/* ── Student Leave Detail Modal ── */}
       {selectedLeave && (
-        <Dialog open={!!selectedLeave} onOpenChange={() => setSelectedLeave(null)}>
+        <Dialog open={!!selectedLeave} onOpenChange={() => { setSelectedLeave(null); setAdminComment(""); }}>
           <DialogContent
             className="max-w-md"
             style={{ background: "#1A2942", border: "1px solid rgba(99,102,241,0.30)", color: "white" }}
@@ -412,6 +414,7 @@ export default function ApprovalCenter({ schoolId }: Props) {
               <DialogTitle className="text-white text-lg font-bold">Student Leave Request</DialogTitle>
             </DialogHeader>
             <div className="space-y-3 py-2">
+              {/* Student */}
               <div className="flex items-center justify-between">
                 <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Student</span>
                 <span className="font-semibold text-white text-sm">
@@ -421,26 +424,31 @@ export default function ApprovalCenter({ schoolId }: Props) {
                   </span>
                 </span>
               </div>
+              {/* Class */}
               <div className="flex items-center justify-between">
                 <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Class</span>
                 <span className="text-white text-sm">{selectedLeave.class}-{selectedLeave.section}</span>
               </div>
+              {/* Dates */}
               <div className="flex items-center justify-between">
                 <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Dates</span>
                 <span className="text-white text-sm">
                   {fmtDate(selectedLeave.startDate)} – {fmtDate(selectedLeave.endDate)}
                 </span>
               </div>
+              {/* Category */}
               {selectedLeave.category && (
                 <div className="flex items-center justify-between">
                   <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Category</span>
                   <span className="text-white text-sm">{selectedLeave.category}</span>
                 </div>
               )}
+              {/* Reason */}
               <div className="flex items-start justify-between gap-4">
                 <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }} className="mt-0.5 flex-shrink-0">Reason</span>
                 <span className="text-white text-sm text-right leading-relaxed">{selectedLeave.reason}</span>
               </div>
+              {/* Attachment */}
               {selectedLeave.attachmentUrl && (
                 <div className="flex items-center justify-between">
                   <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Attachment</span>
@@ -455,23 +463,57 @@ export default function ApprovalCenter({ schoolId }: Props) {
                   </a>
                 </div>
               )}
+              {/* Submitted */}
               <div className="flex items-center justify-between">
                 <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Submitted</span>
                 <span className="text-white text-sm">{fmtDate(selectedLeave.createdAt)}</span>
               </div>
-              <div className="pt-1">
+
+              {/* Forwarded by teacher — highlighted row */}
+              <div
+                className="flex items-center gap-2 rounded-lg px-3 py-2"
+                style={{ background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.25)" }}
+              >
+                <UserCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: "#818cf8" }} />
+                <div className="flex-1 min-w-0">
+                  <p style={{ color: "rgba(255,255,255,0.50)", fontSize: "0.7rem" }}>Forwarded by Teacher</p>
+                  <p className="text-white font-semibold text-sm truncate">
+                    {selectedLeave.forwardedByTeacherName ?? "—"}
+                  </p>
+                </div>
                 <span
-                  className="inline-block text-[10px] px-2.5 py-1 rounded-full font-semibold"
+                  className="text-[10px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0"
                   style={{ background: "rgba(99,102,241,0.20)", color: "#818cf8" }}
                 >
-                  Forwarded by Teacher — Awaiting Principal Approval
+                  Awaiting Principal
                 </span>
               </div>
+
+              {/* Admin Comment */}
+              <div className="space-y-1.5">
+                <label style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>
+                  Principal Comment <span style={{ color: "rgba(255,255,255,0.30)" }}>(optional)</span>
+                </label>
+                <Textarea
+                  value={adminComment}
+                  onChange={(e) => setAdminComment(e.target.value)}
+                  placeholder="Add a comment or note for this decision…"
+                  rows={3}
+                  className="resize-none text-sm"
+                  style={{
+                    background: "rgba(255,255,255,0.05)",
+                    border: "1px solid rgba(255,255,255,0.15)",
+                    color: "white",
+                  }}
+                  data-testid="textarea-admin-comment"
+                />
+              </div>
             </div>
+
             <DialogFooter className="gap-2 mt-1">
               <Button
                 variant="outline"
-                onClick={() => setSelectedLeave(null)}
+                onClick={() => { setSelectedLeave(null); setAdminComment(""); }}
                 className="border-white/20 text-white hover:bg-white/10"
                 data-testid="button-close-leave-detail"
               >
@@ -480,8 +522,9 @@ export default function ApprovalCenter({ schoolId }: Props) {
               <button
                 disabled={isPending}
                 onClick={() => {
-                  studentLeaveApproveMutation.mutate({ id: selectedLeave.id, action: "reject" });
+                  studentLeaveApproveMutation.mutate({ id: selectedLeave.id, action: "reject", comment: adminComment || undefined });
                   setSelectedLeave(null);
+                  setAdminComment("");
                 }}
                 className="px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
                 style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", border: "1px solid rgba(239,68,68,0.25)" }}
@@ -492,8 +535,9 @@ export default function ApprovalCenter({ schoolId }: Props) {
               <button
                 disabled={isPending}
                 onClick={() => {
-                  studentLeaveApproveMutation.mutate({ id: selectedLeave.id, action: "admin-approve" });
+                  studentLeaveApproveMutation.mutate({ id: selectedLeave.id, action: "admin-approve", comment: adminComment || undefined });
                   setSelectedLeave(null);
+                  setAdminComment("");
                 }}
                 className="px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
                 style={{ background: "linear-gradient(135deg,#22c55e,#16a34a)", color: "white" }}

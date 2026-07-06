@@ -2713,7 +2713,8 @@ Thank you for your prompt attention to this matter.
     const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
     if (!leave || leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
     if (leave.status !== "forwarded_to_admin") return res.status(409).json({ message: "Only leaves forwarded by a teacher can be approved here" });
-    const updated = await storage.updateStudentLeaveStatus(leave.id, "approved", req.session.userId!, "admin");
+    const { adminComment } = req.body;
+    const updated = await storage.updateStudentLeaveStatus(leave.id, "approved", req.session.userId!, "admin", undefined, adminComment || undefined);
     // Look up student's class teacher to use as the FK-valid teacherId for attendance records.
     // If no teacher found for that class/section, pass null — existing records are updated, new ones skipped.
     const student = await storage.getStudentById(leave.studentId);
@@ -2763,7 +2764,8 @@ Thank you for your prompt attention to this matter.
     if (req.session.userId) {
       if (leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
       if (leave.status !== "forwarded_to_admin") return res.status(409).json({ message: "Admin can only reject leaves that were forwarded by a teacher" });
-      const updated = await storage.updateStudentLeaveStatus(leave.id, "rejected", req.session.userId!, "admin", rejectionReason || undefined);
+      const { adminComment } = req.body;
+      const updated = await storage.updateStudentLeaveStatus(leave.id, "rejected", req.session.userId!, "admin", rejectionReason || undefined, adminComment || undefined);
       await storage.createAuditLog({
         schoolId: req.session.schoolId!, actionType: "reject", entityType: "student_leave", entityId: leave.id,
         actionBy: req.session.userId!, actionByRole: "admin",
