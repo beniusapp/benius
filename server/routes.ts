@@ -1791,6 +1791,39 @@ export async function registerRoutes(
 
   // ===== STUDENT LEAVE ROUTES =====
 
+  // Leave attachment file upload
+  const leaveAttachUpload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => {
+        const path = require("path");
+        const fs = require("fs");
+        const dir = path.join(process.cwd(), "uploads", "leave-attachments");
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+      },
+      filename: (_req, file, cb) => {
+        const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
+        const ext = require("path").extname(file.originalname) || ".bin";
+        cb(null, unique + ext);
+      },
+    }),
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      const allowed = ["image/jpeg","image/jpg","image/png","image/webp","image/gif",
+                       "application/pdf","application/msword",
+                       "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
+      if (allowed.includes(file.mimetype)) cb(null, true);
+      else cb(new Error("Only images, PDF, and DOC files are allowed"));
+    },
+  });
+
+  app.post("/api/student/leave/upload", leaveAttachUpload.single("file"), async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+    const url = `/uploads/leave-attachments/${req.file.filename}`;
+    res.json({ url });
+  });
+
   app.post("/api/student/leave", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);

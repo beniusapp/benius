@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { fmtDate } from "@/lib/dateUtils";
 import {
   ArrowLeft, FileText, PlusCircle, X, Loader2, Clock, CheckCircle2, XCircle, Forward,
-  CalendarDays, Trash2, Lock,
+  CalendarDays, Trash2, Lock, Upload, Paperclip,
 } from "lucide-react";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -65,7 +65,7 @@ export default function StudentLeave() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
-  const [attachmentUrl, setAttachmentUrl] = useState("");
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
 
   const { data: student, isLoading: studentLoading } = useQuery<StudentMe | null>({
     queryKey: ["/api/student-me"],
@@ -83,12 +83,21 @@ export default function StudentLeave() {
 
   const submitMutation = useMutation({
     mutationFn: async () => {
+      let attachmentUrl: string | undefined;
+      if (attachmentFile) {
+        const fd = new FormData();
+        fd.append("file", attachmentFile);
+        const res = await fetch("/api/student/leave/upload", { method: "POST", body: fd, credentials: "include" });
+        if (!res.ok) throw new Error("File upload failed");
+        const data = await res.json();
+        attachmentUrl = data.url;
+      }
       await apiRequest("POST", "/api/student/leave", {
         startDate,
         endDate,
         reason,
         category: category || undefined,
-        attachmentUrl: attachmentUrl.trim() || undefined,
+        attachmentUrl,
       });
     },
     onSuccess: () => {
@@ -98,7 +107,7 @@ export default function StudentLeave() {
       setStartDate("");
       setEndDate("");
       setReason("");
-      setAttachmentUrl("");
+      setAttachmentFile(null);
       queryClient.invalidateQueries({ queryKey: ["/api/student/leave"] });
     },
     onError: (error: Error) => {
@@ -424,17 +433,40 @@ export default function StudentLeave() {
                 />
               </div>
 
-              {/* Attachment URL */}
+              {/* Attachment upload */}
               <div>
-                <label className="text-xs font-semibold text-gray-600 mb-1.5 block">Attachment URL (optional)</label>
-                <input
-                  type="url"
-                  value={attachmentUrl}
-                  onChange={e => setAttachmentUrl(e.target.value)}
-                  placeholder="https://..."
-                  className="w-full h-11 px-3 rounded-xl border border-emerald-100 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:border-transparent"
-                  data-testid="input-leave-attachment"
-                />
+                <label className="text-xs font-semibold text-gray-600 mb-1.5 block">Attachment (optional)</label>
+                {attachmentFile ? (
+                  <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl border border-emerald-200 bg-emerald-50">
+                    <Paperclip className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                    <span className="text-xs text-emerald-800 font-medium truncate flex-1">{attachmentFile.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => setAttachmentFile(null)}
+                      className="text-gray-400 hover:text-red-500 flex-shrink-0"
+                      data-testid="button-remove-attachment"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <label
+                    className="flex flex-col items-center justify-center gap-2 w-full py-5 rounded-xl cursor-pointer transition-colors hover:bg-emerald-50"
+                    style={{ border: "2px dashed #a7f3d0" }}
+                    data-testid="label-upload-attachment"
+                  >
+                    <Upload className="w-6 h-6 text-gray-400" />
+                    <span className="text-sm font-medium text-gray-600">Click to upload image or document</span>
+                    <span className="text-xs text-gray-400">JPG, PNG, PDF, DOC (Max 10MB)</span>
+                    <input
+                      type="file"
+                      accept="image/*,.pdf,.doc,.docx"
+                      className="hidden"
+                      onChange={e => setAttachmentFile(e.target.files?.[0] ?? null)}
+                      data-testid="input-leave-attachment"
+                    />
+                  </label>
+                )}
               </div>
             </div>
 
