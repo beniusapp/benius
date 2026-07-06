@@ -1722,35 +1722,21 @@ export class DatabaseStorage {
   }
 
   async getMyUploadedEbooks(teacherId: number, schoolId: number): Promise<(LibraryBook & { uploaderName: string | null })[]> {
-    const rows = await db.select({
-      id: libraryBooks.id, schoolId: libraryBooks.schoolId,
-      title: libraryBooks.title, author: libraryBooks.author, isbn: libraryBooks.isbn,
-      targetClass: libraryBooks.targetClass, category: libraryBooks.category,
-      fileUrl: libraryBooks.fileUrl, fileType: libraryBooks.fileType,
-      uploadedById: libraryBooks.uploadedById, verificationStatus: libraryBooks.verificationStatus,
-      totalCopies: libraryBooks.totalCopies, availableCopies: libraryBooks.availableCopies,
-      uploaderName: teachers.name,
-    })
-      .from(libraryBooks)
-      .leftJoin(teachers, eq(libraryBooks.uploadedById, teachers.id))
-      .where(and(eq(libraryBooks.schoolId, schoolId), eq(libraryBooks.uploadedById, teacherId)));
-    return rows.map(r => ({ ...r, uploaderName: r.uploaderName ?? null }));
+    const [books, teacherRow] = await Promise.all([
+      db.select().from(libraryBooks).where(and(eq(libraryBooks.schoolId, schoolId), eq(libraryBooks.uploadedById, teacherId))),
+      db.select().from(teachers).where(eq(teachers.id, teacherId)),
+    ]);
+    const uploaderName = teacherRow[0]?.fullName ?? null;
+    return books.map(b => ({ ...b, uploaderName }));
   }
 
   async getLibraryBooksWithUploaderNames(schoolId: number): Promise<(LibraryBook & { uploaderName: string | null })[]> {
-    const rows = await db.select({
-      id: libraryBooks.id, schoolId: libraryBooks.schoolId,
-      title: libraryBooks.title, author: libraryBooks.author, isbn: libraryBooks.isbn,
-      targetClass: libraryBooks.targetClass, category: libraryBooks.category,
-      fileUrl: libraryBooks.fileUrl, fileType: libraryBooks.fileType,
-      uploadedById: libraryBooks.uploadedById, verificationStatus: libraryBooks.verificationStatus,
-      totalCopies: libraryBooks.totalCopies, availableCopies: libraryBooks.availableCopies,
-      uploaderName: teachers.name,
-    })
-      .from(libraryBooks)
-      .leftJoin(teachers, eq(libraryBooks.uploadedById, teachers.id))
-      .where(eq(libraryBooks.schoolId, schoolId));
-    return rows.map(r => ({ ...r, uploaderName: r.uploaderName ?? null }));
+    const [books, schoolTeachers] = await Promise.all([
+      db.select().from(libraryBooks).where(eq(libraryBooks.schoolId, schoolId)),
+      db.select().from(teachers).where(eq(teachers.schoolId, schoolId)),
+    ]);
+    const teacherMap = new Map(schoolTeachers.map(t => [t.id, t.fullName]));
+    return books.map(b => ({ ...b, uploaderName: b.uploadedById ? (teacherMap.get(b.uploadedById) ?? null) : null }));
   }
 
   async searchLibraryBooks(schoolId: number, query: string): Promise<LibraryBook[]> {
