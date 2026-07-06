@@ -2796,7 +2796,7 @@ export class DatabaseStorage {
       let forwardedByTeacherName: string | null = null;
       if (l.reviewedBy && l.reviewerRole === "teacher") {
         const t = await this.getTeacherById(l.reviewedBy);
-        forwardedByTeacherName = t?.name ?? null;
+        forwardedByTeacherName = t?.fullName ?? null;
       }
       result.push({ ...l, studentName: s?.name ?? "Unknown", dsid: s?.digitalStudentId ?? "", class: s?.class ?? "", section: s?.section ?? "", forwardedByTeacherName });
     }
