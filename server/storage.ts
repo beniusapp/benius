@@ -2803,6 +2803,51 @@ export class DatabaseStorage {
     return result;
   }
 
+  // ===== APPROVAL HISTORY =====
+  async getApprovalHistory(schoolId: number) {
+    // 1. Teacher Leave history
+    const tLeaves = await db.select().from(leaveRequests)
+      .where(and(eq(leaveRequests.schoolId, schoolId), inArray(leaveRequests.status, ["approved", "rejected"])))
+      .orderBy(desc(leaveRequests.createdAt)).limit(100);
+    const teacherLeaveHistory = await Promise.all(tLeaves.map(async l => {
+      const t = await this.getTeacherById(l.teacherId);
+      return { ...l, teacherName: t?.fullName ?? "Unknown" };
+    }));
+
+    // 2. Student Leave history (admin-actioned only)
+    const sLeaves = await db.select().from(studentLeaveRequests)
+      .where(and(
+        eq(studentLeaveRequests.schoolId, schoolId),
+        eq(studentLeaveRequests.reviewerRole, "admin"),
+        inArray(studentLeaveRequests.status, ["approved", "rejected"])
+      ))
+      .orderBy(desc(studentLeaveRequests.createdAt)).limit(100);
+    const studentLeaveHistory = await Promise.all(sLeaves.map(async l => {
+      const s = await this.getStudentById(l.studentId);
+      return { ...l, studentName: s?.name ?? "Unknown", dsid: s?.digitalStudentId ?? "", class: s?.class ?? "", section: s?.section ?? "" };
+    }));
+
+    // 3. Gallery history (approved items only — no rejected state in schema)
+    const gallery = await db.select().from(galleryItems)
+      .where(and(eq(galleryItems.schoolId, schoolId), eq(galleryItems.approved, true)))
+      .orderBy(desc(galleryItems.createdAt)).limit(100);
+    const galleryHistory = await Promise.all(gallery.map(async g => {
+      const t = await this.getTeacherById(g.uploadedById);
+      return { ...g, uploaderName: t?.fullName ?? "Unknown" };
+    }));
+
+    // 4. Ebook history (approved or rejected)
+    const ebooks = await db.select().from(libraryBooks)
+      .where(and(eq(libraryBooks.schoolId, schoolId), inArray(libraryBooks.verificationStatus, ["approved", "rejected"])))
+      .orderBy(desc(libraryBooks.id)).limit(100);
+    const ebookHistory = await Promise.all(ebooks.map(async b => {
+      const t = b.uploadedById ? await this.getTeacherById(b.uploadedById) : null;
+      return { ...b, uploaderName: t?.fullName ?? "Unknown" };
+    }));
+
+    return { teacherLeaves: teacherLeaveHistory, studentLeaves: studentLeaveHistory, gallery: galleryHistory, ebooks: ebookHistory };
+  }
+
   // ===== VISITOR LOGS =====
   async createVisitorLog(data: InsertVisitorLog): Promise<VisitorLog> {
     const [v] = await db.insert(visitorLogs).values(data).returning();

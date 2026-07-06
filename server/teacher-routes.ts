@@ -2710,6 +2710,13 @@ Thank you for your prompt attention to this matter.
     res.json(list);
   });
 
+  app.get("/api/approval-history/:schoolId", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
+    const history = await storage.getApprovalHistory(parseInt(req.params.schoolId));
+    res.json(history);
+  });
+
   app.patch("/api/student-leaves/:id/admin-approve", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const leave = await storage.getStudentLeaveById(parseInt(req.params.id));

@@ -3,11 +3,14 @@ import { useState } from "react";
 import {
   Check, X, BookOpen, Image, UserCheck, Loader2,
   CalendarOff, ImageOff, BookMarked, Users, Inbox, Eye, Paperclip, UserCircle2,
+  History, CheckCircle2, XCircle,
 } from "lucide-react";
 import { fmtDate } from "@/lib/dateUtils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
@@ -206,6 +209,16 @@ export default function ApprovalCenter({ schoolId }: Props) {
   const { toast } = useToast();
   const [selectedLeave, setSelectedLeave] = useState<any | null>(null);
   const [adminComment, setAdminComment] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
+
+  const { data: historyData, isLoading: historyLoading } = useQuery<any>({
+    queryKey: ["/api/approval-history", schoolId],
+    queryFn: async () => {
+      const r = await fetch(`/api/approval-history/${schoolId}`, { credentials: "include" });
+      return r.ok ? r.json() : { teacherLeaves: [], studentLeaves: [], gallery: [], ebooks: [] };
+    },
+    enabled: !!schoolId && showHistory,
+  });
 
   const { data: leaveRequests = [], isLoading: leavesLoading } = useQuery<any[]>({
     queryKey: ["/api/leave/school", schoolId],
@@ -306,11 +319,21 @@ export default function ApprovalCenter({ schoolId }: Props) {
   return (
     <div className="space-y-5">
       {/* Page header */}
-      <div className="mb-1">
-        <h2 className="text-2xl font-extrabold text-white tracking-tight">Approval Center</h2>
-        <p className="text-sm mt-0.5" style={{ color: "rgba(255,255,255,0.55)" }}>
-          Unified hub for all pending approvals · Leave approval auto-syncs attendance
-        </p>
+      <div className="flex items-start justify-between gap-3 mb-1">
+        <div>
+          <h2 className="text-2xl font-extrabold text-white tracking-tight">Approval Center</h2>
+          <p className="text-sm mt-0.5" style={{ color: "rgba(255,255,255,0.55)" }}>
+            Unified hub for all pending approvals · Leave approval auto-syncs attendance
+          </p>
+        </div>
+        <button
+          onClick={() => setShowHistory(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold flex-shrink-0 mt-1 transition-all"
+          style={{ background: "rgba(212,175,55,0.15)", color: "#D4AF37", border: "1px solid rgba(212,175,55,0.30)" }}
+          data-testid="button-approval-history"
+        >
+          <History className="w-3.5 h-3.5" /> History
+        </button>
       </div>
 
       {/* ── Teacher Leave Requests ── */}
@@ -627,6 +650,157 @@ export default function ApprovalCenter({ schoolId }: Props) {
             )
         }
       </Section>
+
+      {/* ── Approval History Modal ── */}
+      <Dialog open={showHistory} onOpenChange={setShowHistory}>
+        <DialogContent
+          className="max-w-3xl max-h-[82vh] flex flex-col"
+          style={{ background: "#0A1628", border: "1px solid rgba(212,175,55,0.25)", color: "#fff" }}
+        >
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle className="flex items-center gap-2 text-white text-lg">
+              <History className="w-5 h-5" style={{ color: "#D4AF37" }} />
+              Approval History
+            </DialogTitle>
+            <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.50)" }}>
+              All admin-actioned items across all categories
+            </p>
+          </DialogHeader>
+
+          {historyLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="w-8 h-8 animate-spin" style={{ color: "#D4AF37" }} />
+            </div>
+          ) : (
+            <Tabs defaultValue="teacher_leaves" className="flex-1 flex flex-col min-h-0">
+              <TabsList className="flex-shrink-0 grid grid-cols-4 w-full" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)" }}>
+                <TabsTrigger value="teacher_leaves" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
+                  Teacher Leaves
+                  <span className="ml-1 text-[10px] opacity-70">({historyData?.teacherLeaves?.length ?? 0})</span>
+                </TabsTrigger>
+                <TabsTrigger value="student_leaves" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
+                  Student Leaves
+                  <span className="ml-1 text-[10px] opacity-70">({historyData?.studentLeaves?.length ?? 0})</span>
+                </TabsTrigger>
+                <TabsTrigger value="gallery" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
+                  Gallery
+                  <span className="ml-1 text-[10px] opacity-70">({historyData?.gallery?.length ?? 0})</span>
+                </TabsTrigger>
+                <TabsTrigger value="ebooks" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
+                  E-Books
+                  <span className="ml-1 text-[10px] opacity-70">({historyData?.ebooks?.length ?? 0})</span>
+                </TabsTrigger>
+              </TabsList>
+
+              {/* Teacher Leave History */}
+              <TabsContent value="teacher_leaves" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
+                {!historyData?.teacherLeaves?.length ? (
+                  <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No teacher leave history</div>
+                ) : historyData.teacherLeaves.map((l: any) => (
+                  <HistoryRow key={l.id} status={l.status}>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-semibold text-sm">{l.teacherName}</p>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
+                        {l.leaveType} · {fmtDate(l.startDate)} – {fmtDate(l.endDate)}
+                      </p>
+                      {l.reason && <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(255,255,255,0.40)" }}>{l.reason}</p>}
+                    </div>
+                    <StatusChip status={l.status} />
+                  </HistoryRow>
+                ))}
+              </TabsContent>
+
+              {/* Student Leave History */}
+              <TabsContent value="student_leaves" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
+                {!historyData?.studentLeaves?.length ? (
+                  <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No student leave history</div>
+                ) : historyData.studentLeaves.map((l: any) => (
+                  <HistoryRow key={l.id} status={l.status}>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-semibold text-sm">{l.studentName}</p>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
+                        {l.dsid} · Class {l.class}{l.section ? `-${l.section}` : ""} · {fmtDate(l.startDate)} – {fmtDate(l.endDate)}
+                      </p>
+                      {l.adminComment && (
+                        <p className="text-xs mt-0.5 truncate italic" style={{ color: "rgba(255,255,255,0.40)" }}>Admin note: {l.adminComment}</p>
+                      )}
+                    </div>
+                    <StatusChip status={l.status} />
+                  </HistoryRow>
+                ))}
+              </TabsContent>
+
+              {/* Gallery History */}
+              <TabsContent value="gallery" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
+                {!historyData?.gallery?.length ? (
+                  <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No gallery approval history</div>
+                ) : historyData.gallery.map((g: any) => (
+                  <HistoryRow key={g.id} status="approved">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-semibold text-sm">{g.title || "Untitled Photo"}</p>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
+                        Uploaded by {g.uploaderName}{g.eventTag ? ` · ${g.eventTag}` : ""}
+                      </p>
+                      {g.createdAt && <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.40)" }}>{fmtDate(g.createdAt)}</p>}
+                    </div>
+                    <StatusChip status="approved" />
+                  </HistoryRow>
+                ))}
+              </TabsContent>
+
+              {/* E-Book History */}
+              <TabsContent value="ebooks" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
+                {!historyData?.ebooks?.length ? (
+                  <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No e-book history</div>
+                ) : historyData.ebooks.map((b: any) => (
+                  <HistoryRow key={b.id} status={b.verificationStatus}>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-semibold text-sm">{b.title}</p>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
+                        by {b.author} · Class {b.targetClass}{b.category ? ` · ${b.category}` : ""}
+                      </p>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.40)" }}>
+                        Uploaded by {b.uploaderName}
+                      </p>
+                    </div>
+                    <StatusChip status={b.verificationStatus} />
+                  </HistoryRow>
+                ))}
+              </TabsContent>
+            </Tabs>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+// ── History helper sub-components ──────────────────────────────────────────────
+function HistoryRow({ children, status }: { children: React.ReactNode; status: string }) {
+  const borderColor = status === "approved" ? "rgba(34,197,94,0.30)" : "rgba(239,68,68,0.30)";
+  return (
+    <div
+      className="flex items-start gap-3 px-3 py-2.5 rounded-lg"
+      style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${borderColor}` }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function StatusChip({ status }: { status: string }) {
+  const approved = status === "approved";
+  return (
+    <span
+      className="flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 self-start mt-0.5"
+      style={{
+        background: approved ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+        color: approved ? "#4ade80" : "#f87171",
+        border: `1px solid ${approved ? "rgba(34,197,94,0.30)" : "rgba(239,68,68,0.30)"}`,
+      }}
+    >
+      {approved ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+      {approved ? "Approved" : "Rejected"}
+    </span>
   );
 }
