@@ -1107,7 +1107,7 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     if (!req.file) return res.status(400).json({ message: "Image file required" });
 
-    const { title, schoolId, description, eventTag, capturedDate, capturedTime } = req.body;
+    const { title, schoolId, description, eventTag, capturedDate, capturedTime, location } = req.body;
     if (!title || !schoolId) return res.status(400).json({ message: "Title and schoolId required" });
 
     const sid = parseInt(schoolId);
@@ -1126,6 +1126,7 @@ export function registerTeacherRoutes(app: Express) {
       eventTag: eventTag || null,
       capturedDate: capturedDate || null,
       capturedTime: capturedTime || null,
+      location: location || null,
       imageUrl: `/uploads/${req.file.filename}`,
       approved: !!req.session.userId && !req.session.teacherId,
     });
@@ -1142,7 +1143,7 @@ export function registerTeacherRoutes(app: Express) {
     const files = req.files as Express.Multer.File[];
     if (!files || files.length === 0) return res.status(400).json({ message: "At least one image required" });
 
-    const { title, schoolId, description, eventTag, capturedDate, capturedTime } = req.body;
+    const { title, schoolId, description, eventTag, capturedDate, capturedTime, location } = req.body;
     if (!title || !schoolId) return res.status(400).json({ message: "Title and schoolId required" });
 
     const sid = parseInt(schoolId);
@@ -1161,6 +1162,7 @@ export function registerTeacherRoutes(app: Express) {
         schoolId: sid, uploadedById: uploaderId, title,
         description: description || null, eventTag: eventTag || null,
         capturedDate: capturedDate || null, capturedTime: capturedTime || null,
+        location: location || null,
         imageUrl: `/uploads/${file.filename}`, approved: isAdmin,
       });
       await storage.createAuditLog({
@@ -1200,6 +1202,41 @@ export function registerTeacherRoutes(app: Express) {
       details: `Approved gallery image: ${item.title}`,
     });
     res.json(item);
+  });
+
+  app.get("/api/admin/gallery/:schoolId", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const items = await storage.getAdminGalleryItems(schoolId);
+    res.json(items);
+  });
+
+  app.delete("/api/gallery/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const existing = await storage.getGalleryItemById(parseInt(req.params.id));
+    if (!existing || existing.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    await storage.deleteGalleryItem(existing.id, existing.schoolId);
+    await storage.createAuditLog({
+      schoolId: existing.schoolId, actionType: "delete", entityType: "gallery", entityId: existing.id,
+      actionBy: req.session.userId!, actionByRole: "admin",
+      details: `Deleted gallery image: ${existing.title}`,
+    });
+    res.json({ success: true });
+  });
+
+  app.post("/api/gallery/batch-delete", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const { ids, reason } = req.body as { ids: number[]; reason?: string };
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "No IDs provided" });
+    await storage.deleteGalleryItems(ids, req.session.schoolId!);
+    await storage.createAuditLog({
+      schoolId: req.session.schoolId!, actionType: reason === "rejected" ? "reject" : "delete",
+      entityType: "gallery", entityId: 0,
+      actionBy: req.session.userId!, actionByRole: "admin",
+      details: `${reason === "rejected" ? "Rejected" : "Deleted"} ${ids.length} gallery image(s)`,
+    });
+    res.json({ success: true, deleted: ids.length });
   });
 
   // ===== CALENDAR =====

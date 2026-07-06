@@ -1468,6 +1468,39 @@ export class DatabaseStorage {
     return item;
   }
 
+  async getAdminGalleryItems(schoolId: number): Promise<Array<GalleryItem & { teacherName: string | null }>> {
+    const rows = await db
+      .select({
+        id: galleryItems.id,
+        schoolId: galleryItems.schoolId,
+        uploadedById: galleryItems.uploadedById,
+        title: galleryItems.title,
+        description: galleryItems.description,
+        eventTag: galleryItems.eventTag,
+        capturedDate: galleryItems.capturedDate,
+        capturedTime: galleryItems.capturedTime,
+        location: galleryItems.location,
+        imageUrl: galleryItems.imageUrl,
+        approved: galleryItems.approved,
+        createdAt: galleryItems.createdAt,
+        teacherName: teachers.fullName,
+      })
+      .from(galleryItems)
+      .leftJoin(teachers, eq(galleryItems.uploadedById, teachers.id))
+      .where(eq(galleryItems.schoolId, schoolId))
+      .orderBy(desc(galleryItems.createdAt));
+    return rows as Array<GalleryItem & { teacherName: string | null }>;
+  }
+
+  async deleteGalleryItem(id: number, schoolId: number): Promise<void> {
+    await db.delete(galleryItems).where(and(eq(galleryItems.id, id), eq(galleryItems.schoolId, schoolId)));
+  }
+
+  async deleteGalleryItems(ids: number[], schoolId: number): Promise<void> {
+    if (ids.length === 0) return;
+    await db.delete(galleryItems).where(and(inArray(galleryItems.id, ids), eq(galleryItems.schoolId, schoolId)));
+  }
+
   async getApprovedGalleryItems(schoolId: number, tag?: string): Promise<GalleryItem[]> {
     const conditions = [eq(galleryItems.schoolId, schoolId), eq(galleryItems.approved, true)];
     if (tag) conditions.push(eq(galleryItems.eventTag, tag));

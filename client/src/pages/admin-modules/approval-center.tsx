@@ -1,12 +1,14 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useMemo, useRef } from "react";
 import {
   Check, X, BookOpen, Image, UserCheck, Loader2,
   CalendarOff, ImageOff, BookMarked, Users, Inbox, Eye, Paperclip, UserCircle2,
-  History, CheckCircle2, XCircle,
+  History, CheckCircle2, XCircle, Camera, Plus, Trash2, MapPin, Images,
+  ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon,
 } from "lucide-react";
 import { fmtDate } from "@/lib/dateUtils";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -204,6 +206,589 @@ function ActionButtons({
   );
 }
 
+// ── Gallery Hub types ──────────────────────────────────────────────────────────
+interface GalleryItemWithTeacher {
+  id: number; schoolId: number; uploadedById: number; title: string;
+  description: string | null; eventTag: string | null; capturedDate: string | null;
+  capturedTime: string | null; location: string | null; imageUrl: string;
+  approved: boolean; createdAt: string; teacherName: string | null;
+}
+
+function MetaRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl p-3" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.09)" }}>
+      <p className="text-[11px] font-semibold mb-0.5" style={{ color: "rgba(255,255,255,0.45)" }}>{label}</p>
+      <p className="text-sm text-white">{value}</p>
+    </div>
+  );
+}
+
+// ── Gallery Hub ────────────────────────────────────────────────────────────────
+function GalleryHub({ schoolId }: { schoolId: number }) {
+  const { toast } = useToast();
+  const [activeTab, setActiveTab] = useState<"gallery-images" | "gallery-approval">("gallery-images");
+  const [showUpload, setShowUpload] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [viewGroup, setViewGroup] = useState<GalleryItemWithTeacher[] | null>(null);
+  const [lightboxIdx, setLightboxIdx] = useState(0);
+
+  const [title, setTitle] = useState("");
+  const [eventName, setEventName] = useState("");
+  const [capturedDate, setCapturedDate] = useState("");
+  const [capturedTime, setCapturedTime] = useState("");
+  const [location, setLocation] = useState("");
+  const [description, setDescription] = useState("");
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const { data: allItems = [], isLoading } = useQuery<GalleryItemWithTeacher[]>({
+    queryKey: ["/api/admin/gallery", schoolId],
+    queryFn: async () => {
+      const r = await fetch(`/api/admin/gallery/${schoolId}`, { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!schoolId,
+  });
+
+  const approvedItems = allItems.filter(i => i.approved);
+  const pendingItems  = allItems.filter(i => !i.approved);
+
+  const pendingGroups = useMemo(() => {
+    const map = new Map<string, GalleryItemWithTeacher[]>();
+    for (const item of pendingItems) {
+      const key = `${item.uploadedById}|${item.title}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(item);
+    }
+    return Array.from(map.values());
+  }, [pendingItems]);
+
+  const refetch = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/gallery", schoolId] });
+    queryClient.invalidateQueries({ queryKey: ["/api/gallery", schoolId] });
+    queryClient.invalidateQueries({ queryKey: ["/api/gallery", schoolId, "all"] });
+  };
+
+  const approveMutation = useMutation({
+    mutationFn: async (ids: number[]) => {
+      await Promise.all(ids.map(id => apiRequest("PATCH", `/api/gallery/${id}/approve`)));
+    },
+    onSuccess: () => {
+      toast({ title: "Gallery Approved", description: "Images are now live in the school gallery." });
+      refetch();
+      setViewGroup(null);
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const batchDeleteMutation = useMutation({
+    mutationFn: async ({ ids, reason }: { ids: number[]; reason?: string }) => {
+      await apiRequest("POST", "/api/gallery/batch-delete", { ids, reason });
+    },
+    onSuccess: (_, vars) => {
+      toast({ title: vars.reason === "rejected" ? "Submission Rejected" : `${vars.ids.length} image${vars.ids.length > 1 ? "s" : ""} deleted` });
+      setSelectedIds(new Set());
+      setViewGroup(null);
+      refetch();
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  function resetForm() {
+    setTitle(""); setEventName(""); setCapturedDate(""); setCapturedTime("");
+    setLocation(""); setDescription(""); setSelectedFiles([]); setPreviews([]);
+  }
+
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []).slice(0, 10);
+    setSelectedFiles(files);
+    setPreviews(files.map(f => URL.createObjectURL(f)));
+  }
+
+  async function handleUpload() {
+    if (!title.trim() || selectedFiles.length === 0) {
+      toast({ title: "Required fields missing", description: "Add a title and select at least one image.", variant: "destructive" });
+      return;
+    }
+    setIsUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("title", title.trim());
+      fd.append("schoolId", String(schoolId));
+      if (eventName) fd.append("eventTag", eventName);
+      if (capturedDate) fd.append("capturedDate", capturedDate);
+      if (capturedTime) fd.append("capturedTime", capturedTime);
+      if (location) fd.append("location", location);
+      if (description) fd.append("description", description);
+      selectedFiles.forEach(f => fd.append("images", f));
+      const r = await fetch("/api/gallery/batch", { method: "POST", body: fd, credentials: "include" });
+      if (!r.ok) throw new Error((await r.json()).message || "Upload failed");
+      toast({ title: "Photos uploaded & published", description: "Images are now live in the gallery." });
+      refetch();
+      setShowUpload(false);
+      resetForm();
+    } catch (e: any) {
+      toast({ title: "Upload failed", description: e.message, variant: "destructive" });
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  function toggleSelect(id: number) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  const isPendingMutation = approveMutation.isPending || batchDeleteMutation.isPending;
+
+  return (
+    <div
+      className="rounded-2xl transition-all duration-300"
+      style={{
+        background: "rgba(255,255,255,0.04)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        border: "1px solid rgba(168,85,247,0.22)",
+        boxShadow: "0 4px 28px rgba(168,85,247,0.16)",
+      }}
+    >
+      {/* ── Header ── */}
+      <div className="flex items-center gap-3 px-5 pt-5 pb-4">
+        <div
+          className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+          style={{ background: "linear-gradient(135deg, #a855f7, #ec4899)", boxShadow: "0 0 18px rgba(168,85,247,0.40)" }}
+        >
+          <Image className="w-4 h-4 text-white" />
+        </div>
+        <div className="flex-1">
+          <h3 className="font-bold text-white tracking-tight text-base">Gallery Hub</h3>
+          <p className="text-[11px]" style={{ color: "rgba(255,255,255,0.45)" }}>Manage & approve school photos</p>
+        </div>
+        {pendingItems.length > 0 && (
+          <span className="px-2.5 py-0.5 rounded-full text-xs font-bold text-white bg-gradient-to-r from-purple-500 to-pink-500 shadow-lg">
+            {pendingItems.length} pending
+          </span>
+        )}
+        <button
+          onClick={() => setShowUpload(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all hover:brightness-110 active:scale-95"
+          style={{ background: "linear-gradient(135deg, #a855f7, #ec4899)", color: "#fff", boxShadow: "0 4px 16px rgba(168,85,247,0.40)" }}
+          data-testid="button-gallery-hub-upload"
+        >
+          <Plus className="w-3.5 h-3.5" /> Upload
+        </button>
+      </div>
+
+      {/* ── Tab Switcher ── */}
+      <div className="px-5 pb-5">
+        <div
+          className="flex gap-1 p-1 rounded-xl mb-4"
+          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)" }}
+        >
+          {(["gallery-images", "gallery-approval"] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => { setActiveTab(tab); setSelectedIds(new Set()); }}
+              className="flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-all duration-200"
+              style={{
+                background: activeTab === tab ? "linear-gradient(135deg, #a855f7, #ec4899)" : "transparent",
+                color: activeTab === tab ? "#fff" : "rgba(255,255,255,0.55)",
+                boxShadow: activeTab === tab ? "0 2px 14px rgba(168,85,247,0.35)" : "none",
+              }}
+              data-testid={`tab-gallery-hub-${tab}`}
+            >
+              {tab === "gallery-images"
+                ? `🖼 Gallery Images (${approvedItems.length})`
+                : `⏳ Gallery Approval (${pendingItems.length})`}
+            </button>
+          ))}
+        </div>
+
+        {/* ── TAB A: Gallery Images ── */}
+        {activeTab === "gallery-images" && (
+          <div>
+            {approvedItems.length > 0 && (
+              <div className="flex items-center justify-between mb-3">
+                <button
+                  onClick={() =>
+                    selectedIds.size === approvedItems.length
+                      ? setSelectedIds(new Set())
+                      : setSelectedIds(new Set(approvedItems.map(i => i.id)))
+                  }
+                  className="text-xs font-medium transition-colors"
+                  style={{ color: selectedIds.size === approvedItems.length ? "#c084fc" : "rgba(255,255,255,0.40)" }}
+                  data-testid="button-gallery-select-all"
+                >
+                  {selectedIds.size === approvedItems.length ? "✓ Deselect All" : "Select All"}
+                </button>
+                {selectedIds.size > 0 && (
+                  <button
+                    disabled={batchDeleteMutation.isPending}
+                    onClick={() => batchDeleteMutation.mutate({ ids: Array.from(selectedIds) })}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all
+                      hover:brightness-110 active:scale-95 disabled:opacity-50"
+                    style={{
+                      background: "linear-gradient(135deg, #ef4444, #dc2626)",
+                      color: "#fff",
+                      boxShadow: "0 3px 12px rgba(239,68,68,0.35)",
+                    }}
+                    data-testid="button-gallery-delete-selected"
+                  >
+                    <Trash2 className="w-3 h-3" /> Delete {selectedIds.size} Selected
+                  </button>
+                )}
+              </div>
+            )}
+
+            {isLoading ? (
+              <div className="flex justify-center py-10">
+                <Loader2 className="w-6 h-6 animate-spin" style={{ color: "rgba(255,255,255,0.30)" }} />
+              </div>
+            ) : approvedItems.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-10 gap-3">
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center" style={{ background: "rgba(168,85,247,0.08)" }}>
+                  <ImageOff className="w-6 h-6 text-purple-400/50" />
+                </div>
+                <p className="text-sm font-medium" style={{ color: "rgba(255,255,255,0.50)" }}>No approved images yet</p>
+                <p className="text-xs" style={{ color: "rgba(255,255,255,0.30)" }}>Approve submissions from Gallery Approval tab</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {approvedItems.map(item => {
+                  const sel = selectedIds.has(item.id);
+                  return (
+                    <div
+                      key={item.id}
+                      className="relative rounded-xl overflow-hidden cursor-pointer transition-all duration-200 hover:scale-[1.03] group"
+                      style={{
+                        border: sel ? "2px solid #a855f7" : "1px solid rgba(168,85,247,0.22)",
+                        boxShadow: sel ? "0 0 0 3px rgba(168,85,247,0.28)" : "0 2px 10px rgba(168,85,247,0.10)",
+                      }}
+                      onClick={() => toggleSelect(item.id)}
+                      data-testid={`card-gallery-img-${item.id}`}
+                    >
+                      <img src={item.imageUrl} alt={item.title} className="w-full h-28 object-cover" />
+                      <div
+                        className="absolute inset-0 transition-opacity duration-200"
+                        style={{ background: sel ? "rgba(168,85,247,0.15)" : "transparent" }}
+                      />
+                      <div
+                        className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center transition-all"
+                        style={{
+                          background: sel ? "#a855f7" : "rgba(0,0,0,0.55)",
+                          border: `2px solid ${sel ? "#a855f7" : "rgba(255,255,255,0.65)"}`,
+                        }}
+                      >
+                        {sel && <Check className="w-3 h-3 text-white" />}
+                      </div>
+                      <div className="p-2" style={{ background: "rgba(10,22,40,0.85)" }}>
+                        <p className="text-xs font-medium text-white truncate">{item.title}</p>
+                        {item.eventTag && (
+                          <p className="text-[10px] truncate mt-0.5" style={{ color: "rgba(255,255,255,0.45)" }}>{item.eventTag}</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── TAB B: Gallery Approval ── */}
+        {activeTab === "gallery-approval" && (
+          <div>
+            {isLoading ? (
+              <div className="flex justify-center py-10">
+                <Loader2 className="w-6 h-6 animate-spin" style={{ color: "rgba(255,255,255,0.30)" }} />
+              </div>
+            ) : pendingGroups.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-10 gap-3">
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center" style={{ background: "rgba(168,85,247,0.08)" }}>
+                  <ImageOff className="w-6 h-6 text-purple-400/50" />
+                </div>
+                <p className="text-sm font-medium" style={{ color: "rgba(255,255,255,0.50)" }}>No pending gallery submissions</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {pendingGroups.map((group, gi) => {
+                  const first = group[0];
+                  return (
+                    <div
+                      key={gi}
+                      className="flex items-center gap-3 p-3 rounded-xl transition-all duration-200 hover:scale-[1.015]"
+                      style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(168,85,247,0.18)" }}
+                      onMouseEnter={e => {
+                        (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(168,85,247,0.42)";
+                        (e.currentTarget as HTMLDivElement).style.background = "rgba(168,85,247,0.07)";
+                      }}
+                      onMouseLeave={e => {
+                        (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(168,85,247,0.18)";
+                        (e.currentTarget as HTMLDivElement).style.background = "rgba(255,255,255,0.04)";
+                      }}
+                      data-testid={`card-gallery-pending-group-${gi}`}
+                    >
+                      <div className="w-14 h-14 rounded-lg overflow-hidden flex-shrink-0" style={{ border: "1px solid rgba(168,85,247,0.20)" }}>
+                        <img src={first.imageUrl} alt={first.title} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white font-semibold text-sm truncate">{first.title}</p>
+                        <p className="text-xs mt-0.5 flex items-center gap-1.5" style={{ color: "rgba(255,255,255,0.55)" }}>
+                          <span className="w-1.5 h-1.5 rounded-full bg-purple-400 flex-shrink-0" />
+                          {first.teacherName ?? "Unknown Teacher"}
+                          {group.length > 1 && (
+                            <span className="ml-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold" style={{ background: "rgba(168,85,247,0.22)", color: "#c084fc" }}>
+                              {group.length} photos
+                            </span>
+                          )}
+                        </p>
+                        {first.eventTag && (
+                          <p className="text-[10px] mt-0.5 truncate" style={{ color: "rgba(255,255,255,0.38)" }}>{first.eventTag}</p>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => { setViewGroup(group); setLightboxIdx(0); }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold
+                          transition-all hover:brightness-110 active:scale-95 flex-shrink-0"
+                        style={{ background: "rgba(168,85,247,0.15)", color: "#c084fc", border: "1px solid rgba(168,85,247,0.32)" }}
+                        data-testid={`button-view-gallery-group-${gi}`}
+                      >
+                        <Eye className="w-3.5 h-3.5" /> View
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Upload Dialog ── */}
+      <Dialog open={showUpload} onOpenChange={v => { if (!v) resetForm(); setShowUpload(v); }}>
+        <DialogContent className="max-w-md max-h-[90vh] flex flex-col bg-white">
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle className="flex items-center gap-2 text-gray-900">
+              <Camera className="w-5 h-5 text-purple-600" />
+              Upload Photos to Gallery
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto space-y-3 pr-0.5 mt-1">
+            <div>
+              <label className="text-xs font-semibold text-gray-600 mb-1 block">Album / Image Title *</label>
+              <Input placeholder="e.g. Annual Sports Day 2026" value={title} onChange={e => setTitle(e.target.value)} data-testid="input-hub-gallery-title" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-600 mb-1 block">Event Name</label>
+              <Input placeholder="e.g. Republic Day Celebration" value={eventName} onChange={e => setEventName(e.target.value)} data-testid="input-hub-gallery-event" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block flex items-center gap-1">
+                  <CalendarIcon className="w-3 h-3" /> Captured Date
+                </label>
+                <Input type="date" value={capturedDate} onChange={e => setCapturedDate(e.target.value)} data-testid="input-hub-gallery-date" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block flex items-center gap-1">
+                  <Clock className="w-3 h-3" /> Captured Time
+                </label>
+                <Input type="time" value={capturedTime} onChange={e => setCapturedTime(e.target.value)} data-testid="input-hub-gallery-time" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-600 mb-1 block flex items-center gap-1">
+                <MapPin className="w-3 h-3" /> Location / Venue
+              </label>
+              <Input placeholder="e.g. School Auditorium" value={location} onChange={e => setLocation(e.target.value)} data-testid="input-hub-gallery-location" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-600 mb-1 block">Description</label>
+              <Textarea placeholder="Brief description (optional)…" value={description} onChange={e => setDescription(e.target.value)} className="resize-none" rows={2} data-testid="input-hub-gallery-desc" />
+            </div>
+            <div>
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="w-full py-3 rounded-xl border-2 border-dashed text-sm font-medium transition-colors"
+                style={{ borderColor: selectedFiles.length ? "#a855f7" : "#e5e7eb", color: selectedFiles.length ? "#a855f7" : "#9ca3af" }}
+                data-testid="button-hub-select-images"
+              >
+                <Images className="w-4 h-4 inline mr-2" />
+                {selectedFiles.length
+                  ? `${selectedFiles.length} file${selectedFiles.length > 1 ? "s" : ""} selected`
+                  : "Select Images (up to 10)"}
+              </button>
+              <input type="file" ref={fileRef} accept="image/*" multiple className="hidden" onChange={handleFileSelect} data-testid="input-hub-gallery-file" />
+            </div>
+            {previews.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {previews.map((url, i) => (
+                  <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden">
+                    <img src={url} alt="" className="w-full h-full object-cover" />
+                    <button
+                      onClick={() => {
+                        setSelectedFiles(f => f.filter((_, j) => j !== i));
+                        setPreviews(p => p.filter((_, j) => j !== i));
+                      }}
+                      className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5"
+                      data-testid={`button-hub-remove-preview-${i}`}
+                    ><X className="w-3 h-3" /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter className="flex-shrink-0 pt-3 gap-2">
+            <Button variant="outline" onClick={() => { resetForm(); setShowUpload(false); }} data-testid="button-hub-cancel-upload">Cancel</Button>
+            <button
+              disabled={isUploading || !title.trim() || selectedFiles.length === 0}
+              onClick={handleUpload}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold
+                transition-all disabled:opacity-50 hover:brightness-110 active:scale-95"
+              style={{ background: "linear-gradient(135deg, #a855f7, #ec4899)", color: "#fff" }}
+              data-testid="button-hub-submit-upload"
+            >
+              {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+              {isUploading ? "Uploading…" : "Upload Photos"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Inspection Modal ── */}
+      {viewGroup && (
+        <Dialog open={!!viewGroup} onOpenChange={v => { if (!v) setViewGroup(null); }}>
+          <DialogContent
+            className="max-w-2xl max-h-[92vh] flex flex-col"
+            style={{ background: "#0A1628", border: "1px solid rgba(168,85,247,0.32)", color: "#fff" }}
+          >
+            <DialogHeader className="flex-shrink-0">
+              <DialogTitle className="text-white flex items-center gap-2 flex-wrap">
+                <Image className="w-4 h-4 flex-shrink-0" style={{ color: "#a855f7" }} />
+                <span className="truncate">{viewGroup[0].title}</span>
+                <span
+                  className="ml-auto text-xs font-normal px-2.5 py-1 rounded-full flex-shrink-0"
+                  style={{ background: "rgba(168,85,247,0.15)", color: "#c084fc", border: "1px solid rgba(168,85,247,0.25)" }}
+                >
+                  by {viewGroup[0].teacherName ?? "Principal"}
+                </span>
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="flex-1 overflow-y-auto space-y-4 mt-2 pr-1">
+              {/* Image viewer */}
+              {viewGroup.length === 1 ? (
+                <img
+                  src={viewGroup[0].imageUrl} alt={viewGroup[0].title}
+                  className="w-full max-h-72 object-contain rounded-xl"
+                  style={{ background: "rgba(0,0,0,0.45)" }}
+                />
+              ) : (
+                <div>
+                  <div className="relative">
+                    <img
+                      src={viewGroup[lightboxIdx].imageUrl} alt=""
+                      className="w-full h-64 object-contain rounded-xl"
+                      style={{ background: "rgba(0,0,0,0.45)" }}
+                    />
+                    {lightboxIdx > 0 && (
+                      <button
+                        onClick={() => setLightboxIdx(i => i - 1)}
+                        className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full flex items-center justify-center"
+                        style={{ background: "rgba(0,0,0,0.65)" }}
+                        data-testid="button-lightbox-prev"
+                      ><ChevronLeft className="w-4 h-4 text-white" /></button>
+                    )}
+                    {lightboxIdx < viewGroup.length - 1 && (
+                      <button
+                        onClick={() => setLightboxIdx(i => i + 1)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full flex items-center justify-center"
+                        style={{ background: "rgba(0,0,0,0.65)" }}
+                        data-testid="button-lightbox-next"
+                      ><ChevronRight className="w-4 h-4 text-white" /></button>
+                    )}
+                  </div>
+                  <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
+                    {viewGroup.map((item, i) => (
+                      <button
+                        key={item.id}
+                        onClick={() => setLightboxIdx(i)}
+                        className="w-14 h-14 rounded-lg overflow-hidden flex-shrink-0 transition-all"
+                        style={{ border: `2px solid ${i === lightboxIdx ? "#a855f7" : "transparent"}`, opacity: i === lightboxIdx ? 1 : 0.5 }}
+                        data-testid={`thumb-gallery-${item.id}`}
+                      >
+                        <img src={item.imageUrl} alt="" className="w-full h-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-center text-[11px] mt-1" style={{ color: "rgba(255,255,255,0.38)" }}>
+                    {lightboxIdx + 1} / {viewGroup.length}
+                  </p>
+                </div>
+              )}
+
+              {/* Metadata grid */}
+              <div className="grid grid-cols-2 gap-2.5">
+                {viewGroup[0].eventTag && <MetaRow label="Event Name" value={viewGroup[0].eventTag} />}
+                {viewGroup[0].capturedDate && <MetaRow label="Captured Date" value={viewGroup[0].capturedDate} />}
+                {viewGroup[0].capturedTime && <MetaRow label="Captured Time" value={viewGroup[0].capturedTime} />}
+                {viewGroup[0].location && <MetaRow label="Venue / Location" value={viewGroup[0].location} />}
+              </div>
+              {viewGroup[0].description && (
+                <div className="rounded-xl p-3" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)" }}>
+                  <p className="text-[11px] font-semibold mb-1" style={{ color: "rgba(255,255,255,0.45)" }}>Description</p>
+                  <p className="text-sm text-white leading-relaxed">{viewGroup[0].description}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Action footer */}
+            <DialogFooter
+              className="flex-shrink-0 gap-3 pt-4"
+              style={{ borderTop: "1px solid rgba(255,255,255,0.10)" }}
+            >
+              <button
+                disabled={isPendingMutation}
+                onClick={() => batchDeleteMutation.mutate({ ids: viewGroup.map(i => i.id), reason: "rejected" })}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold
+                  transition-all disabled:opacity-50 hover:brightness-110 active:scale-95"
+                style={{
+                  background: "rgba(239,68,68,0.10)",
+                  color: "#f87171",
+                  border: "1px solid rgba(239,68,68,0.35)",
+                }}
+                data-testid="button-modal-gallery-reject"
+              >
+                <X className="w-4 h-4" /> Reject Submission
+              </button>
+              <button
+                disabled={isPendingMutation}
+                onClick={() => approveMutation.mutate(viewGroup.map(i => i.id))}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold
+                  transition-all disabled:opacity-50 hover:brightness-110 active:scale-95"
+                style={{
+                  background: "linear-gradient(135deg, #22c55e, #16a34a)",
+                  color: "#fff",
+                  boxShadow: "0 4px 18px rgba(34,197,94,0.32)",
+                }}
+                data-testid="button-modal-gallery-approve"
+              >
+                <Check className="w-4 h-4" /> Approve All & Publish
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function ApprovalCenter({ schoolId }: Props) {
   const { toast } = useToast();
@@ -229,15 +814,6 @@ export default function ApprovalCenter({ schoolId }: Props) {
     enabled: !!schoolId,
   });
 
-  const { data: galleryItems = [], isLoading: galleryLoading } = useQuery<any[]>({
-    queryKey: ["/api/gallery", schoolId, "all"],
-    queryFn: async () => {
-      const r = await fetch(`/api/gallery/${schoolId}?all=true`, { credentials: "include" });
-      return r.ok ? r.json() : [];
-    },
-    enabled: !!schoolId,
-  });
-
   const { data: pendingEbooks = [], isLoading: ebooksLoading } = useQuery<any[]>({
     queryKey: ["/api/library/books", schoolId, "pending"],
     queryFn: async () => {
@@ -257,7 +833,6 @@ export default function ApprovalCenter({ schoolId }: Props) {
   });
 
   const pendingLeaves          = leaveRequests.filter((l: any) => l.status === "pending");
-  const pendingGallery         = galleryItems.filter((g: any) => !g.approved);
   const forwardedStudentLeaves = studentLeaves; // server already filters to forwarded_to_admin only
 
   const leaveStatusMutation = useMutation({
@@ -269,14 +844,6 @@ export default function ApprovalCenter({ schoolId }: Props) {
       queryClient.invalidateQueries({ queryKey: ["/api/leave/school", schoolId] });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-
-  const galleryApproveMutation = useMutation({
-    mutationFn: async (id: number) => { await apiRequest("PATCH", `/api/gallery/${id}/approve`); },
-    onSuccess: () => {
-      toast({ title: "Image Approved" });
-      queryClient.invalidateQueries({ queryKey: ["/api/gallery", schoolId, "all"] });
-    },
   });
 
   const ebookVerifyMutation = useMutation({
@@ -306,7 +873,6 @@ export default function ApprovalCenter({ schoolId }: Props) {
 
   const isPending =
     leaveStatusMutation.isPending ||
-    galleryApproveMutation.isPending ||
     ebookVerifyMutation.isPending ||
     studentLeaveApproveMutation.isPending;
 
@@ -590,54 +1156,8 @@ export default function ApprovalCenter({ schoolId }: Props) {
         </Dialog>
       )}
 
-      {/* ── Gallery Approvals ── */}
-      <Section title="Gallery Approvals" icon={Image} badge={pendingGallery.length} variant="gallery">
-        {galleryLoading ? <Spinner /> :
-          pendingGallery.length === 0
-            ? <EmptyState label="No pending gallery images" variant="gallery" />
-            : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                {pendingGallery.map((g: any) => (
-                  <div
-                    key={g.id}
-                    className="rounded-xl overflow-hidden transition-all duration-200 hover:scale-[1.03]"
-                    style={{
-                      background: "rgba(255,255,255,0.04)",
-                      border: "1px solid rgba(168,85,247,0.20)",
-                      boxShadow: "0 2px 12px rgba(168,85,247,0.12)",
-                    }}
-                    onMouseEnter={e => {
-                      (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(168,85,247,0.45)";
-                    }}
-                    onMouseLeave={e => {
-                      (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(168,85,247,0.20)";
-                    }}
-                    data-testid={`card-gallery-${g.id}`}
-                  >
-                    <img src={g.imageUrl} alt={g.title} className="w-full h-28 object-cover" />
-                    <div className="p-2">
-                      <p className="text-xs font-medium text-white truncate mb-1.5">{g.title}</p>
-                      <button
-                        disabled={galleryApproveMutation.isPending}
-                        onClick={() => galleryApproveMutation.mutate(g.id)}
-                        data-testid={`button-approve-gallery-${g.id}`}
-                        className="w-full h-7 rounded-lg text-xs font-bold flex items-center justify-center gap-1
-                          transition-all duration-150 disabled:opacity-50 hover:brightness-110 active:scale-95"
-                        style={{
-                          background: "linear-gradient(135deg, #a855f7, #ec4899)",
-                          boxShadow: "0 2px 10px rgba(168,85,247,0.30)",
-                          color: "#fff",
-                        }}
-                      >
-                        <Check className="w-3 h-3" /> Approve
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )
-        }
-      </Section>
+      {/* ── Gallery Hub ── */}
+      <GalleryHub schoolId={schoolId} />
 
       {/* ── E-Book Verifications ── */}
       <Section title="E-Book Verifications" icon={BookOpen} badge={pendingEbooks.length} variant="ebook">
