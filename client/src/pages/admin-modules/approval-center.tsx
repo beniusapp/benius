@@ -231,7 +231,7 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [viewGroup, setViewGroup] = useState<GalleryItemWithTeacher[] | null>(null);
   const [lightboxIdx, setLightboxIdx] = useState(0);
-  const [previewItem, setPreviewItem] = useState<GalleryItemWithTeacher | null>(null);
+  const [previewIdx, setPreviewIdx] = useState<number | null>(null);
 
   const [title, setTitle] = useState("");
   const [eventName, setEventName] = useState("");
@@ -259,6 +259,7 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
   });
 
   const approvedItems = allItems.filter(i => i.approved);
+  const previewItem = previewIdx !== null ? approvedItems[previewIdx] ?? null : null;
   const pendingItems  = allItems.filter(i => !i.approved);
 
   const pendingGroups = useMemo(() => {
@@ -522,7 +523,7 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
                       {/* Image — click to preview */}
                       <div
                         className="relative h-44 overflow-hidden cursor-zoom-in"
-                        onClick={() => setPreviewItem(item)}
+                        onClick={() => setPreviewIdx(approvedItems.indexOf(item))}
                       >
                         <img
                           src={item.imageUrl}
@@ -735,23 +736,50 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
       </div>
 
       {/* ── Single Image Preview Modal ── */}
-      {previewItem && (
-        <Dialog open={!!previewItem} onOpenChange={v => { if (!v) setPreviewItem(null); }}>
+      {previewItem && previewIdx !== null && (
+        <Dialog open={!!previewItem} onOpenChange={v => { if (!v) setPreviewIdx(null); }}>
           <DialogContent
             className="max-w-2xl max-h-[92vh] flex flex-col p-0 overflow-hidden"
             style={{ background: "#070d1a", border: "1px solid rgba(168,85,247,0.30)" }}
           >
-            {/* Full image */}
-            <div className="relative flex-shrink-0" style={{ maxHeight: "65vh" }}>
+            {/* Full image with left/right nav */}
+            <div className="relative flex-shrink-0" style={{ maxHeight: "62vh" }}>
               <img
                 src={previewItem.imageUrl}
                 alt={previewItem.title}
                 className="w-full object-contain"
-                style={{ maxHeight: "65vh", background: "#000" }}
+                style={{ maxHeight: "62vh", background: "#000" }}
               />
+
+              {/* Prev arrow */}
+              {previewIdx > 0 && (
+                <button
+                  onClick={() => setPreviewIdx(previewIdx - 1)}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center justify-center w-9 h-9 rounded-full z-20
+                    transition-all hover:scale-110 active:scale-95"
+                  style={{ background: "rgba(0,0,0,0.65)", border: "1px solid rgba(255,255,255,0.22)", backdropFilter: "blur(6px)" }}
+                  data-testid="button-preview-prev"
+                >
+                  <ChevronLeft className="w-5 h-5 text-white" />
+                </button>
+              )}
+
+              {/* Next arrow */}
+              {previewIdx < approvedItems.length - 1 && (
+                <button
+                  onClick={() => setPreviewIdx(previewIdx + 1)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center justify-center w-9 h-9 rounded-full z-20
+                    transition-all hover:scale-110 active:scale-95"
+                  style={{ background: "rgba(0,0,0,0.65)", border: "1px solid rgba(255,255,255,0.22)", backdropFilter: "blur(6px)" }}
+                  data-testid="button-preview-next"
+                >
+                  <ChevronRight className="w-5 h-5 text-white" />
+                </button>
+              )}
+
               {/* Close button */}
               <button
-                onClick={() => setPreviewItem(null)}
+                onClick={() => setPreviewIdx(null)}
                 className="absolute top-3 right-3 flex items-center justify-center w-8 h-8 rounded-full z-20
                   transition-all hover:scale-110 active:scale-95"
                 style={{ background: "rgba(0,0,0,0.70)", border: "1px solid rgba(255,255,255,0.20)" }}
@@ -759,9 +787,20 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
               >
                 <X className="w-4 h-4 text-white" />
               </button>
+
+              {/* Counter pill */}
+              <div className="absolute top-3 left-3 z-20">
+                <span
+                  className="px-2.5 py-1 rounded-full text-[11px] font-bold"
+                  style={{ background: "rgba(0,0,0,0.65)", color: "rgba(255,255,255,0.80)", backdropFilter: "blur(6px)", border: "1px solid rgba(255,255,255,0.15)" }}
+                >
+                  {previewIdx + 1} / {approvedItems.length}
+                </span>
+              </div>
+
               {/* Event tag overlay */}
               {previewItem.eventTag && (
-                <div className="absolute bottom-3 left-3">
+                <div className="absolute bottom-3 left-3 z-10">
                   <span
                     className="px-3 py-1 rounded-full text-xs font-bold"
                     style={{ background: "rgba(168,85,247,0.85)", color: "#f0e6ff", backdropFilter: "blur(6px)" }}
@@ -771,6 +810,30 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
                 </div>
               )}
             </div>
+
+            {/* Thumbnail strip */}
+            {approvedItems.length > 1 && (
+              <div
+                className="flex gap-1.5 px-4 py-2 overflow-x-auto flex-shrink-0"
+                style={{ background: "rgba(0,0,0,0.40)", borderTop: "1px solid rgba(255,255,255,0.07)" }}
+              >
+                {approvedItems.map((img, i) => (
+                  <button
+                    key={img.id}
+                    onClick={() => setPreviewIdx(i)}
+                    className="flex-shrink-0 w-12 h-12 rounded-lg overflow-hidden transition-all"
+                    style={{
+                      border: i === previewIdx ? "2px solid #a855f7" : "2px solid transparent",
+                      opacity: i === previewIdx ? 1 : 0.45,
+                      boxShadow: i === previewIdx ? "0 0 10px rgba(168,85,247,0.55)" : "none",
+                    }}
+                    data-testid={`thumb-preview-${img.id}`}
+                  >
+                    <img src={img.imageUrl} alt="" className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Metadata panel */}
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
@@ -828,7 +891,7 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
               <button
                 onClick={() => {
                   batchDeleteMutation.mutate({ ids: [previewItem.id] });
-                  setPreviewItem(null);
+                  setPreviewIdx(null);
                 }}
                 disabled={batchDeleteMutation.isPending}
                 className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold
