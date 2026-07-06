@@ -2319,6 +2319,27 @@ export class DatabaseStorage {
       }));
   }
 
+  async getStudentLeaveHistoryForTeacher(teacherId: number, schoolId: number): Promise<(StudentLeaveRequest & { studentName: string; dsid: string; class: string; section: string })[]> {
+    const result = await db.select().from(studentLeaveRequests)
+      .innerJoin(students, eq(studentLeaveRequests.studentId, students.id))
+      .where(
+        and(
+          eq(studentLeaveRequests.schoolId, schoolId),
+          eq(studentLeaveRequests.reviewedBy, teacherId),
+          eq(studentLeaveRequests.reviewerRole, "teacher")
+        )
+      )
+      .orderBy(desc(studentLeaveRequests.createdAt));
+
+    return result.map(r => ({
+      ...r.student_leave_requests,
+      studentName: r.students.name,
+      dsid: r.students.digitalStudentId,
+      class: r.students.class,
+      section: r.students.section,
+    }));
+  }
+
   async updateStudentLeaveStatus(id: number, status: string, reviewedBy: number, reviewerRole: string, rejectionReason?: string, adminComment?: string, teacherComment?: string): Promise<StudentLeaveRequest> {
     const updateData: Record<string, unknown> = { status, reviewedBy, reviewerRole };
     if (rejectionReason !== undefined) updateData.rejectionReason = rejectionReason;

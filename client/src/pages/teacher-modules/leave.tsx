@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Loader2, Send, CheckCircle, Forward, Calendar, Clock, XCircle, AlertCircle, Trash2, Eye, Paperclip } from "lucide-react";
+import { Loader2, Send, CheckCircle, Forward, Calendar, Clock, XCircle, AlertCircle, Trash2, Eye, Paperclip, History, CheckCircle2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { fmtDate } from "@/lib/dateUtils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -90,6 +90,16 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
   const [pendingAction, setPendingAction] = useState<{ id: number; type: "approve" | "reject" | "escalate" } | null>(null);
   const [actionComment, setActionComment] = useState("");
   const [selectedLeave, setSelectedLeave] = useState<any | null>(null);
+  const [showStudentHistory, setShowStudentHistory] = useState(false);
+
+  const { data: studentLeaveHistory = [], isLoading: historyLoading } = useQuery<any[]>({
+    queryKey: ["/api/student-leaves/teacher/history"],
+    queryFn: async () => {
+      const res = await fetch("/api/student-leaves/teacher/history", { credentials: "include" });
+      return res.ok ? res.json() : [];
+    },
+    enabled: showStudentHistory,
+  });
 
   const { data: leaves = [], isLoading } = useQuery<LeaveEntry[]>({
     queryKey: ["/api/leave/teacher", teacher.id],
@@ -421,10 +431,18 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
 
         <TabsContent value="student-leave" className="space-y-4 mt-4">
           <Card className="bg-white border border-gray-200 shadow-sm">
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
               <CardTitle className="text-lg text-gray-900" data-testid="text-student-leave-title">
                 Student Leave Requests — Your Classes
               </CardTitle>
+              <button
+                onClick={() => setShowStudentHistory(true)}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all flex-shrink-0"
+                style={{ background: "#f5f3ff", color: "#7c3aed", border: "1px solid #ede9fe" }}
+                data-testid="button-student-leave-history"
+              >
+                <History className="w-3.5 h-3.5" /> History
+              </button>
             </CardHeader>
             <CardContent>
               {studentLeavesLoading ? (
@@ -689,6 +707,90 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* ── Student Leave History Modal ── */}
+      <Dialog open={showStudentHistory} onOpenChange={setShowStudentHistory}>
+        <DialogContent className="max-w-lg max-h-[80vh] flex flex-col">
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle className="flex items-center gap-2 text-gray-900">
+              <History className="w-5 h-5 text-violet-600" />
+              My Student Leave Actions
+            </DialogTitle>
+            <p className="text-xs text-gray-500 mt-0.5">
+              All student leave requests you have approved, rejected, or escalated
+            </p>
+          </DialogHeader>
+
+          {historyLoading ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="w-6 h-6 animate-spin text-violet-500" />
+            </div>
+          ) : studentLeaveHistory.length === 0 ? (
+            <div className="text-center py-12 text-sm text-gray-400">
+              No actions taken on student leave requests yet.
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 mt-1">
+              {studentLeaveHistory.map((sl: any) => {
+                const isApproved = sl.status === "approved";
+                const isRejected = sl.status === "rejected";
+                const isEscalated = sl.status === "forwarded_to_admin";
+                return (
+                  <div
+                    key={sl.id}
+                    className="p-3 rounded-lg border"
+                    style={{
+                      borderColor: isApproved ? "#bbf7d0" : isRejected ? "#fecaca" : "#ddd6fe",
+                      background: isApproved ? "#f0fdf4" : isRejected ? "#fff5f5" : "#f5f3ff",
+                    }}
+                    data-testid={`history-student-leave-${sl.id}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-semibold text-sm text-gray-900">{sl.studentName || `Student #${sl.studentId}`}</span>
+                          {sl.class && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-white border border-gray-200 text-gray-600 font-medium">
+                              {sl.class}-{sl.section}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-0.5">{fmtDate(sl.startDate)} – {fmtDate(sl.endDate)}</p>
+                        {sl.category && <p className="text-xs text-gray-500">{sl.category}</p>}
+                        <p className="text-sm text-gray-700 mt-1 line-clamp-2">{sl.reason}</p>
+                        {sl.teacherComment && (
+                          <div className="mt-1.5 flex items-start gap-1">
+                            <Paperclip className="w-3 h-3 text-violet-500 mt-0.5 flex-shrink-0" />
+                            <p className="text-xs text-violet-700 italic">Your note: {sl.teacherComment}</p>
+                          </div>
+                        )}
+                        {sl.rejectionReason && (
+                          <div className="mt-1.5 flex items-start gap-1">
+                            <XCircle className="w-3 h-3 text-red-500 mt-0.5 flex-shrink-0" />
+                            <p className="text-xs text-red-600 italic">Reason: {sl.rejectionReason}</p>
+                          </div>
+                        )}
+                      </div>
+                      <span
+                        className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
+                        style={{
+                          background: isApproved ? "#dcfce7" : isRejected ? "#fee2e2" : "#ede9fe",
+                          color: isApproved ? "#15803d" : isRejected ? "#b91c1c" : "#6d28d9",
+                        }}
+                      >
+                        {isApproved && <CheckCircle2 className="w-3 h-3" />}
+                        {isRejected && <XCircle className="w-3 h-3" />}
+                        {isEscalated && <Forward className="w-3 h-3" />}
+                        {isApproved ? "Approved" : isRejected ? "Rejected" : "Escalated"}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

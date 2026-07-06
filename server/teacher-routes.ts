@@ -1511,6 +1511,14 @@ export function registerTeacherRoutes(app: Express) {
     res.json(list);
   });
 
+  app.get("/api/student-leaves/teacher/history", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const list = await storage.getStudentLeaveHistoryForTeacher(teacher.id, teacher.schoolId);
+    res.json(list);
+  });
+
   // Legacy per-class route — kept for backwards-compat but new UI uses /teacher/mine
   app.get("/api/student-leaves/:schoolId/:class/:section", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
