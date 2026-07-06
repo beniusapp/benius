@@ -1824,7 +1824,15 @@ export async function registerRoutes(
     res.json({ url });
   });
 
-  app.post("/api/student/leave", async (req, res) => {
+  // Accept either JSON (no file) or multipart/form-data (with optional file)
+  app.post("/api/student/leave", (req, res, next) => {
+    leaveAttachUpload.single("file")(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({ message: err.message || "File upload error" });
+      }
+      next();
+    });
+  }, async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
@@ -1842,8 +1850,15 @@ export async function registerRoutes(
       }
     }
 
-    const { startDate, endDate, reason, category, attachmentUrl } = req.body;
+    const { startDate, endDate, reason, category } = req.body;
     if (!startDate || !endDate || !reason) return res.status(400).json({ message: "startDate, endDate, and reason are required" });
+
+    // Derive attachment URL from uploaded file (if any)
+    let attachmentUrl: string | null = null;
+    if ((req as any).file) {
+      attachmentUrl = `/uploads/leave-attachments/${(req as any).file.filename}`;
+    }
+
     const leave = await storage.createStudentLeaveRequest({
       studentId: student.id,
       schoolId: student.schoolId,
@@ -1851,7 +1866,7 @@ export async function registerRoutes(
       endDate,
       reason,
       category: category || null,
-      attachmentUrl: attachmentUrl || null,
+      attachmentUrl,
     });
     res.status(201).json(leave);
   });

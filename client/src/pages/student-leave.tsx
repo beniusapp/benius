@@ -83,22 +83,22 @@ export default function StudentLeave() {
 
   const submitMutation = useMutation({
     mutationFn: async () => {
-      let attachmentUrl: string | undefined;
-      if (attachmentFile) {
-        const fd = new FormData();
-        fd.append("file", attachmentFile);
-        const res = await fetch("/api/student/leave/upload", { method: "POST", body: fd, credentials: "include" });
-        if (!res.ok) throw new Error("File upload failed");
-        const data = await res.json();
-        attachmentUrl = data.url;
-      }
-      await apiRequest("POST", "/api/student/leave", {
-        startDate,
-        endDate,
-        reason,
-        category: category || undefined,
-        attachmentUrl,
+      // Single atomic FormData request — file + fields in one POST, no two-step race
+      const fd = new FormData();
+      fd.append("startDate", startDate);
+      fd.append("endDate", endDate);
+      fd.append("reason", reason);
+      if (category) fd.append("category", category);
+      if (attachmentFile) fd.append("file", attachmentFile);
+      const res = await fetch("/api/student/leave", {
+        method: "POST",
+        body: fd,
+        credentials: "include",
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || body.error || "Submission failed");
+      }
     },
     onSuccess: () => {
       toast({ title: "Leave Applied", description: "Your request has been submitted to your class teacher." });
