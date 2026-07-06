@@ -247,6 +247,7 @@ export const galleryItems = pgTable("gallery_items", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
   uploadedById: integer("uploaded_by_id").notNull(),
+  uploaderRole: text("uploader_role").notNull().default("teacher"),
   title: text("title").notNull(),
   description: text("description"),
   eventTag: text("event_tag"),

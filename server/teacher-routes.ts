@@ -1121,6 +1121,7 @@ export function registerTeacherRoutes(app: Express) {
     const item = await storage.createGalleryItem({
       schoolId: sid,
       uploadedById: req.session.teacherId || req.session.userId!,
+      uploaderRole: req.session.teacherId ? "teacher" : "admin",
       title,
       description: description || null,
       eventTag: eventTag || null,
@@ -1156,10 +1157,11 @@ export function registerTeacherRoutes(app: Express) {
 
     const uploaderId = req.session.teacherId || req.session.userId!;
     const isAdmin = !!req.session.userId && !req.session.teacherId;
+    const uploaderRole = req.session.teacherId ? "teacher" : "admin";
     const items = [];
     for (const file of files) {
       const item = await storage.createGalleryItem({
-        schoolId: sid, uploadedById: uploaderId, title,
+        schoolId: sid, uploadedById: uploaderId, uploaderRole, title,
         description: description || null, eventTag: eventTag || null,
         capturedDate: capturedDate || null, capturedTime: capturedTime || null,
         location: location || null,
@@ -1180,7 +1182,7 @@ export function registerTeacherRoutes(app: Express) {
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
     const all = await storage.getGalleryItems(teacher.schoolId, false);
-    const mine = all.filter(i => i.uploadedById === req.session.teacherId);
+    const mine = all.filter(i => i.uploadedById === req.session.teacherId && i.uploaderRole === "teacher");
     res.json(mine);
   });
 
