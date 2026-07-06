@@ -1107,7 +1107,7 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     if (!req.file) return res.status(400).json({ message: "Image file required" });
 
-    const { title, schoolId, description, eventTag } = req.body;
+    const { title, schoolId, description, eventTag, capturedDate, capturedTime } = req.body;
     if (!title || !schoolId) return res.status(400).json({ message: "Title and schoolId required" });
 
     const sid = parseInt(schoolId);
@@ -1124,6 +1124,8 @@ export function registerTeacherRoutes(app: Express) {
       title,
       description: description || null,
       eventTag: eventTag || null,
+      capturedDate: capturedDate || null,
+      capturedTime: capturedTime || null,
       imageUrl: `/uploads/${req.file.filename}`,
       approved: !!req.session.userId && !req.session.teacherId,
     });
@@ -1140,7 +1142,7 @@ export function registerTeacherRoutes(app: Express) {
     const files = req.files as Express.Multer.File[];
     if (!files || files.length === 0) return res.status(400).json({ message: "At least one image required" });
 
-    const { title, schoolId, description, eventTag } = req.body;
+    const { title, schoolId, description, eventTag, capturedDate, capturedTime } = req.body;
     if (!title || !schoolId) return res.status(400).json({ message: "Title and schoolId required" });
 
     const sid = parseInt(schoolId);
@@ -1158,6 +1160,7 @@ export function registerTeacherRoutes(app: Express) {
       const item = await storage.createGalleryItem({
         schoolId: sid, uploadedById: uploaderId, title,
         description: description || null, eventTag: eventTag || null,
+        capturedDate: capturedDate || null, capturedTime: capturedTime || null,
         imageUrl: `/uploads/${file.filename}`, approved: isAdmin,
       });
       await storage.createAuditLog({
@@ -1168,6 +1171,15 @@ export function registerTeacherRoutes(app: Express) {
       items.push(item);
     }
     res.status(201).json(items);
+  });
+
+  app.get("/api/gallery/teacher/mine", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const all = await storage.getGalleryItems(teacher.schoolId, false);
+    const mine = all.filter(i => i.uploadedById === req.session.teacherId);
+    res.json(mine);
   });
 
   app.get("/api/gallery/:schoolId", async (req, res) => {

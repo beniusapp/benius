@@ -250,6 +250,8 @@ export const galleryItems = pgTable("gallery_items", {
   title: text("title").notNull(),
   description: text("description"),
   eventTag: text("event_tag"),
+  capturedDate: text("captured_date"),
+  capturedTime: text("captured_time"),
   imageUrl: text("image_url").notNull(),
   approved: boolean("approved").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
