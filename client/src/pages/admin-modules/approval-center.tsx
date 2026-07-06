@@ -4,7 +4,7 @@ import {
   Check, X, BookOpen, Image, UserCheck, Loader2,
   CalendarOff, ImageOff, BookMarked, Users, Inbox, Eye, Paperclip, UserCircle2,
   History, CheckCircle2, XCircle, Camera, Plus, Trash2, MapPin, Images,
-  ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon,
+  ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon, ArrowLeft,
 } from "lucide-react";
 import { fmtDate } from "@/lib/dateUtils";
 import { Button } from "@/components/ui/button";
@@ -794,9 +794,105 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
   );
 }
 
+// ── Sub-section type ───────────────────────────────────────────────────────────
+type ActiveSection = "teacher-leave" | "student-leave" | "gallery-hub" | "ebook" | null;
+
+// ── Landing tile card ──────────────────────────────────────────────────────────
+function ApprovalTile({
+  title, subtitle, icon: Icon, gradient, glow, badge, badgeColor, onClick,
+}: {
+  title: string; subtitle: string; icon: React.ElementType;
+  gradient: string; glow: string; badge: number | null; badgeColor: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      data-testid={`tile-approval-${title.toLowerCase().replace(/\s+/g, "-")}`}
+      className="w-full text-left rounded-2xl p-5 flex flex-col gap-3 transition-all duration-200
+        hover:scale-[1.025] active:scale-[0.98] group"
+      style={{
+        background: "linear-gradient(135deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))",
+        border: "1px solid rgba(255,255,255,0.10)",
+        boxShadow: `0 4px 24px ${glow}`,
+      }}
+      onMouseEnter={e => {
+        (e.currentTarget as HTMLButtonElement).style.border = `1px solid rgba(255,255,255,0.22)`;
+        (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 8px 32px ${glow}`;
+      }}
+      onMouseLeave={e => {
+        (e.currentTarget as HTMLButtonElement).style.border = "1px solid rgba(255,255,255,0.10)";
+        (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 4px 24px ${glow}`;
+      }}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div
+          className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
+          style={{ background: gradient, boxShadow: `0 0 20px ${glow}` }}
+        >
+          <Icon className="w-5 h-5 text-white" />
+        </div>
+        {badge !== null && badge > 0 && (
+          <span
+            className="px-2.5 py-0.5 rounded-full text-xs font-bold text-white flex-shrink-0"
+            style={{ background: badgeColor }}
+          >
+            {badge} pending
+          </span>
+        )}
+      </div>
+      <div className="flex-1">
+        <p className="font-bold text-white text-base leading-tight">{title}</p>
+        <p className="text-xs mt-1 leading-relaxed" style={{ color: "rgba(255,255,255,0.50)" }}>{subtitle}</p>
+      </div>
+      <span className="text-xs font-semibold flex items-center gap-1 mt-1 transition-colors"
+        style={{ color: "rgba(255,255,255,0.40)" }}>
+        Open <ChevronRight className="w-3 h-3" />
+      </span>
+    </button>
+  );
+}
+
+// ── Section back-header ────────────────────────────────────────────────────────
+function SectionHeader({
+  title, icon: Icon, gradient, glow, onBack, badge,
+}: {
+  title: string; icon: React.ElementType; gradient: string; glow: string;
+  onBack: () => void; badge?: number;
+}) {
+  return (
+    <div className="flex items-center gap-3 mb-5">
+      <button
+        onClick={onBack}
+        data-testid="button-approval-back"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex-shrink-0"
+        style={{ background: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.65)", border: "1px solid rgba(255,255,255,0.12)" }}
+      >
+        <ArrowLeft className="w-3.5 h-3.5" /> Back
+      </button>
+      <div
+        className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+        style={{ background: gradient, boxShadow: `0 0 16px ${glow}` }}
+      >
+        <Icon className="w-4 h-4 text-white" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <h3 className="font-bold text-white tracking-tight text-lg">{title}</h3>
+      </div>
+      {badge !== undefined && badge > 0 && (
+        <span className="px-2.5 py-0.5 rounded-full text-xs font-bold text-white flex-shrink-0"
+          style={{ background: gradient }}>
+          {badge}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function ApprovalCenter({ schoolId }: Props) {
   const { toast } = useToast();
+  const [activeSection, setActiveSection] = useState<ActiveSection>(null);
   const [selectedLeave, setSelectedLeave] = useState<any | null>(null);
   const [adminComment, setAdminComment] = useState("");
   const [showHistory, setShowHistory] = useState(false);
@@ -881,34 +977,302 @@ export default function ApprovalCenter({ schoolId }: Props) {
     ebookVerifyMutation.isPending ||
     studentLeaveApproveMutation.isPending;
 
+  const { data: allGalleryForCount = [] } = useQuery<any[]>({
+    queryKey: ["/api/gallery", schoolId, "all"],
+    queryFn: async () => {
+      const r = await fetch(`/api/gallery/${schoolId}?all=true`, { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!schoolId,
+  });
+  const galleryPendingCount = allGalleryForCount.filter((g: any) => !g.approved).length;
+
   const Spinner = () => (
     <div className="flex justify-center py-8">
       <Loader2 className="w-6 h-6 animate-spin" style={{ color: "rgba(255,255,255,0.30)" }} />
     </div>
   );
 
-  return (
-    <div className="space-y-5">
-      {/* Page header */}
-      <div className="flex items-start justify-between gap-3 mb-1">
-        <div>
-          <h2 className="text-2xl font-extrabold text-white tracking-tight">Approval Center</h2>
-          <p className="text-sm mt-0.5" style={{ color: "rgba(255,255,255,0.55)" }}>
-            Unified hub for all pending approvals · Leave approval auto-syncs attendance
-          </p>
+  /* ── Shared modals (rendered regardless of active section) ── */
+  const StudentLeaveModal = selectedLeave ? (
+    <Dialog open={!!selectedLeave} onOpenChange={() => { setSelectedLeave(null); setAdminComment(""); }}>
+      <DialogContent
+        className="max-w-md"
+        style={{ background: "#1A2942", border: "1px solid rgba(99,102,241,0.30)", color: "white" }}
+      >
+        <DialogHeader>
+          <DialogTitle className="text-white text-lg font-bold">Student Leave Request</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="flex items-center justify-between">
+            <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Student</span>
+            <span className="font-semibold text-white text-sm">
+              {selectedLeave.studentName}
+              <span className="ml-1.5 font-normal" style={{ color: "rgba(255,255,255,0.45)", fontSize: "0.7rem" }}>({selectedLeave.dsid})</span>
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Class</span>
+            <span className="text-white text-sm">{selectedLeave.class}-{selectedLeave.section}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Dates</span>
+            <span className="text-white text-sm">{fmtDate(selectedLeave.startDate)} – {fmtDate(selectedLeave.endDate)}</span>
+          </div>
+          {selectedLeave.category && (
+            <div className="flex items-center justify-between">
+              <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Category</span>
+              <span className="text-white text-sm">{selectedLeave.category}</span>
+            </div>
+          )}
+          <div className="flex items-start justify-between gap-4">
+            <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }} className="mt-0.5 flex-shrink-0">Reason</span>
+            <span className="text-white text-sm text-right leading-relaxed">{selectedLeave.reason}</span>
+          </div>
+          {selectedLeave.attachmentUrl && (
+            <div className="flex items-center justify-between">
+              <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Attachment</span>
+              <a href={selectedLeave.attachmentUrl} target="_blank" rel="noreferrer"
+                className="flex items-center gap-1 text-indigo-300 hover:text-indigo-100 text-sm transition-colors"
+                data-testid={`link-leave-attachment-${selectedLeave.id}`}>
+                <Paperclip className="w-3 h-3" /> View file
+              </a>
+            </div>
+          )}
+          <div className="flex items-center justify-between">
+            <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Submitted</span>
+            <span className="text-white text-sm">{fmtDate(selectedLeave.createdAt)}</span>
+          </div>
+          <div className="rounded-lg overflow-hidden" style={{ border: "1px solid rgba(99,102,241,0.25)" }}>
+            <div className="flex items-center gap-2 px-3 py-2" style={{ background: "rgba(99,102,241,0.12)" }}>
+              <UserCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: "#818cf8" }} />
+              <div className="flex-1 min-w-0">
+                <p style={{ color: "rgba(255,255,255,0.50)", fontSize: "0.7rem" }}>Forwarded by Teacher</p>
+                <p className="text-white font-semibold text-sm truncate">{selectedLeave.forwardedByTeacherName ?? "—"}</p>
+              </div>
+              <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0"
+                style={{ background: "rgba(99,102,241,0.20)", color: "#818cf8" }}>
+                Awaiting Principal
+              </span>
+            </div>
+            {selectedLeave.teacherComment && (
+              <div className="px-3 py-2 flex items-start gap-2"
+                style={{ background: "rgba(99,102,241,0.06)", borderTop: "1px solid rgba(99,102,241,0.18)" }}>
+                <Paperclip className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: "#818cf8" }} />
+                <div>
+                  <p style={{ color: "rgba(255,255,255,0.45)", fontSize: "0.68rem" }} className="mb-0.5">Teacher's note to principal</p>
+                  <p className="text-sm" style={{ color: "rgba(255,255,255,0.85)" }}>{selectedLeave.teacherComment}</p>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <label style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>
+              Principal Comment <span style={{ color: "rgba(255,255,255,0.30)" }}>(optional)</span>
+            </label>
+            <Textarea value={adminComment} onChange={e => setAdminComment(e.target.value)}
+              placeholder="Add a comment or note for this decision…" rows={3} className="resize-none text-sm"
+              style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.15)", color: "white" }}
+              data-testid="textarea-admin-comment" />
+          </div>
         </div>
-        <button
-          onClick={() => setShowHistory(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold flex-shrink-0 mt-1 transition-all"
-          style={{ background: "rgba(212,175,55,0.15)", color: "#D4AF37", border: "1px solid rgba(212,175,55,0.30)" }}
-          data-testid="button-approval-history"
-        >
-          <History className="w-3.5 h-3.5" /> History
-        </button>
-      </div>
+        <DialogFooter className="gap-2 mt-1">
+          <Button variant="outline" onClick={() => { setSelectedLeave(null); setAdminComment(""); }}
+            className="border-white/20 text-white hover:bg-white/10" data-testid="button-close-leave-detail">
+            Close
+          </Button>
+          <button disabled={isPending}
+            onClick={() => { studentLeaveApproveMutation.mutate({ id: selectedLeave.id, action: "reject", comment: adminComment || undefined }); setSelectedLeave(null); setAdminComment(""); }}
+            className="px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
+            style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", border: "1px solid rgba(239,68,68,0.25)" }}
+            data-testid={`button-detail-reject-${selectedLeave.id}`}>
+            ✕ Reject
+          </button>
+          <button disabled={isPending}
+            onClick={() => { studentLeaveApproveMutation.mutate({ id: selectedLeave.id, action: "admin-approve", comment: adminComment || undefined }); setSelectedLeave(null); setAdminComment(""); }}
+            className="px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
+            style={{ background: "linear-gradient(135deg,#22c55e,#16a34a)", color: "white" }}
+            data-testid={`button-detail-approve-${selectedLeave.id}`}>
+            ✓ Approve + Sync
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  ) : null;
 
-      {/* ── Teacher Leave Requests ── */}
-      <Section title="Teacher Leave Requests" icon={UserCheck} badge={pendingLeaves.length} variant="teacher">
+  const HistoryModal = (
+    <Dialog open={showHistory} onOpenChange={setShowHistory}>
+      <DialogContent className="max-w-3xl max-h-[82vh] flex flex-col"
+        style={{ background: "#0A1628", border: "1px solid rgba(212,175,55,0.25)", color: "#fff" }}>
+        <DialogHeader className="flex-shrink-0">
+          <DialogTitle className="flex items-center gap-2 text-white text-lg">
+            <History className="w-5 h-5" style={{ color: "#D4AF37" }} />
+            Approval History
+          </DialogTitle>
+          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.50)" }}>All admin-actioned items across all categories</p>
+        </DialogHeader>
+        {historyLoading ? (
+          <div className="flex items-center justify-center py-16"><Loader2 className="w-8 h-8 animate-spin" style={{ color: "#D4AF37" }} /></div>
+        ) : (
+          <Tabs defaultValue="teacher_leaves" className="flex-1 flex flex-col min-h-0">
+            <TabsList className="flex-shrink-0 grid grid-cols-4 w-full" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)" }}>
+              <TabsTrigger value="teacher_leaves" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
+                Teacher Leaves <span className="ml-1 text-[10px] opacity-70">({historyData?.teacherLeaves?.length ?? 0})</span>
+              </TabsTrigger>
+              <TabsTrigger value="student_leaves" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
+                Student Leaves <span className="ml-1 text-[10px] opacity-70">({historyData?.studentLeaves?.length ?? 0})</span>
+              </TabsTrigger>
+              <TabsTrigger value="gallery" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
+                Gallery <span className="ml-1 text-[10px] opacity-70">({historyData?.gallery?.length ?? 0})</span>
+              </TabsTrigger>
+              <TabsTrigger value="ebooks" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
+                E-Books <span className="ml-1 text-[10px] opacity-70">({historyData?.ebooks?.length ?? 0})</span>
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="teacher_leaves" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
+              {!historyData?.teacherLeaves?.length ? <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No teacher leave history</div>
+                : historyData.teacherLeaves.map((l: any) => (
+                  <HistoryRow key={l.id} status={l.status}>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-semibold text-sm">{l.teacherName}</p>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>{l.leaveType} · {fmtDate(l.startDate)} – {fmtDate(l.endDate)}</p>
+                      {l.reason && <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(255,255,255,0.40)" }}>{l.reason}</p>}
+                    </div>
+                    <StatusChip status={l.status} />
+                  </HistoryRow>
+                ))}
+            </TabsContent>
+            <TabsContent value="student_leaves" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
+              {!historyData?.studentLeaves?.length ? <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No student leave history</div>
+                : historyData.studentLeaves.map((l: any) => (
+                  <HistoryRow key={l.id} status={l.status}>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-semibold text-sm">{l.studentName}</p>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>{l.dsid} · Class {l.class}{l.section ? `-${l.section}` : ""} · {fmtDate(l.startDate)} – {fmtDate(l.endDate)}</p>
+                      {l.adminComment && <p className="text-xs mt-0.5 truncate italic" style={{ color: "rgba(255,255,255,0.40)" }}>Admin note: {l.adminComment}</p>}
+                    </div>
+                    <StatusChip status={l.status} />
+                  </HistoryRow>
+                ))}
+            </TabsContent>
+            <TabsContent value="gallery" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
+              {!historyData?.gallery?.length ? <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No gallery approval history</div>
+                : historyData.gallery.map((g: any) => (
+                  <HistoryRow key={g.id} status="approved">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-semibold text-sm">{g.title || "Untitled Photo"}</p>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>Uploaded by {g.uploaderName}{g.eventTag ? ` · ${g.eventTag}` : ""}</p>
+                      {g.createdAt && <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.40)" }}>{fmtDate(g.createdAt)}</p>}
+                    </div>
+                    <StatusChip status="approved" />
+                  </HistoryRow>
+                ))}
+            </TabsContent>
+            <TabsContent value="ebooks" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
+              {!historyData?.ebooks?.length ? <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No e-book history</div>
+                : historyData.ebooks.map((b: any) => (
+                  <HistoryRow key={b.id} status={b.verificationStatus}>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-semibold text-sm">{b.title}</p>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>by {b.author} · Class {b.targetClass}{b.category ? ` · ${b.category}` : ""}</p>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.40)" }}>Uploaded by {b.uploaderName}</p>
+                    </div>
+                    <StatusChip status={b.verificationStatus} />
+                  </HistoryRow>
+                ))}
+            </TabsContent>
+          </Tabs>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+
+  /* ── LANDING PAGE ── */
+  if (activeSection === null) {
+    return (
+      <div className="space-y-5">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-2xl font-extrabold text-white tracking-tight">Approval Center</h2>
+            <p className="text-sm mt-0.5" style={{ color: "rgba(255,255,255,0.55)" }}>
+              Select a category to review pending items
+            </p>
+          </div>
+          <button
+            onClick={() => setShowHistory(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold flex-shrink-0 mt-1 transition-all"
+            style={{ background: "rgba(212,175,55,0.15)", color: "#D4AF37", border: "1px solid rgba(212,175,55,0.30)" }}
+            data-testid="button-approval-history"
+          >
+            <History className="w-3.5 h-3.5" /> History
+          </button>
+        </div>
+
+        {/* 4 tiles */}
+        <div className="grid grid-cols-2 gap-4">
+          <ApprovalTile
+            title="Teacher Leave"
+            subtitle="Review and approve teacher leave requests. Syncs with leave balance."
+            icon={UserCheck}
+            gradient="linear-gradient(135deg, #0ea5e9, #06b6d4)"
+            glow="rgba(14,165,233,0.18)"
+            badge={pendingLeaves.length}
+            badgeColor="linear-gradient(135deg,#0ea5e9,#06b6d4)"
+            onClick={() => setActiveSection("teacher-leave")}
+          />
+          <ApprovalTile
+            title="Student Leave"
+            subtitle="Admin decisions on student leaves forwarded by teachers."
+            icon={Users}
+            gradient="linear-gradient(135deg, #818cf8, #6366f1)"
+            glow="rgba(99,102,241,0.18)"
+            badge={forwardedStudentLeaves.length}
+            badgeColor="linear-gradient(135deg,#818cf8,#6366f1)"
+            onClick={() => setActiveSection("student-leave")}
+          />
+          <ApprovalTile
+            title="Gallery Hub"
+            subtitle="Upload, manage and approve school photos from teachers."
+            icon={Image}
+            gradient="linear-gradient(135deg, #a855f7, #ec4899)"
+            glow="rgba(168,85,247,0.18)"
+            badge={galleryPendingCount}
+            badgeColor="linear-gradient(135deg,#a855f7,#ec4899)"
+            onClick={() => setActiveSection("gallery-hub")}
+          />
+          <ApprovalTile
+            title="E-Book Library"
+            subtitle="Verify and approve e-books submitted by teachers."
+            icon={BookOpen}
+            gradient="linear-gradient(135deg, #f59e0b, #f97316)"
+            glow="rgba(245,158,11,0.18)"
+            badge={pendingEbooks.length}
+            badgeColor="linear-gradient(135deg,#f59e0b,#f97316)"
+            onClick={() => setActiveSection("ebook")}
+          />
+        </div>
+
+        {HistoryModal}
+      </div>
+    );
+  }
+
+  /* ── SUB-SECTION VIEWS ── */
+  return (
+    <div className="space-y-4">
+      {/* ── Teacher Leave ── */}
+      {activeSection === "teacher-leave" && (
+        <>
+          <SectionHeader
+            title="Teacher Leave Requests"
+            icon={UserCheck}
+            gradient="linear-gradient(135deg,#0ea5e9,#06b6d4)"
+            glow="rgba(14,165,233,0.25)"
+            onBack={() => setActiveSection(null)}
+            badge={pendingLeaves.length}
+          />
+          <Section title="Teacher Leave Requests" icon={UserCheck} badge={pendingLeaves.length} variant="teacher">
         {leavesLoading ? <Spinner /> :
           pendingLeaves.length === 0
             ? <EmptyState label="No pending teacher leave requests" variant="teacher" />
@@ -937,382 +1301,122 @@ export default function ApprovalCenter({ schoolId }: Props) {
               </div>
             )
         }
-      </Section>
+          </Section>
+        </>
+      )}
 
-      {/* ── Student Leave Requests (forwarded by teacher) ── */}
-      <Section
-        title="Student Leave Requests (Forwarded by Teacher)"
-        icon={Users}
-        badge={forwardedStudentLeaves.length}
-        variant="student"
-      >
-        {sleavesLoading ? <Spinner /> :
-          forwardedStudentLeaves.length === 0
-            ? <EmptyState label="No student leave requests forwarded" variant="student" />
-            : (
-              <div className="space-y-2">
-                {forwardedStudentLeaves.map((l: any) => (
-                  <ItemRow key={l.id} testId={`card-student-leave-${l.id}`}>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-semibold text-sm">
-                        {l.studentName}{" "}
-                        <span className="font-normal text-xs" style={{ color: "rgba(255,255,255,0.40)" }}>
-                          ({l.dsid})
-                        </span>
-                      </p>
-                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
-                        Class {l.class}-{l.section} · {fmtDate(l.startDate)} – {fmtDate(l.endDate)}
-                      </p>
-                      <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(255,255,255,0.45)" }}>
-                        {l.reason}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <button
-                        onClick={() => setSelectedLeave(l)}
-                        className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors"
-                        style={{ background: "rgba(99,102,241,0.15)", color: "#818cf8" }}
-                        data-testid={`button-view-student-leave-${l.id}`}
-                        title="View details"
-                      >
-                        <Eye className="w-4 h-4" />
-                      </button>
-                      <ActionButtons
-                        disabled={isPending}
-                        onApprove={() =>
-                          studentLeaveApproveMutation.mutate({ id: l.id, action: "admin-approve", comment: undefined })
-                        }
-                        onReject={() =>
-                          studentLeaveApproveMutation.mutate({ id: l.id, action: "reject", comment: undefined })
-                        }
-                        approveLabel="Approve + Sync"
-                        approveTestId={`button-approve-student-leave-${l.id}`}
-                        rejectTestId={`button-reject-student-leave-${l.id}`}
-                      />
-                    </div>
-                  </ItemRow>
-                ))}
-              </div>
-            )
-        }
-      </Section>
-
-      {/* ── Student Leave Detail Modal ── */}
-      {selectedLeave && (
-        <Dialog open={!!selectedLeave} onOpenChange={() => { setSelectedLeave(null); setAdminComment(""); }}>
-          <DialogContent
-            className="max-w-md"
-            style={{ background: "#1A2942", border: "1px solid rgba(99,102,241,0.30)", color: "white" }}
-          >
-            <DialogHeader>
-              <DialogTitle className="text-white text-lg font-bold">Student Leave Request</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3 py-2">
-              {/* Student */}
-              <div className="flex items-center justify-between">
-                <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Student</span>
-                <span className="font-semibold text-white text-sm">
-                  {selectedLeave.studentName}
-                  <span className="ml-1.5 font-normal" style={{ color: "rgba(255,255,255,0.45)", fontSize: "0.7rem" }}>
-                    ({selectedLeave.dsid})
-                  </span>
-                </span>
-              </div>
-              {/* Class */}
-              <div className="flex items-center justify-between">
-                <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Class</span>
-                <span className="text-white text-sm">{selectedLeave.class}-{selectedLeave.section}</span>
-              </div>
-              {/* Dates */}
-              <div className="flex items-center justify-between">
-                <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Dates</span>
-                <span className="text-white text-sm">
-                  {fmtDate(selectedLeave.startDate)} – {fmtDate(selectedLeave.endDate)}
-                </span>
-              </div>
-              {/* Category */}
-              {selectedLeave.category && (
-                <div className="flex items-center justify-between">
-                  <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Category</span>
-                  <span className="text-white text-sm">{selectedLeave.category}</span>
-                </div>
-              )}
-              {/* Reason */}
-              <div className="flex items-start justify-between gap-4">
-                <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }} className="mt-0.5 flex-shrink-0">Reason</span>
-                <span className="text-white text-sm text-right leading-relaxed">{selectedLeave.reason}</span>
-              </div>
-              {/* Attachment */}
-              {selectedLeave.attachmentUrl && (
-                <div className="flex items-center justify-between">
-                  <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Attachment</span>
-                  <a
-                    href={selectedLeave.attachmentUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center gap-1 text-indigo-300 hover:text-indigo-100 text-sm transition-colors"
-                    data-testid={`link-leave-attachment-${selectedLeave.id}`}
-                  >
-                    <Paperclip className="w-3 h-3" /> View file
-                  </a>
-                </div>
-              )}
-              {/* Submitted */}
-              <div className="flex items-center justify-between">
-                <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Submitted</span>
-                <span className="text-white text-sm">{fmtDate(selectedLeave.createdAt)}</span>
-              </div>
-
-              {/* Forwarded by teacher — highlighted row */}
-              <div
-                className="rounded-lg overflow-hidden"
-                style={{ border: "1px solid rgba(99,102,241,0.25)" }}
-              >
-                <div
-                  className="flex items-center gap-2 px-3 py-2"
-                  style={{ background: "rgba(99,102,241,0.12)" }}
-                >
-                  <UserCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: "#818cf8" }} />
-                  <div className="flex-1 min-w-0">
-                    <p style={{ color: "rgba(255,255,255,0.50)", fontSize: "0.7rem" }}>Forwarded by Teacher</p>
-                    <p className="text-white font-semibold text-sm truncate">
-                      {selectedLeave.forwardedByTeacherName ?? "—"}
-                    </p>
+      {/* ── Student Leave ── */}
+      {activeSection === "student-leave" && (
+        <>
+          <SectionHeader
+            title="Student Leave Requests"
+            icon={Users}
+            gradient="linear-gradient(135deg,#818cf8,#6366f1)"
+            glow="rgba(99,102,241,0.25)"
+            onBack={() => setActiveSection(null)}
+            badge={forwardedStudentLeaves.length}
+          />
+          <Section title="Student Leave Requests (Forwarded by Teacher)" icon={Users} badge={forwardedStudentLeaves.length} variant="student">
+            {sleavesLoading ? <Spinner /> :
+              forwardedStudentLeaves.length === 0
+                ? <EmptyState label="No student leave requests forwarded" variant="student" />
+                : (
+                  <div className="space-y-2">
+                    {forwardedStudentLeaves.map((l: any) => (
+                      <ItemRow key={l.id} testId={`card-student-leave-${l.id}`}>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-white font-semibold text-sm">
+                            {l.studentName}{" "}
+                            <span className="font-normal text-xs" style={{ color: "rgba(255,255,255,0.40)" }}>({l.dsid})</span>
+                          </p>
+                          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
+                            Class {l.class}-{l.section} · {fmtDate(l.startDate)} – {fmtDate(l.endDate)}
+                          </p>
+                          <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(255,255,255,0.45)" }}>{l.reason}</p>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <button onClick={() => setSelectedLeave(l)}
+                            className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors"
+                            style={{ background: "rgba(99,102,241,0.15)", color: "#818cf8" }}
+                            data-testid={`button-view-student-leave-${l.id}`} title="View details">
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          <ActionButtons
+                            disabled={isPending}
+                            onApprove={() => studentLeaveApproveMutation.mutate({ id: l.id, action: "admin-approve", comment: undefined })}
+                            onReject={() => studentLeaveApproveMutation.mutate({ id: l.id, action: "reject", comment: undefined })}
+                            approveLabel="Approve + Sync"
+                            approveTestId={`button-approve-student-leave-${l.id}`}
+                            rejectTestId={`button-reject-student-leave-${l.id}`}
+                          />
+                        </div>
+                      </ItemRow>
+                    ))}
                   </div>
-                  <span
-                    className="text-[10px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0"
-                    style={{ background: "rgba(99,102,241,0.20)", color: "#818cf8" }}
-                  >
-                    Awaiting Principal
-                  </span>
-                </div>
-                {selectedLeave.teacherComment && (
-                  <div
-                    className="px-3 py-2 flex items-start gap-2"
-                    style={{ background: "rgba(99,102,241,0.06)", borderTop: "1px solid rgba(99,102,241,0.18)" }}
-                  >
-                    <Paperclip className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: "#818cf8" }} />
-                    <div>
-                      <p style={{ color: "rgba(255,255,255,0.45)", fontSize: "0.68rem" }} className="mb-0.5">Teacher's note to principal</p>
-                      <p className="text-sm" style={{ color: "rgba(255,255,255,0.85)" }}>{selectedLeave.teacherComment}</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Admin Comment */}
-              <div className="space-y-1.5">
-                <label style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>
-                  Principal Comment <span style={{ color: "rgba(255,255,255,0.30)" }}>(optional)</span>
-                </label>
-                <Textarea
-                  value={adminComment}
-                  onChange={(e) => setAdminComment(e.target.value)}
-                  placeholder="Add a comment or note for this decision…"
-                  rows={3}
-                  className="resize-none text-sm"
-                  style={{
-                    background: "rgba(255,255,255,0.05)",
-                    border: "1px solid rgba(255,255,255,0.15)",
-                    color: "white",
-                  }}
-                  data-testid="textarea-admin-comment"
-                />
-              </div>
-            </div>
-
-            <DialogFooter className="gap-2 mt-1">
-              <Button
-                variant="outline"
-                onClick={() => { setSelectedLeave(null); setAdminComment(""); }}
-                className="border-white/20 text-white hover:bg-white/10"
-                data-testid="button-close-leave-detail"
-              >
-                Close
-              </Button>
-              <button
-                disabled={isPending}
-                onClick={() => {
-                  studentLeaveApproveMutation.mutate({ id: selectedLeave.id, action: "reject", comment: adminComment || undefined });
-                  setSelectedLeave(null);
-                  setAdminComment("");
-                }}
-                className="px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
-                style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", border: "1px solid rgba(239,68,68,0.25)" }}
-                data-testid={`button-detail-reject-${selectedLeave.id}`}
-              >
-                ✕ Reject
-              </button>
-              <button
-                disabled={isPending}
-                onClick={() => {
-                  studentLeaveApproveMutation.mutate({ id: selectedLeave.id, action: "admin-approve", comment: adminComment || undefined });
-                  setSelectedLeave(null);
-                  setAdminComment("");
-                }}
-                className="px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
-                style={{ background: "linear-gradient(135deg,#22c55e,#16a34a)", color: "white" }}
-                data-testid={`button-detail-approve-${selectedLeave.id}`}
-              >
-                ✓ Approve + Sync
-              </button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+                )
+            }
+          </Section>
+        </>
       )}
 
       {/* ── Gallery Hub ── */}
-      <GalleryHub schoolId={schoolId} />
+      {activeSection === "gallery-hub" && (
+        <>
+          <SectionHeader
+            title="Gallery Hub"
+            icon={Image}
+            gradient="linear-gradient(135deg,#a855f7,#ec4899)"
+            glow="rgba(168,85,247,0.25)"
+            onBack={() => setActiveSection(null)}
+            badge={galleryPendingCount}
+          />
+          <GalleryHub schoolId={schoolId} />
+        </>
+      )}
 
-      {/* ── E-Book Verifications ── */}
-      <Section title="E-Book Verifications" icon={BookOpen} badge={pendingEbooks.length} variant="ebook">
-        {ebooksLoading ? <Spinner /> :
-          pendingEbooks.length === 0
-            ? <EmptyState label="No pending e-books" variant="ebook" />
-            : (
-              <div className="space-y-2">
-                {pendingEbooks.map((b: any) => (
-                  <ItemRow key={b.id} testId={`card-ebook-${b.id}`}>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-semibold text-sm">{b.title}</p>
-                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
-                        by {b.author} · {b.category} · Class {b.targetClass}
-                      </p>
-                    </div>
-                    <ActionButtons
-                      disabled={ebookVerifyMutation.isPending}
-                      onApprove={() => ebookVerifyMutation.mutate({ id: b.id, status: "approved" })}
-                      onReject={() => ebookVerifyMutation.mutate({ id: b.id, status: "rejected" })}
-                      approveTestId={`button-approve-ebook-${b.id}`}
-                      rejectTestId={`button-reject-ebook-${b.id}`}
-                    />
-                  </ItemRow>
-                ))}
-              </div>
-            )
-        }
-      </Section>
+      {/* ── E-Book Library ── */}
+      {activeSection === "ebook" && (
+        <>
+          <SectionHeader
+            title="E-Book Library"
+            icon={BookOpen}
+            gradient="linear-gradient(135deg,#f59e0b,#f97316)"
+            glow="rgba(245,158,11,0.25)"
+            onBack={() => setActiveSection(null)}
+            badge={pendingEbooks.length}
+          />
+          <Section title="E-Book Verifications" icon={BookOpen} badge={pendingEbooks.length} variant="ebook">
+            {ebooksLoading ? <Spinner /> :
+              pendingEbooks.length === 0
+                ? <EmptyState label="No pending e-books" variant="ebook" />
+                : (
+                  <div className="space-y-2">
+                    {pendingEbooks.map((b: any) => (
+                      <ItemRow key={b.id} testId={`card-ebook-${b.id}`}>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-white font-semibold text-sm">{b.title}</p>
+                          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
+                            by {b.author} · {b.category} · Class {b.targetClass}
+                          </p>
+                        </div>
+                        <ActionButtons
+                          disabled={ebookVerifyMutation.isPending}
+                          onApprove={() => ebookVerifyMutation.mutate({ id: b.id, status: "approved" })}
+                          onReject={() => ebookVerifyMutation.mutate({ id: b.id, status: "rejected" })}
+                          approveTestId={`button-approve-ebook-${b.id}`}
+                          rejectTestId={`button-reject-ebook-${b.id}`}
+                        />
+                      </ItemRow>
+                    ))}
+                  </div>
+                )
+            }
+          </Section>
+        </>
+      )}
 
-      {/* ── Approval History Modal ── */}
-      <Dialog open={showHistory} onOpenChange={setShowHistory}>
-        <DialogContent
-          className="max-w-3xl max-h-[82vh] flex flex-col"
-          style={{ background: "#0A1628", border: "1px solid rgba(212,175,55,0.25)", color: "#fff" }}
-        >
-          <DialogHeader className="flex-shrink-0">
-            <DialogTitle className="flex items-center gap-2 text-white text-lg">
-              <History className="w-5 h-5" style={{ color: "#D4AF37" }} />
-              Approval History
-            </DialogTitle>
-            <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.50)" }}>
-              All admin-actioned items across all categories
-            </p>
-          </DialogHeader>
-
-          {historyLoading ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="w-8 h-8 animate-spin" style={{ color: "#D4AF37" }} />
-            </div>
-          ) : (
-            <Tabs defaultValue="teacher_leaves" className="flex-1 flex flex-col min-h-0">
-              <TabsList className="flex-shrink-0 grid grid-cols-4 w-full" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)" }}>
-                <TabsTrigger value="teacher_leaves" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
-                  Teacher Leaves
-                  <span className="ml-1 text-[10px] opacity-70">({historyData?.teacherLeaves?.length ?? 0})</span>
-                </TabsTrigger>
-                <TabsTrigger value="student_leaves" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
-                  Student Leaves
-                  <span className="ml-1 text-[10px] opacity-70">({historyData?.studentLeaves?.length ?? 0})</span>
-                </TabsTrigger>
-                <TabsTrigger value="gallery" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
-                  Gallery
-                  <span className="ml-1 text-[10px] opacity-70">({historyData?.gallery?.length ?? 0})</span>
-                </TabsTrigger>
-                <TabsTrigger value="ebooks" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
-                  E-Books
-                  <span className="ml-1 text-[10px] opacity-70">({historyData?.ebooks?.length ?? 0})</span>
-                </TabsTrigger>
-              </TabsList>
-
-              {/* Teacher Leave History */}
-              <TabsContent value="teacher_leaves" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
-                {!historyData?.teacherLeaves?.length ? (
-                  <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No teacher leave history</div>
-                ) : historyData.teacherLeaves.map((l: any) => (
-                  <HistoryRow key={l.id} status={l.status}>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-semibold text-sm">{l.teacherName}</p>
-                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
-                        {l.leaveType} · {fmtDate(l.startDate)} – {fmtDate(l.endDate)}
-                      </p>
-                      {l.reason && <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(255,255,255,0.40)" }}>{l.reason}</p>}
-                    </div>
-                    <StatusChip status={l.status} />
-                  </HistoryRow>
-                ))}
-              </TabsContent>
-
-              {/* Student Leave History */}
-              <TabsContent value="student_leaves" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
-                {!historyData?.studentLeaves?.length ? (
-                  <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No student leave history</div>
-                ) : historyData.studentLeaves.map((l: any) => (
-                  <HistoryRow key={l.id} status={l.status}>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-semibold text-sm">{l.studentName}</p>
-                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
-                        {l.dsid} · Class {l.class}{l.section ? `-${l.section}` : ""} · {fmtDate(l.startDate)} – {fmtDate(l.endDate)}
-                      </p>
-                      {l.adminComment && (
-                        <p className="text-xs mt-0.5 truncate italic" style={{ color: "rgba(255,255,255,0.40)" }}>Admin note: {l.adminComment}</p>
-                      )}
-                    </div>
-                    <StatusChip status={l.status} />
-                  </HistoryRow>
-                ))}
-              </TabsContent>
-
-              {/* Gallery History */}
-              <TabsContent value="gallery" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
-                {!historyData?.gallery?.length ? (
-                  <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No gallery approval history</div>
-                ) : historyData.gallery.map((g: any) => (
-                  <HistoryRow key={g.id} status="approved">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-semibold text-sm">{g.title || "Untitled Photo"}</p>
-                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
-                        Uploaded by {g.uploaderName}{g.eventTag ? ` · ${g.eventTag}` : ""}
-                      </p>
-                      {g.createdAt && <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.40)" }}>{fmtDate(g.createdAt)}</p>}
-                    </div>
-                    <StatusChip status="approved" />
-                  </HistoryRow>
-                ))}
-              </TabsContent>
-
-              {/* E-Book History */}
-              <TabsContent value="ebooks" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
-                {!historyData?.ebooks?.length ? (
-                  <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No e-book history</div>
-                ) : historyData.ebooks.map((b: any) => (
-                  <HistoryRow key={b.id} status={b.verificationStatus}>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-semibold text-sm">{b.title}</p>
-                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
-                        by {b.author} · Class {b.targetClass}{b.category ? ` · ${b.category}` : ""}
-                      </p>
-                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.40)" }}>
-                        Uploaded by {b.uploaderName}
-                      </p>
-                    </div>
-                    <StatusChip status={b.verificationStatus} />
-                  </HistoryRow>
-                ))}
-              </TabsContent>
-            </Tabs>
-          )}
-        </DialogContent>
-      </Dialog>
+      {StudentLeaveModal}
+      {HistoryModal}
     </div>
   );
 }
