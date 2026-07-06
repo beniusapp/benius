@@ -1348,6 +1348,15 @@ export function registerTeacherRoutes(app: Express) {
     res.json(list);
   });
 
+  app.get("/api/library/my-ebooks", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const all = await storage.getLibraryBooks(teacher.schoolId);
+    const mine = all.filter(b => b.uploadedById === req.session.teacherId);
+    res.json(mine);
+  });
+
   app.delete("/api/library/books/:id", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
     await storage.deleteLibraryBook(parseInt(req.params.id));
