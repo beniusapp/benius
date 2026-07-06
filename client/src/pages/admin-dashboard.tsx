@@ -598,20 +598,22 @@ function SessionSwitcher({
     <div ref={ref} className="relative" data-testid="session-switcher">
       <button
         onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150"
+        className="flex items-center gap-2 text-[11px] font-semibold px-3 py-1.5 rounded-full transition-all duration-200"
         style={{
           background: isArchive ? "rgba(251,191,36,0.12)" : "rgba(34,211,238,0.10)",
-          border: `1px solid ${isArchive ? "rgba(251,191,36,0.30)" : "rgba(34,211,238,0.22)"}`,
-          color: isArchive ? "#fbbf24" : "#22d3ee",
+          border: `1px solid ${isArchive ? "rgba(251,191,36,0.35)" : "rgba(34,211,238,0.25)"}`,
+          color: isArchive ? "#fbbf24" : "rgba(94,234,212,0.9)",
           backdropFilter: "blur(8px)",
         }}
         data-testid="button-session-switcher"
       >
-        <CalendarRange className="w-3.5 h-3.5 flex-shrink-0" />
-        <span className="max-w-[180px] truncate">
-          Session: {label}{selected?.isActive ? " (Active)" : ""}
+        {isArchive
+          ? <CalendarRange className="w-3 h-3 flex-shrink-0" />
+          : <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse flex-shrink-0" style={{ boxShadow: "0 0 6px #22d3ee" }} />}
+        <span className="hidden sm:inline max-w-[180px] truncate">
+          {label}{selected?.isActive ? " · Active" : " · Archive"}
         </span>
-        <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+        <ChevronDown className={`w-3 h-3 flex-shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
       </button>
 
       {open && (
@@ -891,6 +893,14 @@ export default function AdminDashboard() {
   const attendancePresent = dailySummary?.present ?? 0;
   const attendanceTotal   = dailySummary?.total   ?? 0;
 
+  const adminInitials = me.email
+    .split("@")[0]
+    .split(/[._-]/)
+    .filter(Boolean)
+    .map(w => w[0].toUpperCase())
+    .slice(0, 2)
+    .join("");
+
   return (
     <SessionViewContext.Provider value={{
       sessions,
@@ -961,27 +971,48 @@ export default function AdminDashboard() {
             />
           </div>
 
-          <div className="flex items-center gap-1 sm:gap-2">
-            <span className="hidden sm:block text-sm text-white/35 font-medium" data-testid="text-user-email">{me.email}</span>
-            <Button
-              variant="ghost" size="sm"
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Initials avatar — taps to open profile */}
+            <button
               onClick={() => setShowProfile(true)}
-              className="text-white/50 hover:text-white hover:bg-white/10 px-2 sm:px-3"
               data-testid="button-open-profile"
+              className="flex items-center gap-2"
             >
-              <UserCircle2 className="w-4 h-4 sm:mr-1" />
-              <span className="hidden sm:inline">Profile</span>
-            </Button>
-            <Button
-              variant="ghost" size="sm"
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{
+                  background: "linear-gradient(135deg, rgba(99,102,241,0.35), rgba(6,182,212,0.35))",
+                  border: "2px solid rgba(6,182,212,0.40)",
+                }}
+                data-testid="div-navbar-initials"
+              >
+                <span className="text-[10px] font-bold text-teal-300">{adminInitials}</span>
+              </div>
+              <div className="hidden sm:block text-right">
+                <p className="text-xs font-semibold text-white leading-none" data-testid="text-admin-email">
+                  {me.email.split("@")[0]}
+                </p>
+                <p className="text-[10px] text-white/40 mt-0.5">{me.schoolName}</p>
+              </div>
+            </button>
+
+            {/* Logout */}
+            <button
               onClick={() => logoutMutation.mutate()}
               disabled={logoutMutation.isPending}
-              className="text-white/50 hover:text-white hover:bg-white/10 px-2 sm:px-3"
               data-testid="button-logout"
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-all"
+              style={{
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.10)",
+                color: "rgba(255,255,255,0.55)",
+              }}
             >
-              {logoutMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin sm:mr-1" /> : <LogOut className="w-4 h-4 sm:mr-1" />}
+              {logoutMutation.isPending
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <LogOut className="w-3.5 h-3.5" />}
               <span className="hidden sm:inline">Logout</span>
-            </Button>
+            </button>
           </div>
         </div>
 
