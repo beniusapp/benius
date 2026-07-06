@@ -1281,7 +1281,7 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const q = req.query.q as string;
     const sid = parseInt(req.params.schoolId);
-    const list = q ? await storage.searchLibraryBooksAdvanced(sid, q) : await storage.getLibraryBooks(sid);
+    const list = q ? await storage.searchLibraryBooksAdvanced(sid, q) : await storage.getLibraryBooksWithUploaderNames(sid);
     res.json(list);
   });
 
@@ -1352,8 +1352,7 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const all = await storage.getLibraryBooks(teacher.schoolId);
-    const mine = all.filter(b => b.uploadedById === req.session.teacherId);
+    const mine = await storage.getMyUploadedEbooks(teacher.id, teacher.schoolId);
     res.json(mine);
   });
 

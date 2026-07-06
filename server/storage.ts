@@ -1721,6 +1721,28 @@ export class DatabaseStorage {
     return await db.select().from(libraryBooks).where(eq(libraryBooks.schoolId, schoolId));
   }
 
+  async getMyUploadedEbooks(teacherId: number, schoolId: number): Promise<(LibraryBook & { uploaderName: string | null })[]> {
+    const rows = await db.select({
+      book: libraryBooks,
+      uploaderName: teachers.name,
+    })
+      .from(libraryBooks)
+      .leftJoin(teachers, eq(libraryBooks.uploadedById, teachers.id))
+      .where(and(eq(libraryBooks.schoolId, schoolId), eq(libraryBooks.uploadedById, teacherId)));
+    return rows.map(r => ({ ...r.book, uploaderName: r.uploaderName ?? null }));
+  }
+
+  async getLibraryBooksWithUploaderNames(schoolId: number): Promise<(LibraryBook & { uploaderName: string | null })[]> {
+    const rows = await db.select({
+      book: libraryBooks,
+      uploaderName: teachers.name,
+    })
+      .from(libraryBooks)
+      .leftJoin(teachers, eq(libraryBooks.uploadedById, teachers.id))
+      .where(eq(libraryBooks.schoolId, schoolId));
+    return rows.map(r => ({ ...r.book, uploaderName: r.uploaderName ?? null }));
+  }
+
   async searchLibraryBooks(schoolId: number, query: string): Promise<LibraryBook[]> {
     return await db.select().from(libraryBooks).where(
       and(eq(libraryBooks.schoolId, schoolId), or(ilike(libraryBooks.title, `%${query}%`), ilike(libraryBooks.author, `%${query}%`)))

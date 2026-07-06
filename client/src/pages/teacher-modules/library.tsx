@@ -4,7 +4,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Loader2, Search, BookOpen, RotateCcw, Upload, FileText,
   CheckCircle, Clock, XCircle, BookMarked, Download, Eye,
-  GraduationCap, Tag, History,
+  GraduationCap, Tag, History, User,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,7 @@ interface BookEntry {
   totalCopies: number;
   availableCopies: number;
   uploadedById?: number | null;
+  uploaderName?: string | null;
   createdAt?: string;
 }
 
@@ -305,6 +306,11 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                           </div>
                           {book.isbn && (
                             <p className="text-[10px] mt-1" style={{ color: "rgba(255,255,255,0.30)" }}>ISBN: {book.isbn}</p>
+                          )}
+                          {book.uploaderName && (
+                            <p className="flex items-center gap-1 text-[10px] mt-1" style={{ color: "rgba(255,255,255,0.38)" }}>
+                              <User className="w-2.5 h-2.5" />Uploaded by {book.uploaderName}
+                            </p>
                           )}
                         </div>
 
