@@ -417,35 +417,53 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
         {/* ── TAB A: Gallery Images ── */}
         {activeTab === "gallery-images" && (
           <div>
+            {/* ── Action bar ── */}
             {approvedItems.length > 0 && (
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-4 gap-3">
                 <button
                   onClick={() =>
                     selectedIds.size === approvedItems.length
                       ? setSelectedIds(new Set())
                       : setSelectedIds(new Set(approvedItems.map(i => i.id)))
                   }
-                  className="text-xs font-medium transition-colors"
-                  style={{ color: selectedIds.size === approvedItems.length ? "#c084fc" : "rgba(255,255,255,0.40)" }}
+                  className="text-xs font-semibold transition-colors flex items-center gap-1.5"
+                  style={{ color: selectedIds.size === approvedItems.length ? "#c084fc" : "rgba(255,255,255,0.45)" }}
                   data-testid="button-gallery-select-all"
                 >
-                  {selectedIds.size === approvedItems.length ? "✓ Deselect All" : "Select All"}
+                  <div
+                    className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-all"
+                    style={{
+                      background: selectedIds.size === approvedItems.length ? "#a855f7" : "transparent",
+                      border: `2px solid ${selectedIds.size === approvedItems.length ? "#a855f7" : "rgba(255,255,255,0.30)"}`,
+                    }}
+                  >
+                    {selectedIds.size === approvedItems.length && <Check className="w-2.5 h-2.5 text-white" />}
+                  </div>
+                  {selectedIds.size === approvedItems.length ? "Deselect All" : "Select All"}
                 </button>
-                {selectedIds.size > 0 && (
+
+                {selectedIds.size > 0 ? (
                   <button
                     disabled={batchDeleteMutation.isPending}
                     onClick={() => batchDeleteMutation.mutate({ ids: Array.from(selectedIds) })}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all
                       hover:brightness-110 active:scale-95 disabled:opacity-50"
                     style={{
                       background: "linear-gradient(135deg, #ef4444, #dc2626)",
                       color: "#fff",
-                      boxShadow: "0 3px 12px rgba(239,68,68,0.35)",
+                      boxShadow: "0 4px 16px rgba(239,68,68,0.40)",
                     }}
                     data-testid="button-gallery-delete-selected"
                   >
-                    <Trash2 className="w-3 h-3" /> Delete {selectedIds.size} Selected
+                    {batchDeleteMutation.isPending
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : <Trash2 className="w-3.5 h-3.5" />}
+                    Delete {selectedIds.size} Selected
                   </button>
+                ) : (
+                  <span className="text-xs" style={{ color: "rgba(255,255,255,0.30)" }}>
+                    {approvedItems.length} photo{approvedItems.length !== 1 ? "s" : ""}
+                  </span>
                 )}
               </div>
             )}
@@ -455,51 +473,214 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
                 <Loader2 className="w-6 h-6 animate-spin" style={{ color: "rgba(255,255,255,0.30)" }} />
               </div>
             ) : approvedItems.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-10 gap-3">
-                <div className="w-14 h-14 rounded-2xl flex items-center justify-center" style={{ background: "rgba(168,85,247,0.08)" }}>
-                  <ImageOff className="w-6 h-6 text-purple-400/50" />
+              <div className="flex flex-col items-center justify-center py-12 gap-3">
+                <div
+                  className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                  style={{ background: "rgba(168,85,247,0.08)", border: "1px solid rgba(168,85,247,0.18)" }}
+                >
+                  <ImageOff className="w-7 h-7 text-purple-400/50" />
                 </div>
                 <p className="text-sm font-medium" style={{ color: "rgba(255,255,255,0.50)" }}>No approved images yet</p>
-                <p className="text-xs" style={{ color: "rgba(255,255,255,0.30)" }}>Approve submissions from Gallery Approval tab</p>
+                <p className="text-xs text-center" style={{ color: "rgba(255,255,255,0.28)" }}>
+                  Approve teacher submissions from the Gallery Approval tab,<br />or upload directly using the Upload button above.
+                </p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {approvedItems.map(item => {
                   const sel = selectedIds.has(item.id);
                   return (
                     <div
                       key={item.id}
-                      className="relative rounded-xl overflow-hidden cursor-pointer transition-all duration-200 hover:scale-[1.03] group"
-                      style={{
-                        border: sel ? "2px solid #a855f7" : "1px solid rgba(168,85,247,0.22)",
-                        boxShadow: sel ? "0 0 0 3px rgba(168,85,247,0.28)" : "0 2px 10px rgba(168,85,247,0.10)",
-                      }}
-                      onClick={() => toggleSelect(item.id)}
                       data-testid={`card-gallery-img-${item.id}`}
+                      className="relative rounded-2xl overflow-hidden group cursor-pointer transition-all duration-250"
+                      style={{
+                        border: sel
+                          ? "2px solid #a855f7"
+                          : "1px solid rgba(255,255,255,0.09)",
+                        boxShadow: sel
+                          ? "0 0 0 4px rgba(168,85,247,0.22), 0 8px 32px rgba(168,85,247,0.22)"
+                          : "0 4px 18px rgba(0,0,0,0.30)",
+                        transform: sel ? "scale(1.02)" : "scale(1)",
+                      }}
+                      onMouseEnter={e => {
+                        if (!sel) {
+                          (e.currentTarget as HTMLDivElement).style.border = "1px solid rgba(168,85,247,0.45)";
+                          (e.currentTarget as HTMLDivElement).style.boxShadow = "0 8px 28px rgba(168,85,247,0.25)";
+                          (e.currentTarget as HTMLDivElement).style.transform = "scale(1.025)";
+                        }
+                      }}
+                      onMouseLeave={e => {
+                        if (!sel) {
+                          (e.currentTarget as HTMLDivElement).style.border = "1px solid rgba(255,255,255,0.09)";
+                          (e.currentTarget as HTMLDivElement).style.boxShadow = "0 4px 18px rgba(0,0,0,0.30)";
+                          (e.currentTarget as HTMLDivElement).style.transform = "scale(1)";
+                        }
+                      }}
                     >
-                      <img src={item.imageUrl} alt={item.title} className="w-full h-28 object-cover" />
-                      <div
-                        className="absolute inset-0 transition-opacity duration-200"
-                        style={{ background: sel ? "rgba(168,85,247,0.15)" : "transparent" }}
-                      />
-                      <div
-                        className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center transition-all"
-                        style={{
-                          background: sel ? "#a855f7" : "rgba(0,0,0,0.55)",
-                          border: `2px solid ${sel ? "#a855f7" : "rgba(255,255,255,0.65)"}`,
-                        }}
-                      >
-                        {sel && <Check className="w-3 h-3 text-white" />}
+                      {/* Image */}
+                      <div className="relative h-44 overflow-hidden">
+                        <img
+                          src={item.imageUrl}
+                          alt={item.title}
+                          className="w-full h-full object-cover transition-transform duration-400 group-hover:scale-[1.06]"
+                        />
+
+                        {/* Selection overlay */}
+                        <div
+                          className="absolute inset-0 transition-opacity duration-200"
+                          style={{
+                            background: sel
+                              ? "rgba(168,85,247,0.22)"
+                              : "rgba(0,0,0,0)",
+                            opacity: 1,
+                          }}
+                        />
+
+                        {/* Hover gradient (bottom-up) */}
+                        <div
+                          className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+                          style={{ background: "linear-gradient(to top, rgba(0,0,0,0.70) 0%, transparent 55%)" }}
+                        />
+
+                        {/* Top-right: trash + select ring */}
+                        <div className="absolute top-2 right-2 flex items-center gap-1.5 z-10">
+                          {/* Trash icon — always visible, subtle */}
+                          <button
+                            onClick={e => { e.stopPropagation(); toggleSelect(item.id); }}
+                            data-testid={`button-gallery-trash-${item.id}`}
+                            title={sel ? "Deselect" : "Mark for deletion"}
+                            className="flex items-center justify-center w-7 h-7 rounded-full transition-all duration-200
+                              hover:scale-110 active:scale-95"
+                            style={{
+                              background: sel
+                                ? "rgba(239,68,68,0.85)"
+                                : "rgba(0,0,0,0.55)",
+                              backdropFilter: "blur(4px)",
+                              border: sel
+                                ? "1.5px solid rgba(239,68,68,0.90)"
+                                : "1.5px solid rgba(255,255,255,0.25)",
+                              boxShadow: sel ? "0 0 12px rgba(239,68,68,0.50)" : "none",
+                            }}
+                          >
+                            <Trash2
+                              className="w-3.5 h-3.5 transition-colors"
+                              style={{ color: sel ? "#fff" : "rgba(255,255,255,0.75)" }}
+                            />
+                          </button>
+
+                          {/* Selection ring */}
+                          <div
+                            onClick={() => toggleSelect(item.id)}
+                            className="flex items-center justify-center w-7 h-7 rounded-full transition-all duration-200 cursor-pointer"
+                            style={{
+                              background: sel ? "#a855f7" : "rgba(0,0,0,0.50)",
+                              backdropFilter: "blur(4px)",
+                              border: `2px solid ${sel ? "#c084fc" : "rgba(255,255,255,0.40)"}`,
+                              boxShadow: sel ? "0 0 12px rgba(168,85,247,0.55)" : "none",
+                            }}
+                          >
+                            {sel && <Check className="w-3.5 h-3.5 text-white" />}
+                          </div>
+                        </div>
+
+                        {/* Bottom info strip — visible on hover via group */}
+                        <div
+                          className="absolute bottom-0 left-0 right-0 px-3 py-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+                        >
+                          {item.eventTag && (
+                            <span
+                              className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold mb-1"
+                              style={{ background: "rgba(168,85,247,0.70)", color: "#f0e6ff" }}
+                            >
+                              {item.eventTag}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="p-2" style={{ background: "rgba(10,22,40,0.85)" }}>
-                        <p className="text-xs font-medium text-white truncate">{item.title}</p>
-                        {item.eventTag && (
-                          <p className="text-[10px] truncate mt-0.5" style={{ color: "rgba(255,255,255,0.45)" }}>{item.eventTag}</p>
+
+                      {/* Caption bar */}
+                      <div
+                        className="px-3 py-2.5"
+                        style={{ background: "rgba(10,16,32,0.92)" }}
+                      >
+                        <p className="text-white font-semibold text-xs leading-snug truncate">{item.title}</p>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          {item.eventTag && (
+                            <span className="text-[10px] truncate" style={{ color: "rgba(192,132,252,0.80)" }}>
+                              {item.eventTag}
+                            </span>
+                          )}
+                          {item.capturedDate && (
+                            <span className="text-[10px] flex items-center gap-0.5" style={{ color: "rgba(255,255,255,0.35)" }}>
+                              <CalendarIcon className="w-2.5 h-2.5" />
+                              {fmtDate(item.capturedDate)}
+                            </span>
+                          )}
+                          {!item.eventTag && !item.capturedDate && item.location && (
+                            <span className="text-[10px] flex items-center gap-0.5 truncate" style={{ color: "rgba(255,255,255,0.35)" }}>
+                              <MapPin className="w-2.5 h-2.5" />
+                              {item.location}
+                            </span>
+                          )}
+                        </div>
+                        {sel && (
+                          <div className="mt-1.5 flex items-center gap-1">
+                            <div className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                            <span className="text-[10px] font-semibold" style={{ color: "#f87171" }}>
+                              Marked for deletion
+                            </span>
+                          </div>
                         )}
                       </div>
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {/* Bottom delete confirmation strip */}
+            {selectedIds.size > 0 && (
+              <div
+                className="mt-4 flex items-center justify-between gap-3 px-4 py-3 rounded-2xl"
+                style={{
+                  background: "rgba(239,68,68,0.10)",
+                  border: "1px solid rgba(239,68,68,0.30)",
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <Trash2 className="w-4 h-4 flex-shrink-0" style={{ color: "#f87171" }} />
+                  <p className="text-sm font-semibold" style={{ color: "#f87171" }}>
+                    {selectedIds.size} image{selectedIds.size !== 1 ? "s" : ""} selected for deletion
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setSelectedIds(new Set())}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg transition-all"
+                    style={{ color: "rgba(255,255,255,0.55)", background: "rgba(255,255,255,0.07)" }}
+                    data-testid="button-gallery-cancel-delete"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    disabled={batchDeleteMutation.isPending}
+                    onClick={() => batchDeleteMutation.mutate({ ids: Array.from(selectedIds) })}
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold transition-all
+                      hover:brightness-110 active:scale-95 disabled:opacity-50"
+                    style={{
+                      background: "linear-gradient(135deg,#ef4444,#dc2626)",
+                      color: "#fff",
+                      boxShadow: "0 4px 14px rgba(239,68,68,0.40)",
+                    }}
+                    data-testid="button-gallery-confirm-delete"
+                  >
+                    {batchDeleteMutation.isPending
+                      ? <Loader2 className="w-3 h-3 animate-spin" />
+                      : <Trash2 className="w-3 h-3" />}
+                    Confirm Delete
+                  </button>
+                </div>
               </div>
             )}
           </div>
