@@ -494,22 +494,39 @@ export default function ApprovalCenter({ schoolId }: Props) {
 
               {/* Forwarded by teacher — highlighted row */}
               <div
-                className="flex items-center gap-2 rounded-lg px-3 py-2"
-                style={{ background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.25)" }}
+                className="rounded-lg overflow-hidden"
+                style={{ border: "1px solid rgba(99,102,241,0.25)" }}
               >
-                <UserCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: "#818cf8" }} />
-                <div className="flex-1 min-w-0">
-                  <p style={{ color: "rgba(255,255,255,0.50)", fontSize: "0.7rem" }}>Forwarded by Teacher</p>
-                  <p className="text-white font-semibold text-sm truncate">
-                    {selectedLeave.forwardedByTeacherName ?? "—"}
-                  </p>
-                </div>
-                <span
-                  className="text-[10px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0"
-                  style={{ background: "rgba(99,102,241,0.20)", color: "#818cf8" }}
+                <div
+                  className="flex items-center gap-2 px-3 py-2"
+                  style={{ background: "rgba(99,102,241,0.12)" }}
                 >
-                  Awaiting Principal
-                </span>
+                  <UserCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: "#818cf8" }} />
+                  <div className="flex-1 min-w-0">
+                    <p style={{ color: "rgba(255,255,255,0.50)", fontSize: "0.7rem" }}>Forwarded by Teacher</p>
+                    <p className="text-white font-semibold text-sm truncate">
+                      {selectedLeave.forwardedByTeacherName ?? "—"}
+                    </p>
+                  </div>
+                  <span
+                    className="text-[10px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0"
+                    style={{ background: "rgba(99,102,241,0.20)", color: "#818cf8" }}
+                  >
+                    Awaiting Principal
+                  </span>
+                </div>
+                {selectedLeave.teacherComment && (
+                  <div
+                    className="px-3 py-2 flex items-start gap-2"
+                    style={{ background: "rgba(99,102,241,0.06)", borderTop: "1px solid rgba(99,102,241,0.18)" }}
+                  >
+                    <Paperclip className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: "#818cf8" }} />
+                    <div>
+                      <p style={{ color: "rgba(255,255,255,0.45)", fontSize: "0.68rem" }} className="mb-0.5">Teacher's note to principal</p>
+                      <p className="text-sm" style={{ color: "rgba(255,255,255,0.85)" }}>{selectedLeave.teacherComment}</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Admin Comment */}
