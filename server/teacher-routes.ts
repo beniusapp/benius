@@ -1528,7 +1528,12 @@ export function registerTeacherRoutes(app: Express) {
     const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
     if (!leave || leave.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Not authorized" });
     const student = await storage.getStudentById(leave.studentId);
-    if (!student || student.class !== teacher.assignedClass || student.section !== teacher.assignedSection) {
+    const mappings = await storage.getFacultyMappingsByTeacher(teacher.id);
+    const isAuthorized = student && (
+      mappings.some(m => m.className === student.class && m.section === student.section) ||
+      (teacher.assignedClass === student.class && teacher.assignedSection === student.section)
+    );
+    if (!isAuthorized) {
       return res.status(403).json({ message: "Not authorized for this student's class/section" });
     }
     if (leave.status !== "pending_teacher") return res.status(409).json({ message: "Only pending teacher-tier leaves can be approved here" });
@@ -1549,7 +1554,12 @@ export function registerTeacherRoutes(app: Express) {
     const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
     if (!leave || leave.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Not authorized" });
     const student = await storage.getStudentById(leave.studentId);
-    if (!student || student.class !== teacher.assignedClass || student.section !== teacher.assignedSection) {
+    const mappingsFwd = await storage.getFacultyMappingsByTeacher(teacher.id);
+    const isAuthorizedFwd = student && (
+      mappingsFwd.some(m => m.className === student.class && m.section === student.section) ||
+      (teacher.assignedClass === student.class && teacher.assignedSection === student.section)
+    );
+    if (!isAuthorizedFwd) {
       return res.status(403).json({ message: "Not authorized for this student's class/section" });
     }
     if (leave.status !== "pending_teacher") return res.status(409).json({ message: "Only pending teacher-tier leaves can be forwarded" });
@@ -2731,7 +2741,12 @@ Thank you for your prompt attention to this matter.
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
       if (leave.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Not authorized" });
       const student = await storage.getStudentById(leave.studentId);
-      if (!student || student.class !== teacher.assignedClass || student.section !== teacher.assignedSection) {
+      const mappingsRej = await storage.getFacultyMappingsByTeacher(teacher.id);
+      const isAuthorizedRej = student && (
+        mappingsRej.some(m => m.className === student.class && m.section === student.section) ||
+        (teacher.assignedClass === student.class && teacher.assignedSection === student.section)
+      );
+      if (!isAuthorizedRej) {
         return res.status(403).json({ message: "Not authorized for this student's class/section" });
       }
       if (leave.status !== "pending_teacher") return res.status(409).json({ message: "Only pending teacher-tier leaves can be rejected here" });
