@@ -1537,7 +1537,8 @@ export function registerTeacherRoutes(app: Express) {
       return res.status(403).json({ message: "Not authorized for this student's class/section" });
     }
     if (leave.status !== "pending_teacher") return res.status(409).json({ message: "Only pending teacher-tier leaves can be approved here" });
-    const updated = await storage.updateStudentLeaveStatus(leave.id, "approved", teacher.id, "teacher");
+    const { teacherComment: approveComment } = req.body;
+    const updated = await storage.updateStudentLeaveStatus(leave.id, "approved", teacher.id, "teacher", undefined, undefined, approveComment || undefined);
     await storage.markAttendanceAsLeave(leave.studentId, teacher.id, teacher.schoolId, leave.startDate, leave.endDate);
     await storage.createAuditLog({
       schoolId: teacher.schoolId, actionType: "approve", entityType: "student_leave", entityId: leave.id,
@@ -1563,7 +1564,8 @@ export function registerTeacherRoutes(app: Express) {
       return res.status(403).json({ message: "Not authorized for this student's class/section" });
     }
     if (leave.status !== "pending_teacher") return res.status(409).json({ message: "Only pending teacher-tier leaves can be forwarded" });
-    const updated = await storage.updateStudentLeaveStatus(leave.id, "forwarded_to_admin", teacher.id, "teacher");
+    const { teacherComment: fwdComment } = req.body;
+    const updated = await storage.updateStudentLeaveStatus(leave.id, "forwarded_to_admin", teacher.id, "teacher", undefined, undefined, fwdComment || undefined);
     await storage.createAuditLog({
       schoolId: teacher.schoolId, actionType: "forward", entityType: "student_leave", entityId: leave.id,
       actionBy: teacher.id, actionByRole: "teacher",

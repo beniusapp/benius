@@ -362,6 +362,7 @@ export const studentLeaveRequests = pgTable("student_leave_requests", {
   attachmentUrl: text("attachment_url"),
   rejectionReason: text("rejection_reason"),
   adminComment: text("admin_comment"),
+  teacherComment: text("teacher_comment"),
 });
 
 export const auditLogs = pgTable("audit_logs", {

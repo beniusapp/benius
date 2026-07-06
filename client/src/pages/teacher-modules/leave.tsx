@@ -87,8 +87,8 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
   const [activeTab, setActiveTab] = useState("my-leave");
-  const [rejectingId, setRejectingId] = useState<number | null>(null);
-  const [rejectionReason, setRejectionReason] = useState("");
+  const [pendingAction, setPendingAction] = useState<{ id: number; type: "approve" | "reject" | "escalate" } | null>(null);
+  const [actionComment, setActionComment] = useState("");
   const [selectedLeave, setSelectedLeave] = useState<any | null>(null);
 
   const { data: leaves = [], isLoading } = useQuery<LeaveEntry[]>({
@@ -150,11 +150,12 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const approveMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await apiRequest("PATCH", `/api/student-leaves/${id}/approve`, {});
+    mutationFn: async ({ id, comment }: { id: number; comment?: string }) => {
+      await apiRequest("PATCH", `/api/student-leaves/${id}/approve`, { teacherComment: comment || undefined });
     },
     onSuccess: () => {
       toast({ title: "Leave Approved", description: "Attendance has been auto-synced for the leave dates." });
+      setPendingAction(null); setActionComment("");
       queryClient.invalidateQueries({ queryKey: ["/api/student-leaves/teacher/mine"] });
     },
     onError: (error: Error) => {
@@ -163,11 +164,12 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const forwardMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await apiRequest("PATCH", `/api/student-leaves/${id}/forward`, {});
+    mutationFn: async ({ id, comment }: { id: number; comment?: string }) => {
+      await apiRequest("PATCH", `/api/student-leaves/${id}/forward`, { teacherComment: comment || undefined });
     },
     onSuccess: () => {
-      toast({ title: "Leave Forwarded", description: "Leave request forwarded to principal." });
+      toast({ title: "Leave Escalated", description: "Leave request forwarded to principal." });
+      setPendingAction(null); setActionComment("");
       queryClient.invalidateQueries({ queryKey: ["/api/student-leaves/teacher/mine"] });
     },
     onError: (error: Error) => {
@@ -199,8 +201,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
     },
     onSuccess: () => {
       toast({ title: "Leave Rejected", description: "The student has been notified." });
-      setRejectingId(null);
-      setRejectionReason("");
+      setPendingAction(null); setActionComment("");
       queryClient.invalidateQueries({ queryKey: ["/api/student-leaves/teacher/mine"] });
     },
     onError: (error: Error) => {
@@ -465,26 +466,22 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                         {fmtDate(sl.startDate)} to {fmtDate(sl.endDate)}
                       </p>
                       <p className="text-sm mt-1 mb-2 text-gray-700 line-clamp-2">{sl.reason}</p>
-                      {sl.status === "pending_teacher" && rejectingId !== sl.id && (
+                      {/* ── Action Buttons ── */}
+                      {sl.status === "pending_teacher" && !(pendingAction?.id === sl.id) && (
                         <div className="flex items-center gap-2 flex-wrap">
                           <Button
                             size="sm"
-                            onClick={() => approveMutation.mutate(sl.id)}
-                            disabled={approveMutation.isPending}
+                            onClick={() => { setPendingAction({ id: sl.id, type: "approve" }); setActionComment(""); }}
                             className="bg-emerald-600 hover:bg-emerald-700 text-white"
                             data-testid={`button-approve-leave-${sl.id}`}
                           >
-                            {approveMutation.isPending ? (
-                              <Loader2 className="w-3 h-3 animate-spin mr-1" />
-                            ) : (
-                              <CheckCircle className="w-3 h-3 mr-1" />
-                            )}
+                            <CheckCircle className="w-3 h-3 mr-1" />
                             Approve
                           </Button>
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => { setRejectingId(sl.id); setRejectionReason(""); }}
+                            onClick={() => { setPendingAction({ id: sl.id, type: "reject" }); setActionComment(""); }}
                             className="border-red-200 text-red-600 hover:bg-red-50"
                             data-testid={`button-reject-leave-${sl.id}`}
                           >
@@ -494,41 +491,82 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => forwardMutation.mutate(sl.id)}
-                            disabled={forwardMutation.isPending}
+                            onClick={() => { setPendingAction({ id: sl.id, type: "escalate" }); setActionComment(""); }}
                             data-testid={`button-forward-leave-${sl.id}`}
                           >
-                            {forwardMutation.isPending ? (
-                              <Loader2 className="w-3 h-3 animate-spin mr-1" />
-                            ) : (
-                              <Forward className="w-3 h-3 mr-1" />
-                            )}
+                            <Forward className="w-3 h-3 mr-1" />
                             Escalate
                           </Button>
                         </div>
                       )}
-                      {sl.status === "pending_teacher" && rejectingId === sl.id && (
-                        <div className="mt-2 space-y-2">
+
+                      {/* ── Inline Confirm Panel (shown after clicking any action) ── */}
+                      {sl.status === "pending_teacher" && pendingAction?.id === sl.id && (
+                        <div className="mt-2 space-y-2 p-3 rounded-md border border-gray-200 bg-white">
+                          <p className="text-xs font-medium text-gray-700">
+                            {pendingAction.type === "approve" && "✓ Approving this leave request"}
+                            {pendingAction.type === "reject" && "✕ Rejecting this leave request"}
+                            {pendingAction.type === "escalate" && "→ Escalating to Principal"}
+                          </p>
                           <Textarea
-                            placeholder="Reason for rejection (optional)..."
-                            value={rejectionReason}
-                            onChange={e => setRejectionReason(e.target.value)}
+                            placeholder={
+                              pendingAction.type === "approve"
+                                ? "Add a note for the student (optional)…"
+                                : pendingAction.type === "reject"
+                                ? "Reason for rejection (optional)…"
+                                : "Reason for escalating to principal (optional)…"
+                            }
+                            value={actionComment}
+                            onChange={e => setActionComment(e.target.value)}
                             rows={2}
-                            className="text-sm text-gray-900"
-                            data-testid={`input-rejection-reason-${sl.id}`}
+                            className="text-sm text-gray-900 resize-none"
+                            data-testid={`input-action-comment-${sl.id}`}
                           />
                           <div className="flex gap-2">
+                            {pendingAction.type === "approve" && (
+                              <Button
+                                size="sm"
+                                onClick={() => approveMutation.mutate({ id: sl.id, comment: actionComment })}
+                                disabled={approveMutation.isPending}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                                data-testid={`button-confirm-approve-${sl.id}`}
+                              >
+                                {approveMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <CheckCircle className="w-3 h-3 mr-1" />}
+                                Confirm Approve
+                              </Button>
+                            )}
+                            {pendingAction.type === "reject" && (
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={() => rejectMutation.mutate({ id: sl.id, reason: actionComment })}
+                                disabled={rejectMutation.isPending}
+                                data-testid={`button-confirm-reject-${sl.id}`}
+                              >
+                                {rejectMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <XCircle className="w-3 h-3 mr-1" />}
+                                Confirm Reject
+                              </Button>
+                            )}
+                            {pendingAction.type === "escalate" && (
+                              <Button
+                                size="sm"
+                                onClick={() => forwardMutation.mutate({ id: sl.id, comment: actionComment })}
+                                disabled={forwardMutation.isPending}
+                                className="bg-blue-600 hover:bg-blue-700 text-white"
+                                data-testid={`button-confirm-escalate-${sl.id}`}
+                              >
+                                {forwardMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Forward className="w-3 h-3 mr-1" />}
+                                Confirm Escalate
+                              </Button>
+                            )}
                             <Button
                               size="sm"
-                              variant="destructive"
-                              onClick={() => rejectMutation.mutate({ id: sl.id, reason: rejectionReason })}
-                              disabled={rejectMutation.isPending}
-                              data-testid={`button-confirm-reject-${sl.id}`}
+                              variant="ghost"
+                              onClick={() => { setPendingAction(null); setActionComment(""); }}
+                              data-testid={`button-cancel-action-${sl.id}`}
                             >
-                              {rejectMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <XCircle className="w-3 h-3 mr-1" />}
-                              Confirm Reject
+                              Cancel
                             </Button>
-                            <Button size="sm" variant="ghost" onClick={() => setRejectingId(null)}>Cancel</Button>
                           </div>
                         </div>
                       )}

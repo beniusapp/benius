@@ -161,6 +161,7 @@ app.use((req, res, next) => {
     ALTER TABLE student_leave_requests ADD COLUMN IF NOT EXISTS attachment_url TEXT;
     ALTER TABLE student_leave_requests ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
     ALTER TABLE student_leave_requests ADD COLUMN IF NOT EXISTS admin_comment TEXT;
+    ALTER TABLE student_leave_requests ADD COLUMN IF NOT EXISTS teacher_comment TEXT;
   `);
 
   await pool.query(`
