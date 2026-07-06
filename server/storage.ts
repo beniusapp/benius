@@ -2266,7 +2266,8 @@ export class DatabaseStorage {
         and(
           eq(studentLeaveRequests.schoolId, schoolId),
           eq(students.class, cls),
-          eq(students.section, section)
+          eq(students.section, section),
+          eq(studentLeaveRequests.status, "pending_teacher")
         )
       )
       .orderBy(desc(studentLeaveRequests.createdAt));
@@ -2301,7 +2302,7 @@ export class DatabaseStorage {
     const leave = await this.getStudentLeaveById(id);
     if (!leave) return { success: false, reason: "not_found" };
     if (leave.studentId !== studentId) return { success: false, reason: "forbidden" };
-    if (leave.status !== "pending") return { success: false, reason: "not_pending" };
+    if (leave.status !== "pending_teacher") return { success: false, reason: "not_pending" };
     await db.delete(studentLeaveRequests).where(eq(studentLeaveRequests.id, id));
     return { success: true };
   }
@@ -2741,9 +2742,11 @@ export class DatabaseStorage {
     return db.select().from(auditLogs).where(eq(auditLogs.schoolId, schoolId)).orderBy(desc(auditLogs.createdAt)).limit(limit);
   }
 
-  // ===== STUDENT LEAVES FOR ADMIN (forwarded to principal) =====
+  // ===== STUDENT LEAVES FOR ADMIN (forwarded_to_admin only — teacher tier stays hidden) =====
   async getStudentLeavesForAdmin(schoolId: number): Promise<(StudentLeaveRequest & { studentName: string; dsid: string; class: string; section: string })[]> {
-    const leaves = await db.select().from(studentLeaveRequests).where(eq(studentLeaveRequests.schoolId, schoolId)).orderBy(desc(studentLeaveRequests.createdAt));
+    const leaves = await db.select().from(studentLeaveRequests).where(
+      and(eq(studentLeaveRequests.schoolId, schoolId), eq(studentLeaveRequests.status, "forwarded_to_admin"))
+    ).orderBy(desc(studentLeaveRequests.createdAt));
     const result = [];
     for (const l of leaves) {
       const s = await this.getStudentById(l.studentId);

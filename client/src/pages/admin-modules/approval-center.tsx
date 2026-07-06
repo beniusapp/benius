@@ -240,9 +240,7 @@ export default function ApprovalCenter({ schoolId }: Props) {
 
   const pendingLeaves          = leaveRequests.filter((l: any) => l.status === "pending");
   const pendingGallery         = galleryItems.filter((g: any) => !g.approved);
-  const forwardedStudentLeaves = studentLeaves.filter(
-    (l: any) => l.status === "forwarded" || l.status === "pending",
-  );
+  const forwardedStudentLeaves = studentLeaves; // server already filters to forwarded_to_admin only
 
   const leaveStatusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: number; status: string }) => {

@@ -303,6 +303,10 @@ app.use((req, res, next) => {
     ALTER TABLE non_teaching_staff ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE faculty_mappings ADD COLUMN IF NOT EXISTS subject TEXT;
 
+    -- Multi-tier leave approval: migrate legacy status values to named statuses
+    UPDATE student_leave_requests SET status = 'pending_teacher'   WHERE status = 'pending';
+    UPDATE student_leave_requests SET status = 'forwarded_to_admin' WHERE status = 'forwarded';
+
     CREATE TABLE IF NOT EXISTS exam_policy_tiers (
       id SERIAL PRIMARY KEY,
       school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,

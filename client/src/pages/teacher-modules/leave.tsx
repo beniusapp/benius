@@ -449,7 +449,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                         {fmtDate(sl.startDate)} to {fmtDate(sl.endDate)}
                       </p>
                       <p className="text-sm mt-1 mb-2 text-gray-700">{sl.reason}</p>
-                      {sl.status === "pending" && rejectingId !== sl.id && (
+                      {sl.status === "pending_teacher" && rejectingId !== sl.id && (
                         <div className="flex items-center gap-2 flex-wrap">
                           <Button
                             size="sm"
@@ -491,7 +491,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                           </Button>
                         </div>
                       )}
-                      {sl.status === "pending" && rejectingId === sl.id && (
+                      {sl.status === "pending_teacher" && rejectingId === sl.id && (
                         <div className="mt-2 space-y-2">
                           <Textarea
                             placeholder="Reason for rejection (optional)..."
@@ -519,7 +519,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                       {sl.status === "rejected" && sl.rejectionReason && (
                         <p className="text-xs text-red-500 mt-1">Reason: {sl.rejectionReason}</p>
                       )}
-                      {sl.status === "forwarded" && (
+                      {sl.status === "forwarded_to_admin" && (
                         <p className="text-xs text-blue-500 mt-1">Sent to Principal for final review</p>
                       )}
                     </div>

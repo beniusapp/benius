@@ -44,10 +44,10 @@ const LEAVE_CATEGORIES = [
 ];
 
 const STATUS_CONFIG: Record<string, { icon: typeof CheckCircle2; color: string; label: string }> = {
-  pending: { icon: Clock, color: "text-amber-500 bg-amber-50 border-amber-200", label: "Pending" },
-  approved: { icon: CheckCircle2, color: "text-emerald-600 bg-emerald-50 border-emerald-200", label: "Approved" },
-  rejected: { icon: XCircle, color: "text-red-500 bg-red-50 border-red-200", label: "Rejected" },
-  forwarded: { icon: Forward, color: "text-blue-500 bg-blue-50 border-blue-200", label: "Sent to Principal" },
+  pending_teacher:    { icon: Clock,         color: "text-amber-500 bg-amber-50 border-amber-200",     label: "Awaiting Teacher"    },
+  forwarded_to_admin: { icon: Forward,       color: "text-blue-500 bg-blue-50 border-blue-200",        label: "Sent to Principal"   },
+  approved:           { icon: CheckCircle2,  color: "text-emerald-600 bg-emerald-50 border-emerald-200", label: "Approved"           },
+  rejected:           { icon: XCircle,       color: "text-red-500 bg-red-50 border-red-200",           label: "Rejected"            },
 };
 
 
@@ -133,7 +133,7 @@ export default function StudentLeave() {
   });
 
   const totalLeaves = leaves.length;
-  const pendingCount = leaves.filter(l => l.status === "pending").length;
+  const pendingCount = leaves.filter(l => l.status === "pending_teacher").length;
   const approvedCount = leaves.filter(l => l.status === "approved").length;
   const rejectedCount = leaves.filter(l => l.status === "rejected").length;
 
@@ -302,7 +302,7 @@ export default function StudentLeave() {
                         <Icon className="w-3 h-3" />
                         {cfg.label}
                       </span>
-                      {leave.status === "pending" && !isArchiveMode && (
+                      {leave.status === "pending_teacher" && !isArchiveMode && (
                         <button
                           onClick={() => deleteLeaveMutation.mutate(leave.id)}
                           disabled={deleteLeaveMutation.isPending}

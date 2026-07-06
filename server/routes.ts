@@ -1840,6 +1840,7 @@ export async function registerRoutes(
       startDate,
       endDate,
       reason,
+      status: "pending_teacher",
       category: category || null,
       attachmentUrl,
     });
