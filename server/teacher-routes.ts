@@ -3287,6 +3287,44 @@ Thank you for your prompt attention to this matter.
     }
   });
 
+  app.get("/api/admin/analytics/view-marks/:class/:section/:subject/:examType", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const cls = decodeURIComponent(req.params.class);
+    const section = decodeURIComponent(req.params.section);
+    const subject = decodeURIComponent(req.params.subject);
+    const examType = decodeURIComponent(req.params.examType);
+    try {
+      const list = await storage.getExamScores(schoolId, subject, examType, cls, section);
+      res.json(list);
+    } catch { res.status(500).json({ message: "Failed to fetch exam scores" }); }
+  });
+
+  app.get("/api/admin/analytics/student-scores/:studentId", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const studentId = parseInt(req.params.studentId);
+    try {
+      const list = await storage.getExamScoresByStudent(studentId, schoolId);
+      res.json(list);
+    } catch { res.status(500).json({ message: "Failed to fetch student scores" }); }
+  });
+
+  app.get("/api/admin/analytics/class-average/:class/:section/:subject", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const cls = decodeURIComponent(req.params.class);
+    const section = decodeURIComponent(req.params.section);
+    const subject = decodeURIComponent(req.params.subject);
+    try {
+      const averages = await storage.getClassAverages(schoolId, cls, section, subject);
+      res.json(averages);
+    } catch { res.status(500).json({ message: "Failed to fetch class averages" }); }
+  });
+
   app.get("/api/admin/analytics/attendance-summary/:class/:section", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
