@@ -3592,7 +3592,6 @@ export class DatabaseStorage {
       .where(and(
         eq(examScores.schoolId, schoolId),
         eq(examScores.class, cls),
-        eq(examScores.published, true),
       ));
     return rows.map(r => r.section).filter(Boolean) as string[];
   }
@@ -3614,10 +3613,11 @@ export class DatabaseStorage {
     subjectList: string[];
     passThreshold: number;
   }> {
+    // Admin analytics shows ALL scores regardless of published status —
+    // the published flag gates student-facing views only, not principal oversight.
     const conditions: SQL<unknown>[] = [
       eq(examScores.schoolId, schoolId),
       eq(examScores.class, cls),
-      eq(examScores.published, true),
     ];
     if (opts.section) conditions.push(eq(examScores.section, opts.section));
     if (opts.examType) conditions.push(eq(examScores.examType, opts.examType));
