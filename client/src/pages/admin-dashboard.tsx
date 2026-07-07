@@ -1348,7 +1348,7 @@ export default function AdminDashboard() {
                     >
                       {groupTiles.map(tile => {
                         const isActive = activeModule === tile.id;
-                        const badge = tile.badgeKey ? BADGES[tile.badgeKey] : undefined;
+                        const badge = (tile.badgeKey && me?.role !== "support_staff") ? BADGES[tile.badgeKey] : undefined;
                         return (
                           <button
                             key={tile.id}
@@ -1448,7 +1448,7 @@ export default function AdminDashboard() {
                           <TileCard
                             key={tile.id}
                             tile={tile}
-                            badge={tile.badgeKey ? BADGES[tile.badgeKey] : undefined}
+                            badge={(tile.badgeKey && me?.role !== "support_staff") ? BADGES[tile.badgeKey] : undefined}
                             onClick={() => goToModule(tile.id)}
                           />
                         ))}
