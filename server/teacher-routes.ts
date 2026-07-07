@@ -3287,6 +3287,36 @@ Thank you for your prompt attention to this matter.
     }
   });
 
+  app.get("/api/admin/analytics/attendance-summary/:class/:section", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const cls = decodeURIComponent(req.params.class);
+    const section = decodeURIComponent(req.params.section);
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const year = new Date().getFullYear();
+      const aprThisYear = `${year}-04-01`;
+      const aprLastYear = `${year - 1}-04-01`;
+      const yearStart = today >= aprThisYear ? aprThisYear : aprLastYear;
+      const records = await storage.getAttendanceHistory(schoolId, cls, section, yearStart, today);
+      const byStudent: Record<number, { present: number; total: number }> = {};
+      for (const r of records) {
+        const sid = (r as any).studentId as number;
+        if (!byStudent[sid]) byStudent[sid] = { present: 0, total: 0 };
+        byStudent[sid].total++;
+        if ((r as any).status === "present") byStudent[sid].present++;
+      }
+      const summary = Object.entries(byStudent).map(([sid, data]) => ({
+        studentId: parseInt(sid),
+        attendancePct: data.total > 0 ? Math.round((data.present / data.total) * 100) : null,
+        presentDays: data.present,
+        totalDays: data.total,
+      }));
+      res.json(summary);
+    } catch { res.status(500).json({ message: "Failed to fetch attendance summary" }); }
+  });
+
   // ===== TEACHER REGISTRY — /api/admin/teachers CRUD (session-scoped) =====
   app.get("/api/admin/teachers", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
