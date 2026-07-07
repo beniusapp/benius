@@ -3214,6 +3214,79 @@ Thank you for your prompt attention to this matter.
     }
   });
 
+  // ── Admin analytics: weighted data endpoints (mirrors teacher module) ─────
+  app.get("/api/admin/analytics/class-scores/:class/:section", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const cls = decodeURIComponent(req.params.class);
+    const section = decodeURIComponent(req.params.section);
+    try {
+      const studentList = await storage.getStudentsByClassSection(schoolId, cls, section);
+      const results = await Promise.all(studentList.map(async (s) => {
+        const scores = await storage.getExamScoresByStudent(s.id, schoolId);
+        return {
+          studentId: s.id,
+          name: s.name,
+          digitalStudentId: s.digitalStudentId,
+          rollNumber: s.rollNumber,
+          scores: scores.map(sc => ({
+            subject: sc.subject,
+            examType: sc.examType,
+            marks: sc.marks ?? 0,
+            totalMarks: sc.totalMarks ?? 100,
+            isAbsent: sc.isAbsent ?? false,
+          })),
+        };
+      }));
+      res.json(results);
+    } catch { res.status(500).json({ message: "Failed to fetch class scores" }); }
+  });
+
+  app.get("/api/admin/analytics/exam-policy/:class", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const cls = decodeURIComponent(req.params.class);
+    try {
+      const tiers = await storage.getExamPolicyTiers(schoolId);
+      const tier = tiers.find(t =>
+        (t.applicableClasses || []).map((c: string) => String(c).trim()).includes(String(cls).trim())
+      );
+      if (!tier) return res.status(404).json({ message: "No exam policy configured for this class" });
+      res.json(tier);
+    } catch { res.status(500).json({ message: "Failed to fetch exam policy" }); }
+  });
+
+  app.get("/api/admin/analytics/grading-rules/:class", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const cls = decodeURIComponent(req.params.class);
+    try {
+      const tiers = await storage.getGradingTiers(schoolId);
+      const tier = tiers.find(t => (t.classes || []).map(String).includes(String(cls).trim()));
+      if (!tier) return res.json({ rules: [], passPercentage: 35 });
+      const rules = await storage.getGradingRules(schoolId, tier.id);
+      res.json({ rules, passPercentage: tier.passPercentage });
+    } catch { res.status(500).json({ message: "Failed to fetch grading rules" }); }
+  });
+
+  app.get("/api/admin/analytics/promotion-decisions/:class/:section/:term", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    try {
+      const cls = decodeURIComponent(req.params.class);
+      const section = decodeURIComponent(req.params.section);
+      const term = decodeURIComponent(req.params.term);
+      const decisions = await storage.getPromotionDecisions(schoolId, cls, section, term);
+      res.json(decisions);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to fetch promotion decisions" });
+    }
+  });
+
   // ===== TEACHER REGISTRY — /api/admin/teachers CRUD (session-scoped) =====
   app.get("/api/admin/teachers", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
