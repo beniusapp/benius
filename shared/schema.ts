@@ -718,6 +718,8 @@ export const nonTeachingStaff = pgTable("non_teaching_staff", {
   email: text("email").notNull().default(""),
   phone: varchar("phone", { length: 20 }).notNull().default(""),
   designation: text("designation").notNull(),
+  passwordHash: text("password_hash"),
+  allowedModules: text("allowed_modules").array().notNull().default([]),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

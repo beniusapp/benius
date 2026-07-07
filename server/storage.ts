@@ -3943,6 +3943,17 @@ export class DatabaseStorage {
     return result.length > 0;
   }
 
+  async getNonTeachingStaffById(id: number): Promise<NonTeachingStaff | undefined> {
+    const [record] = await db.select().from(nonTeachingStaff).where(eq(nonTeachingStaff.id, id));
+    return record;
+  }
+
+  async getNonTeachingStaffByEmail(email: string): Promise<NonTeachingStaff | undefined> {
+    const [record] = await db.select().from(nonTeachingStaff)
+      .where(and(eq(nonTeachingStaff.email, email), eq(nonTeachingStaff.isActive, true)));
+    return record;
+  }
+
   // ===== FACULTY MAPPINGS =====
   async getFacultyMappingsBySchool(schoolId: number): Promise<(FacultyMapping & { teacherName: string; email: string })[]> {
     const rows = await db.select({

@@ -3450,9 +3450,11 @@ Thank you for your prompt attention to this matter.
   // ===== NON-TEACHING STAFF (admin CRUD) =====
   const ntsCreateSchema = z.object({
     fullName: z.string().min(2),
-    email: z.string().email().optional().or(z.literal("")),
+    email: z.string().email("Valid email required"),
     phone: z.string().optional().or(z.literal("")),
     designation: z.string().min(1),
+    password: z.string().min(6, "Password must be at least 6 characters").optional(),
+    allowedModules: z.array(z.string()).optional(),
   });
 
   app.get("/api/admin/non-teaching-staff", async (req, res) => {
@@ -3472,13 +3474,19 @@ Thank you for your prompt attention to this matter.
     const parsed = ntsCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     try {
+      let passwordHash: string | undefined;
+      if (parsed.data.password) {
+        passwordHash = await bcrypt.hash(parsed.data.password, 10);
+      }
       const record = await storage.createNonTeachingStaff({
         schoolId: req.session.schoolId!,
         fullName: parsed.data.fullName,
-        email: parsed.data.email || "",
+        email: parsed.data.email,
         phone: parsed.data.phone || "",
         designation: parsed.data.designation,
+        allowedModules: parsed.data.allowedModules || [],
         isActive: true,
+        ...(passwordHash ? { passwordHash } : {}),
       });
       res.status(201).json(record);
     } catch (err: any) {
@@ -3491,10 +3499,27 @@ Thank you for your prompt attention to this matter.
       return res.status(403).json({ message: "Admin access required" });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
-    const parsed = ntsCreateSchema.partial().safeParse(req.body);
+    const patchSchema = z.object({
+      fullName: z.string().min(2).optional(),
+      email: z.string().email().optional(),
+      phone: z.string().optional().or(z.literal("")),
+      designation: z.string().min(1).optional(),
+      password: z.string().min(6).optional(),
+      allowedModules: z.array(z.string()).optional(),
+    });
+    const parsed = patchSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     try {
-      const updated = await storage.updateNonTeachingStaff(id, req.session.schoolId!, parsed.data);
+      const updateData: Record<string, unknown> = {};
+      if (parsed.data.fullName !== undefined) updateData.fullName = parsed.data.fullName;
+      if (parsed.data.email !== undefined) updateData.email = parsed.data.email;
+      if (parsed.data.phone !== undefined) updateData.phone = parsed.data.phone;
+      if (parsed.data.designation !== undefined) updateData.designation = parsed.data.designation;
+      if (parsed.data.allowedModules !== undefined) updateData.allowedModules = parsed.data.allowedModules;
+      if (parsed.data.password) {
+        updateData.passwordHash = await bcrypt.hash(parsed.data.password, 10);
+      }
+      const updated = await storage.updateNonTeachingStaff(id, req.session.schoolId!, updateData as any);
       if (!updated) return res.status(404).json({ message: "Staff not found" });
       res.json(updated);
     } catch (err: any) {

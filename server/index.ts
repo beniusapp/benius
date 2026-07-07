@@ -306,6 +306,8 @@ app.use((req, res, next) => {
     );
 
     ALTER TABLE non_teaching_staff ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE non_teaching_staff ADD COLUMN IF NOT EXISTS password_hash TEXT;
+    ALTER TABLE non_teaching_staff ADD COLUMN IF NOT EXISTS allowed_modules TEXT[] NOT NULL DEFAULT '{}';
     ALTER TABLE faculty_mappings ADD COLUMN IF NOT EXISTS subject TEXT;
 
     -- Multi-tier leave approval: migrate legacy status values to named statuses

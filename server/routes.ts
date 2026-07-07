@@ -27,6 +27,13 @@ declare module "express-session" {
     pendingPinToken?: string;
     pendingForgotUserId?: number;
     pendingResetUserId?: number;
+    staffId?: number;
+    staffName?: string;
+    staffEmail?: string;
+    staffDesignation?: string;
+    allowedModules?: string[];
+    schoolName?: string;
+    schoolCode?: string;
   }
 }
 
@@ -257,6 +264,25 @@ export async function registerRoutes(
 
     const user = await storage.getUserByEmail(parsed.data.email);
     if (!user) {
+      // Fallback: check support staff table
+      const staff = await storage.getNonTeachingStaffByEmail(parsed.data.email);
+      if (staff && staff.passwordHash) {
+        const valid = await bcrypt.compare(parsed.data.password, staff.passwordHash);
+        if (!valid) return res.status(401).json({ message: "Invalid email or password" });
+        const [school] = await db.select().from(schools).where(eq(schools.id, staff.schoolId));
+        if (!school) return res.status(401).json({ message: "School not found" });
+        req.session.staffId = staff.id;
+        req.session.userId = -(staff.id);
+        req.session.userRole = "admin";
+        req.session.schoolId = staff.schoolId;
+        req.session.allowedModules = staff.allowedModules;
+        req.session.staffName = staff.fullName;
+        req.session.staffEmail = staff.email;
+        req.session.staffDesignation = staff.designation;
+        req.session.schoolName = school.name;
+        req.session.schoolCode = school.code;
+        return res.json({ role: "support_staff", allowedModules: staff.allowedModules });
+      }
       await storage.logSecurityEvent(null, null, "login_unknown_email", false, req.ip || null, req.headers["user-agent"] || null);
       return res.status(401).json({ message: "Invalid email or password" });
     }
@@ -557,6 +583,21 @@ export async function registerRoutes(
   });
 
   app.get("/api/me", async (req, res) => {
+    if (req.session.staffId) {
+      return res.json({
+        id: req.session.staffId,
+        email: req.session.staffEmail || "",
+        role: "support_staff",
+        displayName: req.session.staffName || "",
+        designation: req.session.staffDesignation || "",
+        schoolId: req.session.schoolId!,
+        schoolName: req.session.schoolName || "",
+        schoolCode: req.session.schoolCode || "",
+        studentCount: 0,
+        allowedModules: req.session.allowedModules || [],
+      });
+    }
+
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });
     }

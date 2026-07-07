@@ -123,6 +123,11 @@ export default function Login() {
     },
     onSuccess: (data) => {
       setErrorMessage("");
+      if (data.role === "support_staff") {
+        queryClient.invalidateQueries({ queryKey: ["/api/me"] });
+        setLocation("/admin-dashboard");
+        return;
+      }
       if (data.requiresInit) { setLocation("/admin-setup"); return; }
       if (data.requiresPin) { setPin(""); setTempToken(data.tempToken || ""); setStep("pin"); }
     },

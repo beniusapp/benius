@@ -42,6 +42,9 @@ const FeesManager         = lazy(() => import("./admin-modules/fees-manager"));
 interface MeResponse {
   id: number; email: string; role: string;
   schoolId: number; schoolName: string; schoolCode: string; studentCount: number;
+  allowedModules?: string[];
+  displayName?: string;
+  designation?: string;
 }
 
 interface AdminProfileResponse {
@@ -724,6 +727,12 @@ export default function AdminDashboard() {
     if (!isLoading && (isError || !me)) setLocation("/login");
   }, [isLoading, isError, me, setLocation]);
 
+  useEffect(() => {
+    if (!isLoading && me?.role === "support_staff" && activeModule !== "grid") {
+      if (!me.allowedModules?.includes(activeModule)) setLocation("/admin-dashboard");
+    }
+  }, [me, isLoading, activeModule]);
+
   const { data: schoolMeta } = useQuery<{
     classes: string[]; sections: string[]; subjects: string[]; exam_types: string[];
     class_sections: Record<string, string[]>;
@@ -874,7 +883,31 @@ export default function AdminDashboard() {
     classExamTypes: schoolMeta?.class_exam_types ?? {},
   };
 
+  const visibleTiles = me?.role === "support_staff"
+    ? TILES.filter(t => me.allowedModules?.includes(t.id))
+    : TILES;
+
   const renderModule = () => {
+    if (me?.role === "support_staff" && activeModule !== "grid" && !me.allowedModules?.includes(activeModule)) {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center">
+          <div className="w-16 h-16 rounded-full flex items-center justify-center"
+            style={{ background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.20)" }}>
+            <Shield className="w-8 h-8 text-red-400" />
+          </div>
+          <h2 className="text-xl font-bold text-white">Access Denied</h2>
+          <p className="text-white/50 text-sm max-w-sm">
+            You don't have permission to view this module. Contact your Principal to request access.
+          </p>
+          <button
+            onClick={() => setLocation("/admin-dashboard")}
+            className="text-[#D4AF37] text-sm hover:underline mt-2"
+          >
+            ← Return to Dashboard
+          </button>
+        </div>
+      );
+    }
     switch (activeModule) {
       case "school-setup":      return <SchoolSetup schoolId={me.schoolId} section={setupSection} onNavigateSection={(sec) => { if (sec === null) setLocation("/admin-dashboard/school-setup"); else setLocation(`/admin-dashboard/school-setup/${sec}`); }} />;
       case "student-registry":  return <StudentRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} viewSessionId={selectedViewSession?.id} isArchiveMode={isArchiveMode} />;
@@ -901,13 +934,9 @@ export default function AdminDashboard() {
   const attendancePresent = dailySummary?.present ?? 0;
   const attendanceTotal   = dailySummary?.total   ?? 0;
 
-  const adminInitials = me.email
-    .split("@")[0]
-    .split(/[._-]/)
-    .filter(Boolean)
-    .map(w => w[0].toUpperCase())
-    .slice(0, 2)
-    .join("");
+  const adminInitials = (me.role === "support_staff" && me.displayName)
+    ? me.displayName.trim().split(/\s+/).slice(0, 2).map((w: string) => w[0].toUpperCase()).join("")
+    : me.email.split("@")[0].split(/[._-]/).filter(Boolean).map((w: string) => w[0].toUpperCase()).slice(0, 2).join("");
 
   return (
     <SessionViewContext.Provider value={{
@@ -1276,7 +1305,8 @@ export default function AdminDashboard() {
             <nav className="flex-1 py-2 space-y-0" data-testid="sidebar-nav">
               {GROUP_ORDER.map(group => {
                 const isOpen = expandedGroups[group];
-                const groupTiles = TILES.filter(t => t.group === group);
+                const groupTiles = visibleTiles.filter(t => t.group === group);
+                if (!groupTiles.length) return null;
                 const zone = GROUP_ZONE[group];
                 return (
                   <div key={group}>
@@ -1364,7 +1394,8 @@ export default function AdminDashboard() {
             {activeModule === "grid" ? (
               <div className="space-y-10">
                 {GROUP_ORDER.map(group => {
-                  const groupTiles = TILES.filter(t => t.group === group);
+                  const groupTiles = visibleTiles.filter(t => t.group === group);
+                  if (!groupTiles.length) return null;
                   const zone = GROUP_ZONE[group];
                   return (
                     <motion.section
