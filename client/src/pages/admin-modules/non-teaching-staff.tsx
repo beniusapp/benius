@@ -142,7 +142,7 @@ function ModulePermissionTree({
         </button>
       </div>
 
-      <div className="space-y-1 max-h-56 overflow-y-auto pr-0.5 [scrollbar-width:thin] [scrollbar-color:#D4AF37_#0A1628]">
+      <div className="space-y-1 max-h-80 overflow-y-auto pr-1 [scrollbar-width:thin] [scrollbar-color:#D4AF37_#0A1628]">
         {ADMIN_TILE_DEFS.map(mod => {
           const checked = isModuleChecked(mod.id);
           const subs = MODULE_SUB_MODULES[mod.id] ?? [];
@@ -247,6 +247,7 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
   const [searchQ, setSearchQ] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [permsSelected, setPermsSelected] = useState<string[]>([]);
+  const [addModules, setAddModules] = useState<string[]>([]);
 
   const { data: staff = [], isLoading } = useQuery<NonTeachingStaff[]>({
     queryKey: ["/api/admin/non-teaching-staff"],
@@ -277,14 +278,14 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
       const designation = (d.designation === "Other" && d.customDesignation) ? d.customDesignation : d.designation;
       const r = await apiRequest("POST", "/api/admin/non-teaching-staff", {
         fullName: d.fullName, email: d.email, phone: d.phone || "",
-        designation, password: d.password, allowedModules: d.allowedModules,
+        designation, password: d.password, allowedModules: addModules,
       });
       if (!r.ok) { const e = await r.json(); throw new Error(e.message || "Failed"); }
       return r.json();
     },
     onSuccess: () => {
       toast({ title: "Staff Registered", description: "Portal access credentials created." });
-      addForm.reset(); setShowForm(false);
+      addForm.reset(); setShowForm(false); setAddModules([]);
       queryClient.invalidateQueries({ queryKey: ["/api/admin/non-teaching-staff"] });
     },
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
@@ -476,8 +477,8 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
               {/* Module + Sub-module Access */}
               <div className="rounded-lg border border-white/10 bg-[#0A1628] p-3">
                 <ModulePermissionTree
-                  selected={addForm.watch("allowedModules") ?? []}
-                  onChange={mods => addForm.setValue("allowedModules", mods)}
+                  selected={addModules}
+                  onChange={setAddModules}
                 />
               </div>
 
@@ -489,7 +490,7 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
                   Register Staff
                 </Button>
                 <Button type="button" variant="outline" className="border-white/20 text-white hover:bg-white/10"
-                  onClick={() => { setShowForm(false); addForm.reset(); }}>Cancel</Button>
+                  onClick={() => { setShowForm(false); addForm.reset(); setAddModules([]); }}>Cancel</Button>
               </div>
             </form>
           </Form>
@@ -683,9 +684,9 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
           data-testid="modal-perms-nts"
           onClick={e => { if (e.target === e.currentTarget) setPermTarget(null); }}>
-          <div className="w-full max-w-lg rounded-2xl bg-[#1A2942] border border-blue-400/25 shadow-2xl overflow-hidden">
+          <div className="w-full max-w-lg rounded-2xl bg-[#1A2942] border border-blue-400/25 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
             <div
-              className="flex items-center justify-between px-5 py-4 border-b border-white/10"
+              className="flex items-center justify-between px-5 py-4 border-b border-white/10 flex-shrink-0"
               style={{ background: "linear-gradient(90deg, rgba(59,130,246,0.10) 0%, transparent 100%)" }}
             >
               <div>
@@ -700,9 +701,9 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="p-5 space-y-4">
+            <div className="p-5 space-y-4 overflow-y-auto flex-1">
               <p className="text-white/45 text-xs leading-relaxed">
-                Check a module to grant access. Expand with <ChevronDown className="inline w-3 h-3" /> to set sub-module permissions. Unchecking a module removes all its sub-permissions.
+                Check a module to grant access. Expand <ChevronDown className="inline w-3 h-3" /> to set sub-module permissions. Unchecking a module removes all its sub-permissions.
               </p>
               <div className="rounded-lg border border-white/10 bg-[#0A1628] p-3">
                 <ModulePermissionTree selected={permsSelected} onChange={setPermsSelected} />
