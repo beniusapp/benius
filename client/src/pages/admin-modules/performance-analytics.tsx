@@ -636,11 +636,32 @@ export default function PerformanceAnalytics({
   const [viewExamType, setViewExamType] = useState("");
   const [expandedStudent, setExpandedStudent] = useState<number | null>(null);
 
-  const viewSectionOpts = useMemo(() => viewClass ? (classSections[viewClass]?.length > 0 ? classSections[viewClass] : allSections) : [], [viewClass, classSections, allSections]);
-  const viewSubjectOpts = useMemo(() => viewClass ? (classSubjects[viewClass] || []) : [], [viewClass, classSubjects]);
-  const viewExamTypeOpts = useMemo(() => viewClass ? (classExamTypes[viewClass] || globalExamTypes) : globalExamTypes, [viewClass, classExamTypes, globalExamTypes]);
+  const viewSectionOpts = useMemo(() => {
+    if (!viewClass) return [];
+    const perClass = classSections[viewClass];
+    return perClass?.length ? perClass : allSections;
+  }, [viewClass, classSections, allSections]);
 
-  function handleViewClassChange(cls: string) { setViewClass(cls); setViewSection(""); setViewSubject(""); setViewExamType(""); setExpandedStudent(null); }
+  const viewSubjectOpts = useMemo(() => {
+    if (!viewClass) return [];
+    const perClass = classSubjects[viewClass];
+    return perClass?.length ? perClass : [];
+  }, [viewClass, classSubjects]);
+
+  // Exact replica of teacher's getExamTypesForClass logic
+  const viewExamTypeOpts = useMemo(() => {
+    if (viewClass && classExamTypes[viewClass]?.length) {
+      const valid = globalExamTypes.length
+        ? classExamTypes[viewClass].filter(et => globalExamTypes.includes(et))
+        : classExamTypes[viewClass];
+      return valid.length ? valid : globalExamTypes;
+    }
+    return globalExamTypes;
+  }, [viewClass, classExamTypes, globalExamTypes]);
+
+  function handleViewClassChange(cls: string) {
+    setViewClass(cls); setViewSection(""); setViewSubject(""); setViewExamType(""); setExpandedStudent(null);
+  }
 
   const { data: viewScores = [], isLoading: viewLoading } = useQuery<ExamScoreEntry[]>({
     queryKey: ["/api/admin/analytics/view-marks", viewClass, viewSection, viewSubject, viewExamType],
@@ -873,10 +894,10 @@ export default function PerformanceAnalytics({
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium text-slate-400">Exam Type *</label>
-                <select value={viewExamType} onChange={e => setViewExamType(e.target.value)} disabled={!viewClass || !viewSection}
-                  className="w-full h-9 rounded-xl border border-[#1e293b] bg-[#020617] text-sm px-3 text-white appearance-none cursor-pointer focus:outline-none focus:border-yellow-500/50 disabled:opacity-50"
+                <select value={viewExamType} onChange={e => setViewExamType(e.target.value)}
+                  className="w-full h-9 rounded-xl border border-[#1e293b] bg-[#020617] text-sm px-3 text-white appearance-none cursor-pointer focus:outline-none focus:border-yellow-500/50"
                   style={{ colorScheme: "dark" }} data-testid="select-view-exam-type">
-                  <option value="">{!viewClass ? "Pick class first" : "Select exam type"}</option>
+                  <option value="">Select exam type</option>
                   {viewExamTypeOpts.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
