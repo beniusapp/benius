@@ -676,6 +676,8 @@ export default function PerformanceAnalytics({
     enabled: tab === "view" && !!viewClass && !!viewSection && !!viewSubject && !!viewExamType,
     staleTime: 0,
     refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchInterval: 30000,
   });
 
   function generateProgressReport() {
@@ -755,6 +757,7 @@ export default function PerformanceAnalytics({
       return res.json();
     },
     enabled: !!resClass && !!resSection, staleTime: 0, refetchOnMount: "always",
+    refetchOnWindowFocus: true, refetchInterval: 30000,
   });
 
   const { data: attendanceSummary = [] } = useQuery<AttendanceSummary[]>({
@@ -764,6 +767,7 @@ export default function PerformanceAnalytics({
       return res.ok ? res.json() : [];
     },
     enabled: !!resClass && !!resSection, staleTime: 0, refetchOnMount: "always",
+    refetchOnWindowFocus: true, refetchInterval: 30000,
   });
 
   const termNames = useMemo(() => {
@@ -836,7 +840,7 @@ export default function PerformanceAnalytics({
   return (
     <div className="space-y-6">
       {/* ── Tab bar — identical styling to teacher examination module ── */}
-      <div className="flex gap-1.5 p-1 bg-[#020617] border border-[#1e293b] rounded-2xl" data-testid="tabs-analytics">
+      <div className="flex items-center gap-1.5 p-1 bg-[#020617] border border-[#1e293b] rounded-2xl" data-testid="tabs-analytics">
         {([
           { key: "view" as const, label: "View Marks", Icon: BarChart3 },
           { key: "results" as const, label: "Results", Icon: Award },
@@ -847,6 +851,13 @@ export default function PerformanceAnalytics({
             <Icon className="w-4 h-4" /> {label}
           </button>
         ))}
+        <div className="flex items-center gap-1.5 px-3 shrink-0" title="Auto-syncs with teacher entries every 30 seconds">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+          </span>
+          <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wide">Live</span>
+        </div>
       </div>
 
       {/* ── View Marks tab ── */}
