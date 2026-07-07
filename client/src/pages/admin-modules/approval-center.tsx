@@ -1502,6 +1502,14 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
     </Dialog>
   ) : null;
 
+  const hCanTeacherLeaves = !allowedSubs || allowedSubs.includes("teacher-leave");
+  const hCanStudentLeaves = !allowedSubs || allowedSubs.includes("student-leave");
+  const hCanGallery       = !allowedSubs || allowedSubs.includes("gallery-hub");
+  const hCanEbooks        = !allowedSubs || allowedSubs.includes("ebook");
+  const hTabCount = [hCanTeacherLeaves, hCanStudentLeaves, hCanGallery, hCanEbooks].filter(Boolean).length;
+  const hDefaultTab = hCanTeacherLeaves ? "teacher_leaves" : hCanStudentLeaves ? "student_leaves" : hCanGallery ? "gallery" : "ebooks";
+  const hGridCols = hTabCount === 1 ? "grid-cols-1" : hTabCount === 2 ? "grid-cols-2" : hTabCount === 3 ? "grid-cols-3" : "grid-cols-4";
+
   const HistoryModal = (
     <Dialog open={showHistory} onOpenChange={setShowHistory}>
       <DialogContent className="max-w-3xl max-h-[82vh] flex flex-col"
@@ -1511,26 +1519,35 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
             <History className="w-5 h-5" style={{ color: "#D4AF37" }} />
             Approval History
           </DialogTitle>
-          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.50)" }}>All admin-actioned items across all categories</p>
+          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.50)" }}>Admin-actioned items across your accessible categories</p>
         </DialogHeader>
         {historyLoading ? (
           <div className="flex items-center justify-center py-16"><Loader2 className="w-8 h-8 animate-spin" style={{ color: "#D4AF37" }} /></div>
         ) : (
-          <Tabs defaultValue="teacher_leaves" className="flex-1 flex flex-col min-h-0">
-            <TabsList className="flex-shrink-0 grid grid-cols-4 w-full" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)" }}>
-              <TabsTrigger value="teacher_leaves" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
-                Teacher Leaves <span className="ml-1 text-[10px] opacity-70">({historyData?.teacherLeaves?.length ?? 0})</span>
-              </TabsTrigger>
-              <TabsTrigger value="student_leaves" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
-                Student Leaves <span className="ml-1 text-[10px] opacity-70">({historyData?.studentLeaves?.length ?? 0})</span>
-              </TabsTrigger>
-              <TabsTrigger value="gallery" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
-                Gallery <span className="ml-1 text-[10px] opacity-70">({historyData?.gallery?.length ?? 0})</span>
-              </TabsTrigger>
-              <TabsTrigger value="ebooks" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
-                E-Books <span className="ml-1 text-[10px] opacity-70">({historyData?.ebooks?.length ?? 0})</span>
-              </TabsTrigger>
+          <Tabs defaultValue={hDefaultTab} className="flex-1 flex flex-col min-h-0">
+            <TabsList className={`flex-shrink-0 grid ${hGridCols} w-full`} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)" }}>
+              {hCanTeacherLeaves && (
+                <TabsTrigger value="teacher_leaves" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
+                  Teacher Leaves <span className="ml-1 text-[10px] opacity-70">({historyData?.teacherLeaves?.length ?? 0})</span>
+                </TabsTrigger>
+              )}
+              {hCanStudentLeaves && (
+                <TabsTrigger value="student_leaves" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
+                  Student Leaves <span className="ml-1 text-[10px] opacity-70">({historyData?.studentLeaves?.length ?? 0})</span>
+                </TabsTrigger>
+              )}
+              {hCanGallery && (
+                <TabsTrigger value="gallery" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
+                  Gallery <span className="ml-1 text-[10px] opacity-70">({historyData?.gallery?.length ?? 0})</span>
+                </TabsTrigger>
+              )}
+              {hCanEbooks && (
+                <TabsTrigger value="ebooks" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
+                  E-Books <span className="ml-1 text-[10px] opacity-70">({historyData?.ebooks?.length ?? 0})</span>
+                </TabsTrigger>
+              )}
             </TabsList>
+            {hCanTeacherLeaves && (
             <TabsContent value="teacher_leaves" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
               {!historyData?.teacherLeaves?.length ? <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No teacher leave history</div>
                 : historyData.teacherLeaves.map((l: any) => (
@@ -1544,6 +1561,8 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
                   </HistoryRow>
                 ))}
             </TabsContent>
+            )}
+            {hCanStudentLeaves && (
             <TabsContent value="student_leaves" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
               {!historyData?.studentLeaves?.length ? <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No student leave history</div>
                 : historyData.studentLeaves.map((l: any) => (
@@ -1557,6 +1576,8 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
                   </HistoryRow>
                 ))}
             </TabsContent>
+            )}
+            {hCanGallery && (
             <TabsContent value="gallery" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
               {!historyData?.gallery?.length ? <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No gallery approval history</div>
                 : historyData.gallery.map((g: any) => (
@@ -1570,6 +1591,8 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
                   </HistoryRow>
                 ))}
             </TabsContent>
+            )}
+            {hCanEbooks && (
             <TabsContent value="ebooks" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
               {!historyData?.ebooks?.length ? <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No e-book history</div>
                 : historyData.ebooks.map((b: any) => (
@@ -1583,6 +1606,7 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
                   </HistoryRow>
                 ))}
             </TabsContent>
+            )}
           </Tabs>
         )}
       </DialogContent>

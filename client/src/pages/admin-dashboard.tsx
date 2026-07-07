@@ -1219,8 +1219,8 @@ export default function AdminDashboard() {
               );
             })()}
 
-            {/* Action Required */}
-            <div
+            {/* Action Required — hidden for support_staff (count spans all categories, not just their allowed ones) */}
+            {me?.role !== "support_staff" && <div
               className="flex items-center gap-3 rounded-xl px-4 py-3 cursor-pointer transition-all hover:bg-red-500/12"
               style={{
                 background: totalActionRequired > 0 ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.03)",
@@ -1267,7 +1267,7 @@ export default function AdminDashboard() {
                   {actionCountAnimated}
                 </p>
               </div>
-            </div>
+            </div>}
 
           </div>
 
