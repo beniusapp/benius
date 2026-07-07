@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[]; initialTab?: string; onNavigateTab?: (tab: string) => void; }
+interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[]; initialTab?: string; onNavigateTab?: (tab: string) => void; allowedSubs?: string[] }
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const PERIODS = [1, 2, 3, 4, 5, 6, 7, 8];
@@ -48,7 +48,7 @@ interface StructureRow {
 
 type TabType = "schedule" | "structure" | "publish";
 
-export default function TimetableMaster({ schoolId, classes, sections, subjects, initialTab, onNavigateTab }: Props) {
+export default function TimetableMaster({ schoolId, classes, sections, subjects, initialTab, onNavigateTab, allowedSubs }: Props) {
   const { toast } = useToast();
   const CLASS_LIST = classes;
   const SECTION_LIST = sections;
@@ -293,7 +293,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
           { id: "schedule", label: "Schedule Grid", icon: <Grid3x3 className="w-3.5 h-3.5" /> },
           { id: "structure", label: "Bell Structure", icon: <Clock className="w-3.5 h-3.5" /> },
           { id: "publish", label: "Publish", icon: <Lock className="w-3.5 h-3.5" /> },
-        ] as const).map(tab => (
+        ] as const).filter(tab => allowedSubs === undefined || allowedSubs.includes(tab.id)).map(tab => (
           <button
             key={tab.id}
             onClick={() => { setActiveTab(tab.id); onNavigateTab?.(tab.id); }}

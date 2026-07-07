@@ -61,6 +61,7 @@ interface Props {
   classes: string[];
   sections: string[];
   examTypes: string[];
+  allowedSubs?: string[];
 }
 
 // ── Tiny helpers ──────────────────────────────────────────────────────────────
@@ -127,7 +128,8 @@ function LedgerPills({ row }: { row: LedgerRow }) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ExamController({ examTypes, classes: schoolClasses, sections: schoolSections }: Props) {
+export default function ExamController({ examTypes, classes: schoolClasses, sections: schoolSections, allowedSubs }: Props) {
+  const canWizard = allowedSubs === undefined || allowedSubs.includes("wizard");
   const { toast } = useToast();
 
   // ── Core view state ───────────────────────────────────────────────────────
@@ -550,6 +552,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     setFilterText(""); setFilterPctOp("gte"); setFilterPctVal(""); setFilterDecision("all");
   }
   function openWizard(row: LedgerRow) {
+    if (!canWizard) return;
     setCohort(row);
     setExamType(row.term);
     setOverrides({}); setConfirmed(false); setStep(1);

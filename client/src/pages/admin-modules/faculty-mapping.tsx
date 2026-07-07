@@ -14,14 +14,15 @@ import {
 } from "@/components/ui/dialog";
 import type { Teacher } from "@shared/schema";
 
-interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[] }
+interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[]; allowedSubs?: string[] }
 type TeacherWithEmail = Teacher & { email: string };
 type MappingRow = { id: number; teacherId: number; teacherName: string; email: string; className: string; section: string; schoolId: number; subject?: string | null };
 
 const DEFAULT_CLASSES = ["1","2","3","4","5","6","7","8","9","10","11","12"];
 const DEFAULT_SECTIONS = ["A","B","C","D"];
 
-export default function FacultyMapping({ schoolId, classes, sections }: Props) {
+export default function FacultyMapping({ schoolId, classes, sections, allowedSubs }: Props) {
+  const canAssign = allowedSubs === undefined || allowedSubs.includes("assign");
   const { toast } = useToast();
   const [searchQ, setSearchQ] = useState("");
   const [selectedTeacher, setSelectedTeacher] = useState<TeacherWithEmail | null>(null);
@@ -381,7 +382,7 @@ export default function FacultyMapping({ schoolId, classes, sections }: Props) {
                     size="sm"
                     className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold text-xs h-8"
                     onClick={() => saveMutation.mutate()}
-                    disabled={saveMutation.isPending}
+                    disabled={saveMutation.isPending || !canAssign}
                     data-testid="button-save-faculty-mapping"
                   >
                     {saveMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Save className="w-3 h-3 mr-1" />}

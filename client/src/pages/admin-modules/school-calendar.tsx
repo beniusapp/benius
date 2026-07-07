@@ -420,7 +420,8 @@ function AudiencePicker({
   );
 }
 
-export default function SchoolCalendar() {
+export default function SchoolCalendar({ allowedSubs }: { allowedSubs?: string[] } = {}) {
+  const canEvents = allowedSubs === undefined || allowedSubs.includes("events");
   const { toast } = useToast();
   const { isArchiveMode } = useSessionView();
   const now = new Date();
@@ -645,20 +646,22 @@ export default function SchoolCalendar() {
             <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
             Refresh
           </button>
-          <button
-            onClick={() => {
-              const todayKey = buildKey(now.getFullYear(), now.getMonth(), now.getDate());
-              setForm(f => ({ ...f, startDate: todayKey, endDate: todayKey }));
-              setAddTargeted(false);
-              setAddOpen(true);
-            }}
-            data-testid="button-add-event"
-            disabled={isArchiveMode}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#D4AF37]/15 border border-[#D4AF37]/30 text-[#D4AF37] text-sm font-medium hover:bg-[#D4AF37]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add Event
-          </button>
+          {canEvents && (
+            <button
+              onClick={() => {
+                const todayKey = buildKey(now.getFullYear(), now.getMonth(), now.getDate());
+                setForm(f => ({ ...f, startDate: todayKey, endDate: todayKey }));
+                setAddTargeted(false);
+                setAddOpen(true);
+              }}
+              data-testid="button-add-event"
+              disabled={isArchiveMode}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#D4AF37]/15 border border-[#D4AF37]/30 text-[#D4AF37] text-sm font-medium hover:bg-[#D4AF37]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add Event
+            </button>
+          )}
         </div>
       </div>
 
@@ -782,14 +785,16 @@ export default function SchoolCalendar() {
             ) : selectedDayEvents.length === 0 ? (
               <div className="text-center py-4">
                 <p className="text-white/30 text-sm mb-3">No events on this day</p>
-                <button
-                  onClick={() => openAddForDay(selectedDay)}
-                  disabled={isArchiveMode}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-[#D4AF37]/15 border border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  data-testid="button-add-for-selected-day"
-                >
-                  <Plus className="w-3 h-3 inline mr-1" />Add Event
-                </button>
+                {canEvents && (
+                  <button
+                    onClick={() => openAddForDay(selectedDay)}
+                    disabled={isArchiveMode}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-[#D4AF37]/15 border border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    data-testid="button-add-for-selected-day"
+                  >
+                    <Plus className="w-3 h-3 inline mr-1" />Add Event
+                  </button>
+                )}
               </div>
             ) : (
               <div className="space-y-2">
@@ -818,24 +823,28 @@ export default function SchoolCalendar() {
                       >
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
-                      <button
-                        onClick={(e) => openEditWithDelete(ev, e)}
-                        className="p-1 rounded hover:bg-red-500/20 text-red-400 transition-colors"
-                        data-testid={`button-delete-event-${ev.id}`}
-                        aria-label="Delete event"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {canEvents && (
+                        <button
+                          onClick={(e) => openEditWithDelete(ev, e)}
+                          className="p-1 rounded hover:bg-red-500/20 text-red-400 transition-colors"
+                          data-testid={`button-delete-event-${ev.id}`}
+                          aria-label="Delete event"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
-                <button
-                  onClick={() => openAddForDay(selectedDay)}
-                  className="w-full mt-1 text-xs px-2 py-1.5 rounded-lg border border-dashed border-white/20 text-white/30 hover:text-[#D4AF37] hover:border-[#D4AF37]/40 transition-colors"
-                  data-testid="button-add-to-day"
-                >
-                  <Plus className="w-3 h-3 inline mr-1" />Add to this day
-                </button>
+                {canEvents && (
+                  <button
+                    onClick={() => openAddForDay(selectedDay)}
+                    className="w-full mt-1 text-xs px-2 py-1.5 rounded-lg border border-dashed border-white/20 text-white/30 hover:text-[#D4AF37] hover:border-[#D4AF37]/40 transition-colors"
+                    data-testid="button-add-to-day"
+                  >
+                    <Plus className="w-3 h-3 inline mr-1" />Add to this day
+                  </button>
+                )}
               </div>
             )}
           </div>

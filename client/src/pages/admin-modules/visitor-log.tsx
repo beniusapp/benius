@@ -8,10 +8,12 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 
-interface Props { schoolId: number }
+interface Props { schoolId: number; allowedSubs?: string[] }
 
 
-export default function VisitorLog({ schoolId }: Props) {
+export default function VisitorLog({ schoolId, allowedSubs }: Props) {
+  const canCheckin  = allowedSubs === undefined || allowedSubs.includes("checkin");
+  const canCheckout = allowedSubs === undefined || allowedSubs.includes("checkout");
   const { toast } = useToast();
   const { isArchiveMode } = useSessionView();
   const [showForm, setShowForm] = useState(false);
@@ -63,10 +65,12 @@ export default function VisitorLog({ schoolId }: Props) {
           <h2 className="text-xl font-bold text-white">Visitor Log</h2>
           <p className="text-white/50 text-sm">{active.length} currently on campus</p>
         </div>
-        <Button size="sm" className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
-          onClick={() => setShowForm(!showForm)} data-testid="button-checkin-visitor">
-          <Plus className="w-4 h-4 mr-1" /> Check In Visitor
-        </Button>
+        {canCheckin && (
+          <Button size="sm" className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
+            onClick={() => setShowForm(!showForm)} data-testid="button-checkin-visitor">
+            <Plus className="w-4 h-4 mr-1" /> Check In Visitor
+          </Button>
+        )}
       </div>
 
       {showForm && (
@@ -120,11 +124,13 @@ export default function VisitorLog({ schoolId }: Props) {
                   <td className="py-3 px-4 text-[#D4AF37] text-xs font-mono">{v.badge ?? "—"}</td>
                   <td className="py-3 px-4 text-white/50 text-xs">{fmtDateTime(v.checkIn)}</td>
                   <td className="py-3 px-4">
-                    <Button size="sm" variant="outline" onClick={() => checkoutMutation.mutate(v.id)}
-                      disabled={checkoutMutation.isPending}
-                      className="h-7 px-2 border-orange-500/40 text-orange-400 hover:bg-orange-500/10" data-testid={`button-checkout-${v.id}`}>
-                      <LogOut className="w-3 h-3 mr-1" /> Out
-                    </Button>
+                    {canCheckout && (
+                      <Button size="sm" variant="outline" onClick={() => checkoutMutation.mutate(v.id)}
+                        disabled={checkoutMutation.isPending}
+                        className="h-7 px-2 border-orange-500/40 text-orange-400 hover:bg-orange-500/10" data-testid={`button-checkout-${v.id}`}>
+                        <LogOut className="w-3 h-3 mr-1" /> Out
+                      </Button>
+                    )}
                   </td>
                 </tr>
               ))}

@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 
-interface Props { schoolId: number }
+interface Props { schoolId: number; allowedSubs?: string[] }
 
 interface Asset {
   id: number;
@@ -39,7 +39,10 @@ const CONDITION_BADGE: Record<string, string> = {
 };
 
 
-export default function AssetsInventory({ schoolId: _schoolId }: Props) {
+export default function AssetsInventory({ schoolId: _schoolId, allowedSubs }: Props) {
+  const canAdd    = allowedSubs === undefined || allowedSubs.includes("add");
+  const canEdit   = allowedSubs === undefined || allowedSubs.includes("edit");
+  const canDelete = allowedSubs === undefined || allowedSubs.includes("delete");
   const { toast } = useToast();
   const { isArchiveMode } = useSessionView();
 
@@ -159,15 +162,17 @@ export default function AssetsInventory({ schoolId: _schoolId }: Props) {
           <h2 className="text-xl font-bold text-white">Assets & Inventory</h2>
           <p className="text-white/50 text-sm">{filtered.length} asset type{filtered.length !== 1 ? "s" : ""} · {totalItems.toLocaleString()} total items</p>
         </div>
-        <Button
-          size="sm"
-          className="bg-[#10b981] hover:bg-[#059669] text-white font-semibold"
-          onClick={() => setShowAddForm(v => !v)}
-          disabled={isArchiveMode}
-          data-testid="button-add-asset"
-        >
-          <Plus className="w-4 h-4 mr-1" /> Add Asset
-        </Button>
+        {canAdd && (
+          <Button
+            size="sm"
+            className="bg-[#10b981] hover:bg-[#059669] text-white font-semibold"
+            onClick={() => setShowAddForm(v => !v)}
+            disabled={isArchiveMode}
+            data-testid="button-add-asset"
+          >
+            <Plus className="w-4 h-4 mr-1" /> Add Asset
+          </Button>
+        )}
       </div>
 
       {showAddForm && (
@@ -353,20 +358,24 @@ export default function AssetsInventory({ schoolId: _schoolId }: Props) {
                           </button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="bg-[#1A2942] border-white/10">
-                          <DropdownMenuItem
-                            className="text-white/80 hover:text-white cursor-pointer"
-                            onClick={() => openEdit(a)}
-                            data-testid={`menu-edit-${a.id}`}
-                          >
-                            <Edit2 className="w-3.5 h-3.5 mr-2 text-[#10b981]" /> Edit Details
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="text-rose-400 hover:text-rose-300 cursor-pointer"
-                            onClick={() => setDeleteTarget(a)}
-                            data-testid={`menu-delete-${a.id}`}
-                          >
-                            <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete Asset
-                          </DropdownMenuItem>
+                          {canEdit && (
+                            <DropdownMenuItem
+                              className="text-white/80 hover:text-white cursor-pointer"
+                              onClick={() => openEdit(a)}
+                              data-testid={`menu-edit-${a.id}`}
+                            >
+                              <Edit2 className="w-3.5 h-3.5 mr-2 text-[#10b981]" /> Edit Details
+                            </DropdownMenuItem>
+                          )}
+                          {canDelete && (
+                            <DropdownMenuItem
+                              className="text-rose-400 hover:text-rose-300 cursor-pointer"
+                              onClick={() => setDeleteTarget(a)}
+                              data-testid={`menu-delete-${a.id}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete Asset
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem
                             className="text-white/60 hover:text-white cursor-pointer"
                             onClick={() => toast({ title: "Coming Soon", description: "Report generation will be available in Phase 2." })}

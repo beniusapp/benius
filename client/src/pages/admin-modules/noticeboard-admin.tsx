@@ -17,6 +17,7 @@ interface Props {
   classes: string[];
   sections: string[];
   adminUserId: number;
+  allowedSubs?: string[];
 }
 
 interface Notice {
@@ -74,7 +75,9 @@ function getTypeStyle(t: string | null) {
   return NOTICE_TYPES.find(x => x.value === t) || NOTICE_TYPES[0];
 }
 
-export default function NoticeboardAdmin({ schoolId, classes, sections, adminUserId }: Props) {
+export default function NoticeboardAdmin({ schoolId, classes, sections, adminUserId, allowedSubs }: Props) {
+  const canCreate    = allowedSubs === undefined || allowedSubs.includes("create");
+  const canBulkDel   = allowedSubs === undefined || allowedSubs.includes("bulk-delete");
   const { toast } = useToast();
 
   // Form state
@@ -298,7 +301,7 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
         />
 
         <Button
-          disabled={!canPost || postMutation.isPending}
+          disabled={!canPost || postMutation.isPending || !canCreate}
           onClick={() => postMutation.mutate()}
           className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
           data-testid="button-post-notice"
@@ -329,18 +332,20 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
               <h3 className="text-sm font-bold text-white">Notice Statistics</h3>
             </div>
             {/* Bulk-delete toggle icon */}
-            <button
-              onClick={() => setBulkPanelOpen(prev => !prev)}
-              title={bulkPanelOpen ? "Close bulk delete" : "Bulk delete notices"}
-              data-testid="button-toggle-bulk-delete"
-              className={`p-1.5 rounded-lg transition-all duration-200 ${
-                bulkPanelOpen
-                  ? "bg-rose-500/20 text-rose-400 ring-1 ring-rose-500/40"
-                  : "text-white/25 hover:text-rose-400 hover:bg-rose-500/10"
-              }`}
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
+            {canBulkDel && (
+              <button
+                onClick={() => setBulkPanelOpen(prev => !prev)}
+                title={bulkPanelOpen ? "Close bulk delete" : "Bulk delete notices"}
+                data-testid="button-toggle-bulk-delete"
+                className={`p-1.5 rounded-lg transition-all duration-200 ${
+                  bulkPanelOpen
+                    ? "bg-rose-500/20 text-rose-400 ring-1 ring-rose-500/40"
+                    : "text-white/25 hover:text-rose-400 hover:bg-rose-500/10"
+                }`}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           {/* Stat tiles */}
@@ -502,26 +507,30 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
                       <span className="text-white/25 text-xs tabular-nums">{fmtDateTime(n.createdAt)}</span>
                       {isOwn && !isEditing && (
                         <>
-                          <button
-                            onClick={() => startEdit(n)}
-                            className="p-1.5 rounded-lg text-white/40 hover:text-[#D4AF37] hover:bg-[#D4AF37]/10 transition-colors"
-                            title="Edit notice"
-                            data-testid={`button-edit-notice-${n.id}`}
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => deleteMutation.mutate(n.id)}
-                            disabled={deleteMutation.isPending}
-                            className="p-1.5 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-400/10 transition-colors disabled:opacity-40"
-                            title="Delete notice"
-                            data-testid={`button-delete-notice-${n.id}`}
-                          >
-                            {deleteMutation.isPending
-                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              : <Trash2 className="w-3.5 h-3.5" />
-                            }
-                          </button>
+                          {canCreate && (
+                            <button
+                              onClick={() => startEdit(n)}
+                              className="p-1.5 rounded-lg text-white/40 hover:text-[#D4AF37] hover:bg-[#D4AF37]/10 transition-colors"
+                              title="Edit notice"
+                              data-testid={`button-edit-notice-${n.id}`}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canBulkDel && (
+                            <button
+                              onClick={() => deleteMutation.mutate(n.id)}
+                              disabled={deleteMutation.isPending}
+                              className="p-1.5 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-400/10 transition-colors disabled:opacity-40"
+                              title="Delete notice"
+                              data-testid={`button-delete-notice-${n.id}`}
+                            >
+                              {deleteMutation.isPending
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                : <Trash2 className="w-3.5 h-3.5" />
+                              }
+                            </button>
+                          )}
                         </>
                       )}
                     </div>

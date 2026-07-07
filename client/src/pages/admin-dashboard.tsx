@@ -929,23 +929,23 @@ export default function AdminDashboard() {
     }
     switch (activeModule) {
       case "school-setup":      return <SchoolSetup schoolId={me.schoolId} section={setupSection} onNavigateSection={(sec) => { if (sec === null) setLocation("/admin-dashboard/school-setup"); else setLocation(`/admin-dashboard/school-setup/${sec}`); }} />;
-      case "student-registry":  return <StudentRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} viewSessionId={selectedViewSession?.id} isArchiveMode={isArchiveMode} />;
-      case "faculty-mapping":   return <FacultyMapping schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
+      case "student-registry":  return <StudentRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} viewSessionId={selectedViewSession?.id} isArchiveMode={isArchiveMode} allowedSubs={getSubsFor("student-registry")} />;
+      case "faculty-mapping":   return <FacultyMapping schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} allowedSubs={getSubsFor("faculty-mapping")} />;
       case "teacher-registry":  return <TeacherRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} onNavigate={(mod) => goToModule(mod as ActiveModule)} allowedSubs={getSubsFor("teacher-registry")} />;
-      case "non-teaching-staff":return <NonTeachingStaff schoolId={me.schoolId} />;
+      case "non-teaching-staff":return <NonTeachingStaff schoolId={me.schoolId} allowedSubs={getSubsFor("non-teaching-staff")} />;
       case "approval-center":   return <ApprovalCenter schoolId={me.schoolId} initialSection={approvalSubParams?.tab ?? null} onNavigateSection={(sec) => { if (sec) setLocation(`/admin-dashboard/approval-center/${sec}`); else setLocation("/admin-dashboard/approval-center"); }} allowedSubs={getSubsFor("approval-center")} />;
       case "audit-logs":        return <AuditLogsModule schoolId={me.schoolId} />;
-      case "visitor-log":       return <VisitorLogModule schoolId={me.schoolId} />;
+      case "visitor-log":       return <VisitorLogModule schoolId={me.schoolId} allowedSubs={getSubsFor("visitor-log")} />;
       case "attendance":        return <AttendanceOverview schoolId={me.schoolId} onViewStudent={() => goToModule("student-registry")} />;
       case "analytics":         return <PerformanceAnalytics schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} examTypes={meta.exam_types} classSections={meta.classSections} classSubjects={meta.classSubjects} classExamTypes={meta.classExamTypes} initialTab={analyticsSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/analytics/${t}`)} allowedSubs={getSubsFor("analytics")} />;
-      case "exam-controller":   return <ExamController schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} examTypes={meta.exam_types} />;
+      case "exam-controller":   return <ExamController schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} examTypes={meta.exam_types} allowedSubs={getSubsFor("exam-controller")} />;
       case "complaint-hub":     return <ComplaintHub schoolId={me.schoolId} initialTab={complaintSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/complaint-hub/${t}`)} allowedSubs={getSubsFor("complaint-hub")} />;
-      case "noticeboard":       return <NoticeboardAdmin schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} adminUserId={me.id} />;
-      case "timetable":         return <TimetableMaster schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} initialTab={timetableSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/timetable/${t}`)} />;
+      case "noticeboard":       return <NoticeboardAdmin schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} adminUserId={me.id} allowedSubs={getSubsFor("noticeboard")} />;
+      case "timetable":         return <TimetableMaster schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} initialTab={timetableSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/timetable/${t}`)} allowedSubs={getSubsFor("timetable")} />;
       case "id-card-gen":       return <IdCardGen schoolId={me.schoolId} schoolName={me.schoolName} classes={meta.classes} sections={meta.sections} initialTab={idCardSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/id-card-gen/${t}`)} allowedSubs={getSubsFor("id-card-gen")} />;
-      case "assets":            return <AssetsInventory schoolId={me.schoolId} />;
-      case "school-calendar":   return <SchoolCalendar />;
-      case "fees-manager":      return <FeesManager schoolId={me.schoolId} />;
+      case "assets":            return <AssetsInventory schoolId={me.schoolId} allowedSubs={getSubsFor("assets")} />;
+      case "school-calendar":   return <SchoolCalendar allowedSubs={getSubsFor("school-calendar")} />;
+      case "fees-manager":      return <FeesManager schoolId={me.schoolId} allowedSubs={getSubsFor("fees-manager")} />;
       default: return null;
     }
   };

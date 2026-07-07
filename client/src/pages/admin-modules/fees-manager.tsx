@@ -80,7 +80,9 @@ const feeFormSchema = z.object({
 });
 type FeeFormValues = z.infer<typeof feeFormSchema>;
 
-export default function FeesManager({ schoolId }: { schoolId: number }) {
+export default function FeesManager({ schoolId, allowedSubs }: { schoolId: number; allowedSubs?: string[] }) {
+  const canRecord = allowedSubs === undefined || allowedSubs.includes("record");
+  const canExport  = allowedSubs === undefined || allowedSubs.includes("export");
   const { toast } = useToast();
   const { isArchiveMode } = useSessionView();
   const [search, setSearch] = useState("");
@@ -229,9 +231,11 @@ export default function FeesManager({ schoolId }: { schoolId: number }) {
             <p className="text-xs text-slate-400">Manage student fee records and payment history</p>
           </div>
         </div>
-        <Button onClick={openCreate} disabled={isArchiveMode} className="flex items-center gap-2 text-sm" data-testid="button-add-fee">
-          <Plus className="w-4 h-4" /> Add Fee Record
-        </Button>
+        {canRecord && (
+          <Button onClick={openCreate} disabled={isArchiveMode} className="flex items-center gap-2 text-sm" data-testid="button-add-fee">
+            <Plus className="w-4 h-4" /> Add Fee Record
+          </Button>
+        )}
       </div>
 
       {/* Summary */}
@@ -319,25 +323,29 @@ export default function FeesManager({ schoolId }: { schoolId: number }) {
               </div>
               <div className="flex items-center gap-3">
                 <p className="text-base font-extrabold text-slate-800" data-testid={`text-admin-fee-amount-${rec.id}`}>{formatAmount(rec.amount)}</p>
-                <button
-                  onClick={() => openEdit(rec)}
-                  className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
-                  data-testid={`button-edit-fee-${rec.id}`}
-                  title="Edit"
-                >
-                  <Pencil className="w-4 h-4 text-slate-500" />
-                </button>
-                <button
-                  onClick={() => {
-                    if (confirm("Delete this fee record?")) deleteMutation.mutate(rec.id);
-                  }}
-                  className="p-2 rounded-lg hover:bg-red-50 transition-colors"
-                  data-testid={`button-delete-fee-${rec.id}`}
-                  title="Delete"
-                  disabled={isArchiveMode || deleteMutation.isPending}
-                >
-                  <Trash2 className="w-4 h-4 text-red-400" />
-                </button>
+                {canRecord && (
+                  <button
+                    onClick={() => openEdit(rec)}
+                    className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
+                    data-testid={`button-edit-fee-${rec.id}`}
+                    title="Edit"
+                  >
+                    <Pencil className="w-4 h-4 text-slate-500" />
+                  </button>
+                )}
+                {canRecord && (
+                  <button
+                    onClick={() => {
+                      if (confirm("Delete this fee record?")) deleteMutation.mutate(rec.id);
+                    }}
+                    className="p-2 rounded-lg hover:bg-red-50 transition-colors"
+                    data-testid={`button-delete-fee-${rec.id}`}
+                    title="Delete"
+                    disabled={isArchiveMode || deleteMutation.isPending}
+                  >
+                    <Trash2 className="w-4 h-4 text-red-400" />
+                  </button>
+                )}
               </div>
             </div>
           ))}

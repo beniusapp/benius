@@ -23,6 +23,7 @@ interface Props {
   sections: string[];
   viewSessionId?: number;
   isArchiveMode?: boolean;
+  allowedSubs?: string[];
 }
 
 const PAGE_SIZE = 50;
@@ -73,7 +74,11 @@ function GenderBadge({ gender }: { gender: string | null | undefined }) {
   );
 }
 
-export default function StudentRegistry({ schoolId, classes, sections, viewSessionId, isArchiveMode }: Props) {
+export default function StudentRegistry({ schoolId, classes, sections, viewSessionId, isArchiveMode, allowedSubs }: Props) {
+  const canAdd        = allowedSubs === undefined || allowedSubs.includes("add");
+  const canEdit       = allowedSubs === undefined || allowedSubs.includes("edit");
+  const canDeactivate = allowedSubs === undefined || allowedSubs.includes("deactivate");
+  const canExport     = allowedSubs === undefined || allowedSubs.includes("export");
   const { toast } = useToast();
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
@@ -339,22 +344,28 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
             <AlignJustify className="w-3.5 h-3.5" />
             {compact ? "Compact" : "Normal"}
           </button>
-          <Button size="sm" variant="outline"
-            className="border-[#D4AF37]/40 text-[#D4AF37] hover:bg-[#D4AF37]/10 h-11"
-            onClick={handleExport} disabled={isExporting} data-testid="button-export-excel">
-            {isExporting ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <FileDown className="w-4 h-4 mr-1" />}
-            {isExporting ? "Exporting…" : "Export"}
-          </Button>
-          <Button size="sm" variant="outline" className="border-[#D4AF37]/40 text-[#D4AF37] hover:bg-[#D4AF37]/10 h-11"
-            onClick={() => uploadRef.current?.click()} data-testid="button-upload-csv" disabled={isArchiveMode || uploadMutation.isPending}>
-            <Upload className="w-4 h-4 mr-1" /> {uploadMutation.isPending ? "Uploading…" : "Bulk CSV"}
-          </Button>
+          {canExport && (
+            <Button size="sm" variant="outline"
+              className="border-[#D4AF37]/40 text-[#D4AF37] hover:bg-[#D4AF37]/10 h-11"
+              onClick={handleExport} disabled={isExporting} data-testid="button-export-excel">
+              {isExporting ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <FileDown className="w-4 h-4 mr-1" />}
+              {isExporting ? "Exporting…" : "Export"}
+            </Button>
+          )}
+          {canAdd && (
+            <Button size="sm" variant="outline" className="border-[#D4AF37]/40 text-[#D4AF37] hover:bg-[#D4AF37]/10 h-11"
+              onClick={() => uploadRef.current?.click()} data-testid="button-upload-csv" disabled={isArchiveMode || uploadMutation.isPending}>
+              <Upload className="w-4 h-4 mr-1" /> {uploadMutation.isPending ? "Uploading…" : "Bulk CSV"}
+            </Button>
+          )}
           <input ref={el => uploadRef.current = el} type="file" accept=".csv,.xlsx" className="hidden"
             onChange={e => { const f = e.target.files?.[0]; if (f) uploadMutation.mutate(f); }} />
-          <Button size="sm" className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-11"
-            onClick={() => setShowForm(!showForm)} disabled={isArchiveMode} data-testid="button-add-student-toggle">
-            <UserPlus className="w-4 h-4 mr-1" /> Add Student
-          </Button>
+          {canAdd && (
+            <Button size="sm" className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-11"
+              onClick={() => setShowForm(!showForm)} disabled={isArchiveMode} data-testid="button-add-student-toggle">
+              <UserPlus className="w-4 h-4 mr-1" /> Add Student
+            </Button>
+          )}
         </div>
       </div>
 
@@ -491,7 +502,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
             <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Reset
           </Button>
         )}
-        {cls && section && (
+        {canEdit && cls && section && (
           <Button size="sm" variant="outline"
             className="border-[#10b981]/40 text-[#10b981] hover:bg-[#10b981]/10 h-11"
             onClick={() => autoAssignMutation.mutate()}
@@ -502,7 +513,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
             Auto Roll#
           </Button>
         )}
-        {selected.size > 0 && (
+        {canDeactivate && selected.size > 0 && (
           <Button size="sm" variant="outline"
             className="border-red-400/40 text-red-400 hover:bg-red-400/10 h-11"
             onClick={() => setShowBulkConfirm(true)}
@@ -531,14 +542,16 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
             <thead className="bg-[#0F1E35] sticky top-0 z-10">
               <tr>
                 <th className="py-3 px-3">
-                  <input
-                    type="checkbox"
-                    checked={allSelected}
-                    ref={el => { if (el) el.indeterminate = someSelected && !allSelected; }}
-                    onChange={toggleAll}
-                    data-testid="checkbox-select-all"
-                    className="w-4 h-4 accent-[#10b981] cursor-pointer"
-                  />
+                  {canDeactivate && (
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      ref={el => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                      onChange={toggleAll}
+                      data-testid="checkbox-select-all"
+                      className="w-4 h-4 accent-[#10b981] cursor-pointer"
+                    />
+                  )}
                 </th>
                 <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">DSID</th>
                 <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Name</th>
@@ -567,13 +580,15 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                         ${selected.has(s.id) ? "bg-[#10b981]/5 border-l-2 border-l-[#10b981]/40" : ""}`}
                       data-testid={`row-student-${s.id}`}>
                       <td className="py-2 px-3">
-                        <input
-                          type="checkbox"
-                          checked={selected.has(s.id)}
-                          onChange={() => toggleOne(s.id)}
-                          data-testid={`checkbox-student-${s.id}`}
-                          className="w-4 h-4 accent-[#10b981] cursor-pointer"
-                        />
+                        {canDeactivate && (
+                          <input
+                            type="checkbox"
+                            checked={selected.has(s.id)}
+                            onChange={() => toggleOne(s.id)}
+                            data-testid={`checkbox-student-${s.id}`}
+                            className="w-4 h-4 accent-[#10b981] cursor-pointer"
+                          />
+                        )}
                       </td>
                       <td className={`${cell} font-mono overflow-hidden`}>
                         <div className="flex flex-col gap-0.5">
@@ -600,22 +615,26 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                             title="View profile">
                             <Eye className="w-3.5 h-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon"
-                            className="text-[#10b981] hover:text-emerald-300 hover:bg-[#10b981]/10 h-9 w-9 shrink-0"
-                            onClick={() => setEditTarget(s)}
-                            disabled={isArchiveMode}
-                            data-testid={`button-edit-student-${s.id}`}
-                            title="Edit student">
-                            <Pencil className="w-3.5 h-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon"
-                            className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-9 w-9 shrink-0"
-                            onClick={() => setDeactivateTarget(s)}
-                            disabled={isArchiveMode}
-                            data-testid={`button-deactivate-student-${s.id}`}
-                            title="Deactivate student">
-                            <UserX className="w-3.5 h-3.5" />
-                          </Button>
+                          {canEdit && (
+                            <Button variant="ghost" size="icon"
+                              className="text-[#10b981] hover:text-emerald-300 hover:bg-[#10b981]/10 h-9 w-9 shrink-0"
+                              onClick={() => setEditTarget(s)}
+                              disabled={isArchiveMode}
+                              data-testid={`button-edit-student-${s.id}`}
+                              title="Edit student">
+                              <Pencil className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
+                          {canDeactivate && (
+                            <Button variant="ghost" size="icon"
+                              className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-9 w-9 shrink-0"
+                              onClick={() => setDeactivateTarget(s)}
+                              disabled={isArchiveMode}
+                              data-testid={`button-deactivate-student-${s.id}`}
+                              title="Deactivate student">
+                              <UserX className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -692,11 +711,13 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
               ))}
             </div>
             <div className="px-5 pb-5">
-              <Button className="w-full h-11" variant="outline"
-                onClick={() => { setViewTarget(null); setEditTarget(viewTarget); }}
-                data-testid="button-view-to-edit">
-                <Pencil className="w-4 h-4 mr-2" /> Edit this student
-              </Button>
+              {canEdit && (
+                <Button className="w-full h-11" variant="outline"
+                  onClick={() => { setViewTarget(null); setEditTarget(viewTarget); }}
+                  data-testid="button-view-to-edit">
+                  <Pencil className="w-4 h-4 mr-2" /> Edit this student
+                </Button>
+              )}
             </div>
           </div>
         </div>

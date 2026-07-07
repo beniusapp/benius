@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ADMIN_TILE_DEFS, MODULE_SUB_MODULES, expandModulesWithSubs } from "@/lib/admin-tiles";
 import type { NonTeachingStaff } from "@shared/schema";
 
-interface Props { schoolId: number }
+interface Props { schoolId: number; allowedSubs?: string[] }
 
 const DESIGNATIONS = ["Principal", "Vice Principal", "Admin", "Accountant", "Librarian", "Lab Assistant", "Peon", "Security", "Driver", "Clerk", "Counselor", "Other"];
 
@@ -237,7 +237,10 @@ function ModulePermissionTree({
   );
 }
 
-export default function NonTeachingStaffModule({ schoolId }: Props) {
+export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props) {
+  const canAdd   = allowedSubs === undefined || allowedSubs.includes("add");
+  const canEdit  = allowedSubs === undefined || allowedSubs.includes("edit");
+  const canPerms = allowedSubs === undefined || allowedSubs.includes("permissions");
   const { toast } = useToast();
   const { isArchiveMode } = useSessionView();
   const [showForm, setShowForm] = useState(false);
@@ -367,15 +370,17 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
           <h2 className="text-xl font-bold text-white">Support Staff Registry</h2>
           <p className="text-white/50 text-sm">{staff.length} staff member{staff.length !== 1 ? "s" : ""} registered</p>
         </div>
-        <Button
-          size="sm"
-          className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
-          onClick={() => setShowForm(!showForm)}
-          disabled={isArchiveMode}
-          data-testid="button-add-nts-toggle"
-        >
-          <UserPlus className="w-4 h-4 mr-1" /> Add Staff
-        </Button>
+        {canAdd && (
+          <Button
+            size="sm"
+            className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
+            onClick={() => setShowForm(!showForm)}
+            disabled={isArchiveMode}
+            data-testid="button-add-nts-toggle"
+          >
+            <UserPlus className="w-4 h-4 mr-1" /> Add Staff
+          </Button>
+        )}
       </div>
 
       {/* ── Add Form ── */}
@@ -562,24 +567,30 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
                         </td>
                         <td className="py-3 px-4">
                           <div className="flex items-center gap-1">
-                            <Button variant="ghost" size="icon"
-                              className="text-[#D4AF37] hover:text-yellow-300 hover:bg-yellow-400/10 h-8 w-8"
-                              onClick={() => openEdit(s)} disabled={isArchiveMode}
-                              data-testid={`button-edit-nts-${s.id}`} title="Edit profile">
-                              <Pencil className="w-3.5 h-3.5" />
-                            </Button>
-                            <Button variant="ghost" size="icon"
-                              className="text-blue-400 hover:text-blue-300 hover:bg-blue-400/10 h-8 w-8"
-                              onClick={() => openPerms(s)} disabled={isArchiveMode}
-                              data-testid={`button-perms-nts-${s.id}`} title="Edit permissions">
-                              <ShieldCheck className="w-3.5 h-3.5" />
-                            </Button>
-                            <Button variant="ghost" size="icon"
-                              className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-8 w-8"
-                              onClick={() => setDeleteTarget(s)} disabled={isArchiveMode}
-                              data-testid={`button-delete-nts-${s.id}`} title="Remove">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
+                            {canEdit && (
+                              <Button variant="ghost" size="icon"
+                                className="text-[#D4AF37] hover:text-yellow-300 hover:bg-yellow-400/10 h-8 w-8"
+                                onClick={() => openEdit(s)} disabled={isArchiveMode}
+                                data-testid={`button-edit-nts-${s.id}`} title="Edit profile">
+                                <Pencil className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                            {canPerms && (
+                              <Button variant="ghost" size="icon"
+                                className="text-blue-400 hover:text-blue-300 hover:bg-blue-400/10 h-8 w-8"
+                                onClick={() => openPerms(s)} disabled={isArchiveMode}
+                                data-testid={`button-perms-nts-${s.id}`} title="Edit permissions">
+                                <ShieldCheck className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                            {allowedSubs === undefined && (
+                              <Button variant="ghost" size="icon"
+                                className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-8 w-8"
+                                onClick={() => setDeleteTarget(s)} disabled={isArchiveMode}
+                                data-testid={`button-delete-nts-${s.id}`} title="Remove">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
                           </div>
                         </td>
                       </tr>
