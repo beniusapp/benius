@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Save, Loader2, Lock, Grid3x3, X, Pencil, Trash2, Settings, Plus, Clock, Coffee,
@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[] }
+interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[]; initialTab?: string; onNavigateTab?: (tab: string) => void; }
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const PERIODS = [1, 2, 3, 4, 5, 6, 7, 8];
@@ -48,14 +48,18 @@ interface StructureRow {
 
 type TabType = "schedule" | "structure" | "publish";
 
-export default function TimetableMaster({ schoolId, classes, sections, subjects }: Props) {
+export default function TimetableMaster({ schoolId, classes, sections, subjects, initialTab, onNavigateTab }: Props) {
   const { toast } = useToast();
   const CLASS_LIST = classes;
   const SECTION_LIST = sections;
   const SUBJECT_LIST = subjects;
   const hasConfig = CLASS_LIST.length > 0 && SUBJECT_LIST.length > 0;
 
-  const [activeTab, setActiveTab] = useState<TabType>("schedule");
+  const [activeTab, setActiveTab] = useState<TabType>((initialTab as TabType) ?? "schedule");
+  useEffect(() => {
+    if (initialTab && (["schedule", "structure", "publish"] as string[]).includes(initialTab))
+      setActiveTab(initialTab as TabType);
+  }, [initialTab]);
 
   // ── Schedule tab state ──
   const [selectedClass, setSelectedClass] = useState("");
@@ -292,7 +296,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects 
         ] as const).map(tab => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => { setActiveTab(tab.id); onNavigateTab?.(tab.id); }}
             data-testid={`tab-${tab.id}`}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
               activeTab === tab.id

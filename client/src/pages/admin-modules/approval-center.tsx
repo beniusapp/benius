@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import {
   Check, X, BookOpen, Image, UserCheck, Loader2,
   CalendarOff, ImageOff, BookMarked, Users, Inbox, Eye, Paperclip, UserCircle2,
@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 
-interface Props { schoolId: number }
+interface Props { schoolId: number; initialSection?: string | null; onNavigateSection?: (sec: string | null) => void; }
 
 // ── Section colours keyed by variant ──────────────────────────────────────────
 const VARIANTS = {
@@ -1231,9 +1231,12 @@ function SectionHeader({
 // ── Main component ─────────────────────────────────────────────────────────────
 const EBOOK_CATEGORIES = ["Fiction", "Non-Fiction", "Science", "Mathematics", "History", "Literature", "Technology", "Arts", "Reference", "Other"];
 
-export default function ApprovalCenter({ schoolId }: Props) {
+export default function ApprovalCenter({ schoolId, initialSection, onNavigateSection }: Props) {
   const { toast } = useToast();
-  const [activeSection, setActiveSection] = useState<ActiveSection>(null);
+  const [activeSection, setActiveSection] = useState<ActiveSection>((initialSection as ActiveSection) ?? null);
+  useEffect(() => {
+    setActiveSection((initialSection as ActiveSection) ?? null);
+  }, [initialSection]);
   const [selectedLeave, setSelectedLeave] = useState<any | null>(null);
   const [adminComment, setAdminComment] = useState("");
   const [showHistory, setShowHistory] = useState(false);
@@ -1618,7 +1621,7 @@ export default function ApprovalCenter({ schoolId }: Props) {
             glow="rgba(14,165,233,0.18)"
             badge={pendingLeaves.length}
             badgeColor="linear-gradient(135deg,#0ea5e9,#06b6d4)"
-            onClick={() => setActiveSection("teacher-leave")}
+            onClick={() => { setActiveSection("teacher-leave"); onNavigateSection?.("teacher-leave"); }}
           />
           <ApprovalTile
             title="Student Leave"
@@ -1628,7 +1631,7 @@ export default function ApprovalCenter({ schoolId }: Props) {
             glow="rgba(99,102,241,0.18)"
             badge={forwardedStudentLeaves.length}
             badgeColor="linear-gradient(135deg,#818cf8,#6366f1)"
-            onClick={() => setActiveSection("student-leave")}
+            onClick={() => { setActiveSection("student-leave"); onNavigateSection?.("student-leave"); }}
           />
           <ApprovalTile
             title="Gallery Hub"
@@ -1638,7 +1641,7 @@ export default function ApprovalCenter({ schoolId }: Props) {
             glow="rgba(168,85,247,0.18)"
             badge={galleryPendingCount}
             badgeColor="linear-gradient(135deg,#a855f7,#ec4899)"
-            onClick={() => setActiveSection("gallery-hub")}
+            onClick={() => { setActiveSection("gallery-hub"); onNavigateSection?.("gallery-hub"); }}
           />
           <ApprovalTile
             title="E-Book Library"
@@ -1648,7 +1651,7 @@ export default function ApprovalCenter({ schoolId }: Props) {
             glow="rgba(245,158,11,0.18)"
             badge={pendingEbooks.length}
             badgeColor="linear-gradient(135deg,#f59e0b,#f97316)"
-            onClick={() => setActiveSection("ebook")}
+            onClick={() => { setActiveSection("ebook"); onNavigateSection?.("ebook"); }}
           />
         </div>
 
@@ -1668,7 +1671,7 @@ export default function ApprovalCenter({ schoolId }: Props) {
             icon={UserCheck}
             gradient="linear-gradient(135deg,#0ea5e9,#06b6d4)"
             glow="rgba(14,165,233,0.25)"
-            onBack={() => setActiveSection(null)}
+            onBack={() => { setActiveSection(null); onNavigateSection?.(null); }}
             badge={pendingLeaves.length}
           />
           <Section title="Teacher Leave Requests" icon={UserCheck} badge={pendingLeaves.length} variant="teacher">
@@ -1712,7 +1715,7 @@ export default function ApprovalCenter({ schoolId }: Props) {
             icon={Users}
             gradient="linear-gradient(135deg,#818cf8,#6366f1)"
             glow="rgba(99,102,241,0.25)"
-            onBack={() => setActiveSection(null)}
+            onBack={() => { setActiveSection(null); onNavigateSection?.(null); }}
             badge={forwardedStudentLeaves.length}
           />
           <Section title="Student Leave Requests (Forwarded by Teacher)" icon={Users} badge={forwardedStudentLeaves.length} variant="student">
@@ -1766,7 +1769,7 @@ export default function ApprovalCenter({ schoolId }: Props) {
             icon={Image}
             gradient="linear-gradient(135deg,#a855f7,#ec4899)"
             glow="rgba(168,85,247,0.25)"
-            onBack={() => setActiveSection(null)}
+            onBack={() => { setActiveSection(null); onNavigateSection?.(null); }}
             badge={galleryPendingCount}
           />
           <GalleryHub schoolId={schoolId} />
@@ -1781,7 +1784,7 @@ export default function ApprovalCenter({ schoolId }: Props) {
             icon={BookOpen}
             gradient="linear-gradient(135deg,#f59e0b,#f97316)"
             glow="rgba(245,158,11,0.25)"
-            onBack={() => { setActiveSection(null); setEbookTab("catalog"); }}
+            onBack={() => { setActiveSection(null); setEbookTab("catalog"); onNavigateSection?.(null); }}
             badge={pendingEbooks.length}
           />
 

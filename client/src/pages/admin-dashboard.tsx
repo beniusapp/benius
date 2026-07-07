@@ -680,14 +680,26 @@ function SessionSwitcher({
 export default function AdminDashboard() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
-  const [matchedModule, moduleParams] = useRoute("/admin-dashboard/:module");
-  const [matchedSetupSub, setupSubParams] = useRoute("/admin-dashboard/school-setup/:section");
-  const activeModule: ActiveModule = matchedSetupSub
-    ? "school-setup"
+  const [matchedModule, moduleParams]               = useRoute("/admin-dashboard/:module");
+  const [matchedSetupSub,    setupSubParams]         = useRoute("/admin-dashboard/school-setup/:tab");
+  const [matchedTimetableSub, timetableSubParams]   = useRoute("/admin-dashboard/timetable/:tab");
+  const [matchedApprovalSub,  approvalSubParams]    = useRoute("/admin-dashboard/approval-center/:tab");
+  const [matchedComplaintSub, complaintSubParams]   = useRoute("/admin-dashboard/complaint-hub/:tab");
+  const [matchedAnalyticsSub, analyticsSubParams]   = useRoute("/admin-dashboard/analytics/:tab");
+  const [matchedIdCardSub,    idCardSubParams]       = useRoute("/admin-dashboard/id-card-gen/:tab");
+
+  const activeModule: ActiveModule =
+      matchedSetupSub     ? "school-setup"
+    : matchedTimetableSub ? "timetable"
+    : matchedApprovalSub  ? "approval-center"
+    : matchedComplaintSub ? "complaint-hub"
+    : matchedAnalyticsSub ? "analytics"
+    : matchedIdCardSub    ? "id-card-gen"
     : matchedModule && moduleParams?.module
     ? (moduleParams.module as ActiveModule)
     : "grid";
-  const setupSection = matchedSetupSub ? (setupSubParams?.section ?? undefined) : undefined;
+
+  const setupSection = matchedSetupSub ? (setupSubParams?.tab ?? undefined) : undefined;
   const [showProfile, setShowProfile] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
     Foundation: true, Oversight: true, Management: true, Enterprise: true,
@@ -914,16 +926,16 @@ export default function AdminDashboard() {
       case "faculty-mapping":   return <FacultyMapping schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
       case "teacher-registry":  return <TeacherRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} onNavigate={(mod) => goToModule(mod as ActiveModule)} />;
       case "non-teaching-staff":return <NonTeachingStaff schoolId={me.schoolId} />;
-      case "approval-center":   return <ApprovalCenter schoolId={me.schoolId} />;
+      case "approval-center":   return <ApprovalCenter schoolId={me.schoolId} initialSection={approvalSubParams?.tab ?? null} onNavigateSection={(sec) => { if (sec) setLocation(`/admin-dashboard/approval-center/${sec}`); else setLocation("/admin-dashboard/approval-center"); }} />;
       case "audit-logs":        return <AuditLogsModule schoolId={me.schoolId} />;
       case "visitor-log":       return <VisitorLogModule schoolId={me.schoolId} />;
       case "attendance":        return <AttendanceOverview schoolId={me.schoolId} onViewStudent={() => goToModule("student-registry")} />;
-      case "analytics":         return <PerformanceAnalytics schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} examTypes={meta.exam_types} classSections={meta.classSections} classSubjects={meta.classSubjects} classExamTypes={meta.classExamTypes} />;
+      case "analytics":         return <PerformanceAnalytics schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} examTypes={meta.exam_types} classSections={meta.classSections} classSubjects={meta.classSubjects} classExamTypes={meta.classExamTypes} initialTab={analyticsSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/analytics/${t}`)} />;
       case "exam-controller":   return <ExamController schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} examTypes={meta.exam_types} />;
-      case "complaint-hub":     return <ComplaintHub schoolId={me.schoolId} />;
+      case "complaint-hub":     return <ComplaintHub schoolId={me.schoolId} initialTab={complaintSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/complaint-hub/${t}`)} />;
       case "noticeboard":       return <NoticeboardAdmin schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} adminUserId={me.id} />;
-      case "timetable":         return <TimetableMaster schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} />;
-      case "id-card-gen":       return <IdCardGen schoolId={me.schoolId} schoolName={me.schoolName} classes={meta.classes} sections={meta.sections} />;
+      case "timetable":         return <TimetableMaster schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} initialTab={timetableSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/timetable/${t}`)} />;
+      case "id-card-gen":       return <IdCardGen schoolId={me.schoolId} schoolName={me.schoolName} classes={meta.classes} sections={meta.sections} initialTab={idCardSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/id-card-gen/${t}`)} />;
       case "assets":            return <AssetsInventory schoolId={me.schoolId} />;
       case "school-calendar":   return <SchoolCalendar />;
       case "fees-manager":      return <FeesManager schoolId={me.schoolId} />;

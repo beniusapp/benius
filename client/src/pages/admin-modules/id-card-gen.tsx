@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-interface Props { schoolId: number; schoolName: string; classes: string[]; sections: string[] }
+interface Props { schoolId: number; schoolName: string; classes: string[]; sections: string[]; initialTab?: string; onNavigateTab?: (tab: string) => void; }
 
 function IDCard({ student, schoolName, showReissueBanner }: { student: any; schoolName: string; showReissueBanner?: boolean }) {
   return (
@@ -47,9 +47,9 @@ function IDCard({ student, schoolName, showReissueBanner }: { student: any; scho
   );
 }
 
-export default function IdCardGen({ schoolId, schoolName, classes, sections }: Props) {
+export default function IdCardGen({ schoolId, schoolName, classes, sections, initialTab, onNavigateTab }: Props) {
   const { toast } = useToast();
-  const [tab, setTab] = useState<"search" | "reissue">("search");
+  const [tab, setTab] = useState<"search" | "reissue">((initialTab as "search" | "reissue") ?? "search");
   const [cls, setCls] = useState("");
   const [section, setSection] = useState("");
   const [q, setQ] = useState("");
@@ -95,13 +95,13 @@ export default function IdCardGen({ schoolId, schoolName, classes, sections }: P
       {/* Tabs */}
       <div className="flex gap-2">
         <button
-          onClick={() => { setTab("search"); setSearched(false); }}
+          onClick={() => { setTab("search"); setSearched(false); onNavigateTab?.("search"); }}
           className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${tab === "search" ? "bg-[#D4AF37] text-[#0A1628]" : "bg-[#1A2942] text-white/60 hover:text-white border border-white/10"}`}
           data-testid="tab-idcard-search">
           <Search className="w-3.5 h-3.5 inline mr-1.5" />Search
         </button>
         <button
-          onClick={() => setTab("reissue")}
+          onClick={() => { setTab("reissue"); onNavigateTab?.("reissue"); }}
           className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors relative ${tab === "reissue" ? "bg-orange-500 text-white" : "bg-[#1A2942] text-orange-400 hover:text-orange-300 border border-orange-400/30"}`}
           data-testid="tab-idcard-reissue">
           <RefreshCw className="w-3.5 h-3.5 inline mr-1.5" />Pending Re-issuance

@@ -24,6 +24,8 @@ interface Props {
   classSections: Record<string, string[]>;
   classSubjects: Record<string, string[]>;
   classExamTypes: Record<string, string[]>;
+  initialTab?: string;
+  onNavigateTab?: (tab: string) => void;
 }
 
 // ── Shared types ───────────────────────────────────────────────────────────────
@@ -626,8 +628,12 @@ function PromoCellReadOnly({ entry }: { entry: PromoEntry | undefined }) {
 // ── Main Admin Performance Analytics ──────────────────────────────────────────
 export default function PerformanceAnalytics({
   classes, sections: allSections, classSections, classSubjects, classExamTypes, examTypes: globalExamTypes,
+  initialTab, onNavigateTab,
 }: Props) {
-  const [tab, setTab] = useState<"view" | "results">("view");
+  const [tab, setTab] = useState<"view" | "results">((initialTab as "view" | "results") ?? "view");
+  useEffect(() => {
+    if (initialTab === "view" || initialTab === "results") setTab(initialTab);
+  }, [initialTab]);
 
   // ── View Marks state ─────────────────────────────────────────────
   const [viewClass, setViewClass] = useState("");
@@ -845,7 +851,7 @@ export default function PerformanceAnalytics({
           { key: "view" as const, label: "View Marks", Icon: BarChart3 },
           { key: "results" as const, label: "Results", Icon: Award },
         ]).map(({ key, label, Icon }) => (
-          <button key={key} onClick={() => setTab(key)}
+          <button key={key} onClick={() => { setTab(key); onNavigateTab?.(key); }}
             className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === key ? "bg-yellow-500 text-[#020617] shadow-sm" : "text-slate-400 hover:text-white hover:bg-[#1e293b]"}`}
             data-testid={`tab-${key}`}>
             <Icon className="w-4 h-4" /> {label}

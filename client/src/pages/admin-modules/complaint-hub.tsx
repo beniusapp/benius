@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { fmtDateTimeAmPm } from "@/lib/dateUtils";
 import {
@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-interface Props { schoolId: number }
+interface Props { schoolId: number; initialTab?: string; onNavigateTab?: (tab: string) => void; }
 
 interface AdminComplaint {
   id: number;
@@ -405,8 +405,12 @@ const TAB_CONFIG: {
 ];
 
 // ── Main Component ─────────────────────────────────────────────────────────────
-export default function ComplaintHub({ schoolId }: Props) {
-  const [activeTab, setActiveTab] = useState<TabKey>("private");
+export default function ComplaintHub({ schoolId, initialTab, onNavigateTab }: Props) {
+  const [activeTab, setActiveTab] = useState<TabKey>((initialTab as TabKey) ?? "private");
+  useEffect(() => {
+    if (initialTab && (["private", "grievances", "escalated"] as string[]).includes(initialTab))
+      setActiveTab(initialTab as TabKey);
+  }, [initialTab]);
   const [tabFilters, setTabFilters] = useState<Record<TabKey, StatusFilter>>({
     private: "all", grievances: "all", escalated: "all",
   });
@@ -478,7 +482,7 @@ export default function ComplaintHub({ schoolId }: Props) {
           const isActive = activeTab === tab.key;
           const Icon = tab.icon;
           return (
-            <button key={tab.key} role="tab" aria-selected={isActive} onClick={() => setActiveTab(tab.key)} data-testid={`tab-${tab.key}`}
+            <button key={tab.key} role="tab" aria-selected={isActive} onClick={() => { setActiveTab(tab.key); onNavigateTab?.(tab.key); }} data-testid={`tab-${tab.key}`}
               className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-xs font-bold transition-all duration-200 ${
                 isActive ? `bg-[#1A2942] ${tab.accentText} border-b-2 ${tab.activeBorder} shadow-sm` : "text-white/40 hover:text-white/70 hover:bg-white/5"
               }`}>
