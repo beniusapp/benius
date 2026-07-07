@@ -830,63 +830,73 @@ export default function PerformanceAnalytics({
 
       {/* ── View Marks tab ── */}
       {tab === "view" && (
-        <div className="rounded-2xl shadow-lg border border-[#1e293b] bg-white dark:bg-gray-950" data-testid="card-view-marks">
+        <div className="rounded-2xl border border-[#1e293b] bg-[#0f172a]" data-testid="card-view-marks">
           <div className="p-5 sm:p-6 space-y-5">
             <div className="flex items-center gap-2 mb-1">
-              <BarChart3 className="w-5 h-5 text-indigo-500" />
-              <h2 className="text-lg font-bold tracking-tight">View Marks — 360° History</h2>
+              <BarChart3 className="w-5 h-5 text-yellow-400" />
+              <h2 className="text-white font-bold text-base tracking-tight">View Marks — 360° History</h2>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Class *</label>
-                <Select value={viewClass} onValueChange={handleViewClassChange}>
-                  <SelectTrigger className="rounded-xl" data-testid="select-view-class"><SelectValue placeholder="Select class" /></SelectTrigger>
-                  <SelectContent>{classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                </Select>
+                <label className="text-xs font-medium text-slate-400">Class *</label>
+                <select value={viewClass} onChange={e => handleViewClassChange(e.target.value)}
+                  className="w-full h-9 rounded-xl border border-[#1e293b] bg-[#020617] text-sm px-3 text-white appearance-none cursor-pointer focus:outline-none focus:border-yellow-500/50"
+                  style={{ colorScheme: "dark" }} data-testid="select-view-class">
+                  <option value="">Select class</option>
+                  {classes.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Section *</label>
-                <Select value={viewSection} onValueChange={setViewSection} disabled={!viewClass}>
-                  <SelectTrigger className="rounded-xl" data-testid="select-view-section"><SelectValue placeholder="Select section" /></SelectTrigger>
-                  <SelectContent>{viewSectionOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
-                </Select>
+                <label className="text-xs font-medium text-slate-400">Section *</label>
+                <select value={viewSection} onChange={e => setViewSection(e.target.value)} disabled={!viewClass}
+                  className="w-full h-9 rounded-xl border border-[#1e293b] bg-[#020617] text-sm px-3 text-white appearance-none cursor-pointer focus:outline-none focus:border-yellow-500/50 disabled:opacity-50"
+                  style={{ colorScheme: "dark" }} data-testid="select-view-section">
+                  <option value="">Select section</option>
+                  {viewSectionOpts.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Subject *</label>
+                <label className="text-xs font-medium text-slate-400">Subject *</label>
                 {viewSubjectOpts.length > 0 ? (
-                  <Select value={viewSubject} onValueChange={setViewSubject} disabled={!viewClass}>
-                    <SelectTrigger className="rounded-xl" data-testid="select-view-subject"><SelectValue placeholder="Select subject" /></SelectTrigger>
-                    <SelectContent>{viewSubjectOpts.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
-                  </Select>
+                  <select value={viewSubject} onChange={e => setViewSubject(e.target.value)} disabled={!viewClass}
+                    className="w-full h-9 rounded-xl border border-[#1e293b] bg-[#020617] text-sm px-3 text-white appearance-none cursor-pointer focus:outline-none focus:border-yellow-500/50 disabled:opacity-50"
+                    style={{ colorScheme: "dark" }} data-testid="select-view-subject">
+                    <option value="">Select subject</option>
+                    {viewSubjectOpts.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
                 ) : (
-                  <Input value={viewSubject} onChange={e => setViewSubject(e.target.value)} placeholder="Enter subject *" className="rounded-xl" data-testid="input-view-subject" />
+                  <input value={viewSubject} onChange={e => setViewSubject(e.target.value)} placeholder="Enter subject"
+                    className="w-full h-9 rounded-xl border border-[#1e293b] bg-[#020617] text-sm px-3 text-white placeholder:text-slate-600 focus:outline-none focus:border-yellow-500/50"
+                    style={{ colorScheme: "dark" }} data-testid="input-view-subject" />
                 )}
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Exam Type *</label>
-                <Select value={viewExamType} onValueChange={setViewExamType} disabled={!viewClass}>
-                  <SelectTrigger className="rounded-xl" data-testid="select-view-exam-type"><SelectValue placeholder="Select exam type" /></SelectTrigger>
-                  <SelectContent>{viewExamTypeOpts.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
-                </Select>
+                <label className="text-xs font-medium text-slate-400">Exam Type *</label>
+                <select value={viewExamType} onChange={e => setViewExamType(e.target.value)} disabled={!viewClass || !viewSection}
+                  className="w-full h-9 rounded-xl border border-[#1e293b] bg-[#020617] text-sm px-3 text-white appearance-none cursor-pointer focus:outline-none focus:border-yellow-500/50 disabled:opacity-50"
+                  style={{ colorScheme: "dark" }} data-testid="select-view-exam-type">
+                  <option value="">{!viewClass ? "Pick class first" : "Select exam type"}</option>
+                  {viewExamTypeOpts.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
               </div>
             </div>
 
             {viewLoading ? (
-              <div className="space-y-3">{[1, 2, 3].map(i => <div key={i} className="rounded-xl border bg-card p-4 animate-pulse"><div className="h-4 bg-muted rounded w-3/4 mb-2" /><div className="h-4 bg-muted rounded w-1/2" /></div>)}</div>
+              <div className="space-y-3">{[1, 2, 3].map(i => <div key={i} className="rounded-xl border border-[#1e293b] bg-[#1e293b]/30 p-4 animate-pulse"><div className="h-4 bg-[#1e293b] rounded w-3/4 mb-2" /><div className="h-4 bg-[#1e293b] rounded w-1/2" /></div>)}</div>
             ) : viewExamType && viewScores.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground text-sm" data-testid="text-no-scores">
+              <div className="text-center py-8 text-slate-500 text-sm" data-testid="text-no-scores">
                 <BarChart3 className="w-10 h-10 mx-auto mb-2 opacity-20" />
                 No scores recorded yet for this selection.
               </div>
             ) : viewExamType && viewScores.length > 0 ? (
               <>
-                <div className="overflow-x-auto rounded-xl border">
+                <div className="overflow-x-auto rounded-xl border border-[#1e293b]">
                   <table className="w-full text-sm" data-testid="table-view-scores">
                     <thead>
-                      <tr className="bg-muted/50 border-b">
+                      <tr className="bg-[#1e293b]/60 border-b border-[#1e293b]">
                         {["#", "DSID", "Name", "Marks", "%", "Grade", ""].map((h, i) => (
-                          <th key={i} className={`py-2.5 px-3 text-xs font-semibold text-muted-foreground ${i > 2 ? "text-center" : "text-left"} ${i === 0 ? "w-10" : i === 6 ? "w-10" : ""}`}>{h}</th>
+                          <th key={i} className={`py-2.5 px-3 text-xs font-semibold text-slate-400 ${i > 2 ? "text-center" : "text-left"} ${i === 0 ? "w-10" : i === 6 ? "w-10" : ""}`}>{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -897,19 +907,19 @@ export default function PerformanceAnalytics({
                         const g = computeGrade(pct, []);
                         return (
                           <Fragment key={s.studentId}>
-                            <tr className="border-b last:border-0 hover:bg-muted/20 cursor-pointer" onClick={() => setExpandedStudent(isExpanded ? null : s.studentId)} data-testid={`row-view-${s.studentId}`}>
-                              <td className="py-2 px-3 text-xs text-muted-foreground">{idx + 1}</td>
-                              <td className="py-2 px-3 font-mono text-xs">{s.dsid}</td>
-                              <td className="py-2 px-3 text-sm font-medium text-indigo-600 hover:underline">{s.studentName}</td>
-                              <td className="py-2 px-3 text-center text-xs">{s.isAbsent ? <span className="font-bold text-gray-500">AB</span> : `${s.marks}/${s.totalMarks}`}</td>
-                              <td className="py-2 px-3 text-center text-xs font-medium">{s.isAbsent ? "—" : `${pct}%`}</td>
-                              <td className="py-2 px-3 text-center">
-                                {s.isAbsent ? <span className="text-xs text-muted-foreground">—</span> : <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${g.color} ${g.bg}`}>{g.label}</span>}
+                            <tr className="border-b border-[#1e293b]/60 last:border-0 hover:bg-[#1e293b]/40 cursor-pointer transition-colors" onClick={() => setExpandedStudent(isExpanded ? null : s.studentId)} data-testid={`row-view-${s.studentId}`}>
+                              <td className="py-2.5 px-3 text-xs text-slate-500">{idx + 1}</td>
+                              <td className="py-2.5 px-3 font-mono text-xs text-slate-400">{s.dsid}</td>
+                              <td className="py-2.5 px-3 text-sm font-semibold text-yellow-300 hover:text-yellow-200">{s.studentName}</td>
+                              <td className="py-2.5 px-3 text-center text-xs text-slate-300">{s.isAbsent ? <span className="font-bold text-slate-500">AB</span> : `${s.marks}/${s.totalMarks}`}</td>
+                              <td className="py-2.5 px-3 text-center text-xs font-semibold text-white">{s.isAbsent ? "—" : `${pct}%`}</td>
+                              <td className="py-2.5 px-3 text-center">
+                                {s.isAbsent ? <span className="text-xs text-slate-600">—</span> : <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${g.color} ${g.bg}`}>{g.label}</span>}
                               </td>
-                              <td className="py-2 px-3 text-center">{isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}</td>
+                              <td className="py-2.5 px-3 text-center text-slate-500">{isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}</td>
                             </tr>
                             {isExpanded && (
-                              <tr><td colSpan={7} className="p-0">
+                              <tr><td colSpan={7} className="p-0 bg-[#020617]">
                                 <AdminStudentTimeline studentId={s.studentId} studentName={s.studentName} subject={viewSubject} examTypes={viewExamTypeOpts} viewClass={viewClass} viewSection={viewSection} />
                               </td></tr>
                             )}
@@ -919,9 +929,11 @@ export default function PerformanceAnalytics({
                     </tbody>
                   </table>
                 </div>
-                <Button variant="outline" className="rounded-xl gap-2" onClick={generateProgressReport} data-testid="button-download-report">
+                <button onClick={generateProgressReport}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[#1e293b] bg-[#1e293b]/50 text-slate-300 hover:text-white hover:bg-[#1e293b] text-sm font-medium transition-colors"
+                  data-testid="button-download-report">
                   <Download className="w-4 h-4" /> Download Progress Report
-                </Button>
+                </button>
               </>
             ) : null}
           </div>
