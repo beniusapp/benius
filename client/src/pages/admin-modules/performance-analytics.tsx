@@ -402,20 +402,9 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
     ? classSubjects[filterClass]
     : subjects;
 
-  // Exam types: fetch distinct exam types from actual DB data for the selected class/section
-  const { data: availExamTypes = [] } = useQuery<string[]>({
-    queryKey: ["/api/admin/analytics/exam-types", filterClass, effectiveSection],
-    queryFn: async () => {
-      if (!filterClass) return [];
-      const p = new URLSearchParams({ class: filterClass });
-      if (effectiveSection) p.set("section", effectiveSection);
-      const r = await fetch(`/api/admin/analytics/exam-types?${p}`, { credentials: "include" });
-      return r.ok ? r.json() : [];
-    },
-    enabled: !!filterClass,
-    staleTime: 0,
-  });
-  const examTypeList_filter = availExamTypes.length > 0 ? availExamTypes : [];
+  // Exam types: use the global school-setup list (sorted), which is the source of truth.
+  // classExamTypes is intentionally not used — class-specific overrides can cause stale/extra entries.
+  const examTypeList_filter = [...examTypes].sort();
 
   const params = new URLSearchParams();
   params.set("class", filterClass);
