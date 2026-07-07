@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { UserPlus, Pencil, Trash2, Loader2, X, Save, Search, Eye, EyeOff, ShieldCheck } from "lucide-react";
+import { UserPlus, Pencil, Trash2, Loader2, X, Save, Search, Eye, EyeOff, ShieldCheck, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -11,32 +11,12 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ADMIN_TILE_DEFS, MODULE_SUB_MODULES, expandModulesWithSubs } from "@/lib/admin-tiles";
 import type { NonTeachingStaff } from "@shared/schema";
 
 interface Props { schoolId: number }
 
 const DESIGNATIONS = ["Principal", "Vice Principal", "Admin", "Accountant", "Librarian", "Lab Assistant", "Peon", "Security", "Driver", "Clerk", "Counselor", "Other"];
-
-const ADMIN_MODULES = [
-  { id: "school-setup",       label: "School Setup",          emoji: "⚙️" },
-  { id: "timetable",          label: "Timetable Master",      emoji: "📅" },
-  { id: "school-calendar",    label: "School Calendar",       emoji: "🗓️" },
-  { id: "attendance",         label: "Attendance Overview",   emoji: "📊" },
-  { id: "exam-controller",    label: "Exam Controller",       emoji: "🏆" },
-  { id: "complaint-hub",      label: "Complaint Hub",         emoji: "🛡️" },
-  { id: "noticeboard",        label: "Noticeboard",           emoji: "🔔" },
-  { id: "approval-center",    label: "Approval Center",       emoji: "✅" },
-  { id: "teacher-registry",   label: "Teacher Registry",      emoji: "📖" },
-  { id: "non-teaching-staff", label: "Support Staff",         emoji: "👷" },
-  { id: "faculty-mapping",    label: "Faculty Mapping",       emoji: "🗂️" },
-  { id: "student-registry",   label: "Student Registry",      emoji: "🎓" },
-  { id: "fees-manager",       label: "Fees & Payments",       emoji: "💰" },
-  { id: "analytics",          label: "Performance Analytics", emoji: "📈" },
-  { id: "audit-logs",         label: "Audit Logs",            emoji: "🔐" },
-  { id: "visitor-log",        label: "Visitor Log",           emoji: "🚪" },
-  { id: "id-card-gen",        label: "ID Card Gen",           emoji: "💳" },
-  { id: "assets",             label: "Assets & Inventory",    emoji: "📦" },
-];
 
 const addSchema = z.object({
   fullName: z.string().min(2, "Name must be at least 2 characters"),
@@ -71,51 +51,186 @@ function SkeletonRow() {
   );
 }
 
-function ModuleCheckboxGrid({ selected, onChange }: { selected: string[]; onChange: (mods: string[]) => void }) {
-  const toggle = (id: string) =>
-    onChange(selected.includes(id) ? selected.filter(m => m !== id) : [...selected, id]);
-  const allSelected = selected.length === ADMIN_MODULES.length;
-  const toggleAll = () => onChange(allSelected ? [] : ADMIN_MODULES.map(m => m.id));
+function ModulePermissionTree({
+  selected,
+  onChange,
+}: {
+  selected: string[];
+  onChange: (v: string[]) => void;
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const isModuleChecked = (moduleId: string) => selected.includes(moduleId);
+  const isSubChecked = (moduleId: string, subId: string) => selected.includes(`${moduleId}:${subId}`);
+
+  const getSubKeys = (moduleId: string) =>
+    (MODULE_SUB_MODULES[moduleId] ?? []).map(s => `${moduleId}:${s.id}`);
+
+  const getSubState = (moduleId: string): "all" | "partial" | "none" => {
+    const subs = MODULE_SUB_MODULES[moduleId] ?? [];
+    if (!subs.length) return "all";
+    const checked = subs.filter(s => selected.includes(`${moduleId}:${s.id}`)).length;
+    if (checked === 0) return "none";
+    if (checked === subs.length) return "all";
+    return "partial";
+  };
+
+  const toggleModule = (moduleId: string) => {
+    const currently = isModuleChecked(moduleId);
+    const subKeys = getSubKeys(moduleId);
+    if (currently) {
+      onChange(selected.filter(s => s !== moduleId && !subKeys.includes(s)));
+      setExpanded(prev => { const n = new Set(prev); n.delete(moduleId); return n; });
+    } else {
+      const without = selected.filter(s => !subKeys.includes(s) && s !== moduleId);
+      onChange([...without, moduleId, ...subKeys]);
+      setExpanded(prev => new Set([...prev, moduleId]));
+    }
+  };
+
+  const toggleSub = (moduleId: string, subId: string) => {
+    const key = `${moduleId}:${subId}`;
+    const currently = selected.includes(key);
+    if (currently) {
+      const next = selected.filter(s => s !== key);
+      const anySubLeft = (MODULE_SUB_MODULES[moduleId] ?? [])
+        .map(s => `${moduleId}:${s.id}`)
+        .some(k => k !== key && next.includes(k));
+      onChange(anySubLeft ? next : next.filter(s => s !== moduleId));
+    } else {
+      const adds = [key];
+      if (!selected.includes(moduleId)) adds.push(moduleId);
+      onChange([...selected, ...adds]);
+    }
+  };
+
+  const toggleExpand = (moduleId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpanded(prev => {
+      const n = new Set(prev);
+      n.has(moduleId) ? n.delete(moduleId) : n.add(moduleId);
+      return n;
+    });
+  };
+
+  const allChecked = ADMIN_TILE_DEFS.every(m => isModuleChecked(m.id));
+
+  const handleSelectAll = () => {
+    if (allChecked) {
+      onChange([]);
+      setExpanded(new Set());
+    } else {
+      const all: string[] = [];
+      ADMIN_TILE_DEFS.forEach(m => {
+        all.push(m.id);
+        (MODULE_SUB_MODULES[m.id] ?? []).forEach(s => all.push(`${m.id}:${s.id}`));
+      });
+      onChange(all);
+      setExpanded(new Set(ADMIN_TILE_DEFS.map(m => m.id)));
+    }
+  };
+
+  const modulesGranted = ADMIN_TILE_DEFS.filter(m => selected.includes(m.id)).length;
+  const subGranted = selected.filter(s => s.includes(":")).length;
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-white/70 text-xs font-medium">Module Access Control</span>
-        <button type="button" onClick={toggleAll} className="text-[10px] text-[#D4AF37] hover:underline">
-          {allSelected ? "Deselect All" : "Select All"}
+      <div className="flex items-center justify-between">
+        <span className="text-white/70 text-xs font-semibold">Module Access Control</span>
+        <button type="button" onClick={handleSelectAll} className="text-[10px] text-[#D4AF37] hover:underline">
+          {allChecked ? "Deselect All" : "Select All"}
         </button>
       </div>
-      <div className="grid grid-cols-2 gap-1.5 max-h-44 overflow-y-auto pr-1 [scrollbar-width:thin] [scrollbar-color:#D4AF37_#0A1628]">
-        {ADMIN_MODULES.map(mod => {
-          const checked = selected.includes(mod.id);
+
+      <div className="space-y-1 max-h-56 overflow-y-auto pr-0.5 [scrollbar-width:thin] [scrollbar-color:#D4AF37_#0A1628]">
+        {ADMIN_TILE_DEFS.map(mod => {
+          const checked = isModuleChecked(mod.id);
+          const subs = MODULE_SUB_MODULES[mod.id] ?? [];
+          const isExp = expanded.has(mod.id);
+          const subState = getSubState(mod.id);
+
           return (
-            <label
-              key={mod.id}
-              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 cursor-pointer transition-all select-none"
-              style={{
-                background: checked ? "rgba(212,175,55,0.10)" : "rgba(255,255,255,0.03)",
-                border: `1px solid ${checked ? "rgba(212,175,55,0.35)" : "rgba(255,255,255,0.08)"}`,
-              }}
-              data-testid={`checkbox-module-${mod.id}`}
-            >
-              <input type="checkbox" className="sr-only" checked={checked} onChange={() => toggle(mod.id)} />
+            <div key={mod.id}>
+              {/* Module row */}
               <div
-                className="w-3.5 h-3.5 rounded flex items-center justify-center flex-shrink-0 transition-all"
+                className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 cursor-pointer transition-all select-none"
                 style={{
-                  background: checked ? "#D4AF37" : "transparent",
-                  border: `1.5px solid ${checked ? "#D4AF37" : "rgba(255,255,255,0.25)"}`,
+                  background: checked ? "rgba(212,175,55,0.10)" : "rgba(255,255,255,0.03)",
+                  border: `1px solid ${checked ? "rgba(212,175,55,0.35)" : "rgba(255,255,255,0.08)"}`,
                 }}
+                onClick={() => toggleModule(mod.id)}
+                data-testid={`checkbox-module-${mod.id}`}
               >
-                {checked && <span className="text-[9px] text-[#0A1628] font-black leading-none">✓</span>}
+                {/* Checkbox indicator */}
+                <div
+                  className="w-3.5 h-3.5 rounded flex items-center justify-center flex-shrink-0 transition-all"
+                  style={{
+                    background: checked && subState !== "partial" ? "#D4AF37" : "transparent",
+                    border: `1.5px solid ${checked ? "#D4AF37" : "rgba(255,255,255,0.25)"}`,
+                  }}
+                >
+                  {checked && subState === "all"     && <span className="text-[8px] text-[#0A1628] font-black leading-none">✓</span>}
+                  {checked && subState === "partial"  && <span className="text-[9px] text-[#D4AF37] font-black leading-none">–</span>}
+                </div>
+                <span className="flex-1 text-[11px] text-white/85 leading-tight">{mod.emoji} {mod.label}</span>
+                {subs.length > 0 && (
+                  <button
+                    type="button"
+                    className="text-white/30 hover:text-white/70 transition-colors p-0.5 -mr-0.5"
+                    onClick={e => toggleExpand(mod.id, e)}
+                    data-testid={`expand-module-${mod.id}`}
+                    title={isExp ? "Collapse sub-modules" : "Expand sub-modules"}
+                  >
+                    <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${isExp ? "rotate-180" : ""}`} />
+                  </button>
+                )}
               </div>
-              <span className="text-[10px] text-white/80 leading-tight truncate">{mod.emoji} {mod.label}</span>
-            </label>
+
+              {/* Sub-modules */}
+              {isExp && subs.length > 0 && (
+                <div className="ml-5 mt-0.5 space-y-0.5 border-l-2 border-[#D4AF37]/20 pl-2">
+                  {subs.map(sub => {
+                    const subChecked = isSubChecked(mod.id, sub.id);
+                    return (
+                      <label
+                        key={sub.id}
+                        className="flex items-center gap-2 rounded-md px-2 py-1 cursor-pointer transition-all select-none"
+                        style={{
+                          background: subChecked ? "rgba(59,130,246,0.08)" : "rgba(255,255,255,0.02)",
+                          border: `1px solid ${subChecked ? "rgba(59,130,246,0.30)" : "rgba(255,255,255,0.05)"}`,
+                        }}
+                        data-testid={`checkbox-submodule-${mod.id}-${sub.id}`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={subChecked}
+                          onChange={() => toggleSub(mod.id, sub.id)}
+                        />
+                        <div
+                          className="w-3 h-3 rounded flex items-center justify-center flex-shrink-0 transition-all"
+                          style={{
+                            background: subChecked ? "#3b82f6" : "transparent",
+                            border: `1.5px solid ${subChecked ? "#3b82f6" : "rgba(255,255,255,0.20)"}`,
+                          }}
+                        >
+                          {subChecked && <span className="text-[7px] text-white font-black leading-none">✓</span>}
+                        </div>
+                        <span className="text-[10px] text-white/65 leading-tight">{sub.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           );
         })}
       </div>
-      {selected.length > 0 && (
-        <p className="text-[10px] text-[#D4AF37]/70 pt-0.5">
-          {selected.length} of {ADMIN_MODULES.length} modules granted
+
+      {modulesGranted > 0 && (
+        <p className="text-[10px] text-[#D4AF37]/70">
+          {modulesGranted} module{modulesGranted !== 1 ? "s" : ""}
+          {subGranted > 0 && ` · ${subGranted} sub-module${subGranted !== 1 ? "s" : ""}`} granted
         </p>
       )}
     </div>
@@ -201,7 +316,7 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
       return r.json();
     },
     onSuccess: () => {
-      toast({ title: "Permissions Updated", description: `${permTarget?.fullName}'s module access saved.` });
+      toast({ title: "Permissions Updated", description: `${permTarget?.fullName}'s access has been saved.` });
       setPermTarget(null);
       queryClient.invalidateQueries({ queryKey: ["/api/admin/non-teaching-staff"] });
     },
@@ -221,7 +336,7 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
   });
 
   const openPerms = (s: NonTeachingStaff) => {
-    setPermsSelected(s.allowedModules ?? []);
+    setPermsSelected(expandModulesWithSubs(s.allowedModules ?? []));
     setPermTarget(s);
   };
 
@@ -239,6 +354,9 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
 
   const isOtherAdd = addForm.watch("designation") === "Other";
   const isOtherEdit = editForm.watch("designation") === "Other";
+
+  const moduleCount = (s: NonTeachingStaff) =>
+    (s.allowedModules ?? []).filter(m => !m.includes(":")).length;
 
   return (
     <div className="space-y-4">
@@ -292,7 +410,7 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
                 )} />
                 <FormField control={addForm.control} name="phone" render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="text-white/70 text-xs">Phone <span className="text-white/30">(optional)</span></FormLabel>
+                    <FormLabel className="text-white/70 text-xs">Phone</FormLabel>
                     <FormControl><Input {...field} className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-nts-add-phone" /></FormControl>
                     <FormMessage />
                   </FormItem>
@@ -355,9 +473,9 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
                 </FormItem>
               )} />
 
-              {/* Access Control */}
+              {/* Module + Sub-module Access */}
               <div className="rounded-lg border border-white/10 bg-[#0A1628] p-3">
-                <ModuleCheckboxGrid
+                <ModulePermissionTree
                   selected={addForm.watch("allowedModules") ?? []}
                   onChange={mods => addForm.setValue("allowedModules", mods)}
                 />
@@ -410,53 +528,62 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
                       {searchQ ? `No staff match "${searchQ}"` : "No support staff registered yet"}
                     </td></tr>
                   )
-                  : filtered.map(s => (
-                    <tr key={s.id} className="border-b border-white/5 hover:bg-white/5 transition-colors" data-testid={`row-nts-${s.id}`}>
-                      <td className="py-3 px-4 text-white font-medium">{s.fullName}</td>
-                      <td className="py-3 px-4 text-white/70 text-xs">{s.email || "—"}</td>
-                      <td className="py-3 px-4 text-white/70 text-xs">{s.phone || "—"}</td>
-                      <td className="py-3 px-4">
-                        <span className="px-2 py-0.5 rounded-full bg-green-500/10 text-green-400 text-xs border border-green-500/20">
-                          {s.designation}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4">
-                        {(s.allowedModules?.length ?? 0) > 0 ? (
-                          <span
-                            className="px-2 py-0.5 rounded-full text-xs border"
-                            style={{ background: "rgba(212,175,55,0.10)", color: "#D4AF37", borderColor: "rgba(212,175,55,0.25)" }}
-                            title={s.allowedModules!.map(id => ADMIN_MODULES.find(m => m.id === id)?.label ?? id).join(", ")}
-                          >
-                            {s.allowedModules!.length} module{s.allowedModules!.length !== 1 ? "s" : ""}
+                  : filtered.map(s => {
+                    const mCount = moduleCount(s);
+                    const subCount = (s.allowedModules ?? []).filter(m => m.includes(":")).length;
+                    return (
+                      <tr key={s.id} className="border-b border-white/5 hover:bg-white/5 transition-colors" data-testid={`row-nts-${s.id}`}>
+                        <td className="py-3 px-4 text-white font-medium">{s.fullName}</td>
+                        <td className="py-3 px-4 text-white/70 text-xs">{s.email || "—"}</td>
+                        <td className="py-3 px-4 text-white/70 text-xs">{s.phone || "—"}</td>
+                        <td className="py-3 px-4">
+                          <span className="px-2 py-0.5 rounded-full bg-green-500/10 text-green-400 text-xs border border-green-500/20">
+                            {s.designation}
                           </span>
-                        ) : (
-                          <span className="text-white/25 text-xs">None</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex items-center gap-1">
-                          <Button variant="ghost" size="icon"
-                            className="text-[#D4AF37] hover:text-yellow-300 hover:bg-yellow-400/10 h-8 w-8"
-                            onClick={() => openEdit(s)} disabled={isArchiveMode}
-                            data-testid={`button-edit-nts-${s.id}`} title="Edit profile">
-                            <Pencil className="w-3.5 h-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon"
-                            className="text-blue-400 hover:text-blue-300 hover:bg-blue-400/10 h-8 w-8"
-                            onClick={() => openPerms(s)} disabled={isArchiveMode}
-                            data-testid={`button-perms-nts-${s.id}`} title="Edit permissions">
-                            <ShieldCheck className="w-3.5 h-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon"
-                            className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-8 w-8"
-                            onClick={() => setDeleteTarget(s)} disabled={isArchiveMode}
-                            data-testid={`button-delete-nts-${s.id}`} title="Remove">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                        </td>
+                        <td className="py-3 px-4">
+                          {mCount > 0 ? (
+                            <div className="flex flex-col gap-0.5">
+                              <span
+                                className="px-2 py-0.5 rounded-full text-xs border inline-flex w-fit"
+                                style={{ background: "rgba(212,175,55,0.10)", color: "#D4AF37", borderColor: "rgba(212,175,55,0.25)" }}
+                                title={(s.allowedModules ?? []).filter(m => !m.includes(":")).map(id => ADMIN_TILE_DEFS.find(t => t.id === id)?.label ?? id).join(", ")}
+                              >
+                                {mCount} module{mCount !== 1 ? "s" : ""}
+                              </span>
+                              {subCount > 0 && (
+                                <span className="text-[10px] text-blue-400/70">{subCount} sub-action{subCount !== 1 ? "s" : ""}</span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-white/25 text-xs">None</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-1">
+                            <Button variant="ghost" size="icon"
+                              className="text-[#D4AF37] hover:text-yellow-300 hover:bg-yellow-400/10 h-8 w-8"
+                              onClick={() => openEdit(s)} disabled={isArchiveMode}
+                              data-testid={`button-edit-nts-${s.id}`} title="Edit profile">
+                              <Pencil className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="icon"
+                              className="text-blue-400 hover:text-blue-300 hover:bg-blue-400/10 h-8 w-8"
+                              onClick={() => openPerms(s)} disabled={isArchiveMode}
+                              data-testid={`button-perms-nts-${s.id}`} title="Edit permissions">
+                              <ShieldCheck className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="icon"
+                              className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-8 w-8"
+                              onClick={() => setDeleteTarget(s)} disabled={isArchiveMode}
+                              data-testid={`button-delete-nts-${s.id}`} title="Remove">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
               }
             </tbody>
           </table>
@@ -530,8 +657,9 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
                       )} />
                     )}
                   </div>
-                  <p className="text-white/35 text-[10px] pt-1">
-                    💡 To update module permissions, close this and use the <ShieldCheck className="inline w-3 h-3 text-blue-400" /> button.
+                  <p className="text-white/30 text-[10px] pt-0.5 flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-blue-400" />
+                    Use the blue permissions button to update module access.
                   </p>
                   <div className="flex gap-2 pt-1">
                     <Button type="submit" disabled={isArchiveMode || editMutation.isPending}
@@ -573,12 +701,11 @@ export default function NonTeachingStaffModule({ schoolId }: Props) {
               </button>
             </div>
             <div className="p-5 space-y-4">
-              <p className="text-white/50 text-xs leading-relaxed">
-                Select which Admin Dashboard modules this staff member can access when they log in via the admin portal.
-                Any unchecked module will be completely hidden from their view.
+              <p className="text-white/45 text-xs leading-relaxed">
+                Check a module to grant access. Expand with <ChevronDown className="inline w-3 h-3" /> to set sub-module permissions. Unchecking a module removes all its sub-permissions.
               </p>
               <div className="rounded-lg border border-white/10 bg-[#0A1628] p-3">
-                <ModuleCheckboxGrid selected={permsSelected} onChange={setPermsSelected} />
+                <ModulePermissionTree selected={permsSelected} onChange={setPermsSelected} />
               </div>
               <div className="flex gap-2">
                 <Button
