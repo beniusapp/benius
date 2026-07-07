@@ -3769,13 +3769,7 @@ export class DatabaseStorage {
   }> {
     const tiers = await this.getGradingTiers(schoolId);
     const allRules = await this.getGradingRules(schoolId);
-    const matchedTier = tiers.find(t => {
-      const allClasses = ["LKG","UKG","1","2","3","4","5","6","7","8","9","10","11","12"];
-      const minIdx = allClasses.indexOf(t.minClass);
-      const maxIdx = allClasses.indexOf(t.maxClass);
-      const curIdx = allClasses.indexOf(studentClass);
-      return curIdx !== -1 && curIdx >= minIdx && curIdx <= maxIdx;
-    });
+    const matchedTier = tiers.find(t => Array.isArray(t.classes) && t.classes.includes(studentClass));
     if (!matchedTier) return { passPercentage: 35, gradeLabel: null, gradePoint: null, remarks: null };
     const tierRules = allRules.filter(r => r.tierId === matchedTier.id)
       .sort((a, b) => b.minPercent - a.minPercent);
