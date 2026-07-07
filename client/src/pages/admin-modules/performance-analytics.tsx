@@ -11,7 +11,16 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
-interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[]; examTypes: string[] }
+interface Props {
+  schoolId: number;
+  classes: string[];
+  sections: string[];
+  subjects: string[];
+  examTypes: string[];
+  classSections: Record<string, string[]>;
+  classSubjects: Record<string, string[]>;
+  classExamTypes: Record<string, string[]>;
+}
 
 type AStudent = {
   studentId: number; dsid: string; name: string;
@@ -316,7 +325,7 @@ const HeatmapTable = memo(function HeatmapTable({ students, subjectList, sliceFi
   );
 });
 
-export default function PerformanceAnalytics({ schoolId, classes, sections: configSections, subjects, examTypes }: Props) {
+export default function PerformanceAnalytics({ schoolId, classes, sections: configSections, subjects, examTypes, classSections, classSubjects, classExamTypes }: Props) {
   const queryClient = useQueryClient();
   const [filterClass, setFilterClass] = useState("");
   const [filterSection, setFilterSection] = useState("");
@@ -381,17 +390,20 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
     setLastUpdated(new Date());
   }, [queryClient, filterClass, effectiveSection, effectiveExam, effectiveSubject, searchDebounced]);
 
-  const { data: availSections = [] } = useQuery<string[]>({
-    queryKey: ["/api/admin/analytics/sections", filterClass],
-    queryFn: async () => {
-      if (!filterClass) return [];
-      const r = await fetch(`/api/admin/analytics/sections?class=${encodeURIComponent(filterClass)}`, { credentials: "include" });
-      return r.ok ? r.json() : [];
-    },
-    enabled: !!filterClass,
-  });
+  // Sections: prefer class-specific config (classSections[class]), fall back to all configured sections
+  const sectionList = (filterClass && classSections[filterClass]?.length > 0)
+    ? classSections[filterClass]
+    : configSections;
 
-  const sectionList = availSections.length > 0 ? availSections : configSections;
+  // Subjects: prefer class-specific config (classSubjects[class]), fall back to all subjects
+  const subjectList_filter = (filterClass && classSubjects[filterClass]?.length > 0)
+    ? classSubjects[filterClass]
+    : subjects;
+
+  // Exam types: prefer class-specific config (classExamTypes[class]), fall back to all exam types
+  const examTypeList_filter = (filterClass && classExamTypes[filterClass]?.length > 0)
+    ? classExamTypes[filterClass]
+    : examTypes;
 
   const params = new URLSearchParams();
   params.set("class", filterClass);
@@ -407,7 +419,7 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
       return r.ok ? r.json() : { students: [], subjectAverages: [], subjectList: [], passThreshold: 35 };
     },
     enabled: !!filterClass,
-    staleTime: 30000,
+    staleTime: 0,
   });
 
   const { data: journeyData, isLoading: loadingJourney } = useQuery<JourneyData>({
@@ -517,7 +529,7 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Subjects</SelectItem>
-            {(subjects.length > 0 ? subjects : ["Math","Science","English"]).map(s => (
+            {subjectList_filter.map(s => (
               <SelectItem key={s} value={s}>{s}</SelectItem>
             ))}
           </SelectContent>
@@ -529,7 +541,7 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Exams</SelectItem>
-            {(examTypes.length > 0 ? examTypes : ["UT1","UT2","Mid-term","Annual"]).map(e => (
+            {examTypeList_filter.map(e => (
               <SelectItem key={e} value={e}>{e}</SelectItem>
             ))}
           </SelectContent>
@@ -631,8 +643,8 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
           {students.length === 0 ? (
             <div className="rounded-xl border border-white/10 bg-[#1A2942] py-14 text-center">
               <BookOpen className="w-9 h-9 mx-auto mb-3 text-white/20" />
-              <p className="text-white/40 text-sm">No published exam data found for this filter combination.</p>
-              <p className="text-white/25 text-xs mt-1">Try a different class, section, or exam type.</p>
+              <p className="text-white/40 text-sm">No exam data found for this filter combination.</p>
+              <p className="text-white/25 text-xs mt-1">Try a different class, section, or exam type. Scores may not have been entered yet.</p>
             </div>
           ) : (
             <>

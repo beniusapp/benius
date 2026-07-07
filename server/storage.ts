@@ -3713,7 +3713,6 @@ export class DatabaseStorage {
       .where(and(
         eq(examScores.studentId, studentId),
         eq(examScores.schoolId, schoolId),
-        eq(examScores.published, true),
       ))
       .orderBy(examScores.id);
 

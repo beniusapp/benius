@@ -724,12 +724,17 @@ export default function AdminDashboard() {
     if (!isLoading && (isError || !me)) setLocation("/login");
   }, [isLoading, isError, me, setLocation]);
 
-  const { data: schoolMeta } = useQuery<{ classes: string[]; sections: string[]; subjects: string[]; exam_types: string[] }>({
+  const { data: schoolMeta } = useQuery<{
+    classes: string[]; sections: string[]; subjects: string[]; exam_types: string[];
+    class_sections: Record<string, string[]>;
+    class_subjects: Record<string, string[]>;
+    class_exam_types: Record<string, string[]>;
+  }>({
     queryKey: ["/api/school-metadata", me?.schoolId],
     queryFn: async () => {
-      if (!me?.schoolId) return { classes: [], sections: [], subjects: [], exam_types: [] };
+      if (!me?.schoolId) return { classes: [], sections: [], subjects: [], exam_types: [], class_sections: {}, class_subjects: {}, class_exam_types: {} };
       const r = await fetch(`/api/school-metadata/${me.schoolId}`, { credentials: "include" });
-      return r.ok ? r.json() : { classes: [], sections: [], subjects: [], exam_types: [] };
+      return r.ok ? r.json() : { classes: [], sections: [], subjects: [], exam_types: [], class_sections: {}, class_subjects: {}, class_exam_types: {} };
     },
     enabled: !!me?.schoolId,
   });
@@ -860,10 +865,13 @@ export default function AdminDashboard() {
   }
 
   const meta = {
-    classes:    schoolMeta?.classes    ?? [],
-    sections:   schoolMeta?.sections   ?? [],
-    subjects:   schoolMeta?.subjects   ?? [],
-    exam_types: schoolMeta?.exam_types ?? [],
+    classes:        schoolMeta?.classes         ?? [],
+    sections:       schoolMeta?.sections        ?? [],
+    subjects:       schoolMeta?.subjects        ?? [],
+    exam_types:     schoolMeta?.exam_types      ?? [],
+    classSections:  schoolMeta?.class_sections  ?? {},
+    classSubjects:  schoolMeta?.class_subjects  ?? {},
+    classExamTypes: schoolMeta?.class_exam_types ?? {},
   };
 
   const renderModule = () => {
@@ -877,7 +885,7 @@ export default function AdminDashboard() {
       case "audit-logs":        return <AuditLogsModule schoolId={me.schoolId} />;
       case "visitor-log":       return <VisitorLogModule schoolId={me.schoolId} />;
       case "attendance":        return <AttendanceOverview schoolId={me.schoolId} onViewStudent={() => goToModule("student-registry")} />;
-      case "analytics":         return <PerformanceAnalytics schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} examTypes={meta.exam_types} />;
+      case "analytics":         return <PerformanceAnalytics schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} examTypes={meta.exam_types} classSections={meta.classSections} classSubjects={meta.classSubjects} classExamTypes={meta.classExamTypes} />;
       case "exam-controller":   return <ExamController schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} examTypes={meta.exam_types} />;
       case "complaint-hub":     return <ComplaintHub schoolId={me.schoolId} />;
       case "noticeboard":       return <NoticeboardAdmin schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} adminUserId={me.id} />;
