@@ -13,7 +13,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import type { Teacher } from "@shared/schema";
 import { useSessionView } from "@/contexts/session-view-context";
 
-interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[]; onNavigate?: (module: string) => void }
+interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[]; onNavigate?: (module: string) => void; allowedSubs?: string[]; }
 type TeacherWithEmail = Teacher & { email: string; mappings: { className: string; section: string }[] };
 
 const PAGE_SIZE = 20;
@@ -46,7 +46,7 @@ function SkeletonRow() {
   );
 }
 
-export default function TeacherRegistry({ schoolId, classes, sections, onNavigate }: Props) {
+export default function TeacherRegistry({ schoolId, classes, sections, onNavigate, allowedSubs }: Props) {
   const { toast } = useToast();
   const { isArchiveMode } = useSessionView();
   const [q, setQ] = useState("");
@@ -185,6 +185,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
             {data?.total ?? "..."} teacher{(data?.total ?? 0) !== 1 ? "s" : ""} · Page {page} of {totalPages}
           </p>
         </div>
+        {(!allowedSubs || allowedSubs.includes("add")) && (
         <Button
           size="sm"
           className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
@@ -194,6 +195,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
         >
           <UserPlus className="w-4 h-4 mr-1" /> Add Teacher
         </Button>
+        )}
       </div>
 
       {/* Add Teacher Form */}
@@ -349,14 +351,18 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
                       <td className="py-3 px-4 text-white/50 text-xs">{t.designation || "—"}</td>
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-1">
+                          {(!allowedSubs || allowedSubs.includes("edit")) && (
                           <Button variant="ghost" size="icon" className="text-[#D4AF37] hover:text-yellow-300 hover:bg-yellow-400/10 h-8 w-8"
                             onClick={() => setEditTarget(t)} disabled={isArchiveMode} data-testid={`button-edit-teacher-reg-${t.id}`} title="Edit">
                             <Pencil className="w-3.5 h-3.5" />
                           </Button>
+                          )}
+                          {(!allowedSubs || allowedSubs.includes("deactivate")) && (
                           <Button variant="ghost" size="icon" className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-8 w-8"
                             onClick={() => setDeleteTarget(t)} disabled={isArchiveMode} data-testid={`button-delete-teacher-reg-${t.id}`} title="Remove">
                             <Trash2 className="w-3.5 h-3.5" />
                           </Button>
+                          )}
                         </div>
                       </td>
                     </tr>

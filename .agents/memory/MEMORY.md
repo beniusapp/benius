@@ -2,3 +2,4 @@
 - [Drizzle Push Interactive Prompt](drizzle-push-workaround.md) — `npx drizzle-kit push` hangs on interactive table-creation prompt; use direct `node -e` SQL via pg Pool as a workaround.
 - [Complaint Hub Enhancements](complaint-hub-enhancements.md) — bulk-delete, retention policy, per-tab status filters, soft-delete fields (deletedAt/deletedBy/resolvedAt), audit logs, and daily auto-cleanup all implemented.
 - [Session View Context pattern](session-view-context.md) — SessionViewContext in contexts/; Provider wraps AdminDashboard's return JSX (not a split outer/inner component); SessionSwitcher is a prop-driven sub-component defined above AdminDashboard in the same file.
+- [Support Staff Auth & Sub-Module Enforcement](support-staff-auth.md) — login bug fix (userRole was "admin", now "support_staff"); allowedSubs pattern for UI filtering; backend route auth pattern for staff vs admin.

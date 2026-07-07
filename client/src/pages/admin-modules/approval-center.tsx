@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 
-interface Props { schoolId: number; initialSection?: string | null; onNavigateSection?: (sec: string | null) => void; }
+interface Props { schoolId: number; initialSection?: string | null; onNavigateSection?: (sec: string | null) => void; allowedSubs?: string[]; }
 
 // ── Section colours keyed by variant ──────────────────────────────────────────
 const VARIANTS = {
@@ -1231,7 +1231,7 @@ function SectionHeader({
 // ── Main component ─────────────────────────────────────────────────────────────
 const EBOOK_CATEGORIES = ["Fiction", "Non-Fiction", "Science", "Mathematics", "History", "Literature", "Technology", "Arts", "Reference", "Other"];
 
-export default function ApprovalCenter({ schoolId, initialSection, onNavigateSection }: Props) {
+export default function ApprovalCenter({ schoolId, initialSection, onNavigateSection, allowedSubs }: Props) {
   const { toast } = useToast();
   const [activeSection, setActiveSection] = useState<ActiveSection>((initialSection as ActiveSection) ?? null);
   useEffect(() => {
@@ -1613,6 +1613,7 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
 
         {/* 4 tiles */}
         <div className="grid grid-cols-2 gap-4">
+          {(!allowedSubs || allowedSubs.includes("teacher-leave")) && (
           <ApprovalTile
             title="Teacher Leave"
             subtitle="Review and approve teacher leave requests. Syncs with leave balance."
@@ -1623,6 +1624,8 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
             badgeColor="linear-gradient(135deg,#0ea5e9,#06b6d4)"
             onClick={() => { setActiveSection("teacher-leave"); onNavigateSection?.("teacher-leave"); }}
           />
+          )}
+          {(!allowedSubs || allowedSubs.includes("student-leave")) && (
           <ApprovalTile
             title="Student Leave"
             subtitle="Admin decisions on student leaves forwarded by teachers."
@@ -1633,6 +1636,8 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
             badgeColor="linear-gradient(135deg,#818cf8,#6366f1)"
             onClick={() => { setActiveSection("student-leave"); onNavigateSection?.("student-leave"); }}
           />
+          )}
+          {(!allowedSubs || allowedSubs.includes("gallery-hub")) && (
           <ApprovalTile
             title="Gallery Hub"
             subtitle="Upload, manage and approve school photos from teachers."
@@ -1643,6 +1648,8 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
             badgeColor="linear-gradient(135deg,#a855f7,#ec4899)"
             onClick={() => { setActiveSection("gallery-hub"); onNavigateSection?.("gallery-hub"); }}
           />
+          )}
+          {(!allowedSubs || allowedSubs.includes("ebook")) && (
           <ApprovalTile
             title="E-Book Library"
             subtitle="Verify and approve e-books submitted by teachers."
@@ -1653,6 +1660,7 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
             badgeColor="linear-gradient(135deg,#f59e0b,#f97316)"
             onClick={() => { setActiveSection("ebook"); onNavigateSection?.("ebook"); }}
           />
+          )}
         </div>
 
         {HistoryModal}

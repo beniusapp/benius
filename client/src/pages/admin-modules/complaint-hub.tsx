@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-interface Props { schoolId: number; initialTab?: string; onNavigateTab?: (tab: string) => void; }
+interface Props { schoolId: number; initialTab?: string; onNavigateTab?: (tab: string) => void; allowedSubs?: string[]; }
 
 interface AdminComplaint {
   id: number;
@@ -405,10 +405,14 @@ const TAB_CONFIG: {
 ];
 
 // ── Main Component ─────────────────────────────────────────────────────────────
-export default function ComplaintHub({ schoolId, initialTab, onNavigateTab }: Props) {
-  const [activeTab, setActiveTab] = useState<TabKey>((initialTab as TabKey) ?? "private");
+export default function ComplaintHub({ schoolId, initialTab, onNavigateTab, allowedSubs }: Props) {
+  const visibleTabs = allowedSubs ? TAB_CONFIG.filter(t => allowedSubs.includes(t.key)) : TAB_CONFIG;
+  const defaultTab = (visibleTabs[0]?.key ?? "private") as TabKey;
+  const [activeTab, setActiveTab] = useState<TabKey>(
+    (initialTab && (!allowedSubs || allowedSubs.includes(initialTab)) ? initialTab : defaultTab) as TabKey
+  );
   useEffect(() => {
-    if (initialTab && (["private", "grievances", "escalated"] as string[]).includes(initialTab))
+    if (initialTab && (["private", "grievances", "escalated"] as string[]).includes(initialTab) && (!allowedSubs || allowedSubs.includes(initialTab)))
       setActiveTab(initialTab as TabKey);
   }, [initialTab]);
   const [tabFilters, setTabFilters] = useState<Record<TabKey, StatusFilter>>({
@@ -468,7 +472,7 @@ export default function ComplaintHub({ schoolId, initialTab, onNavigateTab }: Pr
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {TAB_CONFIG.map(t => activeByKey[t.key] > 0 && (
+          {visibleTabs.map(t => activeByKey[t.key] > 0 && (
             <span key={t.key} className={`text-xs font-bold px-2 py-0.5 rounded-full ${t.badgeBg}`}>
               {t.label.split(" ")[0]}: {activeByKey[t.key]} active
             </span>
@@ -478,7 +482,7 @@ export default function ComplaintHub({ schoolId, initialTab, onNavigateTab }: Pr
 
       {/* Tab Navigation */}
       <div className="flex gap-1 p-1 rounded-xl bg-[#0A1628] border border-white/10" role="tablist" data-testid="complaint-tabs">
-        {TAB_CONFIG.map(tab => {
+        {visibleTabs.map(tab => {
           const isActive = activeTab === tab.key;
           const Icon = tab.icon;
           return (
@@ -508,7 +512,7 @@ export default function ComplaintHub({ schoolId, initialTab, onNavigateTab }: Pr
       </div>
 
       {/* Tab Panels */}
-      {TAB_CONFIG.map(tab => (
+      {visibleTabs.map(tab => (
         <div key={tab.key} className={activeTab === tab.key ? "block" : "hidden"} role="tabpanel" data-testid={`panel-${tab.key}`}>
           <TabPanel
             items={itemsByKey[tab.key]}

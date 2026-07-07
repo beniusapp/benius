@@ -273,7 +273,7 @@ export async function registerRoutes(
         if (!school) return res.status(401).json({ message: "School not found" });
         req.session.staffId = staff.id;
         req.session.userId = -(staff.id);
-        req.session.userRole = "admin";
+        req.session.userRole = "support_staff";
         req.session.schoolId = staff.schoolId;
         req.session.allowedModules = staff.allowedModules;
         req.session.staffName = staff.fullName;

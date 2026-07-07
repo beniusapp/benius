@@ -2847,7 +2847,10 @@ Thank you for your prompt attention to this matter.
   });
 
   app.patch("/api/student-leaves/:id/admin-approve", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const isAdmin = !!(req.session.userId && req.session.userRole === "admin");
+    const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
+      (req.session.allowedModules ?? []).includes("approval-center:student-leave"));
+    if (!isAdmin && !isStaffMod) return res.status(403).json({ message: "Admin access required" });
     const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
     if (!leave || leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
     if (leave.status !== "forwarded_to_admin") return res.status(409).json({ message: "Only leaves forwarded by a teacher can be approved here" });
@@ -3357,8 +3360,10 @@ Thank you for your prompt attention to this matter.
 
   // ===== TEACHER REGISTRY — /api/admin/teachers CRUD (session-scoped) =====
   app.get("/api/admin/teachers", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    const isAdmin = !!(req.session.userId && req.session.userRole === "admin");
+    const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
+      (req.session.allowedModules ?? []).some((m: string) => m === "teacher-registry" || m.startsWith("teacher-registry:")));
+    if (!isAdmin && !isStaffMod) return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId!;
     const q = (req.query.q as string) || "";
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
@@ -3374,8 +3379,10 @@ Thank you for your prompt attention to this matter.
   });
 
   app.post("/api/admin/teachers", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    const isAdmin = !!(req.session.userId && req.session.userRole === "admin");
+    const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
+      (req.session.allowedModules ?? []).includes("teacher-registry:add"));
+    if (!isAdmin && !isStaffMod) return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId!;
     const parsed = createTeacherSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
@@ -3400,8 +3407,10 @@ Thank you for your prompt attention to this matter.
   });
 
   app.patch("/api/admin/teachers/:id", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    const isAdmin = !!(req.session.userId && req.session.userRole === "admin");
+    const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
+      (req.session.allowedModules ?? []).includes("teacher-registry:edit"));
+    if (!isAdmin && !isStaffMod) return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId!;
     const teacherId = parseInt(req.params.id);
     if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
@@ -3431,8 +3440,10 @@ Thank you for your prompt attention to this matter.
   });
 
   app.delete("/api/admin/teachers/:id", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    const isAdmin = !!(req.session.userId && req.session.userRole === "admin");
+    const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
+      (req.session.allowedModules ?? []).includes("teacher-registry:deactivate"));
+    if (!isAdmin && !isStaffMod) return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId!;
     const teacherId = parseInt(req.params.id);
     if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });

@@ -26,6 +26,7 @@ interface Props {
   classExamTypes: Record<string, string[]>;
   initialTab?: string;
   onNavigateTab?: (tab: string) => void;
+  allowedSubs?: string[];
 }
 
 // ── Shared types ───────────────────────────────────────────────────────────────
@@ -628,11 +629,21 @@ function PromoCellReadOnly({ entry }: { entry: PromoEntry | undefined }) {
 // ── Main Admin Performance Analytics ──────────────────────────────────────────
 export default function PerformanceAnalytics({
   classes, sections: allSections, classSections, classSubjects, classExamTypes, examTypes: globalExamTypes,
-  initialTab, onNavigateTab,
+  initialTab, onNavigateTab, allowedSubs,
 }: Props) {
-  const [tab, setTab] = useState<"view" | "results">((initialTab as "view" | "results") ?? "view");
+  const allAnalyticsTabs = [
+    { key: "view" as const, label: "View Marks", Icon: BarChart3 },
+    { key: "results" as const, label: "Results", Icon: Award },
+  ];
+  const visibleAnalyticsTabs = allowedSubs ? allAnalyticsTabs.filter(t => allowedSubs.includes(t.key)) : allAnalyticsTabs;
+  const defaultAnalyticsTab = (visibleAnalyticsTabs[0]?.key ?? "view") as "view" | "results";
+  const [tab, setTab] = useState<"view" | "results">(
+    (initialTab === "view" || initialTab === "results") && (!allowedSubs || allowedSubs.includes(initialTab))
+      ? initialTab : defaultAnalyticsTab
+  );
   useEffect(() => {
-    if (initialTab === "view" || initialTab === "results") setTab(initialTab);
+    if ((initialTab === "view" || initialTab === "results") && (!allowedSubs || allowedSubs.includes(initialTab)))
+      setTab(initialTab);
   }, [initialTab]);
 
   // ── View Marks state ─────────────────────────────────────────────
@@ -847,10 +858,7 @@ export default function PerformanceAnalytics({
     <div className="space-y-6">
       {/* ── Tab bar — identical styling to teacher examination module ── */}
       <div className="flex items-center gap-1.5 p-1 bg-[#020617] border border-[#1e293b] rounded-2xl" data-testid="tabs-analytics">
-        {([
-          { key: "view" as const, label: "View Marks", Icon: BarChart3 },
-          { key: "results" as const, label: "Results", Icon: Award },
-        ]).map(({ key, label, Icon }) => (
+        {visibleAnalyticsTabs.map(({ key, label, Icon }) => (
           <button key={key} onClick={() => { setTab(key); onNavigateTab?.(key); }}
             className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === key ? "bg-yellow-500 text-[#020617] shadow-sm" : "text-slate-400 hover:text-white hover:bg-[#1e293b]"}`}
             data-testid={`tab-${key}`}>
