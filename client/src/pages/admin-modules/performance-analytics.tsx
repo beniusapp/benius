@@ -305,7 +305,7 @@ const HeatmapTable = memo(function HeatmapTable({ students, subjectList, sliceFi
               })}
               <td className={`px-3 py-2.5 text-center font-bold ${pctColor(s.percentage, s.tierPassThreshold)}`}>
                 <span>{s.percentage.toFixed(1)}%</span>
-                {s.percentage >= 80 && (
+                {s.percentage >= 90 && (
                   <span className="ml-1 inline-block px-1 py-0.5 text-[9px] rounded bg-emerald-500/20 text-emerald-400 font-bold leading-none">HP</span>
                 )}
               </td>
