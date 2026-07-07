@@ -3593,7 +3593,19 @@ export class DatabaseStorage {
         eq(examScores.schoolId, schoolId),
         eq(examScores.class, cls),
       ));
-    return rows.map(r => r.section).filter(Boolean) as string[];
+    return rows.map(r => r.section).filter(Boolean).sort() as string[];
+  }
+
+  async getDistinctExamTypesByClass(schoolId: number, cls: string, section?: string): Promise<string[]> {
+    const conditions: SQL<unknown>[] = [
+      eq(examScores.schoolId, schoolId),
+      eq(examScores.class, cls),
+    ];
+    if (section) conditions.push(eq(examScores.section, section));
+    const rows = await db.selectDistinct({ examType: examScores.examType })
+      .from(examScores)
+      .where(and(...conditions));
+    return rows.map(r => r.examType).filter(Boolean).sort() as string[];
   }
 
   async getAnalyticsData(

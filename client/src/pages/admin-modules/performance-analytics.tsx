@@ -362,6 +362,8 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
   const handleClassChange = useCallback((cls: string) => {
     setFilterClass(cls);
     setFilterSection("");
+    setFilterExam("");
+    setFilterSubject("");
     setSliceFilter(null);
     setResetKey(k => k + 1);
   }, []);
@@ -400,10 +402,20 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
     ? classSubjects[filterClass]
     : subjects;
 
-  // Exam types: prefer class-specific config (classExamTypes[class]), fall back to all exam types
-  const examTypeList_filter = (filterClass && classExamTypes[filterClass]?.length > 0)
-    ? classExamTypes[filterClass]
-    : examTypes;
+  // Exam types: fetch distinct exam types from actual DB data for the selected class/section
+  const { data: availExamTypes = [] } = useQuery<string[]>({
+    queryKey: ["/api/admin/analytics/exam-types", filterClass, effectiveSection],
+    queryFn: async () => {
+      if (!filterClass) return [];
+      const p = new URLSearchParams({ class: filterClass });
+      if (effectiveSection) p.set("section", effectiveSection);
+      const r = await fetch(`/api/admin/analytics/exam-types?${p}`, { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!filterClass,
+    staleTime: 0,
+  });
+  const examTypeList_filter = availExamTypes.length > 0 ? availExamTypes : [];
 
   const params = new URLSearchParams();
   params.set("class", filterClass);
@@ -513,7 +525,7 @@ export default function PerformanceAnalytics({ schoolId, classes, sections: conf
           </SelectContent>
         </Select>
 
-        <Select value={filterSection} onValueChange={v => { setFilterSection(v); setSliceFilter(null); }} disabled={!filterClass}>
+        <Select value={filterSection} onValueChange={v => { setFilterSection(v); setFilterExam(""); setSliceFilter(null); }} disabled={!filterClass}>
           <SelectTrigger className="w-28 bg-[#0A1628] border-white/20 text-white h-9 disabled:opacity-40" data-testid="select-analytics-section">
             <SelectValue placeholder="Section" />
           </SelectTrigger>

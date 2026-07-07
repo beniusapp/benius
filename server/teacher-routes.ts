@@ -3167,6 +3167,20 @@ Thank you for your prompt attention to this matter.
     }
   });
 
+  app.get("/api/admin/analytics/exam-types", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const { class: cls, section } = req.query as Record<string, string>;
+    if (!cls) return res.status(400).json({ message: "class is required" });
+    const schoolId = req.session.schoolId!;
+    try {
+      const examTypes = await storage.getDistinctExamTypesByClass(schoolId, cls, section || undefined);
+      res.json(examTypes);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to fetch exam types" });
+    }
+  });
+
   app.get("/api/admin/analytics/performance", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
