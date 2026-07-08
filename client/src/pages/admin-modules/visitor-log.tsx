@@ -120,7 +120,8 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
 
   const checkinMutation = useMutation({
     mutationFn: async () => {
-      const r = await apiRequest("POST", "/api/visitor-logs", { visitorName: name, purpose, hostName: host, phone: phone || null, email: email || null, visitorIdNumber: idNumber || null, address: address || null });
+      const payload = { visitorName: name, purpose, hostName: host, phone: phone || null, email: email || null, visitorIdNumber: idNumber || null, address: address || null };
+      const r = await apiRequest("POST", "/api/visitor-logs", payload);
       return r.json();
     },
     onSuccess: () => {
