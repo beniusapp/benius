@@ -42,7 +42,13 @@ async function throwIfResNotOk(res: Response) {
       const json = JSON.parse(text);
       if (json.error)        message = json.error;
       else if (json.message) message = json.message;
-    } catch {}
+    } catch {
+      // If the response body looks like HTML (e.g. Replit's "app not running" page),
+      // replace it with a friendly message instead of showing raw markup.
+      if (text.trimStart().startsWith("<!")) {
+        message = "Server temporarily unavailable. Please try again in a moment.";
+      }
+    }
     throw new Error(message);
   }
 }
