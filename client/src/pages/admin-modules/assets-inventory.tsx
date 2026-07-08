@@ -328,12 +328,17 @@ export default function AssetsInventory({ schoolId: _schoolId, allowedSubs }: Pr
             </div>
             <div>
               <label className="block text-xs text-white/60 mb-1 font-medium">Category *</label>
-              <Select value={addCategory} onValueChange={setAddCategory}>
-                <SelectTrigger className="bg-[#0A1628] border-white/20 text-white" data-testid="select-asset-category">
-                  <SelectValue placeholder="Select category" />
-                </SelectTrigger>
-                <SelectContent>{CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-              </Select>
+              <Input
+                value={addCategory}
+                onChange={e => setAddCategory(e.target.value)}
+                placeholder="e.g. Electronics, Furniture…"
+                className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/20 focus:border-[#10b981]/60"
+                data-testid="input-asset-category"
+                list="category-suggestions"
+              />
+              <datalist id="category-suggestions">
+                {CATEGORIES.map(c => <option key={c} value={c} />)}
+              </datalist>
             </div>
 
             {/* Row 3: Qty | Condition */}
@@ -574,12 +579,12 @@ export default function AssetsInventory({ schoolId: _schoolId, allowedSubs }: Pr
       {/* ── Inventory Table ── */}
       <div className="rounded-xl border border-white/10 bg-[#1A2942] overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm" style={{ minWidth: "860px" }}>
+          <table className="w-full text-sm" style={{ minWidth: "1020px" }}>
             <thead className="bg-[#0F1E35]">
               <tr>
                 {[
                   "Asset Name", "Category", "Code / Serial", "Qty",
-                  "Location", "Condition", "Purchase Date", "",
+                  "Location", "Condition", "Purchase Date", "Warranty Expiry", "",
                 ].map((h, i) => (
                   <th
                     key={i}
@@ -597,7 +602,7 @@ export default function AssetsInventory({ schoolId: _schoolId, allowedSubs }: Pr
               {isLoading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i} className="border-b border-white/5">
-                    {Array.from({ length: 8 }).map((__, j) => (
+                    {Array.from({ length: 9 }).map((__, j) => (
                       <td key={j} className={`py-3 px-4 ${j === 0 ? "sticky left-0 bg-[#1A2942]" : ""}`}>
                         <div className="h-4 rounded bg-white/10 animate-pulse" style={{ width: j === 0 ? "140px" : "60px" }} />
                       </td>
@@ -606,7 +611,7 @@ export default function AssetsInventory({ schoolId: _schoolId, allowedSubs }: Pr
                 ))
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-16 text-center">
+                  <td colSpan={9} className="py-16 text-center">
                     <div className="flex flex-col items-center gap-3 text-white/40">
                       <Package className="w-12 h-12 opacity-30" />
                       <p className="text-base font-semibold text-white/50">No assets found</p>
@@ -680,6 +685,23 @@ export default function AssetsInventory({ schoolId: _schoolId, allowedSubs }: Pr
                       {/* Purchase Date */}
                       <td className="py-3 px-4 text-white/45 text-xs whitespace-nowrap">
                         {a.purchasedDate ? fmtDate(a.purchasedDate) : <span className="text-white/20">—</span>}
+                      </td>
+
+                      {/* Warranty Expiry */}
+                      <td className="py-3 px-4 text-xs whitespace-nowrap">
+                        {a.warrantyExpiry ? (
+                          <span className={
+                            new Date(a.warrantyExpiry) < now
+                              ? "text-rose-400"
+                              : (new Date(a.warrantyExpiry).getTime() - now.getTime()) < 30 * 24 * 60 * 60 * 1000
+                                ? "text-amber-400"
+                                : "text-white/45"
+                          }>
+                            {fmtDate(a.warrantyExpiry)}
+                          </span>
+                        ) : (
+                          <span className="text-white/20">—</span>
+                        )}
                       </td>
 
                       {/* Actions */}
