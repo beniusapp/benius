@@ -2949,7 +2949,11 @@ Thank you for your prompt attention to this matter.
 
   app.patch("/api/visitor-logs/:id/checkout", async (req, res) => {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
-    const v = await storage.checkoutVisitor(parseInt(req.params.id));
+    const id = parseInt(req.params.id);
+    const logs = await storage.getVisitorLogsBySchool(req.session.schoolId!);
+    const entry = logs.find(l => l.id === id);
+    if (!entry) return res.status(403).json({ message: "Not authorized" });
+    const v = await storage.checkoutVisitor(id);
     res.json(v);
   });
 
