@@ -139,7 +139,11 @@ export default function StudentFaculty() {
 
   const { data: faculty = [], isLoading: facultyLoading } = useQuery<FacultyMember[]>({
     queryKey: ["/api/student/faculty"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
     enabled: !!student,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchInterval: 30000,
   });
 
   const departments = useMemo(() => {
