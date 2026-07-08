@@ -3554,12 +3554,15 @@ export class DatabaseStorage {
 
   async createAsset(data: InsertSchoolAsset): Promise<SchoolAsset> {
     const [asset] = await db.insert(schoolAssets).values(data).returning();
-    const code = `AST-${String(asset.id).padStart(4, "0")}`;
-    const [updated] = await db.update(schoolAssets).set({ assetCode: code }).where(eq(schoolAssets.id, asset.id)).returning();
-    return updated;
+    if (!data.assetCode) {
+      const code = `AST-${String(asset.id).padStart(4, "0")}`;
+      const [updated] = await db.update(schoolAssets).set({ assetCode: code }).where(eq(schoolAssets.id, asset.id)).returning();
+      return updated;
+    }
+    return asset;
   }
 
-  async updateAsset(id: number, schoolId: number, data: { quantity?: number; condition?: string; location?: string }): Promise<SchoolAsset | null> {
+  async updateAsset(id: number, schoolId: number, data: { quantity?: number; condition?: string; location?: string; purchasedDate?: string | null; warrantyExpiry?: string | null }): Promise<SchoolAsset | null> {
     const [updated] = await db.update(schoolAssets)
       .set({ ...data, updatedAt: new Date() })
       .where(and(eq(schoolAssets.id, id), eq(schoolAssets.schoolId, schoolId)))

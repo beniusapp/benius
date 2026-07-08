@@ -636,17 +636,19 @@ export type GradingRule = typeof gradingRules.$inferSelect;
 export const schoolAssets = pgTable("school_assets", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
-  assetCode: varchar("asset_code", { length: 20 }).notNull().default(""),
+  assetCode: varchar("asset_code", { length: 50 }).notNull().default(""),
   name: text("name").notNull(),
   category: text("category").notNull(),
   quantity: integer("quantity").notNull().default(0),
   condition: text("condition").notNull().default("Good"),
   location: text("location").notNull().default(""),
+  purchasedDate: date("purchased_date"),
+  warrantyExpiry: date("warranty_expiry"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-export const insertSchoolAssetSchema = createInsertSchema(schoolAssets).omit({ id: true, assetCode: true, createdAt: true, updatedAt: true });
+export const insertSchoolAssetSchema = createInsertSchema(schoolAssets).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertSchoolAsset = z.infer<typeof insertSchoolAssetSchema>;
 export type SchoolAsset = typeof schoolAssets.$inferSelect;
 

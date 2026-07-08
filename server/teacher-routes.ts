@@ -3067,6 +3067,9 @@ Thank you for your prompt attention to this matter.
     name: z.string().min(1),
     category: z.string().min(1),
     quantity: z.number().int().min(0),
+    assetCode: z.string().max(50).optional(),
+    purchasedDate: z.string().optional().nullable(),
+    warrantyExpiry: z.string().optional().nullable(),
     condition: z.enum(["New", "Good", "Fair", "Poor", "Broken"]),
     location: z.string().min(1),
   });
@@ -3075,6 +3078,8 @@ Thank you for your prompt attention to this matter.
     quantity: z.number().int().min(0).optional(),
     condition: z.enum(["New", "Good", "Fair", "Poor", "Broken"]).optional(),
     location: z.string().min(1).optional(),
+    purchasedDate: z.string().optional().nullable(),
+    warrantyExpiry: z.string().optional().nullable(),
   });
 
   app.get("/api/admin/assets", async (req, res) => {
