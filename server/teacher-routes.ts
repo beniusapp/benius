@@ -3099,7 +3099,9 @@ Thank you for your prompt attention to this matter.
       const schoolId = req.session.schoolId!;
       const parsed = createAssetSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+      console.log("[asset-create] parsed:", JSON.stringify(parsed.data));
       const asset = await storage.createAsset({ ...parsed.data, schoolId });
+      console.log("[asset-create] saved:", JSON.stringify({ id: asset.id, purchasedDate: asset.purchasedDate, warrantyExpiry: asset.warrantyExpiry }));
       res.status(201).json(asset);
     } catch (error: any) {
       res.status(500).json({ message: error.message || "Failed to create asset" });
@@ -3119,7 +3121,9 @@ Thank you for your prompt attention to this matter.
       const before = await storage.getAssetById(id, schoolId);
       if (!before) return res.status(404).json({ message: "Asset not found" });
 
+      console.log("[asset-update] id:", id, "data:", JSON.stringify(parsed.data));
       const updated = await storage.updateAsset(id, schoolId, parsed.data);
+      console.log("[asset-update] result:", JSON.stringify({ id: updated?.id, purchasedDate: updated?.purchasedDate, warrantyExpiry: updated?.warrantyExpiry }));
       if (!updated) return res.status(404).json({ message: "Asset not found" });
 
       await storage.logAssetActivity({

@@ -3552,8 +3552,18 @@ export class DatabaseStorage {
       .orderBy(desc(schoolAssets.createdAt));
   }
 
-  async createAsset(data: InsertSchoolAsset): Promise<SchoolAsset> {
-    const [asset] = await db.insert(schoolAssets).values(data).returning();
+  async createAsset(data: InsertSchoolAsset & { purchasedDate?: string | null; warrantyExpiry?: string | null }): Promise<SchoolAsset> {
+    const [asset] = await db.insert(schoolAssets).values({
+      schoolId: data.schoolId,
+      name: data.name,
+      category: data.category,
+      quantity: data.quantity ?? 0,
+      condition: data.condition ?? "Good",
+      location: data.location ?? "",
+      assetCode: data.assetCode ?? "",
+      purchasedDate: data.purchasedDate ?? null,
+      warrantyExpiry: data.warrantyExpiry ?? null,
+    }).returning();
     if (!data.assetCode) {
       const code = `AST-${String(asset.id).padStart(4, "0")}`;
       const [updated] = await db.update(schoolAssets).set({ assetCode: code }).where(eq(schoolAssets.id, asset.id)).returning();
@@ -3563,8 +3573,14 @@ export class DatabaseStorage {
   }
 
   async updateAsset(id: number, schoolId: number, data: { quantity?: number; condition?: string; location?: string; purchasedDate?: string | null; warrantyExpiry?: string | null }): Promise<SchoolAsset | null> {
+    const setFields: Record<string, unknown> = { updatedAt: new Date() };
+    if (data.quantity !== undefined)       setFields.quantity       = data.quantity;
+    if (data.condition !== undefined)      setFields.condition      = data.condition;
+    if (data.location  !== undefined)      setFields.location       = data.location;
+    if ("purchasedDate" in data)           setFields.purchasedDate  = data.purchasedDate ?? null;
+    if ("warrantyExpiry" in data)          setFields.warrantyExpiry = data.warrantyExpiry ?? null;
     const [updated] = await db.update(schoolAssets)
-      .set({ ...data, updatedAt: new Date() })
+      .set(setFields as any)
       .where(and(eq(schoolAssets.id, id), eq(schoolAssets.schoolId, schoolId)))
       .returning();
     return updated || null;
