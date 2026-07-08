@@ -389,6 +389,7 @@ export const visitorLogs = pgTable("visitor_logs", {
   hostName: text("host_name").notNull(),
   phone: text("phone"),
   email: text("email"),
+  visitorIdNumber: text("visitor_id_number"),
   checkIn: timestamp("check_in").notNull().defaultNow(),
   checkOut: timestamp("check_out"),
   badge: text("badge"),

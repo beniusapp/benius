@@ -17,6 +17,7 @@ interface VisitorEntry {
   hostName: string;
   phone: string | null;
   email: string | null;
+  visitorIdNumber: string | null;
   checkIn: string;
   checkOut: string | null;
 }
@@ -74,6 +75,7 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
   const [host, setHost]       = useState("");
   const [phone, setPhone]     = useState("");
   const [email, setEmail]     = useState("");
+  const [idNumber, setIdNumber]   = useState("");
   const [checkingOutId, setCheckingOutId] = useState<number | null>(null);
 
   const { data: visitors = [], isLoading } = useQuery<VisitorEntry[]>({
@@ -90,13 +92,13 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
   const past   = visitors.filter(v => !!v.checkOut);
 
   const resetForm = useCallback(() => {
-    setName(""); setPurpose(""); setHost(""); setPhone(""); setEmail("");
+    setName(""); setPurpose(""); setHost(""); setPhone(""); setEmail(""); setIdNumber("");
     setShowForm(false);
   }, []);
 
   const checkinMutation = useMutation({
     mutationFn: async () => {
-      const r = await apiRequest("POST", "/api/visitor-logs", { visitorName: name, purpose, hostName: host, phone: phone || null, email });
+      const r = await apiRequest("POST", "/api/visitor-logs", { visitorName: name, purpose, hostName: host, phone: phone || null, email: email || null, visitorIdNumber: idNumber || null });
       return r.json();
     },
     onSuccess: () => {
@@ -129,10 +131,11 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
     { label: "Purpose *",      val: purpose,  set: setPurpose, testid: "input-visitor-purpose",  type: "text",  half: false },
     { label: "Host / Meeting *",val: host,    set: setHost,    testid: "input-visitor-host",    type: "text",  half: false },
     { label: "Phone",          val: phone,    set: setPhone,   testid: "input-visitor-phone",   type: "tel",   half: true  },
-    { label: "Email *",        val: email,    set: setEmail,   testid: "input-visitor-email",   type: "email", half: true  },
+    { label: "Email",          val: email,    set: setEmail,   testid: "input-visitor-email",   type: "email", half: true  },
+    { label: "ID / ID Number", val: idNumber, set: setIdNumber,testid: "input-visitor-id",      type: "text",  half: false },
   ];
 
-  const canSubmit = !isArchiveMode && !!name && !!purpose && !!host && !!email && !checkinMutation.isPending;
+  const canSubmit = !isArchiveMode && !!name && !!purpose && !!host && !checkinMutation.isPending;
 
   return (
     <div className="space-y-5">
@@ -246,11 +249,16 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
                       transition: "opacity 0.35s ease, transform 0.35s ease",
                     }}
                   >
-                    {/* Visitor name + pulse */}
+                    {/* Visitor name + pulse + ID */}
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
                         <PulseDot />
-                        <span className="text-white font-semibold text-sm leading-tight">{v.visitorName}</span>
+                        <div>
+                          <span className="text-white font-semibold text-sm leading-tight">{v.visitorName}</span>
+                          {v.visitorIdNumber && (
+                            <p className="text-white/35 text-[10px] mt-0.5">ID: {v.visitorIdNumber}</p>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="py-3 px-4 text-white/60 text-xs">{v.purpose}</td>
@@ -321,7 +329,7 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
               <tbody>
                 {past.slice(0, 50).map(v => (
                   <tr key={v.id} className="border-b border-white/5 hover:bg-white/[0.03] transition-colors" data-testid={`row-visitor-past-${v.id}`}>
-                    {/* Visitor: name + email */}
+                    {/* Visitor: name + email + ID */}
                     <td className="py-3 px-4">
                       <p className="text-white/85 font-medium text-sm leading-tight">{v.visitorName}</p>
                       {v.email && (
@@ -329,6 +337,9 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
                           <Mail className="w-3 h-3 text-white/25 flex-shrink-0" />
                           <p className="text-white/35 text-[10px] truncate max-w-[140px]">{v.email}</p>
                         </div>
+                      )}
+                      {v.visitorIdNumber && (
+                        <p className="text-white/30 text-[10px] mt-0.5">ID: {v.visitorIdNumber}</p>
                       )}
                     </td>
                     <td className="py-3 px-4 text-white/50 text-xs">{v.purpose}</td>
