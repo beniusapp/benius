@@ -473,9 +473,9 @@ export default function AssetsInventory({ schoolId: _schoolId, allowedSubs }: Pr
 
             {showDateDrop && (
               <div className="
-                absolute left-0 top-full mt-1.5 z-50 w-64
+                absolute right-0 top-full mt-1.5 z-50 w-64
                 rounded-xl border border-white/15 bg-[#0F1E35]/95 backdrop-blur-xl
-                shadow-2xl shadow-black/60 overflow-hidden max-h-[80vh] overflow-y-auto
+                shadow-2xl shadow-black/60 overflow-hidden max-h-[70vh] overflow-y-auto
               ">
                 {/* Field toggle */}
                 <div className="px-3 pt-3 pb-2 border-b border-white/10">
