@@ -158,7 +158,8 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
     { label: "Address",        val: address,  set: setAddress, testid: "input-visitor-address",  type: "text",  half: false },
   ];
 
-  const canSubmit = !isArchiveMode && !!name && !!purpose && !!host && !checkinMutation.isPending;
+  const phoneError = phone.length > 0 && !/^\d{10}$/.test(phone);
+  const canSubmit = !isArchiveMode && !!name && !!purpose && !!host && !phoneError && !checkinMutation.isPending;
 
   return (
     <div className="space-y-5">
@@ -210,18 +211,36 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
               </div>
             ))}
             {/* Half-width fields */}
-            {formFields.filter(f => f.half).map(f => (
-              <div key={f.testid} className="col-span-1">
-                <label className="block text-xs text-white/60 mb-1 font-medium">{f.label}</label>
-                <Input
-                  type={f.type}
-                  value={f.val}
-                  onChange={e => f.set(e.target.value)}
-                  className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/20 focus:border-[#D4AF37]/60 focus:ring-[#D4AF37]/20"
-                  data-testid={f.testid}
-                />
-              </div>
-            ))}
+            {formFields.filter(f => f.half).map(f => {
+              const isPhone = f.testid === "input-visitor-phone";
+              return (
+                <div key={f.testid} className="col-span-1">
+                  <label className="block text-xs text-white/60 mb-1 font-medium">{f.label}</label>
+                  <Input
+                    type={f.type}
+                    value={f.val}
+                    maxLength={isPhone ? 10 : undefined}
+                    onChange={e => {
+                      if (isPhone) {
+                        const digits = e.target.value.replace(/\D/g, "");
+                        f.set(digits);
+                      } else {
+                        f.set(e.target.value);
+                      }
+                    }}
+                    className={`bg-[#0A1628] text-white placeholder:text-white/20 focus:ring-[#D4AF37]/20 ${
+                      isPhone && phoneError
+                        ? "border-red-500/70 focus:border-red-500"
+                        : "border-white/20 focus:border-[#D4AF37]/60"
+                    }`}
+                    data-testid={f.testid}
+                  />
+                  {isPhone && phoneError && (
+                    <p className="text-red-400 text-[10px] mt-1 font-medium">Must be exactly 10 digits</p>
+                  )}
+                </div>
+              );
+            })}
             {/* Submit */}
             <div className="col-span-2">
               <Button
