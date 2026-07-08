@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { UserCheck, LogOut, Plus, X, Loader2, Mail, Clock, Users } from "lucide-react";
+import { UserCheck, LogOut, Plus, X, Loader2, Mail, Clock, Users, ChevronDown, Phone, MapPin, CreditCard, User, Target, CalendarClock } from "lucide-react";
 import { fmtDateTime } from "@/lib/dateUtils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -62,6 +62,23 @@ function PulseDot() {
   );
 }
 
+// ── Detail row item (used in expanded accordion panel) ────────────────────────
+function DetailItem({ icon, label, value, spanFull, highlight }: {
+  icon: React.ReactNode; label: string; value: string;
+  spanFull?: boolean; highlight?: boolean;
+}) {
+  return (
+    <div className={spanFull ? "col-span-2 sm:col-span-3" : ""}>
+      <p className="text-white/35 text-[10px] uppercase tracking-wider font-semibold mb-0.5 flex items-center gap-1">
+        <span className="text-white/25">{icon}</span>{label}
+      </p>
+      <p className={`text-sm font-medium leading-snug ${highlight ? "text-[#D4AF37]" : "text-white/75"}`}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
 // ── Main Component ─────────────────────────────────────────────────────────────
 export default function VisitorLog({ schoolId, allowedSubs }: Props) {
   const canCheckin  = allowedSubs === undefined || allowedSubs.includes("checkin");
@@ -79,6 +96,9 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
   const [idNumber, setIdNumber]   = useState("");
   const [address, setAddress]     = useState("");
   const [checkingOutId, setCheckingOutId] = useState<number | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  const toggleExpand = (id: number) =>
+    setExpandedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
 
   const { data: visitors = [], isLoading } = useQuery<VisitorEntry[]>({
     queryKey: ["/api/visitor-logs", schoolId],
@@ -324,49 +344,99 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[620px]">
+            <table className="w-full text-sm min-w-[520px]">
               <thead>
                 <tr className="bg-[#0F1E35]">
-                  {["Visitor", "Purpose", "Host", "Check In", "Check Out", "Duration"].map(h => (
-                    <th key={h} className="text-left py-2.5 px-4 text-white/50 font-semibold text-[11px] uppercase tracking-wider">{h}</th>
+                  {["Visitor", "Purpose", "Check In", "Check Out", "Duration", ""].map((h, i) => (
+                    <th key={i} className={`text-left py-2.5 px-4 text-white/50 font-semibold text-[11px] uppercase tracking-wider ${i === 5 ? "w-8" : ""}`}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {past.slice(0, 50).map(v => (
-                  <tr key={v.id} className="border-b border-white/5 hover:bg-white/[0.03] transition-colors" data-testid={`row-visitor-past-${v.id}`}>
-                    {/* Visitor: name + email + ID */}
-                    <td className="py-3 px-4">
-                      <p className="text-white/85 font-medium text-sm leading-tight">{v.visitorName}</p>
-                      {v.email && (
-                        <div className="flex items-center gap-1 mt-0.5">
-                          <Mail className="w-3 h-3 text-white/25 flex-shrink-0" />
-                          <p className="text-white/35 text-[10px] truncate max-w-[140px]">{v.email}</p>
-                        </div>
+                {past.slice(0, 50).map(v => {
+                  const isOpen = expandedIds.has(v.id);
+                  return (
+                    <>
+                      {/* ── Summary row ── */}
+                      <tr
+                        key={v.id}
+                        data-testid={`row-visitor-past-${v.id}`}
+                        onClick={() => toggleExpand(v.id)}
+                        className="border-b border-white/5 hover:bg-white/[0.03] transition-colors cursor-pointer select-none"
+                      >
+                        <td className="py-3 px-4">
+                          <p className="text-white/85 font-medium text-sm leading-tight">{v.visitorName}</p>
+                        </td>
+                        <td className="py-3 px-4 text-white/50 text-xs">{v.purpose}</td>
+                        <td className="py-3 px-4 text-white/50 text-xs whitespace-nowrap">{fmtDateTime(v.checkIn)}</td>
+                        <td className="py-3 px-4 text-white/50 text-xs whitespace-nowrap">{v.checkOut ? fmtDateTime(v.checkOut) : "—"}</td>
+                        <td className="py-3 px-4">
+                          {v.checkOut ? (
+                            <span className="inline-block px-2 py-0.5 rounded-full bg-[#D4AF37]/10 text-[#D4AF37] text-[10px] font-semibold whitespace-nowrap">
+                              {getDuration(v.checkIn, v.checkOut)}
+                            </span>
+                          ) : (
+                            <span className="text-white/20 text-xs">—</span>
+                          )}
+                        </td>
+                        {/* Chevron */}
+                        <td className="py-3 px-3 text-right">
+                          <ChevronDown
+                            className={`w-4 h-4 text-white/30 transition-transform duration-300 ${isOpen ? "rotate-180 text-[#D4AF37]/70" : ""}`}
+                          />
+                        </td>
+                      </tr>
+
+                      {/* ── Expanded detail panel ── */}
+                      {isOpen && (
+                        <tr key={`${v.id}-detail`} className="bg-[#0F1E35]/60 border-b border-[#D4AF37]/10">
+                          <td colSpan={6} className="px-5 py-4">
+                            <div className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3">
+
+                              <DetailItem icon={<User className="w-3.5 h-3.5" />}   label="Visitor Name"  value={v.visitorName} />
+                              <DetailItem icon={<Target className="w-3.5 h-3.5" />} label="Purpose"       value={v.purpose} />
+                              <DetailItem icon={<User className="w-3.5 h-3.5" />}   label="Host / Meeting" value={v.hostName} />
+
+                              {v.phone && (
+                                <DetailItem icon={<Phone className="w-3.5 h-3.5" />} label="Phone" value={v.phone} />
+                              )}
+                              {v.email && (
+                                <DetailItem icon={<Mail className="w-3.5 h-3.5" />}  label="Email" value={v.email} />
+                              )}
+                              {v.visitorIdNumber && (
+                                <DetailItem icon={<CreditCard className="w-3.5 h-3.5" />} label="ID / ID Number" value={v.visitorIdNumber} />
+                              )}
+                              {v.address && (
+                                <DetailItem icon={<MapPin className="w-3.5 h-3.5" />} label="Address" value={v.address} spanFull />
+                              )}
+
+                              <DetailItem
+                                icon={<CalendarClock className="w-3.5 h-3.5" />}
+                                label="Checked In"
+                                value={fmtDateTime(v.checkIn)}
+                              />
+                              {v.checkOut && (
+                                <DetailItem
+                                  icon={<CalendarClock className="w-3.5 h-3.5" />}
+                                  label="Checked Out"
+                                  value={fmtDateTime(v.checkOut)}
+                                />
+                              )}
+                              {v.checkOut && (
+                                <DetailItem
+                                  icon={<Clock className="w-3.5 h-3.5" />}
+                                  label="Total Duration"
+                                  value={getDuration(v.checkIn, v.checkOut!)}
+                                  highlight
+                                />
+                              )}
+                            </div>
+                          </td>
+                        </tr>
                       )}
-                      {v.visitorIdNumber && (
-                        <p className="text-white/30 text-[10px] mt-0.5">ID: {v.visitorIdNumber}</p>
-                      )}
-                      {v.address && (
-                        <p className="text-white/25 text-[10px] mt-0.5 truncate max-w-[160px]">{v.address}</p>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-white/50 text-xs">{v.purpose}</td>
-                    <td className="py-3 px-4 text-white/50 text-xs">{v.hostName}</td>
-                    <td className="py-3 px-4 text-white/50 text-xs whitespace-nowrap">{fmtDateTime(v.checkIn)}</td>
-                    <td className="py-3 px-4 text-white/50 text-xs whitespace-nowrap">{v.checkOut ? fmtDateTime(v.checkOut) : "—"}</td>
-                    {/* Duration */}
-                    <td className="py-3 px-4">
-                      {v.checkOut ? (
-                        <span className="inline-block px-2 py-0.5 rounded-full bg-[#D4AF37]/10 text-[#D4AF37] text-[10px] font-semibold whitespace-nowrap">
-                          {getDuration(v.checkIn, v.checkOut)}
-                        </span>
-                      ) : (
-                        <span className="text-white/20 text-xs">—</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                    </>
+                  );
+                })}
               </tbody>
             </table>
           </div>
