@@ -2929,9 +2929,9 @@ Thank you for your prompt attention to this matter.
   // ===== VISITOR LOGS =====
   app.post("/api/visitor-logs", async (req, res) => {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
-    const { visitorName, purpose, hostName, phone, email, visitorIdNumber } = req.body;
+    const { visitorName, purpose, hostName, phone, email, visitorIdNumber, address } = req.body;
     if (!visitorName || !purpose || !hostName) return res.status(400).json({ message: "Name, purpose, and host are required" });
-    const v = await storage.createVisitorLog({ schoolId: req.session.schoolId!, visitorName, purpose, hostName, phone: phone || null, email: email || null, visitorIdNumber: visitorIdNumber || null, badge: null });
+    const v = await storage.createVisitorLog({ schoolId: req.session.schoolId!, visitorName, purpose, hostName, phone: phone || null, email: email || null, visitorIdNumber: visitorIdNumber || null, address: address || null, badge: null });
     await storage.createAuditLog({
       schoolId: req.session.schoolId!, actionType: "checkin", entityType: "visitor", entityId: v.id,
       actionBy: req.session.userId!, actionByRole: "admin",

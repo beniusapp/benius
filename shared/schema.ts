@@ -390,6 +390,7 @@ export const visitorLogs = pgTable("visitor_logs", {
   phone: text("phone"),
   email: text("email"),
   visitorIdNumber: text("visitor_id_number"),
+  address: text("address"),
   checkIn: timestamp("check_in").notNull().defaultNow(),
   checkOut: timestamp("check_out"),
   badge: text("badge"),

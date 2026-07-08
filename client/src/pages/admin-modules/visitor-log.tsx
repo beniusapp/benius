@@ -18,6 +18,7 @@ interface VisitorEntry {
   phone: string | null;
   email: string | null;
   visitorIdNumber: string | null;
+  address: string | null;
   checkIn: string;
   checkOut: string | null;
 }
@@ -76,6 +77,7 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
   const [phone, setPhone]     = useState("");
   const [email, setEmail]     = useState("");
   const [idNumber, setIdNumber]   = useState("");
+  const [address, setAddress]     = useState("");
   const [checkingOutId, setCheckingOutId] = useState<number | null>(null);
 
   const { data: visitors = [], isLoading } = useQuery<VisitorEntry[]>({
@@ -92,13 +94,13 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
   const past   = visitors.filter(v => !!v.checkOut);
 
   const resetForm = useCallback(() => {
-    setName(""); setPurpose(""); setHost(""); setPhone(""); setEmail(""); setIdNumber("");
+    setName(""); setPurpose(""); setHost(""); setPhone(""); setEmail(""); setIdNumber(""); setAddress("");
     setShowForm(false);
   }, []);
 
   const checkinMutation = useMutation({
     mutationFn: async () => {
-      const r = await apiRequest("POST", "/api/visitor-logs", { visitorName: name, purpose, hostName: host, phone: phone || null, email: email || null, visitorIdNumber: idNumber || null });
+      const r = await apiRequest("POST", "/api/visitor-logs", { visitorName: name, purpose, hostName: host, phone: phone || null, email: email || null, visitorIdNumber: idNumber || null, address: address || null });
       return r.json();
     },
     onSuccess: () => {
@@ -133,6 +135,7 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
     { label: "Phone",          val: phone,    set: setPhone,   testid: "input-visitor-phone",   type: "tel",   half: true  },
     { label: "Email",          val: email,    set: setEmail,   testid: "input-visitor-email",   type: "email", half: true  },
     { label: "ID / ID Number", val: idNumber, set: setIdNumber,testid: "input-visitor-id",      type: "text",  half: false },
+    { label: "Address",        val: address,  set: setAddress, testid: "input-visitor-address",  type: "text",  half: false },
   ];
 
   const canSubmit = !isArchiveMode && !!name && !!purpose && !!host && !checkinMutation.isPending;
@@ -258,6 +261,9 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
                           {v.visitorIdNumber && (
                             <p className="text-white/35 text-[10px] mt-0.5">ID: {v.visitorIdNumber}</p>
                           )}
+                          {v.address && (
+                            <p className="text-white/30 text-[10px] mt-0.5 truncate max-w-[160px]">{v.address}</p>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -340,6 +346,9 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
                       )}
                       {v.visitorIdNumber && (
                         <p className="text-white/30 text-[10px] mt-0.5">ID: {v.visitorIdNumber}</p>
+                      )}
+                      {v.address && (
+                        <p className="text-white/25 text-[10px] mt-0.5 truncate max-w-[160px]">{v.address}</p>
                       )}
                     </td>
                     <td className="py-3 px-4 text-white/50 text-xs">{v.purpose}</td>
