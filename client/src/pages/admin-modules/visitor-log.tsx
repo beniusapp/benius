@@ -412,44 +412,16 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
                         <tr key={`${v.id}-detail`} className="bg-[#0F1E35]/60 border-b border-[#D4AF37]/10">
                           <td colSpan={6} className="px-5 py-4">
                             <div className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3">
-
-                              <DetailItem icon={<User className="w-3.5 h-3.5" />}   label="Visitor Name"  value={v.visitorName} />
-                              <DetailItem icon={<Target className="w-3.5 h-3.5" />} label="Purpose"       value={v.purpose} />
-                              <DetailItem icon={<User className="w-3.5 h-3.5" />}   label="Host / Meeting" value={v.hostName} />
-
-                              {v.phone && (
-                                <DetailItem icon={<Phone className="w-3.5 h-3.5" />} label="Phone" value={v.phone} />
-                              )}
-                              {v.email && (
-                                <DetailItem icon={<Mail className="w-3.5 h-3.5" />}  label="Email" value={v.email} />
-                              )}
-                              {v.visitorIdNumber && (
-                                <DetailItem icon={<CreditCard className="w-3.5 h-3.5" />} label="ID / ID Number" value={v.visitorIdNumber} />
-                              )}
-                              {v.address && (
-                                <DetailItem icon={<MapPin className="w-3.5 h-3.5" />} label="Address" value={v.address} spanFull />
-                              )}
-
-                              <DetailItem
-                                icon={<CalendarClock className="w-3.5 h-3.5" />}
-                                label="Checked In"
-                                value={fmtDateTime(v.checkIn)}
-                              />
-                              {v.checkOut && (
-                                <DetailItem
-                                  icon={<CalendarClock className="w-3.5 h-3.5" />}
-                                  label="Checked Out"
-                                  value={fmtDateTime(v.checkOut)}
-                                />
-                              )}
-                              {v.checkOut && (
-                                <DetailItem
-                                  icon={<Clock className="w-3.5 h-3.5" />}
-                                  label="Total Duration"
-                                  value={getDuration(v.checkIn, v.checkOut!)}
-                                  highlight
-                                />
-                              )}
+                              <DetailItem icon={<User className="w-3.5 h-3.5" />}       label="Visitor Name"   value={v.visitorName} />
+                              <DetailItem icon={<Target className="w-3.5 h-3.5" />}     label="Purpose"        value={v.purpose} />
+                              <DetailItem icon={<User className="w-3.5 h-3.5" />}       label="Host / Meeting" value={v.hostName} />
+                              <DetailItem icon={<Phone className="w-3.5 h-3.5" />}      label="Phone"          value={v.phone || "—"} />
+                              <DetailItem icon={<Mail className="w-3.5 h-3.5" />}       label="Email"          value={v.email || "—"} />
+                              <DetailItem icon={<CreditCard className="w-3.5 h-3.5" />} label="ID / ID Number" value={v.visitorIdNumber || "—"} />
+                              <DetailItem icon={<MapPin className="w-3.5 h-3.5" />}     label="Address"        value={v.address || "—"} spanFull />
+                              <DetailItem icon={<CalendarClock className="w-3.5 h-3.5" />} label="Checked In"  value={fmtDateTime(v.checkIn)} />
+                              <DetailItem icon={<CalendarClock className="w-3.5 h-3.5" />} label="Checked Out" value={v.checkOut ? fmtDateTime(v.checkOut) : "—"} />
+                              <DetailItem icon={<Clock className="w-3.5 h-3.5" />}      label="Total Duration" value={v.checkOut ? getDuration(v.checkIn, v.checkOut) : "—"} highlight={!!v.checkOut} />
                             </div>
                           </td>
                         </tr>
