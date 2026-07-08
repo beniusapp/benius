@@ -293,9 +293,10 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
 
             {showFilterDrop && (
               <div className="
-                absolute right-0 top-full mt-1.5 z-50 w-52
+                absolute left-0 top-full mt-1.5 z-50 w-52
                 rounded-xl border border-white/15 bg-[#0F1E35]/95 backdrop-blur-xl
                 shadow-2xl shadow-black/60 overflow-hidden
+                max-h-[70vh] overflow-y-auto
               ">
                 {(["all", "day", "week", "month", "custom"] as FilterMode[]).map(mode => (
                   <button
