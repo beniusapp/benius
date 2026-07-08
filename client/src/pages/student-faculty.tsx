@@ -4,7 +4,7 @@ import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, UserCheck, Search, GraduationCap, Loader2,
-  Phone, BookOpen, X, Users, Award, Building2,
+  BookOpen, X, Users, Award, Building2,
 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 
@@ -123,12 +123,6 @@ function FacultyCard({ member, onClick }: { member: FacultyMember; onClick: () =
           ) : (
             <p className="text-xs text-gray-400 mt-0.5">Faculty</p>
           )}
-          {member.phone && (
-            <div className="flex items-center gap-1 mt-1">
-              <Phone className="w-3 h-3 text-gray-400 flex-shrink-0" />
-              <span className="text-[11px] text-gray-500 font-medium">{member.phone}</span>
-            </div>
-          )}
         </div>
       </div>
 
@@ -243,18 +237,6 @@ function DetailModal({ member, onClose }: { member: FacultyMember; onClose: () =
 
             <div className="mt-4 space-y-3">
 
-              {/* Phone */}
-              {member.phone && (
-                <div className="flex items-center gap-3 p-3 rounded-xl bg-gray-50">
-                  <div className="w-9 h-9 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
-                    <Phone className="w-4 h-4 text-green-600" />
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-gray-400 uppercase font-semibold tracking-wide">Contact</p>
-                    <p className="text-sm font-semibold text-gray-800">{member.phone}</p>
-                  </div>
-                </div>
-              )}
 
               {/* Subjects */}
               {subjects.length > 0 && (
