@@ -850,6 +850,11 @@ export const academicSessions = pgTable("academic_sessions", {
   startDate: date("start_date").notNull(),
   endDate: date("end_date").notNull(),
   isActive: boolean("is_active").notNull().default(false),
+  status: varchar("status", { length: 20 }).notNull().default("draft"),
+  newAdmissionsEnabled: boolean("new_admissions_enabled").notNull().default(false),
+  promotionStrategy: varchar("promotion_strategy", { length: 20 }).notNull().default("defer"),
+  copiedFromSessionId: integer("copied_from_session_id"),
+  copiedModules: text("copied_modules"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

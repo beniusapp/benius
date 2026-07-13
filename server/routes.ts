@@ -2453,21 +2453,60 @@ export async function registerRoutes(
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     try {
       const schema = z.object({
-        sessionName: z.string().min(1, "Session name is required"),
-        startDate:   z.string().min(1, "Start date is required"),
-        endDate:     z.string().min(1, "End date is required"),
+        sessionName:           z.string().min(1, "Session name is required"),
+        startDate:             z.string().min(1, "Start date is required"),
+        endDate:               z.string().min(1, "End date is required"),
+        status:                z.enum(["draft", "active"]).default("draft"),
+        setAsActive:           z.boolean().default(false),
+        newAdmissionsEnabled:  z.boolean().default(false),
+        promotionStrategy:     z.enum(["defer", "immediate"]).default("defer"),
+        copiedFromSessionId:   z.number().nullable().optional(),
+        copiedModules:         z.string().nullable().optional(),
       });
       const parsed = schema.safeParse(req.body);
       if (!parsed.success)
         return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
 
+      const { sessionName, startDate, endDate, status, setAsActive,
+              newAdmissionsEnabled, promotionStrategy, copiedFromSessionId, copiedModules } = parsed.data;
+
+      // Validate: start < end
+      if (new Date(startDate) >= new Date(endDate))
+        return res.status(400).json({ message: "Start date must be before end date" });
+
+      // Validate: unique name within school
+      const existing = await storage.getAcademicSessions(schoolId);
+      if (existing.some(s => s.sessionName.trim().toLowerCase() === sessionName.trim().toLowerCase()))
+        return res.status(400).json({ message: `A session named "${sessionName}" already exists` });
+
+      // Validate: no date overlap with existing sessions
+      const overlap = existing.find(s => {
+        const ns = new Date(startDate), ne = new Date(endDate);
+        const es = new Date(s.startDate), ee = new Date(s.endDate);
+        return ns <= ee && ne >= es;
+      });
+      if (overlap)
+        return res.status(400).json({ message: `Dates overlap with existing session "${overlap.sessionName}"` });
+
+      // Create the session
       const session = await storage.createAcademicSession({
         schoolId,
-        sessionName: parsed.data.sessionName.trim(),
-        startDate:   parsed.data.startDate,
-        endDate:     parsed.data.endDate,
-        isActive:    false, // always starts inactive; admin must explicitly activate
+        sessionName:          sessionName.trim(),
+        startDate,
+        endDate,
+        isActive:             setAsActive,
+        status:               setAsActive ? "active" : status,
+        newAdmissionsEnabled,
+        promotionStrategy,
+        copiedFromSessionId:  copiedFromSessionId ?? null,
+        copiedModules:        copiedModules ?? null,
       });
+
+      // If setAsActive, atomically deactivate all other sessions and activate this one
+      if (setAsActive) {
+        await storage.activateAcademicSession(session.id, schoolId);
+      }
+
       res.status(201).json(session);
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to create session" });
