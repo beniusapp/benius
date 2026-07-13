@@ -1,7 +1,14 @@
 import type { Express } from "express";
 import { type Server } from "http";
 import { storage } from "./storage";
-import { insertSchoolSchema, attendanceRecords, studentProfiles, students, schools, teacherSelfAttendance, attendanceCorrectionRequests, facultyMappings, attendancePolicies, insertAttendancePolicySchema } from "@shared/schema";
+import {
+  insertSchoolSchema, attendanceRecords, studentProfiles, students, schools,
+  teacherSelfAttendance, attendanceCorrectionRequests, facultyMappings,
+  attendancePolicies, insertAttendancePolicySchema,
+  schoolMetadata, timetableStructure, timetableEntries, calendarEvents,
+  teacherAllocations, leavePolicies, examPolicyTiers, schoolAssets,
+  auditLogs, academicSessions,
+} from "@shared/schema";
 import { resolvePolicy, isLateCheckIn, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
@@ -2446,13 +2453,95 @@ export async function registerRoutes(
     }
   });
 
+  // ── SESSION COPY ENGINE ────────────────────────────────────────────────────
+  //
+  // Runs INSIDE the create-session DB transaction.
+  // All copy operations are strictly scoped to schoolId + sourceSessionId.
+  // Returns a structured CopyResult that replaces the raw copiedModules string.
+  //
+  // Category A (safe) — school-wide config tables: already shared across every
+  //   session; we verify they exist and report counts. No physical duplication.
+  // Recurring calendar events — physically duplicated with dates advanced by
+  //   the year-delta between source and destination sessions.
+  // Category B (review) — teacherAllocations / facultyMappings / schoolAssets:
+  //   school-wide; verified and reported. No duplication.
+  // Category C — never touched. Listed in cleanSlate for audit clarity.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  type CopyEntry = { module: string; label: string; count: number; note: string };
+  type SessionCopyResult = {
+    sourceSessionId: number;
+    sourceSessionName: string;
+    destSessionId: number;
+    approvedModules: string[];
+    copied: CopyEntry[];
+    sharedSchoolwide: CopyEntry[];
+    requestedButEmpty: CopyEntry[];
+    cleanSlate: string[];
+    totalRecordsCopied: number;
+    timestamp: string;
+  };
+
+  // Maps every sub-module ID (from the UI tree) onto the DB operation to run.
+  // "schoolwide" entries are verified-only; "calendar-recurring" entries are
+  // physically duplicated.
+  const SUBMODULE_OPS: Record<string, {
+    label: string;
+    kind: "schoolwide-meta" | "schoolwide-table" | "calendar-recurring" | "noop";
+    metaKey?: string;
+    note: string;
+  }> = {
+    // ── Cat A: School Setup ─────────────────────────────────────────────────
+    "classes":                    { label: "Classes",                  kind: "schoolwide-meta",  metaKey: "classes",           note: "Shared across all sessions for this school" },
+    "sections":                   { label: "Sections",                 kind: "schoolwide-meta",  metaKey: "sections",          note: "Shared across all sessions for this school" },
+    "subjects":                   { label: "Subjects",                 kind: "schoolwide-meta",  metaKey: "subjects",          note: "Shared across all sessions for this school" },
+    "exam-types":                 { label: "Exam Types",               kind: "schoolwide-meta",  metaKey: "exam_types",        note: "Shared across all sessions for this school" },
+    "class-mapping":              { label: "Class–Section Mapping",    kind: "schoolwide-meta",  metaKey: "class_sections",    note: "Shared across all sessions for this school" },
+    "subject-mapping":            { label: "Class–Subject Mapping",    kind: "schoolwide-meta",  metaKey: "class_subjects",    note: "Shared across all sessions for this school" },
+    "class-exam-type-mapping":    { label: "Class–Exam Type Mapping",  kind: "schoolwide-meta",  metaKey: "class_exam_types",  note: "Shared across all sessions for this school" },
+    "grading-policy":             { label: "Grading Policy",           kind: "schoolwide-meta",  metaKey: "grading_config",    note: "Shared across all sessions for this school" },
+    "promotion-policy":           { label: "Promotion Policy",         kind: "schoolwide-table", note: "exam_policy_tiers — shared across all sessions" },
+    "attendance-policy":          { label: "Attendance Policy",        kind: "schoolwide-table", note: "attendance_policies — shared across all sessions" },
+    "leave-policy":               { label: "Leave Policy",             kind: "schoolwide-table", note: "leave_policies — shared across all sessions" },
+    // ── Cat A: Timetable Master ─────────────────────────────────────────────
+    "bell-structure":             { label: "Bell Structure",           kind: "schoolwide-table", note: "timetable_structure — shared across all sessions" },
+    "period-config":              { label: "Period Configuration",     kind: "schoolwide-table", note: "timetable_structure — shared across all sessions" },
+    "timetable-template":         { label: "Timetable Template",       kind: "schoolwide-table", note: "Draft timetable entries — shared across all sessions" },
+    // ── Cat A: School Calendar ──────────────────────────────────────────────
+    "holiday-templates":          { label: "Holiday Templates",        kind: "calendar-recurring", note: "Recurring holiday events duplicated with dates advanced to destination year" },
+    "recurring-events":           { label: "Recurring Events",         kind: "calendar-recurring", note: "Recurring events duplicated with dates advanced to destination year" },
+    // ── Cat A: ID Card Generator ────────────────────────────────────────────
+    "card-layouts":               { label: "Card Layouts",             kind: "schoolwide-meta",  metaKey: "id_card_config",    note: "Shared across all sessions for this school" },
+    "print-templates":            { label: "Print Templates",          kind: "schoolwide-meta",  metaKey: "id_card_config",    note: "Shared across all sessions for this school" },
+    // ── Cat B: Faculty Mapping ──────────────────────────────────────────────
+    "teacher-class-assignments":  { label: "Teacher–Class Assignments",kind: "schoolwide-table", note: "teacher_allocations + faculty_mappings — shared across all sessions" },
+    // ── Cat B: Fees & Payments ──────────────────────────────────────────────
+    "fee-categories":             { label: "Fee Categories",           kind: "schoolwide-meta",  metaKey: "fee_categories",    note: "Shared across all sessions for this school" },
+    "fee-heads":                  { label: "Fee Heads",                kind: "schoolwide-meta",  metaKey: "fee_heads",         note: "Shared across all sessions for this school" },
+    "fee-structure":              { label: "Fee Structure",            kind: "schoolwide-meta",  metaKey: "fee_structure",     note: "Shared across all sessions for this school" },
+    "fine-rules":                 { label: "Fine Rules",               kind: "schoolwide-meta",  metaKey: "fee_fine_rules",    note: "Shared across all sessions for this school" },
+    "concession-rules":           { label: "Concession Rules",         kind: "schoolwide-meta",  metaKey: "fee_concessions",   note: "Shared across all sessions for this school" },
+    // ── Cat B: Assets & Inventory ───────────────────────────────────────────
+    "asset-categories":           { label: "Asset Categories",         kind: "schoolwide-table", note: "school_assets — shared across all sessions" },
+    "asset-master":               { label: "Asset Master",             kind: "schoolwide-table", note: "school_assets — shared across all sessions" },
+    "storage-locations":          { label: "Storage Locations",        kind: "schoolwide-table", note: "school_assets — shared across all sessions" },
+  };
+
+  // Cat C — modules that must always start clean. Listed in the audit only.
+  const CLEAN_SLATE_MODULES = [
+    "student-registry", "exam-controller", "attendance",
+    "complaint-hub", "noticeboard", "visitor-log", "audit-logs",
+  ];
+
   app.post("/api/admin/academic-sessions", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
-    const schoolId = req.session.schoolId;
+    const schoolId = req.session.schoolId!;
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
+
     try {
-      const schema = z.object({
+      // ── 1. Validate request body ───────────────────────────────────────────
+      const bodySchema = z.object({
         sessionName:           z.string().min(1, "Session name is required"),
         startDate:             z.string().min(1, "Start date is required"),
         endDate:               z.string().min(1, "End date is required"),
@@ -2463,53 +2552,306 @@ export async function registerRoutes(
         copiedFromSessionId:   z.number().nullable().optional(),
         copiedModules:         z.string().nullable().optional(),
       });
-      const parsed = schema.safeParse(req.body);
+      const parsed = bodySchema.safeParse(req.body);
       if (!parsed.success)
         return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
 
-      const { sessionName, startDate, endDate, status, setAsActive,
-              newAdmissionsEnabled, promotionStrategy, copiedFromSessionId, copiedModules } = parsed.data;
+      const {
+        sessionName, startDate, endDate, status, setAsActive,
+        newAdmissionsEnabled, promotionStrategy, copiedFromSessionId, copiedModules,
+      } = parsed.data;
 
-      // Validate: start < end
+      // ── 2. Pre-transaction validations (read-only, fast) ──────────────────
       if (new Date(startDate) >= new Date(endDate))
         return res.status(400).json({ message: "Start date must be before end date" });
 
-      // Validate: unique name within school
       const existing = await storage.getAcademicSessions(schoolId);
-      if (existing.some(s => s.sessionName.trim().toLowerCase() === sessionName.trim().toLowerCase()))
-        return res.status(400).json({ message: `A session named "${sessionName}" already exists` });
 
-      // Validate: no date overlap with existing sessions
+      if (existing.some(s => s.sessionName.trim().toLowerCase() === sessionName.trim().toLowerCase()))
+        return res.status(400).json({ message: `A session named "${sessionName}" already exists for this school` });
+
       const overlap = existing.find(s => {
-        const ns = new Date(startDate), ne = new Date(endDate);
-        const es = new Date(s.startDate), ee = new Date(s.endDate);
+        const [ns, ne] = [new Date(startDate), new Date(endDate)];
+        const [es, ee] = [new Date(s.startDate), new Date(s.endDate)];
         return ns <= ee && ne >= es;
       });
       if (overlap)
         return res.status(400).json({ message: `Dates overlap with existing session "${overlap.sessionName}"` });
 
-      // Create the session
-      const session = await storage.createAcademicSession({
-        schoolId,
-        sessionName:          sessionName.trim(),
-        startDate,
-        endDate,
-        isActive:             setAsActive,
-        status:               setAsActive ? "active" : status,
-        newAdmissionsEnabled,
-        promotionStrategy,
-        copiedFromSessionId:  copiedFromSessionId ?? null,
-        copiedModules:        copiedModules ?? null,
-      });
-
-      // If setAsActive, atomically deactivate all other sessions and activate this one
-      if (setAsActive) {
-        await storage.activateAcademicSession(session.id, schoolId);
+      // Parse approved sub-module IDs from the copy payload
+      let approvedSubModuleIds: string[] = [];
+      if (copiedFromSessionId && copiedModules) {
+        try {
+          const parsed = JSON.parse(copiedModules);
+          if (Array.isArray(parsed)) approvedSubModuleIds = parsed.filter(x => typeof x === "string");
+        } catch {
+          return res.status(400).json({ message: "copiedModules must be a valid JSON array of sub-module IDs" });
+        }
       }
 
-      res.status(201).json(session);
+      // ── 3. Run entire operation in a single DB transaction ─────────────────
+      const { session: newSession, copyResult } = await db.transaction(async (tx) => {
+
+        // ── Step 3a: Verify source session tenant isolation ─────────────────
+        if (copiedFromSessionId) {
+          const [srcSession] = await tx
+            .select()
+            .from(academicSessions)
+            .where(and(
+              eq(academicSessions.id, copiedFromSessionId),
+              eq(academicSessions.schoolId, schoolId),   // ← STRICT TENANT GUARD
+            ));
+          if (!srcSession)
+            throw new Error(
+              `Source session #${copiedFromSessionId} not found or belongs to a different school. ` +
+              `Cross-school copying is strictly prohibited.`
+            );
+        }
+
+        // ── Step 3b: Insert the new academic session ────────────────────────
+        const [session] = await tx
+          .insert(academicSessions)
+          .values({
+            schoolId,
+            sessionName:          sessionName.trim(),
+            startDate,
+            endDate,
+            isActive:             setAsActive,
+            status:               setAsActive ? "active" : status,
+            newAdmissionsEnabled,
+            promotionStrategy,
+            copiedFromSessionId:  copiedFromSessionId ?? null,
+            copiedModules:        null, // will be updated after copy
+          })
+          .returning();
+
+        // ── Step 3c: If setAsActive, deactivate all sibling sessions ─────────
+        if (setAsActive) {
+          await tx
+            .update(academicSessions)
+            .set({ isActive: false, status: "archived" })
+            .where(and(
+              eq(academicSessions.schoolId, schoolId),
+              eq(academicSessions.isActive, true),
+            ));
+          await tx
+            .update(academicSessions)
+            .set({ isActive: true, status: "active" })
+            .where(and(eq(academicSessions.id, session.id), eq(academicSessions.schoolId, schoolId)));
+        }
+
+        // ── Step 3d: Run copy operations ─────────────────────────────────────
+        let copyResult: SessionCopyResult | null = null;
+
+        if (copiedFromSessionId && approvedSubModuleIds.length > 0) {
+
+          // Re-fetch source session for metadata
+          const [srcSession] = await tx
+            .select()
+            .from(academicSessions)
+            .where(and(eq(academicSessions.id, copiedFromSessionId), eq(academicSessions.schoolId, schoolId)));
+
+          // Year delta for advancing calendar event dates
+          const srcYear  = new Date(srcSession.startDate).getFullYear();
+          const destYear = new Date(session.startDate).getFullYear();
+          const yearDelta = destYear - srcYear;
+
+          const copied:           CopyEntry[] = [];
+          const sharedSchoolwide: CopyEntry[] = [];
+          const requestedButEmpty: CopyEntry[] = [];
+
+          // De-duplicate: if both holiday-templates and recurring-events are
+          // selected, we only do one calendar scan.
+          const calendarCopyDone = { done: false, count: 0 };
+
+          for (const subId of approvedSubModuleIds) {
+            const op = SUBMODULE_OPS[subId];
+            if (!op) continue; // unknown ID — skip silently
+
+            if (op.kind === "schoolwide-meta") {
+              // ── Verify schoolMetadata key exists for this school ────────────
+              const [row] = await tx
+                .select()
+                .from(schoolMetadata)
+                .where(and(
+                  eq(schoolMetadata.schoolId, schoolId),
+                  eq(schoolMetadata.metaKey, op.metaKey!),
+                ));
+              if (row) {
+                let countHint = 1;
+                try {
+                  const val = JSON.parse(row.metaValue);
+                  if (Array.isArray(val)) countHint = val.length;
+                  else if (typeof val === "object" && val !== null)
+                    countHint = Object.keys(val).length;
+                } catch { /* noop */ }
+                sharedSchoolwide.push({ module: subId, label: op.label, count: countHint, note: op.note });
+              } else {
+                requestedButEmpty.push({ module: subId, label: op.label, count: 0, note: "No data configured for this school yet" });
+              }
+
+            } else if (op.kind === "schoolwide-table") {
+              // ── Verify relevant table has data for this school ──────────────
+              let count = 0;
+              switch (subId) {
+                case "promotion-policy": {
+                  const rows = await tx.select().from(examPolicyTiers).where(eq(examPolicyTiers.schoolId, schoolId));
+                  count = rows.length;
+                  break;
+                }
+                case "attendance-policy": {
+                  const rows = await tx.select().from(attendancePolicies).where(eq(attendancePolicies.schoolId, schoolId));
+                  count = rows.length;
+                  break;
+                }
+                case "leave-policy": {
+                  const rows = await tx.select().from(leavePolicies).where(eq(leavePolicies.schoolId, schoolId));
+                  count = rows.length;
+                  break;
+                }
+                case "bell-structure":
+                case "period-config":
+                case "timetable-template": {
+                  const rows = await tx.select().from(timetableStructure).where(eq(timetableStructure.schoolId, schoolId));
+                  count = rows.length;
+                  break;
+                }
+                case "teacher-class-assignments": {
+                  const allocs = await tx.select().from(teacherAllocations).where(eq(teacherAllocations.schoolId, schoolId));
+                  const maps   = await tx.select().from(facultyMappings).where(eq(facultyMappings.schoolId, schoolId));
+                  count = allocs.length + maps.length;
+                  break;
+                }
+                case "asset-categories":
+                case "asset-master":
+                case "storage-locations": {
+                  const rows = await tx.select().from(schoolAssets).where(eq(schoolAssets.schoolId, schoolId));
+                  count = rows.length;
+                  break;
+                }
+                default:
+                  count = 0;
+              }
+              const target = count > 0 ? sharedSchoolwide : requestedButEmpty;
+              target.push({
+                module: subId, label: op.label, count,
+                note: count > 0 ? op.note : "No data configured for this school yet",
+              });
+
+            } else if (op.kind === "calendar-recurring") {
+              // ── Physically duplicate recurring events with date+yearDelta ───
+              // Only run once even if both holiday-templates & recurring-events selected
+              if (calendarCopyDone.done) {
+                // Already ran — just add a reference entry to "copied"
+                copied.push({ module: subId, label: op.label, count: calendarCopyDone.count, note: op.note });
+                continue;
+              }
+
+              const recurringEvents = await tx
+                .select()
+                .from(calendarEvents)
+                .where(and(
+                  eq(calendarEvents.schoolId, schoolId),          // ← TENANT GUARD
+                  eq(calendarEvents.isRecurring, true),
+                ));
+
+              if (recurringEvents.length === 0) {
+                requestedButEmpty.push({ module: subId, label: op.label, count: 0, note: "No recurring events found in source session" });
+                continue;
+              }
+
+              // Insert duplicated records with dates advanced by yearDelta years.
+              // Each original date is parsed, the year is incremented, and a new
+              // record is inserted with a fresh auto-generated primary key.
+              // The schoolId is preserved. No reference to the previous session exists.
+              const newEventRecords = recurringEvents.map(ev => {
+                const originalDate = new Date(ev.date);
+                originalDate.setFullYear(originalDate.getFullYear() + yearDelta);
+                const advancedDate = originalDate.toISOString().split("T")[0]; // YYYY-MM-DD
+                return {
+                  schoolId:      ev.schoolId,                  // same tenant
+                  title:         ev.title,
+                  date:          advancedDate,                 // year advanced
+                  eventType:     ev.eventType,
+                  venue:         ev.venue,
+                  description:   ev.description,
+                  colorCode:     ev.colorCode,
+                  isRecurring:   true,
+                  audienceScope: ev.audienceScope,
+                  targetClass:   ev.targetClass,
+                  targetSection: ev.targetSection,
+                  // id intentionally omitted → auto-generated fresh primary key
+                };
+              });
+
+              await tx.insert(calendarEvents).values(newEventRecords);
+              calendarCopyDone.done  = true;
+              calendarCopyDone.count = newEventRecords.length;
+
+              copied.push({ module: subId, label: op.label, count: newEventRecords.length, note: op.note });
+            }
+            // kind === "noop" → silently skip
+          }
+
+          const totalRecordsCopied = copied.reduce((acc, e) => acc + e.count, 0);
+
+          copyResult = {
+            sourceSessionId:    copiedFromSessionId,
+            sourceSessionName:  srcSession.sessionName,
+            destSessionId:      session.id,
+            approvedModules:    approvedSubModuleIds,
+            copied,
+            sharedSchoolwide,
+            requestedButEmpty,
+            cleanSlate:         CLEAN_SLATE_MODULES,
+            totalRecordsCopied,
+            timestamp:          new Date().toISOString(),
+          };
+
+          // Update the session record with the full copy result JSON
+          await tx
+            .update(academicSessions)
+            .set({ copiedModules: JSON.stringify(copyResult) })
+            .where(and(eq(academicSessions.id, session.id), eq(academicSessions.schoolId, schoolId)));
+        }
+
+        // ── Step 3e: Write immutable audit log ──────────────────────────────
+        await tx.insert(auditLogs).values({
+          schoolId,
+          actionType:   "CREATE",
+          entityType:   "academic_session",
+          entityId:     session.id,
+          actionBy:     req.session.userId!,
+          actionByRole: "admin",
+          details: JSON.stringify({
+            sessionName:         session.sessionName,
+            startDate:           session.startDate,
+            endDate:             session.endDate,
+            copiedFromSessionId: copiedFromSessionId ?? null,
+            approvedModules:     approvedSubModuleIds,
+            totalRecordsCopied:  copyResult?.totalRecordsCopied ?? 0,
+            calendarEventsCopied: copyResult?.copied.reduce((s, e) => s + e.count, 0) ?? 0,
+            sharedConfigs:       copyResult?.sharedSchoolwide.length ?? 0,
+            timestamp:           new Date().toISOString(),
+          }),
+        });
+
+        return {
+          session: { ...session, copiedModules: copyResult ? JSON.stringify(copyResult) : null },
+          copyResult,
+        };
+      }); // ← END DB TRANSACTION
+
+      res.status(201).json({ ...newSession, copyResult });
+
     } catch (e: any) {
-      res.status(500).json({ message: e.message || "Failed to create session" });
+      // Transaction has already been rolled back by Drizzle at this point.
+      // Any partial calendar event inserts, partial session insert, or partial
+      // audit log writes were all reverted automatically.
+      res.status(500).json({
+        message: e.message || "Failed to create session — all changes rolled back",
+        rolled_back: true,
+      });
     }
   });
 
