@@ -548,51 +548,20 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
                 </p>
               )}
 
-              {/* Status radio + Set-as-Active toggle */}
-              <div className="grid grid-cols-2 gap-3">
-                {/* Status */}
-                <div>
-                  <label className="text-xs font-semibold text-white/60 block mb-2">Status</label>
-                  <div className="flex gap-2">
-                    {(["draft", "active"] as const).map(s => (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => { setStatus(s); if (s === "active") setSetAsActive(true); }}
-                        className="flex-1 h-8 rounded-lg text-xs font-semibold capitalize transition-all"
-                        style={{
-                          background: status === s
-                            ? s === "active" ? "rgba(34,211,238,0.20)" : "rgba(255,255,255,0.10)"
-                            : "rgba(255,255,255,0.04)",
-                          border: status === s
-                            ? s === "active" ? "1px solid rgba(34,211,238,0.50)" : "1px solid rgba(255,255,255,0.25)"
-                            : "1px solid rgba(255,255,255,0.08)",
-                          color: status === s ? (s === "active" ? "#22d3ee" : "#fff") : "rgba(255,255,255,0.35)",
-                        }}
-                        data-testid={`status-${s}`}
-                      >
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Set as Active toggle */}
-                <div>
-                  <label className="text-xs font-semibold text-white/60 block mb-2">Set as Active Session</label>
-                  <div className="flex items-center gap-2 h-8">
-                    <ToggleSwitch
-                      on={setAsActive}
-                      onChange={() => {
-                        const next = !setAsActive;
-                        setSetAsActive(next);
-                        if (next) setStatus("active");
-                      }}
-                    />
-                    <span className="text-xs" style={{ color: setAsActive ? "#22d3ee" : "rgba(255,255,255,0.30)" }}>
-                      {setAsActive ? "Yes" : "No"}
-                    </span>
-                  </div>
+              {/* Set as Active toggle */}
+              <div>
+                <label className="text-xs font-semibold text-white/60 block mb-2">Set as Active Session</label>
+                <div className="flex items-center gap-2 h-8">
+                  <ToggleSwitch
+                    on={setAsActive}
+                    onChange={() => {
+                      const next = !setAsActive;
+                      setSetAsActive(next);
+                    }}
+                  />
+                  <span className="text-xs" style={{ color: setAsActive ? "#22d3ee" : "rgba(255,255,255,0.30)" }}>
+                    {setAsActive ? "Yes" : "No"}
+                  </span>
                 </div>
               </div>
 
