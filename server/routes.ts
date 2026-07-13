@@ -1583,11 +1583,9 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    const requestedCls = (req.query.class as string) || student.class;
-    const allowedClasses = await storage.getStudentDistinctClasses(student.schoolId, student.id);
-    const cls = (requestedCls === student.class || allowedClasses.includes(requestedCls))
-      ? requestedCls : student.class;
-    const examTypes = await storage.getStudentExamTypes(student.schoolId, cls, student.section);
+    // Security: studentId scopes data — no need for published-gate class restriction
+    const cls = (req.query.class as string) || student.class;
+    const examTypes = await storage.getStudentExamTypesForStudent(student.schoolId, student.id, cls);
     res.json({ examTypes });
   });
 
@@ -1595,12 +1593,10 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    const requestedCls = (req.query.class as string) || student.class;
-    const allowedClasses = await storage.getStudentDistinctClasses(student.schoolId, student.id);
-    const cls = (requestedCls === student.class || allowedClasses.includes(requestedCls))
-      ? requestedCls : student.class;
+    const cls = (req.query.class as string) || student.class;
     const examType = req.query.examType as string;
     if (!examType) return res.status(400).json({ message: "examType is required" });
+    // Real-time: no published filter — studentId isolation guarantees tenant security
     const scores = await storage.getStudentExamScores(student.schoolId, student.id, cls, examType);
     let rank: { rank: number; total: number } | null = null;
     if (scores.length > 0) {
@@ -1622,7 +1618,7 @@ export async function registerRoutes(
     const allClasses = classes.length > 0 ? classes : [student.class];
     const journey: { cls: string; examType: string; percentage: number }[] = [];
     for (const cls of allClasses) {
-      const examTypes = await storage.getStudentExamTypes(student.schoolId, cls, student.section);
+      const examTypes = await storage.getStudentExamTypesForStudent(student.schoolId, student.id, cls);
       if (examTypes.length === 0) continue;
       const finalExamType = examTypes.includes("Annual") ? "Annual" : examTypes[examTypes.length - 1];
       const scores = await storage.getStudentExamScores(student.schoolId, student.id, cls, finalExamType);
@@ -1635,15 +1631,12 @@ export async function registerRoutes(
     res.json({ journey });
   });
 
-  // Student: exam policy for their class (for term-based view)
+  // Student: exam policy for their class — no published restriction
   app.get("/api/student/exam/policy", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    const requestedCls = (req.query.class as string) || student.class;
-    const allowedClasses = await storage.getStudentDistinctClasses(student.schoolId, student.id);
-    const cls = (requestedCls === student.class || allowedClasses.includes(requestedCls))
-      ? requestedCls : student.class;
+    const cls = (req.query.class as string) || student.class;
     const tiers = await storage.getExamPolicyTiers(student.schoolId);
     const tier = tiers.find(t =>
       (t.applicableClasses || []).map((c: string) => String(c).trim()).includes(String(cls).trim())
@@ -1652,15 +1645,12 @@ export async function registerRoutes(
     res.json(tier);
   });
 
-  // Student: all published exam scores for a class (all exam types)
+  // Student: all exam scores for a class — real-time, no published gate
   app.get("/api/student/exam/all-scores", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    const requestedCls = (req.query.class as string) || student.class;
-    const allowedClasses = await storage.getStudentDistinctClasses(student.schoolId, student.id);
-    const cls = (requestedCls === student.class || allowedClasses.includes(requestedCls))
-      ? requestedCls : student.class;
+    const cls = (req.query.class as string) || student.class;
     const scores = await storage.getStudentAllExamScores(student.schoolId, student.id, cls);
     res.json({ scores, cls });
   });

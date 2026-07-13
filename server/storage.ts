@@ -1397,12 +1397,29 @@ export class DatabaseStorage {
       .where(and(
         eq(examScores.schoolId, schoolId),
         eq(examScores.studentId, studentId),
-        eq(examScores.published, true),
       ))
       .orderBy(sql`${examScores.class} ASC NULLS LAST`);
     return rows.map(r => r.class).filter((c): c is string => c !== null);
   }
 
+  // Student exam types for a specific student+class — no published gate (real-time visibility)
+  async getStudentExamTypesForStudent(schoolId: number, studentId: number, cls: string): Promise<string[]> {
+    const rows = await db.select({
+      examType: examScores.examType,
+      minId: sql<number>`MIN(${examScores.id})`,
+    })
+      .from(examScores)
+      .where(and(
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.studentId, studentId),
+        eq(examScores.class, cls),
+      ))
+      .groupBy(examScores.examType)
+      .orderBy(sql`MIN(${examScores.id}) ASC`);
+    return rows.map(r => r.examType);
+  }
+
+  // Legacy class+section variant kept for non-student uses
   async getStudentExamTypes(schoolId: number, cls: string, section: string): Promise<string[]> {
     const rows = await db.select({
       examType: examScores.examType,
@@ -1420,6 +1437,7 @@ export class DatabaseStorage {
     return rows.map(r => r.examType);
   }
 
+  // Student score fetch — no published gate (real-time visibility)
   async getStudentExamScores(schoolId: number, studentId: number, cls: string, examType: string): Promise<ExamScore[]> {
     return await db.select().from(examScores)
       .where(and(
@@ -1427,18 +1445,17 @@ export class DatabaseStorage {
         eq(examScores.studentId, studentId),
         eq(examScores.class, cls),
         eq(examScores.examType, examType),
-        eq(examScores.published, true),
       ))
       .orderBy(examScores.subject);
   }
 
+  // All scores for a student in a class — no published gate (real-time visibility)
   async getStudentAllExamScores(schoolId: number, studentId: number, cls: string): Promise<ExamScore[]> {
     return await db.select().from(examScores)
       .where(and(
         eq(examScores.schoolId, schoolId),
         eq(examScores.studentId, studentId),
         eq(examScores.class, cls),
-        eq(examScores.published, true),
       ))
       .orderBy(examScores.subject, examScores.examType);
   }
