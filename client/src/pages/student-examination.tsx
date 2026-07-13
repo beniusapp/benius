@@ -7,7 +7,6 @@ import {
   CalendarDays, BarChart3, ChevronDown, Filter, X,
 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
-import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 
 // ─────────────────────────── Types ─────────────────────────────────────────────
 interface AcademicSession {
@@ -33,6 +32,23 @@ interface AttendanceStatsResponse {
   overallPercent: number; workingDays: number; daysPresent: number;
 }
 
+// Enrollment registry — one record per student per academic session
+interface EnrollmentRecord {
+  id: number;
+  sessionId: number;
+  className: string;
+  sectionName: string;
+  status: string;
+}
+
+// Resolved session metadata — class/section verified from enrollment table when possible
+type SessionMeta = AcademicSession & {
+  cls: string;       // resolved class for this session
+  section: string;   // resolved section for this session
+  displayLabel: string;
+  verified: boolean; // true = from enrollment registry; false = arithmetic estimate
+};
+
 // ─────────────────────────── Computation Types ──────────────────────────────────
 interface CompBreakdown {
   sourceExam: string; weight: number;
@@ -49,21 +65,54 @@ interface StudentTermResults {
   allTermFailCounts: Record<string, number>;
 }
 
-// ─────────────────────────── Session→Class Mapping ─────────────────────────────
-function mapSessionsToClasses(
-  sessions: AcademicSession[], currentClass: string,
-): Array<AcademicSession & { cls: string; displayLabel: string }> {
+// ─────────────────── Enrollment-aware Session→Class Resolution ──────────────────
+// Priority: verified enrollment record → arithmetic progression fallback.
+// The enrollment registry (`/api/student/exam/enrollment-history`) stores the
+// student's exact class+section per session.  When that data is present it is
+// used verbatim (verified=true).  When absent the function falls back to the
+// traditional "currentClass - i" arithmetic, marked verified=false, so the UI
+// can surface the uncertainty to the user.
+function resolveSessionsWithEnrollments(
+  sessions: AcademicSession[],
+  enrollments: EnrollmentRecord[],
+  currentClass: string,
+  currentSection: string,
+): SessionMeta[] {
   const sorted = [...sessions].sort(
     (a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime(),
   );
+  const enrollMap = new Map<number, EnrollmentRecord>(enrollments.map(e => [e.sessionId, e]));
   const currentNum = parseInt(currentClass, 10);
-  const result: Array<AcademicSession & { cls: string; displayLabel: string }> = [];
+  const result: SessionMeta[] = [];
+
   for (let i = 0; i < sorted.length; i++) {
     const s = sorted[i];
-    const cls = isNaN(currentNum) ? (i === 0 ? currentClass : "") : String(currentNum - i);
-    if (!isNaN(currentNum) && parseInt(cls, 10) < 1) break;
-    if (cls === "") break;
-    result.push({ ...s, cls, displayLabel: s.sessionName });
+    const rec = enrollMap.get(s.id);
+
+    if (rec) {
+      // ── Verified: enrollment registry has an authoritative record
+      result.push({
+        ...s,
+        cls: rec.className,
+        section: rec.sectionName,
+        displayLabel: s.sessionName,
+        verified: true,
+      });
+    } else {
+      // ── Estimated: use arithmetic class progression as best guess
+      const cls = isNaN(currentNum)
+        ? (i === 0 ? currentClass : "")
+        : String(currentNum - i);
+      if (!isNaN(currentNum) && parseInt(cls, 10) < 1) break;
+      if (cls === "") break;
+      result.push({
+        ...s,
+        cls,
+        section: currentSection,
+        displayLabel: s.sessionName,
+        verified: false,
+      });
+    }
   }
   return result;
 }
@@ -191,20 +240,25 @@ const selectStyle = { background: "#020617", borderColor: "#1e293b", colorScheme
 // Mode C: subject + exam type → single focused result card
 // ══════════════════════════════════════════════════════════════════════════════
 function ViewMarksPanel({
-  allScores, policy, passThreshold, isLoading, selectedClass, section, schoolId,
+  allScores, policy, passThreshold, isLoading, selectedClass, section,
 }: {
   allScores: ExamScore[]; policy: ExamPolicyTier | null; passThreshold: number;
-  isLoading: boolean; selectedClass: string; section: string; schoolId: number;
+  isLoading: boolean; selectedClass: string; section: string;
 }) {
   const [viewSubject,  setViewSubject]  = useState("");
   const [viewExamType, setViewExamType] = useState("");
 
-  // ── Admin-configured master lists ────────────────────────────────────────────
-  const { getSubjectsForClass, getExamTypesForClass, isLoading: configLoading } =
-    useSchoolConfigStrict(schoolId);
-
-  const subjectOptions  = useMemo(() => getSubjectsForClass(selectedClass),  [selectedClass, getSubjectsForClass]);
-  const examTypeOptions = useMemo(() => getExamTypesForClass(selectedClass), [selectedClass, getExamTypesForClass]);
+  // ── Derive dropdown options strictly from actual score data ──────────────────
+  // Using real score subjects/exam-types instead of school config guarantees
+  // historical accuracy — no current-schema bleed into past sessions.
+  const subjectOptions  = useMemo(
+    () => [...new Set(allScores.map(s => s.subject))].sort(),
+    [allScores],
+  );
+  const examTypeOptions = useMemo(
+    () => [...new Set(allScores.map(s => s.examType))].sort(),
+    [allScores],
+  );
 
   // Reset both filters when the session (class) changes
   useEffect(() => { setViewSubject(""); setViewExamType(""); }, [selectedClass]);
@@ -348,6 +402,29 @@ function ViewMarksPanel({
     <div className="space-y-4" data-testid="panel-view-marks-loading">
       {filterRow}
       {resultsLoadingNode}
+    </div>
+  );
+
+  // ── Empty state — no scores for this compound key (session + class) ──────────
+  // Strict guard: never fall through to display empty arrays or wrong-session data.
+  if (allScores.length === 0) return (
+    <div className="rounded-2xl p-12 flex flex-col items-center gap-4 text-center no-print"
+      data-testid="panel-no-scores"
+      style={{ background: "#0f172a", border: "1px solid #1e293b" }}>
+      <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
+        style={{ background: "rgba(100,116,139,0.1)", border: "1px solid #1e293b" }}>
+        <ClipboardList className="w-7 h-7 text-slate-600" />
+      </div>
+      <div className="space-y-1">
+        <h3 className="text-slate-300 font-bold text-base">No marks data for this session</h3>
+        <p className="text-slate-500 text-sm">
+          No exam records found for Class {selectedClass}‑{section}.
+        </p>
+        <p className="text-slate-600 text-xs mt-2 max-w-xs mx-auto">
+          Your teacher has not yet entered scores for this academic year,
+          or this class had no exams recorded in the system.
+        </p>
+      </div>
     </div>
   );
 
@@ -1041,9 +1118,27 @@ export default function StudentExamination() {
     staleTime: 60000,
   });
 
-  const sessions = useMemo(
-    () => (student ? mapSessionsToClasses(rawSessions, student.class) : []),
-    [rawSessions, student],
+  // ── Enrollment history — authoritative class/section per session ─────────────
+  // Auto-upserts the current-session record on the server, so the registry stays
+  // self-healing without any admin action.
+  const { data: enrollmentHistory = [] } = useQuery<EnrollmentRecord[]>({
+    queryKey: ["/api/student/exam/enrollment-history"],
+    enabled: !!student,
+    staleTime: 300000, // 5 min — enrollment rarely changes mid-session
+  });
+
+  // ── Resolve sessions with enrollment data ────────────────────────────────────
+  const sessions: SessionMeta[] = useMemo(
+    () =>
+      student
+        ? resolveSessionsWithEnrollments(
+            rawSessions,
+            enrollmentHistory,
+            student.class,
+            student.section,
+          )
+        : [],
+    [rawSessions, enrollmentHistory, student],
   );
 
   useEffect(() => {
@@ -1053,13 +1148,17 @@ export default function StudentExamination() {
     }
   }, [sessions, selectedSessionId]);
 
-  const selectedSession = sessions.find(s => s.id === selectedSessionId) ?? null;
-  const selectedClass = selectedSession?.cls ?? student?.class ?? "";
+  const selectedSession: SessionMeta | null =
+    sessions.find(s => s.id === selectedSessionId) ?? null;
+
+  // These are the historically-accurate class and section for the selected session
+  const selectedClass   = selectedSession?.cls     ?? student?.class   ?? "";
+  const selectedSection = selectedSession?.section ?? student?.section ?? "";
 
   // Reset tab when session changes
   useEffect(() => { setTab("view"); }, [selectedSessionId]);
 
-  // ── Exam policy ─────────────────────────────────────────────────────────────
+  // ── Exam policy for resolved historical class ────────────────────────────────
   const { data: policyData, isLoading: policyLoading, isError: policyMissing } =
     useQuery<ExamPolicyTier>({
       queryKey: ["/api/student/exam/policy", selectedClass],
@@ -1078,10 +1177,13 @@ export default function StudentExamination() {
 
   const passThreshold = policyData?.passPercentage ?? 35;
 
-  // ── All scores (real-time, 30s poll) ────────────────────────────────────────
+  // ── All scores — keyed by (class, sessionId) for strict cache isolation ──────
+  // Backend filters by studentId + class. The sessionId in the cache key prevents
+  // cross-session cache bleed when the same class appears in multiple sessions
+  // (e.g. a student who repeated a year).
   const { data: allScoresData, isLoading: scoresLoading } =
     useQuery<{ scores: ExamScore[]; cls: string }>({
-      queryKey: ["/api/student/exam/all-scores", selectedClass],
+      queryKey: ["/api/student/exam/all-scores", selectedClass, selectedSessionId],
       queryFn: async () => {
         const r = await fetch(
           `/api/student/exam/all-scores?class=${encodeURIComponent(selectedClass)}`,
@@ -1090,7 +1192,7 @@ export default function StudentExamination() {
         if (!r.ok) throw new Error("Failed");
         return r.json();
       },
-      enabled: !!selectedClass,
+      enabled: !!selectedClass && selectedSessionId !== null,
       staleTime: 0,
       refetchInterval: 30000,
     });
@@ -1147,7 +1249,9 @@ export default function StudentExamination() {
             <div className="min-w-0 leading-tight">
               <p className="font-bold text-sm text-white truncate">Academic Performance</p>
               <p className="text-[11px] text-slate-500 truncate">
-                {student.digitalStudentId} · Class {student.class}-{student.section}
+                {student.digitalStudentId} · {selectedSession
+                  ? `Session ${selectedSession.displayLabel} · Class ${selectedClass}-${selectedSection}`
+                  : `Class ${student.class}-${student.section}`}
               </p>
             </div>
           </div>
@@ -1177,24 +1281,52 @@ export default function StudentExamination() {
           ) : sessions.length === 0 ? (
             <p className="text-slate-600 text-xs italic">No academic sessions configured by your admin.</p>
           ) : (
-            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
-              {sessions.map(s => (
-                <button key={s.id} onClick={() => setSelectedSessionId(s.id)}
-                  className="flex-shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold transition-all min-h-[40px]"
-                  style={s.id === selectedSessionId
-                    ? { background: "rgba(16,185,129,0.2)", border: "1px solid rgba(16,185,129,0.4)", color: "#34d399" }
-                    : { background: "rgba(255,255,255,0.04)", border: "1px solid #1e293b", color: "#94a3b8" }}
-                  data-testid={`pill-session-${s.id}`}>
-                  <span className="whitespace-nowrap">{s.displayLabel}</span>
-                  {s.isActive && (
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap"
-                      style={{ background: "rgba(16,185,129,0.2)", color: "#34d399" }}>
-                      Current
+            <div className="space-y-3">
+              <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+                {sessions.map(s => (
+                  <button key={s.id} onClick={() => setSelectedSessionId(s.id)}
+                    className="flex-shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold transition-all min-h-[40px]"
+                    style={s.id === selectedSessionId
+                      ? { background: "rgba(16,185,129,0.2)", border: "1px solid rgba(16,185,129,0.4)", color: "#34d399" }
+                      : { background: "rgba(255,255,255,0.04)", border: "1px solid #1e293b", color: "#94a3b8" }}
+                    data-testid={`pill-session-${s.id}`}>
+                    <span className="whitespace-nowrap">{s.displayLabel}</span>
+                    {s.isActive && (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap"
+                        style={{ background: "rgba(16,185,129,0.2)", color: "#34d399" }}>
+                        Current
+                      </span>
+                    )}
+                    <span className="text-[10px] whitespace-nowrap" style={{ color: s.verified ? "#6ee7b7" : "#64748b" }}>
+                      Cl.{s.cls}{s.verified ? " ✓" : " ~"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {/* ── Scope badge — authoritative compound key for the selected session ── */}
+              {selectedSession && (
+                <div className="flex items-center gap-2 text-[11px] flex-wrap"
+                  data-testid="scope-badge">
+                  <span className="text-slate-500">{student.schoolName}</span>
+                  <span className="text-slate-700">·</span>
+                  <span className="text-slate-500">Session <span className="text-slate-400 font-semibold">{selectedSession.displayLabel}</span></span>
+                  <span className="text-slate-700">·</span>
+                  <span className="text-slate-500">
+                    Class <span className="text-slate-300 font-bold">{selectedClass}-{selectedSection}</span>
+                  </span>
+                  {selectedSession.verified ? (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                      style={{ background: "rgba(16,185,129,0.1)", color: "#34d399", border: "1px solid rgba(16,185,129,0.2)" }}>
+                      ✓ Enrollment Verified
+                    </span>
+                  ) : (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                      style={{ background: "rgba(245,158,11,0.08)", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.2)" }}>
+                      ~ Class Estimated
                     </span>
                   )}
-                  <span className="text-[10px] text-slate-600 whitespace-nowrap">Cl.{s.cls}</span>
-                </button>
-              ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1224,14 +1356,14 @@ export default function StudentExamination() {
           <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-medium no-print"
             style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)", color: "#fbbf24" }}>
             <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-            No exam policy configured for Class {selectedClass} — aggregated results unavailable. Raw marks still visible in View Marks.
+            No exam policy configured for Class {selectedClass} in Session {selectedSession?.displayLabel ?? ""} — aggregated results unavailable. Raw marks still visible in View Marks.
           </div>
         )}
         {!policyLoading && policyData && (
           <div className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium no-print"
             style={{ background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.18)", color: "#6ee7b7" }}>
             <BookOpen className="w-3.5 h-3.5 flex-shrink-0" />
-            {policyData.tierName} · Session <strong>{selectedSession?.displayLabel}</strong> · Class {selectedClass}
+            {policyData.tierName} · {student.schoolName} · Session <strong>{selectedSession?.displayLabel}</strong> · Class <strong>{selectedClass}-{selectedSection}</strong>
           </div>
         )}
 
@@ -1243,8 +1375,7 @@ export default function StudentExamination() {
             passThreshold={passThreshold}
             isLoading={isDataLoading}
             selectedClass={selectedClass}
-            section={student.section}
-            schoolId={student.schoolId}
+            section={selectedSection}
           />
         )}
         {tab === "results" && (
@@ -1255,7 +1386,7 @@ export default function StudentExamination() {
             isLoading={isDataLoading}
             attendancePct={attPct}
             selectedClass={selectedClass}
-            section={student.section}
+            section={selectedSection}
             sessionLabel={selectedSession?.displayLabel ?? ""}
             studentName={student.name}
             dsid={student.digitalStudentId}

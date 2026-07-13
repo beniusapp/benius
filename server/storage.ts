@@ -4659,6 +4659,32 @@ export class DatabaseStorage {
       .from(enrollments)
       .where(and(eq(enrollments.schoolId, schoolId), eq(enrollments.sessionId, sessionId)));
   }
+
+  /** Get full enrollment history for a single student across all sessions. */
+  async getStudentEnrollmentHistory(schoolId: number, studentId: number): Promise<Enrollment[]> {
+    return await db.select().from(enrollments)
+      .where(and(eq(enrollments.schoolId, schoolId), eq(enrollments.studentId, studentId)))
+      .orderBy(desc(enrollments.sessionId));
+  }
+
+  /**
+   * Insert or update a student enrollment record.
+   * Conflict target: (schoolId, studentId, sessionId) — one enrollment per session per student.
+   * On conflict: refreshes className/sectionName/status to reflect any class transfer.
+   */
+  async upsertStudentEnrollment(data: InsertEnrollment): Promise<Enrollment> {
+    const [row] = await db.insert(enrollments).values(data)
+      .onConflictDoUpdate({
+        target: [enrollments.schoolId, enrollments.studentId, enrollments.sessionId],
+        set: {
+          className: data.className,
+          sectionName: data.sectionName,
+          status: data.status,
+        },
+      })
+      .returning();
+    return row;
+  }
 }
 
 export const storage = new DatabaseStorage();

@@ -1645,6 +1645,38 @@ export async function registerRoutes(
     res.json(tier);
   });
 
+  // Student: enrollment history — exact class/section per academic session
+  // Also auto-upserts the current active-session enrollment so the registry
+  // stays fresh even for students created before the enrollment table existed.
+  app.get("/api/student/exam/enrollment-history", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    // Idempotent upsert: ensure the current session enrollment record exists
+    // (captures students who were created before the enrollment table or before
+    //  the active session was configured).
+    try {
+      const activeSession = await storage.getActiveSession(student.schoolId);
+      if (activeSession) {
+        await storage.upsertStudentEnrollment({
+          schoolId: student.schoolId,
+          studentId: student.id,
+          sessionId: activeSession.id,
+          className: student.class,
+          sectionName: student.section,
+          status: "Active",
+        });
+      }
+    } catch (e) {
+      // Non-fatal — historical data still returned even if upsert fails
+      console.warn("Enrollment upsert skipped:", (e as Error).message);
+    }
+
+    const history = await storage.getStudentEnrollmentHistory(student.schoolId, student.id);
+    res.json(history);
+  });
+
   // Student: all exam scores for a class — real-time, no published gate
   app.get("/api/student/exam/all-scores", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
