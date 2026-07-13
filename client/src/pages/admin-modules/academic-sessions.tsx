@@ -465,13 +465,13 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+      className="fixed inset-0 z-50 sm:flex sm:items-center sm:justify-center sm:p-4"
       style={GLASS.modalOverlay}
       onClick={onClose}
     >
       <div
-        className="w-full sm:max-w-xl rounded-t-3xl sm:rounded-2xl flex flex-col"
-        style={{ ...GLASS.modal, maxHeight: "92dvh" }}
+        className="w-full h-full sm:h-auto sm:max-w-xl sm:rounded-2xl sm:max-h-[92dvh] flex flex-col overflow-hidden"
+        style={GLASS.modal}
         onClick={e => e.stopPropagation()}
       >
         {/* ── Header ─────────────────────────────────────────────────── */}
