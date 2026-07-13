@@ -10,6 +10,7 @@
  */
 
 import { useState, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
@@ -463,14 +464,15 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
     if (next && !copiedFromId && latestPrev) setCopiedFromId(latestPrev.id);
   }
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex flex-col sm:items-center sm:justify-center sm:p-4"
+      className="fixed inset-0 z-50 sm:flex sm:items-center sm:justify-center sm:p-4"
       style={GLASS.modalOverlay}
       onClick={onClose}
     >
       <div
-        className="flex-1 sm:flex-none w-full sm:max-w-xl sm:rounded-2xl sm:max-h-[92dvh] flex flex-col overflow-hidden"
+        className="absolute inset-0 flex flex-col overflow-hidden
+                   sm:relative sm:inset-auto sm:w-full sm:max-w-xl sm:rounded-2xl sm:max-h-[92dvh]"
         style={GLASS.modal}
         onClick={e => e.stopPropagation()}
       >
@@ -786,7 +788,7 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
         </div>
       </div>
     </div>
-  );
+  , document.body);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -808,7 +810,7 @@ function SuccessDialog({ session, onClose, onNavigate }: SuccessDialogProps) {
     { icon: CalendarRange, label: "Go to Academic Sessions Dashboard", path: "" },
   ];
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={GLASS.modalOverlay}>
       <div className="w-full max-w-md rounded-2xl overflow-hidden" style={GLASS.modal}>
         {/* Success header */}
@@ -860,7 +862,7 @@ function SuccessDialog({ session, onClose, onNavigate }: SuccessDialogProps) {
         </div>
       </div>
     </div>
-  );
+  , document.body);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -876,7 +878,7 @@ function RolloverModal({ session, onClose, onConfirm, isPending }: RolloverModal
   const [typed, setTyped] = useState("");
   const confirmed = typed.trim() === "ROLLOVER";
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={GLASS.modalOverlay} onClick={onClose}>
       <div className="w-full max-w-md rounded-2xl p-6 space-y-5"
@@ -937,7 +939,7 @@ function RolloverModal({ session, onClose, onConfirm, isPending }: RolloverModal
         </div>
       </div>
     </div>
-  );
+  , document.body);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -950,7 +952,7 @@ interface DeleteModalProps {
   isPending: boolean;
 }
 function DeleteModal({ session, onClose, onConfirm, isPending }: DeleteModalProps) {
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={GLASS.modalOverlay} onClick={onClose}>
       <div className="w-full max-w-sm rounded-2xl p-6 space-y-4"
@@ -983,7 +985,7 @@ function DeleteModal({ session, onClose, onConfirm, isPending }: DeleteModalProp
         </div>
       </div>
     </div>
-  );
+  , document.body);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
