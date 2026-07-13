@@ -77,7 +77,7 @@ interface Tile {
 const TILES: Tile[] = [
   { id: "profile",          label: "Profile",          emoji: "🎓", accent: "#3b82f6", bg: "#eff6ff", route: "/student-profile",      pulse: false },
   { id: "attendance",       label: "Attendance",       emoji: "✅", accent: "#10b981", bg: "#f0fdf4", route: "/student/attendance",    pulse: false },
-  { id: "homework",         label: "Homework",         emoji: "📝", accent: "#f59e0b", bg: "#fffbeb", route: "/student/homework",      pulse: true  },
+  { id: "homework",         label: "Homework",         emoji: "📝", accent: "#f59e0b", bg: "#fffbeb", route: "/student/homework",      pulse: false },
   { id: "classwork",        label: "Classwork",        emoji: "📚", accent: "#8b5cf6", bg: "#f5f3ff", route: "/student/classwork",     pulse: false },
   { id: "noticeboard",      label: "Noticeboard",      emoji: "🔔", accent: "#ef4444", bg: "#fef2f2", route: "/student/noticeboard",  pulse: true, noticeKey: true },
   { id: "fees",             label: "Fees",             emoji: "💳", accent: "#06b6d4", bg: "#ecfeff", route: "/student/fees",          pulse: false },
