@@ -1432,6 +1432,17 @@ export class DatabaseStorage {
       .orderBy(examScores.subject);
   }
 
+  async getStudentAllExamScores(schoolId: number, studentId: number, cls: string): Promise<ExamScore[]> {
+    return await db.select().from(examScores)
+      .where(and(
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.studentId, studentId),
+        eq(examScores.class, cls),
+        eq(examScores.published, true),
+      ))
+      .orderBy(examScores.subject, examScores.examType);
+  }
+
   async getClassRank(schoolId: number, cls: string, section: string, examType: string, studentId: number): Promise<{ rank: number; total: number }> {
     const allScores = await db.select().from(examScores)
       .where(and(

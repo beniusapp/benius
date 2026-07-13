@@ -1635,6 +1635,36 @@ export async function registerRoutes(
     res.json({ journey });
   });
 
+  // Student: exam policy for their class (for term-based view)
+  app.get("/api/student/exam/policy", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const requestedCls = (req.query.class as string) || student.class;
+    const allowedClasses = await storage.getStudentDistinctClasses(student.schoolId, student.id);
+    const cls = (requestedCls === student.class || allowedClasses.includes(requestedCls))
+      ? requestedCls : student.class;
+    const tiers = await storage.getExamPolicyTiers(student.schoolId);
+    const tier = tiers.find(t =>
+      (t.applicableClasses || []).map((c: string) => String(c).trim()).includes(String(cls).trim())
+    );
+    if (!tier) return res.status(404).json({ message: `No exam policy configured for Class ${cls}` });
+    res.json(tier);
+  });
+
+  // Student: all published exam scores for a class (all exam types)
+  app.get("/api/student/exam/all-scores", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const requestedCls = (req.query.class as string) || student.class;
+    const allowedClasses = await storage.getStudentDistinctClasses(student.schoolId, student.id);
+    const cls = (requestedCls === student.class || allowedClasses.includes(requestedCls))
+      ? requestedCls : student.class;
+    const scores = await storage.getStudentAllExamScores(student.schoolId, student.id, cls);
+    res.json({ scores, cls });
+  });
+
   // ===== STUDENT CLASSWORK ROUTES =====
   app.get("/api/student/classwork", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
