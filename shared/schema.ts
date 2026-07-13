@@ -93,7 +93,7 @@ export const homework = pgTable("homework", {
   fileUrl: text("file_url"),
   dueDate: date("due_date"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-  sessionId: integer("session_id").references(() => academicSessions.id),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
 });
 
 export const homeworkViews = pgTable("homework_views", {
@@ -126,7 +126,7 @@ export const classwork = pgTable("classwork", {
   content: text("content").notNull(),
   fileUrl: text("file_url"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-  sessionId: integer("session_id").references(() => academicSessions.id),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
 });
 
 export const notices = pgTable("notices", {
@@ -216,7 +216,7 @@ export const examScores = pgTable("exam_scores", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedBy: text("updated_by"),
   updatedAt: timestamp("updated_at"),
-  sessionId: integer("session_id").references(() => academicSessions.id),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
 });
 
 export const promotionDecisions = pgTable("promotion_decisions", {
@@ -239,7 +239,7 @@ export const promotionDecisions = pgTable("promotion_decisions", {
   adminExecutedAt: timestamp("admin_executed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at"),
-  sessionId: integer("session_id").references(() => academicSessions.id),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
 });
 export type PromotionDecision = typeof promotionDecisions.$inferSelect;
 
