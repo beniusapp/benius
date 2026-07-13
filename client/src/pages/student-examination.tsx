@@ -243,13 +243,6 @@ function ViewMarksPanel({
     return score.totalMarks > 0 ? Math.round((score.marks / score.totalMarks) * 1000) / 10 : 0;
   }
 
-  // ── Loading skeleton ─────────────────────────────────────────────────────────
-  if (isLoading || configLoading) return (
-    <div className="flex justify-center py-14">
-      <Loader2 className="w-7 h-7 animate-spin text-emerald-400" />
-    </div>
-  );
-
   // ── Shared: the two-column filter row ────────────────────────────────────────
   const filterRow = (
     <div className="rounded-2xl p-5 space-y-4" style={{ background: "#0f172a", border: "1px solid #1e293b" }}>
@@ -324,24 +317,40 @@ function ViewMarksPanel({
     </div>
   );
 
+  // ── Inline results loading node (filter form always visible above) ───────────
+  const resultsLoadingNode = (
+    <div className="flex justify-center py-14">
+      <Loader2 className="w-7 h-7 animate-spin text-emerald-400" />
+    </div>
+  );
+
   // ── No filter selected — prompt ───────────────────────────────────────────────
   if (!mode) return (
     <div className="space-y-4" data-testid="panel-view-marks">
       {filterRow}
-      <div className="rounded-2xl p-10 flex flex-col items-center gap-3 text-center"
-        style={{ background: "#0f172a", border: "1px solid #1e293b" }}>
-        <BarChart3 className="w-8 h-8 text-slate-700" />
-        <p className="text-slate-400 font-semibold text-sm">Select a subject, an exam type, or both</p>
-        <p className="text-slate-600 text-xs max-w-xs">
-          Pick a subject to see all your exam history for it, pick an exam type to see all subjects in that test cycle, or pick both for a focused result.
-        </p>
-      </div>
+      {isLoading ? resultsLoadingNode : (
+        <div className="rounded-2xl p-10 flex flex-col items-center gap-3 text-center"
+          style={{ background: "#0f172a", border: "1px solid #1e293b" }}>
+          <BarChart3 className="w-8 h-8 text-slate-700" />
+          <p className="text-slate-400 font-semibold text-sm">Select a subject, an exam type, or both</p>
+          <p className="text-slate-600 text-xs max-w-xs">
+            Pick a subject to see all your exam history for it, pick an exam type to see all subjects in that test cycle, or pick both for a focused result.
+          </p>
+        </div>
+      )}
     </div>
   );
 
   // ══════════════════════════════════════════════════════════════════════════════
   // MODE A — Subject selected only: show all exam types as rows
   // ══════════════════════════════════════════════════════════════════════════════
+  if (isLoading) return (
+    <div className="space-y-4" data-testid="panel-view-marks-loading">
+      {filterRow}
+      {resultsLoadingNode}
+    </div>
+  );
+
   if (mode === "A") {
     const rows = examTypeOptions.map(et => {
       const score = scoreFor(viewSubject, et);
@@ -1026,10 +1035,9 @@ export default function StudentExamination() {
     if (!studentLoading && !student) setLocation("/student-login");
   }, [studentLoading, student, setLocation]);
 
-  // ── Academic sessions ────────────────────────────────────────────────────────
+  // ── Academic sessions — fire in parallel with student, don't block page render
   const { data: rawSessions = [], isLoading: sessionsLoading } = useQuery<AcademicSession[]>({
     queryKey: ["/api/student/academic-sessions"],
-    enabled: !!student,
     staleTime: 60000,
   });
 
@@ -1108,7 +1116,8 @@ export default function StudentExamination() {
   const isDataLoading = policyLoading || scoresLoading;
   const handlePrint = useCallback(() => window.print(), []);
 
-  if (studentLoading || sessionsLoading || !student) {
+  // Only block on student auth — sessions/data load in background without blocking the page
+  if (studentLoading || !student) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: "#020617" }}>
         <Loader2 className="w-9 h-9 animate-spin text-emerald-400" />
@@ -1159,7 +1168,13 @@ export default function StudentExamination() {
             <CalendarDays className="w-4 h-4 text-emerald-400" />
             <h2 className="text-sm font-bold text-white">Academic Session</h2>
           </div>
-          {sessions.length === 0 ? (
+          {sessions.length === 0 && sessionsLoading ? (
+            <div className="flex gap-2">
+              {[1,2].map(i => (
+                <div key={i} className="h-10 w-28 rounded-xl animate-pulse" style={{ background: "#1e293b" }} />
+              ))}
+            </div>
+          ) : sessions.length === 0 ? (
             <p className="text-slate-600 text-xs italic">No academic sessions configured by your admin.</p>
           ) : (
             <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
