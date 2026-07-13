@@ -1,12 +1,18 @@
 /**
- * AcademicSessions — enhanced tenant-scoped academic year management.
+ * AcademicSessions — Enterprise-grade, multi-tenant academic year management.
  *
- * Rules enforced:
+ * Session creation rules:
  *  • Only ONE session per school may be active at any time.
  *  • Activation requires typing "ROLLOVER" in a safety confirmation modal.
  *  • Deleting an active session is blocked in the UI.
  *  • All API calls carry implicit tenant scope via the admin session cookie.
  *  • Session names must be unique; dates must not overlap; start < end.
+ *
+ * Copy Configuration categories:
+ *  A – Safe to Copy (green, default-checked)
+ *  B – Copy with Review (yellow, default-unchecked, warnings shown)
+ *  C – Never Copy (red lock, disabled)
+ *  D – Generated after creation (blue info banner)
  */
 
 import { useState, useMemo } from "react";
@@ -18,6 +24,8 @@ import {
   AlertTriangle, X, ChevronDown, ChevronRight, Check, Copy,
   Users, UserPlus, BookOpen, LayoutGrid, ArrowRight, Shield,
   ToggleLeft, ToggleRight, GraduationCap, Settings,
+  Lock, Info, CreditCard, Package, MapPin, Calendar,
+  FileText, BarChart2, Bell, UserSquare, CheckSquare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,115 +51,151 @@ interface AcademicSession {
 
 interface Props { schoolId: number }
 
-// ── Module tree definition ─────────────────────────────────────────────────────
-// Each parent has sub-modules. This structure can be fetched from the DB in
-// future — for now it is declared statically so every school gets the same set.
-interface SubModule { id: string; label: string }
-interface Module    { id: string; label: string; subModules: SubModule[] }
+// ── Module Tree — 4-Category Classification ────────────────────────────────────
+type ModuleCategory = "A" | "B" | "C";
 
-const MODULE_TREE: Module[] = [
+interface SubModule {
+  id: string;
+  label: string;
+  notCopied?: string;   // displayed on Category B items
+}
+interface CopyModule {
+  id: string;
+  label: string;
+  emoji: string;
+  category: ModuleCategory;
+  subModules: SubModule[];
+  warning?: string;     // shown on Category B
+  reason?: string;      // shown on Category C
+}
+
+const COPY_MODULE_TREE: CopyModule[] = [
+  // ─── Category A: Safe to Copy ───────────────────────────────────────────────
   {
-    id: "classes-sections", label: "Classes & Sections",
+    id: "school-setup", label: "School Setup", emoji: "⚙️", category: "A",
     subModules: [
-      { id: "classes-list",          label: "Classes Configuration" },
-      { id: "sections-list",         label: "Sections Configuration" },
-      { id: "class-section-mapping", label: "Class–Section Mapping" },
+      { id: "classes",           label: "Classes" },
+      { id: "sections",          label: "Sections" },
+      { id: "subjects",          label: "Subjects" },
+      { id: "exam-types",        label: "Exam Types" },
+      { id: "class-mapping",     label: "Class–Section Mapping" },
+      { id: "subject-mapping",   label: "Class–Subject Mapping" },
+      { id: "promotion-policy",  label: "Promotion Policy" },
+      { id: "attendance-policy", label: "Attendance Policy" },
+      { id: "leave-policy",      label: "Leave Policy" },
+      { id: "grading-policy",    label: "Grading Policy" },
     ],
   },
   {
-    id: "subject-management", label: "Subject Management",
+    id: "timetable-master", label: "Timetable Master", emoji: "📅", category: "A",
     subModules: [
-      { id: "subjects-list",         label: "Subject List" },
-      { id: "class-subject-mapping", label: "Class–Subject Mapping" },
-      { id: "exam-types",            label: "Exam Types Configuration" },
+      { id: "bell-structure",       label: "Bell Structure" },
+      { id: "period-config",        label: "Period Configuration" },
+      { id: "timetable-template",   label: "Timetable Template" },
     ],
   },
   {
-    id: "faculty-mapping", label: "Faculty Mapping",
+    id: "school-calendar", label: "School Calendar", emoji: "🗓️", category: "A",
     subModules: [
-      { id: "teacher-class-assign",  label: "Teacher–Class Assignments" },
-      { id: "subject-teacher-map",   label: "Subject–Teacher Mapping" },
+      { id: "holiday-templates",  label: "Holiday Templates" },
+      { id: "recurring-events",   label: "Recurring Events" },
     ],
   },
   {
-    id: "teacher-assignments", label: "Teacher Assignments",
+    id: "id-card-gen", label: "ID Card Generator", emoji: "💳", category: "A",
     subModules: [
-      { id: "class-teacher",         label: "Class Teacher Assignment" },
-      { id: "subject-teacher-rec",   label: "Subject Teacher Records" },
+      { id: "card-layouts",     label: "Card Layouts" },
+      { id: "print-templates",  label: "Print Templates" },
+    ],
+  },
+
+  // ─── Category B: Copy with Review ───────────────────────────────────────────
+  {
+    id: "faculty-mapping", label: "Faculty Mapping", emoji: "🗂️", category: "B",
+    warning: "Teacher allocations should be reviewed before activating the session.",
+    subModules: [
+      { id: "teacher-class-assignments", label: "Teacher–Class–Subject Assignments" },
     ],
   },
   {
-    id: "timetable", label: "Timetable",
+    id: "fees-payments", label: "Fees & Payments", emoji: "💰", category: "B",
+    warning: "Only fee configuration will be copied. Ledger, receipts and dues are excluded.",
     subModules: [
-      { id: "bell-structure",        label: "Bell Structure" },
-      { id: "schedule-grid",         label: "Schedule Grid" },
+      { id: "fee-categories",   label: "Fee Categories" },
+      { id: "fee-heads",        label: "Fee Heads" },
+      { id: "fee-structure",    label: "Fee Structure" },
+      { id: "fine-rules",       label: "Fine Rules" },
+      { id: "concession-rules", label: "Concession Rules" },
     ],
   },
   {
-    id: "academic-calendar", label: "Academic Calendar",
+    id: "assets-inventory", label: "Assets & Inventory", emoji: "📦", category: "B",
+    warning: "Only asset master and categories will be copied. Movement and maintenance history is excluded.",
     subModules: [
-      { id: "calendar-events",       label: "Events & Programmes" },
-      { id: "holiday-calendar",      label: "Holiday Calendar" },
+      { id: "asset-categories",    label: "Asset Categories" },
+      { id: "asset-master",        label: "Asset Master" },
+      { id: "storage-locations",   label: "Storage Locations" },
     ],
+  },
+
+  // ─── Category C: Never Copy ──────────────────────────────────────────────────
+  {
+    id: "student-registry", label: "Student Registry", emoji: "🎓", category: "C",
+    reason: "Students are transferred only through the Student Promotion Engine or New Admissions workflow.",
+    subModules: [],
   },
   {
-    id: "fee-structure", label: "Fee Structure",
-    subModules: [
-      { id: "fee-categories",        label: "Fee Categories" },
-      { id: "fee-assignments",       label: "Class-Wise Fee Assignments" },
-      { id: "concessions",           label: "Concessions & Waivers" },
-    ],
+    id: "exam-controller", label: "Exam Controller", emoji: "🏆", category: "C",
+    reason: "Marks, grades and report card records must never be copied.",
+    subModules: [],
   },
   {
-    id: "exam-grade-config", label: "Exam & Grade Configuration",
-    subModules: [
-      { id: "exam-policy-tiers",     label: "Exam Policy Tiers" },
-      { id: "grade-bands",           label: "Grade Bands" },
-      { id: "promotion-rules",       label: "Promotion Rules" },
-    ],
+    id: "attendance", label: "Attendance Overview", emoji: "📊", category: "C",
+    reason: "Attendance is strictly session-specific.",
+    subModules: [],
   },
   {
-    id: "attendance-config", label: "Attendance Configuration",
-    subModules: [
-      { id: "working-days",          label: "Working Days" },
-      { id: "attendance-rules",      label: "Attendance Marking Rules" },
-    ],
+    id: "complaint-hub", label: "Complaint Hub", emoji: "🛡️", category: "C",
+    reason: "Complaints belong only to the session they were raised in.",
+    subModules: [],
   },
   {
-    id: "house-management", label: "House Management",
-    subModules: [
-      { id: "houses-list",           label: "House List" },
-      { id: "house-captains",        label: "House Captains" },
-    ],
+    id: "noticeboard", label: "Noticeboard", emoji: "🔔", category: "C",
+    reason: "Announcements should not carry forward to a new academic year.",
+    subModules: [],
   },
   {
-    id: "clubs-activities", label: "Clubs & Activities",
-    subModules: [
-      { id: "clubs-list",            label: "Club Registrations" },
-      { id: "activity-schedule",     label: "Activity Schedule" },
-    ],
+    id: "visitor-log", label: "Visitor Log", emoji: "🚪", category: "C",
+    reason: "Visitor history must remain archived in the original session.",
+    subModules: [],
   },
   {
-    id: "transport-config", label: "Transport Configuration",
-    subModules: [
-      { id: "transport-routes",      label: "Transport Routes" },
-      { id: "vehicle-assignments",   label: "Vehicle Assignments" },
-    ],
+    id: "audit-logs", label: "Audit Logs", emoji: "🔐", category: "C",
+    reason: "Audit history is immutable and must not be replicated.",
+    subModules: [],
   },
-  {
-    id: "hostel-config", label: "Hostel Configuration",
-    subModules: [
-      { id: "hostel-rooms",          label: "Hostel Rooms & Blocks" },
-      { id: "hostel-assignments",    label: "Student Hostel Assignments" },
-    ],
-  },
-  {
-    id: "library-config", label: "Library Configuration",
-    subModules: [
-      { id: "book-catalog",          label: "Book Catalog" },
-      { id: "borrowing-rules",       label: "Borrowing Rules" },
-    ],
-  },
+];
+
+// All Category A + B sub-module IDs (selectable)
+const ALL_SELECTABLE_IDS = COPY_MODULE_TREE
+  .filter(m => m.category === "A" || m.category === "B")
+  .flatMap(m => m.subModules.map(s => s.id));
+
+// Default selected = all Category A sub-module IDs
+const DEFAULT_SELECTED = new Set(
+  COPY_MODULE_TREE
+    .filter(m => m.category === "A")
+    .flatMap(m => m.subModules.map(s => s.id))
+);
+
+// Category D items — displayed as an info banner (not selectable)
+const CATEGORY_D_ITEMS = [
+  "Student Promotion",
+  "New Admissions",
+  "Attendance Records",
+  "Marks Entry",
+  "Report Cards",
+  "Fee Transactions",
 ];
 
 // ── Glassmorphic style tokens ──────────────────────────────────────────────────
@@ -168,13 +212,13 @@ const GLASS = {
     boxShadow: "0 0 24px rgba(34,211,238,0.10)",
   } as React.CSSProperties,
   modalOverlay: {
-    background: "rgba(0,0,0,0.80)",
+    background: "rgba(0,0,0,0.85)",
     backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)",
   } as React.CSSProperties,
   modal: {
     background: "rgba(10,18,36,0.98)",
     backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)",
-    border: "1px solid rgba(255,255,255,0.12)",
+    border: "1px solid rgba(255,255,255,0.10)",
   } as React.CSSProperties,
 };
 
@@ -204,166 +248,313 @@ function ToggleSwitch({ on, onChange, disabled }: { on: boolean; onChange: () =>
   );
 }
 
+// ── Category Badge ─────────────────────────────────────────────────────────────
+function CategoryBadge({ cat }: { cat: ModuleCategory }) {
+  if (cat === "A") return (
+    <span className="inline-flex items-center gap-1 text-[9px] font-bold tracking-wider px-2 py-0.5 rounded-full"
+      style={{ background: "rgba(16,185,129,0.15)", color: "#34d399", border: "1px solid rgba(16,185,129,0.30)" }}>
+      ✓ SAFE TO COPY
+    </span>
+  );
+  if (cat === "B") return (
+    <span className="inline-flex items-center gap-1 text-[9px] font-bold tracking-wider px-2 py-0.5 rounded-full"
+      style={{ background: "rgba(245,158,11,0.15)", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.30)" }}>
+      ⚠ VERIFY BEFORE COPYING
+    </span>
+  );
+  return null;
+}
+
+// ── Checkbox UI atoms ──────────────────────────────────────────────────────────
+function Checkbox({
+  checked, indeterminate, disabled, onChange, size = "md", testId,
+}: {
+  checked: boolean; indeterminate?: boolean; disabled?: boolean;
+  onChange?: () => void; size?: "sm" | "md"; testId?: string;
+}) {
+  const dim = size === "sm" ? "w-3.5 h-3.5" : "w-4 h-4";
+  const iconDim = size === "sm" ? "w-2.5 h-2.5" : "w-3 h-3";
+  const bg = disabled
+    ? "rgba(255,255,255,0.04)"
+    : checked
+      ? "#22d3ee"
+      : indeterminate
+        ? "rgba(34,211,238,0.25)"
+        : "rgba(255,255,255,0.06)";
+  const border = disabled
+    ? "1px solid rgba(255,255,255,0.08)"
+    : checked
+      ? "none"
+      : "1px solid rgba(255,255,255,0.20)";
+  return (
+    <div
+      className={`${dim} rounded flex items-center justify-center flex-shrink-0 ${disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer"} transition-all`}
+      style={{ background: bg, border }}
+      onClick={disabled ? undefined : onChange}
+      data-testid={testId}
+    >
+      {!disabled && checked    && <Check className={`${iconDim} text-[#0a1628]`} />}
+      {!disabled && indeterminate && !checked && <span className="w-2 h-0.5 rounded-full bg-cyan-300 block" />}
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
-// MODULE PERMISSION SELECTOR — reusable tree with parent/child checkboxes
+// COPY CONFIG SELECTOR — Enterprise 4-category hierarchical checkbox tree
 // ══════════════════════════════════════════════════════════════════════════════
-interface ModulePermissionSelectorProps {
+interface CopyConfigSelectorProps {
   selected: Set<string>;
   onChange: (next: Set<string>) => void;
 }
 
-export function ModulePermissionSelector({ selected, onChange }: ModulePermissionSelectorProps) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set(MODULE_TREE.map(m => m.id)));
+export function CopyConfigSelector({ selected, onChange }: CopyConfigSelectorProps) {
+  const [expanded, setExpanded] = useState<Set<string>>(
+    new Set(COPY_MODULE_TREE.filter(m => m.category !== "C").map(m => m.id))
+  );
 
-  const allSubIds = useMemo(() => MODULE_TREE.flatMap(m => m.subModules.map(s => s.id)), []);
-
-  const allSelected  = allSubIds.every(id => selected.has(id));
-  const someSelected = !allSelected && allSubIds.some(id => selected.has(id));
+  const allSelected  = ALL_SELECTABLE_IDS.every(id => selected.has(id));
+  const someSelected = !allSelected && ALL_SELECTABLE_IDS.some(id => selected.has(id));
 
   function toggleAll() {
-    if (allSelected) onChange(new Set());
-    else             onChange(new Set(allSubIds));
+    onChange(allSelected ? new Set() : new Set(ALL_SELECTABLE_IDS));
   }
 
-  function toggleModule(mod: Module) {
+  function toggleModule(mod: CopyModule) {
+    if (mod.category === "C") return;
     const childIds = mod.subModules.map(s => s.id);
-    const allChildOn = childIds.every(id => selected.has(id));
-    const next = new Set(selected);
-    if (allChildOn) childIds.forEach(id => next.delete(id));
-    else            childIds.forEach(id => next.add(id));
+    const allOn    = childIds.every(id => selected.has(id));
+    const next     = new Set(selected);
+    if (allOn) childIds.forEach(id => next.delete(id));
+    else        childIds.forEach(id => next.add(id));
     onChange(next);
   }
 
-  function toggleSub(sub: SubModule) {
+  function toggleSub(mod: CopyModule, subId: string) {
+    if (mod.category === "C") return;
     const next = new Set(selected);
-    if (next.has(sub.id)) next.delete(sub.id);
-    else                  next.add(sub.id);
+    if (next.has(subId)) {
+      next.delete(subId);
+    } else {
+      next.add(subId);
+    }
     onChange(next);
   }
 
   function toggleExpand(id: string) {
     const next = new Set(expanded);
     if (next.has(id)) next.delete(id);
-    else              next.add(id);
+    else               next.add(id);
     setExpanded(next);
   }
 
+  const catAModules = COPY_MODULE_TREE.filter(m => m.category === "A");
+  const catBModules = COPY_MODULE_TREE.filter(m => m.category === "B");
+  const catCModules = COPY_MODULE_TREE.filter(m => m.category === "C");
+
+  function renderModuleRow(mod: CopyModule) {
+    const isC        = mod.category === "C";
+    const childIds   = mod.subModules.map(s => s.id);
+    const allChildOn = childIds.length > 0 && childIds.every(id => selected.has(id));
+    const someChildOn= childIds.length > 0 && !allChildOn && childIds.some(id => selected.has(id));
+    const isExpanded = expanded.has(mod.id);
+
+    return (
+      <div key={mod.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+        {/* Parent row */}
+        <div className="flex items-center gap-2.5 px-4 py-2.5 select-none"
+          style={{ background: isC ? "rgba(0,0,0,0.10)" : "rgba(255,255,255,0.02)" }}>
+
+          {isC ? (
+            <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+              <Lock className="w-3 h-3 text-red-500/50" />
+            </div>
+          ) : (
+            <Checkbox
+              checked={allChildOn}
+              indeterminate={someChildOn}
+              onChange={() => toggleModule(mod)}
+              testId={`module-check-${mod.id}`}
+            />
+          )}
+
+          <span className="text-sm mr-1">{mod.emoji}</span>
+
+          <span
+            className="flex-1 text-sm font-semibold"
+            style={{ color: isC ? "rgba(255,255,255,0.25)" : (allChildOn || someChildOn) ? "#e2e8f0" : "rgba(255,255,255,0.55)" }}
+          >
+            {mod.label}
+          </span>
+
+          {!isC && (
+            <span className="text-[10px] text-white/30 mr-1">
+              {childIds.filter(id => selected.has(id)).length}/{childIds.length}
+            </span>
+          )}
+
+          {isC ? (
+            <span className="text-[9px] font-bold text-red-500/60 tracking-wider mr-1">NEVER COPY</span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => toggleExpand(mod.id)}
+              className="text-white/30 hover:text-white/70 transition-colors"
+              data-testid={`module-expand-${mod.id}`}
+            >
+              {isExpanded
+                ? <ChevronDown  className="w-3.5 h-3.5" />
+                : <ChevronRight className="w-3.5 h-3.5" />}
+            </button>
+          )}
+        </div>
+
+        {/* Category C reason row */}
+        {isC && (
+          <div className="pl-10 pr-4 pb-2 -mt-0.5">
+            <p className="text-[10px] text-white/25 italic leading-relaxed">{mod.reason}</p>
+          </div>
+        )}
+
+        {/* Sub-module rows */}
+        {!isC && isExpanded && (
+          <div style={{ background: "rgba(0,0,0,0.20)" }}>
+            {/* Category B warning */}
+            {mod.category === "B" && mod.warning && (
+              <div className="mx-4 mt-2.5 mb-1.5 flex items-start gap-2 px-3 py-2 rounded-lg text-[10px]"
+                style={{ background: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.20)", color: "#fbbf24" }}>
+                <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                {mod.warning}
+              </div>
+            )}
+
+            {mod.subModules.map(sub => (
+              <div
+                key={sub.id}
+                className="flex items-center gap-3 pl-10 pr-4 py-2 cursor-pointer select-none hover:bg-white/[0.02] transition-colors"
+                onClick={() => toggleSub(mod, sub.id)}
+                data-testid={`submodule-check-${sub.id}`}
+              >
+                <Checkbox
+                  checked={selected.has(sub.id)}
+                  size="sm"
+                  onChange={() => toggleSub(mod, sub.id)}
+                />
+                <span
+                  className="text-xs"
+                  style={{ color: selected.has(sub.id) ? "#cbd5e1" : "rgba(255,255,255,0.40)" }}
+                >
+                  {sub.label}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const totalSelected = ALL_SELECTABLE_IDS.filter(id => selected.has(id)).length;
+
   return (
     <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
-      {/* Select All row */}
+
+      {/* ── Select All ── */}
       <div
         className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none"
-        style={{ background: "rgba(34,211,238,0.06)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}
+        style={{ background: "rgba(34,211,238,0.06)", borderBottom: "1px solid rgba(255,255,255,0.08)" }}
         onClick={toggleAll}
         data-testid="module-select-all"
       >
-        <div
-          className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0"
-          style={{
-            background:  allSelected ? "#22d3ee" : someSelected ? "rgba(34,211,238,0.35)" : "rgba(255,255,255,0.08)",
-            border:      allSelected ? "none"    : "1px solid rgba(255,255,255,0.20)",
-          }}
-        >
-          {allSelected  && <Check  className="w-3 h-3 text-[#0a1628]" />}
-          {someSelected && <span className="w-2 h-0.5 rounded-full bg-cyan-300 block" />}
-        </div>
+        <Checkbox checked={allSelected} indeterminate={someSelected} onChange={toggleAll} testId="check-select-all" />
         <span className="text-sm font-bold text-white">Select All</span>
         <span className="ml-auto text-xs text-white/40">
-          {selected.size} / {allSubIds.length} sub-modules
+          {totalSelected} / {ALL_SELECTABLE_IDS.length} sub-modules
         </span>
       </div>
 
-      {/* Module rows */}
-      {MODULE_TREE.map(mod => {
-        const childIds    = mod.subModules.map(s => s.id);
-        const allChildOn  = childIds.every(id => selected.has(id));
-        const someChildOn = !allChildOn && childIds.some(id => selected.has(id));
-        const isExpanded  = expanded.has(mod.id);
+      {/* ── Category A: Safe to Copy ── */}
+      <div style={{ borderBottom: "1px solid rgba(16,185,129,0.15)" }}>
+        <div className="flex items-center gap-2 px-4 py-2"
+          style={{ background: "rgba(16,185,129,0.05)" }}>
+          <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          <span className="text-[10px] font-bold tracking-widest uppercase text-emerald-400/80">
+            Category A — Safe to Copy
+          </span>
+          <span className="ml-auto text-[10px] text-white/30">Default: Selected</span>
+        </div>
+        {catAModules.map(renderModuleRow)}
+      </div>
 
-        return (
-          <div key={mod.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-            {/* Parent row */}
-            <div className="flex items-center gap-3 px-4 py-2.5 select-none"
-              style={{ background: "rgba(255,255,255,0.02)" }}>
-              {/* Checkbox */}
-              <div
-                className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0 cursor-pointer"
-                style={{
-                  background: allChildOn ? "#22d3ee" : someChildOn ? "rgba(34,211,238,0.25)" : "rgba(255,255,255,0.06)",
-                  border:     allChildOn ? "none"     : "1px solid rgba(255,255,255,0.18)",
-                }}
-                onClick={() => toggleModule(mod)}
-                data-testid={`module-check-${mod.id}`}
-              >
-                {allChildOn  && <Check className="w-3 h-3 text-[#0a1628]" />}
-                {someChildOn && <span className="w-2 h-0.5 rounded-full bg-cyan-400 block" />}
+      {/* ── Category B: Copy with Review ── */}
+      <div style={{ borderBottom: "1px solid rgba(245,158,11,0.15)" }}>
+        <div className="flex items-center gap-2 px-4 py-2"
+          style={{ background: "rgba(245,158,11,0.04)" }}>
+          <div className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+          <span className="text-[10px] font-bold tracking-widest uppercase text-amber-400/80">
+            Category B — Verify Before Copying
+          </span>
+          <span className="ml-auto text-[10px] text-white/30">Default: Unselected</span>
+        </div>
+        {catBModules.map(renderModuleRow)}
+      </div>
+
+      {/* ── Category C: Never Copy ── */}
+      <div style={{ borderBottom: "1px solid rgba(239,68,68,0.12)" }}>
+        <div className="flex items-center gap-2 px-4 py-2"
+          style={{ background: "rgba(239,68,68,0.04)" }}>
+          <Lock className="w-3 h-3 text-red-500/60" />
+          <span className="text-[10px] font-bold tracking-widest uppercase text-red-500/70">
+            Category C — Never Copied
+          </span>
+          <span className="ml-auto text-[10px] text-white/30">Always clean slate</span>
+        </div>
+        <div className="px-4 pt-1 pb-2">
+          <p className="text-[10px] text-white/30 italic mb-2">
+            This module always starts as a clean slate to preserve historical records.
+          </p>
+          <div className="grid grid-cols-2 gap-1.5">
+            {catCModules.map(mod => (
+              <div key={mod.id}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg"
+                style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.12)" }}>
+                <Lock className="w-2.5 h-2.5 text-red-500/40 flex-shrink-0" />
+                <span className="text-[10px] text-white/25">{mod.emoji} {mod.label}</span>
               </div>
-
-              {/* Label */}
-              <span
-                className="flex-1 text-sm font-semibold cursor-pointer"
-                style={{ color: (allChildOn || someChildOn) ? "#e2e8f0" : "rgba(255,255,255,0.55)" }}
-                onClick={() => toggleModule(mod)}
-              >
-                {mod.label}
-              </span>
-
-              {/* Sub-count */}
-              <span className="text-[10px] text-white/30 mr-2">
-                {childIds.filter(id => selected.has(id)).length}/{childIds.length}
-              </span>
-
-              {/* Expand/collapse */}
-              <button
-                type="button"
-                onClick={() => toggleExpand(mod.id)}
-                className="text-white/30 hover:text-white/70 transition-colors"
-                data-testid={`module-expand-${mod.id}`}
-              >
-                {isExpanded
-                  ? <ChevronDown    className="w-3.5 h-3.5" />
-                  : <ChevronRight   className="w-3.5 h-3.5" />}
-              </button>
-            </div>
-
-            {/* Sub-module rows */}
-            {isExpanded && (
-              <div style={{ background: "rgba(0,0,0,0.25)" }}>
-                {mod.subModules.map(sub => (
-                  <div
-                    key={sub.id}
-                    className="flex items-center gap-3 pl-10 pr-4 py-2 cursor-pointer select-none hover:bg-white/[0.02] transition-colors"
-                    onClick={() => toggleSub(sub)}
-                    data-testid={`submodule-check-${sub.id}`}
-                  >
-                    <div
-                      className="w-3.5 h-3.5 rounded flex items-center justify-center flex-shrink-0"
-                      style={{
-                        background: selected.has(sub.id) ? "#22d3ee" : "rgba(255,255,255,0.06)",
-                        border:     selected.has(sub.id) ? "none"     : "1px solid rgba(255,255,255,0.18)",
-                      }}
-                    >
-                      {selected.has(sub.id) && <Check className="w-2.5 h-2.5 text-[#0a1628]" />}
-                    </div>
-                    <span
-                      className="text-xs"
-                      style={{ color: selected.has(sub.id) ? "#cbd5e1" : "rgba(255,255,255,0.40)" }}
-                    >
-                      {sub.label}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
+            ))}
           </div>
-        );
-      })}
+        </div>
+      </div>
+
+      {/* ── Category D: Generated After Creation ── */}
+      <div className="px-4 py-3" style={{ background: "rgba(59,130,246,0.04)" }}>
+        <div className="flex items-center gap-2 mb-2">
+          <Info className="w-3 h-3 text-blue-400" />
+          <span className="text-[10px] font-bold tracking-widest uppercase text-blue-400/80">
+            Category D — Generated After Session Creation
+          </span>
+        </div>
+        <p className="text-[10px] text-white/30 mb-2">
+          These are not copied — they are automatically generated after the session is activated.
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {CATEGORY_D_ITEMS.map(item => (
+            <span key={item}
+              className="text-[10px] px-2 py-1 rounded-full"
+              style={{ background: "rgba(59,130,246,0.08)", color: "rgba(147,197,253,0.70)", border: "1px solid rgba(59,130,246,0.15)" }}>
+              {item}
+            </span>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
 
+// Keep the old export name for any external references
+export { CopyConfigSelector as ModulePermissionSelector };
+
 // ══════════════════════════════════════════════════════════════════════════════
-// CREATE SESSION MODAL — enhanced with all 4 workflow sections
+// CREATE SESSION MODAL — Enterprise 4xl wide, scrollable, 2-section form
 // ══════════════════════════════════════════════════════════════════════════════
 interface CreateModalProps {
   sessions:  AcademicSession[];
@@ -385,23 +576,16 @@ export interface CreatePayload {
 }
 
 function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateModalProps) {
+
   // ── Section 1: Basic info ────────────────────────────────────────────────
-  const [name,        setName]        = useState("");
-  const [startDate,   setStartDate]   = useState("");
-  const [endDate,     setEndDate]     = useState("");
-  const [status,      setStatus]      = useState<"draft" | "active">("draft");
-  const [setAsActive, setSetAsActive] = useState(false);
+  const [name,      setName]      = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate,   setEndDate]   = useState("");
 
   // ── Section 2: Copy previous session ─────────────────────────────────────
   const [copyPrev,          setCopyPrev]          = useState(false);
   const [copiedFromId,      setCopiedFromId]      = useState<number | null>(null);
-  const [selectedModuleIds, setSelectedModuleIds] = useState<Set<string>>(new Set());
-
-  // ── Section 3: Student promotion ─────────────────────────────────────────
-  const [promoStrategy, setPromoStrategy] = useState<"defer" | "immediate">("defer");
-
-  // ── Section 4: New admissions ─────────────────────────────────────────────
-  const [newAdmissions, setNewAdmissions] = useState(false);
+  const [selectedModuleIds, setSelectedModuleIds] = useState<Set<string>>(new Set(DEFAULT_SELECTED));
 
   // ── Validation ───────────────────────────────────────────────────────────
   const trimName = name.trim();
@@ -429,34 +613,16 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
     return ov ? `Dates overlap with "${ov.sessionName}"` : "";
   }, [startDate, endDate, dateError, sessions]);
 
-  const activeSession  = sessions.find(s => s.isActive);
-  const hasActiveConflict = setAsActive && !!activeSession;
-
   const isValid =
     trimName.length > 0 &&
     startDate && endDate &&
     !nameError && !dateError && !overlapError;
 
-  function handleSubmit() {
-    if (!isValid) return;
-    onSubmit({
-      sessionName:          trimName,
-      startDate,
-      endDate,
-      status:               setAsActive ? "active" : status,
-      setAsActive,
-      newAdmissionsEnabled: newAdmissions,
-      promotionStrategy:    promoStrategy,
-      copiedFromSessionId:  copyPrev ? copiedFromId : null,
-      copiedModules:        copyPrev && selectedModuleIds.size > 0
-                              ? JSON.stringify([...selectedModuleIds])
-                              : null,
-    });
-  }
-
   // ── Derived helpers ──────────────────────────────────────────────────────
-  const prevSessions = sessions.filter(s => !s.isActive);
-  const latestPrev   = prevSessions[0] ?? null;
+  const prevSessions = [...sessions].sort(
+    (a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
+  );
+  const latestPrev = prevSessions[0] ?? null;
 
   function handleCopyPrevToggle() {
     const next = !copyPrev;
@@ -464,188 +630,237 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
     if (next && !copiedFromId && latestPrev) setCopiedFromId(latestPrev.id);
   }
 
+  function handleSubmit() {
+    if (!isValid) return;
+    onSubmit({
+      sessionName:          trimName,
+      startDate,
+      endDate,
+      status:               "draft",
+      setAsActive:          false,
+      newAdmissionsEnabled: false,
+      promotionStrategy:    "defer",
+      copiedFromSessionId:  copyPrev ? copiedFromId : null,
+      copiedModules:        copyPrev && selectedModuleIds.size > 0
+                              ? JSON.stringify([...selectedModuleIds])
+                              : null,
+    });
+  }
+
+  const selectedCount = [...selectedModuleIds].length;
+
   return createPortal(
     <div
-      className="fixed inset-0 z-50 sm:flex sm:items-center sm:justify-center sm:p-4"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4"
       style={GLASS.modalOverlay}
       onClick={onClose}
     >
       <div
-        className="absolute inset-0 flex flex-col overflow-hidden
-                   sm:relative sm:inset-auto sm:w-full sm:max-w-xl sm:rounded-2xl sm:max-h-[92dvh]"
+        className="w-full max-w-4xl h-[90vh] md:h-auto max-h-[90vh] flex flex-col
+                   rounded-t-2xl sm:rounded-2xl overflow-hidden"
         style={GLASS.modal}
         onClick={e => e.stopPropagation()}
       >
-        {/* ── Header ─────────────────────────────────────────────────── */}
+
+        {/* ── Header ──────────────────────────────────────────────────────── */}
         <div className="flex items-center justify-between px-6 pt-6 pb-4 flex-shrink-0"
           style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-              style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)" }}>
-              <CalendarRange className="w-4 h-4 text-white" />
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+              style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", boxShadow: "0 0 20px rgba(34,211,238,0.30)" }}>
+              <CalendarRange className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h3 className="font-bold text-white leading-tight">New Academic Session</h3>
-              <p className="text-[11px] text-white/40">Configure the full year workflow</p>
+              <h3 className="font-bold text-white text-base leading-tight">New Academic Session</h3>
+              <p className="text-[11px] text-white/40 mt-0.5">Configure the academic year and copy settings</p>
             </div>
           </div>
-          <button onClick={onClose} className="text-white/30 hover:text-white/70 transition-colors p-1">
-            <X className="w-5 h-5" />
+          <button
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-white/30 hover:text-white/70 hover:bg-white/5 transition-all"
+            data-testid="button-close-modal"
+          >
+            <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* ── Scrollable body ─────────────────────────────────────────── */}
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-7 min-h-0">
+        {/* ── Scrollable body ──────────────────────────────────────────────── */}
+        <div className="flex-1 overflow-y-auto min-h-0 px-6 py-6 space-y-8">
 
-          {/* ── SECTION 1: Basic Information ──────────────────────────── */}
+          {/* ── SECTION 1: Session Details ──────────────────────────────── */}
           <div>
-            <SectionLabel>1 · Basic Information</SectionLabel>
-            <div className="space-y-4">
+            <SectionLabel>1 · Session Details</SectionLabel>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
 
-              {/* Session Name */}
-              <div>
-                <label className="text-xs font-semibold text-white/60 block mb-1.5">
+              {/* Session Name — spans 3 cols on md */}
+              <div className="md:col-span-3">
+                <label className="text-xs font-semibold text-white/60 block mb-2">
                   Session Name <span className="text-red-400">*</span>
                 </label>
                 <Input
                   value={name}
                   onChange={e => setName(e.target.value)}
                   placeholder="e.g. 2026–2027"
-                  className="bg-[#0A1628] border-white/15 text-white placeholder:text-white/20 focus:border-cyan-400/50"
+                  className="bg-[#0A1628] border-white/15 text-white placeholder:text-white/20
+                             focus:border-cyan-400/50 h-10 text-sm"
                   data-testid="input-session-name"
                 />
                 {nameError && (
-                  <p className="text-xs mt-1.5 text-red-400 flex items-center gap-1">
+                  <p className="text-xs mt-2 text-red-400 flex items-center gap-1.5">
                     <AlertTriangle className="w-3 h-3 flex-shrink-0" />{nameError}
                   </p>
                 )}
               </div>
 
-              {/* Start + End Date */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-white/60 block mb-1.5">
-                    Start Date <span className="text-red-400">*</span>
-                  </label>
-                  <input type="date" value={startDate}
-                    onChange={e => setStartDate(e.target.value)}
-                    className="w-full h-9 px-3 rounded-md text-sm text-white bg-[#0A1628] border border-white/15 focus:outline-none focus:border-cyan-400/50"
-                    data-testid="input-session-start" />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-white/60 block mb-1.5">
-                    End Date <span className="text-red-400">*</span>
-                  </label>
-                  <input type="date" value={endDate} min={startDate}
-                    onChange={e => setEndDate(e.target.value)}
-                    className="w-full h-9 px-3 rounded-md text-sm text-white bg-[#0A1628] border border-white/15 focus:outline-none focus:border-cyan-400/50"
-                    data-testid="input-session-end" />
-                </div>
+              {/* Start Date */}
+              <div className="md:col-span-1">
+                <label className="text-xs font-semibold text-white/60 block mb-2">
+                  Start Date <span className="text-red-400">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={e => setStartDate(e.target.value)}
+                  className="w-full h-10 px-3 rounded-lg text-sm text-white bg-[#0A1628]
+                             border border-white/15 focus:outline-none focus:border-cyan-400/50"
+                  data-testid="input-session-start"
+                />
               </div>
+
+              {/* End Date */}
+              <div className="md:col-span-1">
+                <label className="text-xs font-semibold text-white/60 block mb-2">
+                  End Date <span className="text-red-400">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={endDate}
+                  min={startDate}
+                  onChange={e => setEndDate(e.target.value)}
+                  className="w-full h-10 px-3 rounded-lg text-sm text-white bg-[#0A1628]
+                             border border-white/15 focus:outline-none focus:border-cyan-400/50"
+                  data-testid="input-session-end"
+                />
+              </div>
+
+              {/* Duration preview */}
+              <div className="md:col-span-1 flex flex-col justify-end">
+                {startDate && endDate && !dateError && !overlapError ? (
+                  <div className="h-10 flex items-center px-3 rounded-lg text-xs font-semibold text-emerald-400"
+                    style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.20)" }}>
+                    {(() => {
+                      const days = Math.round(
+                        (new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000
+                      );
+                      const months = Math.round(days / 30);
+                      return `≈ ${months} months (${days} days)`;
+                    })()}
+                  </div>
+                ) : (
+                  <div className="h-10 flex items-center px-3 rounded-lg text-xs text-white/25"
+                    style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                    Duration will appear here
+                  </div>
+                )}
+              </div>
+
+              {/* Date / overlap errors */}
               {(dateError || overlapError) && (
-                <p className="text-xs text-red-400 flex items-center gap-1 -mt-2">
-                  <AlertTriangle className="w-3 h-3 flex-shrink-0" />{dateError || overlapError}
-                </p>
-              )}
-
-              {/* Set as Active toggle */}
-              <div>
-                <label className="text-xs font-semibold text-white/60 block mb-2">Set as Active Session</label>
-                <div className="flex items-center gap-2 h-8">
-                  <ToggleSwitch
-                    on={setAsActive}
-                    onChange={() => {
-                      const next = !setAsActive;
-                      setSetAsActive(next);
-                    }}
-                  />
-                  <span className="text-xs" style={{ color: setAsActive ? "#22d3ee" : "rgba(255,255,255,0.30)" }}>
-                    {setAsActive ? "Yes" : "No"}
-                  </span>
-                </div>
-              </div>
-
-              {/* Active conflict warning */}
-              {hasActiveConflict && activeSession && (
-                <div className="flex items-start gap-2 p-3 rounded-xl text-xs"
-                  style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)", color: "#fbbf24" }}>
-                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                  <span>
-                    <strong>"{activeSession.sessionName}"</strong> is currently active.
-                    Creating this session as active will archive it and rollover all rosters.
-                    A "ROLLOVER" confirmation will be required.
-                  </span>
+                <div className="md:col-span-3">
+                  <p className="text-xs text-red-400 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3 h-3 flex-shrink-0" />{dateError || overlapError}
+                  </p>
                 </div>
               )}
             </div>
           </div>
 
-          {/* ── SECTION 2: Copy Previous Session ─────────────────────── */}
+          {/* ── SECTION 2: Copy Configuration ──────────────────────────── */}
           <div>
-            <SectionLabel>2 · Copy Previous Session</SectionLabel>
+            <SectionLabel>2 · Copy Configuration</SectionLabel>
 
-            {/* Toggle checkbox */}
-            <label className="flex items-start gap-3 cursor-pointer select-none group">
+            {/* Toggle */}
+            <label
+              className="flex items-start gap-3 cursor-pointer select-none group p-4 rounded-xl transition-all"
+              style={{
+                background: copyPrev ? "rgba(34,211,238,0.06)" : "rgba(255,255,255,0.03)",
+                border:     copyPrev ? "1px solid rgba(34,211,238,0.20)" : "1px solid rgba(255,255,255,0.07)",
+              }}
+            >
               <div
                 className="w-4 h-4 rounded mt-0.5 flex items-center justify-center flex-shrink-0 transition-all"
                 style={{
                   background: copyPrev ? "#22d3ee" : "rgba(255,255,255,0.06)",
-                  border:     copyPrev ? "none"    : "1px solid rgba(255,255,255,0.20)",
+                  border:     copyPrev ? "none" : "1px solid rgba(255,255,255,0.20)",
                 }}
                 onClick={handleCopyPrevToggle}
                 data-testid="toggle-copy-prev"
               >
                 {copyPrev && <Check className="w-3 h-3 text-[#0a1628]" />}
               </div>
-              <div onClick={handleCopyPrevToggle}>
+              <div onClick={handleCopyPrevToggle} className="flex-1">
                 <p className="text-sm font-semibold text-white/80 group-hover:text-white transition-colors">
                   Copy configuration from previous academic session
                 </p>
                 <p className="text-xs text-white/35 mt-0.5">
-                  Choose exactly which modules should carry over into the new year.
+                  Choose exactly which modules carry over. Safe configurations are pre-selected by default.
                 </p>
               </div>
             </label>
 
-            {/* Source session picker + module selector */}
+            {/* Source + tree */}
             {copyPrev && (
-              <div className="mt-4 space-y-4 pl-7">
-                {/* Source selector */}
+              <div className="mt-5 space-y-5">
+
+                {/* Source picker */}
                 <div>
-                  <label className="text-xs font-semibold text-white/60 block mb-1.5">
+                  <label className="text-xs font-semibold text-white/60 block mb-2">
                     Copy From Session
                   </label>
                   {prevSessions.length === 0 ? (
-                    <p className="text-xs text-white/35 italic">No previous sessions available.</p>
+                    <div className="flex items-center gap-2 px-4 py-3 rounded-xl text-xs text-white/40 italic"
+                      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                      <Info className="w-3.5 h-3.5 text-white/30" />
+                      No previous sessions available — this will be your first session.
+                    </div>
                   ) : (
                     <div className="relative">
                       <select
                         value={copiedFromId ?? ""}
                         onChange={e => setCopiedFromId(e.target.value ? Number(e.target.value) : null)}
-                        className="w-full h-9 pl-3 pr-8 rounded-lg text-sm text-white bg-[#0A1628] border border-white/15 focus:outline-none focus:border-cyan-400/50 appearance-none"
+                        className="w-full h-10 pl-3 pr-8 rounded-lg text-sm text-white bg-[#0A1628]
+                                   border border-white/15 focus:outline-none focus:border-cyan-400/50 appearance-none"
                         data-testid="select-copy-source"
                       >
-                        <option value="">— Select a session —</option>
+                        <option value="">— Select a session to copy from —</option>
                         {prevSessions.map(s => (
                           <option key={s.id} value={s.id}>{s.sessionName}</option>
                         ))}
                       </select>
-                      <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30 pointer-events-none" />
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30 pointer-events-none" />
                     </div>
                   )}
                 </div>
 
-                {/* Module permission selector */}
+                {/* Module tree label + counter */}
                 <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs font-semibold text-white/60">
-                      Select Modules to Copy
-                    </label>
-                    <span className="text-[10px] text-white/30">
-                      {selectedModuleIds.size} sub-modules selected
-                    </span>
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <p className="text-xs font-semibold text-white/60">Select Modules to Copy</p>
+                      <p className="text-[10px] text-white/30 mt-0.5">
+                        Category A is pre-selected. Review Category B carefully before enabling.
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs font-bold" style={{ color: "#22d3ee" }}>
+                        {selectedCount}
+                      </span>
+                      <span className="text-[10px] text-white/30">
+                        /{ALL_SELECTABLE_IDS.length} selected
+                      </span>
+                    </div>
                   </div>
-                  <ModulePermissionSelector
+                  <CopyConfigSelector
                     selected={selectedModuleIds}
                     onChange={setSelectedModuleIds}
                   />
@@ -653,107 +868,52 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
               </div>
             )}
           </div>
-
-          {/* ── SECTION 3: Student Promotion ──────────────────────────── */}
-          <div>
-            <SectionLabel>3 · Student Promotion</SectionLabel>
-            <div className="space-y-2.5">
-              {([
-                {
-                  value: "defer",
-                  label: "Promote students later",
-                  desc:  "Students remain in their current class. Run promotions manually after the session is set up.",
-                },
-                {
-                  value: "immediate",
-                  label: "Promote students immediately",
-                  desc:  "Trigger the promotion workflow right after session creation. Confirmation required.",
-                },
-              ] as const).map(opt => (
-                <label
-                  key={opt.value}
-                  className="flex items-start gap-3 p-3.5 rounded-xl cursor-pointer transition-all"
-                  style={{
-                    background: promoStrategy === opt.value ? "rgba(34,211,238,0.07)" : "rgba(255,255,255,0.03)",
-                    border:     promoStrategy === opt.value ? "1px solid rgba(34,211,238,0.25)" : "1px solid rgba(255,255,255,0.07)",
-                  }}
-                  data-testid={`promo-${opt.value}`}
-                >
-                  <div
-                    className="w-4 h-4 rounded-full mt-0.5 flex-shrink-0 flex items-center justify-center"
-                    style={{
-                      background: promoStrategy === opt.value ? "#22d3ee" : "transparent",
-                      border:     promoStrategy === opt.value ? "none" : "1.5px solid rgba(255,255,255,0.25)",
-                    }}
-                    onClick={() => setPromoStrategy(opt.value)}
-                  >
-                    {promoStrategy === opt.value && <div className="w-1.5 h-1.5 rounded-full bg-[#0a1628]" />}
-                  </div>
-                  <div onClick={() => setPromoStrategy(opt.value)}>
-                    <p className="text-sm font-semibold" style={{ color: promoStrategy === opt.value ? "#e2e8f0" : "rgba(255,255,255,0.55)" }}>
-                      {opt.label}
-                    </p>
-                    <p className="text-xs mt-0.5 text-white/35">{opt.desc}</p>
-                  </div>
-                </label>
-              ))}
-              <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs"
-                style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.15)", color: "rgba(252,165,165,0.80)" }}>
-                <Shield className="w-3.5 h-3.5 flex-shrink-0" />
-                Students are never promoted automatically without an explicit confirmation step.
-              </div>
-            </div>
-          </div>
-
-          {/* ── SECTION 4: New Admissions ─────────────────────────────── */}
-          <div>
-            <SectionLabel>4 · New Admissions</SectionLabel>
-            <div
-              className="flex items-center justify-between p-4 rounded-xl"
-              style={{
-                background: newAdmissions ? "rgba(16,185,129,0.07)" : "rgba(255,255,255,0.03)",
-                border:     newAdmissions ? "1px solid rgba(16,185,129,0.25)" : "1px solid rgba(255,255,255,0.07)",
-              }}
-            >
-              <div>
-                <p className="text-sm font-semibold" style={{ color: newAdmissions ? "#e2e8f0" : "rgba(255,255,255,0.55)" }}>
-                  Enable New Admissions for this Session
-                </p>
-                <p className="text-xs mt-0.5 text-white/35">
-                  Allow the student registry to register new students under this session.
-                </p>
-              </div>
-              <ToggleSwitch
-                on={newAdmissions}
-                onChange={() => setNewAdmissions(v => !v)}
-              />
-            </div>
-          </div>
         </div>
 
-        {/* ── Footer ──────────────────────────────────────────────────────── */}
-        <div className="flex gap-3 px-6 py-4 flex-shrink-0"
+        {/* ── Footer ──────────────────────────────────────────────────────────── */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 px-6 py-4 flex-shrink-0"
           style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}>
-          <Button
-            variant="outline"
-            onClick={onClose}
-            className="flex-1 border-white/15 text-white/60 hover:bg-white/5"
-            data-testid="button-modal-cancel"
-          >
-            Cancel
-          </Button>
-          <button
-            disabled={!isValid || isPending}
-            onClick={handleSubmit}
-            data-testid="button-modal-save"
-            className="flex-1 h-9 rounded-lg font-semibold text-sm flex items-center justify-center gap-2
-              disabled:opacity-40 transition-all hover:brightness-110 active:scale-95"
-            style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", color: "#fff" }}
-          >
-            {isPending
-              ? <><Loader2 className="w-4 h-4 animate-spin" /> Creating…</>
-              : <><Plus className="w-4 h-4" /> Create Session</>}
-          </button>
+
+          {/* Summary pill */}
+          {isValid && (
+            <div className="hidden sm:flex items-center gap-2 text-[10px] text-white/40 flex-1">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              {trimName}
+              <span className="text-white/20">·</span>
+              {fmtDate(startDate)} → {fmtDate(endDate)}
+              {copyPrev && selectedCount > 0 && (
+                <>
+                  <span className="text-white/20">·</span>
+                  {selectedCount} modules to copy
+                </>
+              )}
+            </div>
+          )}
+
+          <div className="flex gap-3 sm:ml-auto">
+            <Button
+              variant="outline"
+              onClick={onClose}
+              className="flex-1 sm:flex-none sm:px-6 border-white/15 text-white/60 hover:bg-white/5 h-10"
+              data-testid="button-modal-cancel"
+            >
+              Cancel
+            </Button>
+            <button
+              disabled={!isValid || isPending}
+              onClick={handleSubmit}
+              data-testid="button-modal-save"
+              className="flex-1 sm:flex-none sm:px-8 h-10 rounded-lg font-semibold text-sm
+                         flex items-center justify-center gap-2
+                         disabled:opacity-40 transition-all hover:brightness-110 active:scale-95"
+              style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", color: "#fff",
+                       boxShadow: isValid ? "0 4px 18px rgba(34,211,238,0.30)" : "none" }}
+            >
+              {isPending
+                ? <><Loader2 className="w-4 h-4 animate-spin" /> Creating…</>
+                : <><Plus className="w-4 h-4" /> Create Session</>}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -761,72 +921,174 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// SUCCESS DIALOG — quick actions after creation
+// SUCCESS DIALOG — Professional post-creation workflow dashboard
 // ══════════════════════════════════════════════════════════════════════════════
 interface SuccessDialogProps {
   session:    AcademicSession;
   onClose:    () => void;
   onNavigate: (path: string) => void;
 }
+
 function SuccessDialog({ session, onClose, onNavigate }: SuccessDialogProps) {
+  const copiedCount = useMemo(() => {
+    if (!session.copiedModules) return 0;
+    try { return (JSON.parse(session.copiedModules) as string[]).length; }
+    catch { return 0; }
+  }, [session.copiedModules]);
+
   const actions = [
-    { icon: Copy,         label: "Copy Previous Session Setup",    path: "/admin-dashboard/school-setup/academic-sessions" },
-    { icon: GraduationCap, label: "Promote Students",              path: "/admin-dashboard/student-registry" },
-    { icon: UserPlus,     label: "Add New Admissions",              path: "/admin-dashboard/student-registry" },
-    { icon: LayoutGrid,   label: "Manage Timetable",               path: "/admin-dashboard/timetable" },
-    { icon: Users,        label: "Assign Teachers",                 path: "/admin-dashboard/faculty-mapping" },
-    { icon: Zap,          label: "Switch Active Session",           path: "" },
-    { icon: CalendarRange, label: "Go to Academic Sessions Dashboard", path: "" },
+    {
+      icon: Copy,
+      label: "Copy Configuration Summary",
+      desc: copiedCount > 0 ? `${copiedCount} sub-modules copied` : "No modules copied",
+      path: "",
+      color: "#22d3ee",
+      bg:   "rgba(34,211,238,0.10)",
+    },
+    {
+      icon: GraduationCap,
+      label: "Promote Students",
+      desc: "Move students from previous session",
+      path: "/admin-dashboard/student-registry",
+      color: "#8b5cf6",
+      bg:   "rgba(139,92,246,0.10)",
+    },
+    {
+      icon: UserPlus,
+      label: "Add New Admissions",
+      desc: "Register new students for this year",
+      path: "/admin-dashboard/student-registry",
+      color: "#10b981",
+      bg:   "rgba(16,185,129,0.10)",
+    },
+    {
+      icon: Users,
+      label: "Update Faculty Mapping",
+      desc: "Assign teachers to classes and subjects",
+      path: "/admin-dashboard/faculty-mapping",
+      color: "#6366f1",
+      bg:   "rgba(99,102,241,0.10)",
+    },
+    {
+      icon: LayoutGrid,
+      label: "Configure Timetable",
+      desc: "Build the period schedule for this session",
+      path: "/admin-dashboard/timetable",
+      color: "#3b82f6",
+      bg:   "rgba(59,130,246,0.10)",
+    },
+    {
+      icon: CreditCard,
+      label: "Review Fee Structure",
+      desc: "Verify and update fee categories",
+      path: "/admin-dashboard/fees-manager",
+      color: "#10b981",
+      bg:   "rgba(16,185,129,0.10)",
+    },
+    {
+      icon: Zap,
+      label: "Activate Academic Session",
+      desc: "Set this as the live session for the school",
+      path: "",
+      color: "#D4AF37",
+      bg:   "rgba(212,175,55,0.10)",
+    },
+    {
+      icon: CalendarRange,
+      label: "Go to Academic Sessions Dashboard",
+      desc: "View all sessions and their status",
+      path: "",
+      color: "#22d3ee",
+      bg:   "rgba(34,211,238,0.06)",
+    },
   ];
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={GLASS.modalOverlay}>
-      <div className="w-full max-w-md rounded-2xl overflow-hidden" style={GLASS.modal}>
+      <div className="w-full max-w-lg rounded-2xl overflow-hidden" style={GLASS.modal}>
+
         {/* Success header */}
-        <div className="px-6 pt-6 pb-5 text-center"
+        <div className="px-6 pt-8 pb-6 text-center"
           style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-          <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-3"
-            style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", boxShadow: "0 0 24px rgba(34,211,238,0.35)" }}>
-            <CheckCircle2 className="w-7 h-7 text-white" />
+          <div className="relative inline-flex mb-4">
+            <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
+              style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", boxShadow: "0 0 32px rgba(34,211,238,0.40)" }}>
+              <CheckCircle2 className="w-8 h-8 text-white" />
+            </div>
+            <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-emerald-400 flex items-center justify-center">
+              <Check className="w-3 h-3 text-white" />
+            </div>
           </div>
-          <h3 className="font-bold text-white text-lg">Session Created!</h3>
-          <p className="text-sm mt-1" style={{ color: "rgba(34,211,238,0.80)" }}>
+          <h3 className="font-bold text-white text-lg">Session Created Successfully!</h3>
+          <p className="text-base font-semibold mt-1" style={{ color: "#22d3ee" }}>
             {session.sessionName}
           </p>
-          <p className="text-xs text-white/40 mt-1">
+          <p className="text-xs text-white/40 mt-1.5">
             {fmtDate(session.startDate)} → {fmtDate(session.endDate)}
           </p>
+          {copiedCount > 0 && (
+            <div className="inline-flex items-center gap-1.5 mt-3 px-3 py-1 rounded-full text-xs font-semibold"
+              style={{ background: "rgba(16,185,129,0.12)", color: "#34d399", border: "1px solid rgba(16,185,129,0.25)" }}>
+              <CheckSquare className="w-3 h-3" />
+              {copiedCount} configuration modules copied
+            </div>
+          )}
         </div>
 
-        {/* Quick actions */}
-        <div className="p-4 space-y-1.5 max-h-64 overflow-y-auto">
-          {actions.map(({ icon: Icon, label, path }) => (
+        {/* Workflow banner */}
+        <div className="px-5 py-3" style={{ background: "rgba(99,102,241,0.06)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+          <p className="text-[10px] font-bold tracking-widest uppercase text-indigo-400/70 mb-1.5">
+            Recommended Next Steps
+          </p>
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
+            {["Promote", "Admissions", "Faculty", "Timetable", "Fees", "Activate"].map((step, i, arr) => (
+              <div key={step} className="flex items-center gap-1.5 shrink-0">
+                <span className="text-[9px] font-bold text-white/40 px-2 py-0.5 rounded-full"
+                  style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                  {step}
+                </span>
+                {i < arr.length - 1 && <ArrowRight className="w-2.5 h-2.5 text-white/20 shrink-0" />}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Quick action grid */}
+        <div className="p-4 space-y-1.5 max-h-72 overflow-y-auto">
+          {actions.map(({ icon: Icon, label, desc, path, color, bg }) => (
             <button
               key={label}
-              onClick={() => { path ? onNavigate(path) : onClose(); }}
-              className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left text-sm font-semibold text-white/70 hover:text-white transition-all"
-              style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
+              onClick={() => { if (path) onNavigate(path); else onClose(); }}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all
+                         hover:scale-[1.01] group"
+              style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.06)" }}
               data-testid={`success-action-${label.replace(/\s+/g, "-").toLowerCase()}`}
             >
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
-                style={{ background: "rgba(34,211,238,0.10)" }}>
-                <Icon className="w-3.5 h-3.5 text-cyan-400" />
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-all
+                              group-hover:scale-110"
+                style={{ background: bg }}>
+                <Icon className="w-4 h-4" style={{ color }} />
               </div>
-              {label}
-              <ArrowRight className="w-3.5 h-3.5 ml-auto text-white/25" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-white/80 group-hover:text-white transition-colors leading-tight">
+                  {label}
+                </p>
+                <p className="text-[10px] text-white/35 mt-0.5 truncate">{desc}</p>
+              </div>
+              <ArrowRight className="w-3.5 h-3.5 text-white/20 group-hover:text-white/50 transition-colors shrink-0" />
             </button>
           ))}
         </div>
 
-        {/* Close */}
-        <div className="px-6 pb-5 pt-2">
+        {/* Done */}
+        <div className="px-5 pb-5 pt-2">
           <Button
             variant="outline"
             onClick={onClose}
-            className="w-full border-white/15 text-white/60 hover:bg-white/5"
+            className="w-full border-white/15 text-white/60 hover:bg-white/5 h-10"
             data-testid="button-success-close"
           >
-            Done
+            Done — I'll set it up later
           </Button>
         </div>
       </div>
@@ -984,10 +1246,10 @@ export default function AcademicSessions({ schoolId }: Props) {
   const { toast }       = useToast();
   const [, setLocation] = useLocation();
 
-  const [showCreate,      setShowCreate]      = useState(false);
-  const [createdSession,  setCreatedSession]  = useState<AcademicSession | null>(null);
-  const [rolloverTarget,  setRolloverTarget]  = useState<AcademicSession | null>(null);
-  const [deleteTarget,    setDeleteTarget]    = useState<AcademicSession | null>(null);
+  const [showCreate,     setShowCreate]     = useState(false);
+  const [createdSession, setCreatedSession] = useState<AcademicSession | null>(null);
+  const [rolloverTarget, setRolloverTarget] = useState<AcademicSession | null>(null);
+  const [deleteTarget,   setDeleteTarget]   = useState<AcademicSession | null>(null);
 
   // ── Data ─────────────────────────────────────────────────────────────────
   const { data: sessions = [], isLoading } = useQuery<AcademicSession[]>({
@@ -998,8 +1260,6 @@ export default function AcademicSessions({ schoolId }: Props) {
       return r.json();
     },
   });
-
-  const activeSession = sessions.find(s => s.isActive);
 
   // ── Create mutation ───────────────────────────────────────────────────────
   const createMut = useMutation({
@@ -1066,11 +1326,11 @@ export default function AcademicSessions({ schoolId }: Props) {
           className="flex items-center gap-2 h-9 px-4 rounded-xl text-sm font-semibold text-white
             transition-all hover:brightness-110 active:scale-95"
           style={{
-            background:  "linear-gradient(135deg,#22d3ee,#6366f1)",
-            boxShadow:   "0 4px 16px rgba(34,211,238,0.25)",
+            background: "linear-gradient(135deg,#22d3ee,#6366f1)",
+            boxShadow:  "0 4px 16px rgba(34,211,238,0.25)",
           }}
         >
-          <Plus className="w-4 h-4" /> Add Session
+          <Plus className="w-4 h-4" /> New Session
         </button>
       </div>
 
@@ -1089,6 +1349,14 @@ export default function AcademicSessions({ schoolId }: Props) {
         <div className="space-y-3">
           {sessions.map(session => {
             const isActive = session.isActive;
+
+            // Count copied modules
+            let copiedCount = 0;
+            if (session.copiedModules) {
+              try { copiedCount = (JSON.parse(session.copiedModules) as string[]).length; }
+              catch { /* noop */ }
+            }
+
             return (
               <div
                 key={session.id}
@@ -1134,30 +1402,24 @@ export default function AcademicSessions({ schoolId }: Props) {
                         {session.status ?? "archived"}
                       </span>
                     )}
-                    {session.newAdmissionsEnabled && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold"
-                        style={{ background: "rgba(16,185,129,0.12)", color: "#34d399", border: "1px solid rgba(16,185,129,0.20)" }}>
-                        Admissions Open
-                      </span>
-                    )}
                   </div>
                   <p className="text-xs mt-0.5 text-white/50">
                     {fmtDate(session.startDate)} → {fmtDate(session.endDate)}
                   </p>
-                  {session.copiedFromSessionId && (
+                  {copiedCount > 0 && (
                     <p className="text-[10px] mt-0.5 text-white/30 flex items-center gap-1">
                       <Copy className="w-2.5 h-2.5" />
-                      Copied from session #{session.copiedFromSessionId}
+                      {copiedCount} modules copied from session #{session.copiedFromSessionId}
                     </p>
                   )}
                 </div>
 
                 {/* Actions */}
                 <div className="flex items-center gap-2 shrink-0">
-                  {/* Settings / expand — placeholder for future detail view */}
                   <button
                     onClick={() => {}}
-                    className="w-8 h-8 flex items-center justify-center rounded-lg text-white/25 hover:text-white/60 transition-colors"
+                    className="w-8 h-8 flex items-center justify-center rounded-lg text-white/25
+                      hover:text-white/60 transition-colors"
                     style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
                     title="Session settings"
                     data-testid={`button-settings-${session.id}`}
@@ -1165,7 +1427,6 @@ export default function AcademicSessions({ schoolId }: Props) {
                     <Settings className="w-3.5 h-3.5" />
                   </button>
 
-                  {/* Activate toggle */}
                   {!isActive && (
                     <button
                       onClick={() => setRolloverTarget(session)}
@@ -1178,7 +1439,6 @@ export default function AcademicSessions({ schoolId }: Props) {
                     </button>
                   )}
 
-                  {/* Delete */}
                   {isActive ? (
                     <span className="text-[10px] text-white/20 px-2" title="Cannot delete the active session">
                       Protected
@@ -1200,7 +1460,7 @@ export default function AcademicSessions({ schoolId }: Props) {
         </div>
       )}
 
-      {/* ── Modals ────────────────────────────────────────────────────── */}
+      {/* ── Modals ─────────────────────────────────────────────────────── */}
       {showCreate && (
         <CreateSessionModal
           sessions={sessions}
