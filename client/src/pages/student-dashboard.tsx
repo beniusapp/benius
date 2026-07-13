@@ -20,22 +20,17 @@ interface StudentMeResponse {
   schoolId?: number;
 }
 
-interface MonthlyAttendanceDay {
-  date: string;
-  dayOfWeek: number;
-  status: string;
-  isHoliday: boolean;
-  isSunday: boolean;
-  isFuture: boolean;
-  isApprovedLeave: boolean;
+interface AttendanceStatsResponse {
+  overallPercent: number;
+  workingDays: number;
+  daysPresent: number;
 }
 
-interface MonthlyAttendanceResponse {
-  schoolId: number;
-  studentId: number;
-  year: number;
-  month: number;
-  days: MonthlyAttendanceDay[];
+function getCurrentAcademicYear(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const startYear = now.getMonth() >= 3 ? y : y - 1;
+  return `${startYear}-${String(startYear + 1).slice(-2)}`;
 }
 
 interface HomeworkSubmission {
@@ -126,19 +121,17 @@ export default function StudentDashboard() {
     refetchOnMount: "always",
   });
 
-  const now = new Date();
-  const currentYear  = now.getFullYear();
-  const currentMonth = now.getMonth() + 1;
+  const academicYear = getCurrentAcademicYear();
 
-  const { data: monthlyAttendance } = useQuery<MonthlyAttendanceResponse>({
-    queryKey: ["/api/student/attendance/monthly", currentYear, currentMonth],
+  const { data: attendanceStats } = useQuery<AttendanceStatsResponse>({
+    queryKey: ["/api/student/attendance/stats", academicYear],
     queryFn: async () => {
       const r = await fetch(
-        `/api/student/attendance/monthly?year=${currentYear}&month=${currentMonth}`,
+        `/api/student/attendance/stats?academicYear=${encodeURIComponent(academicYear)}`,
         { credentials: "include" }
       );
       if (!r.ok) throw new Error(`Attendance fetch failed: ${r.status}`);
-      return r.json() as Promise<MonthlyAttendanceResponse>;
+      return r.json() as Promise<AttendanceStatsResponse>;
     },
     enabled: !!student,
     staleTime: 0,
@@ -176,15 +169,7 @@ export default function StudentDashboard() {
     return student.name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
   }, [student?.name]);
 
-  const attendPct = useMemo(() => {
-    if (!monthlyAttendance) return null;
-    const markedDays = monthlyAttendance.days.filter(
-      (d) => !d.isHoliday && !d.isSunday && !d.isFuture && d.status !== "none"
-    );
-    if (markedDays.length === 0) return null;
-    const present = markedDays.filter((d) => d.status === "present").length;
-    return Math.round((present / markedDays.length) * 100);
-  }, [monthlyAttendance]);
+  const attendPct = attendanceStats?.overallPercent ?? null;
 
   const pendingHwCount = useMemo(() => {
     if (!homeworkItems) return null;
