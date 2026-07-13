@@ -2540,7 +2540,13 @@ export async function registerRoutes(
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
 
     try {
+      // Execution log — human-readable record of every step taken.
+      // Included in the API response so the frontend can display it.
+      const executionLog: string[] = [];
+
       // ── 1. Validate request body ───────────────────────────────────────────
+      console.log("[SESSION-CREATE] Step 1 — validating request body");
+      executionLog.push("STEP 1 → Validating inputs...");
       const bodySchema = z.object({
         sessionName:           z.string().min(1, "Session name is required"),
         startDate:             z.string().min(1, "Start date is required"),
@@ -2561,54 +2567,76 @@ export async function registerRoutes(
         newAdmissionsEnabled, promotionStrategy, copiedFromSessionId, copiedModules,
       } = parsed.data;
 
-      // ── 2. Pre-transaction validations (read-only, fast) ──────────────────
-      if (new Date(startDate) >= new Date(endDate))
+      // ── 2. Pre-transaction validations ────────────────────────────────────
+      if (new Date(startDate) >= new Date(endDate)) {
+        console.log("[SESSION-CREATE] ✗ STEP 1 failed: start >= end");
         return res.status(400).json({ message: "Start date must be before end date" });
+      }
 
       const existing = await storage.getAcademicSessions(schoolId);
 
-      if (existing.some(s => s.sessionName.trim().toLowerCase() === sessionName.trim().toLowerCase()))
+      if (existing.some(s => s.sessionName.trim().toLowerCase() === sessionName.trim().toLowerCase())) {
+        console.log(`[SESSION-CREATE] ✗ STEP 1 failed: duplicate name "${sessionName}"`);
         return res.status(400).json({ message: `A session named "${sessionName}" already exists for this school` });
+      }
 
       const overlap = existing.find(s => {
         const [ns, ne] = [new Date(startDate), new Date(endDate)];
         const [es, ee] = [new Date(s.startDate), new Date(s.endDate)];
         return ns <= ee && ne >= es;
       });
-      if (overlap)
+      if (overlap) {
+        console.log(`[SESSION-CREATE] ✗ STEP 1 failed: date overlap with "${overlap.sessionName}"`);
         return res.status(400).json({ message: `Dates overlap with existing session "${overlap.sessionName}"` });
+      }
 
-      // Parse approved sub-module IDs from the copy payload
+      executionLog.push(`STEP 1 ✓ — Inputs valid. Session: "${sessionName}", ${startDate} → ${endDate}`);
+      console.log(`[SESSION-CREATE] ✓ STEP 1 passed — "${sessionName}"`);
+
+      // ── Parse approved sub-module IDs ─────────────────────────────────────
       let approvedSubModuleIds: string[] = [];
       if (copiedFromSessionId && copiedModules) {
         try {
-          const parsed = JSON.parse(copiedModules);
-          if (Array.isArray(parsed)) approvedSubModuleIds = parsed.filter(x => typeof x === "string");
+          const modulesParsed = JSON.parse(copiedModules);
+          if (Array.isArray(modulesParsed))
+            approvedSubModuleIds = modulesParsed.filter((x: unknown) => typeof x === "string");
         } catch {
           return res.status(400).json({ message: "copiedModules must be a valid JSON array of sub-module IDs" });
         }
+        executionLog.push(`STEP 2 → Copy Engine queued — source #${copiedFromSessionId}, ${approvedSubModuleIds.length} modules: [${approvedSubModuleIds.join(", ")}]`);
+        console.log(`[SESSION-CREATE] Copy payload — source #${copiedFromSessionId}, modules: ${approvedSubModuleIds.join(", ")}`);
+      } else if (copiedFromSessionId) {
+        executionLog.push(`STEP 2 → Copy from session #${copiedFromSessionId} — no modules selected, copy engine will be skipped`);
+        console.log(`[SESSION-CREATE] Source session provided but no modules selected — copy engine skipped`);
+      } else {
+        executionLog.push("STEP 2 → Copy Engine not requested (fresh session, no source)");
+        console.log("[SESSION-CREATE] No source session — creating fresh session");
       }
 
-      // ── 3. Run entire operation in a single DB transaction ─────────────────
+      // ── 3. Single DB transaction ────────────────────────────────────────────
+      executionLog.push("STEP 3 → Starting database transaction...");
+      console.log("[SESSION-CREATE] STEP 3 — starting DB transaction");
+
       const { session: newSession, copyResult } = await db.transaction(async (tx) => {
 
-        // ── Step 3a: Verify source session tenant isolation ─────────────────
+        // Step 3a: Tenant isolation guard
         if (copiedFromSessionId) {
-          const [srcSession] = await tx
+          console.log(`[SESSION-CREATE] 3a — verifying source session #${copiedFromSessionId} belongs to school #${schoolId}`);
+          const [srcGuard] = await tx
             .select()
             .from(academicSessions)
             .where(and(
               eq(academicSessions.id, copiedFromSessionId),
-              eq(academicSessions.schoolId, schoolId),   // ← STRICT TENANT GUARD
+              eq(academicSessions.schoolId, schoolId),
             ));
-          if (!srcSession)
-            throw new Error(
-              `Source session #${copiedFromSessionId} not found or belongs to a different school. ` +
-              `Cross-school copying is strictly prohibited.`
-            );
+          if (!srcGuard)
+            throw new Error(`Source session #${copiedFromSessionId} not found or belongs to a different school. Cross-school copying is strictly prohibited.`);
+          executionLog.push(`STEP 3a ✓ — Source session "${srcGuard.sessionName}" verified (same school)`);
+          console.log(`[SESSION-CREATE] ✓ 3a — source "${srcGuard.sessionName}" verified`);
         }
 
-        // ── Step 3b: Insert the new academic session ────────────────────────
+        // Step 3b: Insert session
+        console.log("[SESSION-CREATE] 3b — inserting session record");
         const [session] = await tx
           .insert(academicSessions)
           .values({
@@ -2621,179 +2649,171 @@ export async function registerRoutes(
             newAdmissionsEnabled,
             promotionStrategy,
             copiedFromSessionId:  copiedFromSessionId ?? null,
-            copiedModules:        null, // will be updated after copy
+            copiedModules:        null,
           })
           .returning();
+        executionLog.push(`STEP 3b ✓ — Session record created (ID #${session.id})`);
+        console.log(`[SESSION-CREATE] ✓ 3b — session #${session.id} inserted`);
 
-        // ── Step 3c: If setAsActive, deactivate all sibling sessions ─────────
+        // Step 3c: Activate if requested
         if (setAsActive) {
-          await tx
-            .update(academicSessions)
+          console.log("[SESSION-CREATE] 3c — activating, archiving siblings");
+          await tx.update(academicSessions)
             .set({ isActive: false, status: "archived" })
-            .where(and(
-              eq(academicSessions.schoolId, schoolId),
-              eq(academicSessions.isActive, true),
-            ));
-          await tx
-            .update(academicSessions)
+            .where(and(eq(academicSessions.schoolId, schoolId), eq(academicSessions.isActive, true)));
+          await tx.update(academicSessions)
             .set({ isActive: true, status: "active" })
             .where(and(eq(academicSessions.id, session.id), eq(academicSessions.schoolId, schoolId)));
+          executionLog.push("STEP 3c ✓ — Session set as active, siblings archived");
         }
 
-        // ── Step 3d: Run copy operations ─────────────────────────────────────
+        // Step 3d: Copy engine
         let copyResult: SessionCopyResult | null = null;
 
         if (copiedFromSessionId && approvedSubModuleIds.length > 0) {
+          executionLog.push(`STEP 4 → Starting Copy Engine (${approvedSubModuleIds.length} modules to process)...`);
+          console.log(`[SESSION-CREATE] STEP 4 — copy engine starting, ${approvedSubModuleIds.length} modules`);
 
-          // Re-fetch source session for metadata
           const [srcSession] = await tx
             .select()
             .from(academicSessions)
             .where(and(eq(academicSessions.id, copiedFromSessionId), eq(academicSessions.schoolId, schoolId)));
 
-          // Year delta for advancing calendar event dates
-          const srcYear  = new Date(srcSession.startDate).getFullYear();
-          const destYear = new Date(session.startDate).getFullYear();
+          const srcYear   = new Date(srcSession.startDate).getFullYear();
+          const destYear  = new Date(session.startDate).getFullYear();
           const yearDelta = destYear - srcYear;
+          executionLog.push(`  Year delta: ${srcYear} → ${destYear} (Δ${yearDelta >= 0 ? "+" : ""}${yearDelta}yr)`);
+          console.log(`[SESSION-CREATE] Year delta: ${srcYear}→${destYear} (Δ${yearDelta})`);
 
-          const copied:           CopyEntry[] = [];
-          const sharedSchoolwide: CopyEntry[] = [];
-          const requestedButEmpty: CopyEntry[] = [];
-
-          // De-duplicate: if both holiday-templates and recurring-events are
-          // selected, we only do one calendar scan.
+          const copied:             CopyEntry[] = [];
+          const sharedSchoolwide:   CopyEntry[] = [];
+          const requestedButEmpty:  CopyEntry[] = [];
           const calendarCopyDone = { done: false, count: 0 };
 
           for (const subId of approvedSubModuleIds) {
             const op = SUBMODULE_OPS[subId];
-            if (!op) continue; // unknown ID — skip silently
+            if (!op) {
+              executionLog.push(`  [${subId}] SKIP — module ID not in registry`);
+              console.log(`[SESSION-CREATE]   SKIP ${subId} — not in SUBMODULE_OPS`);
+              continue;
+            }
 
+            console.log(`[SESSION-CREATE]   Processing ${subId} (${op.kind})...`);
+            executionLog.push(`  [${subId}] ${op.label} → running (${op.kind})...`);
+
+            // ── schoolwide-meta: verify schoolMetadata key ──────────────────
             if (op.kind === "schoolwide-meta") {
-              // ── Verify schoolMetadata key exists for this school ────────────
               const [row] = await tx
-                .select()
-                .from(schoolMetadata)
-                .where(and(
-                  eq(schoolMetadata.schoolId, schoolId),
-                  eq(schoolMetadata.metaKey, op.metaKey!),
-                ));
+                .select().from(schoolMetadata)
+                .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, op.metaKey!)));
               if (row) {
                 let countHint = 1;
                 try {
                   const val = JSON.parse(row.metaValue);
                   if (Array.isArray(val)) countHint = val.length;
-                  else if (typeof val === "object" && val !== null)
-                    countHint = Object.keys(val).length;
+                  else if (typeof val === "object" && val !== null) countHint = Object.keys(val).length;
                 } catch { /* noop */ }
                 sharedSchoolwide.push({ module: subId, label: op.label, count: countHint, note: op.note });
+                executionLog.push(`  [${subId}] ✓ ${op.label} — schoolwide config verified (${countHint} items)`);
+                console.log(`[SESSION-CREATE]   ✓ ${subId}: ${countHint} items`);
               } else {
-                requestedButEmpty.push({ module: subId, label: op.label, count: 0, note: "No data configured for this school yet" });
+                requestedButEmpty.push({ module: subId, label: op.label, count: 0, note: "Not configured yet for this school" });
+                executionLog.push(`  [${subId}] ⚠ ${op.label} — no data found (not configured yet)`);
+                console.log(`[SESSION-CREATE]   ⚠ ${subId}: no data`);
               }
 
+            // ── schoolwide-table: count rows in relevant table ──────────────
             } else if (op.kind === "schoolwide-table") {
-              // ── Verify relevant table has data for this school ──────────────
               let count = 0;
               switch (subId) {
                 case "promotion-policy": {
                   const rows = await tx.select().from(examPolicyTiers).where(eq(examPolicyTiers.schoolId, schoolId));
-                  count = rows.length;
-                  break;
+                  count = rows.length; break;
                 }
                 case "attendance-policy": {
                   const rows = await tx.select().from(attendancePolicies).where(eq(attendancePolicies.schoolId, schoolId));
-                  count = rows.length;
-                  break;
+                  count = rows.length; break;
                 }
                 case "leave-policy": {
                   const rows = await tx.select().from(leavePolicies).where(eq(leavePolicies.schoolId, schoolId));
-                  count = rows.length;
-                  break;
+                  count = rows.length; break;
                 }
                 case "bell-structure":
                 case "period-config":
                 case "timetable-template": {
                   const rows = await tx.select().from(timetableStructure).where(eq(timetableStructure.schoolId, schoolId));
-                  count = rows.length;
-                  break;
+                  count = rows.length; break;
                 }
                 case "teacher-class-assignments": {
                   const allocs = await tx.select().from(teacherAllocations).where(eq(teacherAllocations.schoolId, schoolId));
                   const maps   = await tx.select().from(facultyMappings).where(eq(facultyMappings.schoolId, schoolId));
-                  count = allocs.length + maps.length;
-                  break;
+                  count = allocs.length + maps.length; break;
                 }
                 case "asset-categories":
                 case "asset-master":
                 case "storage-locations": {
                   const rows = await tx.select().from(schoolAssets).where(eq(schoolAssets.schoolId, schoolId));
-                  count = rows.length;
-                  break;
+                  count = rows.length; break;
                 }
-                default:
-                  count = 0;
+                default: count = 0;
               }
-              const target = count > 0 ? sharedSchoolwide : requestedButEmpty;
-              target.push({
-                module: subId, label: op.label, count,
-                note: count > 0 ? op.note : "No data configured for this school yet",
-              });
+              const tgt = count > 0 ? sharedSchoolwide : requestedButEmpty;
+              tgt.push({ module: subId, label: op.label, count, note: count > 0 ? op.note : "Not configured yet" });
+              executionLog.push(`  [${subId}] ${count > 0 ? "✓" : "⚠"} ${op.label} — ${count > 0 ? `${count} records (schoolwide)` : "no records found"}`);
+              console.log(`[SESSION-CREATE]   ${count > 0 ? "✓" : "⚠"} ${subId}: ${count} records`);
 
+            // ── calendar-recurring: physically duplicate with year+delta ─────
             } else if (op.kind === "calendar-recurring") {
-              // ── Physically duplicate recurring events with date+yearDelta ───
-              // Only run once even if both holiday-templates & recurring-events selected
               if (calendarCopyDone.done) {
-                // Already ran — just add a reference entry to "copied"
+                // Calendar scan already ran — just reference the count
                 copied.push({ module: subId, label: op.label, count: calendarCopyDone.count, note: op.note });
+                executionLog.push(`  [${subId}] ✓ ${op.label} — ${calendarCopyDone.count} events (shared from previous calendar pass)`);
                 continue;
               }
 
               const recurringEvents = await tx
-                .select()
-                .from(calendarEvents)
-                .where(and(
-                  eq(calendarEvents.schoolId, schoolId),          // ← TENANT GUARD
-                  eq(calendarEvents.isRecurring, true),
-                ));
+                .select().from(calendarEvents)
+                .where(and(eq(calendarEvents.schoolId, schoolId), eq(calendarEvents.isRecurring, true)));
 
               if (recurringEvents.length === 0) {
-                requestedButEmpty.push({ module: subId, label: op.label, count: 0, note: "No recurring events found in source session" });
+                requestedButEmpty.push({ module: subId, label: op.label, count: 0, note: "No recurring events found" });
+                executionLog.push(`  [${subId}] ⚠ ${op.label} — no recurring events found (nothing to duplicate)`);
+                console.log(`[SESSION-CREATE]   ⚠ ${subId}: no recurring events`);
                 continue;
               }
 
-              // Insert duplicated records with dates advanced by yearDelta years.
-              // Each original date is parsed, the year is incremented, and a new
-              // record is inserted with a fresh auto-generated primary key.
-              // The schoolId is preserved. No reference to the previous session exists.
               const newEventRecords = recurringEvents.map(ev => {
-                const originalDate = new Date(ev.date);
-                originalDate.setFullYear(originalDate.getFullYear() + yearDelta);
-                const advancedDate = originalDate.toISOString().split("T")[0]; // YYYY-MM-DD
+                const d = new Date(ev.date);
+                d.setFullYear(d.getFullYear() + yearDelta);
                 return {
-                  schoolId:      ev.schoolId,                  // same tenant
-                  title:         ev.title,
-                  date:          advancedDate,                 // year advanced
-                  eventType:     ev.eventType,
-                  venue:         ev.venue,
-                  description:   ev.description,
-                  colorCode:     ev.colorCode,
-                  isRecurring:   true,
-                  audienceScope: ev.audienceScope,
-                  targetClass:   ev.targetClass,
-                  targetSection: ev.targetSection,
-                  // id intentionally omitted → auto-generated fresh primary key
+                  schoolId: ev.schoolId, title: ev.title, date: d.toISOString().split("T")[0],
+                  eventType: ev.eventType, venue: ev.venue, description: ev.description,
+                  colorCode: ev.colorCode, isRecurring: true as const,
+                  audienceScope: ev.audienceScope, targetClass: ev.targetClass, targetSection: ev.targetSection,
                 };
               });
-
               await tx.insert(calendarEvents).values(newEventRecords);
               calendarCopyDone.done  = true;
               calendarCopyDone.count = newEventRecords.length;
-
               copied.push({ module: subId, label: op.label, count: newEventRecords.length, note: op.note });
+              executionLog.push(`  [${subId}] ✓ ${op.label} — ${newEventRecords.length} events physically duplicated (dates +${yearDelta >= 0 ? "+" : ""}${yearDelta}yr)`);
+              console.log(`[SESSION-CREATE]   ✓ ${subId}: ${newEventRecords.length} events duplicated`);
             }
             // kind === "noop" → silently skip
           }
 
           const totalRecordsCopied = copied.reduce((acc, e) => acc + e.count, 0);
+
+          executionLog.push(`STEP 4 ✓ — Copy Engine completed:`);
+          executionLog.push(`  • ${copied.length} module(s) physically duplicated → ${totalRecordsCopied} new records`);
+          executionLog.push(`  • ${sharedSchoolwide.length} module(s) verified as schoolwide shared config`);
+          executionLog.push(`  • ${requestedButEmpty.length} module(s) had no data to copy`);
+          executionLog.push(`  • ${CLEAN_SLATE_MODULES.length} Category C modules always start clean`);
+          console.log(`[SESSION-CREATE] ✓ STEP 4 — ${totalRecordsCopied} records, ${sharedSchoolwide.length} verified, ${requestedButEmpty.length} empty`);
+
+          if (copied.length === 0 && sharedSchoolwide.length === 0 && requestedButEmpty.length > 0) {
+            executionLog.push("  ⚠ No configuration data found — source session may not be fully configured");
+          }
 
           copyResult = {
             sourceSessionId:    copiedFromSessionId,
@@ -2808,14 +2828,22 @@ export async function registerRoutes(
             timestamp:          new Date().toISOString(),
           };
 
-          // Update the session record with the full copy result JSON
           await tx
             .update(academicSessions)
             .set({ copiedModules: JSON.stringify(copyResult) })
             .where(and(eq(academicSessions.id, session.id), eq(academicSessions.schoolId, schoolId)));
+
+        } else if (copiedFromSessionId && approvedSubModuleIds.length === 0) {
+          executionLog.push("STEP 4 → Copy Engine skipped — no modules were selected");
+          console.log("[SESSION-CREATE] Copy engine skipped — zero modules selected");
+        } else {
+          executionLog.push("STEP 4 → Copy Engine skipped — fresh session (no source specified)");
+          console.log("[SESSION-CREATE] Copy engine skipped — no source session");
         }
 
-        // ── Step 3e: Write immutable audit log ──────────────────────────────
+        // Step 3e: Write audit log
+        executionLog.push("STEP 5 → Writing audit log...");
+        console.log("[SESSION-CREATE] STEP 5 — writing audit log");
         await tx.insert(auditLogs).values({
           schoolId,
           actionType:   "CREATE",
@@ -2824,17 +2852,19 @@ export async function registerRoutes(
           actionBy:     req.session.userId!,
           actionByRole: "admin",
           details: JSON.stringify({
-            sessionName:         session.sessionName,
-            startDate:           session.startDate,
-            endDate:             session.endDate,
-            copiedFromSessionId: copiedFromSessionId ?? null,
-            approvedModules:     approvedSubModuleIds,
-            totalRecordsCopied:  copyResult?.totalRecordsCopied ?? 0,
+            sessionName:          session.sessionName,
+            startDate:            session.startDate,
+            endDate:              session.endDate,
+            copiedFromSessionId:  copiedFromSessionId ?? null,
+            approvedModules:      approvedSubModuleIds,
+            totalRecordsCopied:   copyResult?.totalRecordsCopied ?? 0,
             calendarEventsCopied: copyResult?.copied.reduce((s, e) => s + e.count, 0) ?? 0,
-            sharedConfigs:       copyResult?.sharedSchoolwide.length ?? 0,
-            timestamp:           new Date().toISOString(),
+            sharedConfigs:        copyResult?.sharedSchoolwide.length ?? 0,
+            timestamp:            new Date().toISOString(),
           }),
         });
+        executionLog.push("STEP 5 ✓ — Audit log entry written");
+        console.log(`[SESSION-CREATE] ✓ STEP 5 — audit log written for session #${session.id}`);
 
         return {
           session: { ...session, copiedModules: copyResult ? JSON.stringify(copyResult) : null },
@@ -2842,12 +2872,13 @@ export async function registerRoutes(
         };
       }); // ← END DB TRANSACTION
 
-      res.status(201).json({ ...newSession, copyResult });
+      executionLog.push("STEP 6 ✓ — Database transaction committed successfully");
+      console.log(`[SESSION-CREATE] ✓ STEP 6 — committed. Session #${newSession.id} "${newSession.sessionName}" created.`);
+
+      res.status(201).json({ ...newSession, copyResult, executionLog });
 
     } catch (e: any) {
-      // Transaction has already been rolled back by Drizzle at this point.
-      // Any partial calendar event inserts, partial session insert, or partial
-      // audit log writes were all reverted automatically.
+      console.error("[SESSION-CREATE] ✗ FAILED:", e.message);
       res.status(500).json({
         message: e.message || "Failed to create session — all changes rolled back",
         rolled_back: true,

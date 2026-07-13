@@ -34,6 +34,28 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { fmtDate } from "@/lib/dateUtils";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
+
+// Matches the SessionCopyResult the backend writes into copiedModules JSON
+// and returns in the creation response body.
+interface SessionCopyEntry {
+  module: string;
+  label: string;
+  count: number;
+  note: string;
+}
+interface SessionCopyResult {
+  sourceSessionId: number;
+  sourceSessionName: string;
+  destSessionId: number;
+  approvedModules: string[];
+  copied: SessionCopyEntry[];           // physically duplicated records
+  sharedSchoolwide: SessionCopyEntry[]; // school-level configs, already available
+  requestedButEmpty: SessionCopyEntry[]; // requested but no source data existed
+  cleanSlate: string[];                 // Category C — never copied
+  totalRecordsCopied: number;
+  timestamp: string;
+}
+
 interface AcademicSession {
   id: number;
   schoolId: number;
@@ -45,8 +67,11 @@ interface AcademicSession {
   newAdmissionsEnabled: boolean;
   promotionStrategy: string;
   copiedFromSessionId: number | null;
-  copiedModules: string | null;
+  copiedModules: string | null; // JSON-stringified SessionCopyResult or null
   createdAt: string | null;
+  // Extra fields returned only by the POST /api/admin/academic-sessions endpoint
+  copyResult?: SessionCopyResult | null;
+  executionLog?: string[];
 }
 
 interface Props { schoolId: number }
@@ -921,7 +946,7 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// SUCCESS DIALOG — Professional post-creation workflow dashboard
+// SUCCESS DIALOG — Full copy report + execution log + next steps
 // ══════════════════════════════════════════════════════════════════════════════
 interface SuccessDialogProps {
   session:    AcademicSession;
@@ -930,158 +955,320 @@ interface SuccessDialogProps {
 }
 
 function SuccessDialog({ session, onClose, onNavigate }: SuccessDialogProps) {
-  const copiedCount = useMemo(() => {
-    if (!session.copiedModules) return 0;
-    try { return (JSON.parse(session.copiedModules) as string[]).length; }
-    catch { return 0; }
-  }, [session.copiedModules]);
+  const [showLog,    setShowLog]    = useState(false);
+  const [showReport, setShowReport] = useState(true);
 
-  const actions = [
-    {
-      icon: Copy,
-      label: "Copy Configuration Summary",
-      desc: copiedCount > 0 ? `${copiedCount} sub-modules copied` : "No modules copied",
-      path: "",
-      color: "#22d3ee",
-      bg:   "rgba(34,211,238,0.10)",
-    },
-    {
-      icon: GraduationCap,
-      label: "Promote Students",
-      desc: "Move students from previous session",
-      path: "/admin-dashboard/student-registry",
-      color: "#8b5cf6",
-      bg:   "rgba(139,92,246,0.10)",
-    },
-    {
-      icon: UserPlus,
-      label: "Add New Admissions",
-      desc: "Register new students for this year",
-      path: "/admin-dashboard/student-registry",
-      color: "#10b981",
-      bg:   "rgba(16,185,129,0.10)",
-    },
-    {
-      icon: Users,
-      label: "Update Faculty Mapping",
-      desc: "Assign teachers to classes and subjects",
-      path: "/admin-dashboard/faculty-mapping",
-      color: "#6366f1",
-      bg:   "rgba(99,102,241,0.10)",
-    },
-    {
-      icon: LayoutGrid,
-      label: "Configure Timetable",
-      desc: "Build the period schedule for this session",
-      path: "/admin-dashboard/timetable",
-      color: "#3b82f6",
-      bg:   "rgba(59,130,246,0.10)",
-    },
-    {
-      icon: CreditCard,
-      label: "Review Fee Structure",
-      desc: "Verify and update fee categories",
-      path: "/admin-dashboard/fees-manager",
-      color: "#10b981",
-      bg:   "rgba(16,185,129,0.10)",
-    },
-    {
-      icon: Zap,
-      label: "Activate Academic Session",
-      desc: "Set this as the live session for the school",
-      path: "",
-      color: "#D4AF37",
-      bg:   "rgba(212,175,55,0.10)",
-    },
-    {
-      icon: CalendarRange,
-      label: "Go to Academic Sessions Dashboard",
-      desc: "View all sessions and their status",
-      path: "",
-      color: "#22d3ee",
-      bg:   "rgba(34,211,238,0.06)",
-    },
+  // Parse copyResult — prefer the top-level field (present right after creation),
+  // fall back to parsing copiedModules JSON (for sessions loaded from the GET list).
+  const copyResult = useMemo<SessionCopyResult | null>(() => {
+    if (session.copyResult) return session.copyResult;
+    if (!session.copiedModules) return null;
+    try {
+      const parsed = JSON.parse(session.copiedModules);
+      if (parsed && typeof parsed === "object" && "approvedModules" in parsed)
+        return parsed as SessionCopyResult;
+      return null;
+    } catch { return null; }
+  }, [session.copyResult, session.copiedModules]);
+
+  const executionLog = session.executionLog ?? [];
+
+  const hasCopy     = copyResult !== null;
+  const totalNew    = copyResult?.totalRecordsCopied ?? 0;
+  const totalShared = copyResult?.sharedSchoolwide.length ?? 0;
+  const totalEmpty  = copyResult?.requestedButEmpty.length ?? 0;
+
+  const NEXT_STEPS = [
+    { icon: GraduationCap, label: "Promote Students",       desc: "Move students from previous session",       path: "/admin-dashboard/student-registry", color: "#8b5cf6" },
+    { icon: UserPlus,      label: "Add New Admissions",     desc: "Register new students for this year",       path: "/admin-dashboard/student-registry", color: "#10b981" },
+    { icon: Users,         label: "Update Faculty Mapping", desc: "Assign teachers to classes and subjects",   path: "/admin-dashboard/faculty-mapping",   color: "#6366f1" },
+    { icon: LayoutGrid,    label: "Configure Timetable",    desc: "Build the period schedule for this session",path: "/admin-dashboard/timetable",         color: "#3b82f6" },
+    { icon: CreditCard,    label: "Review Fee Structure",   desc: "Verify and update fee categories",          path: "/admin-dashboard/fees-manager",      color: "#10b981" },
+    { icon: Zap,           label: "Activate Session",       desc: "Set this as the live session",              path: "",                                   color: "#D4AF37" },
   ];
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={GLASS.modalOverlay}>
-      <div className="w-full max-w-lg rounded-2xl overflow-hidden" style={GLASS.modal}>
+      <div className="w-full max-w-xl rounded-2xl overflow-hidden flex flex-col"
+        style={{ ...GLASS.modal, maxHeight: "90vh" }}>
 
-        {/* Success header */}
-        <div className="px-6 pt-8 pb-6 text-center"
+        {/* ── Header ─────────────────────────────────────────────────────── */}
+        <div className="px-6 pt-7 pb-5 flex-shrink-0"
           style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-          <div className="relative inline-flex mb-4">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
-              style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", boxShadow: "0 0 32px rgba(34,211,238,0.40)" }}>
-              <CheckCircle2 className="w-8 h-8 text-white" />
+          <div className="flex items-start gap-4">
+            <div className="relative flex-shrink-0">
+              <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
+                style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", boxShadow: "0 0 28px rgba(34,211,238,0.40)" }}>
+                <CheckCircle2 className="w-7 h-7 text-white" />
+              </div>
+              <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-emerald-400 flex items-center justify-center">
+                <Check className="w-3 h-3 text-white" />
+              </div>
             </div>
-            <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-emerald-400 flex items-center justify-center">
-              <Check className="w-3 h-3 text-white" />
+            <div className="flex-1 min-w-0">
+              <h3 className="font-bold text-white text-base">Academic Session Created!</h3>
+              <p className="text-sm font-semibold mt-0.5" style={{ color: "#22d3ee" }}>
+                {session.sessionName}
+              </p>
+              <p className="text-xs text-white/40 mt-0.5">
+                {fmtDate(session.startDate)} → {fmtDate(session.endDate)}
+              </p>
+              {/* Summary badges */}
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {totalNew > 0 && (
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1"
+                    style={{ background: "rgba(16,185,129,0.12)", color: "#34d399", border: "1px solid rgba(16,185,129,0.25)" }}>
+                    <CheckSquare className="w-2.5 h-2.5" />
+                    {totalNew} records duplicated
+                  </span>
+                )}
+                {totalShared > 0 && (
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1"
+                    style={{ background: "rgba(34,211,238,0.10)", color: "#67e8f9", border: "1px solid rgba(34,211,238,0.20)" }}>
+                    <Copy className="w-2.5 h-2.5" />
+                    {totalShared} configs verified
+                  </span>
+                )}
+                {hasCopy && totalNew === 0 && totalShared === 0 && totalEmpty > 0 && (
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1"
+                    style={{ background: "rgba(251,191,36,0.10)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.20)" }}>
+                    <AlertTriangle className="w-2.5 h-2.5" />
+                    Source not yet configured
+                  </span>
+                )}
+                {!hasCopy && (
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                    style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.40)", border: "1px solid rgba(255,255,255,0.10)" }}>
+                    Fresh session
+                  </span>
+                )}
+              </div>
             </div>
           </div>
-          <h3 className="font-bold text-white text-lg">Session Created Successfully!</h3>
-          <p className="text-base font-semibold mt-1" style={{ color: "#22d3ee" }}>
-            {session.sessionName}
-          </p>
-          <p className="text-xs text-white/40 mt-1.5">
-            {fmtDate(session.startDate)} → {fmtDate(session.endDate)}
-          </p>
-          {copiedCount > 0 && (
-            <div className="inline-flex items-center gap-1.5 mt-3 px-3 py-1 rounded-full text-xs font-semibold"
-              style={{ background: "rgba(16,185,129,0.12)", color: "#34d399", border: "1px solid rgba(16,185,129,0.25)" }}>
-              <CheckSquare className="w-3 h-3" />
-              {copiedCount} configuration modules copied
+        </div>
+
+        {/* ── Scrollable body ─────────────────────────────────────────────── */}
+        <div className="flex-1 overflow-y-auto min-h-0">
+
+          {/* Copy Report section */}
+          {hasCopy && (
+            <div style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+              <button
+                onClick={() => setShowReport(v => !v)}
+                className="w-full flex items-center justify-between px-5 py-3 text-left"
+                style={{ background: "rgba(34,211,238,0.03)" }}
+                data-testid="toggle-copy-report"
+              >
+                <div className="flex items-center gap-2">
+                  <Copy className="w-3.5 h-3.5 text-cyan-400/70" />
+                  <span className="text-[10px] font-bold tracking-widest uppercase text-cyan-400/70">
+                    Copy Report
+                  </span>
+                  <span className="text-[9px] text-white/25">
+                    ({copyResult!.approvedModules.length} modules processed)
+                  </span>
+                </div>
+                <ChevronDown className={`w-3.5 h-3.5 text-white/30 transition-transform ${showReport ? "" : "-rotate-90"}`} />
+              </button>
+
+              {showReport && (
+                <div className="px-5 pb-4 space-y-4">
+
+                  {/* Source info */}
+                  <div className="flex items-center gap-2 text-[10px] text-white/30 pt-1">
+                    <span>Copied from:</span>
+                    <span className="font-semibold text-white/50">{copyResult!.sourceSessionName}</span>
+                    <span className="text-white/20">·</span>
+                    <span>{new Date(copyResult!.timestamp).toLocaleTimeString()}</span>
+                  </div>
+
+                  {/* Physically Copied */}
+                  {copyResult!.copied.length > 0 && (
+                    <div className="rounded-xl p-3 space-y-2"
+                      style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.15)" }}>
+                      <div className="flex items-center gap-2">
+                        <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="text-xs font-bold text-emerald-400">Physically Duplicated</span>
+                        <span className="text-[10px] text-emerald-400/60">
+                          {copyResult!.totalRecordsCopied} new records created
+                        </span>
+                      </div>
+                      <div className="space-y-1.5 pl-1">
+                        {copyResult!.copied.map(e => (
+                          <div key={e.module} className="flex items-center justify-between">
+                            <span className="text-xs text-white/65">{e.label}</span>
+                            <span className="text-[10px] font-semibold text-emerald-400/70 bg-emerald-400/8 px-1.5 py-0.5 rounded-full">
+                              {e.count} records
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Shared Schoolwide */}
+                  {copyResult!.sharedSchoolwide.length > 0 && (
+                    <div className="rounded-xl p-3 space-y-2"
+                      style={{ background: "rgba(34,211,238,0.05)", border: "1px solid rgba(34,211,238,0.15)" }}>
+                      <div className="flex items-center gap-2">
+                        <Copy className="w-3.5 h-3.5 text-cyan-400" />
+                        <span className="text-xs font-bold text-cyan-400">Shared School-Wide Configs</span>
+                        <span className="text-[10px] text-cyan-400/60">available to all sessions</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 pl-1">
+                        {copyResult!.sharedSchoolwide.map(e => (
+                          <span key={e.module}
+                            className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
+                            style={{ background: "rgba(34,211,238,0.08)", color: "#67e8f9", border: "1px solid rgba(34,211,238,0.15)" }}>
+                            {e.label} ({e.count})
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Requested but Empty */}
+                  {copyResult!.requestedButEmpty.length > 0 && (
+                    <div className="rounded-xl p-3 space-y-2"
+                      style={{ background: "rgba(251,191,36,0.05)", border: "1px solid rgba(251,191,36,0.15)" }}>
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                        <span className="text-xs font-bold text-amber-400">Requested but Not Configured</span>
+                      </div>
+                      <p className="text-[10px] text-white/35 pl-1">
+                        These modules were selected for copying but no data was found in the source. Configure them after activation.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 pl-1">
+                        {copyResult!.requestedButEmpty.map(e => (
+                          <span key={e.module}
+                            className="text-[10px] px-2 py-0.5 rounded-full"
+                            style={{ background: "rgba(251,191,36,0.08)", color: "#fcd34d", border: "1px solid rgba(251,191,36,0.15)" }}>
+                            {e.label}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Clean Slate */}
+                  {copyResult!.cleanSlate.length > 0 && (
+                    <div className="rounded-xl p-3 space-y-2"
+                      style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                      <div className="flex items-center gap-2">
+                        <Info className="w-3.5 h-3.5 text-white/40" />
+                        <span className="text-xs font-bold text-white/40">Category C — Always Start Fresh</span>
+                      </div>
+                      <p className="text-[10px] text-white/25 pl-1">
+                        These modules are never copied — they begin empty every session by design.
+                      </p>
+                      <div className="flex flex-wrap gap-1 pl-1">
+                        {copyResult!.cleanSlate.map(m => (
+                          <span key={m}
+                            className="text-[9px] px-1.5 py-0.5 rounded font-mono"
+                            style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.25)" }}>
+                            {m}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              )}
             </div>
           )}
-        </div>
 
-        {/* Workflow banner */}
-        <div className="px-5 py-3" style={{ background: "rgba(99,102,241,0.06)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-          <p className="text-[10px] font-bold tracking-widest uppercase text-indigo-400/70 mb-1.5">
-            Recommended Next Steps
-          </p>
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
-            {["Promote", "Admissions", "Faculty", "Timetable", "Fees", "Activate"].map((step, i, arr) => (
-              <div key={step} className="flex items-center gap-1.5 shrink-0">
-                <span className="text-[9px] font-bold text-white/40 px-2 py-0.5 rounded-full"
-                  style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                  {step}
-                </span>
-                {i < arr.length - 1 && <ArrowRight className="w-2.5 h-2.5 text-white/20 shrink-0" />}
-              </div>
-            ))}
+          {/* Execution Log section */}
+          {executionLog.length > 0 && (
+            <div style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+              <button
+                onClick={() => setShowLog(v => !v)}
+                className="w-full flex items-center justify-between px-5 py-3 text-left"
+                style={{ background: "rgba(99,102,241,0.03)" }}
+                data-testid="toggle-execution-log"
+              >
+                <div className="flex items-center gap-2">
+                  <Info className="w-3.5 h-3.5 text-indigo-400/70" />
+                  <span className="text-[10px] font-bold tracking-widest uppercase text-indigo-400/70">
+                    Execution Log
+                  </span>
+                  <span className="text-[9px] text-white/25">({executionLog.length} steps)</span>
+                </div>
+                <ChevronDown className={`w-3.5 h-3.5 text-white/30 transition-transform ${showLog ? "" : "-rotate-90"}`} />
+              </button>
+
+              {showLog && (
+                <div className="px-5 pb-4">
+                  <div className="rounded-xl p-3 space-y-1"
+                    style={{ background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                    {executionLog.map((line, i) => {
+                      const isOk    = line.includes("✓");
+                      const isWarn  = line.includes("⚠");
+                      const isSkip  = line.includes("SKIP") || line.includes("skipped");
+                      const isArrow = line.startsWith("STEP") || line.startsWith("  [");
+                      return (
+                        <p key={i}
+                          className="text-[10px] font-mono leading-relaxed"
+                          style={{
+                            color: isOk   ? "#34d399"
+                                 : isWarn ? "#fbbf24"
+                                 : isSkip ? "rgba(255,255,255,0.30)"
+                                 : isArrow ? "rgba(255,255,255,0.55)"
+                                 : "rgba(255,255,255,0.35)",
+                          }}>
+                          {line}
+                        </p>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Next Steps */}
+          <div className="p-4">
+            <p className="text-[10px] font-bold tracking-widest uppercase text-indigo-400/70 mb-2 px-1">
+              Recommended Next Steps
+            </p>
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-hide mb-3">
+              {["Promote", "Admissions", "Faculty", "Timetable", "Fees", "Activate"].map((step, i, arr) => (
+                <div key={step} className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-[9px] font-bold text-white/40 px-2 py-0.5 rounded-full"
+                    style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    {step}
+                  </span>
+                  {i < arr.length - 1 && <ArrowRight className="w-2.5 h-2.5 text-white/20 shrink-0" />}
+                </div>
+              ))}
+            </div>
+            <div className="space-y-1.5">
+              {NEXT_STEPS.map(({ icon: Icon, label, desc, path, color }) => (
+                <button
+                  key={label}
+                  onClick={() => { if (path) onNavigate(path); else onClose(); }}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all hover:scale-[1.01] group"
+                  style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.06)" }}
+                  data-testid={`success-action-${label.replace(/\s+/g, "-").toLowerCase()}`}
+                >
+                  <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 transition-all group-hover:scale-110"
+                    style={{ background: `${color}18` }}>
+                    <Icon className="w-3.5 h-3.5" style={{ color }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-white/80 group-hover:text-white transition-colors leading-tight">{label}</p>
+                    <p className="text-[10px] text-white/30 mt-0.5 truncate">{desc}</p>
+                  </div>
+                  <ArrowRight className="w-3 h-3 text-white/20 group-hover:text-white/50 transition-colors shrink-0" />
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
-        {/* Quick action grid */}
-        <div className="p-4 space-y-1.5 max-h-72 overflow-y-auto">
-          {actions.map(({ icon: Icon, label, desc, path, color, bg }) => (
-            <button
-              key={label}
-              onClick={() => { if (path) onNavigate(path); else onClose(); }}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all
-                         hover:scale-[1.01] group"
-              style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.06)" }}
-              data-testid={`success-action-${label.replace(/\s+/g, "-").toLowerCase()}`}
-            >
-              <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-all
-                              group-hover:scale-110"
-                style={{ background: bg }}>
-                <Icon className="w-4 h-4" style={{ color }} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-white/80 group-hover:text-white transition-colors leading-tight">
-                  {label}
-                </p>
-                <p className="text-[10px] text-white/35 mt-0.5 truncate">{desc}</p>
-              </div>
-              <ArrowRight className="w-3.5 h-3.5 text-white/20 group-hover:text-white/50 transition-colors shrink-0" />
-            </button>
-          ))}
-        </div>
-
-        {/* Done */}
-        <div className="px-5 pb-5 pt-2">
+        {/* ── Footer ─────────────────────────────────────────────────────── */}
+        <div className="px-5 pb-5 pt-3 flex-shrink-0"
+          style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}>
           <Button
             variant="outline"
             onClick={onClose}
@@ -1350,11 +1537,17 @@ export default function AcademicSessions({ schoolId }: Props) {
           {sessions.map(session => {
             const isActive = session.isActive;
 
-            // Count copied modules
+            // Count modules in copy result (handles both old string[] and new SessionCopyResult format)
             let copiedCount = 0;
             if (session.copiedModules) {
-              try { copiedCount = (JSON.parse(session.copiedModules) as string[]).length; }
-              catch { /* noop */ }
+              try {
+                const parsed = JSON.parse(session.copiedModules);
+                if (Array.isArray(parsed)) {
+                  copiedCount = parsed.length; // legacy format
+                } else if (parsed && typeof parsed === "object" && "approvedModules" in parsed) {
+                  copiedCount = (parsed as SessionCopyResult).approvedModules?.length ?? 0;
+                }
+              } catch { /* noop */ }
             }
 
             return (
