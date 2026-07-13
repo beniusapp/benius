@@ -1473,6 +1473,16 @@ export async function registerRoutes(
     res.json(items);
   });
 
+  app.get("/api/student/homework/pending-dates", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const month = (req.query.month as string) || "";
+    if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ message: "month must be YYYY-MM" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const dates = await storage.getStudentHomeworkPendingDates(student.schoolId, student.class, student.section, student.id, month);
+    res.json(dates);
+  });
+
   app.get("/api/student/homework/:id", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const hwId = parseInt(req.params.id);

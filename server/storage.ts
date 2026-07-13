@@ -470,6 +470,45 @@ export class DatabaseStorage {
     return rows.map(r => ({ ...r, submission: subMap.get(r.id) ?? null }));
   }
 
+  async getStudentHomeworkPendingDates(schoolId: number, cls: string, section: string, studentId: number, month: string): Promise<string[]> {
+    // month = "YYYY-MM"
+    const [yearStr, monStr] = month.split("-");
+    const year = parseInt(yearStr);
+    const mon  = parseInt(monStr);
+    const startDate = `${month}-01`;
+    const lastDay   = new Date(year, mon, 0).getDate();
+    const endDate   = `${month}-${String(lastDay).padStart(2, "0")}`;
+
+    const rows = await db.select({
+      createdAt: homework.createdAt,
+      dueDate:   homework.dueDate,
+      subStatus: homeworkSubmissions.status,
+    }).from(homework)
+      .leftJoin(homeworkSubmissions, and(
+        eq(homeworkSubmissions.homeworkId, homework.id),
+        eq(homeworkSubmissions.studentId, studentId),
+      ))
+      .where(and(
+        eq(homework.schoolId, schoolId),
+        eq(homework.class, cls),
+        eq(homework.section, section),
+        or(
+          sql`${homework.createdAt}::date BETWEEN ${startDate}::date AND ${endDate}::date`,
+          sql`${homework.dueDate} BETWEEN ${startDate} AND ${endDate}`,
+        )!,
+      ));
+
+    const pendingDates = new Set<string>();
+    for (const row of rows) {
+      const isPending = !row.subStatus || row.subStatus === "rejected";
+      if (isPending) {
+        pendingDates.add(new Date(row.createdAt).toISOString().split("T")[0]);
+        if (row.dueDate) pendingDates.add(row.dueDate);
+      }
+    }
+    return Array.from(pendingDates);
+  }
+
   async getStudentClasswork(schoolId: number, cls: string, section: string, date?: string): Promise<{
     id: number; schoolId: number; teacherId: number; class: string; section: string;
     subject: string; content: string; fileUrl: string | null; createdAt: Date; teacherName: string;

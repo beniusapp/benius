@@ -120,10 +120,20 @@ function DatePickerModal({ value, onSelect, onClose }: {
   const today = new Date();
   const [viewYear, setViewYear] = useState(() => new Date(value + "T00:00:00").getFullYear());
   const [viewMonth, setViewMonth] = useState(() => new Date(value + "T00:00:00").getMonth());
+  const [pendingDates, setPendingDates] = useState<Set<string>>(new Set());
 
   const firstDay = new Date(viewYear, viewMonth, 1).getDay();
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const todayStr = toISODate(today);
+
+  // Fetch pending homework dates whenever the viewed month changes
+  useEffect(() => {
+    const month = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}`;
+    fetch(`/api/student/homework/pending-dates?month=${month}`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then((dates: string[]) => setPendingDates(new Set(dates)))
+      .catch(() => setPendingDates(new Set()));
+  }, [viewYear, viewMonth]);
 
   function prevMonth() {
     if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); }
@@ -167,13 +177,14 @@ function DatePickerModal({ value, onSelect, onClose }: {
             const isFuture = dateStr > todayStr;
             const isSelected = dateStr === value;
             const isToday = dateStr === todayStr;
+            const hasPending = !isFuture && pendingDates.has(dateStr);
             return (
               <button
                 key={dateStr}
                 disabled={isFuture}
                 onClick={() => { onSelect(dateStr); onClose(); }}
                 className={`
-                  aspect-square w-full flex items-center justify-center rounded-full text-xs font-semibold transition-colors
+                  relative w-full flex flex-col items-center justify-center rounded-full text-xs font-semibold transition-colors py-1
                   ${isSelected ? "bg-[#10b981] text-white" : ""}
                   ${!isSelected && isToday ? "bg-emerald-100 text-emerald-700" : ""}
                   ${!isSelected && !isToday && !isFuture ? "hover:bg-slate-100 text-slate-700" : ""}
@@ -181,7 +192,14 @@ function DatePickerModal({ value, onSelect, onClose }: {
                 `}
                 data-testid={`datepicker-day-${dateStr}`}
               >
-                {num}
+                <span>{num}</span>
+                {hasPending && (
+                  <span
+                    className={`block w-1.5 h-1.5 rounded-full mt-0.5 ${isSelected ? "bg-white" : "bg-red-500"}`}
+                    aria-label="pending homework"
+                  />
+                )}
+                {!hasPending && <span className="block w-1.5 h-1.5 mt-0.5 opacity-0" />}
               </button>
             );
           })}
