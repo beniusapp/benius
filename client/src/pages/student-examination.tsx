@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   ArrowLeft, GraduationCap, Loader2, ClipboardList, Printer,
   AlertTriangle, TrendingUp, Trophy, Award, BookOpen,
   CalendarDays, BarChart3, ChevronDown, Filter, X,
+  MoreVertical, Check, History,
 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 
@@ -211,6 +212,10 @@ function PrintStyles() {
         #exam-print-area { position: fixed; top: 0; left: 0; width: 100%; padding: 20px; background: #fff; color: #000; }
         .no-print { display: none !important; }
       }
+      @keyframes fadeSlideDown {
+        from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+        to   { opacity: 1; transform: translateY(0)   scale(1); }
+      }
     `}</style>
   );
 }
@@ -408,22 +413,30 @@ function ViewMarksPanel({
   // ── Empty state — no scores for this compound key (session + class) ──────────
   // Strict guard: never fall through to display empty arrays or wrong-session data.
   if (allScores.length === 0) return (
-    <div className="rounded-2xl p-12 flex flex-col items-center gap-4 text-center no-print"
+    <div className="rounded-2xl p-12 flex flex-col items-center gap-5 text-center no-print"
       data-testid="panel-no-scores"
       style={{ background: "#0f172a", border: "1px solid #1e293b" }}>
-      <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
-        style={{ background: "rgba(100,116,139,0.1)", border: "1px solid #1e293b" }}>
-        <ClipboardList className="w-7 h-7 text-slate-600" />
+      <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
+        style={{ background: "rgba(100,116,139,0.07)", border: "1px solid rgba(100,116,139,0.15)" }}>
+        <Filter className="w-7 h-7 text-slate-600" />
       </div>
-      <div className="space-y-1">
-        <h3 className="text-slate-300 font-bold text-base">No marks data for this session</h3>
-        <p className="text-slate-500 text-sm">
-          No exam records found for Class {selectedClass}‑{section}.
+      <div className="space-y-2">
+        <h3 className="text-slate-200 font-bold text-base tracking-tight">
+          Select a subject, an exam type, or both
+        </h3>
+        <p className="text-slate-500 text-sm max-w-[260px] mx-auto leading-relaxed">
+          Use the dropdowns above to filter your marks for{" "}
+          <span style={{ color: "#94a3b8", fontWeight: 600 }}>
+            Class {selectedClass}‑{section}
+          </span>.
         </p>
-        <p className="text-slate-600 text-xs mt-2 max-w-xs mx-auto">
-          Your teacher has not yet entered scores for this academic year,
-          or this class had no exams recorded in the system.
-        </p>
+        <div className="pt-1 flex items-start gap-2 max-w-[280px] mx-auto px-3 py-2.5 rounded-xl text-left"
+          style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.14)" }}>
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
+          <p className="text-[11px] leading-relaxed" style={{ color: "#d97706" }}>
+            No marks have been posted for this session yet. Results will appear here once your teacher enters scores.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -1102,6 +1115,19 @@ export default function StudentExamination() {
   const [, setLocation] = useLocation();
   const [tab, setTab] = useState<MainTab>("view");
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
+  const sessionMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (sessionMenuRef.current && !sessionMenuRef.current.contains(e.target as Node)) {
+        setSessionMenuOpen(false);
+      }
+    }
+    if (sessionMenuOpen) document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [sessionMenuOpen]);
 
   // ── Auth ────────────────────────────────────────────────────────────────────
   const { data: student, isLoading: studentLoading } = useQuery<StudentMeResponse | null>({
@@ -1241,6 +1267,7 @@ export default function StudentExamination() {
             data-testid="button-back">
             <ArrowLeft className="w-4 h-4 text-slate-400" />
           </button>
+
           <div className="flex items-center gap-2.5 flex-1 min-w-0">
             <div className="flex items-center justify-center w-8 h-8 rounded-xl flex-shrink-0"
               style={{ background: "linear-gradient(135deg,#f97316,#ef4444)" }}>
@@ -1248,88 +1275,142 @@ export default function StudentExamination() {
             </div>
             <div className="min-w-0 leading-tight">
               <p className="font-bold text-sm text-white truncate">Academic Performance</p>
-              <p className="text-[11px] text-slate-500 truncate">
-                {student.digitalStudentId} · {selectedSession
-                  ? `Session ${selectedSession.displayLabel} · Class ${selectedClass}-${selectedSection}`
-                  : `Class ${student.class}-${student.section}`}
+              <p className="text-[11px] truncate" style={{ color: "#64748b" }}>
+                {student.schoolName}
+                {selectedSession && (
+                  <>
+                    <span className="mx-1 text-slate-700">·</span>
+                    <span style={{ color: "#94a3b8" }}>Session {selectedSession.displayLabel}</span>
+                    <span className="mx-1 text-slate-700">·</span>
+                    <span style={{ color: "#e2e8f0", fontWeight: 600 }}>
+                      Cl.{selectedClass}-{selectedSection}
+                    </span>
+                    {selectedSession.verified
+                      ? <span className="ml-1.5" style={{ color: "#34d399" }}>✓</span>
+                      : <span className="ml-1.5" style={{ color: "#fbbf24" }}>~</span>}
+                  </>
+                )}
               </p>
             </div>
           </div>
-          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-slate-400"
-            style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
-            <GraduationCap className="w-3.5 h-3.5" />
-            {student.schoolCode}
+
+          {/* ── Three-dots session selector ──────────────────────────────────── */}
+          <div className="relative flex-shrink-0" ref={sessionMenuRef}>
+            <button
+              onClick={() => setSessionMenuOpen(v => !v)}
+              className="flex items-center justify-center w-9 h-9 rounded-xl transition-all"
+              style={{
+                background: sessionMenuOpen
+                  ? "rgba(16,185,129,0.15)"
+                  : "rgba(255,255,255,0.05)",
+                border: sessionMenuOpen
+                  ? "1px solid rgba(16,185,129,0.35)"
+                  : "1px solid rgba(255,255,255,0.1)",
+              }}
+              data-testid="button-session-menu"
+              title="Switch academic session">
+              {sessionsLoading
+                ? <Loader2 className="w-4 h-4 text-slate-400 animate-spin" />
+                : <MoreVertical className="w-4 h-4" style={{ color: sessionMenuOpen ? "#34d399" : "#94a3b8" }} />}
+            </button>
+
+            {/* ── Floating dropdown ──────────────────────────────────────────── */}
+            {sessionMenuOpen && (
+              <div
+                className="absolute right-0 mt-2 w-64 rounded-2xl overflow-hidden"
+                style={{
+                  background: "rgba(15,23,42,0.95)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  boxShadow: "0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(16,185,129,0.06)",
+                  backdropFilter: "blur(20px)",
+                  WebkitBackdropFilter: "blur(20px)",
+                  animation: "fadeSlideDown 0.14s ease",
+                  top: "100%",
+                  zIndex: 50,
+                }}
+                data-testid="session-dropdown">
+
+                {/* Header row */}
+                <div className="px-3.5 pt-3 pb-2 flex items-center gap-2"
+                  style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                  <History className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                  <span className="text-[11px] font-bold text-slate-400 tracking-wider uppercase">
+                    Academic Session
+                  </span>
+                </div>
+
+                {/* Session list */}
+                <div className="py-1.5">
+                  {sessions.length === 0 ? (
+                    <p className="text-slate-600 text-xs px-3.5 py-3 italic">
+                      No sessions configured.
+                    </p>
+                  ) : sessions.map(s => {
+                    const isSelected = s.id === selectedSessionId;
+                    return (
+                      <button
+                        key={s.id}
+                        onClick={() => { setSelectedSessionId(s.id); setSessionMenuOpen(false); }}
+                        className="w-full flex items-center gap-3 px-3.5 py-2.5 transition-all text-left"
+                        style={{
+                          background: isSelected ? "rgba(16,185,129,0.1)" : "transparent",
+                        }}
+                        onMouseEnter={e => {
+                          if (!isSelected) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.04)";
+                        }}
+                        onMouseLeave={e => {
+                          if (!isSelected) (e.currentTarget as HTMLElement).style.background = "transparent";
+                        }}
+                        data-testid={`menu-session-${s.id}`}>
+
+                        {/* Check or circle */}
+                        <div className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
+                          {isSelected
+                            ? <Check className="w-3.5 h-3.5" style={{ color: "#34d399" }} />
+                            : <div className="w-2 h-2 rounded-full" style={{ background: "#1e293b", border: "1px solid #334155" }} />}
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold truncate"
+                              style={{ color: isSelected ? "#e2e8f0" : "#94a3b8" }}>
+                              {s.displayLabel}
+                            </span>
+                            {s.isActive && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0"
+                                style={{ background: "rgba(16,185,129,0.15)", color: "#34d399" }}>
+                                Current
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] mt-0.5 flex items-center gap-1.5"
+                            style={{ color: "#475569" }}>
+                            <span>Class {s.cls}{s.section ? `-${s.section}` : ""}</span>
+                            <span>·</span>
+                            <span style={{ color: s.verified ? "#6ee7b7" : "#64748b" }}>
+                              {s.verified ? "✓ Verified" : "~ Estimated"}
+                            </span>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Footer hint */}
+                <div className="px-3.5 py-2.5"
+                  style={{ borderTop: "1px solid rgba(255,255,255,0.05)", background: "rgba(0,0,0,0.2)" }}>
+                  <p className="text-[10px] text-slate-600 leading-relaxed">
+                    Viewing historical marks uses your enrollment record from that session.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </header>
 
       <div className="flex-1 max-w-4xl mx-auto w-full px-4 py-5 space-y-5">
-
-        {/* ── Session pills ────────────────────────────────────────────────── */}
-        <div className="rounded-2xl p-4 no-print"
-          style={{ background: "#0f172a", border: "1px solid #1e293b" }}>
-          <div className="flex items-center gap-2 mb-3">
-            <CalendarDays className="w-4 h-4 text-emerald-400" />
-            <h2 className="text-sm font-bold text-white">Academic Session</h2>
-          </div>
-          {sessions.length === 0 && sessionsLoading ? (
-            <div className="flex gap-2">
-              {[1,2].map(i => (
-                <div key={i} className="h-10 w-28 rounded-xl animate-pulse" style={{ background: "#1e293b" }} />
-              ))}
-            </div>
-          ) : sessions.length === 0 ? (
-            <p className="text-slate-600 text-xs italic">No academic sessions configured by your admin.</p>
-          ) : (
-            <div className="space-y-3">
-              <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
-                {sessions.map(s => (
-                  <button key={s.id} onClick={() => setSelectedSessionId(s.id)}
-                    className="flex-shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold transition-all min-h-[40px]"
-                    style={s.id === selectedSessionId
-                      ? { background: "rgba(16,185,129,0.2)", border: "1px solid rgba(16,185,129,0.4)", color: "#34d399" }
-                      : { background: "rgba(255,255,255,0.04)", border: "1px solid #1e293b", color: "#94a3b8" }}
-                    data-testid={`pill-session-${s.id}`}>
-                    <span className="whitespace-nowrap">{s.displayLabel}</span>
-                    {s.isActive && (
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap"
-                        style={{ background: "rgba(16,185,129,0.2)", color: "#34d399" }}>
-                        Current
-                      </span>
-                    )}
-                    <span className="text-[10px] whitespace-nowrap" style={{ color: s.verified ? "#6ee7b7" : "#64748b" }}>
-                      Cl.{s.cls}{s.verified ? " ✓" : " ~"}
-                    </span>
-                  </button>
-                ))}
-              </div>
-              {/* ── Scope badge — authoritative compound key for the selected session ── */}
-              {selectedSession && (
-                <div className="flex items-center gap-2 text-[11px] flex-wrap"
-                  data-testid="scope-badge">
-                  <span className="text-slate-500">{student.schoolName}</span>
-                  <span className="text-slate-700">·</span>
-                  <span className="text-slate-500">Session <span className="text-slate-400 font-semibold">{selectedSession.displayLabel}</span></span>
-                  <span className="text-slate-700">·</span>
-                  <span className="text-slate-500">
-                    Class <span className="text-slate-300 font-bold">{selectedClass}-{selectedSection}</span>
-                  </span>
-                  {selectedSession.verified ? (
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
-                      style={{ background: "rgba(16,185,129,0.1)", color: "#34d399", border: "1px solid rgba(16,185,129,0.2)" }}>
-                      ✓ Enrollment Verified
-                    </span>
-                  ) : (
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
-                      style={{ background: "rgba(245,158,11,0.08)", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.2)" }}>
-                      ~ Class Estimated
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
 
         {/* ── Golden-yellow tab bar — exact mirror of teacher dashboard ────── */}
         <div className="flex gap-1.5 p-1 rounded-2xl no-print"

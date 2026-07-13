@@ -1,0 +1,17 @@
+Act as a premium frontend developer and UI/UX engineer specializing in Next.js, React, and Lucide-react iconography packs. We need to refactor the session-selection layout inside the Student Portal's Academic Performance view (`student-dashboard/examination`).
+
+### 1. UI REFACTOR: TOP-RIGHT THREE-DOTS DROPDOWN
+- Remove the side-by-side "Academic Session" pill rows (e.g., the horizontal 2026-2027 and 2025-2026 buttons) from the main layout header completely.
+- In the top-right corner of the screen, insert a minimalist, premium glassmorphic Three-Dots action button (using a vertical ellipsis icon like `MoreVertical` from lucide-react).
+- Clicking this three-dots button must open a sleek, floating context dropdown menu displaying all available previous academic sessions fetched from the server.
+- Toggling a session from this dropdown menu makes it the active target session, closing the menu smoothly with a CSS micro-interaction fade.
+
+### 2. DYNAMIC LOOKBACK & ADMIN MASTER DATA ALIGNMENT
+- Once a previous session is selected via the dropdown menu, update the main header sub-text banner dynamically to indicate the chosen period (e.g., "Whole School • Session 2025-2026").
+- The system must immediately resolve the exact Class and Section the student belonged to during that chosen session.
+- Re-query the dropdown select arrays for "SUBJECT" and "EXAM TYPE" so they display strictly the accurate configuration maps set up by the Admin Portal (`admin-dashboard/school-setup/academic-session`) for that specific historical year and class context.
+
+### 3. EMPTY STATE SAFEGUARDING
+- If no matching data structures or recorded grade matrices exist for the resolved historical profile combination, display our clean fallback state: "Select a subject, an exam type, or both" with a clear informational caption indicating that no marks data has been posted for this session.
+
+Please generate the updated React interface component containing the floating context dropdown and its associated state lifecycle synchronization logic.
