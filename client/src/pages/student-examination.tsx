@@ -1,14 +1,29 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   ArrowLeft, Loader2, ClipboardList, Printer,
   AlertTriangle, TrendingUp, Trophy, Award, BookOpen,
   BarChart3, ChevronDown, Filter, X,
+  MoreVertical, Check, History,
 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 
 // ─────────────────────────── Types ─────────────────────────────────────────────
+interface AcademicSession {
+  id: number; sessionName: string; startDate: string; endDate: string;
+  isActive: boolean; schoolId: number;
+}
+interface EnrollmentRecord {
+  id: number; sessionId: number;
+  className: string; sectionName: string; status: string;
+}
+type SessionMeta = AcademicSession & {
+  cls: string;          // resolved class for this session
+  section: string;      // resolved section for this session
+  displayLabel: string;
+  verified: boolean;    // true = enrollment registry; false = arithmetic estimate
+};
 interface StudentMeResponse {
   id: number; name: string; digitalStudentId: string;
   class: string; section: string; schoolName: string; schoolCode: string;
@@ -42,6 +57,39 @@ interface SubjectTermResult {
 interface StudentTermResults {
   termResults: Record<string, SubjectTermResult[]>;
   allTermFailCounts: Record<string, number>;
+}
+
+// ─────────── Enrollment-aware Session → Class/Section Resolution ────────────────
+// Checks the enrollment registry first (verified=true), falls back to arithmetic
+// class subtraction (verified=false) so the UI can flag the uncertainty.
+function resolveSessionsWithEnrollments(
+  sessions: AcademicSession[],
+  enrollments: EnrollmentRecord[],
+  currentClass: string,
+  currentSection: string,
+): SessionMeta[] {
+  const sorted = [...sessions].sort(
+    (a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime(),
+  );
+  const enrollMap = new Map<number, EnrollmentRecord>(
+    enrollments.map(e => [e.sessionId, e]),
+  );
+  const currentNum = parseInt(currentClass, 10);
+  const result: SessionMeta[] = [];
+
+  for (let i = 0; i < sorted.length; i++) {
+    const s = sorted[i];
+    const rec = enrollMap.get(s.id);
+    if (rec) {
+      result.push({ ...s, cls: rec.className, section: rec.sectionName, displayLabel: s.sessionName, verified: true });
+    } else {
+      const cls = isNaN(currentNum) ? (i === 0 ? currentClass : "") : String(currentNum - i);
+      if (!isNaN(currentNum) && parseInt(cls, 10) < 1) break;
+      if (cls === "") break;
+      result.push({ ...s, cls, section: currentSection, displayLabel: s.sessionName, verified: false });
+    }
+  }
+  return result;
 }
 
 // ─────────────────────────── Term Computation ──────────────────────────────────
@@ -1039,7 +1087,20 @@ type MainTab = "view" | "results";
 
 export default function StudentExamination() {
   const [, setLocation] = useLocation();
-  const [tab, setTab] = useState<MainTab>("view");
+  const [tab, setTab]   = useState<MainTab>("view");
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node))
+        setMenuOpen(false);
+    }
+    if (menuOpen) document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [menuOpen]);
 
   // ── Auth ────────────────────────────────────────────────────────────────────
   const { data: student, isLoading: studentLoading } = useQuery<StudentMeResponse | null>({
@@ -1050,10 +1111,50 @@ export default function StudentExamination() {
     if (!studentLoading && !student) setLocation("/student-login");
   }, [studentLoading, student, setLocation]);
 
-  const selectedClass   = student?.class   ?? "";
-  const selectedSection = student?.section ?? "";
+  // ── Academic sessions (fires in parallel; never blocks page render) ──────────
+  const { data: rawSessions = [], isLoading: sessionsLoading } =
+    useQuery<AcademicSession[]>({
+      queryKey: ["/api/student/academic-sessions"],
+      staleTime: 60000,
+    });
 
-  // ── Exam policy ──────────────────────────────────────────────────────────────
+  // ── Enrollment history — authoritative compound-key lookup ───────────────────
+  const { data: enrollments = [] } = useQuery<EnrollmentRecord[]>({
+    queryKey: ["/api/student/exam/enrollment-history"],
+    enabled: !!student,
+    staleTime: 300000,
+  });
+
+  // ── Resolve sessions → (class, section, verified) per session ────────────────
+  const sessions: SessionMeta[] = useMemo(
+    () =>
+      student
+        ? resolveSessionsWithEnrollments(
+            rawSessions, enrollments, student.class, student.section,
+          )
+        : [],
+    [rawSessions, enrollments, student],
+  );
+
+  // Auto-select the active session on first load
+  useEffect(() => {
+    if (sessions.length > 0 && selectedSessionId === null) {
+      const active = sessions.find(s => s.isActive) ?? sessions[0];
+      setSelectedSessionId(active.id);
+    }
+  }, [sessions, selectedSessionId]);
+
+  // Reset to View Marks whenever the selected session changes
+  useEffect(() => { setTab("view"); }, [selectedSessionId]);
+
+  const selectedSession: SessionMeta | null =
+    sessions.find(s => s.id === selectedSessionId) ?? null;
+
+  // Historically-resolved class/section for the selected session
+  const selectedClass   = selectedSession?.cls     ?? student?.class   ?? "";
+  const selectedSection = selectedSession?.section ?? student?.section ?? "";
+
+  // ── Exam policy for the resolved class ───────────────────────────────────────
   const { data: policyData, isLoading: policyLoading, isError: policyMissing } =
     useQuery<ExamPolicyTier>({
       queryKey: ["/api/student/exam/policy", selectedClass],
@@ -1072,10 +1173,10 @@ export default function StudentExamination() {
 
   const passThreshold = policyData?.passPercentage ?? 35;
 
-  // ── All scores ───────────────────────────────────────────────────────────────
+  // ── All scores — cache key includes sessionId to prevent cross-session bleed ──
   const { data: allScoresData, isLoading: scoresLoading } =
     useQuery<{ scores: ExamScore[]; cls: string }>({
-      queryKey: ["/api/student/exam/all-scores", selectedClass],
+      queryKey: ["/api/student/exam/all-scores", selectedClass, selectedSessionId],
       queryFn: async () => {
         const r = await fetch(
           `/api/student/exam/all-scores?class=${encodeURIComponent(selectedClass)}`,
@@ -1084,7 +1185,7 @@ export default function StudentExamination() {
         if (!r.ok) throw new Error("Failed");
         return r.json();
       },
-      enabled: !!selectedClass,
+      enabled: !!selectedClass && selectedSessionId !== null,
       staleTime: 0,
       refetchInterval: 30000,
     });
@@ -1093,14 +1194,25 @@ export default function StudentExamination() {
 
   // ── Attendance ───────────────────────────────────────────────────────────────
   const { data: attendanceData } = useQuery<AttendanceStatsResponse>({
-    queryKey: ["/api/student/attendance/stats"],
+    queryKey: ["/api/student/attendance/stats", selectedSession?.sessionName],
+    queryFn: async () => {
+      const base = "/api/student/attendance/stats";
+      const qs   = selectedSession
+        ? `?academicYear=${encodeURIComponent(selectedSession.sessionName)}`
+        : "";
+      const r = await fetch(base + qs, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed");
+      return r.json();
+    },
+    enabled: !!student,
     staleTime: 60000,
   });
 
-  const attPct = attendanceData?.overallPercent ?? null;
+  const attPct       = attendanceData?.overallPercent ?? null;
   const isDataLoading = policyLoading || scoresLoading;
-  const handlePrint = useCallback(() => window.print(), []);
+  const handlePrint   = useCallback(() => window.print(), []);
 
+  // ── Auth gate ────────────────────────────────────────────────────────────────
   if (studentLoading || !student) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: "#020617" }}>
@@ -1113,16 +1225,22 @@ export default function StudentExamination() {
     <div className="min-h-screen flex flex-col" style={{ background: "#020617", color: "#e2e8f0" }}>
       <PrintStyles />
 
-      {/* ── Header ───────────────────────────────────────────────────────────── */}
+      {/* ══════════════════════════════════════════════════════════════════════
+          HEADER — back button · title · three-dots session menu
+      ══════════════════════════════════════════════════════════════════════ */}
       <header className="sticky top-0 z-30 no-print"
         style={{ background: "#0f172a", borderBottom: "1px solid #1e293b", boxShadow: "0 1px 20px rgba(0,0,0,0.4)" }}>
         <div className="max-w-4xl mx-auto px-4 h-14 flex items-center gap-3">
+
+          {/* Back */}
           <button onClick={() => setLocation("/student-dashboard")}
-            className="flex items-center justify-center w-9 h-9 rounded-xl transition-colors"
+            className="flex items-center justify-center w-9 h-9 rounded-xl transition-colors flex-shrink-0"
             style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
             data-testid="button-back">
             <ArrowLeft className="w-4 h-4 text-slate-400" />
           </button>
+
+          {/* Title block */}
           <div className="flex items-center gap-2.5 flex-1 min-w-0">
             <div className="flex items-center justify-center w-8 h-8 rounded-xl flex-shrink-0"
               style={{ background: "linear-gradient(135deg,#f97316,#ef4444)" }}>
@@ -1135,9 +1253,107 @@ export default function StudentExamination() {
               </p>
             </div>
           </div>
+
+          {/* ── Three-dots session picker ──────────────────────────────────── */}
+          <div className="relative flex-shrink-0" ref={menuRef}>
+            <button
+              onClick={() => setMenuOpen(v => !v)}
+              className="flex items-center justify-center w-9 h-9 rounded-xl transition-all"
+              style={{
+                background: menuOpen ? "rgba(16,185,129,0.15)" : "rgba(255,255,255,0.05)",
+                border:     menuOpen ? "1px solid rgba(16,185,129,0.35)" : "1px solid rgba(255,255,255,0.1)",
+              }}
+              data-testid="button-session-menu"
+              title="Switch academic session">
+              {sessionsLoading
+                ? <Loader2 className="w-4 h-4 text-slate-400 animate-spin" />
+                : <MoreVertical className="w-4 h-4" style={{ color: menuOpen ? "#34d399" : "#94a3b8" }} />}
+            </button>
+
+            {menuOpen && (
+              <div className="absolute right-0 w-64 rounded-2xl overflow-hidden"
+                style={{
+                  top: "calc(100% + 8px)",
+                  background: "rgba(15,23,42,0.97)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  boxShadow: "0 24px 64px rgba(0,0,0,0.7), 0 0 0 1px rgba(16,185,129,0.06)",
+                  backdropFilter: "blur(24px)",
+                  WebkitBackdropFilter: "blur(24px)",
+                  animation: "fadeSlideDown 0.14s ease",
+                  zIndex: 50,
+                }}
+                data-testid="session-dropdown">
+
+                {/* Menu header */}
+                <div className="flex items-center gap-2 px-4 pt-3.5 pb-2.5"
+                  style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                  <History className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                  <span className="text-[11px] font-bold text-slate-400 tracking-widest uppercase">
+                    Academic Session
+                  </span>
+                </div>
+
+                {/* Session rows */}
+                <div className="py-1.5 max-h-72 overflow-y-auto">
+                  {sessions.length === 0
+                    ? <p className="text-slate-600 text-xs px-4 py-3 italic">No sessions configured.</p>
+                    : sessions.map(s => {
+                        const active = s.id === selectedSessionId;
+                        return (
+                          <button key={s.id}
+                            onClick={() => { setSelectedSessionId(s.id); setMenuOpen(false); }}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors"
+                            style={{ background: active ? "rgba(16,185,129,0.1)" : "transparent" }}
+                            onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.04)"; }}
+                            onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                            data-testid={`menu-session-${s.id}`}>
+                            <div className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
+                              {active
+                                ? <Check className="w-3.5 h-3.5" style={{ color: "#34d399" }} />
+                                : <div className="w-2 h-2 rounded-full" style={{ background: "#1e293b", border: "1px solid #334155" }} />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-semibold truncate"
+                                  style={{ color: active ? "#e2e8f0" : "#94a3b8" }}>
+                                  {s.displayLabel}
+                                </span>
+                                {s.isActive && (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0"
+                                    style={{ background: "rgba(16,185,129,0.15)", color: "#34d399" }}>
+                                    Current
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] mt-0.5 flex items-center gap-1.5" style={{ color: "#475569" }}>
+                                <span>Class {s.cls}{s.section ? `-${s.section}` : ""}</span>
+                                <span>·</span>
+                                <span style={{ color: s.verified ? "#6ee7b7" : "#64748b" }}>
+                                  {s.verified ? "✓ Verified" : "~ Est."}
+                                </span>
+                              </p>
+                            </div>
+                          </button>
+                        );
+                      })}
+                </div>
+
+                {/* Footer */}
+                <div className="px-4 py-2.5"
+                  style={{ borderTop: "1px solid rgba(255,255,255,0.05)", background: "rgba(0,0,0,0.25)" }}>
+                  <p className="text-[10px] text-slate-600 leading-relaxed">
+                    Historical views resolve your exact class from the enrollment registry.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
+      {/* ══════════════════════════════════════════════════════════════════════
+          CONTENT
+      ══════════════════════════════════════════════════════════════════════ */}
       <div className="flex-1 max-w-4xl mx-auto w-full px-4 py-5 space-y-5">
 
         {/* ── Tab bar ──────────────────────────────────────────────────────── */}
@@ -1160,23 +1376,41 @@ export default function StudentExamination() {
           ))}
         </div>
 
-        {/* ── Policy banner ─────────────────────────────────────────────────── */}
+        {/* ── Context meta banner ───────────────────────────────────────────── */}
         {!policyLoading && policyMissing && (
           <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-medium no-print"
             style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)", color: "#fbbf24" }}>
             <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-            No exam policy configured for Class {selectedClass} — aggregated results unavailable. Raw marks still visible in View Marks.
+            No exam policy configured for Class {selectedClass}
+            {selectedSession ? ` · Session ${selectedSession.displayLabel}` : ""}
+            {" "}— aggregated results unavailable. Raw marks still visible in View Marks.
           </div>
         )}
         {!policyLoading && policyData && (
           <div className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium no-print"
-            style={{ background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.18)", color: "#6ee7b7" }}>
+            style={{ background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.18)", color: "#6ee7b7" }}
+            data-testid="meta-banner">
             <BookOpen className="w-3.5 h-3.5 flex-shrink-0" />
-            {policyData.tierName} · {student.schoolName} · Class {selectedClass}-{selectedSection}
+            <span className="truncate">
+              {policyData.tierName}
+              <span className="mx-1.5 opacity-40">·</span>
+              {student.schoolName}
+              {selectedSession && (
+                <>
+                  <span className="mx-1.5 opacity-40">·</span>
+                  Session <strong>{selectedSession.displayLabel}</strong>
+                </>
+              )}
+              <span className="mx-1.5 opacity-40">·</span>
+              Class <strong>{selectedClass}-{selectedSection}</strong>
+              {selectedSession && !selectedSession.verified && (
+                <span className="ml-1.5 text-amber-400 font-normal opacity-70">~</span>
+              )}
+            </span>
           </div>
         )}
 
-        {/* ── Tab content ──────────────────────────────────────────────────── */}
+        {/* ── Tab panels ───────────────────────────────────────────────────── */}
         {tab === "view" && (
           <ViewMarksPanel
             allScores={allScores}
@@ -1196,7 +1430,7 @@ export default function StudentExamination() {
             attendancePct={attPct}
             selectedClass={selectedClass}
             section={selectedSection}
-            sessionLabel=""
+            sessionLabel={selectedSession?.displayLabel ?? ""}
             studentName={student.name}
             dsid={student.digitalStudentId}
             onPrint={handlePrint}
