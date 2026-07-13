@@ -369,18 +369,6 @@ export default function StudentDashboard() {
                   <span>📊</span>
                   Attendance: {attendPct !== null ? `${attendPct}%` : "—"}
                 </span>
-                <span
-                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow-sm"
-                  style={{
-                    background: pendingHwCount === null ? "#f1f5f9" : "#fffbeb",
-                    color:      pendingHwCount === null ? "#94a3b8" : "#f59e0b",
-                    border:     `1px solid ${pendingHwCount === null ? "#e2e8f0" : "#fde68a"}`,
-                  }}
-                  data-testid="badge-hw-pending"
-                >
-                  <span>📝</span>
-                  {pendingHwCount !== null ? pendingHwCount : "—"} Pending
-                </span>
                 {unreadCount > 0 && (
                   <span
                     className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow-sm"
