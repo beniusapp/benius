@@ -202,27 +202,6 @@ const COPY_MODULE_TREE: CopyModule[] = [
   },
 ];
 
-// All Category A + B sub-module IDs (selectable)
-const ALL_SELECTABLE_IDS = COPY_MODULE_TREE
-  .filter(m => m.category === "A" || m.category === "B")
-  .flatMap(m => m.subModules.map(s => s.id));
-
-// Default selected = all Category A sub-module IDs
-const DEFAULT_SELECTED = new Set(
-  COPY_MODULE_TREE
-    .filter(m => m.category === "A")
-    .flatMap(m => m.subModules.map(s => s.id))
-);
-
-// Category D items — displayed as an info banner (not selectable)
-const CATEGORY_D_ITEMS = [
-  "Student Promotion",
-  "New Admissions",
-  "Attendance Records",
-  "Marks Entry",
-  "Report Cards",
-  "Fee Transactions",
-];
 
 // ── Glassmorphic style tokens ──────────────────────────────────────────────────
 const GLASS = {
@@ -258,6 +237,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
+// ── Simple toggle UI (used in CreateSessionModal) ──────────────────────────────
 function ToggleSwitch({ on, onChange, disabled }: { on: boolean; onChange: () => void; disabled?: boolean }) {
   return (
     <button
@@ -274,75 +254,20 @@ function ToggleSwitch({ on, onChange, disabled }: { on: boolean; onChange: () =>
   );
 }
 
-// ── Category Badge ─────────────────────────────────────────────────────────────
-function CategoryBadge({ cat }: { cat: ModuleCategory }) {
-  if (cat === "A") return (
-    <span className="inline-flex items-center gap-1 text-[9px] font-bold tracking-wider px-2 py-0.5 rounded-full"
-      style={{ background: "rgba(16,185,129,0.15)", color: "#34d399", border: "1px solid rgba(16,185,129,0.30)" }}>
-      ✓ SAFE TO COPY
-    </span>
-  );
-  if (cat === "B") return (
-    <span className="inline-flex items-center gap-1 text-[9px] font-bold tracking-wider px-2 py-0.5 rounded-full"
-      style={{ background: "rgba(245,158,11,0.15)", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.30)" }}>
-      ⚠ VERIFY BEFORE COPYING
-    </span>
-  );
-  return null;
-}
-
-// ── Checkbox UI atoms ──────────────────────────────────────────────────────────
-function Checkbox({
-  checked, indeterminate, disabled, onChange, size = "md", testId,
-}: {
-  checked: boolean; indeterminate?: boolean; disabled?: boolean;
-  onChange?: () => void; size?: "sm" | "md"; testId?: string;
-}) {
-  const dim = size === "sm" ? "w-3.5 h-3.5" : "w-4 h-4";
-  const iconDim = size === "sm" ? "w-2.5 h-2.5" : "w-3 h-3";
-  const bg = disabled
-    ? "rgba(255,255,255,0.04)"
-    : checked
-      ? "#22d3ee"
-      : indeterminate
-        ? "rgba(34,211,238,0.25)"
-        : "rgba(255,255,255,0.06)";
-  const border = disabled
-    ? "1px solid rgba(255,255,255,0.08)"
-    : checked
-      ? "none"
-      : "1px solid rgba(255,255,255,0.20)";
-  return (
-    <div
-      className={`${dim} rounded flex items-center justify-center flex-shrink-0 ${disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer"} transition-all`}
-      style={{ background: bg, border }}
-      onClick={disabled ? undefined : onChange}
-      data-testid={testId}
-    >
-      {!disabled && checked    && <Check className={`${iconDim} text-[#0a1628]`} />}
-      {!disabled && indeterminate && !checked && <span className="w-2 h-0.5 rounded-full bg-cyan-300 block" />}
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// COPY CONFIG SELECTOR — Enterprise 4-category hierarchical checkbox tree
-// ══════════════════════════════════════════════════════════════════════════════
-interface CopyConfigSelectorProps {
-  selected: Set<string>;
-  onChange: (next: Set<string>) => void;
-}
-
-export function CopyConfigSelector({ selected, onChange }: CopyConfigSelectorProps) {
+export function CopyConfigSelector({ selected, onChange }: { selected: Set<string>; onChange: (next: Set<string>) => void }) {
   const [expanded, setExpanded] = useState<Set<string>>(
     new Set(COPY_MODULE_TREE.filter(m => m.category !== "C").map(m => m.id))
   );
 
-  const allSelected  = ALL_SELECTABLE_IDS.every(id => selected.has(id));
-  const someSelected = !allSelected && ALL_SELECTABLE_IDS.some(id => selected.has(id));
+  const selectableIds = COPY_MODULE_TREE
+    .filter(m => m.category === "A" || m.category === "B")
+    .flatMap(m => m.subModules.map(s => s.id));
+
+  const allSelected  = selectableIds.every(id => selected.has(id));
+  const someSelected = !allSelected && selectableIds.some(id => selected.has(id));
 
   function toggleAll() {
-    onChange(allSelected ? new Set() : new Set(ALL_SELECTABLE_IDS));
+    onChange(allSelected ? new Set() : new Set(selectableIds));
   }
 
   function toggleModule(mod: CopyModule) {
@@ -479,7 +404,7 @@ export function CopyConfigSelector({ selected, onChange }: CopyConfigSelectorPro
     );
   }
 
-  const totalSelected = ALL_SELECTABLE_IDS.filter(id => selected.has(id)).length;
+  const totalSelected = selectableIds.filter(id => selected.has(id)).length;
 
   return (
     <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -494,7 +419,7 @@ export function CopyConfigSelector({ selected, onChange }: CopyConfigSelectorPro
         <Checkbox checked={allSelected} indeterminate={someSelected} onChange={toggleAll} testId="check-select-all" />
         <span className="text-sm font-bold text-white">Select All</span>
         <span className="ml-auto text-xs text-white/40">
-          {totalSelected} / {ALL_SELECTABLE_IDS.length} sub-modules
+          {totalSelected} / {selectableIds.length} sub-modules
         </span>
       </div>
 
@@ -563,7 +488,7 @@ export function CopyConfigSelector({ selected, onChange }: CopyConfigSelectorPro
           These are not copied — they are automatically generated after the session is activated.
         </p>
         <div className="flex flex-wrap gap-1.5">
-          {CATEGORY_D_ITEMS.map(item => (
+          {["Student Promotion","New Admissions","Attendance Records","Marks Entry","Report Cards","Fee Transactions"].map(item => (
             <span key={item}
               className="text-[10px] px-2 py-1 rounded-full"
               style={{ background: "rgba(59,130,246,0.08)", color: "rgba(147,197,253,0.70)", border: "1px solid rgba(59,130,246,0.15)" }}>
@@ -585,7 +510,6 @@ export { CopyConfigSelector as ModulePermissionSelector };
 interface CreateModalProps {
   sessions:  AcademicSession[];
   onClose:   () => void;
-  onCreated: (s: AcademicSession) => void;
   isPending: boolean;
   onSubmit:  (payload: CreatePayload) => void;
 }
@@ -609,9 +533,8 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
   const [endDate,   setEndDate]   = useState("");
 
   // ── Section 2: Copy previous session ─────────────────────────────────────
-  const [copyPrev,          setCopyPrev]          = useState(false);
-  const [copiedFromId,      setCopiedFromId]      = useState<number | null>(null);
-  const [selectedModuleIds, setSelectedModuleIds] = useState<Set<string>>(new Set(DEFAULT_SELECTED));
+  const [copyPrev,     setCopyPrev]     = useState(false);
+  const [copiedFromId, setCopiedFromId] = useState<number | null>(null);
 
   // ── Validation ───────────────────────────────────────────────────────────
   const trimName = name.trim();
@@ -667,13 +590,9 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
       newAdmissionsEnabled: false,
       promotionStrategy:    "defer",
       copiedFromSessionId:  copyPrev ? copiedFromId : null,
-      copiedModules:        copyPrev && selectedModuleIds.size > 0
-                              ? JSON.stringify([...selectedModuleIds])
-                              : null,
+      copiedModules:        null,
     });
   }
-
-  const selectedCount = [...selectedModuleIds].length;
 
   return createPortal(
     <div
@@ -834,11 +753,9 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
               </div>
             </label>
 
-            {/* Source + tree */}
+            {/* Source picker */}
             {copyPrev && (
-              <div className="mt-5 space-y-5">
-
-                {/* Source picker */}
+              <div className="mt-5 space-y-4">
                 <div>
                   <label className="text-xs font-semibold text-white/60 block mb-2">
                     Copy From Session
@@ -868,28 +785,19 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
                   )}
                 </div>
 
-                {/* Module tree label + counter */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <p className="text-xs font-semibold text-white/60">Select Modules to Copy</p>
-                      <p className="text-[10px] text-white/30 mt-0.5">
-                        Category A is pre-selected. Review Category B carefully before enabling.
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-xs font-bold" style={{ color: "#22d3ee" }}>
-                        {selectedCount}
-                      </span>
-                      <span className="text-[10px] text-white/30">
-                        /{ALL_SELECTABLE_IDS.length} selected
-                      </span>
-                    </div>
+                {/* Copy Center callout */}
+                <div className="flex items-start gap-3 px-4 py-3 rounded-xl"
+                  style={{ background: "rgba(34,211,238,0.06)", border: "1px solid rgba(34,211,238,0.18)" }}>
+                  <Info className="w-4 h-4 text-cyan-400/70 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-semibold text-cyan-300/80">
+                      You'll be taken to the Configuration Copy Center after creation
+                    </p>
+                    <p className="text-[10px] text-white/40 mt-1 leading-relaxed">
+                      Choose exactly which modules to copy — module by module — with live record counts
+                      from the source session. You can come back and copy more modules anytime.
+                    </p>
                   </div>
-                  <CopyConfigSelector
-                    selected={selectedModuleIds}
-                    onChange={setSelectedModuleIds}
-                  />
                 </div>
               </div>
             )}
@@ -907,10 +815,10 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
               {trimName}
               <span className="text-white/20">·</span>
               {fmtDate(startDate)} → {fmtDate(endDate)}
-              {copyPrev && selectedCount > 0 && (
+              {copyPrev && copiedFromId && (
                 <>
                   <span className="text-white/20">·</span>
-                  {selectedCount} modules to copy
+                  <span style={{ color: "#22d3ee" }}>Opens Copy Center →</span>
                 </>
               )}
             </div>
@@ -946,16 +854,11 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
   , document.body);
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// SUCCESS DIALOG — Full copy report + execution log + next steps
-// ══════════════════════════════════════════════════════════════════════════════
-interface SuccessDialogProps {
-  session:    AcademicSession;
-  onClose:    () => void;
-  onNavigate: (path: string) => void;
-}
-
-function SuccessDialog({ session, onClose, onNavigate }: SuccessDialogProps) {
+// ── SuccessDialog retained for sessions created via the old flow ───────────────
+// (sessions that already have copiedModules from the POST handler copy engine)
+function SuccessDialog({ session, onClose, onNavigate }: {
+  session: AcademicSession; onClose: () => void; onNavigate: (path: string) => void;
+}) {
   const [showLog,    setShowLog]    = useState(false);
   const [showReport, setShowReport] = useState(true);
 
@@ -1460,7 +1363,6 @@ export default function AcademicSessions({ schoolId }: Props) {
   const [, setLocation] = useLocation();
 
   const [showCreate,     setShowCreate]     = useState(false);
-  const [createdSession, setCreatedSession] = useState<AcademicSession | null>(null);
   const [rolloverTarget, setRolloverTarget] = useState<AcademicSession | null>(null);
   const [deleteTarget,   setDeleteTarget]   = useState<AcademicSession | null>(null);
 
@@ -1487,8 +1389,12 @@ export default function AcademicSessions({ schoolId }: Props) {
     onSuccess: (session) => {
       setShowCreate(false);
       queryClient.invalidateQueries({ queryKey: ["/api/admin/academic-sessions"] });
-      setCreatedSession(session);
-      toast({ title: "Session created", description: `"${session.sessionName}" has been created.` });
+      if (session.copiedFromSessionId) {
+        toast({ title: "Session created", description: `"${session.sessionName}" created. Opening Copy Center…` });
+        setLocation(`/session-copy-center/${session.id}`);
+      } else {
+        toast({ title: "Session created", description: `"${session.sessionName}" is ready as a fresh session.` });
+      }
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1684,16 +1590,8 @@ export default function AcademicSessions({ schoolId }: Props) {
         <CreateSessionModal
           sessions={sessions}
           onClose={() => setShowCreate(false)}
-          onCreated={setCreatedSession}
           isPending={createMut.isPending}
           onSubmit={payload => createMut.mutate(payload)}
-        />
-      )}
-      {createdSession && (
-        <SuccessDialog
-          session={createdSession}
-          onClose={() => setCreatedSession(null)}
-          onNavigate={path => { setCreatedSession(null); setLocation(path); }}
         />
       )}
       {rolloverTarget && (

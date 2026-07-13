@@ -17,6 +17,8 @@ import Login           from "@/pages/login";
 import StudentLogin    from "@/pages/student-login";
 import TeacherLogin    from "@/pages/teacher-login";
 
+const SessionCopyCenter = lazy(() => import("@/pages/session-copy-center"));
+
 // Everything else stays lazy — only downloaded when first visited
 const SuperMaster         = lazy(() => import("@/pages/super-master"));
 const Register            = lazy(() => import("@/pages/register"));
@@ -96,6 +98,7 @@ function Router() {
         <Route path="/teacher/dashboard">
           {() => <TeacherRedirect />}
         </Route>
+        <Route path="/session-copy-center/:sessionId" component={SessionCopyCenter} />
         <Route component={NotFound} />
       </Switch>
     </Suspense>

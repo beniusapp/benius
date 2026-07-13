@@ -2921,6 +2921,264 @@ export async function registerRoutes(
     }
   });
 
+  // ── MODULE PREVIEW — record counts per sub-module for the Copy Center ─────────
+  app.get("/api/admin/academic-sessions/module-preview", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    try {
+      const metaRows = await db.select().from(schoolMetadata)
+        .where(eq(schoolMetadata.schoolId, schoolId));
+      const metaMap: Record<string, string> = {};
+      for (const r of metaRows) metaMap[r.metaKey] = r.metaValue;
+      function cntMeta(key: string): number {
+        try {
+          const v = JSON.parse(metaMap[key] ?? "null");
+          if (Array.isArray(v)) return v.length;
+          if (v && typeof v === "object") return Object.keys(v).length;
+          return 0;
+        } catch { return 0; }
+      }
+      const [promR, attnR, leaveR, ttR, allocR, mapR, assetR, calR] = await Promise.all([
+        db.select().from(examPolicyTiers).where(eq(examPolicyTiers.schoolId, schoolId)),
+        db.select().from(attendancePolicies).where(eq(attendancePolicies.schoolId, schoolId)),
+        db.select().from(leavePolicies).where(eq(leavePolicies.schoolId, schoolId)),
+        db.select().from(timetableStructure).where(eq(timetableStructure.schoolId, schoolId)),
+        db.select().from(teacherAllocations).where(eq(teacherAllocations.schoolId, schoolId)),
+        db.select().from(facultyMappings).where(eq(facultyMappings.schoolId, schoolId)),
+        db.select().from(schoolAssets).where(eq(schoolAssets.schoolId, schoolId)),
+        db.select().from(calendarEvents).where(and(eq(calendarEvents.schoolId, schoolId), eq(calendarEvents.isRecurring, true))),
+      ]);
+      res.json({
+        counts: {
+          "classes":                   cntMeta("classes"),
+          "sections":                  cntMeta("sections"),
+          "subjects":                  cntMeta("subjects"),
+          "exam-types":                cntMeta("exam_types"),
+          "class-mapping":             cntMeta("class_sections"),
+          "subject-mapping":           cntMeta("class_subjects"),
+          "class-exam-type-mapping":   cntMeta("class_exam_types"),
+          "grading-policy":            cntMeta("grading_config"),
+          "promotion-policy":          promR.length,
+          "attendance-policy":         attnR.length,
+          "leave-policy":              leaveR.length,
+          "bell-structure":            ttR.length,
+          "period-config":             ttR.length,
+          "timetable-template":        ttR.length,
+          "holiday-templates":         calR.length,
+          "recurring-events":          calR.length,
+          "card-layouts":              cntMeta("id_card_config"),
+          "print-templates":           cntMeta("id_card_config"),
+          "teacher-class-assignments": allocR.length + mapR.length,
+          "fee-categories":            cntMeta("fee_categories"),
+          "fee-heads":                 cntMeta("fee_heads"),
+          "fee-structure":             cntMeta("fee_structure"),
+          "fine-rules":                cntMeta("fee_fine_rules"),
+          "concession-rules":          cntMeta("fee_concessions"),
+          "asset-categories":          assetR.length,
+          "asset-master":              assetR.length,
+          "storage-locations":         assetR.length,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to fetch module preview" });
+    }
+  });
+
+  // ── COPY MODULES — Configuration Copy Center: copy specific sub-modules ────────
+  app.post("/api/admin/academic-sessions/:sessionId/copy-modules", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+
+    const destId = parseInt(req.params.sessionId);
+    if (isNaN(destId)) return res.status(400).json({ message: "Invalid session ID" });
+
+    const { sourceSessionId, subModuleIds } = req.body as {
+      sourceSessionId: number;
+      subModuleIds: string[];
+    };
+    if (!sourceSessionId || !Array.isArray(subModuleIds) || subModuleIds.length === 0)
+      return res.status(400).json({ message: "sourceSessionId and subModuleIds are required" });
+
+    type CEntry = { module: string; parentModule: string; label: string; count: number; note: string };
+    type CResult = {
+      sourceSessionId: number; sourceSessionName: string;
+      destSessionId: number; approvedModules: string[];
+      copied: CEntry[]; sharedSchoolwide: CEntry[]; requestedButEmpty: CEntry[];
+      cleanSlate: string[]; totalRecordsCopied: number; timestamp: string;
+    };
+    const CLEAN_SLATE_IDS = [
+      "student-registry","exam-controller","attendance",
+      "complaint-hub","noticeboard","visitor-log","audit-logs",
+    ];
+    const OPS: Record<string, { parentModule: string; label: string; kind: "schoolwide-meta"|"schoolwide-table"|"calendar-recurring"; metaKey?: string; note: string }> = {
+      "classes":                   { parentModule: "School Setup",       label: "Classes",                  kind: "schoolwide-meta",    metaKey: "classes",           note: "Shared across all sessions" },
+      "sections":                  { parentModule: "School Setup",       label: "Sections",                 kind: "schoolwide-meta",    metaKey: "sections",          note: "Shared across all sessions" },
+      "subjects":                  { parentModule: "School Setup",       label: "Subjects",                 kind: "schoolwide-meta",    metaKey: "subjects",          note: "Shared across all sessions" },
+      "exam-types":                { parentModule: "School Setup",       label: "Exam Types",               kind: "schoolwide-meta",    metaKey: "exam_types",        note: "Shared across all sessions" },
+      "class-mapping":             { parentModule: "School Setup",       label: "Class–Section Mapping",    kind: "schoolwide-meta",    metaKey: "class_sections",    note: "Shared across all sessions" },
+      "subject-mapping":           { parentModule: "School Setup",       label: "Class–Subject Mapping",    kind: "schoolwide-meta",    metaKey: "class_subjects",    note: "Shared across all sessions" },
+      "class-exam-type-mapping":   { parentModule: "School Setup",       label: "Class–Exam Type Mapping",  kind: "schoolwide-meta",    metaKey: "class_exam_types",  note: "Shared across all sessions" },
+      "grading-policy":            { parentModule: "School Setup",       label: "Grading Policy",           kind: "schoolwide-meta",    metaKey: "grading_config",    note: "Shared across all sessions" },
+      "promotion-policy":          { parentModule: "School Setup",       label: "Promotion Policy",         kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "attendance-policy":         { parentModule: "School Setup",       label: "Attendance Policy",        kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "leave-policy":              { parentModule: "School Setup",       label: "Leave Policy",             kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "bell-structure":            { parentModule: "Timetable Master",   label: "Bell Structure",           kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "period-config":             { parentModule: "Timetable Master",   label: "Period Configuration",     kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "timetable-template":        { parentModule: "Timetable Master",   label: "Timetable Template",       kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "holiday-templates":         { parentModule: "School Calendar",    label: "Holiday Templates",        kind: "calendar-recurring", note: "Recurring events duplicated with dates advanced" },
+      "recurring-events":          { parentModule: "School Calendar",    label: "Recurring Events",         kind: "calendar-recurring", note: "Recurring events duplicated with dates advanced" },
+      "card-layouts":              { parentModule: "ID Card Generator",  label: "Card Layouts",             kind: "schoolwide-meta",    metaKey: "id_card_config",    note: "Shared across all sessions" },
+      "print-templates":           { parentModule: "ID Card Generator",  label: "Print Templates",          kind: "schoolwide-meta",    metaKey: "id_card_config",    note: "Shared across all sessions" },
+      "teacher-class-assignments": { parentModule: "Faculty Mapping",    label: "Teacher–Class Assignments",kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "fee-categories":            { parentModule: "Fees & Payments",    label: "Fee Categories",           kind: "schoolwide-meta",    metaKey: "fee_categories",    note: "Shared across all sessions" },
+      "fee-heads":                 { parentModule: "Fees & Payments",    label: "Fee Heads",                kind: "schoolwide-meta",    metaKey: "fee_heads",         note: "Shared across all sessions" },
+      "fee-structure":             { parentModule: "Fees & Payments",    label: "Fee Structure",            kind: "schoolwide-meta",    metaKey: "fee_structure",     note: "Shared across all sessions" },
+      "fine-rules":                { parentModule: "Fees & Payments",    label: "Fine Rules",               kind: "schoolwide-meta",    metaKey: "fee_fine_rules",    note: "Shared across all sessions" },
+      "concession-rules":          { parentModule: "Fees & Payments",    label: "Concession Rules",         kind: "schoolwide-meta",    metaKey: "fee_concessions",   note: "Shared across all sessions" },
+      "asset-categories":          { parentModule: "Assets & Inventory", label: "Asset Categories",         kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "asset-master":              { parentModule: "Assets & Inventory", label: "Asset Master",             kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "storage-locations":         { parentModule: "Assets & Inventory", label: "Storage Locations",        kind: "schoolwide-table",   note: "Shared across all sessions" },
+    };
+
+    try {
+      const mergedResult = await db.transaction(async (tx) => {
+        const [destSession] = await tx.select().from(academicSessions)
+          .where(and(eq(academicSessions.id, destId), eq(academicSessions.schoolId, schoolId)));
+        if (!destSession) throw new Error("Destination session not found or access denied");
+
+        const [srcSession] = await tx.select().from(academicSessions)
+          .where(and(eq(academicSessions.id, sourceSessionId), eq(academicSessions.schoolId, schoolId)));
+        if (!srcSession) throw new Error("Source session not found or access denied");
+
+        const yearDelta = new Date(destSession.startDate).getFullYear() - new Date(srcSession.startDate).getFullYear();
+
+        let existingResult: CResult | null = null;
+        if (destSession.copiedModules) {
+          try {
+            const p = JSON.parse(destSession.copiedModules);
+            if (p && "approvedModules" in p) existingResult = p as CResult;
+          } catch { /* noop */ }
+        }
+
+        const copied: CEntry[]              = [...(existingResult?.copied           ?? [])];
+        const sharedSchoolwide: CEntry[]    = [...(existingResult?.sharedSchoolwide ?? [])];
+        const requestedButEmpty: CEntry[]   = [...(existingResult?.requestedButEmpty ?? [])];
+        const alreadyDone = new Set([
+          ...copied.map(e => e.module),
+          ...sharedSchoolwide.map(e => e.module),
+          ...requestedButEmpty.map(e => e.module),
+        ]);
+
+        const calDone = { done: false, count: 0 };
+
+        for (const subId of subModuleIds) {
+          if (alreadyDone.has(subId)) continue;
+          const op = OPS[subId];
+          if (!op) continue;
+
+          if (op.kind === "schoolwide-meta") {
+            const [row] = await tx.select().from(schoolMetadata)
+              .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, op.metaKey!)));
+            if (row?.metaValue) {
+              let cnt = 0;
+              try {
+                const v = JSON.parse(row.metaValue);
+                if (Array.isArray(v)) cnt = v.length;
+                else if (v && typeof v === "object") cnt = Object.keys(v).length;
+              } catch { /* noop */ }
+              sharedSchoolwide.push({ module: subId, parentModule: op.parentModule, label: op.label, count: cnt, note: op.note });
+            } else {
+              requestedButEmpty.push({ module: subId, parentModule: op.parentModule, label: op.label, count: 0, note: "Not configured yet" });
+            }
+
+          } else if (op.kind === "schoolwide-table") {
+            let count = 0;
+            switch (subId) {
+              case "promotion-policy":  count = (await tx.select().from(examPolicyTiers).where(eq(examPolicyTiers.schoolId, schoolId))).length; break;
+              case "attendance-policy": count = (await tx.select().from(attendancePolicies).where(eq(attendancePolicies.schoolId, schoolId))).length; break;
+              case "leave-policy":      count = (await tx.select().from(leavePolicies).where(eq(leavePolicies.schoolId, schoolId))).length; break;
+              case "bell-structure": case "period-config": case "timetable-template":
+                count = (await tx.select().from(timetableStructure).where(eq(timetableStructure.schoolId, schoolId))).length; break;
+              case "teacher-class-assignments": {
+                const a = (await tx.select().from(teacherAllocations).where(eq(teacherAllocations.schoolId, schoolId))).length;
+                const b = (await tx.select().from(facultyMappings).where(eq(facultyMappings.schoolId, schoolId))).length;
+                count = a + b; break;
+              }
+              case "asset-categories": case "asset-master": case "storage-locations":
+                count = (await tx.select().from(schoolAssets).where(eq(schoolAssets.schoolId, schoolId))).length; break;
+            }
+            (count > 0 ? sharedSchoolwide : requestedButEmpty).push({
+              module: subId, parentModule: op.parentModule, label: op.label, count,
+              note: count > 0 ? op.note : "Not configured yet",
+            });
+
+          } else if (op.kind === "calendar-recurring") {
+            if (calDone.done) {
+              copied.push({ module: subId, parentModule: op.parentModule, label: op.label, count: calDone.count, note: op.note });
+              continue;
+            }
+            const events = await tx.select().from(calendarEvents)
+              .where(and(eq(calendarEvents.schoolId, schoolId), eq(calendarEvents.isRecurring, true)));
+            if (events.length === 0) {
+              requestedButEmpty.push({ module: subId, parentModule: op.parentModule, label: op.label, count: 0, note: "No recurring events found" });
+              continue;
+            }
+            const newEvs = events.map(ev => {
+              const d = new Date(ev.date);
+              d.setFullYear(d.getFullYear() + yearDelta);
+              return {
+                schoolId: ev.schoolId, title: ev.title, date: d.toISOString().split("T")[0],
+                eventType: ev.eventType, venue: ev.venue, description: ev.description,
+                colorCode: ev.colorCode, isRecurring: true as const,
+                audienceScope: ev.audienceScope, targetClass: ev.targetClass, targetSection: ev.targetSection,
+              };
+            });
+            await tx.insert(calendarEvents).values(newEvs);
+            calDone.done = true; calDone.count = newEvs.length;
+            copied.push({ module: subId, parentModule: op.parentModule, label: op.label, count: newEvs.length, note: op.note });
+          }
+        }
+
+        const totalRecordsCopied = copied.reduce((s, e) => s + e.count, 0);
+        const prevApproved = existingResult?.approvedModules ?? [];
+        const newApproved = subModuleIds.filter(id => !alreadyDone.has(id));
+
+        const newResult: CResult = {
+          sourceSessionId, sourceSessionName: srcSession.sessionName,
+          destSessionId: destId,
+          approvedModules: [...prevApproved, ...newApproved],
+          copied, sharedSchoolwide, requestedButEmpty,
+          cleanSlate: CLEAN_SLATE_IDS,
+          totalRecordsCopied,
+          timestamp: new Date().toISOString(),
+        };
+
+        await tx.update(academicSessions)
+          .set({ copiedModules: JSON.stringify(newResult) })
+          .where(and(eq(academicSessions.id, destId), eq(academicSessions.schoolId, schoolId)));
+
+        await tx.insert(auditLogs).values({
+          schoolId, actionType: "UPDATE", entityType: "academic_session",
+          entityId: destId, actionBy: req.session.userId!, actionByRole: "admin",
+          details: JSON.stringify({
+            action: "copy-modules", subModuleIds, sourceSessionId,
+            totalRecordsCopied, timestamp: new Date().toISOString(),
+          }),
+        });
+
+        return newResult;
+      });
+
+      res.json({ copyResult: mergedResult });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Copy failed", rolled_back: true });
+    }
+  });
+
   // ===== ATTENDANCE POLICY ENGINE — CRUD =====
 
   app.get("/api/admin/attendance-policies", async (req, res) => {
