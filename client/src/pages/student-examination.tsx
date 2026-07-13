@@ -8,6 +8,7 @@ import {
   MoreVertical, Check, History,
 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
+import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 
 // ─────────────────────────── Types ─────────────────────────────────────────────
 interface AcademicSession {
@@ -219,24 +220,39 @@ const selectStyle = { background: "#020617", borderColor: "#1e293b", colorScheme
 // Mode C: subject + exam type → single focused result card
 // ══════════════════════════════════════════════════════════════════════════════
 function ViewMarksPanel({
-  allScores, policy, passThreshold, isLoading, selectedClass, section,
+  allScores, policy, passThreshold, isLoading, selectedClass, section, schoolId,
 }: {
   allScores: ExamScore[]; policy: ExamPolicyTier | null; passThreshold: number;
-  isLoading: boolean; selectedClass: string; section: string;
+  isLoading: boolean; selectedClass: string; section: string; schoolId: number;
 }) {
   const [viewSubject,  setViewSubject]  = useState("");
   const [viewExamType, setViewExamType] = useState("");
 
-  // ── Derive dropdown options strictly from actual score data ──────────────────
-  // Using real score subjects/exam-types instead of school config guarantees
-  // historical accuracy — no current-schema bleed into past sessions.
+  // ── Dropdown options from the admin's configured school setup ────────────────
+  // `useSchoolConfigStrict` returns exactly what the principal registered in
+  // admin-dashboard/school-setup — per-class maps (classSubjects / classExamTypes)
+  // take priority; fall back to the school-wide list; final safety net is the
+  // unique set derived from actual score rows so nothing ever goes blank.
+  const { getSubjectsForClass, getExamTypesForClass } = useSchoolConfigStrict(schoolId);
+
+  const configSubjects  = getSubjectsForClass(selectedClass);
+  const configExamTypes = getExamTypesForClass(selectedClass);
+
   const subjectOptions  = useMemo(
-    () => [...new Set(allScores.map(s => s.subject))].sort(),
-    [allScores],
+    () =>
+      configSubjects.length
+        ? configSubjects
+        : [...new Set(allScores.map(s => s.subject))].sort(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [configSubjects, allScores],
   );
   const examTypeOptions = useMemo(
-    () => [...new Set(allScores.map(s => s.examType))].sort(),
-    [allScores],
+    () =>
+      configExamTypes.length
+        ? configExamTypes
+        : [...new Set(allScores.map(s => s.examType))].sort(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [configExamTypes, allScores],
   );
 
   // Reset both filters when the session (class) changes
@@ -1419,6 +1435,7 @@ export default function StudentExamination() {
             isLoading={isDataLoading}
             selectedClass={selectedClass}
             section={selectedSection}
+            schoolId={student.schoolId}
           />
         )}
         {tab === "results" && (
