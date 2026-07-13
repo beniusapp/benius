@@ -2468,7 +2468,7 @@ export async function registerRoutes(
   // Category C — never touched. Listed in cleanSlate for audit clarity.
   // ─────────────────────────────────────────────────────────────────────────
 
-  type CopyEntry = { module: string; label: string; count: number; note: string };
+  type CopyEntry = { module: string; parentModule: string; label: string; count: number; note: string };
   type SessionCopyResult = {
     sourceSessionId: number;
     sourceSessionName: string;
@@ -2486,45 +2486,46 @@ export async function registerRoutes(
   // "schoolwide" entries are verified-only; "calendar-recurring" entries are
   // physically duplicated.
   const SUBMODULE_OPS: Record<string, {
+    parentModule: string;
     label: string;
     kind: "schoolwide-meta" | "schoolwide-table" | "calendar-recurring" | "noop";
     metaKey?: string;
     note: string;
   }> = {
     // ── Cat A: School Setup ─────────────────────────────────────────────────
-    "classes":                    { label: "Classes",                  kind: "schoolwide-meta",  metaKey: "classes",           note: "Shared across all sessions for this school" },
-    "sections":                   { label: "Sections",                 kind: "schoolwide-meta",  metaKey: "sections",          note: "Shared across all sessions for this school" },
-    "subjects":                   { label: "Subjects",                 kind: "schoolwide-meta",  metaKey: "subjects",          note: "Shared across all sessions for this school" },
-    "exam-types":                 { label: "Exam Types",               kind: "schoolwide-meta",  metaKey: "exam_types",        note: "Shared across all sessions for this school" },
-    "class-mapping":              { label: "Class–Section Mapping",    kind: "schoolwide-meta",  metaKey: "class_sections",    note: "Shared across all sessions for this school" },
-    "subject-mapping":            { label: "Class–Subject Mapping",    kind: "schoolwide-meta",  metaKey: "class_subjects",    note: "Shared across all sessions for this school" },
-    "class-exam-type-mapping":    { label: "Class–Exam Type Mapping",  kind: "schoolwide-meta",  metaKey: "class_exam_types",  note: "Shared across all sessions for this school" },
-    "grading-policy":             { label: "Grading Policy",           kind: "schoolwide-meta",  metaKey: "grading_config",    note: "Shared across all sessions for this school" },
-    "promotion-policy":           { label: "Promotion Policy",         kind: "schoolwide-table", note: "exam_policy_tiers — shared across all sessions" },
-    "attendance-policy":          { label: "Attendance Policy",        kind: "schoolwide-table", note: "attendance_policies — shared across all sessions" },
-    "leave-policy":               { label: "Leave Policy",             kind: "schoolwide-table", note: "leave_policies — shared across all sessions" },
+    "classes":                    { parentModule: "School Setup",        label: "Classes",                  kind: "schoolwide-meta",    metaKey: "classes",           note: "Shared across all sessions for this school" },
+    "sections":                   { parentModule: "School Setup",        label: "Sections",                 kind: "schoolwide-meta",    metaKey: "sections",          note: "Shared across all sessions for this school" },
+    "subjects":                   { parentModule: "School Setup",        label: "Subjects",                 kind: "schoolwide-meta",    metaKey: "subjects",          note: "Shared across all sessions for this school" },
+    "exam-types":                 { parentModule: "School Setup",        label: "Exam Types",               kind: "schoolwide-meta",    metaKey: "exam_types",        note: "Shared across all sessions for this school" },
+    "class-mapping":              { parentModule: "School Setup",        label: "Class–Section Mapping",    kind: "schoolwide-meta",    metaKey: "class_sections",    note: "Shared across all sessions for this school" },
+    "subject-mapping":            { parentModule: "School Setup",        label: "Class–Subject Mapping",    kind: "schoolwide-meta",    metaKey: "class_subjects",    note: "Shared across all sessions for this school" },
+    "class-exam-type-mapping":    { parentModule: "School Setup",        label: "Class–Exam Type Mapping",  kind: "schoolwide-meta",    metaKey: "class_exam_types",  note: "Shared across all sessions for this school" },
+    "grading-policy":             { parentModule: "School Setup",        label: "Grading Policy",           kind: "schoolwide-meta",    metaKey: "grading_config",    note: "Shared across all sessions for this school" },
+    "promotion-policy":           { parentModule: "School Setup",        label: "Promotion Policy",         kind: "schoolwide-table",   note: "exam_policy_tiers — shared across all sessions" },
+    "attendance-policy":          { parentModule: "School Setup",        label: "Attendance Policy",        kind: "schoolwide-table",   note: "attendance_policies — shared across all sessions" },
+    "leave-policy":               { parentModule: "School Setup",        label: "Leave Policy",             kind: "schoolwide-table",   note: "leave_policies — shared across all sessions" },
     // ── Cat A: Timetable Master ─────────────────────────────────────────────
-    "bell-structure":             { label: "Bell Structure",           kind: "schoolwide-table", note: "timetable_structure — shared across all sessions" },
-    "period-config":              { label: "Period Configuration",     kind: "schoolwide-table", note: "timetable_structure — shared across all sessions" },
-    "timetable-template":         { label: "Timetable Template",       kind: "schoolwide-table", note: "Draft timetable entries — shared across all sessions" },
+    "bell-structure":             { parentModule: "Timetable Master",    label: "Bell Structure",           kind: "schoolwide-table",   note: "timetable_structure — shared across all sessions" },
+    "period-config":              { parentModule: "Timetable Master",    label: "Period Configuration",     kind: "schoolwide-table",   note: "timetable_structure — shared across all sessions" },
+    "timetable-template":         { parentModule: "Timetable Master",    label: "Timetable Template",       kind: "schoolwide-table",   note: "Draft timetable entries — shared across all sessions" },
     // ── Cat A: School Calendar ──────────────────────────────────────────────
-    "holiday-templates":          { label: "Holiday Templates",        kind: "calendar-recurring", note: "Recurring holiday events duplicated with dates advanced to destination year" },
-    "recurring-events":           { label: "Recurring Events",         kind: "calendar-recurring", note: "Recurring events duplicated with dates advanced to destination year" },
+    "holiday-templates":          { parentModule: "School Calendar",     label: "Holiday Templates",        kind: "calendar-recurring", note: "Recurring holiday events duplicated with dates advanced to destination year" },
+    "recurring-events":           { parentModule: "School Calendar",     label: "Recurring Events",         kind: "calendar-recurring", note: "Recurring events duplicated with dates advanced to destination year" },
     // ── Cat A: ID Card Generator ────────────────────────────────────────────
-    "card-layouts":               { label: "Card Layouts",             kind: "schoolwide-meta",  metaKey: "id_card_config",    note: "Shared across all sessions for this school" },
-    "print-templates":            { label: "Print Templates",          kind: "schoolwide-meta",  metaKey: "id_card_config",    note: "Shared across all sessions for this school" },
+    "card-layouts":               { parentModule: "ID Card Generator",   label: "Card Layouts",             kind: "schoolwide-meta",    metaKey: "id_card_config",    note: "Shared across all sessions for this school" },
+    "print-templates":            { parentModule: "ID Card Generator",   label: "Print Templates",          kind: "schoolwide-meta",    metaKey: "id_card_config",    note: "Shared across all sessions for this school" },
     // ── Cat B: Faculty Mapping ──────────────────────────────────────────────
-    "teacher-class-assignments":  { label: "Teacher–Class Assignments",kind: "schoolwide-table", note: "teacher_allocations + faculty_mappings — shared across all sessions" },
+    "teacher-class-assignments":  { parentModule: "Faculty Mapping",     label: "Teacher–Class Assignments",kind: "schoolwide-table",   note: "teacher_allocations + faculty_mappings — shared across all sessions" },
     // ── Cat B: Fees & Payments ──────────────────────────────────────────────
-    "fee-categories":             { label: "Fee Categories",           kind: "schoolwide-meta",  metaKey: "fee_categories",    note: "Shared across all sessions for this school" },
-    "fee-heads":                  { label: "Fee Heads",                kind: "schoolwide-meta",  metaKey: "fee_heads",         note: "Shared across all sessions for this school" },
-    "fee-structure":              { label: "Fee Structure",            kind: "schoolwide-meta",  metaKey: "fee_structure",     note: "Shared across all sessions for this school" },
-    "fine-rules":                 { label: "Fine Rules",               kind: "schoolwide-meta",  metaKey: "fee_fine_rules",    note: "Shared across all sessions for this school" },
-    "concession-rules":           { label: "Concession Rules",         kind: "schoolwide-meta",  metaKey: "fee_concessions",   note: "Shared across all sessions for this school" },
+    "fee-categories":             { parentModule: "Fees & Payments",     label: "Fee Categories",           kind: "schoolwide-meta",    metaKey: "fee_categories",    note: "Shared across all sessions for this school" },
+    "fee-heads":                  { parentModule: "Fees & Payments",     label: "Fee Heads",                kind: "schoolwide-meta",    metaKey: "fee_heads",         note: "Shared across all sessions for this school" },
+    "fee-structure":              { parentModule: "Fees & Payments",     label: "Fee Structure",            kind: "schoolwide-meta",    metaKey: "fee_structure",     note: "Shared across all sessions for this school" },
+    "fine-rules":                 { parentModule: "Fees & Payments",     label: "Fine Rules",               kind: "schoolwide-meta",    metaKey: "fee_fine_rules",    note: "Shared across all sessions for this school" },
+    "concession-rules":           { parentModule: "Fees & Payments",     label: "Concession Rules",         kind: "schoolwide-meta",    metaKey: "fee_concessions",   note: "Shared across all sessions for this school" },
     // ── Cat B: Assets & Inventory ───────────────────────────────────────────
-    "asset-categories":           { label: "Asset Categories",         kind: "schoolwide-table", note: "school_assets — shared across all sessions" },
-    "asset-master":               { label: "Asset Master",             kind: "schoolwide-table", note: "school_assets — shared across all sessions" },
-    "storage-locations":          { label: "Storage Locations",        kind: "schoolwide-table", note: "school_assets — shared across all sessions" },
+    "asset-categories":           { parentModule: "Assets & Inventory",  label: "Asset Categories",         kind: "schoolwide-table",   note: "school_assets — shared across all sessions" },
+    "asset-master":               { parentModule: "Assets & Inventory",  label: "Asset Master",             kind: "schoolwide-table",   note: "school_assets — shared across all sessions" },
+    "storage-locations":          { parentModule: "Assets & Inventory",  label: "Storage Locations",        kind: "schoolwide-table",   note: "school_assets — shared across all sessions" },
   };
 
   // Cat C — modules that must always start clean. Listed in the audit only.
@@ -2713,12 +2714,12 @@ export async function registerRoutes(
                   if (Array.isArray(val)) countHint = val.length;
                   else if (typeof val === "object" && val !== null) countHint = Object.keys(val).length;
                 } catch { /* noop */ }
-                sharedSchoolwide.push({ module: subId, label: op.label, count: countHint, note: op.note });
-                executionLog.push(`  [${subId}] ✓ ${op.label} — schoolwide config verified (${countHint} items)`);
-                console.log(`[SESSION-CREATE]   ✓ ${subId}: ${countHint} items`);
+                sharedSchoolwide.push({ module: subId, parentModule: op.parentModule, label: op.label, count: countHint, note: op.note });
+                executionLog.push(`  [${subId}] ✓ ${op.parentModule} › ${op.label} — schoolwide config verified (${countHint} items)`);
+                console.log(`[SESSION-CREATE]   ✓ ${subId} (${op.parentModule} › ${op.label}): ${countHint} items`);
               } else {
-                requestedButEmpty.push({ module: subId, label: op.label, count: 0, note: "Not configured yet for this school" });
-                executionLog.push(`  [${subId}] ⚠ ${op.label} — no data found (not configured yet)`);
+                requestedButEmpty.push({ module: subId, parentModule: op.parentModule, label: op.label, count: 0, note: "Not configured yet for this school" });
+                executionLog.push(`  [${subId}] ⚠ ${op.parentModule} › ${op.label} — no data found (not configured yet)`);
                 console.log(`[SESSION-CREATE]   ⚠ ${subId}: no data`);
               }
 
@@ -2758,16 +2759,16 @@ export async function registerRoutes(
                 default: count = 0;
               }
               const tgt = count > 0 ? sharedSchoolwide : requestedButEmpty;
-              tgt.push({ module: subId, label: op.label, count, note: count > 0 ? op.note : "Not configured yet" });
-              executionLog.push(`  [${subId}] ${count > 0 ? "✓" : "⚠"} ${op.label} — ${count > 0 ? `${count} records (schoolwide)` : "no records found"}`);
+              tgt.push({ module: subId, parentModule: op.parentModule, label: op.label, count, note: count > 0 ? op.note : "Not configured yet" });
+              executionLog.push(`  [${subId}] ${count > 0 ? "✓" : "⚠"} ${op.parentModule} › ${op.label} — ${count > 0 ? `${count} records (schoolwide)` : "no records found"}`);
               console.log(`[SESSION-CREATE]   ${count > 0 ? "✓" : "⚠"} ${subId}: ${count} records`);
 
             // ── calendar-recurring: physically duplicate with year+delta ─────
             } else if (op.kind === "calendar-recurring") {
               if (calendarCopyDone.done) {
                 // Calendar scan already ran — just reference the count
-                copied.push({ module: subId, label: op.label, count: calendarCopyDone.count, note: op.note });
-                executionLog.push(`  [${subId}] ✓ ${op.label} — ${calendarCopyDone.count} events (shared from previous calendar pass)`);
+                copied.push({ module: subId, parentModule: op.parentModule, label: op.label, count: calendarCopyDone.count, note: op.note });
+                executionLog.push(`  [${subId}] ✓ ${op.parentModule} › ${op.label} — ${calendarCopyDone.count} events (shared from previous calendar pass)`);
                 continue;
               }
 
@@ -2776,8 +2777,8 @@ export async function registerRoutes(
                 .where(and(eq(calendarEvents.schoolId, schoolId), eq(calendarEvents.isRecurring, true)));
 
               if (recurringEvents.length === 0) {
-                requestedButEmpty.push({ module: subId, label: op.label, count: 0, note: "No recurring events found" });
-                executionLog.push(`  [${subId}] ⚠ ${op.label} — no recurring events found (nothing to duplicate)`);
+                requestedButEmpty.push({ module: subId, parentModule: op.parentModule, label: op.label, count: 0, note: "No recurring events found" });
+                executionLog.push(`  [${subId}] ⚠ ${op.parentModule} › ${op.label} — no recurring events found (nothing to duplicate)`);
                 console.log(`[SESSION-CREATE]   ⚠ ${subId}: no recurring events`);
                 continue;
               }
@@ -2795,8 +2796,8 @@ export async function registerRoutes(
               await tx.insert(calendarEvents).values(newEventRecords);
               calendarCopyDone.done  = true;
               calendarCopyDone.count = newEventRecords.length;
-              copied.push({ module: subId, label: op.label, count: newEventRecords.length, note: op.note });
-              executionLog.push(`  [${subId}] ✓ ${op.label} — ${newEventRecords.length} events physically duplicated (dates +${yearDelta >= 0 ? "+" : ""}${yearDelta}yr)`);
+              copied.push({ module: subId, parentModule: op.parentModule, label: op.label, count: newEventRecords.length, note: op.note });
+              executionLog.push(`  [${subId}] ✓ ${op.parentModule} › ${op.label} — ${newEventRecords.length} events physically duplicated (dates +${yearDelta >= 0 ? "+" : ""}${yearDelta}yr)`);
               console.log(`[SESSION-CREATE]   ✓ ${subId}: ${newEventRecords.length} events duplicated`);
             }
             // kind === "noop" → silently skip

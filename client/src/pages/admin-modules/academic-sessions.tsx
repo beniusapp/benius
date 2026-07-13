@@ -38,8 +38,9 @@ import { fmtDate } from "@/lib/dateUtils";
 // Matches the SessionCopyResult the backend writes into copiedModules JSON
 // and returns in the creation response body.
 interface SessionCopyEntry {
-  module: string;
-  label: string;
+  module: string;       // sub-module ID, e.g. "classes"
+  parentModule: string; // parent group label, e.g. "School Setup"
+  label: string;        // sub-module label, e.g. "Classes"
   count: number;
   note: string;
 }
@@ -1095,9 +1096,17 @@ function SuccessDialog({ session, onClose, onNavigate }: SuccessDialogProps) {
                       </div>
                       <div className="space-y-1.5 pl-1">
                         {copyResult!.copied.map(e => (
-                          <div key={e.module} className="flex items-center justify-between">
-                            <span className="text-xs text-white/65">{e.label}</span>
-                            <span className="text-[10px] font-semibold text-emerald-400/70 bg-emerald-400/8 px-1.5 py-0.5 rounded-full">
+                          <div key={e.module} className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="text-[10px] font-semibold shrink-0"
+                                style={{ color: "rgba(52,211,153,0.60)" }}>
+                                {e.parentModule}
+                              </span>
+                              <span className="text-white/25 text-[10px] shrink-0">›</span>
+                              <span className="text-xs text-white/80 font-semibold truncate">{e.label}</span>
+                            </div>
+                            <span className="text-[10px] font-bold text-emerald-400 shrink-0 px-2 py-0.5 rounded-full"
+                              style={{ background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.20)" }}>
                               {e.count} records
                             </span>
                           </div>
@@ -1113,15 +1122,24 @@ function SuccessDialog({ session, onClose, onNavigate }: SuccessDialogProps) {
                       <div className="flex items-center gap-2">
                         <Copy className="w-3.5 h-3.5 text-cyan-400" />
                         <span className="text-xs font-bold text-cyan-400">Shared School-Wide Configs</span>
-                        <span className="text-[10px] text-cyan-400/60">available to all sessions</span>
+                        <span className="text-[10px] text-cyan-400/50">available to all sessions</span>
                       </div>
-                      <div className="flex flex-wrap gap-1.5 pl-1">
+                      <div className="space-y-1.5 pl-1">
                         {copyResult!.sharedSchoolwide.map(e => (
-                          <span key={e.module}
-                            className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
-                            style={{ background: "rgba(34,211,238,0.08)", color: "#67e8f9", border: "1px solid rgba(34,211,238,0.15)" }}>
-                            {e.label} ({e.count})
-                          </span>
+                          <div key={e.module} className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="text-[10px] font-semibold shrink-0"
+                                style={{ color: "rgba(34,211,238,0.55)" }}>
+                                {e.parentModule}
+                              </span>
+                              <span className="text-white/25 text-[10px] shrink-0">›</span>
+                              <span className="text-xs text-white/75 truncate">{e.label}</span>
+                            </div>
+                            <span className="text-[10px] text-cyan-400/60 shrink-0 px-2 py-0.5 rounded-full font-medium"
+                              style={{ background: "rgba(34,211,238,0.07)", border: "1px solid rgba(34,211,238,0.12)" }}>
+                              {e.count > 0 ? `${e.count} items` : "✓"}
+                            </span>
+                          </div>
                         ))}
                       </div>
                     </div>
@@ -1136,15 +1154,18 @@ function SuccessDialog({ session, onClose, onNavigate }: SuccessDialogProps) {
                         <span className="text-xs font-bold text-amber-400">Requested but Not Configured</span>
                       </div>
                       <p className="text-[10px] text-white/35 pl-1">
-                        These modules were selected for copying but no data was found in the source. Configure them after activation.
+                        Selected for copying but no source data existed. Configure these after activation.
                       </p>
-                      <div className="flex flex-wrap gap-1.5 pl-1">
+                      <div className="space-y-1 pl-1">
                         {copyResult!.requestedButEmpty.map(e => (
-                          <span key={e.module}
-                            className="text-[10px] px-2 py-0.5 rounded-full"
-                            style={{ background: "rgba(251,191,36,0.08)", color: "#fcd34d", border: "1px solid rgba(251,191,36,0.15)" }}>
-                            {e.label}
-                          </span>
+                          <div key={e.module} className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-semibold shrink-0"
+                              style={{ color: "rgba(251,191,36,0.55)" }}>
+                              {e.parentModule}
+                            </span>
+                            <span className="text-white/25 text-[10px] shrink-0">›</span>
+                            <span className="text-xs text-amber-300/70">{e.label}</span>
+                          </div>
                         ))}
                       </div>
                     </div>
@@ -1155,20 +1176,25 @@ function SuccessDialog({ session, onClose, onNavigate }: SuccessDialogProps) {
                     <div className="rounded-xl p-3 space-y-2"
                       style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)" }}>
                       <div className="flex items-center gap-2">
-                        <Info className="w-3.5 h-3.5 text-white/40" />
-                        <span className="text-xs font-bold text-white/40">Category C — Always Start Fresh</span>
+                        <Info className="w-3.5 h-3.5 text-white/35" />
+                        <span className="text-xs font-bold text-white/35">Category C — Always Start Fresh</span>
                       </div>
-                      <p className="text-[10px] text-white/25 pl-1">
+                      <p className="text-[10px] text-white/22 pl-1">
                         These modules are never copied — they begin empty every session by design.
                       </p>
-                      <div className="flex flex-wrap gap-1 pl-1">
-                        {copyResult!.cleanSlate.map(m => (
-                          <span key={m}
-                            className="text-[9px] px-1.5 py-0.5 rounded font-mono"
-                            style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.25)" }}>
-                            {m}
-                          </span>
-                        ))}
+                      <div className="space-y-1 pl-1">
+                        {copyResult!.cleanSlate.map(id => {
+                          const mod = COPY_MODULE_TREE.find(m => m.id === id);
+                          return (
+                            <div key={id} className="flex items-center gap-1.5">
+                              {mod && <span className="text-[10px]">{mod.emoji}</span>}
+                              <span className="text-[10px] text-white/35 font-semibold">
+                                {mod?.label ?? id}
+                              </span>
+                              <span className="text-[9px] text-white/18 font-mono">({id})</span>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
