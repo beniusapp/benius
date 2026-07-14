@@ -62,100 +62,23 @@ interface SessionCopyResult {
 
 type ModuleStatus = "pending" | "copying" | "copied" | "skipped" | "failed";
 
+// Sub-module and module types — populated entirely from backend (data-driven, no static list)
 interface SubModuleDef {
-  id: string;
+  id:    string;
   label: string;
-  desc: string;
+  desc:  string;
+  count: number; // real record count from source session
 }
 
 interface CopyModuleDef {
-  id: string;
-  label: string;
-  emoji: string;
-  category: "A" | "B";
-  group: "FOUNDATION" | "MANAGEMENT";
-  warning?: string;
+  id:        string;
+  label:     string;
+  emoji:     string;
+  category:  "A" | "B";
+  group:     "FOUNDATION" | "MANAGEMENT";
+  warning?:  string;
   subModules: SubModuleDef[];
 }
-
-// ── Module definitions ─────────────────────────────────────────────────────────
-
-const COPY_MODULES: CopyModuleDef[] = [
-  // ── FOUNDATION ───────────────────────────────────────────────────────────────
-  {
-    id: "school-setup", label: "School Setup", emoji: "⚙️",
-    category: "A", group: "FOUNDATION",
-    subModules: [
-      { id: "classes",                 label: "Classes",                 desc: "Class divisions (Class I, II, III…)" },
-      { id: "sections",                label: "Sections",                desc: "Sections within each class (A, B, C…)" },
-      { id: "subjects",                label: "Subjects",                desc: "Subjects taught across all classes" },
-      { id: "exam-types",              label: "Exam Types",              desc: "Exam categories (Unit Test, Half Yearly…)" },
-      { id: "class-mapping",           label: "Class–Section Mapping",   desc: "Which sections exist in each class" },
-      { id: "subject-mapping",         label: "Class–Subject Mapping",   desc: "Which subjects are taught in each class" },
-      { id: "class-exam-type-mapping", label: "Class–Exam Type Mapping", desc: "Which exam types apply per class" },
-      { id: "grading-policy",          label: "Grading Policy",          desc: "Grade boundaries and GPA thresholds" },
-      { id: "promotion-policy",        label: "Promotion Policy",        desc: "Rules governing student promotion" },
-      { id: "attendance-policy",       label: "Attendance Policy",       desc: "Minimum attendance requirements" },
-      { id: "leave-policy",            label: "Leave Policy",            desc: "Student and staff leave entitlements" },
-    ],
-  },
-  {
-    id: "timetable-master", label: "Timetable Master", emoji: "📅",
-    category: "A", group: "FOUNDATION",
-    subModules: [
-      { id: "bell-structure",     label: "Bell Structure",         desc: "Daily period timing and bell schedule" },
-      { id: "period-config",      label: "Period Configuration",   desc: "Period lengths, breaks, and types" },
-      { id: "timetable-template", label: "Timetable Template",     desc: "Draft period assignments per class" },
-    ],
-  },
-  {
-    id: "school-calendar", label: "School Calendar", emoji: "🗓️",
-    category: "A", group: "FOUNDATION",
-    subModules: [
-      { id: "holiday-templates", label: "Holiday Templates", desc: "Public holidays — dates advanced to new year" },
-      { id: "recurring-events",  label: "Recurring Events",  desc: "Annual events — dates advanced to new year" },
-    ],
-  },
-  {
-    id: "id-card-gen", label: "ID Card Generator", emoji: "💳",
-    category: "A", group: "FOUNDATION",
-    subModules: [
-      { id: "card-layouts",    label: "Card Layouts",    desc: "Student and staff ID card design templates" },
-      { id: "print-templates", label: "Print Templates", desc: "Print-ready output configuration" },
-    ],
-  },
-  // ── MANAGEMENT ───────────────────────────────────────────────────────────────
-  {
-    id: "faculty-mapping", label: "Faculty Mapping", emoji: "🗂️",
-    category: "B", group: "MANAGEMENT",
-    warning: "Review all teacher allocations before activating the new session.",
-    subModules: [
-      { id: "teacher-class-assignments", label: "Teacher–Class Assignments", desc: "Teacher allocations to classes and subjects" },
-    ],
-  },
-  {
-    id: "fees-payments", label: "Fees & Payments", emoji: "💰",
-    category: "B", group: "MANAGEMENT",
-    warning: "Only fee configuration templates are copied. Ledger, receipts, and outstanding dues are excluded.",
-    subModules: [
-      { id: "fee-categories",   label: "Fee Categories",   desc: "Fee groupings and classifications" },
-      { id: "fee-heads",        label: "Fee Heads",        desc: "Individual fee line items" },
-      { id: "fee-structure",    label: "Fee Structure",    desc: "Per-class fee assignment matrix" },
-      { id: "fine-rules",       label: "Fine Rules",       desc: "Late payment penalty configuration" },
-      { id: "concession-rules", label: "Concession Rules", desc: "Discount and waiver rules" },
-    ],
-  },
-  {
-    id: "assets-inventory", label: "Assets & Inventory", emoji: "📦",
-    category: "B", group: "MANAGEMENT",
-    warning: "Only asset master and categories are copied. Movement, maintenance, and issue history is excluded.",
-    subModules: [
-      { id: "asset-categories", label: "Asset Categories",  desc: "Asset classification groups" },
-      { id: "asset-master",     label: "Asset Master",      desc: "School asset registry" },
-      { id: "storage-locations",label: "Storage Locations", desc: "Physical storage location directory" },
-    ],
-  },
-];
 
 const CLEAN_SLATE = [
   { id: "student-registry", label: "Student Registry",     emoji: "🎓" },
@@ -193,15 +116,15 @@ function parseExistingResult(copiedModules: string | null): SessionCopyResult | 
   return null;
 }
 
-function deriveStatuses(result: SessionCopyResult | null): Record<string, ModuleStatus> {
-  if (!result) return {};
+function deriveStatuses(result: SessionCopyResult | null, modules: CopyModuleDef[]): Record<string, ModuleStatus> {
+  if (!result || modules.length === 0) return {};
   const processedIds = new Set([
     ...(result.copied || []).map(e => e.module),
     ...(result.sharedSchoolwide || []).map(e => e.module),
     ...(result.requestedButEmpty || []).map(e => e.module),
   ]);
   const statuses: Record<string, ModuleStatus> = {};
-  for (const mod of COPY_MODULES) {
+  for (const mod of modules) {
     const hasDone = mod.subModules.some(s => processedIds.has(s.id));
     if (hasDone) statuses[mod.id] = "copied";
   }
@@ -332,40 +255,40 @@ export default function SessionCopyCenter() {
   const srcSessionId = destSession?.copiedFromSessionId ?? null;
   const srcSession   = sessions.find(s => s.id === srcSessionId) ?? null;
 
-  const { data: preview, isLoading: previewLoading } = useQuery<{ counts: Record<string, number> }>({
-    queryKey: ["/api/admin/academic-sessions/module-preview"],
+  const { data: preview, isLoading: previewLoading } = useQuery<{ modules: CopyModuleDef[] }>({
+    queryKey: ["/api/admin/academic-sessions/module-preview", srcSessionId],
     queryFn: async () => {
-      const r = await fetch("/api/admin/academic-sessions/module-preview", { credentials: "include" });
+      const url = `/api/admin/academic-sessions/module-preview${srcSessionId ? `?sourceSessionId=${srcSessionId}` : ""}`;
+      const r = await fetch(url, { credentials: "include" });
       if (!r.ok) throw new Error("Failed to load module preview");
       return r.json();
     },
     enabled: !!srcSessionId,
   });
 
-  const counts: Record<string, number> = preview?.counts ?? {};
+  // Dynamic module list — entirely from backend, already filtered (count > 0 only)
+  const dynamicModules = useMemo(() => preview?.modules ?? [], [preview]);
 
   // ── Derive initial statuses from existing copiedModules ──
   useEffect(() => {
-    if (!destSession?.copiedModules) return;
+    if (!destSession?.copiedModules || dynamicModules.length === 0) return;
     const existing = parseExistingResult(destSession.copiedModules);
-    const derived  = deriveStatuses(existing);
+    const derived  = deriveStatuses(existing, dynamicModules);
     setModuleStatuses(prev => ({ ...derived, ...prev }));
-  }, [destSession?.copiedModules]);
+  }, [destSession?.copiedModules, dynamicModules]);
 
   // ── Open module ──
-  const openModule = useMemo(() => COPY_MODULES.find(m => m.id === openModuleId) ?? null, [openModuleId]);
+  const openModule = useMemo(
+    () => dynamicModules.find(m => m.id === openModuleId) ?? null,
+    [openModuleId, dynamicModules]
+  );
 
   function handleOpenModule(modId: string) {
-    const mod = COPY_MODULES.find(m => m.id === modId);
+    const mod = dynamicModules.find(m => m.id === modId);
     if (!mod) return;
     setOpenModuleId(modId);
-    // Default: select all sub-modules that have data
-    const initialSelected = new Set(
-      mod.subModules
-        .filter(s => (counts[s.id] ?? 0) > 0 || mod.category === "A")
-        .map(s => s.id)
-    );
-    setSelectedSubIds(initialSelected.size > 0 ? initialSelected : new Set(mod.subModules.map(s => s.id)));
+    // All sub-modules in the dynamic list already have count > 0 — select all by default
+    setSelectedSubIds(new Set(mod.subModules.map(s => s.id)));
     setFailedError("");
     setView("detail");
   }
@@ -403,14 +326,14 @@ export default function SessionCopyCenter() {
     },
   });
 
-  // ── Computed ──
-  const foundationModules  = COPY_MODULES.filter(m => m.group === "FOUNDATION");
-  const managementModules  = COPY_MODULES.filter(m => m.group === "MANAGEMENT");
-  const totalModules       = COPY_MODULES.length;
-  const copiedCount        = Object.values(moduleStatuses).filter(s => s === "copied").length;
-  const skippedCount       = Object.values(moduleStatuses).filter(s => s === "skipped").length;
-  const doneCount          = copiedCount + skippedCount;
-  const allDone            = doneCount === totalModules;
+  // ── Computed — all driven from dynamicModules (no hardcoded list) ──
+  const foundationModules = dynamicModules.filter(m => m.group === "FOUNDATION");
+  const managementModules = dynamicModules.filter(m => m.group === "MANAGEMENT");
+  const totalModules      = dynamicModules.length;
+  const copiedCount       = Object.values(moduleStatuses).filter(s => s === "copied").length;
+  const skippedCount      = Object.values(moduleStatuses).filter(s => s === "skipped").length;
+  const doneCount         = copiedCount + skippedCount;
+  const allDone           = totalModules > 0 && doneCount === totalModules;
 
   const existingResult = useMemo(
     () => parseExistingResult(destSession?.copiedModules ?? null),
@@ -564,7 +487,7 @@ export default function SessionCopyCenter() {
                   <span className="text-xs font-bold text-white/35">Skipped</span>
                 </div>
                 <div className="divide-y" style={{ borderColor: "rgba(255,255,255,0.04)" }}>
-                  {COPY_MODULES.filter(m => moduleStatuses[m.id] === "skipped").map(m => (
+                  {dynamicModules.filter(m => moduleStatuses[m.id] === "skipped").map(m => (
                     <div key={m.id} className="px-4 py-2.5 flex items-center gap-2">
                       <span className="text-sm">{m.emoji}</span>
                       <span className="text-xs text-white/30">{m.label}</span>
@@ -725,10 +648,9 @@ export default function SessionCopyCenter() {
                 </span>
               </div>
 
-              {/* Sub-module rows */}
+              {/* Sub-module rows — count comes directly from the sub-module object (backend-filtered) */}
               {openModule.subModules.map((sub, idx) => {
-                const isOn  = selectedSubIds.has(sub.id);
-                const cnt   = counts[sub.id] ?? 0;
+                const isOn   = selectedSubIds.has(sub.id);
                 const isLast = idx === openModule.subModules.length - 1;
                 return (
                   <div
@@ -746,19 +668,10 @@ export default function SessionCopyCenter() {
                       <p className="text-[10px] mt-0.5 text-white/30 leading-relaxed">{sub.desc}</p>
                     </div>
                     <div className="flex flex-col items-end gap-0.5 shrink-0">
-                      {previewLoading ? (
-                        <Loader2 className="w-3 h-3 animate-spin text-white/20" />
-                      ) : cnt > 0 ? (
-                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
-                          style={{ background: "rgba(16,185,129,0.08)", color: "#34d399", border: "1px solid rgba(16,185,129,0.18)" }}>
-                          Available · {cnt}
-                        </span>
-                      ) : (
-                        <span className="text-[10px] px-2 py-0.5 rounded-full"
-                          style={{ background: "rgba(251,191,36,0.07)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.18)" }}>
-                          No data yet
-                        </span>
-                      )}
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                        style={{ background: "rgba(16,185,129,0.08)", color: "#34d399", border: "1px solid rgba(16,185,129,0.18)" }}>
+                        Available · {sub.count}
+                      </span>
                     </div>
                   </div>
                 );
@@ -985,37 +898,66 @@ export default function SessionCopyCenter() {
               }} />
           </div>
 
-          {/* FOUNDATION section */}
-          <div>
-            <div className="flex items-center gap-2 mb-4">
-              <div className="h-px flex-1" style={{ background: "rgba(255,255,255,0.07)" }} />
-              <span className="text-[10px] font-bold tracking-widest uppercase px-3"
-                style={{ color: "rgba(16,185,129,0.70)" }}>Foundation</span>
-              <div className="h-px flex-1" style={{ background: "rgba(255,255,255,0.07)" }} />
+          {/* Module grid — fully data-driven from backend */}
+          {previewLoading ? (
+            /* Loading skeleton */
+            <div className="space-y-3">
+              {[1, 2, 3, 4].map(i => (
+                <div key={i} className="rounded-xl p-4 h-24 animate-pulse"
+                  style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }} />
+              ))}
             </div>
-            <p className="text-[10px] text-white/30 mb-4 -mt-2">
-              Safe to copy — school-wide configuration templates shared across all sessions.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {foundationModules.map(m => <ModuleCard key={m.id} mod={m} />)}
+          ) : dynamicModules.length === 0 ? (
+            /* No modules with data */
+            <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
+              <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
+                style={{ background: "rgba(255,255,255,0.04)" }}>
+                <Info className="w-7 h-7 text-white/20" />
+              </div>
+              <p className="text-white/50 text-sm font-semibold">No Copyable Configuration Found</p>
+              <p className="text-white/30 text-xs max-w-xs leading-relaxed">
+                The source session has no configured modules yet. Set up your school configuration first, then return here to copy it.
+              </p>
             </div>
-          </div>
+          ) : (
+            <>
+              {/* FOUNDATION section */}
+              {foundationModules.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="h-px flex-1" style={{ background: "rgba(255,255,255,0.07)" }} />
+                    <span className="text-[10px] font-bold tracking-widest uppercase px-3"
+                      style={{ color: "rgba(16,185,129,0.70)" }}>Foundation</span>
+                    <div className="h-px flex-1" style={{ background: "rgba(255,255,255,0.07)" }} />
+                  </div>
+                  <p className="text-[10px] text-white/30 mb-4 -mt-2">
+                    Safe to copy — school-wide configuration templates shared across all sessions.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {foundationModules.map(m => <ModuleCard key={m.id} mod={m} />)}
+                  </div>
+                </div>
+              )}
 
-          {/* MANAGEMENT section */}
-          <div>
-            <div className="flex items-center gap-2 mb-4">
-              <div className="h-px flex-1" style={{ background: "rgba(255,255,255,0.07)" }} />
-              <span className="text-[10px] font-bold tracking-widest uppercase px-3"
-                style={{ color: "rgba(245,158,11,0.70)" }}>Management</span>
-              <div className="h-px flex-1" style={{ background: "rgba(255,255,255,0.07)" }} />
-            </div>
-            <p className="text-[10px] text-white/30 mb-4 -mt-2">
-              Review before copying — these modules contain operational configurations that may need adjustment.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {managementModules.map(m => <ModuleCard key={m.id} mod={m} />)}
-            </div>
-          </div>
+              {/* MANAGEMENT section */}
+              {managementModules.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="h-px flex-1" style={{ background: "rgba(255,255,255,0.07)" }} />
+                    <span className="text-[10px] font-bold tracking-widest uppercase px-3"
+                      style={{ color: "rgba(245,158,11,0.70)" }}>Management</span>
+                    <div className="h-px flex-1" style={{ background: "rgba(255,255,255,0.07)" }} />
+                  </div>
+                  <p className="text-[10px] text-white/30 mb-4 -mt-2">
+                    Review before copying — these modules contain operational configurations that may need adjustment.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {managementModules.map(m => <ModuleCard key={m.id} mod={m} />)}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
 
           {/* Clean slate notice */}
           <div className="rounded-xl px-4 py-4"

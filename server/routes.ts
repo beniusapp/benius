@@ -2927,11 +2927,15 @@ export async function registerRoutes(
       return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
+
+    const sourceSessionId = req.query.sourceSessionId ? parseInt(req.query.sourceSessionId as string) : null;
+    console.log(`[module-preview] schoolId=${schoolId} sourceSessionId=${sourceSessionId ?? "none"}`);
+
     try {
-      const metaRows = await db.select().from(schoolMetadata)
-        .where(eq(schoolMetadata.schoolId, schoolId));
+      const metaRows = await db.select().from(schoolMetadata).where(eq(schoolMetadata.schoolId, schoolId));
       const metaMap: Record<string, string> = {};
       for (const r of metaRows) metaMap[r.metaKey] = r.metaValue;
+
       function cntMeta(key: string): number {
         try {
           const v = JSON.parse(metaMap[key] ?? "null");
@@ -2940,6 +2944,7 @@ export async function registerRoutes(
           return 0;
         } catch { return 0; }
       }
+
       const [promR, attnR, leaveR, ttR, allocR, mapR, assetR, calR] = await Promise.all([
         db.select().from(examPolicyTiers).where(eq(examPolicyTiers.schoolId, schoolId)),
         db.select().from(attendancePolicies).where(eq(attendancePolicies.schoolId, schoolId)),
@@ -2950,37 +2955,130 @@ export async function registerRoutes(
         db.select().from(schoolAssets).where(eq(schoolAssets.schoolId, schoolId)),
         db.select().from(calendarEvents).where(and(eq(calendarEvents.schoolId, schoolId), eq(calendarEvents.isRecurring, true))),
       ]);
-      res.json({
-        counts: {
-          "classes":                   cntMeta("classes"),
-          "sections":                  cntMeta("sections"),
-          "subjects":                  cntMeta("subjects"),
-          "exam-types":                cntMeta("exam_types"),
-          "class-mapping":             cntMeta("class_sections"),
-          "subject-mapping":           cntMeta("class_subjects"),
-          "class-exam-type-mapping":   cntMeta("class_exam_types"),
-          "grading-policy":            cntMeta("grading_config"),
-          "promotion-policy":          promR.length,
-          "attendance-policy":         attnR.length,
-          "leave-policy":              leaveR.length,
-          "bell-structure":            ttR.length,
-          "period-config":             ttR.length,
-          "timetable-template":        ttR.length,
-          "holiday-templates":         calR.length,
-          "recurring-events":          calR.length,
-          "card-layouts":              cntMeta("id_card_config"),
-          "print-templates":           cntMeta("id_card_config"),
-          "teacher-class-assignments": allocR.length + mapR.length,
-          "fee-categories":            cntMeta("fee_categories"),
-          "fee-heads":                 cntMeta("fee_heads"),
-          "fee-structure":             cntMeta("fee_structure"),
-          "fine-rules":                cntMeta("fee_fine_rules"),
-          "concession-rules":          cntMeta("fee_concessions"),
-          "asset-categories":          assetR.length,
-          "asset-master":              assetR.length,
-          "storage-locations":         assetR.length,
+
+      // ── Raw count map: sub-module id → record count ───────────────────────
+      const rawCounts: Record<string, number> = {
+        "classes":                   cntMeta("classes"),
+        "sections":                  cntMeta("sections"),
+        "subjects":                  cntMeta("subjects"),
+        "exam-types":                cntMeta("exam_types"),
+        "class-mapping":             cntMeta("class_sections"),
+        "subject-mapping":           cntMeta("class_subjects"),
+        "class-exam-type-mapping":   cntMeta("class_exam_types"),
+        "grading-policy":            cntMeta("grading_config"),
+        "promotion-policy":          promR.length,
+        "attendance-policy":         attnR.length,
+        "leave-policy":              leaveR.length,
+        "bell-structure":            ttR.length,
+        "period-config":             ttR.length,
+        "timetable-template":        ttR.length,
+        "holiday-templates":         calR.length,
+        "recurring-events":          calR.length,
+        "card-layouts":              cntMeta("id_card_config"),
+        "print-templates":           cntMeta("id_card_config"),
+        "teacher-class-assignments": allocR.length + mapR.length,
+        "fee-categories":            cntMeta("fee_categories"),
+        "fee-heads":                 cntMeta("fee_heads"),
+        "fee-structure":             cntMeta("fee_structure"),
+        "fine-rules":                cntMeta("fee_fine_rules"),
+        "concession-rules":          cntMeta("fee_concessions"),
+        "asset-categories":          assetR.length,
+        "asset-master":              assetR.length,
+        "storage-locations":         assetR.length,
+      };
+
+      // ── Full possible module tree (server-side master definition) ─────────
+      type SubDef = { id: string; label: string; desc: string };
+      type ModDef = { id: string; label: string; emoji: string; category: "A" | "B"; group: "FOUNDATION" | "MANAGEMENT"; warning?: string; subModules: SubDef[] };
+
+      const FULL_TREE: ModDef[] = [
+        {
+          id: "school-setup", label: "School Setup", emoji: "⚙️", category: "A", group: "FOUNDATION",
+          subModules: [
+            { id: "classes",                 label: "Classes",                 desc: "Class divisions (Class I, II, III…)" },
+            { id: "sections",                label: "Sections",                desc: "Sections within each class (A, B, C…)" },
+            { id: "subjects",                label: "Subjects",                desc: "Subjects taught across all classes" },
+            { id: "exam-types",              label: "Exam Types",              desc: "Exam categories (Unit Test, Half Yearly…)" },
+            { id: "class-mapping",           label: "Class–Section Mapping",   desc: "Which sections exist in each class" },
+            { id: "subject-mapping",         label: "Class–Subject Mapping",   desc: "Which subjects are taught in each class" },
+            { id: "class-exam-type-mapping", label: "Class–Exam Type Mapping", desc: "Which exam types apply per class" },
+            { id: "grading-policy",          label: "Grading Policy",          desc: "Grade boundaries and GPA thresholds" },
+            { id: "promotion-policy",        label: "Promotion Policy",        desc: "Rules governing student promotion" },
+            { id: "attendance-policy",       label: "Attendance Policy",       desc: "Minimum attendance requirements" },
+            { id: "leave-policy",            label: "Leave Policy",            desc: "Student and staff leave entitlements" },
+          ],
         },
-      });
+        {
+          id: "timetable-master", label: "Timetable Master", emoji: "📅", category: "A", group: "FOUNDATION",
+          subModules: [
+            { id: "bell-structure",     label: "Bell Structure",       desc: "Daily period timing and bell schedule" },
+            { id: "period-config",      label: "Period Configuration", desc: "Period lengths, breaks, and types" },
+            { id: "timetable-template", label: "Timetable Template",   desc: "Draft period assignments per class" },
+          ],
+        },
+        {
+          id: "school-calendar", label: "School Calendar", emoji: "🗓️", category: "A", group: "FOUNDATION",
+          subModules: [
+            { id: "holiday-templates", label: "Holiday Templates", desc: "Public holidays — dates advanced to new year" },
+            { id: "recurring-events",  label: "Recurring Events",  desc: "Annual events — dates advanced to new year" },
+          ],
+        },
+        {
+          id: "id-card-gen", label: "ID Card Generator", emoji: "💳", category: "A", group: "FOUNDATION",
+          subModules: [
+            { id: "card-layouts",    label: "Card Layouts",    desc: "Student and staff ID card design templates" },
+            { id: "print-templates", label: "Print Templates", desc: "Print-ready output configuration" },
+          ],
+        },
+        {
+          id: "faculty-mapping", label: "Faculty Mapping", emoji: "🗂️", category: "B", group: "MANAGEMENT",
+          warning: "Review all teacher allocations before activating the new session.",
+          subModules: [
+            { id: "teacher-class-assignments", label: "Teacher–Class Assignments", desc: "Teacher allocations to classes and subjects" },
+          ],
+        },
+        {
+          id: "fees-payments", label: "Fees & Payments", emoji: "💰", category: "B", group: "MANAGEMENT",
+          warning: "Only fee configuration templates are copied. Ledger, receipts, and outstanding dues are excluded.",
+          subModules: [
+            { id: "fee-categories",   label: "Fee Categories",   desc: "Fee groupings and classifications" },
+            { id: "fee-heads",        label: "Fee Heads",        desc: "Individual fee line items" },
+            { id: "fee-structure",    label: "Fee Structure",    desc: "Per-class fee assignment matrix" },
+            { id: "fine-rules",       label: "Fine Rules",       desc: "Late payment penalty configuration" },
+            { id: "concession-rules", label: "Concession Rules", desc: "Discount and waiver rules" },
+          ],
+        },
+        {
+          id: "assets-inventory", label: "Assets & Inventory", emoji: "📦", category: "B", group: "MANAGEMENT",
+          warning: "Only asset master and categories are copied. Movement, maintenance, and issue history is excluded.",
+          subModules: [
+            { id: "asset-categories",  label: "Asset Categories",  desc: "Asset classification groups" },
+            { id: "asset-master",      label: "Asset Master",      desc: "School asset registry" },
+            { id: "storage-locations", label: "Storage Locations", desc: "Physical storage location directory" },
+          ],
+        },
+      ];
+
+      // ── Filter tree: only include sub-modules and modules with data ────────
+      console.log(`[module-preview] --- Sub-module breakdown ---`);
+      const filteredModules = [];
+      for (const mod of FULL_TREE) {
+        const filteredSubs = [];
+        for (const sub of mod.subModules) {
+          const count = rawCounts[sub.id] ?? 0;
+          const included = count > 0;
+          console.log(`  sub: ${sub.label.padEnd(30)} | count=${String(count).padStart(4)} | ${included ? "INCLUDED" : "EXCLUDED (zero records)"}`);
+          if (included) filteredSubs.push({ ...sub, count });
+        }
+        const included = filteredSubs.length > 0;
+        console.log(`mod: ${mod.label.padEnd(25)} | ${filteredSubs.length}/${mod.subModules.length} sub-modules | ${included ? "INCLUDED" : "EXCLUDED (all empty)"}`);
+        if (included) filteredModules.push({ ...mod, subModules: filteredSubs });
+      }
+
+      const totalSubs = filteredModules.reduce((a, m) => a + m.subModules.length, 0);
+      console.log(`[module-preview] Result: ${filteredModules.length} modules, ${totalSubs} sub-modules shown in Copy Center`);
+
+      res.json({ modules: filteredModules });
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to fetch module preview" });
     }
