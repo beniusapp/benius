@@ -1212,77 +1212,332 @@ function SuccessDialog({ session, onClose, onNavigate }: {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ROLLOVER MODAL — type "ROLLOVER" to confirm session activation
+// SESSION ACTIVATION GATE — 4-section safety modal before session goes live
 // ══════════════════════════════════════════════════════════════════════════════
-interface RolloverModalProps {
+// ── Promotion summary entry from the backend ──────────────────────────────────
+interface PromotionSummaryEntry {
+  studentId:      number;
+  studentName:    string;
+  currentClass:   string;
+  currentSection: string;
+  targetClass:    string;
+  targetSection:  string;
+  decision:       "promoted" | "retained" | string;
+  locked:         boolean;
+}
+
+interface ActivationGateProps {
   session:   AcademicSession;
   onClose:   () => void;
   onConfirm: () => void;
   isPending: boolean;
 }
-function RolloverModal({ session, onClose, onConfirm, isPending }: RolloverModalProps) {
-  const [typed, setTyped] = useState("");
-  const confirmed = typed.trim() === "ROLLOVER";
+
+function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: ActivationGateProps) {
+  const [typedWord,     setTypedWord]     = useState("");
+  const [promoChecked,  setPromoChecked]  = useState(false);
+  const [moduleChecked, setModuleChecked] = useState(false);
+
+  // ── Fetch promotion summary ─────────────────────────────────────────────
+  const { data: promoList = [], isLoading: promoLoading } = useQuery<PromotionSummaryEntry[]>({
+    queryKey: ["/api/admin/academic-sessions", session.id, "promotion-summary"],
+    queryFn: async () => {
+      const r = await fetch(`/api/admin/academic-sessions/${session.id}/promotion-summary`, { credentials: "include" });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+
+  const promotedStudents = promoList.filter(s => s.decision === "promoted");
+  const detainedStudents = promoList.filter(s => s.decision !== "promoted");
+
+  // ── Parse module impact from stored copiedModules JSON ──────────────────
+  let carriedForward: Array<{ label: string; parent: string }> = [];
+  let alwaysFresh:   string[] = [];
+  const hasCopyData = !!session.copiedModules;
+  if (hasCopyData) {
+    try {
+      const parsed = JSON.parse(session.copiedModules!) as SessionCopyResult;
+      const seen = new Set<string>();
+      [...parsed.sharedSchoolwide, ...parsed.copied].forEach(e => {
+        if (!seen.has(e.label)) {
+          seen.add(e.label);
+          carriedForward.push({ label: e.label, parent: e.parentModule });
+        }
+      });
+      alwaysFresh = parsed.cleanSlate ?? [];
+    } catch { /* noop */ }
+  }
+
+  const canActivate = typedWord === "ACTIVATE" && promoChecked && moduleChecked;
+
+  // ── Checkbox row helper ─────────────────────────────────────────────────
+  function CheckRow({ checked, onChange, children }: { checked: boolean; onChange: () => void; children: React.ReactNode }) {
+    return (
+      <label className="flex items-start gap-3 cursor-pointer group">
+        <div
+          onClick={onChange}
+          className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0 mt-0.5 transition-all"
+          style={{
+            background: checked ? "#22d3ee" : "transparent",
+            border: checked ? "1.5px solid #22d3ee" : "1.5px solid rgba(255,255,255,0.25)",
+          }}>
+          {checked && <Check className="w-3 h-3 text-[#0A1628]" />}
+        </div>
+        <span className="text-xs text-white/60 leading-relaxed group-hover:text-white/80 transition-colors select-none">
+          {children}
+        </span>
+      </label>
+    );
+  }
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6"
       style={GLASS.modalOverlay} onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl p-6 space-y-5"
-        style={{ ...GLASS.modal, border: "1px solid rgba(239,68,68,0.35)" }}
+      <div
+        className="w-full max-w-lg max-h-[92vh] flex flex-col rounded-2xl overflow-hidden"
+        style={{ ...GLASS.modal, border: "1px solid rgba(34,211,238,0.20)" }}
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5"
-            style={{ background: "rgba(239,68,68,0.15)" }}>
-            <AlertTriangle className="w-5 h-5 text-red-400" />
+
+        {/* ── Header ──────────────────────────────────────────────────────── */}
+        <div className="flex items-center justify-between px-5 py-4 flex-shrink-0"
+          style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+              style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", boxShadow: "0 0 16px rgba(34,211,238,0.25)" }}>
+              <Shield className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <h3 className="font-bold text-white text-sm leading-tight">Session Activation Gate</h3>
+              <p className="text-[10px] text-white/40 mt-0.5">
+                Activating <span className="text-cyan-300 font-semibold">"{session.sessionName}"</span>
+              </p>
+            </div>
           </div>
-          <div>
-            <h3 className="font-bold text-white">Session Rollover Warning</h3>
-            <p className="text-xs text-white/50 mt-1">
-              Activating <span className="font-semibold text-cyan-300">"{session.sessionName}"</span> will
-              immediately shift the <strong className="text-white">live tracking roster</strong> for all
-              teachers and students to this session.
+          <button onClick={onClose}
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-white/30 hover:text-white/70 hover:bg-white/5 transition-all">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* ── Scrollable body ──────────────────────────────────────────────── */}
+        <div className="flex-1 overflow-y-auto min-h-0 px-5 py-5 space-y-5">
+
+          {/* ── SECTION 1: Safety Lock ──────────────────────────────────── */}
+          <div className="rounded-xl p-4 space-y-3"
+            style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.18)" }}>
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white"
+                style={{ background: "rgba(239,68,68,0.25)", border: "1px solid rgba(239,68,68,0.40)" }}>1</div>
+              <p className="text-[11px] font-black tracking-widest uppercase text-red-400/80">Safety Lock</p>
+            </div>
+            <p className="text-xs text-white/50 leading-relaxed">
+              This is a permanent switch. Once activated, all date-scoped modules flip to this session.
+              Type <span className="font-mono font-bold text-red-400">ACTIVATE</span> to unlock the form below.
             </p>
+            <Input
+              value={typedWord}
+              onChange={e => setTypedWord(e.target.value)}
+              placeholder="ACTIVATE"
+              className="bg-[#0A1628] border-red-500/30 text-white placeholder:text-white/20 font-mono tracking-widest focus:border-red-400/60 h-10"
+              data-testid="input-activate-confirm"
+            />
+            {typedWord.length > 0 && typedWord !== "ACTIVATE" && (
+              <p className="text-[10px] text-red-400/70 flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3" /> Must match exactly: ACTIVATE
+              </p>
+            )}
+            {typedWord === "ACTIVATE" && (
+              <p className="text-[10px] text-emerald-400 flex items-center gap-1">
+                <Check className="w-3 h-3" /> Safety lock cleared
+              </p>
+            )}
           </div>
+
+          {/* ── SECTION 2: Promotion Status ─────────────────────────────── */}
+          <div className="rounded-xl overflow-hidden"
+            style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
+            <div className="flex items-center gap-2 px-4 py-3"
+              style={{ background: "rgba(139,92,246,0.07)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+              <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white"
+                style={{ background: "rgba(139,92,246,0.25)", border: "1px solid rgba(139,92,246,0.40)" }}>2</div>
+              <p className="text-[11px] font-black tracking-widest uppercase text-violet-400/80">Promotion Status</p>
+              <span className="ml-auto text-[10px] text-white/30">Live · Exam Controller</span>
+            </div>
+
+            {promoLoading ? (
+              <div className="flex items-center justify-center gap-2 py-6">
+                <Loader2 className="w-4 h-4 animate-spin text-white/30" />
+                <span className="text-xs text-white/30">Fetching promotion data…</span>
+              </div>
+            ) : promoList.length === 0 ? (
+              <div className="px-4 py-4 flex items-start gap-3"
+                style={{ background: "rgba(245,158,11,0.05)" }}>
+                <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-amber-300">No promotions recorded yet</p>
+                  <p className="text-[10px] text-white/40 mt-0.5 leading-relaxed">
+                    Please complete student promotions in the <strong className="text-white/60">Exam Controller</strong> before activating this session. You can still proceed, but promotions should be done first.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div>
+                {/* Summary banner */}
+                <div className="flex items-center gap-3 px-4 py-2.5"
+                  style={{ background: "rgba(16,185,129,0.06)", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                  <p className="text-xs text-emerald-300 font-semibold flex-1">
+                    {promotedStudents.length} student{promotedStudents.length !== 1 ? "s" : ""} promoted
+                    {detainedStudents.length > 0 && ` · ${detainedStudents.length} detained`}
+                  </p>
+                </div>
+                {/* Table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[10px]">
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                        {["Student", "Current Class", "Current Sec", "→ Target Class", "Target Sec", "Status"].map(h => (
+                          <th key={h} className="px-3 py-2 text-left font-bold tracking-wider uppercase"
+                            style={{ color: "rgba(255,255,255,0.25)" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {promoList.map((s, idx) => (
+                        <tr key={s.studentId}
+                          style={{
+                            borderBottom: idx < promoList.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none",
+                            background: idx % 2 === 0 ? "rgba(255,255,255,0.01)" : "transparent",
+                          }}>
+                          <td className="px-3 py-2.5 font-semibold text-white/80 whitespace-nowrap">{s.studentName}</td>
+                          <td className="px-3 py-2.5 text-white/50">{s.currentClass}</td>
+                          <td className="px-3 py-2.5 text-white/50">{s.currentSection}</td>
+                          <td className="px-3 py-2.5 text-cyan-300/70 font-semibold">{s.targetClass}</td>
+                          <td className="px-3 py-2.5 text-cyan-300/70">{s.targetSection}</td>
+                          <td className="px-3 py-2.5">
+                            <span className="px-2 py-0.5 rounded-full font-bold"
+                              style={s.decision === "promoted"
+                                ? { background: "rgba(16,185,129,0.15)", color: "#34d399", border: "1px solid rgba(16,185,129,0.25)" }
+                                : { background: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.22)" }}>
+                              {s.decision === "promoted" ? "✓ Promoted" : "✗ Detained"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── SECTION 3: Module Impact Summary ─────────────────────────── */}
+          <div className="rounded-xl overflow-hidden"
+            style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
+            <div className="flex items-center gap-2 px-4 py-3"
+              style={{ background: "rgba(34,211,238,0.06)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+              <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white"
+                style={{ background: "rgba(34,211,238,0.20)", border: "1px solid rgba(34,211,238,0.35)" }}>3</div>
+              <p className="text-[11px] font-black tracking-widest uppercase text-cyan-400/80">Module Impact</p>
+              <span className="ml-auto text-[10px] text-white/30">What changes on activation</span>
+            </div>
+
+            <div className="p-4 space-y-4">
+              {!hasCopyData ? (
+                <div className="flex items-center gap-2 text-xs text-white/40">
+                  <Info className="w-3.5 h-3.5 flex-shrink-0" />
+                  All modules start fresh — this session was created without copying from a previous session.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Carried Forward */}
+                  <div>
+                    <p className="text-[9px] font-black tracking-widest uppercase text-emerald-400/70 mb-2">
+                      ✅ Carried Forward ({carriedForward.length})
+                    </p>
+                    <div className="space-y-1">
+                      {carriedForward.map(e => (
+                        <div key={e.label} className="flex items-center gap-1.5">
+                          <div className="w-1 h-1 rounded-full bg-emerald-400/50 flex-shrink-0" />
+                          <span className="text-[10px] text-white/55">{e.label}</span>
+                          <span className="text-[9px] text-white/25 ml-auto">{e.parent}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Always Fresh */}
+                  <div>
+                    <p className="text-[9px] font-black tracking-widest uppercase text-red-400/70 mb-2">
+                      🔒 Always Fresh ({alwaysFresh.length})
+                    </p>
+                    <div className="space-y-1">
+                      {alwaysFresh.map(label => (
+                        <div key={label} className="flex items-center gap-1.5">
+                          <div className="w-1 h-1 rounded-full bg-red-400/40 flex-shrink-0" />
+                          <span className="text-[10px] text-white/40 capitalize">{label.replace(/-/g, " ")}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-start gap-2 pt-1 pb-0.5 px-3 py-2 rounded-lg text-[10px]"
+                style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.14)", color: "rgba(252,165,165,0.55)" }}>
+                <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5 text-red-400/50" />
+                <span>
+                  Attendance, Complaints, Noticeboard, Visitor Log, Audit Logs, and Calendar will show
+                  only records within <strong className="text-white/50">{session.sessionName}</strong>'s date window after activation.
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* ── SECTION 4: Confirmation Checkboxes ──────────────────────── */}
+          <div className="rounded-xl p-4 space-y-3"
+            style={{ background: "rgba(99,102,241,0.05)", border: "1px solid rgba(99,102,241,0.16)" }}>
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white"
+                style={{ background: "rgba(99,102,241,0.25)", border: "1px solid rgba(99,102,241,0.40)" }}>4</div>
+              <p className="text-[11px] font-black tracking-widest uppercase text-indigo-400/80">Confirmation</p>
+            </div>
+            <CheckRow checked={promoChecked} onChange={() => setPromoChecked(v => !v)}>
+              I have promoted all eligible students in the <strong className="text-white/70">Exam Controller</strong> for this session.
+            </CheckRow>
+            <CheckRow checked={moduleChecked} onChange={() => setModuleChecked(v => !v)}>
+              I understand that the modules listed above will reset when this session is activated.
+            </CheckRow>
+          </div>
+
         </div>
-        <div className="rounded-xl p-3 space-y-1.5 text-xs"
-          style={{ background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.20)" }}>
-          {[
-            "The currently active session will be automatically archived.",
-            "New student registrations will be enrolled in this session.",
-            "Existing data from the previous session is retained and unaffected.",
-          ].map(line => (
-            <p key={line} className="flex items-start gap-2 text-white/65">
-              <span className="text-red-400 mt-0.5 shrink-0">›</span> {line}
-            </p>
-          ))}
-        </div>
-        <div>
-          <label className="text-xs font-semibold text-white/60 block mb-1.5">
-            Type <span className="font-mono text-red-400 font-bold">ROLLOVER</span> to confirm
-          </label>
-          <Input
-            value={typed} onChange={e => setTyped(e.target.value)}
-            placeholder="ROLLOVER"
-            className="bg-[#0A1628] border-red-500/30 text-white placeholder:text-white/20 font-mono tracking-widest focus:border-red-400/60"
-            data-testid="input-rollover-confirm"
-          />
-        </div>
-        <div className="flex gap-3">
+
+        {/* ── Footer ───────────────────────────────────────────────────────── */}
+        <div className="px-5 py-4 flex gap-3 flex-shrink-0"
+          style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}>
           <Button variant="outline" onClick={onClose}
-            className="flex-1 border-white/15 text-white/60 hover:bg-white/5"
-            data-testid="button-rollover-cancel">Cancel</Button>
-          <button disabled={!confirmed || isPending} onClick={onConfirm}
-            data-testid="button-rollover-proceed"
-            className="flex-1 h-9 rounded-lg font-semibold text-sm flex items-center justify-center gap-2
-              disabled:opacity-40 transition-all hover:brightness-110 active:scale-95"
+            className="flex-1 border-white/15 text-white/60 hover:bg-white/5 h-10"
+            data-testid="button-activate-cancel">
+            Cancel
+          </Button>
+          <button
+            disabled={!canActivate || isPending}
+            onClick={onConfirm}
+            data-testid="button-activate-confirm"
+            className="flex-1 h-10 rounded-xl font-bold text-sm flex items-center justify-center gap-2
+              disabled:opacity-30 transition-all hover:brightness-110 active:scale-[0.99]"
             style={{
-              background: confirmed ? "linear-gradient(135deg,#dc2626,#ef4444)" : "rgba(239,68,68,0.20)",
-              color: "#fff", border: "1px solid rgba(239,68,68,0.50)",
+              background: canActivate ? "linear-gradient(135deg,#22d3ee,#6366f1)" : "rgba(255,255,255,0.06)",
+              color: "#fff",
+              boxShadow: canActivate ? "0 4px 20px rgba(34,211,238,0.25)" : "none",
             }}>
-            {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+            {isPending
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <Zap className="w-4 h-4" />}
             Activate Session
           </button>
         </div>
+
       </div>
     </div>
   , document.body);
@@ -1602,7 +1857,7 @@ export default function AcademicSessions({ schoolId }: Props) {
         />
       )}
       {rolloverTarget && (
-        <RolloverModal
+        <SessionActivationGateModal
           session={rolloverTarget}
           onClose={() => setRolloverTarget(null)}
           onConfirm={() => activateMut.mutate(rolloverTarget.id)}

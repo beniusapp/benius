@@ -7,7 +7,7 @@ import {
   attendancePolicies, insertAttendancePolicySchema,
   schoolMetadata, timetableStructure, timetableEntries, calendarEvents,
   teacherAllocations, leavePolicies, examPolicyTiers, schoolAssets,
-  auditLogs, academicSessions, gradingTiers,
+  auditLogs, academicSessions, gradingTiers, promotionDecisions,
 } from "@shared/schema";
 import { resolvePolicy, isLateCheckIn, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 import bcrypt from "bcryptjs";
@@ -2888,6 +2888,75 @@ export async function registerRoutes(
   });
 
   /**
+   * Promotion summary for the activation gate modal.
+   * Returns all promotion decisions for a session, joined with student names.
+   * Deduplicates per student: locked entries take priority, then most recent.
+   */
+  app.get("/api/admin/academic-sessions/:id/promotion-summary", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid session ID" });
+    try {
+      const rows = await db
+        .select({
+          studentId:      promotionDecisions.studentId,
+          studentName:    students.name,
+          currentClass:   promotionDecisions.class,
+          currentSection: promotionDecisions.section,
+          targetClass:    promotionDecisions.targetClass,
+          targetSection:  promotionDecisions.targetSection,
+          decision:       promotionDecisions.decision,
+          locked:         promotionDecisions.locked,
+          createdAt:      promotionDecisions.createdAt,
+        })
+        .from(promotionDecisions)
+        .innerJoin(students, eq(students.id, promotionDecisions.studentId))
+        .where(
+          and(
+            eq(promotionDecisions.sessionId, id),
+            eq(promotionDecisions.schoolId, schoolId),
+          )
+        );
+
+      // Deduplicate per student: prefer locked rows, then most recent createdAt
+      const seen = new Map<number, typeof rows[0]>();
+      for (const row of rows) {
+        const existing = seen.get(row.studentId);
+        if (!existing) { seen.set(row.studentId, row); continue; }
+        if (row.locked && !existing.locked) { seen.set(row.studentId, row); continue; }
+        if (!existing.locked && row.createdAt && existing.createdAt && row.createdAt > existing.createdAt) {
+          seen.set(row.studentId, row);
+        }
+      }
+
+      const result = Array.from(seen.values()).map(r => ({
+        studentId:      r.studentId,
+        studentName:    r.studentName,
+        currentClass:   r.currentClass,
+        currentSection: r.currentSection,
+        targetClass:    r.targetClass,
+        targetSection:  r.targetSection,
+        decision:       r.decision,
+        locked:         r.locked,
+      }));
+
+      // Sort by class then section then name for consistent display
+      result.sort((a, b) =>
+        a.currentClass.localeCompare(b.currentClass) ||
+        a.currentSection.localeCompare(b.currentSection) ||
+        a.studentName.localeCompare(b.studentName)
+      );
+
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to fetch promotion summary" });
+    }
+  });
+
+  /*
    * Activate a session — atomically deactivates all sibling sessions for this
    * school before marking the target active (see storage.activateAcademicSession).
    */
