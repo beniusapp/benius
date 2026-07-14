@@ -2920,8 +2920,11 @@ export class DatabaseStorage {
   }
 
   // ===== AUDIT LOGS READER =====
-  async getAuditLogsBySchool(schoolId: number, limit = 100): Promise<AuditLog[]> {
-    return db.select().from(auditLogs).where(eq(auditLogs.schoolId, schoolId)).orderBy(desc(auditLogs.createdAt)).limit(limit);
+  async getAuditLogsBySchool(schoolId: number, limit = 100, from?: Date, to?: Date): Promise<AuditLog[]> {
+    const conditions = [eq(auditLogs.schoolId, schoolId)];
+    if (from) conditions.push(gte(auditLogs.createdAt, from));
+    if (to)   conditions.push(lte(auditLogs.createdAt, to));
+    return db.select().from(auditLogs).where(and(...conditions)).orderBy(desc(auditLogs.createdAt)).limit(limit);
   }
 
   // ===== STUDENT LEAVES FOR ADMIN (forwarded_to_admin only — teacher tier stays hidden) =====
@@ -2993,8 +2996,11 @@ export class DatabaseStorage {
     return v;
   }
 
-  async getVisitorLogsBySchool(schoolId: number): Promise<VisitorLog[]> {
-    return db.select().from(visitorLogs).where(eq(visitorLogs.schoolId, schoolId)).orderBy(desc(visitorLogs.createdAt)).limit(200);
+  async getVisitorLogsBySchool(schoolId: number, from?: Date, to?: Date): Promise<VisitorLog[]> {
+    const conditions = [eq(visitorLogs.schoolId, schoolId)];
+    if (from) conditions.push(gte(visitorLogs.checkIn, from));
+    if (to)   conditions.push(lte(visitorLogs.checkIn, to));
+    return db.select().from(visitorLogs).where(and(...conditions)).orderBy(desc(visitorLogs.createdAt)).limit(200);
   }
 
   async checkoutVisitor(id: number): Promise<VisitorLog> {

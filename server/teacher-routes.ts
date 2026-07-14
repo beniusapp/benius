@@ -8,7 +8,7 @@ import path from "path";
 import fs from "fs";
 import ExcelJS from "exceljs";
 import { db } from "./db";
-import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies } from "@shared/schema";
+import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions } from "@shared/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 
@@ -2826,8 +2826,14 @@ Thank you for your prompt attention to this matter.
   // ===== AUDIT LOGS (Admin) =====
   app.get("/api/audit-logs/:schoolId", async (req, res) => {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
-    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
-    const list = await storage.getAuditLogsBySchool(parseInt(req.params.schoolId));
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const [activeSession] = await db.select().from(academicSessions)
+      .where(and(eq(academicSessions.schoolId, schoolId), eq(academicSessions.isActive, true)))
+      .limit(1);
+    const from = activeSession ? new Date(activeSession.startDate + "T00:00:00.000Z") : undefined;
+    const to   = activeSession ? new Date(activeSession.endDate   + "T23:59:59.999Z") : undefined;
+    const list = await storage.getAuditLogsBySchool(schoolId, 100, from, to);
     res.json(list);
   });
 
@@ -2942,8 +2948,14 @@ Thank you for your prompt attention to this matter.
 
   app.get("/api/visitor-logs/:schoolId", async (req, res) => {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
-    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
-    const list = await storage.getVisitorLogsBySchool(parseInt(req.params.schoolId));
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const [activeSession] = await db.select().from(academicSessions)
+      .where(and(eq(academicSessions.schoolId, schoolId), eq(academicSessions.isActive, true)))
+      .limit(1);
+    const from = activeSession ? new Date(activeSession.startDate + "T00:00:00.000Z") : undefined;
+    const to   = activeSession ? new Date(activeSession.endDate   + "T23:59:59.999Z") : undefined;
+    const list = await storage.getVisitorLogsBySchool(schoolId, from, to);
     res.json(list);
   });
 
