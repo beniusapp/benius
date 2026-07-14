@@ -1388,12 +1388,7 @@ export default function AcademicSessions({ schoolId }: Props) {
     onSuccess: (session) => {
       setShowCreate(false);
       queryClient.invalidateQueries({ queryKey: ["/api/admin/academic-sessions"] });
-      if (session.copiedFromSessionId) {
-        toast({ title: "Session created", description: `"${session.sessionName}" — now select which modules to migrate.` });
-        setLocation(`/admin-dashboard/school-setup/session-migration/${session.id}?copyFrom=${session.copiedFromSessionId}`);
-      } else {
-        toast({ title: "Session created", description: `"${session.sessionName}" is ready as a fresh session.` });
-      }
+      toast({ title: "Session created", description: `"${session.sessionName}" is ready as a fresh session.` });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1590,7 +1585,20 @@ export default function AcademicSessions({ schoolId }: Props) {
           sessions={sessions}
           onClose={() => setShowCreate(false)}
           isSubmitting={createMut.isPending}
-          onNext={payload => createMut.mutate(payload)}
+          onNext={payload => {
+            if (payload.copiedFromSessionId) {
+              setShowCreate(false);
+              const q = new URLSearchParams({
+                name:     payload.sessionName,
+                start:    payload.startDate,
+                end:      payload.endDate,
+                copyFrom: String(payload.copiedFromSessionId),
+              });
+              setLocation(`/admin-dashboard/school-setup/session-migration?${q.toString()}`);
+            } else {
+              createMut.mutate(payload);
+            }
+          }}
         />
       )}
       {rolloverTarget && (

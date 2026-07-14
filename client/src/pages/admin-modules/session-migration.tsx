@@ -1,24 +1,23 @@
 /**
- * SessionMigrationPage
+ * SessionMigrationPage — 3-step academic session migration wizard.
  *
- * Full-screen 3-step academic session migration wizard.
+ * Route: /admin-dashboard/school-setup/session-migration
+ *        ?name=&start=&end=&copyFrom=<srcSessionId>
  *
- * Route: /admin-dashboard/school-setup/session-migration/:id?copyFrom=:srcId
- *
- * Step 1 — completed in the modal (session already created in DB before this page loads)
- * Step 2 — Module selector: mandatory / chooseable / blocked grid
- * Step 3 — Migration work log with live status chips
+ * Step 1 — Session Details  (completed in the modal; wizard starts at Step 2)
+ * Step 2 — Module Selector  (mandatory / chooseable / blocked)
+ * Step 3 — Migration        (creates session in DB → copies modules → live log)
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { useParams, useLocation } from "wouter";
+import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft, Check, Lock, AlertTriangle, Loader2, Info,
-  GraduationCap, CheckCircle2, AlertCircle, ArrowRight,
-  Zap, Users, Database, Shield,
+  GraduationCap, CheckCircle2, AlertCircle, ArrowRight, Zap, Shield,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
+import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { fmtDate } from "@/lib/dateUtils";
 
@@ -30,7 +29,6 @@ interface Session {
   startDate: string;
   endDate: string;
   isActive: boolean;
-  status: string;
   copiedFromSessionId: number | null;
 }
 
@@ -119,15 +117,15 @@ const CHOOSEABLE_MODULES: ChooseableMod[] = [
 ];
 
 const BLOCKED_MODULES = [
-  { id: "student-registry", label: "Student Registry",   emoji: "🎓" },
-  { id: "exam-controller",  label: "Exam Controller",     emoji: "🏆" },
-  { id: "attendance",       label: "Attendance Records",  emoji: "📊" },
-  { id: "complaint-hub",    label: "Complaint Hub",       emoji: "🛡️" },
-  { id: "noticeboard",      label: "Noticeboard",         emoji: "🔔" },
-  { id: "visitor-log",      label: "Visitor Log",         emoji: "🚪" },
-  { id: "audit-logs",       label: "Audit Logs",          emoji: "🔐" },
-  { id: "id-card-gen",      label: "ID Card Generator",   emoji: "💳" },
-  { id: "school-calendar",  label: "School Calendar",     emoji: "🗓️" },
+  { id: "student-registry", label: "Student Registry",  emoji: "🎓" },
+  { id: "exam-controller",  label: "Exam Controller",    emoji: "🏆" },
+  { id: "attendance",       label: "Attendance Records", emoji: "📊" },
+  { id: "complaint-hub",    label: "Complaint Hub",      emoji: "🛡️" },
+  { id: "noticeboard",      label: "Noticeboard",        emoji: "🔔" },
+  { id: "visitor-log",      label: "Visitor Log",        emoji: "🚪" },
+  { id: "audit-logs",       label: "Audit Logs",         emoji: "🔐" },
+  { id: "id-card-gen",      label: "ID Card Generator",  emoji: "💳" },
+  { id: "school-calendar",  label: "School Calendar",    emoji: "🗓️" },
 ];
 
 // ── Step Bar ──────────────────────────────────────────────────────────────────
@@ -136,7 +134,7 @@ function StepBar({ current }: { current: 1 | 2 | 3 }) {
   const steps = [
     { n: 1 as const, label: "Session Details" },
     { n: 2 as const, label: "Select Modules" },
-    { n: 3 as const, label: "Migration Log" },
+    { n: 3 as const, label: "Migration" },
   ];
   return (
     <div className="flex items-center w-full max-w-xl mx-auto">
@@ -176,16 +174,10 @@ function StepBar({ current }: { current: 1 | 2 | 3 }) {
   );
 }
 
-// ── Chooseable module tile ────────────────────────────────────────────────────
+// ── Chooseable tile ───────────────────────────────────────────────────────────
 
-function ChooseTile({
-  mod,
-  selected,
-  onToggle,
-}: {
-  mod: ChooseableMod;
-  selected: boolean;
-  onToggle: () => void;
+function ChooseTile({ mod, selected, onToggle }: {
+  mod: ChooseableMod; selected: boolean; onToggle: () => void;
 }) {
   return (
     <button
@@ -195,9 +187,7 @@ function ChooseTile({
       className="w-full text-left rounded-xl p-4 transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
       style={{
         background: selected ? `rgba(${mod.accentHex},0.09)` : "rgba(255,255,255,0.04)",
-        border: selected
-          ? `1.5px solid rgba(${mod.accentHex},0.35)`
-          : "1px solid rgba(255,255,255,0.08)",
+        border: selected ? `1.5px solid rgba(${mod.accentHex},0.35)` : "1px solid rgba(255,255,255,0.08)",
         boxShadow: selected ? `0 0 20px rgba(${mod.accentHex},0.10)` : "none",
       }}>
       <div className="flex items-start gap-3">
@@ -210,9 +200,7 @@ function ChooseTile({
           {mod.emoji}
         </div>
         <div className="flex-1 min-w-0">
-          <p
-            className="text-sm font-bold"
-            style={{ color: selected ? "#fff" : "rgba(255,255,255,0.75)" }}>
+          <p className="text-sm font-bold" style={{ color: selected ? "#fff" : "rgba(255,255,255,0.75)" }}>
             {mod.label}
           </p>
           <p className="text-[10px] text-white/35 mt-0.5 leading-relaxed">{mod.desc}</p>
@@ -237,57 +225,21 @@ function ChooseTile({
 
 type EntryKind = "copied" | "shared" | "empty" | "fresh";
 
-function LogEntryRow({
-  label,
-  parent,
-  note,
-  count,
-  kind,
-  visible,
-}: {
-  label: string;
-  parent: string;
-  note: string;
-  count: number;
-  kind: EntryKind;
-  visible: boolean;
+function LogEntryRow({ label, parent, note, count, kind, visible }: {
+  label: string; parent: string; note: string; count: number;
+  kind: EntryKind; visible: boolean;
 }) {
   const cfg: Record<EntryKind, { icon: typeof Check; color: string; bg: string; border: string; badge: string }> = {
-    copied: {
-      icon: CheckCircle2,
-      color: "#22d3ee",
-      bg: "rgba(34,211,238,0.05)",
-      border: "rgba(34,211,238,0.16)",
-      badge: count > 0 ? `Duplicated · ${count}` : "Duplicated",
-    },
-    shared: {
-      icon: Check,
-      color: "#10b981",
-      bg: "rgba(16,185,129,0.05)",
-      border: "rgba(16,185,129,0.16)",
-      badge: count > 0 ? `Shared · ${count}` : "Shared",
-    },
-    empty: {
-      icon: AlertTriangle,
-      color: "#f59e0b",
-      bg: "rgba(245,158,11,0.05)",
-      border: "rgba(245,158,11,0.14)",
-      badge: "Not Configured",
-    },
-    fresh: {
-      icon: Shield,
-      color: "rgba(255,255,255,0.20)",
-      bg: "rgba(255,255,255,0.02)",
-      border: "rgba(255,255,255,0.06)",
-      badge: "Always Fresh",
-    },
+    copied: { icon: CheckCircle2, color: "#22d3ee", bg: "rgba(34,211,238,0.05)", border: "rgba(34,211,238,0.16)", badge: count > 0 ? `Copied · ${count}` : "Copied" },
+    shared: { icon: Check,        color: "#10b981", bg: "rgba(16,185,129,0.05)", border: "rgba(16,185,129,0.16)", badge: count > 0 ? `Shared · ${count}` : "Shared" },
+    empty:  { icon: AlertTriangle, color: "#f59e0b", bg: "rgba(245,158,11,0.05)", border: "rgba(245,158,11,0.14)", badge: "Not Configured" },
+    fresh:  { icon: Shield,        color: "rgba(255,255,255,0.20)", bg: "rgba(255,255,255,0.02)", border: "rgba(255,255,255,0.06)", badge: "Always Fresh" },
   };
   const c = cfg[kind];
   const Icon = c.icon;
-
   return (
     <div
-      className="flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300"
+      className="flex items-center gap-3 px-4 py-2.5 rounded-xl"
       style={{
         background: c.bg,
         border: `1px solid ${c.border}`,
@@ -312,161 +264,160 @@ function LogEntryRow({
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function SessionMigrationPage() {
-  const { id: sessionIdStr } = useParams<{ id: string }>();
-  const [, setLocation]      = useLocation();
-  const { toast }            = useToast();
+  const [, setLocation] = useLocation();
+  const { toast }       = useToast();
 
-  const destSessionId = parseInt(sessionIdStr ?? "0");
+  // ── Parse URL params ───────────────────────────────────────────────────────
+  const search = typeof window !== "undefined" ? window.location.search : "";
+  const sp     = new URLSearchParams(search);
+  const newName    = sp.get("name")     ?? "";
+  const newStart   = sp.get("start")    ?? "";
+  const newEnd     = sp.get("end")      ?? "";
+  const srcIdStr   = sp.get("copyFrom") ?? "";
+  const srcSessionId = parseInt(srcIdStr) || null;
 
-  const searchParams = new URLSearchParams(
-    typeof window !== "undefined" ? window.location.search : ""
-  );
-  const srcSessionId = parseInt(searchParams.get("copyFrom") ?? "0") || null;
+  // Guard — if essential params are missing redirect back
+  useEffect(() => {
+    if (!newName || !newStart || !newEnd || !srcSessionId) {
+      toast({ title: "Invalid wizard state", description: "Please start again from the session form.", variant: "destructive" });
+      setLocation("/admin-dashboard/academic-sessions");
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Data ──────────────────────────────────────────────────────────────────
-
+  // ── Source session info ────────────────────────────────────────────────────
   const { data: sessions = [] } = useQuery<Session[]>({
     queryKey: ["/api/admin/academic-sessions"],
   });
+  const srcSession = srcSessionId ? (sessions.find(s => s.id === srcSessionId) ?? null) : null;
 
-  const destSession = sessions.find(s => s.id === destSessionId) ?? null;
-  const srcSession  = srcSessionId ? (sessions.find(s => s.id === srcSessionId) ?? null) : null;
-
-  // ── View state ────────────────────────────────────────────────────────────
-
+  // ── View state ─────────────────────────────────────────────────────────────
   type View = "selector" | "worklog";
-  const [view, setView]       = useState<View>("selector");
+  const [view, setView]         = useState<View>("selector");
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   // worklog state
-  type MigStatus = "running" | "complete" | "error";
-  const [migStatus,    setMigStatus]    = useState<MigStatus>("running");
+  type MigStatus = "creating" | "copying" | "complete" | "error";
+  const [migStatus,    setMigStatus]    = useState<MigStatus>("creating");
+  const [migSubMsg,    setMigSubMsg]    = useState("");
   const [copyResult,   setCopyResult]   = useState<CopyResult | null>(null);
+  const [createdId,    setCreatedId]    = useState<number | null>(null);
   const [errorMsg,     setErrorMsg]     = useState("");
   const [visibleCount, setVisibleCount] = useState(0);
 
   function toggleModule(id: string) {
     setSelected(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else              next.add(id);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   }
 
-  // ── Migration runner ──────────────────────────────────────────────────────
-
+  // ── Migration runner — Step 3 logic ───────────────────────────────────────
   const runMigration = useCallback(async () => {
-    if (!srcSessionId) {
-      setErrorMsg("No source session specified. Cannot run migration.");
+    if (!srcSessionId || !newName || !newStart || !newEnd) {
+      setErrorMsg("Missing session details. Please go back and try again.");
       setMigStatus("error");
       return;
     }
 
-    setMigStatus("running");
-    setVisibleCount(0);
+    setMigStatus("creating");
+    setMigSubMsg(`Creating "${newName}"…`);
     setCopyResult(null);
+    setVisibleCount(0);
     setErrorMsg("");
 
-    const mandatorySubIds = MANDATORY_MODULE.subIds;
-    const chosenSubIds = CHOOSEABLE_MODULES
-      .filter(m => selected.has(m.id))
-      .flatMap(m => m.subIds);
+    // Step 3a — Create the session in DB
+    let newSessionId: number;
+    try {
+      const cr = await apiRequest("POST", "/api/admin/academic-sessions", {
+        sessionName:         newName,
+        startDate:           newStart,
+        endDate:             newEnd,
+        copiedFromSessionId: srcSessionId,
+        status:              "draft",
+      });
+      if (!cr.ok) {
+        const e = await cr.json();
+        throw new Error(e.message || "Failed to create session");
+      }
+      const session: Session = await cr.json();
+      newSessionId = session.id;
+      setCreatedId(session.id);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/academic-sessions"] });
+    } catch (e: any) {
+      setErrorMsg(e.message || "Could not create session");
+      setMigStatus("error");
+      return;
+    }
 
-    const allSubIds = [...mandatorySubIds, ...chosenSubIds];
+    // Step 3b — Copy modules
+    setMigStatus("copying");
+    setMigSubMsg("Copying configurations…");
+
+    const mandatorySubIds = MANDATORY_MODULE.subIds;
+    const chosenSubIds    = CHOOSEABLE_MODULES.filter(m => selected.has(m.id)).flatMap(m => m.subIds);
+    const allSubIds       = [...mandatorySubIds, ...chosenSubIds];
 
     try {
-      const r = await apiRequest(
+      const mr = await apiRequest(
         "POST",
-        `/api/admin/academic-sessions/${destSessionId}/copy-modules`,
+        `/api/admin/academic-sessions/${newSessionId}/copy-modules`,
         { sourceSessionId: srcSessionId, subModuleIds: allSubIds }
       );
-      if (!r.ok) {
-        const err = await r.json();
-        throw new Error(err.message || "Migration failed");
+      if (!mr.ok) {
+        const e = await mr.json();
+        throw new Error(e.message || "Migration failed");
       }
-      const data = await r.json() as { copyResult: CopyResult };
+      const data = await mr.json() as { copyResult: CopyResult };
       setCopyResult(data.copyResult);
       setMigStatus("complete");
+      toast({ title: "Session created", description: `"${newName}" is ready with copied configurations.` });
     } catch (e: any) {
-      setErrorMsg(e.message || "An unexpected error occurred");
+      setErrorMsg(e.message || "An unexpected error occurred during migration");
       setMigStatus("error");
     }
-  }, [destSessionId, srcSessionId, selected]);
+  }, [srcSessionId, newName, newStart, newEnd, selected]);
 
-  // fire migration when view switches to worklog
   useEffect(() => {
-    if (view === "worklog") {
-      runMigration();
-    }
+    if (view === "worklog") runMigration();
   }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // animate log entries after result arrives
+  // Animate log entries after result
   useEffect(() => {
     if (!copyResult || migStatus !== "complete") return;
-    const total =
-      copyResult.copied.length +
-      copyResult.sharedSchoolwide.length +
-      copyResult.requestedButEmpty.length +
-      BLOCKED_MODULES.length;
+    const total = copyResult.copied.length + copyResult.sharedSchoolwide.length +
+                  copyResult.requestedButEmpty.length + BLOCKED_MODULES.length;
     let count = 0;
-    const timer = setInterval(() => {
-      count++;
-      setVisibleCount(count);
-      if (count >= total) clearInterval(timer);
-    }, 70);
+    const timer = setInterval(() => { count++; setVisibleCount(count); if (count >= total) clearInterval(timer); }, 70);
     return () => clearInterval(timer);
   }, [copyResult, migStatus]);
 
-  // ── No source session guard ───────────────────────────────────────────────
+  // ── Shared page shell ──────────────────────────────────────────────────────
 
-  if (!srcSessionId) {
+  function PageHeader({ onBack, backDisabled = false }: { onBack: () => void; backDisabled?: boolean }) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "#0A1628" }}>
-        <div className="text-center space-y-3 px-6">
-          <AlertTriangle className="w-10 h-10 text-amber-400/60 mx-auto" />
-          <p className="text-white/60 text-sm">No source session specified for migration.</p>
-          <button
-            onClick={() => setLocation("/admin-dashboard/academic-sessions")}
-            className="text-cyan-400 text-xs hover:text-cyan-300 flex items-center gap-1 mx-auto">
-            <ArrowLeft className="w-3.5 h-3.5" /> Back to Sessions
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Shared header ─────────────────────────────────────────────────────────
-
-  function PageHeader({ backLabel, onBack }: { backLabel: string; onBack: () => void }) {
-    return (
-      <div
-        className="flex items-center justify-between px-5 py-4 flex-shrink-0"
+      <div className="flex items-center justify-between px-5 py-4 flex-shrink-0"
         style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
         <button
           onClick={onBack}
-          className="flex items-center gap-2 text-white/45 hover:text-white/70 transition-colors text-sm"
+          disabled={backDisabled}
+          className="flex items-center gap-2 text-white/45 hover:text-white/70 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm"
           data-testid="button-migration-back">
           <ArrowLeft className="w-4 h-4" />
-          <span className="hidden sm:inline">{backLabel}</span>
+          <span className="hidden sm:inline">Back</span>
         </button>
         <div className="text-center">
           <p className="text-sm font-bold text-white/80">Session Migration Wizard</p>
-          <p className="text-[10px] text-white/35">
-            {destSession ? destSession.sessionName : "New Session"}
-          </p>
+          <p className="text-[10px] text-white/35">{newName || "New Session"}</p>
         </div>
-        <div className="w-24" />
+        <div className="w-16" />
       </div>
     );
   }
 
-  // ── Session banner ────────────────────────────────────────────────────────
-
   function SessionBanner() {
     return (
-      <div
-        className="flex items-center gap-3 px-4 py-3 rounded-xl"
+      <div className="flex items-center gap-3 px-4 py-3 rounded-xl"
         style={{ background: "rgba(34,211,238,0.05)", border: "1px solid rgba(34,211,238,0.13)" }}>
         <div className="flex-1 min-w-0">
           <p className="text-[10px] text-white/30 uppercase font-bold tracking-wider mb-0.5">Source</p>
@@ -481,13 +432,11 @@ export default function SessionMigrationPage() {
         </div>
         <ArrowRight className="w-5 h-5 text-cyan-400/40 flex-shrink-0" />
         <div className="flex-1 min-w-0 text-right">
-          <p className="text-[10px] text-white/30 uppercase font-bold tracking-wider mb-0.5">Target</p>
-          <p className="text-sm font-semibold text-cyan-300 truncate">
-            {destSession?.sessionName ?? `Session #${destSessionId}`}
-          </p>
-          {destSession && (
+          <p className="text-[10px] text-white/30 uppercase font-bold tracking-wider mb-0.5">Target (New)</p>
+          <p className="text-sm font-semibold text-cyan-300 truncate">{newName}</p>
+          {newStart && newEnd && (
             <p className="text-[10px] text-white/30 mt-0.5">
-              {fmtDate(destSession.startDate)} → {fmtDate(destSession.endDate)}
+              {fmtDate(newStart)} → {fmtDate(newEnd)}
             </p>
           )}
         </div>
@@ -495,17 +444,14 @@ export default function SessionMigrationPage() {
     );
   }
 
-  // ════════════════════════════════════════════════════════════════════════════
-  // STEP 2 — SELECTOR VIEW
-  // ════════════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════════
+  // STEP 2 — MODULE SELECTOR
+  // ══════════════════════════════════════════════════════════════════════════
 
   if (view === "selector") {
     return (
       <div className="min-h-screen flex flex-col" style={{ background: "#0A1628" }}>
-        <PageHeader
-          backLabel="Academic Sessions"
-          onBack={() => setLocation("/admin-dashboard/academic-sessions")}
-        />
+        <PageHeader onBack={() => setLocation("/admin-dashboard/academic-sessions")} />
 
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-8">
@@ -513,50 +459,34 @@ export default function SessionMigrationPage() {
             <StepBar current={2} />
             <SessionBanner />
 
-            {/* ── MANDATORY SECTION ──────────────────────────────────────── */}
+            {/* MANDATORY */}
             <section className="space-y-3">
               <div className="flex items-center gap-2">
-                <div
-                  className="w-1.5 h-5 rounded-full"
-                  style={{ background: "linear-gradient(180deg,#10b981,#34d399)" }}
-                />
-                <h3 className="text-[11px] font-black tracking-widest uppercase text-emerald-400/80">
-                  Mandatory
-                </h3>
+                <div className="w-1.5 h-5 rounded-full" style={{ background: "linear-gradient(180deg,#10b981,#34d399)" }} />
+                <h3 className="text-[11px] font-black tracking-widest uppercase text-emerald-400/80">Mandatory</h3>
                 <span className="text-[10px] text-white/25">Auto-included · cannot be removed</span>
               </div>
-
-              <div
-                className="rounded-xl p-4"
-                style={{
-                  background: "rgba(16,185,129,0.06)",
-                  border: "1.5px solid rgba(16,185,129,0.28)",
-                  boxShadow: "0 0 24px rgba(16,185,129,0.08)",
-                }}>
+              <div className="rounded-xl p-4"
+                style={{ background: "rgba(16,185,129,0.06)", border: "1.5px solid rgba(16,185,129,0.28)", boxShadow: "0 0 24px rgba(16,185,129,0.08)" }}>
                 <div className="flex items-start gap-3">
-                  <div
-                    className="w-11 h-11 rounded-xl flex items-center justify-center text-2xl flex-shrink-0"
+                  <div className="w-11 h-11 rounded-xl flex items-center justify-center text-2xl flex-shrink-0"
                     style={{ background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.28)" }}>
                     ⚙️
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-bold text-white/90">School Setup</p>
-                      <span
-                        className="text-[8px] font-black tracking-wider px-1.5 py-0.5 rounded-full"
+                      <span className="text-[8px] font-black tracking-wider px-1.5 py-0.5 rounded-full"
                         style={{ background: "rgba(16,185,129,0.12)", color: "#34d399", border: "1px solid rgba(16,185,129,0.28)" }}>
                         REQUIRED
                       </span>
                     </div>
-                    <p className="text-[10px] text-white/40 mt-0.5 leading-relaxed">
-                      {MANDATORY_MODULE.desc}
-                    </p>
+                    <p className="text-[10px] text-white/40 mt-0.5 leading-relaxed">{MANDATORY_MODULE.desc}</p>
                     <p className="text-[10px] text-emerald-400/55 mt-1.5">
                       {MANDATORY_MODULE.subIds.length} configurations · Auto-included in every migration
                     </p>
                   </div>
-                  <div
-                    className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
                     style={{ background: "rgba(16,185,129,0.18)", border: "1px solid rgba(16,185,129,0.35)" }}>
                     <Check className="w-4 h-4 text-emerald-400" />
                   </div>
@@ -564,19 +494,13 @@ export default function SessionMigrationPage() {
               </div>
             </section>
 
-            {/* ── CHOOSEABLE SECTION ─────────────────────────────────────── */}
+            {/* CHOOSEABLE */}
             <section className="space-y-3">
               <div className="flex items-center gap-2">
-                <div
-                  className="w-1.5 h-5 rounded-full"
-                  style={{ background: "linear-gradient(180deg,#22d3ee,#6366f1)" }}
-                />
-                <h3 className="text-[11px] font-black tracking-widest uppercase text-cyan-400/80">
-                  Reusable Configurations
-                </h3>
+                <div className="w-1.5 h-5 rounded-full" style={{ background: "linear-gradient(180deg,#22d3ee,#6366f1)" }} />
+                <h3 className="text-[11px] font-black tracking-widest uppercase text-cyan-400/80">Reusable Configurations</h3>
                 <span className="text-[10px] text-white/25">Select what to carry forward</span>
               </div>
-
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {CHOOSEABLE_MODULES.map(mod => (
                   <ChooseTile
@@ -587,38 +511,27 @@ export default function SessionMigrationPage() {
                   />
                 ))}
               </div>
-
               {selected.size === 0 && (
-                <div
-                  className="flex items-start gap-2 px-3 py-2.5 rounded-xl text-[10px]"
+                <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl text-[10px]"
                   style={{ background: "rgba(34,211,238,0.04)", border: "1px solid rgba(34,211,238,0.10)", color: "rgba(147,197,253,0.60)" }}>
                   <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-blue-400" />
-                  <span>Select at least one module to carry its configuration into the new session, or proceed with only the mandatory School Setup.</span>
+                  <span>Only School Setup will be migrated. Select modules above to carry additional configurations into the new session.</span>
                 </div>
               )}
             </section>
 
-            {/* ── BLOCKED SECTION ────────────────────────────────────────── */}
+            {/* BLOCKED */}
             <section className="space-y-3">
               <div className="flex items-center gap-2">
-                <div
-                  className="w-1.5 h-5 rounded-full"
-                  style={{ background: "linear-gradient(180deg,#ef4444,#f87171)" }}
-                />
-                <h3 className="text-[11px] font-black tracking-widest uppercase text-red-400/80">
-                  Always Start Fresh
-                </h3>
+                <div className="w-1.5 h-5 rounded-full" style={{ background: "linear-gradient(180deg,#ef4444,#f87171)" }} />
+                <h3 className="text-[11px] font-black tracking-widest uppercase text-red-400/80">Always Start Fresh</h3>
                 <span className="text-[10px] text-white/25">Historical data cannot be duplicated</span>
               </div>
-
-              <div
-                className="rounded-xl px-1 py-1"
+              <div className="rounded-xl px-1 py-1"
                 style={{ background: "rgba(239,68,68,0.03)", border: "1px solid rgba(239,68,68,0.14)" }}>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-0">
-                  {BLOCKED_MODULES.map((mod, i) => (
-                    <div
-                      key={mod.id}
-                      className="flex items-center gap-2.5 px-3 py-2.5"
+                  {BLOCKED_MODULES.map(mod => (
+                    <div key={mod.id} className="flex items-center gap-2.5 px-3 py-2.5"
                       data-testid={`tile-blocked-${mod.id}`}>
                       <span className="text-sm opacity-40">{mod.emoji}</span>
                       <p className="text-xs text-white/30 flex-1">{mod.label}</p>
@@ -626,8 +539,7 @@ export default function SessionMigrationPage() {
                     </div>
                   ))}
                 </div>
-                <div
-                  className="mx-3 mb-2 mt-1 flex items-start gap-2 px-3 py-2 rounded-lg text-[10px]"
+                <div className="mx-3 mb-2 mt-1 flex items-start gap-2 px-3 py-2 rounded-lg text-[10px]"
                   style={{ background: "rgba(239,68,68,0.05)", color: "rgba(252,165,165,0.55)" }}>
                   <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5 text-red-400/50" />
                   <span>Fresh data required for new session — these records are tied to a specific academic period and cannot be duplicated.</span>
@@ -635,22 +547,30 @@ export default function SessionMigrationPage() {
               </div>
             </section>
 
-            {/* ── PROCEED BUTTON ─────────────────────────────────────────── */}
+            {/* ── FOOTER: Previous + Next ─────────────────────────────────── */}
             <div className="pb-4 space-y-3">
-              <button
-                onClick={() => setView("worklog")}
-                className="w-full h-12 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all hover:brightness-110 active:scale-[0.99]"
-                style={{
-                  background: "linear-gradient(135deg,#22d3ee,#6366f1)",
-                  color: "#fff",
-                  boxShadow: "0 4px 24px rgba(34,211,238,0.30)",
-                  fontSize: "15px",
-                }}
-                data-testid="button-proceed-to-migration">
-                <Zap className="w-5 h-5" />
-                Proceed to Migration
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setLocation("/admin-dashboard/academic-sessions")}
+                  className="flex-1 h-12 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all hover:bg-white/6"
+                  style={{ border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.50)" }}
+                  data-testid="button-step2-previous">
+                  <ArrowLeft className="w-4 h-4" />
+                  Previous
+                </button>
+                <button
+                  onClick={() => setView("worklog")}
+                  className="flex-1 h-12 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all hover:brightness-110 active:scale-[0.99]"
+                  style={{
+                    background: "linear-gradient(135deg,#22d3ee,#6366f1)",
+                    color: "#fff",
+                    boxShadow: "0 4px 24px rgba(34,211,238,0.30)",
+                  }}
+                  data-testid="button-step2-next">
+                  Next
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
               <p className="text-[10px] text-center text-white/20">
                 School Setup is always included ·{" "}
                 {selected.size > 0
@@ -665,26 +585,23 @@ export default function SessionMigrationPage() {
     );
   }
 
-  // ════════════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════════
   // STEP 3 — MIGRATION WORK LOG
-  // ════════════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════════
 
-  const allLogEntries: Array<{ entry: CopyEntry | null; kind: EntryKind; label: string; parent: string; note: string; count: number }> = [];
+  const isRunning = migStatus === "creating" || migStatus === "copying";
 
+  const allLogEntries: Array<{ kind: EntryKind; label: string; parent: string; note: string; count: number }> = [];
   if (copyResult) {
     copyResult.sharedSchoolwide.forEach(e =>
-      allLogEntries.push({ entry: e, kind: "shared", label: e.label, parent: e.parentModule, note: e.note, count: e.count })
-    );
+      allLogEntries.push({ kind: "shared", label: e.label, parent: e.parentModule, note: e.note, count: e.count }));
     copyResult.copied.forEach(e =>
-      allLogEntries.push({ entry: e, kind: "copied", label: e.label, parent: e.parentModule, note: e.note, count: e.count })
-    );
+      allLogEntries.push({ kind: "copied", label: e.label, parent: e.parentModule, note: e.note, count: e.count }));
     copyResult.requestedButEmpty.forEach(e =>
-      allLogEntries.push({ entry: e, kind: "empty", label: e.label, parent: e.parentModule, note: e.note, count: 0 })
-    );
+      allLogEntries.push({ kind: "empty",  label: e.label, parent: e.parentModule, note: e.note, count: 0 }));
   }
 
   const blockedEntries = BLOCKED_MODULES.map(m => ({
-    entry: null as null,
     kind: "fresh" as EntryKind,
     label: m.label,
     parent: "System",
@@ -693,19 +610,21 @@ export default function SessionMigrationPage() {
   }));
 
   const totalEntries = allLogEntries.length + blockedEntries.length;
-  const allVisible   = visibleCount >= totalEntries;
+  const allVisible   = migStatus === "complete" && visibleCount >= totalEntries;
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "#0A1628" }}>
       <PageHeader
-        backLabel="Select Modules"
         onBack={() => {
-          if (migStatus === "running") return;
+          if (isRunning) return;
           setView("selector");
           setCopyResult(null);
           setVisibleCount(0);
-          setMigStatus("running");
+          setMigStatus("creating");
+          setCreatedId(null);
+          setErrorMsg("");
         }}
+        backDisabled={isRunning}
       />
 
       <div className="flex-1 overflow-y-auto">
@@ -714,106 +633,100 @@ export default function SessionMigrationPage() {
           <StepBar current={3} />
           <SessionBanner />
 
-          {/* ── Status banner ────────────────────────────────────────────── */}
-          {migStatus === "running" && (
-            <div
-              className="flex items-center gap-4 px-5 py-4 rounded-xl"
+          {/* Status banner */}
+          {migStatus === "creating" && (
+            <div className="flex items-center gap-4 px-5 py-4 rounded-xl"
+              style={{ background: "rgba(34,211,238,0.06)", border: "1px solid rgba(34,211,238,0.18)" }}>
+              <Loader2 className="w-6 h-6 text-cyan-400 animate-spin flex-shrink-0" />
+              <div>
+                <p className="text-sm font-bold text-cyan-300">Creating session…</p>
+                <p className="text-[10px] text-white/40 mt-0.5">{migSubMsg}</p>
+              </div>
+            </div>
+          )}
+
+          {migStatus === "copying" && (
+            <div className="flex items-center gap-4 px-5 py-4 rounded-xl"
               style={{ background: "rgba(34,211,238,0.06)", border: "1px solid rgba(34,211,238,0.18)" }}>
               <Loader2 className="w-6 h-6 text-cyan-400 animate-spin flex-shrink-0" />
               <div>
                 <p className="text-sm font-bold text-cyan-300">Migration in progress…</p>
-                <p className="text-[10px] text-white/40 mt-0.5">
-                  Copying configurations to {destSession?.sessionName ?? "new session"} — please wait
-                </p>
+                <p className="text-[10px] text-white/40 mt-0.5">{migSubMsg}</p>
               </div>
             </div>
           )}
 
           {migStatus === "error" && (
-            <div
-              className="flex items-start gap-3 px-5 py-4 rounded-xl"
+            <div className="flex items-start gap-3 px-5 py-4 rounded-xl"
               style={{ background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.25)" }}>
               <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm font-bold text-red-400">Migration failed</p>
                 <p className="text-[10px] text-white/50 mt-0.5">{errorMsg}</p>
-                <button
-                  onClick={runMigration}
-                  className="mt-2 text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1">
-                  Retry migration
-                </button>
+                {!createdId && (
+                  <button onClick={runMigration}
+                    className="mt-2 text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1">
+                    Retry
+                  </button>
+                )}
+                {createdId && (
+                  <p className="text-[10px] text-amber-400/60 mt-1">
+                    Session #{createdId} was created but module copy failed. You can retry the copy from Academic Sessions.
+                  </p>
+                )}
               </div>
             </div>
           )}
 
           {migStatus === "complete" && copyResult && (
-            <div
-              className="flex items-center gap-4 px-5 py-4 rounded-xl"
+            <div className="flex items-center gap-4 px-5 py-4 rounded-xl"
               style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.22)" }}>
               <CheckCircle2 className="w-6 h-6 text-emerald-400 flex-shrink-0" />
               <div className="flex-1">
-                <p className="text-sm font-bold text-emerald-300">Migration complete</p>
+                <p className="text-sm font-bold text-emerald-300">Session created &amp; migration complete</p>
                 <p className="text-[10px] text-white/40 mt-0.5">
-                  {copyResult.sharedSchoolwide.length + copyResult.copied.length} configurations verified ·{" "}
+                  {copyResult.sharedSchoolwide.length + copyResult.copied.length} configurations verified
                   {copyResult.requestedButEmpty.length > 0
-                    ? `${copyResult.requestedButEmpty.length} not yet configured`
-                    : "all modules had data"}
+                    ? ` · ${copyResult.requestedButEmpty.length} not yet configured in source`
+                    : ""}
                 </p>
               </div>
               <div className="text-right shrink-0">
-                <p
-                  className="text-lg font-black"
-                  style={{ color: "#22d3ee" }}>
-                  {(copyResult.sharedSchoolwide.length + copyResult.copied.length)}
+                <p className="text-lg font-black" style={{ color: "#22d3ee" }}>
+                  {copyResult.sharedSchoolwide.length + copyResult.copied.length}
                 </p>
                 <p className="text-[9px] text-white/30">verified</p>
               </div>
             </div>
           )}
 
-          {/* ── Log entries ──────────────────────────────────────────────── */}
-          {(copyResult || migStatus === "running") && (
+          {/* Log entries */}
+          {copyResult && (
             <div className="space-y-2">
               <p className="text-[10px] uppercase font-black tracking-widest text-white/25 px-1">
                 Migration Pipeline
               </p>
-
-              {/* Copied / shared / empty entries */}
               {allLogEntries.map((item, idx) => (
-                <LogEntryRow
-                  key={`${item.kind}-${idx}`}
-                  label={item.label}
-                  parent={item.parent}
-                  note={item.note}
-                  count={item.count}
-                  kind={item.kind}
-                  visible={visibleCount > idx}
-                />
+                <LogEntryRow key={`${item.kind}-${idx}`}
+                  label={item.label} parent={item.parent} note={item.note}
+                  count={item.count} kind={item.kind} visible={visibleCount > idx} />
               ))}
-
-              {/* Always-fresh blocked modules */}
               {allLogEntries.length > 0 && (
                 <p className="text-[9px] uppercase font-black tracking-widest text-white/18 px-1 pt-2">
                   Always Fresh — Not Migrated
                 </p>
               )}
               {blockedEntries.map((item, idx) => (
-                <LogEntryRow
-                  key={`blocked-${item.label}`}
-                  label={item.label}
-                  parent={item.parent}
-                  note={item.note}
-                  count={0}
-                  kind="fresh"
-                  visible={visibleCount > allLogEntries.length + idx}
-                />
+                <LogEntryRow key={`blocked-${item.label}`}
+                  label={item.label} parent={item.parent} note={item.note}
+                  count={0} kind="fresh" visible={visibleCount > allLogEntries.length + idx} />
               ))}
             </div>
           )}
 
-          {/* ── Call to action ────────────────────────────────────────────── */}
-          {migStatus === "complete" && allVisible && (
-            <div className="pb-4 space-y-3 animate-fade-in">
+          {/* CTA — shown once all entries animated */}
+          {allVisible && (
+            <div className="pb-4 space-y-3">
               <button
                 onClick={() => setLocation("/admin-dashboard/student-registry")}
                 className="w-full h-12 rounded-xl font-bold text-sm flex items-center justify-center gap-2.5 transition-all hover:brightness-110 active:scale-[0.99]"
@@ -821,14 +734,12 @@ export default function SessionMigrationPage() {
                   background: "linear-gradient(135deg,#8b5cf6,#6366f1)",
                   color: "#fff",
                   boxShadow: "0 4px 24px rgba(99,102,241,0.32)",
-                  fontSize: "15px",
                 }}
                 data-testid="button-proceed-promote-students">
                 <GraduationCap className="w-5 h-5" />
                 Proceed to Promote Students
                 <ArrowRight className="w-4 h-4" />
               </button>
-
               <button
                 onClick={() => setLocation("/admin-dashboard/academic-sessions")}
                 className="w-full h-10 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all hover:bg-white/5"
@@ -836,14 +747,12 @@ export default function SessionMigrationPage() {
                 data-testid="button-go-to-sessions">
                 Back to Academic Sessions
               </button>
-
-              <div
-                className="flex items-start gap-2 px-3 py-2.5 rounded-xl text-[10px]"
+              <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl text-[10px]"
                 style={{ background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.14)", color: "rgba(196,181,253,0.60)" }}>
                 <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#a78bfa" }} />
                 <span>
                   The session is saved as a <strong>Draft</strong>. Activate it from the Sessions page when you are ready to make it live.
-                  Use the <strong>Student Registry → Promote Students</strong> tool to advance students into the new session.
+                  Use <strong>Student Registry → Promote Students</strong> to advance students into the new session.
                 </span>
               </div>
             </div>

@@ -65,7 +65,7 @@ function Router() {
         <Route path="/login" component={Login} />
         <Route path="/admin-setup" component={AdminSetup} />
         <Route path="/admin-dashboard" component={AdminDashboard} />
-        <Route path="/admin-dashboard/school-setup/session-migration/:id" component={SessionMigration} />
+        <Route path="/admin-dashboard/school-setup/session-migration" component={SessionMigration} />
         <Route path="/admin-dashboard/school-setup/:tab" component={AdminDashboard} />
         <Route path="/admin-dashboard/timetable/:tab" component={AdminDashboard} />
         <Route path="/admin-dashboard/approval-center/:tab" component={AdminDashboard} />
