@@ -75,6 +75,9 @@ interface CopyModuleDef {
   category: "A" | "B";
   group: "FOUNDATION" | "MANAGEMENT";
   warning?: string;
+  mandatory?: boolean;
+  recommended?: boolean;
+  selectAllOnly?: boolean;
   subModules: SubModuleDef[];
 }
 
@@ -85,6 +88,7 @@ const COPY_MODULES: CopyModuleDef[] = [
   {
     id: "school-setup", label: "School Setup", emoji: "⚙️",
     category: "A", group: "FOUNDATION",
+    mandatory: true,
     subModules: [
       { id: "classes",                 label: "Classes",                 desc: "Class divisions (Class I, II, III…)" },
       { id: "sections",                label: "Sections",                desc: "Sections within each class (A, B, C…)" },
@@ -102,25 +106,10 @@ const COPY_MODULES: CopyModuleDef[] = [
   {
     id: "timetable-master", label: "Timetable Master", emoji: "📅",
     category: "A", group: "FOUNDATION",
+    recommended: true,
     subModules: [
       { id: "bell-structure", label: "Bell Structure", desc: "Daily period timing and bell schedule" },
       { id: "period-config",  label: "Schedule Grid",  desc: "Period-by-period subject assignments per class" },
-    ],
-  },
-  {
-    id: "school-calendar", label: "School Calendar", emoji: "🗓️",
-    category: "A", group: "FOUNDATION",
-    subModules: [
-      { id: "holiday-templates", label: "Holiday Templates", desc: "Public holidays — dates advanced to new year" },
-      { id: "recurring-events",  label: "Recurring Events",  desc: "Annual events — dates advanced to new year" },
-    ],
-  },
-  {
-    id: "id-card-gen", label: "ID Card Generator", emoji: "💳",
-    category: "A", group: "FOUNDATION",
-    subModules: [
-      { id: "card-layouts",    label: "Card Layouts",    desc: "Student and staff ID card design templates" },
-      { id: "print-templates", label: "Print Templates", desc: "Print-ready output configuration" },
     ],
   },
   // ── MANAGEMENT ───────────────────────────────────────────────────────────────
@@ -147,6 +136,8 @@ const COPY_MODULES: CopyModuleDef[] = [
   {
     id: "assets-inventory", label: "Assets & Inventory", emoji: "📦",
     category: "B", group: "MANAGEMENT",
+    recommended: true,
+    selectAllOnly: true,
     warning: "Only asset master and categories are copied. Movement, maintenance, and issue history is excluded.",
     subModules: [
       { id: "asset-categories", label: "Asset Categories",  desc: "Asset classification groups" },
@@ -164,6 +155,8 @@ const CLEAN_SLATE = [
   { id: "noticeboard",      label: "Noticeboard",          emoji: "🔔" },
   { id: "visitor-log",      label: "Visitor Log",          emoji: "🚪" },
   { id: "audit-logs",       label: "Audit Logs",           emoji: "🔐" },
+  { id: "school-calendar",  label: "School Calendar",      emoji: "🗓️" },
+  { id: "id-card-gen",      label: "ID Card Generator",    emoji: "💳" },
 ];
 
 // ── Glassmorphic style tokens ──────────────────────────────────────────────────
@@ -798,11 +791,12 @@ export default function SessionCopyCenter() {
               </div>
             )}
 
-            {/* Select all */}
+            {/* Select all + sub-module rows */}
             <div className="rounded-xl overflow-hidden" style={GLASS.card}>
               <div
                 className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none"
-                style={{ background: "rgba(34,211,238,0.04)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}
+                style={{ background: "rgba(34,211,238,0.04)",
+                         borderBottom: openModule.selectAllOnly ? "none" : "1px solid rgba(255,255,255,0.06)" }}
                 onClick={() => {
                   if (allOn) setSelectedSubIds(new Set());
                   else setSelectedSubIds(new Set(allSubIds));
@@ -818,8 +812,8 @@ export default function SessionCopyCenter() {
                 </span>
               </div>
 
-              {/* Sub-module rows — only sub-modules with data in the source session */}
-              {visibleSubs.map((sub, idx) => {
+              {/* Sub-module rows — hidden for selectAllOnly modules */}
+              {!openModule.selectAllOnly && visibleSubs.map((sub, idx) => {
                 const isOn   = selectedSubIds.has(sub.id);
                 const cnt    = counts[sub.id] ?? 0;
                 const isLast = idx === visibleSubs.length - 1;
@@ -957,10 +951,24 @@ export default function SessionCopyCenter() {
               {mod.emoji}
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-bold truncate"
-                style={{ color: isSkipped ? "rgba(255,255,255,0.30)" : "rgba(255,255,255,0.85)" }}>
-                {mod.label}
-              </p>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <p className="text-sm font-bold truncate"
+                  style={{ color: isSkipped ? "rgba(255,255,255,0.30)" : "rgba(255,255,255,0.85)" }}>
+                  {mod.label}
+                </p>
+                {mod.mandatory && (
+                  <span className="text-[8px] font-black tracking-wider px-1.5 py-0.5 rounded-full flex-shrink-0"
+                    style={{ background: "rgba(239,68,68,0.14)", color: "#f87171", border: "1px solid rgba(239,68,68,0.30)" }}>
+                    REQUIRED
+                  </span>
+                )}
+                {mod.recommended && !mod.mandatory && (
+                  <span className="text-[8px] font-black tracking-wider px-1.5 py-0.5 rounded-full flex-shrink-0"
+                    style={{ background: "rgba(245,158,11,0.12)", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.28)" }}>
+                    RECOMMENDED
+                  </span>
+                )}
+              </div>
               <p className="text-[10px] text-white/30 mt-0.5">
                 {subCnt} item{subCnt !== 1 ? "s" : ""}
                 {mod.category === "B" && <span className="ml-1.5 text-amber-400/60">Review required</span>}
