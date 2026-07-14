@@ -17,7 +17,7 @@ import { parse } from "csv-parse/sync";
 import * as XLSX from "xlsx";
 import { registerTeacherRoutes } from "./teacher-routes";
 import { db } from "./db";
-import { eq, and, sql, inArray } from "drizzle-orm";
+import { eq, and, sql, inArray, not } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
@@ -2950,7 +2950,31 @@ export async function registerRoutes(
         a.studentName.localeCompare(b.studentName)
       );
 
-      res.json(result);
+      // Count active students who have NO promotion_decisions record for this session
+      const decidedStudentIds = Array.from(seen.keys());
+      let undecidedCount = 0;
+      if (decidedStudentIds.length > 0) {
+        const [undecidedRow] = await db
+          .select({ cnt: sql<number>`count(*)::int` })
+          .from(students)
+          .where(
+            and(
+              eq(students.schoolId, schoolId),
+              eq(students.isActive, true),
+              not(inArray(students.id, decidedStudentIds)),
+            )
+          );
+        undecidedCount = undecidedRow?.cnt ?? 0;
+      } else {
+        // No decisions at all — count all active students
+        const [totalRow] = await db
+          .select({ cnt: sql<number>`count(*)::int` })
+          .from(students)
+          .where(and(eq(students.schoolId, schoolId), eq(students.isActive, true)));
+        undecidedCount = totalRow?.cnt ?? 0;
+      }
+
+      res.json({ decisions: result, undecidedCount });
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to fetch promotion summary" });
     }

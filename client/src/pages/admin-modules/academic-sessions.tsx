@@ -1226,6 +1226,11 @@ interface PromotionSummaryEntry {
   locked:         boolean;
 }
 
+interface PromotionSummaryResponse {
+  decisions:      PromotionSummaryEntry[];
+  undecidedCount: number;
+}
+
 interface ActivationGateProps {
   session:   AcademicSession;
   onClose:   () => void;
@@ -1239,15 +1244,17 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
   const [moduleChecked, setModuleChecked] = useState(false);
 
   // ── Fetch promotion summary ─────────────────────────────────────────────
-  const { data: promoList = [], isLoading: promoLoading } = useQuery<PromotionSummaryEntry[]>({
+  const { data: promoData, isLoading: promoLoading } = useQuery<PromotionSummaryResponse>({
     queryKey: ["/api/admin/academic-sessions", session.id, "promotion-summary"],
     queryFn: async () => {
       const r = await fetch(`/api/admin/academic-sessions/${session.id}/promotion-summary`, { credentials: "include" });
-      if (!r.ok) return [];
+      if (!r.ok) return { decisions: [], undecidedCount: 0 };
       return r.json();
     },
   });
 
+  const promoList       = promoData?.decisions      ?? [];
+  const undecidedCount  = promoData?.undecidedCount ?? 0;
   const promotedStudents = promoList.filter(s => s.decision === "promoted");
   const detainedStudents = promoList.filter(s => s.decision !== "promoted");
 
@@ -1450,6 +1457,26 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
                       ))}
                     </tbody>
                   </table>
+                </div>
+              </div>
+            )}
+
+            {/* ── Undecided students sub-section ──────────────────────────── */}
+            {!promoLoading && undecidedCount > 0 && (
+              <div className="flex items-start gap-3 px-4 py-3"
+                style={{
+                  background: "rgba(245,158,11,0.07)",
+                  borderTop: "1px solid rgba(245,158,11,0.15)",
+                }}>
+                <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-amber-300">
+                    {undecidedCount} student{undecidedCount !== 1 ? "s have" : " has"} no promotion decision yet
+                  </p>
+                  <p className="text-[10px] text-white/40 mt-0.5 leading-relaxed">
+                    These students are not in the promotion ledger for this session and will be left without a class assignment after the session switch. Visit the{" "}
+                    <strong className="text-amber-300/70">Exam Controller</strong> to record their decisions before activating.
+                  </p>
                 </div>
               </div>
             )}
