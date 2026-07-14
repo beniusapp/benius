@@ -523,7 +523,7 @@ export interface CreatePayload {
   copiedModules:        string | null;
 }
 
-function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateModalProps) {
+function CreateSessionModal({ sessions, onClose, onNext }: CreateModalProps) {
 
   // ── Section 1: Basic info ────────────────────────────────────────────────
   const [name,      setName]      = useState("");
