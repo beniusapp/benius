@@ -359,13 +359,13 @@ export default function SessionCopyCenter() {
     const mod = COPY_MODULES.find(m => m.id === modId);
     if (!mod) return;
     setOpenModuleId(modId);
-    // Default: select all sub-modules that have data
-    const initialSelected = new Set(
+    // Pre-select only sub-modules that have data in the source session
+    const withData = new Set(
       mod.subModules
-        .filter(s => (counts[s.id] ?? 0) > 0 || mod.category === "A")
+        .filter(s => (counts[s.id] ?? 0) > 0)
         .map(s => s.id)
     );
-    setSelectedSubIds(initialSelected.size > 0 ? initialSelected : new Set(mod.subModules.map(s => s.id)));
+    setSelectedSubIds(withData);
     setFailedError("");
     setView("detail");
   }
@@ -630,9 +630,11 @@ export default function SessionCopyCenter() {
   // ── DETAIL VIEW ───────────────────────────────────────────────────────────
 
   if (view === "detail" && openModule) {
-    const allSubIds  = openModule.subModules.map(s => s.id);
-    const allOn      = allSubIds.every(id => selectedSubIds.has(id));
-    const isCopying  = moduleStatuses[openModule.id] === "copying";
+    // Only show sub-modules that actually have data in the source session
+    const visibleSubs = openModule.subModules.filter(s => (counts[s.id] ?? 0) > 0);
+    const allSubIds   = visibleSubs.map(s => s.id);
+    const allOn       = allSubIds.length > 0 && allSubIds.every(id => selectedSubIds.has(id));
+    const isCopying   = moduleStatuses[openModule.id] === "copying";
 
     function toggleSub(id: string) {
       setSelectedSubIds(prev => {
@@ -678,7 +680,7 @@ export default function SessionCopyCenter() {
               <div>
                 <h2 className="text-white font-bold text-lg">{openModule.label}</h2>
                 <p className="text-white/40 text-xs mt-0.5">
-                  {openModule.subModules.length} configuration item{openModule.subModules.length !== 1 ? "s" : ""}
+                  {visibleSubs.length} configuration item{visibleSubs.length !== 1 ? "s" : ""}
                   {srcSession && <> · Copying from <span className="text-white/60">{srcSession.sessionName}</span></>}
                 </p>
               </div>
@@ -725,11 +727,11 @@ export default function SessionCopyCenter() {
                 </span>
               </div>
 
-              {/* Sub-module rows */}
-              {openModule.subModules.map((sub, idx) => {
-                const isOn  = selectedSubIds.has(sub.id);
-                const cnt   = counts[sub.id] ?? 0;
-                const isLast = idx === openModule.subModules.length - 1;
+              {/* Sub-module rows — only sub-modules with data in the source session */}
+              {visibleSubs.map((sub, idx) => {
+                const isOn   = selectedSubIds.has(sub.id);
+                const cnt    = counts[sub.id] ?? 0;
+                const isLast = idx === visibleSubs.length - 1;
                 return (
                   <div
                     key={sub.id}

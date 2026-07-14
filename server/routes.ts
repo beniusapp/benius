@@ -7,7 +7,7 @@ import {
   attendancePolicies, insertAttendancePolicySchema,
   schoolMetadata, timetableStructure, timetableEntries, calendarEvents,
   teacherAllocations, leavePolicies, examPolicyTiers, schoolAssets,
-  auditLogs, academicSessions,
+  auditLogs, academicSessions, gradingTiers,
 } from "@shared/schema";
 import { resolvePolicy, isLateCheckIn, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 import bcrypt from "bcryptjs";
@@ -2940,7 +2940,7 @@ export async function registerRoutes(
           return 0;
         } catch { return 0; }
       }
-      const [promR, attnR, leaveR, ttR, allocR, mapR, assetR, calR] = await Promise.all([
+      const [promR, attnR, leaveR, ttR, allocR, mapR, assetR, calR, gradR] = await Promise.all([
         db.select().from(examPolicyTiers).where(eq(examPolicyTiers.schoolId, schoolId)),
         db.select().from(attendancePolicies).where(eq(attendancePolicies.schoolId, schoolId)),
         db.select().from(leavePolicies).where(eq(leavePolicies.schoolId, schoolId)),
@@ -2949,6 +2949,7 @@ export async function registerRoutes(
         db.select().from(facultyMappings).where(eq(facultyMappings.schoolId, schoolId)),
         db.select().from(schoolAssets).where(eq(schoolAssets.schoolId, schoolId)),
         db.select().from(calendarEvents).where(and(eq(calendarEvents.schoolId, schoolId), eq(calendarEvents.isRecurring, true))),
+        db.select().from(gradingTiers).where(eq(gradingTiers.schoolId, schoolId)),
       ]);
       res.json({
         counts: {
@@ -2959,7 +2960,7 @@ export async function registerRoutes(
           "class-mapping":             cntMeta("class_sections"),
           "subject-mapping":           cntMeta("class_subjects"),
           "class-exam-type-mapping":   cntMeta("class_exam_types"),
-          "grading-policy":            cntMeta("grading_config"),
+          "grading-policy":            gradR.length,   // grading_tiers table, NOT school_metadata
           "promotion-policy":          promR.length,
           "attendance-policy":         attnR.length,
           "leave-policy":              leaveR.length,
