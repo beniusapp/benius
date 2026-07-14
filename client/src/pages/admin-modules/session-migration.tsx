@@ -728,7 +728,7 @@ export default function SessionMigrationPage() {
           {allVisible && (
             <div className="pb-4 space-y-3">
               <button
-                onClick={() => setLocation("/admin-dashboard/student-registry")}
+                onClick={() => setLocation("/admin-dashboard/exam-controller")}
                 className="w-full h-12 rounded-xl font-bold text-sm flex items-center justify-center gap-2.5 transition-all hover:brightness-110 active:scale-[0.99]"
                 style={{
                   background: "linear-gradient(135deg,#8b5cf6,#6366f1)",
