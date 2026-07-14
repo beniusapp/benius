@@ -2940,11 +2940,12 @@ export async function registerRoutes(
           return 0;
         } catch { return 0; }
       }
-      const [promR, attnR, leaveR, ttR, allocR, mapR, assetR, calR, gradR] = await Promise.all([
+      const [promR, attnR, leaveR, ttR, ttEntR, allocR, mapR, assetR, calR, gradR] = await Promise.all([
         db.select().from(examPolicyTiers).where(eq(examPolicyTiers.schoolId, schoolId)),
         db.select().from(attendancePolicies).where(eq(attendancePolicies.schoolId, schoolId)),
         db.select().from(leavePolicies).where(eq(leavePolicies.schoolId, schoolId)),
         db.select().from(timetableStructure).where(eq(timetableStructure.schoolId, schoolId)),
+        db.select().from(timetableEntries).where(eq(timetableEntries.schoolId, schoolId)),
         db.select().from(teacherAllocations).where(eq(teacherAllocations.schoolId, schoolId)),
         db.select().from(facultyMappings).where(eq(facultyMappings.schoolId, schoolId)),
         db.select().from(schoolAssets).where(eq(schoolAssets.schoolId, schoolId)),
@@ -2965,8 +2966,7 @@ export async function registerRoutes(
           "attendance-policy":         attnR.length,
           "leave-policy":              leaveR.length,
           "bell-structure":            ttR.length,
-          "period-config":             ttR.length,
-          "timetable-template":        ttR.length,
+          "period-config":             ttEntR.length,
           "holiday-templates":         calR.length,
           "recurring-events":          calR.length,
           "card-layouts":              cntMeta("id_card_config"),

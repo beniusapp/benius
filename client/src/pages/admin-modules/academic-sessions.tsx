@@ -106,18 +106,17 @@ const COPY_MODULE_TREE: CopyModule[] = [
       { id: "exam-types",        label: "Exam Types" },
       { id: "class-mapping",     label: "Class–Section Mapping" },
       { id: "subject-mapping",   label: "Class–Subject Mapping" },
-      { id: "promotion-policy",  label: "Promotion Policy" },
+      { id: "promotion-policy",  label: "Exam & Promotion Policy" },
       { id: "attendance-policy", label: "Attendance Policy" },
       { id: "leave-policy",      label: "Leave Policy" },
-      { id: "grading-policy",    label: "Grading Policy" },
+      { id: "grading-policy",    label: "Academic Policy" },
     ],
   },
   {
     id: "timetable-master", label: "Timetable Master", emoji: "📅", category: "A",
     subModules: [
-      { id: "bell-structure",       label: "Bell Structure" },
-      { id: "period-config",        label: "Period Configuration" },
-      { id: "timetable-template",   label: "Timetable Template" },
+      { id: "bell-structure", label: "Bell Structure" },
+      { id: "period-config",  label: "Schedule Grid" },
     ],
   },
   {

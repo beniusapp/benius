@@ -93,8 +93,8 @@ const COPY_MODULES: CopyModuleDef[] = [
       { id: "class-mapping",           label: "Class–Section Mapping",   desc: "Which sections exist in each class" },
       { id: "subject-mapping",         label: "Class–Subject Mapping",   desc: "Which subjects are taught in each class" },
       { id: "class-exam-type-mapping", label: "Class–Exam Type Mapping", desc: "Which exam types apply per class" },
-      { id: "grading-policy",          label: "Grading Policy",          desc: "Grade boundaries and GPA thresholds" },
-      { id: "promotion-policy",        label: "Promotion Policy",        desc: "Rules governing student promotion" },
+      { id: "grading-policy",          label: "Academic Policy",          desc: "Grading tiers, pass percentages, and grade brackets" },
+      { id: "promotion-policy",        label: "Exam & Promotion Policy",  desc: "Exam weighting formulas and promotion rules" },
       { id: "attendance-policy",       label: "Attendance Policy",       desc: "Minimum attendance requirements" },
       { id: "leave-policy",            label: "Leave Policy",            desc: "Student and staff leave entitlements" },
     ],
@@ -103,9 +103,8 @@ const COPY_MODULES: CopyModuleDef[] = [
     id: "timetable-master", label: "Timetable Master", emoji: "📅",
     category: "A", group: "FOUNDATION",
     subModules: [
-      { id: "bell-structure",     label: "Bell Structure",         desc: "Daily period timing and bell schedule" },
-      { id: "period-config",      label: "Period Configuration",   desc: "Period lengths, breaks, and types" },
-      { id: "timetable-template", label: "Timetable Template",     desc: "Draft period assignments per class" },
+      { id: "bell-structure", label: "Bell Structure", desc: "Daily period timing and bell schedule" },
+      { id: "period-config",  label: "Schedule Grid",  desc: "Period-by-period subject assignments per class" },
     ],
   },
   {
@@ -130,7 +129,7 @@ const COPY_MODULES: CopyModuleDef[] = [
     category: "B", group: "MANAGEMENT",
     warning: "Review all teacher allocations before activating the new session.",
     subModules: [
-      { id: "teacher-class-assignments", label: "Teacher–Class Assignments", desc: "Teacher allocations to classes and subjects" },
+      { id: "teacher-class-assignments", label: "Teacher–Class–Subject Assignments", desc: "Teacher allocations to classes, sections, and subjects" },
     ],
   },
   {
