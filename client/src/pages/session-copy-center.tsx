@@ -318,7 +318,7 @@ export default function SessionCopyCenter() {
   const destSessionId = isNewMode ? 0 : parseInt(sessionIdStr ?? "0");
 
   // ── Views ──
-  type View = "grid" | "detail" | "summary";
+  type View = "grid" | "detail" | "summary" | "step3" | "step4";
   const [view, setView] = useState<View>("grid");
   const [openModuleId, setOpenModuleId] = useState<string | null>(null);
   const [selectedSubIds, setSelectedSubIds] = useState<Set<string>>(new Set());
@@ -1018,6 +1018,203 @@ export default function SessionCopyCenter() {
     );
   }
 
+  // ── STEP 3 VIEW (new mode: Promote Students) ─────────────────────────────
+  if (isNewMode && view === "step3") {
+    return (
+      <div className="min-h-screen flex flex-col" style={{ background: "#0A1628" }}>
+        <div className="flex items-center justify-between px-6 py-4 flex-shrink-0"
+          style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+          <button onClick={() => setView("grid")}
+            className="flex items-center gap-2 text-white/50 hover:text-white/80 transition-colors text-sm">
+            <ArrowLeft className="w-4 h-4" /><span className="hidden sm:inline">Copy Config</span>
+          </button>
+          <div className="text-center">
+            <p className="text-sm font-bold text-white/80">Configuration Copy Center</p>
+            <p className="text-[10px] text-white/35">Academic Session Setup</p>
+          </div>
+          <div className="w-24" />
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-8">
+            <StepBar current={3} />
+
+            {/* Session banner */}
+            {(srcSession || draftName) && (
+              <div className="flex items-center gap-3 px-4 py-3 rounded-xl"
+                style={{ background: "rgba(34,211,238,0.05)", border: "1px solid rgba(34,211,238,0.15)" }}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] text-white/35 uppercase font-bold tracking-wider mb-0.5">Copying from</p>
+                  <p className="text-sm font-semibold text-white/80 truncate">{srcSession?.sessionName ?? "—"}</p>
+                </div>
+                <ArrowRight className="w-5 h-5 text-cyan-400/50 flex-shrink-0" />
+                <div className="flex-1 min-w-0 text-right">
+                  <p className="text-[10px] text-white/35 uppercase font-bold tracking-wider mb-0.5">New Session</p>
+                  <p className="text-sm font-semibold text-cyan-300 truncate">{draftName}</p>
+                  {draftStart && draftEnd && (
+                    <p className="text-[10px] text-white/35 mt-0.5">{fmtDate(draftStart)} → {fmtDate(draftEnd)}</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Promote Students info card */}
+            <div className="rounded-2xl overflow-hidden" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              <div className="px-5 py-4 flex items-center gap-3"
+                style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(99,102,241,0.06)" }}>
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+                  style={{ background: "linear-gradient(135deg,#6366f1,#8b5cf6)", boxShadow: "0 0 16px rgba(99,102,241,0.30)" }}>
+                  <GraduationCap className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-white/85">Promote Students</p>
+                  <p className="text-[10px] text-white/40 mt-0.5">Move students to the next class/grade</p>
+                </div>
+              </div>
+              <div className="px-5 py-5 space-y-4">
+                <p className="text-xs text-white/55 leading-relaxed">
+                  After the session is created, you can promote students from <span className="text-white/75 font-semibold">{srcSession?.sessionName ?? "the previous session"}</span> to <span className="text-cyan-300 font-semibold">{draftName}</span>.
+                  Promotion moves each student to their next class based on their exam results and promotion rules.
+                </p>
+                <div className="space-y-2">
+                  {[
+                    { icon: "📋", label: "Review exam results first", desc: "Promotion is based on Term 3 final results" },
+                    { icon: "✅", label: "Bulk or individual promotion", desc: "Promote entire class or select students manually" },
+                    { icon: "🔒", label: "Safe to defer", desc: "You can promote students at any time after session creation" },
+                  ].map(item => (
+                    <div key={item.label} className="flex items-start gap-3 px-3 py-2.5 rounded-lg"
+                      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                      <span className="text-base flex-shrink-0 mt-0.5">{item.icon}</span>
+                      <div>
+                        <p className="text-xs font-semibold text-white/75">{item.label}</p>
+                        <p className="text-[10px] text-white/40 mt-0.5">{item.desc}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl text-[10px]"
+                  style={{ background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.14)", color: "rgba(196,181,253,0.70)" }}>
+                  <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#a78bfa" }} />
+                  <span>Promotion can be done from the <strong>Admin Dashboard → Student Management</strong> after the session is created.</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer navigation */}
+            <div className="pb-4 flex gap-3">
+              <button
+                onClick={() => setView("grid")}
+                className="flex-1 h-11 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all hover:bg-white/5"
+                style={{ color: "rgba(255,255,255,0.60)", border: "1px solid rgba(255,255,255,0.12)" }}
+                data-testid="button-step3-prev">
+                <ArrowLeft className="w-4 h-4" /> Previous
+              </button>
+              <button
+                onClick={() => setView("step4")}
+                className="flex-1 h-11 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all hover:brightness-110 active:scale-[0.99]"
+                style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", color: "#fff",
+                         boxShadow: "0 4px 18px rgba(34,211,238,0.25)" }}
+                data-testid="button-step3-next">
+                Next <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── STEP 4 VIEW (new mode: Activate / Create Session) ────────────────────
+  if (isNewMode && view === "step4") {
+    return (
+      <div className="min-h-screen flex flex-col" style={{ background: "#0A1628" }}>
+        <div className="flex items-center justify-between px-6 py-4 flex-shrink-0"
+          style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+          <button onClick={() => setView("step3")}
+            className="flex items-center gap-2 text-white/50 hover:text-white/80 transition-colors text-sm">
+            <ArrowLeft className="w-4 h-4" /><span className="hidden sm:inline">Promote Students</span>
+          </button>
+          <div className="text-center">
+            <p className="text-sm font-bold text-white/80">Configuration Copy Center</p>
+            <p className="text-[10px] text-white/35">Academic Session Setup</p>
+          </div>
+          <div className="w-24" />
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-8">
+            <StepBar current={4} />
+
+            {/* Title */}
+            <div className="flex items-start gap-4">
+              <div className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0"
+                style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", boxShadow: "0 0 24px rgba(34,211,238,0.35)" }}>
+                <CalendarRange className="w-7 h-7 text-white" />
+              </div>
+              <div>
+                <h1 className="text-white font-bold text-xl">Ready to Create Session</h1>
+                <p className="text-white/50 text-sm mt-1">Review the details below and confirm to create your new academic session.</p>
+              </div>
+            </div>
+
+            {/* Session summary card */}
+            <div className="rounded-2xl overflow-hidden" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              <div className="px-5 py-4 flex items-center gap-2"
+                style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(34,211,238,0.05)" }}>
+                <Check className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="text-xs font-bold text-cyan-400 tracking-wider uppercase">Session Summary</span>
+              </div>
+              <div className="divide-y" style={{ borderColor: "rgba(255,255,255,0.05)" }}>
+                {[
+                  { label: "Session Name", value: draftName, highlight: true },
+                  { label: "Start Date",   value: draftStart ? fmtDate(draftStart) : "—", highlight: false },
+                  { label: "End Date",     value: draftEnd   ? fmtDate(draftEnd)   : "—", highlight: false },
+                  { label: "Copy Source",  value: srcSession?.sessionName ?? "None (fresh session)", highlight: false },
+                  { label: "Modules Ready", value: readyCount > 0 ? `${readyCount} module${readyCount !== 1 ? "s" : ""} confirmed` : "No modules selected (fresh start)", highlight: false },
+                ].map(row => (
+                  <div key={row.label} className="px-5 py-3 flex items-center justify-between gap-4">
+                    <span className="text-xs text-white/40 shrink-0">{row.label}</span>
+                    <span className={`text-xs font-semibold text-right ${row.highlight ? "text-cyan-300" : "text-white/75"}`}>{row.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Info note */}
+            <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl text-[10px]"
+              style={{ background: "rgba(34,211,238,0.05)", border: "1px solid rgba(34,211,238,0.12)", color: "rgba(147,197,253,0.70)" }}>
+              <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-blue-400" />
+              <span>The session starts as a <strong>Draft</strong>. Activate it from the Sessions page when you are ready to make it the active session for your school.</span>
+            </div>
+
+            {/* Footer navigation */}
+            <div className="pb-4 space-y-3">
+              <button
+                onClick={handleCreateSession}
+                disabled={isCreating}
+                className="w-full h-12 rounded-xl font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50 transition-all hover:brightness-110 active:scale-[0.99]"
+                style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", color: "#fff",
+                         boxShadow: "0 4px 24px rgba(34,211,238,0.35)", fontSize: "15px" }}
+                data-testid="button-create-session-final">
+                {isCreating
+                  ? <><Loader2 className="w-5 h-5 animate-spin" /> Creating session…</>
+                  : <><Plus className="w-5 h-5" /> Create Session</>}
+              </button>
+              <button
+                onClick={() => setView("step3")}
+                disabled={isCreating}
+                className="w-full h-10 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all hover:bg-white/5 disabled:opacity-40"
+                style={{ color: "rgba(255,255,255,0.50)", border: "1px solid rgba(255,255,255,0.10)" }}
+                data-testid="button-step4-prev">
+                <ArrowLeft className="w-4 h-4" /> Previous
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "#0A1628" }}>
 
@@ -1172,23 +1369,26 @@ export default function SessionCopyCenter() {
               <div className="space-y-2">
                 {readyCount > 0 && (
                   <p className="text-[10px] text-center text-white/35">
-                    {readyCount} module{readyCount !== 1 ? "s" : ""} confirmed — remaining will start fresh
+                    {readyCount} module{readyCount !== 1 ? "s" : ""} confirmed — you can adjust this any time
                   </p>
                 )}
-                <button
-                  onClick={handleCreateSession}
-                  disabled={isCreating}
-                  className="w-full h-11 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50 transition-all hover:brightness-110 active:scale-[0.99]"
-                  style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", color: "#fff",
-                           boxShadow: "0 4px 18px rgba(34,211,238,0.30)" }}
-                  data-testid="button-create-session-final">
-                  {isCreating
-                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Creating session…</>
-                    : <><Plus className="w-4 h-4" /> Create Session</>}
-                </button>
-                <p className="text-[9px] text-center text-white/20">
-                  Session will be created with your confirmed selections copied in
-                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setLocation("/admin-dashboard/academic-sessions")}
+                    className="flex-1 h-11 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all hover:bg-white/5"
+                    style={{ color: "rgba(255,255,255,0.60)", border: "1px solid rgba(255,255,255,0.12)" }}
+                    data-testid="button-step2-prev">
+                    <ArrowLeft className="w-4 h-4" /> Previous
+                  </button>
+                  <button
+                    onClick={() => setView("step3")}
+                    className="flex-1 h-11 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all hover:brightness-110 active:scale-[0.99]"
+                    style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", color: "#fff",
+                             boxShadow: "0 4px 18px rgba(34,211,238,0.25)" }}
+                    data-testid="button-step2-next">
+                    Next <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             ) : (
               <button
