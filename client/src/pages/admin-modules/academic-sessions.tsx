@@ -1354,6 +1354,14 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
             )}
           </div>
 
+          {/* ── SECTIONS 2-4: gated behind Safety Lock ──────────────────── */}
+          <div
+            style={{
+              opacity: typedWord === "ACTIVATE" ? 1 : 0.35,
+              pointerEvents: typedWord === "ACTIVATE" ? "auto" : "none",
+              transition: "opacity 0.25s ease",
+            }}>
+
           {/* ── SECTION 2: Promotion Status ─────────────────────────────── */}
           <div className="rounded-xl overflow-hidden"
             style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -1383,15 +1391,30 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
               </div>
             ) : (
               <div>
-                {/* Summary banner */}
-                <div className="flex items-center gap-3 px-4 py-2.5"
-                  style={{ background: "rgba(16,185,129,0.06)", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                  <p className="text-xs text-emerald-300 font-semibold flex-1">
-                    {promotedStudents.length} student{promotedStudents.length !== 1 ? "s" : ""} promoted
-                    {detainedStudents.length > 0 && ` · ${detainedStudents.length} detained`}
-                  </p>
-                </div>
+                {/* Summary banner — amber if no promoted students even with records, green otherwise */}
+                {promotedStudents.length === 0 ? (
+                  <div className="px-4 py-3 flex items-start gap-3"
+                    style={{ background: "rgba(245,158,11,0.06)", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                    <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs font-semibold text-amber-300">
+                        No promoted students — {detainedStudents.length} detained
+                      </p>
+                      <p className="text-[10px] text-white/40 mt-0.5">
+                        All recorded decisions are "detained". Please verify promotion decisions in the <strong className="text-white/60">Exam Controller</strong> before activating.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 px-4 py-2.5"
+                    style={{ background: "rgba(16,185,129,0.06)", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                    <p className="text-xs text-emerald-300 font-semibold flex-1">
+                      {promotedStudents.length} student{promotedStudents.length !== 1 ? "s" : ""} promoted
+                      {detainedStudents.length > 0 && ` · ${detainedStudents.length} detained`}
+                    </p>
+                  </div>
+                )}
                 {/* Table */}
                 <div className="overflow-x-auto">
                   <table className="w-full text-[10px]">
@@ -1508,6 +1531,9 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
             <CheckRow checked={moduleChecked} onChange={() => setModuleChecked(v => !v)}>
               I understand that the modules listed above will reset when this session is activated.
             </CheckRow>
+          </div>
+
+          {/* ── End of gating wrapper ────────────────────────────────────── */}
           </div>
 
         </div>
