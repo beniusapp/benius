@@ -290,8 +290,10 @@ function StatusBadge({ status }: { status: ModuleStatus }) {
 
 function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   return (
-    <button type="button" onClick={onToggle}
-      className="flex items-center transition-opacity hover:opacity-80">
+    <button
+      type="button"
+      onClick={e => { e.stopPropagation(); onToggle(); }}
+      className="flex items-center transition-opacity hover:opacity-80 flex-shrink-0">
       {on
         ? <ToggleRight className="w-6 h-6" style={{ color: "#22d3ee" }} />
         : <ToggleLeft  className="w-6 h-6 text-white/30" />}
