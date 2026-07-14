@@ -567,7 +567,7 @@ export default function SessionMigrationPage() {
                     boxShadow: "0 4px 24px rgba(34,211,238,0.30)",
                   }}
                   data-testid="button-step2-next">
-                  Next
+                  Create New Session
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
