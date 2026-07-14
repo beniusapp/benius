@@ -1,0 +1,856 @@
+/**
+ * SessionMigrationPage
+ *
+ * Full-screen 3-step academic session migration wizard.
+ *
+ * Route: /admin-dashboard/school-setup/session-migration/:id?copyFrom=:srcId
+ *
+ * Step 1 — completed in the modal (session already created in DB before this page loads)
+ * Step 2 — Module selector: mandatory / chooseable / blocked grid
+ * Step 3 — Migration work log with live status chips
+ */
+
+import { useState, useEffect, useCallback } from "react";
+import { useParams, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
+import {
+  ArrowLeft, Check, Lock, AlertTriangle, Loader2, Info,
+  GraduationCap, CheckCircle2, AlertCircle, ArrowRight,
+  Zap, Users, Database, Shield,
+} from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { fmtDate } from "@/lib/dateUtils";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface Session {
+  id: number;
+  sessionName: string;
+  startDate: string;
+  endDate: string;
+  isActive: boolean;
+  status: string;
+  copiedFromSessionId: number | null;
+}
+
+interface CopyEntry {
+  module: string;
+  parentModule: string;
+  label: string;
+  count: number;
+  note: string;
+}
+
+interface CopyResult {
+  sourceSessionId: number;
+  sourceSessionName: string;
+  destSessionId: number;
+  approvedModules: string[];
+  copied: CopyEntry[];
+  sharedSchoolwide: CopyEntry[];
+  requestedButEmpty: CopyEntry[];
+  cleanSlate: string[];
+  totalRecordsCopied: number;
+  timestamp: string;
+}
+
+// ── Module catalogue ──────────────────────────────────────────────────────────
+
+const MANDATORY_MODULE = {
+  id: "school-setup",
+  label: "School Setup",
+  emoji: "⚙️",
+  desc: "Classes, Sections, Subjects, Exam Types, Grading & Promotion Policy, Attendance & Leave Policy",
+  subIds: [
+    "classes", "sections", "subjects", "exam-types",
+    "class-mapping", "subject-mapping", "class-exam-type-mapping",
+    "grading-policy", "promotion-policy", "attendance-policy", "leave-policy",
+  ],
+};
+
+interface ChooseableMod {
+  id: string;
+  label: string;
+  emoji: string;
+  desc: string;
+  subIds: string[];
+  accentColor: string;
+  accentHex: string;
+}
+
+const CHOOSEABLE_MODULES: ChooseableMod[] = [
+  {
+    id: "timetable-master",
+    label: "Timetable Master",
+    emoji: "📅",
+    desc: "Bell structure and period schedule grid",
+    subIds: ["bell-structure", "period-config"],
+    accentColor: "#3b82f6",
+    accentHex: "59,130,246",
+  },
+  {
+    id: "faculty-mapping",
+    label: "Faculty Mapping",
+    emoji: "🗂️",
+    desc: "Teacher–class–subject assignment matrix",
+    subIds: ["teacher-class-assignments"],
+    accentColor: "#8b5cf6",
+    accentHex: "139,92,246",
+  },
+  {
+    id: "fees-payments",
+    label: "Fees & Payments",
+    emoji: "💰",
+    desc: "Fee structure, categories, fine and concession rules",
+    subIds: ["fee-categories", "fee-heads", "fee-structure", "fine-rules", "concession-rules"],
+    accentColor: "#f59e0b",
+    accentHex: "245,158,11",
+  },
+  {
+    id: "assets-inventory",
+    label: "Assets & Inventory",
+    emoji: "📦",
+    desc: "Asset master, categories and storage locations",
+    subIds: ["asset-categories", "asset-master", "storage-locations"],
+    accentColor: "#f97316",
+    accentHex: "249,115,22",
+  },
+];
+
+const BLOCKED_MODULES = [
+  { id: "student-registry", label: "Student Registry",   emoji: "🎓" },
+  { id: "exam-controller",  label: "Exam Controller",     emoji: "🏆" },
+  { id: "attendance",       label: "Attendance Records",  emoji: "📊" },
+  { id: "complaint-hub",    label: "Complaint Hub",       emoji: "🛡️" },
+  { id: "noticeboard",      label: "Noticeboard",         emoji: "🔔" },
+  { id: "visitor-log",      label: "Visitor Log",         emoji: "🚪" },
+  { id: "audit-logs",       label: "Audit Logs",          emoji: "🔐" },
+  { id: "id-card-gen",      label: "ID Card Generator",   emoji: "💳" },
+  { id: "school-calendar",  label: "School Calendar",     emoji: "🗓️" },
+];
+
+// ── Step Bar ──────────────────────────────────────────────────────────────────
+
+function StepBar({ current }: { current: 1 | 2 | 3 }) {
+  const steps = [
+    { n: 1 as const, label: "Session Details" },
+    { n: 2 as const, label: "Select Modules" },
+    { n: 3 as const, label: "Migration Log" },
+  ];
+  return (
+    <div className="flex items-center w-full max-w-xl mx-auto">
+      {steps.map((s, i) => {
+        const done   = s.n < current;
+        const active = s.n === current;
+        return (
+          <div key={s.n} className="flex items-center flex-1 min-w-0">
+            <div className="flex flex-col items-center gap-1 shrink-0">
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all"
+                style={{
+                  background: done    ? "#10b981"
+                             : active ? "linear-gradient(135deg,#22d3ee,#6366f1)"
+                             :          "rgba(255,255,255,0.08)",
+                  boxShadow: active ? "0 0 18px rgba(34,211,238,0.40)" : "none",
+                  color: done || active ? "#fff" : "rgba(255,255,255,0.25)",
+                }}>
+                {done ? <Check className="w-4 h-4" /> : s.n}
+              </div>
+              <span
+                className="text-[9px] font-semibold text-center hidden sm:block"
+                style={{ color: active ? "#22d3ee" : done ? "#10b981" : "rgba(255,255,255,0.25)" }}>
+                {s.label}
+              </span>
+            </div>
+            {i < steps.length - 1 && (
+              <div
+                className="flex-1 h-px mx-2 mt-[-14px] sm:mt-[-20px]"
+                style={{ background: done ? "#10b981" : "rgba(255,255,255,0.10)" }}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Chooseable module tile ────────────────────────────────────────────────────
+
+function ChooseTile({
+  mod,
+  selected,
+  onToggle,
+}: {
+  mod: ChooseableMod;
+  selected: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      data-testid={`tile-choose-${mod.id}`}
+      className="w-full text-left rounded-xl p-4 transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
+      style={{
+        background: selected ? `rgba(${mod.accentHex},0.09)` : "rgba(255,255,255,0.04)",
+        border: selected
+          ? `1.5px solid rgba(${mod.accentHex},0.35)`
+          : "1px solid rgba(255,255,255,0.08)",
+        boxShadow: selected ? `0 0 20px rgba(${mod.accentHex},0.10)` : "none",
+      }}>
+      <div className="flex items-start gap-3">
+        <div
+          className="w-10 h-10 rounded-xl flex items-center justify-center text-xl flex-shrink-0"
+          style={{
+            background: selected ? `rgba(${mod.accentHex},0.18)` : "rgba(255,255,255,0.06)",
+            border: selected ? `1px solid rgba(${mod.accentHex},0.30)` : "1px solid rgba(255,255,255,0.08)",
+          }}>
+          {mod.emoji}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p
+            className="text-sm font-bold"
+            style={{ color: selected ? "#fff" : "rgba(255,255,255,0.75)" }}>
+            {mod.label}
+          </p>
+          <p className="text-[10px] text-white/35 mt-0.5 leading-relaxed">{mod.desc}</p>
+          <p className="text-[10px] mt-1" style={{ color: selected ? mod.accentColor : "rgba(255,255,255,0.20)" }}>
+            {mod.subIds.length} configuration{mod.subIds.length !== 1 ? "s" : ""}
+          </p>
+        </div>
+        <div
+          className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all mt-0.5"
+          style={{
+            background: selected ? mod.accentColor : "transparent",
+            border: selected ? `1.5px solid ${mod.accentColor}` : "1.5px solid rgba(255,255,255,0.20)",
+          }}>
+          {selected && <Check className="w-3 h-3 text-white" />}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+// ── Log entry chip ────────────────────────────────────────────────────────────
+
+type EntryKind = "copied" | "shared" | "empty" | "fresh";
+
+function LogEntryRow({
+  label,
+  parent,
+  note,
+  count,
+  kind,
+  visible,
+}: {
+  label: string;
+  parent: string;
+  note: string;
+  count: number;
+  kind: EntryKind;
+  visible: boolean;
+}) {
+  const cfg: Record<EntryKind, { icon: typeof Check; color: string; bg: string; border: string; badge: string }> = {
+    copied: {
+      icon: CheckCircle2,
+      color: "#22d3ee",
+      bg: "rgba(34,211,238,0.05)",
+      border: "rgba(34,211,238,0.16)",
+      badge: count > 0 ? `Duplicated · ${count}` : "Duplicated",
+    },
+    shared: {
+      icon: Check,
+      color: "#10b981",
+      bg: "rgba(16,185,129,0.05)",
+      border: "rgba(16,185,129,0.16)",
+      badge: count > 0 ? `Shared · ${count}` : "Shared",
+    },
+    empty: {
+      icon: AlertTriangle,
+      color: "#f59e0b",
+      bg: "rgba(245,158,11,0.05)",
+      border: "rgba(245,158,11,0.14)",
+      badge: "Not Configured",
+    },
+    fresh: {
+      icon: Shield,
+      color: "rgba(255,255,255,0.20)",
+      bg: "rgba(255,255,255,0.02)",
+      border: "rgba(255,255,255,0.06)",
+      badge: "Always Fresh",
+    },
+  };
+  const c = cfg[kind];
+  const Icon = c.icon;
+
+  return (
+    <div
+      className="flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300"
+      style={{
+        background: c.bg,
+        border: `1px solid ${c.border}`,
+        opacity: visible ? 1 : 0,
+        transform: visible ? "translateY(0)" : "translateY(6px)",
+        transition: "opacity 0.3s ease, transform 0.3s ease",
+      }}>
+      <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: c.color }} />
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-semibold text-white/80">{label}</p>
+        <p className="text-[10px] text-white/30 mt-0.5">{parent} · {note}</p>
+      </div>
+      <span
+        className="text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0"
+        style={{ background: `${c.color}18`, color: c.color, border: `1px solid ${c.color}28` }}>
+        {c.badge}
+      </span>
+    </div>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+
+export default function SessionMigrationPage() {
+  const { id: sessionIdStr } = useParams<{ id: string }>();
+  const [, setLocation]      = useLocation();
+  const { toast }            = useToast();
+
+  const destSessionId = parseInt(sessionIdStr ?? "0");
+
+  const searchParams = new URLSearchParams(
+    typeof window !== "undefined" ? window.location.search : ""
+  );
+  const srcSessionId = parseInt(searchParams.get("copyFrom") ?? "0") || null;
+
+  // ── Data ──────────────────────────────────────────────────────────────────
+
+  const { data: sessions = [] } = useQuery<Session[]>({
+    queryKey: ["/api/admin/academic-sessions"],
+  });
+
+  const destSession = sessions.find(s => s.id === destSessionId) ?? null;
+  const srcSession  = srcSessionId ? (sessions.find(s => s.id === srcSessionId) ?? null) : null;
+
+  // ── View state ────────────────────────────────────────────────────────────
+
+  type View = "selector" | "worklog";
+  const [view, setView]       = useState<View>("selector");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // worklog state
+  type MigStatus = "running" | "complete" | "error";
+  const [migStatus,    setMigStatus]    = useState<MigStatus>("running");
+  const [copyResult,   setCopyResult]   = useState<CopyResult | null>(null);
+  const [errorMsg,     setErrorMsg]     = useState("");
+  const [visibleCount, setVisibleCount] = useState(0);
+
+  function toggleModule(id: string) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else              next.add(id);
+      return next;
+    });
+  }
+
+  // ── Migration runner ──────────────────────────────────────────────────────
+
+  const runMigration = useCallback(async () => {
+    if (!srcSessionId) {
+      setErrorMsg("No source session specified. Cannot run migration.");
+      setMigStatus("error");
+      return;
+    }
+
+    setMigStatus("running");
+    setVisibleCount(0);
+    setCopyResult(null);
+    setErrorMsg("");
+
+    const mandatorySubIds = MANDATORY_MODULE.subIds;
+    const chosenSubIds = CHOOSEABLE_MODULES
+      .filter(m => selected.has(m.id))
+      .flatMap(m => m.subIds);
+
+    const allSubIds = [...mandatorySubIds, ...chosenSubIds];
+
+    try {
+      const r = await apiRequest(
+        "POST",
+        `/api/admin/academic-sessions/${destSessionId}/copy-modules`,
+        { sourceSessionId: srcSessionId, subModuleIds: allSubIds }
+      );
+      if (!r.ok) {
+        const err = await r.json();
+        throw new Error(err.message || "Migration failed");
+      }
+      const data = await r.json() as { copyResult: CopyResult };
+      setCopyResult(data.copyResult);
+      setMigStatus("complete");
+    } catch (e: any) {
+      setErrorMsg(e.message || "An unexpected error occurred");
+      setMigStatus("error");
+    }
+  }, [destSessionId, srcSessionId, selected]);
+
+  // fire migration when view switches to worklog
+  useEffect(() => {
+    if (view === "worklog") {
+      runMigration();
+    }
+  }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // animate log entries after result arrives
+  useEffect(() => {
+    if (!copyResult || migStatus !== "complete") return;
+    const total =
+      copyResult.copied.length +
+      copyResult.sharedSchoolwide.length +
+      copyResult.requestedButEmpty.length +
+      BLOCKED_MODULES.length;
+    let count = 0;
+    const timer = setInterval(() => {
+      count++;
+      setVisibleCount(count);
+      if (count >= total) clearInterval(timer);
+    }, 70);
+    return () => clearInterval(timer);
+  }, [copyResult, migStatus]);
+
+  // ── No source session guard ───────────────────────────────────────────────
+
+  if (!srcSessionId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#0A1628" }}>
+        <div className="text-center space-y-3 px-6">
+          <AlertTriangle className="w-10 h-10 text-amber-400/60 mx-auto" />
+          <p className="text-white/60 text-sm">No source session specified for migration.</p>
+          <button
+            onClick={() => setLocation("/admin-dashboard/academic-sessions")}
+            className="text-cyan-400 text-xs hover:text-cyan-300 flex items-center gap-1 mx-auto">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Sessions
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Shared header ─────────────────────────────────────────────────────────
+
+  function PageHeader({ backLabel, onBack }: { backLabel: string; onBack: () => void }) {
+    return (
+      <div
+        className="flex items-center justify-between px-5 py-4 flex-shrink-0"
+        style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+        <button
+          onClick={onBack}
+          className="flex items-center gap-2 text-white/45 hover:text-white/70 transition-colors text-sm"
+          data-testid="button-migration-back">
+          <ArrowLeft className="w-4 h-4" />
+          <span className="hidden sm:inline">{backLabel}</span>
+        </button>
+        <div className="text-center">
+          <p className="text-sm font-bold text-white/80">Session Migration Wizard</p>
+          <p className="text-[10px] text-white/35">
+            {destSession ? destSession.sessionName : "New Session"}
+          </p>
+        </div>
+        <div className="w-24" />
+      </div>
+    );
+  }
+
+  // ── Session banner ────────────────────────────────────────────────────────
+
+  function SessionBanner() {
+    return (
+      <div
+        className="flex items-center gap-3 px-4 py-3 rounded-xl"
+        style={{ background: "rgba(34,211,238,0.05)", border: "1px solid rgba(34,211,238,0.13)" }}>
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] text-white/30 uppercase font-bold tracking-wider mb-0.5">Source</p>
+          <p className="text-sm font-semibold text-white/70 truncate">
+            {srcSession?.sessionName ?? `Session #${srcSessionId}`}
+          </p>
+          {srcSession && (
+            <p className="text-[10px] text-white/30 mt-0.5">
+              {fmtDate(srcSession.startDate)} → {fmtDate(srcSession.endDate)}
+            </p>
+          )}
+        </div>
+        <ArrowRight className="w-5 h-5 text-cyan-400/40 flex-shrink-0" />
+        <div className="flex-1 min-w-0 text-right">
+          <p className="text-[10px] text-white/30 uppercase font-bold tracking-wider mb-0.5">Target</p>
+          <p className="text-sm font-semibold text-cyan-300 truncate">
+            {destSession?.sessionName ?? `Session #${destSessionId}`}
+          </p>
+          {destSession && (
+            <p className="text-[10px] text-white/30 mt-0.5">
+              {fmtDate(destSession.startDate)} → {fmtDate(destSession.endDate)}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // STEP 2 — SELECTOR VIEW
+  // ════════════════════════════════════════════════════════════════════════════
+
+  if (view === "selector") {
+    return (
+      <div className="min-h-screen flex flex-col" style={{ background: "#0A1628" }}>
+        <PageHeader
+          backLabel="Academic Sessions"
+          onBack={() => setLocation("/admin-dashboard/academic-sessions")}
+        />
+
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-8">
+
+            <StepBar current={2} />
+            <SessionBanner />
+
+            {/* ── MANDATORY SECTION ──────────────────────────────────────── */}
+            <section className="space-y-3">
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-1.5 h-5 rounded-full"
+                  style={{ background: "linear-gradient(180deg,#10b981,#34d399)" }}
+                />
+                <h3 className="text-[11px] font-black tracking-widest uppercase text-emerald-400/80">
+                  Mandatory
+                </h3>
+                <span className="text-[10px] text-white/25">Auto-included · cannot be removed</span>
+              </div>
+
+              <div
+                className="rounded-xl p-4"
+                style={{
+                  background: "rgba(16,185,129,0.06)",
+                  border: "1.5px solid rgba(16,185,129,0.28)",
+                  boxShadow: "0 0 24px rgba(16,185,129,0.08)",
+                }}>
+                <div className="flex items-start gap-3">
+                  <div
+                    className="w-11 h-11 rounded-xl flex items-center justify-center text-2xl flex-shrink-0"
+                    style={{ background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.28)" }}>
+                    ⚙️
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-bold text-white/90">School Setup</p>
+                      <span
+                        className="text-[8px] font-black tracking-wider px-1.5 py-0.5 rounded-full"
+                        style={{ background: "rgba(16,185,129,0.12)", color: "#34d399", border: "1px solid rgba(16,185,129,0.28)" }}>
+                        REQUIRED
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-white/40 mt-0.5 leading-relaxed">
+                      {MANDATORY_MODULE.desc}
+                    </p>
+                    <p className="text-[10px] text-emerald-400/55 mt-1.5">
+                      {MANDATORY_MODULE.subIds.length} configurations · Auto-included in every migration
+                    </p>
+                  </div>
+                  <div
+                    className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
+                    style={{ background: "rgba(16,185,129,0.18)", border: "1px solid rgba(16,185,129,0.35)" }}>
+                    <Check className="w-4 h-4 text-emerald-400" />
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* ── CHOOSEABLE SECTION ─────────────────────────────────────── */}
+            <section className="space-y-3">
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-1.5 h-5 rounded-full"
+                  style={{ background: "linear-gradient(180deg,#22d3ee,#6366f1)" }}
+                />
+                <h3 className="text-[11px] font-black tracking-widest uppercase text-cyan-400/80">
+                  Reusable Configurations
+                </h3>
+                <span className="text-[10px] text-white/25">Select what to carry forward</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {CHOOSEABLE_MODULES.map(mod => (
+                  <ChooseTile
+                    key={mod.id}
+                    mod={mod}
+                    selected={selected.has(mod.id)}
+                    onToggle={() => toggleModule(mod.id)}
+                  />
+                ))}
+              </div>
+
+              {selected.size === 0 && (
+                <div
+                  className="flex items-start gap-2 px-3 py-2.5 rounded-xl text-[10px]"
+                  style={{ background: "rgba(34,211,238,0.04)", border: "1px solid rgba(34,211,238,0.10)", color: "rgba(147,197,253,0.60)" }}>
+                  <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-blue-400" />
+                  <span>Select at least one module to carry its configuration into the new session, or proceed with only the mandatory School Setup.</span>
+                </div>
+              )}
+            </section>
+
+            {/* ── BLOCKED SECTION ────────────────────────────────────────── */}
+            <section className="space-y-3">
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-1.5 h-5 rounded-full"
+                  style={{ background: "linear-gradient(180deg,#ef4444,#f87171)" }}
+                />
+                <h3 className="text-[11px] font-black tracking-widest uppercase text-red-400/80">
+                  Always Start Fresh
+                </h3>
+                <span className="text-[10px] text-white/25">Historical data cannot be duplicated</span>
+              </div>
+
+              <div
+                className="rounded-xl px-1 py-1"
+                style={{ background: "rgba(239,68,68,0.03)", border: "1px solid rgba(239,68,68,0.14)" }}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-0">
+                  {BLOCKED_MODULES.map((mod, i) => (
+                    <div
+                      key={mod.id}
+                      className="flex items-center gap-2.5 px-3 py-2.5"
+                      data-testid={`tile-blocked-${mod.id}`}>
+                      <span className="text-sm opacity-40">{mod.emoji}</span>
+                      <p className="text-xs text-white/30 flex-1">{mod.label}</p>
+                      <Lock className="w-3 h-3 text-red-400/35 flex-shrink-0" />
+                    </div>
+                  ))}
+                </div>
+                <div
+                  className="mx-3 mb-2 mt-1 flex items-start gap-2 px-3 py-2 rounded-lg text-[10px]"
+                  style={{ background: "rgba(239,68,68,0.05)", color: "rgba(252,165,165,0.55)" }}>
+                  <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5 text-red-400/50" />
+                  <span>Fresh data required for new session — these records are tied to a specific academic period and cannot be duplicated.</span>
+                </div>
+              </div>
+            </section>
+
+            {/* ── PROCEED BUTTON ─────────────────────────────────────────── */}
+            <div className="pb-4 space-y-3">
+              <button
+                onClick={() => setView("worklog")}
+                className="w-full h-12 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all hover:brightness-110 active:scale-[0.99]"
+                style={{
+                  background: "linear-gradient(135deg,#22d3ee,#6366f1)",
+                  color: "#fff",
+                  boxShadow: "0 4px 24px rgba(34,211,238,0.30)",
+                  fontSize: "15px",
+                }}
+                data-testid="button-proceed-to-migration">
+                <Zap className="w-5 h-5" />
+                Proceed to Migration
+                <ArrowRight className="w-4 h-4" />
+              </button>
+              <p className="text-[10px] text-center text-white/20">
+                School Setup is always included ·{" "}
+                {selected.size > 0
+                  ? `${selected.size} additional module${selected.size !== 1 ? "s" : ""} selected`
+                  : "No extra modules selected"}
+              </p>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // STEP 3 — MIGRATION WORK LOG
+  // ════════════════════════════════════════════════════════════════════════════
+
+  const allLogEntries: Array<{ entry: CopyEntry | null; kind: EntryKind; label: string; parent: string; note: string; count: number }> = [];
+
+  if (copyResult) {
+    copyResult.sharedSchoolwide.forEach(e =>
+      allLogEntries.push({ entry: e, kind: "shared", label: e.label, parent: e.parentModule, note: e.note, count: e.count })
+    );
+    copyResult.copied.forEach(e =>
+      allLogEntries.push({ entry: e, kind: "copied", label: e.label, parent: e.parentModule, note: e.note, count: e.count })
+    );
+    copyResult.requestedButEmpty.forEach(e =>
+      allLogEntries.push({ entry: e, kind: "empty", label: e.label, parent: e.parentModule, note: e.note, count: 0 })
+    );
+  }
+
+  const blockedEntries = BLOCKED_MODULES.map(m => ({
+    entry: null as null,
+    kind: "fresh" as EntryKind,
+    label: m.label,
+    parent: "System",
+    note: "Always starts fresh — historical data not carried forward",
+    count: 0,
+  }));
+
+  const totalEntries = allLogEntries.length + blockedEntries.length;
+  const allVisible   = visibleCount >= totalEntries;
+
+  return (
+    <div className="min-h-screen flex flex-col" style={{ background: "#0A1628" }}>
+      <PageHeader
+        backLabel="Select Modules"
+        onBack={() => {
+          if (migStatus === "running") return;
+          setView("selector");
+          setCopyResult(null);
+          setVisibleCount(0);
+          setMigStatus("running");
+        }}
+      />
+
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-8">
+
+          <StepBar current={3} />
+          <SessionBanner />
+
+          {/* ── Status banner ────────────────────────────────────────────── */}
+          {migStatus === "running" && (
+            <div
+              className="flex items-center gap-4 px-5 py-4 rounded-xl"
+              style={{ background: "rgba(34,211,238,0.06)", border: "1px solid rgba(34,211,238,0.18)" }}>
+              <Loader2 className="w-6 h-6 text-cyan-400 animate-spin flex-shrink-0" />
+              <div>
+                <p className="text-sm font-bold text-cyan-300">Migration in progress…</p>
+                <p className="text-[10px] text-white/40 mt-0.5">
+                  Copying configurations to {destSession?.sessionName ?? "new session"} — please wait
+                </p>
+              </div>
+            </div>
+          )}
+
+          {migStatus === "error" && (
+            <div
+              className="flex items-start gap-3 px-5 py-4 rounded-xl"
+              style={{ background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.25)" }}>
+              <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-bold text-red-400">Migration failed</p>
+                <p className="text-[10px] text-white/50 mt-0.5">{errorMsg}</p>
+                <button
+                  onClick={runMigration}
+                  className="mt-2 text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1">
+                  Retry migration
+                </button>
+              </div>
+            </div>
+          )}
+
+          {migStatus === "complete" && copyResult && (
+            <div
+              className="flex items-center gap-4 px-5 py-4 rounded-xl"
+              style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.22)" }}>
+              <CheckCircle2 className="w-6 h-6 text-emerald-400 flex-shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm font-bold text-emerald-300">Migration complete</p>
+                <p className="text-[10px] text-white/40 mt-0.5">
+                  {copyResult.sharedSchoolwide.length + copyResult.copied.length} configurations verified ·{" "}
+                  {copyResult.requestedButEmpty.length > 0
+                    ? `${copyResult.requestedButEmpty.length} not yet configured`
+                    : "all modules had data"}
+                </p>
+              </div>
+              <div className="text-right shrink-0">
+                <p
+                  className="text-lg font-black"
+                  style={{ color: "#22d3ee" }}>
+                  {(copyResult.sharedSchoolwide.length + copyResult.copied.length)}
+                </p>
+                <p className="text-[9px] text-white/30">verified</p>
+              </div>
+            </div>
+          )}
+
+          {/* ── Log entries ──────────────────────────────────────────────── */}
+          {(copyResult || migStatus === "running") && (
+            <div className="space-y-2">
+              <p className="text-[10px] uppercase font-black tracking-widest text-white/25 px-1">
+                Migration Pipeline
+              </p>
+
+              {/* Copied / shared / empty entries */}
+              {allLogEntries.map((item, idx) => (
+                <LogEntryRow
+                  key={`${item.kind}-${idx}`}
+                  label={item.label}
+                  parent={item.parent}
+                  note={item.note}
+                  count={item.count}
+                  kind={item.kind}
+                  visible={visibleCount > idx}
+                />
+              ))}
+
+              {/* Always-fresh blocked modules */}
+              {allLogEntries.length > 0 && (
+                <p className="text-[9px] uppercase font-black tracking-widest text-white/18 px-1 pt-2">
+                  Always Fresh — Not Migrated
+                </p>
+              )}
+              {blockedEntries.map((item, idx) => (
+                <LogEntryRow
+                  key={`blocked-${item.label}`}
+                  label={item.label}
+                  parent={item.parent}
+                  note={item.note}
+                  count={0}
+                  kind="fresh"
+                  visible={visibleCount > allLogEntries.length + idx}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* ── Call to action ────────────────────────────────────────────── */}
+          {migStatus === "complete" && allVisible && (
+            <div className="pb-4 space-y-3 animate-fade-in">
+              <button
+                onClick={() => setLocation("/admin-dashboard/student-registry")}
+                className="w-full h-12 rounded-xl font-bold text-sm flex items-center justify-center gap-2.5 transition-all hover:brightness-110 active:scale-[0.99]"
+                style={{
+                  background: "linear-gradient(135deg,#8b5cf6,#6366f1)",
+                  color: "#fff",
+                  boxShadow: "0 4px 24px rgba(99,102,241,0.32)",
+                  fontSize: "15px",
+                }}
+                data-testid="button-proceed-promote-students">
+                <GraduationCap className="w-5 h-5" />
+                Proceed to Promote Students
+                <ArrowRight className="w-4 h-4" />
+              </button>
+
+              <button
+                onClick={() => setLocation("/admin-dashboard/academic-sessions")}
+                className="w-full h-10 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all hover:bg-white/5"
+                style={{ color: "rgba(255,255,255,0.40)", border: "1px solid rgba(255,255,255,0.08)" }}
+                data-testid="button-go-to-sessions">
+                Back to Academic Sessions
+              </button>
+
+              <div
+                className="flex items-start gap-2 px-3 py-2.5 rounded-xl text-[10px]"
+                style={{ background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.14)", color: "rgba(196,181,253,0.60)" }}>
+                <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#a78bfa" }} />
+                <span>
+                  The session is saved as a <strong>Draft</strong>. Activate it from the Sessions page when you are ready to make it live.
+                  Use the <strong>Student Registry → Promote Students</strong> tool to advance students into the new session.
+                </span>
+              </div>
+            </div>
+          )}
+
+        </div>
+      </div>
+    </div>
+  );
+}

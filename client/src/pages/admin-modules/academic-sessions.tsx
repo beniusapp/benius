@@ -507,9 +507,10 @@ export { CopyConfigSelector as ModulePermissionSelector };
 // CREATE SESSION MODAL — Enterprise 4xl wide, scrollable, 2-section form
 // ══════════════════════════════════════════════════════════════════════════════
 interface CreateModalProps {
-  sessions: AcademicSession[];
-  onClose:  () => void;
-  onNext:   (payload: CreatePayload) => void;
+  sessions:     AcademicSession[];
+  onClose:      () => void;
+  onNext:       (payload: CreatePayload) => void;
+  isSubmitting?: boolean;
 }
 export interface CreatePayload {
   sessionName:          string;
@@ -523,7 +524,7 @@ export interface CreatePayload {
   copiedModules:        string | null;
 }
 
-function CreateSessionModal({ sessions, onClose, onNext }: CreateModalProps) {
+function CreateSessionModal({ sessions, onClose, onNext, isSubmitting = false }: CreateModalProps) {
 
   // ── Section 1: Basic info ────────────────────────────────────────────────
   const [name,      setName]      = useState("");
@@ -832,7 +833,7 @@ function CreateSessionModal({ sessions, onClose, onNext }: CreateModalProps) {
               Cancel
             </Button>
             <button
-              disabled={!isValid}
+              disabled={!isValid || isSubmitting}
               onClick={handleSubmit}
               data-testid="button-modal-save"
               className="flex-1 sm:flex-none sm:px-8 h-10 rounded-lg font-semibold text-sm
@@ -841,7 +842,9 @@ function CreateSessionModal({ sessions, onClose, onNext }: CreateModalProps) {
               style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", color: "#fff",
                        boxShadow: isValid ? "0 4px 18px rgba(34,211,238,0.30)" : "none" }}
             >
-              Next <ArrowRight className="w-4 h-4" />
+              {isSubmitting
+                ? <><Loader2 className="w-4 h-4 animate-spin" /> Creating…</>
+                : <>Next <ArrowRight className="w-4 h-4" /></>}
             </button>
           </div>
         </div>
@@ -1386,8 +1389,8 @@ export default function AcademicSessions({ schoolId }: Props) {
       setShowCreate(false);
       queryClient.invalidateQueries({ queryKey: ["/api/admin/academic-sessions"] });
       if (session.copiedFromSessionId) {
-        toast({ title: "Session created", description: `"${session.sessionName}" created. Opening Copy Center…` });
-        setLocation(`/session-copy-center/${session.id}`);
+        toast({ title: "Session created", description: `"${session.sessionName}" — now select which modules to migrate.` });
+        setLocation(`/admin-dashboard/school-setup/session-migration/${session.id}?copyFrom=${session.copiedFromSessionId}`);
       } else {
         toast({ title: "Session created", description: `"${session.sessionName}" is ready as a fresh session.` });
       }
@@ -1586,12 +1589,8 @@ export default function AcademicSessions({ schoolId }: Props) {
         <CreateSessionModal
           sessions={sessions}
           onClose={() => setShowCreate(false)}
-          onNext={payload => {
-            setShowCreate(false);
-            const q = new URLSearchParams({ name: payload.sessionName, start: payload.startDate, end: payload.endDate });
-            if (payload.copiedFromSessionId) q.set("copyFrom", String(payload.copiedFromSessionId));
-            setLocation(`/session-copy-center/new?${q.toString()}`);
-          }}
+          isSubmitting={createMut.isPending}
+          onNext={payload => createMut.mutate(payload)}
         />
       )}
       {rolloverTarget && (

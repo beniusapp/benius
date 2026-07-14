@@ -17,7 +17,8 @@ import Login           from "@/pages/login";
 import StudentLogin    from "@/pages/student-login";
 import TeacherLogin    from "@/pages/teacher-login";
 
-const SessionCopyCenter = lazy(() => import("@/pages/session-copy-center"));
+const SessionCopyCenter  = lazy(() => import("@/pages/session-copy-center"));
+const SessionMigration   = lazy(() => import("@/pages/admin-modules/session-migration"));
 
 // Everything else stays lazy — only downloaded when first visited
 const SuperMaster         = lazy(() => import("@/pages/super-master"));
@@ -64,6 +65,7 @@ function Router() {
         <Route path="/login" component={Login} />
         <Route path="/admin-setup" component={AdminSetup} />
         <Route path="/admin-dashboard" component={AdminDashboard} />
+        <Route path="/admin-dashboard/school-setup/session-migration/:id" component={SessionMigration} />
         <Route path="/admin-dashboard/school-setup/:tab" component={AdminDashboard} />
         <Route path="/admin-dashboard/timetable/:tab" component={AdminDashboard} />
         <Route path="/admin-dashboard/approval-center/:tab" component={AdminDashboard} />
