@@ -615,7 +615,10 @@ export class DatabaseStorage {
     return n;
   }
 
-  async getAllSchoolNotices(schoolId: number, limit = 500): Promise<(Notice & { creatorName: string | null })[]> {
+  async getAllSchoolNotices(schoolId: number, limit = 500, from?: Date, to?: Date): Promise<(Notice & { creatorName: string | null })[]> {
+    const conditions: SQL[] = [eq(notices.schoolId, schoolId)];
+    if (from) conditions.push(gte(notices.createdAt, from));
+    if (to)   conditions.push(lte(notices.createdAt, to));
     const rows = await db
       .select({
         id: notices.id,
@@ -634,7 +637,7 @@ export class DatabaseStorage {
       })
       .from(notices)
       .leftJoin(teachers, and(eq(notices.createdById, teachers.id), eq(notices.creatorRole, "teacher")))
-      .where(eq(notices.schoolId, schoolId))
+      .where(and(...conditions))
       .orderBy(desc(notices.createdAt))
       .limit(limit);
     return rows;
@@ -975,7 +978,7 @@ export class DatabaseStorage {
     return ids.length;
   }
 
-  async getComplaintsBySchool(schoolId: number): Promise<(Complaint & {
+  async getComplaintsBySchool(schoolId: number, from?: Date, to?: Date): Promise<(Complaint & {
     studentName: string | null;
     teacherName: string | null;
     complainantName: string | null;
@@ -1000,7 +1003,12 @@ export class DatabaseStorage {
       .leftJoin(students, eq(complaints.studentId, students.id))
       .leftJoin(teachers, eq(complaints.teacherId, teachers.id))
       .leftJoin(complainantStudents, eq(complaints.complainantStudentId, complainantStudents.id))
-      .where(and(eq(complaints.schoolId, schoolId), eq(complaints.isDeleted, false)))
+      .where(and(
+        eq(complaints.schoolId, schoolId),
+        eq(complaints.isDeleted, false),
+        ...(from ? [gte(complaints.createdAt, from)] : []),
+        ...(to   ? [lte(complaints.createdAt, to)]   : []),
+      ))
       .orderBy(desc(complaints.createdAt));
 
     const complaintIds = result.map(r => r.complaint.id);

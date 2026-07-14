@@ -570,7 +570,12 @@ export function registerTeacherRoutes(app: Express) {
   app.get("/api/notices/:schoolId/all", async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const sid = parseInt(req.params.schoolId);
-    const list = await storage.getAllSchoolNotices(sid, 500);
+    const [activeSession] = await db.select().from(academicSessions)
+      .where(and(eq(academicSessions.schoolId, sid), eq(academicSessions.isActive, true)))
+      .limit(1);
+    const from = activeSession ? new Date(activeSession.startDate + "T00:00:00.000Z") : undefined;
+    const to   = activeSession ? new Date(activeSession.endDate   + "T23:59:59.999Z") : undefined;
+    const list = await storage.getAllSchoolNotices(sid, 500, from, to);
     res.json(list);
   });
 
@@ -1275,7 +1280,16 @@ export function registerTeacherRoutes(app: Express) {
 
   app.get("/api/calendar/:schoolId", async (req, res) => {
     if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const list = await storage.getCalendarEvents(parseInt(req.params.schoolId));
+    const schoolId = parseInt(req.params.schoolId);
+    const [activeSession] = await db.select().from(academicSessions)
+      .where(and(eq(academicSessions.schoolId, schoolId), eq(academicSessions.isActive, true)))
+      .limit(1);
+    let list;
+    if (activeSession) {
+      list = await storage.getCalendarEventsByRange(schoolId, activeSession.startDate, activeSession.endDate);
+    } else {
+      list = await storage.getCalendarEvents(schoolId);
+    }
     res.json(list);
   });
 
@@ -2818,8 +2832,14 @@ Thank you for your prompt attention to this matter.
   // ===== COMPLAINTS BY SCHOOL (Admin only — teachers excluded) =====
   app.get("/api/complaints/school/:schoolId", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
-    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
-    const list = await storage.getComplaintsBySchool(parseInt(req.params.schoolId));
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const [activeSession] = await db.select().from(academicSessions)
+      .where(and(eq(academicSessions.schoolId, schoolId), eq(academicSessions.isActive, true)))
+      .limit(1);
+    const from = activeSession ? new Date(activeSession.startDate + "T00:00:00.000Z") : undefined;
+    const to   = activeSession ? new Date(activeSession.endDate   + "T23:59:59.999Z") : undefined;
+    const list = await storage.getComplaintsBySchool(schoolId, from, to);
     res.json(list);
   });
 
