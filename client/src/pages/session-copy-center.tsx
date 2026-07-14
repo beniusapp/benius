@@ -19,7 +19,7 @@ import {
   ArrowLeft, CheckCircle2, Circle, ChevronRight, AlertTriangle,
   Copy, Loader2, Check, ToggleLeft, ToggleRight, Info, Zap,
   GraduationCap, UserPlus, Users, LayoutGrid, CreditCard,
-  ArrowRight, SkipForward, RotateCcw, X,
+  ArrowRight, SkipForward, RotateCcw, X, Plus, CalendarRange,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -307,7 +307,15 @@ export default function SessionCopyCenter() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
-  const destSessionId = parseInt(sessionIdStr ?? "0");
+  // ── New-session mode: user clicked "Next" in the modal, session not yet created ──
+  const isNewMode = sessionIdStr === "new";
+  const urlParams   = new URLSearchParams(window.location.search);
+  const draftName   = isNewMode ? (urlParams.get("name")  ?? "")  : "";
+  const draftStart  = isNewMode ? (urlParams.get("start") ?? "")  : "";
+  const draftEnd    = isNewMode ? (urlParams.get("end")   ?? "")  : "";
+  const draftCopyFrom = isNewMode ? (parseInt(urlParams.get("copyFrom") ?? "") || null) : null;
+
+  const destSessionId = isNewMode ? 0 : parseInt(sessionIdStr ?? "0");
 
   // ── Views ──
   type View = "grid" | "detail" | "summary";
@@ -316,6 +324,9 @@ export default function SessionCopyCenter() {
   const [selectedSubIds, setSelectedSubIds] = useState<Set<string>>(new Set());
   const [moduleStatuses, setModuleStatuses] = useState<Record<string, ModuleStatus>>({});
   const [failedError, setFailedError] = useState<string>("");
+  // In new mode: stores confirmed sub-module selections per module (copied on "Create Session")
+  const [moduleSelections, setModuleSelections] = useState<Record<string, string[]>>({});
+  const [isCreating, setIsCreating] = useState(false);
 
   // ── Data ──
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery<Session[]>({
@@ -327,8 +338,8 @@ export default function SessionCopyCenter() {
     },
   });
 
-  const destSession  = sessions.find(s => s.id === destSessionId) ?? null;
-  const srcSessionId = destSession?.copiedFromSessionId ?? null;
+  const destSession  = isNewMode ? null : (sessions.find(s => s.id === destSessionId) ?? null);
+  const srcSessionId = isNewMode ? draftCopyFrom : (destSession?.copiedFromSessionId ?? null);
   const srcSession   = sessions.find(s => s.id === srcSessionId) ?? null;
 
   const { data: preview, isLoading: previewLoading } = useQuery<{ counts: Record<string, number> }>({
@@ -358,13 +369,18 @@ export default function SessionCopyCenter() {
     const mod = COPY_MODULES.find(m => m.id === modId);
     if (!mod) return;
     setOpenModuleId(modId);
-    // Pre-select only sub-modules that have data in the source session
-    const withData = new Set(
-      mod.subModules
-        .filter(s => (counts[s.id] ?? 0) > 0)
-        .map(s => s.id)
-    );
-    setSelectedSubIds(withData);
+    // In new mode: restore previously confirmed selections if they exist
+    if (isNewMode && moduleSelections[modId]) {
+      setSelectedSubIds(new Set(moduleSelections[modId]));
+    } else {
+      // Pre-select only sub-modules that have data in the source session
+      const withData = new Set(
+        mod.subModules
+          .filter(s => (counts[s.id] ?? 0) > 0)
+          .map(s => s.id)
+      );
+      setSelectedSubIds(withData);
+    }
     setFailedError("");
     setView("detail");
   }
@@ -402,6 +418,45 @@ export default function SessionCopyCenter() {
     },
   });
 
+  // ── Create Session handler (new mode only) ──────────────────────────────────
+  async function handleCreateSession() {
+    if (isCreating) return;
+    setIsCreating(true);
+    try {
+      const r = await apiRequest("POST", "/api/admin/academic-sessions", {
+        sessionName:          draftName,
+        startDate:            draftStart,
+        endDate:              draftEnd,
+        status:               "draft",
+        setAsActive:          false,
+        newAdmissionsEnabled: false,
+        promotionStrategy:    "defer",
+        copiedFromSessionId:  draftCopyFrom,
+        copiedModules:        null,
+      });
+      if (!r.ok) { const e = await r.json(); throw new Error(e.message || "Failed to create session"); }
+      const session = await r.json() as Session;
+
+      // Copy all confirmed modules sequentially
+      const entries = Object.entries(moduleSelections);
+      for (const [, subIds] of entries) {
+        if (subIds.length === 0) continue;
+        await apiRequest("POST", `/api/admin/academic-sessions/${session.id}/copy-modules`, {
+          sourceSessionId: srcSessionId,
+          subModuleIds:    subIds,
+        });
+      }
+
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/academic-sessions"] });
+      toast({ title: "Session created!", description: `"${session.sessionName}" is ready. Proceeding to next steps.` });
+      setLocation(`/session-copy-center/${session.id}`);
+    } catch (e: unknown) {
+      toast({ title: "Error", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
   // ── Computed ──
   const foundationModules  = COPY_MODULES.filter(m => m.group === "FOUNDATION");
   const managementModules  = COPY_MODULES.filter(m => m.group === "MANAGEMENT");
@@ -410,6 +465,7 @@ export default function SessionCopyCenter() {
   const skippedCount       = Object.values(moduleStatuses).filter(s => s === "skipped").length;
   const doneCount          = copiedCount + skippedCount;
   const allDone            = doneCount === totalModules;
+  const readyCount         = Object.keys(moduleSelections).length; // new mode: confirmed modules
 
   const existingResult = useMemo(
     () => parseExistingResult(destSession?.copiedModules ?? null),
@@ -417,6 +473,42 @@ export default function SessionCopyCenter() {
   );
 
   // ── No source session state ────────────────────────────────────────────────
+  // In new mode with no copyFrom: fresh session — show direct "Create Session" UI
+  if (isNewMode && !srcSessionId && !sessionsLoading) {
+    return (
+      <div className="min-h-screen flex flex-col" style={{ background: "#0A1628" }}>
+        <div className="flex items-center gap-3 px-6 py-4" style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+          <button onClick={() => setLocation("/admin-dashboard/academic-sessions")}
+            className="flex items-center gap-2 text-white/50 hover:text-white/80 transition-colors text-sm">
+            <ArrowLeft className="w-4 h-4" /> Back
+          </button>
+        </div>
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="max-w-md text-center space-y-4">
+            <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto"
+              style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", boxShadow: "0 0 24px rgba(34,211,238,0.35)" }}>
+              <CalendarRange className="w-8 h-8 text-white" />
+            </div>
+            <div>
+              <h2 className="text-white font-bold text-lg">Fresh Academic Session</h2>
+              <p className="text-white font-semibold text-base mt-1" style={{ color: "#22d3ee" }}>{draftName}</p>
+              <p className="text-white/50 text-sm mt-2">
+                No copy source selected. This will be a blank session — you can configure each module directly from the Admin Dashboard after creation.
+              </p>
+            </div>
+            <button
+              onClick={handleCreateSession}
+              disabled={isCreating}
+              className="w-full h-11 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50 transition-all hover:brightness-110"
+              style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", color: "#fff", boxShadow: "0 4px 18px rgba(34,211,238,0.30)" }}
+              data-testid="button-create-fresh-session">
+              {isCreating ? <><Loader2 className="w-4 h-4 animate-spin" /> Creating…</> : <><Plus className="w-4 h-4" /> Create Session</>}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!sessionsLoading && !srcSessionId) {
     return (
@@ -782,25 +874,53 @@ export default function SessionCopyCenter() {
         {/* Sticky footer */}
         <div className="flex-shrink-0 px-4 sm:px-6 py-4 space-y-2"
           style={{ borderTop: "1px solid rgba(255,255,255,0.07)", background: "rgba(10,18,40,0.95)" }}>
-          <button
-            disabled={selectedSubIds.size === 0 || isCopying || !srcSessionId}
-            onClick={() => copyMut.mutate({ modId: openModule.id, subIds: [...selectedSubIds] })}
-            data-testid="button-copy-selected"
-            className="w-full h-11 rounded-xl font-semibold text-sm flex items-center justify-center gap-2
-                       disabled:opacity-40 transition-all hover:brightness-110 active:scale-[0.99]"
-            style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", color: "#fff",
-                     boxShadow: "0 4px 18px rgba(34,211,238,0.25)" }}>
-            {isCopying
-              ? <><Loader2 className="w-4 h-4 animate-spin" /> Copying…</>
-              : <><Copy className="w-4 h-4" /> Copy Selected Configuration ({selectedSubIds.size})</>}
-          </button>
-          <button
-            onClick={() => { handleSkipModule(openModule.id); setView("grid"); }}
-            className="w-full h-9 rounded-xl font-medium text-sm flex items-center justify-center gap-2 transition-all hover:bg-white/5"
-            style={{ color: "rgba(255,255,255,0.35)", border: "1px solid rgba(255,255,255,0.08)" }}
-            data-testid="button-skip-module">
-            <SkipForward className="w-3.5 h-3.5" /> Skip this module
-          </button>
+          {isNewMode ? (
+            <>
+              <button
+                disabled={selectedSubIds.size === 0}
+                onClick={() => {
+                  setModuleSelections(prev => ({ ...prev, [openModule.id]: [...selectedSubIds] }));
+                  setModuleStatuses(prev => ({ ...prev, [openModule.id]: "copied" }));
+                  setView("grid");
+                }}
+                data-testid="button-confirm-selection"
+                className="w-full h-11 rounded-xl font-semibold text-sm flex items-center justify-center gap-2
+                           disabled:opacity-40 transition-all hover:brightness-110 active:scale-[0.99]"
+                style={{ background: "linear-gradient(135deg,#10b981,#22d3ee)", color: "#fff",
+                         boxShadow: "0 4px 18px rgba(16,185,129,0.25)" }}>
+                <Check className="w-4 h-4" /> Confirm Selection ({selectedSubIds.size})
+              </button>
+              <button
+                onClick={() => { handleSkipModule(openModule.id); setView("grid"); }}
+                className="w-full h-9 rounded-xl font-medium text-sm flex items-center justify-center gap-2 transition-all hover:bg-white/5"
+                style={{ color: "rgba(255,255,255,0.35)", border: "1px solid rgba(255,255,255,0.08)" }}
+                data-testid="button-skip-module">
+                <SkipForward className="w-3.5 h-3.5" /> Skip this module
+              </button>
+            </>
+          ) : (
+          <>
+            <button
+              disabled={selectedSubIds.size === 0 || isCopying || !srcSessionId}
+              onClick={() => copyMut.mutate({ modId: openModule.id, subIds: [...selectedSubIds] })}
+              data-testid="button-copy-selected"
+              className="w-full h-11 rounded-xl font-semibold text-sm flex items-center justify-center gap-2
+                         disabled:opacity-40 transition-all hover:brightness-110 active:scale-[0.99]"
+              style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", color: "#fff",
+                       boxShadow: "0 4px 18px rgba(34,211,238,0.25)" }}>
+              {isCopying
+                ? <><Loader2 className="w-4 h-4 animate-spin" /> Copying…</>
+                : <><Copy className="w-4 h-4" /> Copy Selected Configuration ({selectedSubIds.size})</>}
+            </button>
+            <button
+              onClick={() => { handleSkipModule(openModule.id); setView("grid"); }}
+              className="w-full h-9 rounded-xl font-medium text-sm flex items-center justify-center gap-2 transition-all hover:bg-white/5"
+              style={{ color: "rgba(255,255,255,0.35)", border: "1px solid rgba(255,255,255,0.08)" }}
+              data-testid="button-skip-module">
+              <SkipForward className="w-3.5 h-3.5" /> Skip this module
+            </button>
+          </>
+          )}
         </div>
       </div>
     );
@@ -847,7 +967,14 @@ export default function SessionCopyCenter() {
               </p>
             </div>
           </div>
-          <StatusBadge status={status} />
+          {isNewMode && isCopied ? (
+            <span className="flex items-center gap-1 text-[9px] font-bold tracking-wider px-2 py-0.5 rounded-full"
+              style={{ background: "rgba(16,185,129,0.12)", color: "#34d399", border: "1px solid rgba(16,185,129,0.25)" }}>
+              <Check className="w-2.5 h-2.5" /> READY
+            </span>
+          ) : (
+            <StatusBadge status={status} />
+          )}
         </div>
 
         <div className="flex items-center gap-2 mt-auto">
@@ -928,7 +1055,7 @@ export default function SessionCopyCenter() {
           <StepBar current={2} />
 
           {/* Session banner */}
-          {(srcSession || destSession) && (
+          {(srcSession || destSession || (isNewMode && draftName)) && (
             <div className="flex items-center gap-3 px-4 py-3 rounded-xl"
               style={{ background: "rgba(34,211,238,0.05)", border: "1px solid rgba(34,211,238,0.15)" }}>
               <div className="flex-1 min-w-0">
@@ -946,13 +1073,13 @@ export default function SessionCopyCenter() {
               <div className="flex-1 min-w-0 text-right">
                 <p className="text-[10px] text-white/35 uppercase font-bold tracking-wider mb-0.5">New Session</p>
                 <p className="text-sm font-semibold text-cyan-300 truncate">
-                  {destSession?.sessionName ?? "—"}
+                  {isNewMode ? draftName : (destSession?.sessionName ?? "—")}
                 </p>
-                {destSession && (
-                  <p className="text-[10px] text-white/35 mt-0.5">
-                    {fmtDate(destSession.startDate)} → {fmtDate(destSession.endDate)}
-                  </p>
-                )}
+                <p className="text-[10px] text-white/35 mt-0.5">
+                  {isNewMode
+                    ? (draftStart && draftEnd ? `${fmtDate(draftStart)} → ${fmtDate(draftEnd)}` : "")
+                    : (destSession ? `${fmtDate(destSession.startDate)} → ${fmtDate(destSession.endDate)}` : "")}
+                </p>
               </div>
             </div>
           )}
@@ -1041,22 +1168,46 @@ export default function SessionCopyCenter() {
 
           {/* Bottom CTA */}
           <div className="pb-4">
-            <button
-              onClick={() => setView("summary")}
-              className="w-full h-11 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all hover:brightness-110 active:scale-[0.99]"
-              style={{
-                background: allDone
-                  ? "linear-gradient(135deg,#22d3ee,#6366f1)"
-                  : "rgba(255,255,255,0.06)",
-                color: allDone ? "#fff" : "rgba(255,255,255,0.40)",
-                border: allDone ? "none" : "1px solid rgba(255,255,255,0.10)",
-                boxShadow: allDone ? "0 4px 18px rgba(34,211,238,0.25)" : "none",
-              }}
-              data-testid="button-finish-copy">
-              {allDone
-                ? <><CheckCircle2 className="w-4 h-4" /> View Copy Summary</>
-                : <><Info className="w-4 h-4" /> View Summary (configure remaining modules later)</>}
-            </button>
+            {isNewMode ? (
+              <div className="space-y-2">
+                {readyCount > 0 && (
+                  <p className="text-[10px] text-center text-white/35">
+                    {readyCount} module{readyCount !== 1 ? "s" : ""} confirmed — remaining will start fresh
+                  </p>
+                )}
+                <button
+                  onClick={handleCreateSession}
+                  disabled={isCreating}
+                  className="w-full h-11 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50 transition-all hover:brightness-110 active:scale-[0.99]"
+                  style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", color: "#fff",
+                           boxShadow: "0 4px 18px rgba(34,211,238,0.30)" }}
+                  data-testid="button-create-session-final">
+                  {isCreating
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Creating session…</>
+                    : <><Plus className="w-4 h-4" /> Create Session</>}
+                </button>
+                <p className="text-[9px] text-center text-white/20">
+                  Session will be created with your confirmed selections copied in
+                </p>
+              </div>
+            ) : (
+              <button
+                onClick={() => setView("summary")}
+                className="w-full h-11 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all hover:brightness-110 active:scale-[0.99]"
+                style={{
+                  background: allDone
+                    ? "linear-gradient(135deg,#22d3ee,#6366f1)"
+                    : "rgba(255,255,255,0.06)",
+                  color: allDone ? "#fff" : "rgba(255,255,255,0.40)",
+                  border: allDone ? "none" : "1px solid rgba(255,255,255,0.10)",
+                  boxShadow: allDone ? "0 4px 18px rgba(34,211,238,0.25)" : "none",
+                }}
+                data-testid="button-finish-copy">
+                {allDone
+                  ? <><CheckCircle2 className="w-4 h-4" /> View Copy Summary</>
+                  : <><Info className="w-4 h-4" /> View Summary (configure remaining modules later)</>}
+              </button>
+            )}
           </div>
 
         </div>

@@ -507,10 +507,9 @@ export { CopyConfigSelector as ModulePermissionSelector };
 // CREATE SESSION MODAL — Enterprise 4xl wide, scrollable, 2-section form
 // ══════════════════════════════════════════════════════════════════════════════
 interface CreateModalProps {
-  sessions:  AcademicSession[];
-  onClose:   () => void;
-  isPending: boolean;
-  onSubmit:  (payload: CreatePayload) => void;
+  sessions: AcademicSession[];
+  onClose:  () => void;
+  onNext:   (payload: CreatePayload) => void;
 }
 export interface CreatePayload {
   sessionName:          string;
@@ -580,7 +579,7 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
 
   function handleSubmit() {
     if (!isValid) return;
-    onSubmit({
+    onNext({
       sessionName:          trimName,
       startDate,
       endDate,
@@ -833,7 +832,7 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
               Cancel
             </Button>
             <button
-              disabled={!isValid || isPending}
+              disabled={!isValid}
               onClick={handleSubmit}
               data-testid="button-modal-save"
               className="flex-1 sm:flex-none sm:px-8 h-10 rounded-lg font-semibold text-sm
@@ -842,9 +841,7 @@ function CreateSessionModal({ sessions, onClose, isPending, onSubmit }: CreateMo
               style={{ background: "linear-gradient(135deg,#22d3ee,#6366f1)", color: "#fff",
                        boxShadow: isValid ? "0 4px 18px rgba(34,211,238,0.30)" : "none" }}
             >
-              {isPending
-                ? <><Loader2 className="w-4 h-4 animate-spin" /> Creating…</>
-                : <><Plus className="w-4 h-4" /> Create Session</>}
+              Next <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -1589,8 +1586,12 @@ export default function AcademicSessions({ schoolId }: Props) {
         <CreateSessionModal
           sessions={sessions}
           onClose={() => setShowCreate(false)}
-          isPending={createMut.isPending}
-          onSubmit={payload => createMut.mutate(payload)}
+          onNext={payload => {
+            setShowCreate(false);
+            const q = new URLSearchParams({ name: payload.sessionName, start: payload.startDate, end: payload.endDate });
+            if (payload.copiedFromSessionId) q.set("copyFrom", String(payload.copiedFromSessionId));
+            setLocation(`/session-copy-center/new?${q.toString()}`);
+          }}
         />
       )}
       {rolloverTarget && (
