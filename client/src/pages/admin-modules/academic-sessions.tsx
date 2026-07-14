@@ -1528,6 +1528,16 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
             <CheckRow checked={promoChecked} onChange={() => setPromoChecked(v => !v)}>
               I have promoted all eligible students in the <strong className="text-white/70">Exam Controller</strong> for this session.
             </CheckRow>
+            {promoChecked && promoList.length === 0 && (
+              <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg text-[10px]"
+                style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.28)" }}
+                data-testid="warning-no-promotions">
+                <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5 text-red-400" />
+                <span className="text-red-300/80 leading-relaxed">
+                  You are about to activate with <strong className="text-red-300">no student promotions on record.</strong> This means no students will be carried forward into the new session automatically.
+                </span>
+              </div>
+            )}
             <CheckRow checked={moduleChecked} onChange={() => setModuleChecked(v => !v)}>
               I understand that the modules listed above will reset when this session is activated.
             </CheckRow>
@@ -1560,7 +1570,7 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
             {isPending
               ? <Loader2 className="w-4 h-4 animate-spin" />
               : <Zap className="w-4 h-4" />}
-            Activate Session
+            {promoList.length === 0 ? "Activate Anyway" : "Activate Session"}
           </button>
         </div>
 
