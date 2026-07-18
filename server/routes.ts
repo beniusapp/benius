@@ -3116,7 +3116,7 @@ export async function registerRoutes(
       "class-mapping":             { parentModule: "School Setup",       label: "Class–Section Mapping",    kind: "schoolwide-meta",    metaKey: "class_sections",    note: "Shared across all sessions" },
       "subject-mapping":           { parentModule: "School Setup",       label: "Class–Subject Mapping",    kind: "schoolwide-meta",    metaKey: "class_subjects",    note: "Shared across all sessions" },
       "class-exam-type-mapping":   { parentModule: "School Setup",       label: "Class–Exam Type Mapping",  kind: "schoolwide-meta",    metaKey: "class_exam_types",  note: "Shared across all sessions" },
-      "grading-policy":            { parentModule: "School Setup",       label: "Grading Policy",           kind: "schoolwide-meta",    metaKey: "grading_config",    note: "Shared across all sessions" },
+      "grading-policy":            { parentModule: "School Setup",       label: "Academic Grading (Tiers)",  kind: "schoolwide-table",                                 note: "Shared across all sessions" },
       "promotion-policy":          { parentModule: "School Setup",       label: "Promotion Policy",         kind: "schoolwide-table",   note: "Shared across all sessions" },
       "attendance-policy":         { parentModule: "School Setup",       label: "Attendance Policy",        kind: "schoolwide-table",   note: "Shared across all sessions" },
       "leave-policy":              { parentModule: "School Setup",       label: "Leave Policy",             kind: "schoolwide-table",   note: "Shared across all sessions" },
@@ -3192,6 +3192,7 @@ export async function registerRoutes(
           } else if (op.kind === "schoolwide-table") {
             let count = 0;
             switch (subId) {
+              case "grading-policy":    count = (await tx.select().from(gradingTiers).where(eq(gradingTiers.schoolId, schoolId))).length; break;
               case "promotion-policy":  count = (await tx.select().from(examPolicyTiers).where(eq(examPolicyTiers.schoolId, schoolId))).length; break;
               case "attendance-policy": count = (await tx.select().from(attendancePolicies).where(eq(attendancePolicies.schoolId, schoolId))).length; break;
               case "leave-policy":      count = (await tx.select().from(leavePolicies).where(eq(leavePolicies.schoolId, schoolId))).length; break;

@@ -765,29 +765,147 @@ export default function SessionMigrationPage() {
             </div>
           )}
 
-          {/* Log entries */}
-          {copyResult && (
-            <div className="space-y-2">
-              <p className="text-[10px] uppercase font-black tracking-widest text-white/25 px-1">
-                Migration Pipeline
-              </p>
-              {allLogEntries.map((item, idx) => (
-                <LogEntryRow key={`${item.kind}-${idx}`}
-                  label={item.label} parent={item.parent} note={item.note}
-                  count={item.count} kind={item.kind} visible={visibleCount > idx} />
-              ))}
-              {allLogEntries.length > 0 && (
-                <p className="text-[9px] uppercase font-black tracking-widest text-white/18 px-1 pt-2">
-                  Always Fresh — Not Migrated
+          {/* Log entries — grouped by module */}
+          {copyResult && (() => {
+            // Build ordered module groups preserving insertion order
+            const groupMap = new Map<string, typeof allLogEntries>();
+            for (const e of allLogEntries) {
+              if (!groupMap.has(e.parent)) groupMap.set(e.parent, []);
+              groupMap.get(e.parent)!.push(e);
+            }
+            const groups = Array.from(groupMap.entries()); // [moduleName, entries[]]
+
+            // Flatten for visibility index tracking (same order as before)
+            let globalIdx = 0;
+
+            return (
+              <div className="space-y-4">
+                <p className="text-[10px] uppercase font-black tracking-widest text-white/25 px-1">
+                  Migration Pipeline
                 </p>
-              )}
-              {blockedEntries.map((item, idx) => (
-                <LogEntryRow key={`blocked-${item.label}`}
-                  label={item.label} parent={item.parent} note={item.note}
-                  count={0} kind="fresh" visible={visibleCount > allLogEntries.length + idx} />
-              ))}
-            </div>
-          )}
+
+                {groups.map(([moduleName, entries]) => {
+                  const allOk     = entries.every(e => e.kind === "shared" || e.kind === "copied");
+                  const anyEmpty  = entries.some(e => e.kind === "empty");
+                  const anyFailed = entries.some(e => e.kind === "copied" && e.count === 0);
+                  const successCount = entries.filter(e => e.kind === "shared" || e.kind === "copied").length;
+
+                  // Module header colours
+                  const hdrBg     = anyEmpty  ? "rgba(245,158,11,0.06)"
+                                  : anyFailed ? "rgba(239,68,68,0.06)"
+                                  :             "rgba(16,185,129,0.06)";
+                  const hdrBorder = anyEmpty  ? "rgba(245,158,11,0.22)"
+                                  : anyFailed ? "rgba(239,68,68,0.22)"
+                                  :             "rgba(16,185,129,0.22)";
+                  const hdrColor  = anyEmpty  ? "#f59e0b"
+                                  : anyFailed ? "#f87171"
+                                  :             "#34d399";
+                  const hdrIcon   = anyEmpty  ? <AlertTriangle className="w-3.5 h-3.5" style={{ color: hdrColor }} />
+                                  : anyFailed ? <AlertCircle   className="w-3.5 h-3.5" style={{ color: hdrColor }} />
+                                  :             <CheckCircle2  className="w-3.5 h-3.5" style={{ color: hdrColor }} />;
+                  const hdrBadge  = anyEmpty  ? `${successCount}/${entries.length} configured`
+                                  : anyFailed ? `${successCount}/${entries.length} ok`
+                                  :             `${entries.length}/${entries.length} ✓`;
+
+                  return (
+                    <div key={moduleName} className="rounded-xl overflow-hidden"
+                      style={{ border: `1px solid ${hdrBorder}` }}>
+                      {/* Module header */}
+                      <div className="flex items-center gap-2.5 px-4 py-2.5"
+                        style={{ background: hdrBg, borderBottom: `1px solid ${hdrBorder}` }}>
+                        {hdrIcon}
+                        <p className="text-xs font-black tracking-wide flex-1" style={{ color: hdrColor }}>
+                          {moduleName}
+                        </p>
+                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full"
+                          style={{ background: `${hdrColor}18`, color: hdrColor, border: `1px solid ${hdrColor}28` }}>
+                          {hdrBadge}
+                        </span>
+                      </div>
+
+                      {/* Sub-module rows */}
+                      <div className="divide-y" style={{ borderColor: "rgba(255,255,255,0.04)" }}>
+                        {entries.map((item) => {
+                          const myIdx = globalIdx++;
+                          const isVis = visibleCount > myIdx;
+                          const cfg: Record<EntryKind, { icon: typeof Check; color: string; badge: string }> = {
+                            copied: { icon: CheckCircle2, color: "#22d3ee", badge: item.count > 0 ? `Copied · ${item.count}` : "Copied" },
+                            shared: { icon: Check,        color: "#10b981", badge: item.count > 0 ? `Shared · ${item.count}` : "Shared" },
+                            empty:  { icon: AlertTriangle,color: "#f59e0b", badge: "Not Configured" },
+                            fresh:  { icon: Shield,       color: "rgba(255,255,255,0.20)", badge: "Always Fresh" },
+                          };
+                          const c = cfg[item.kind];
+                          const Icon = c.icon;
+                          return (
+                            <div key={`${item.kind}-${item.label}`}
+                              className="flex items-center gap-3 px-4 py-2.5"
+                              style={{
+                                background: "rgba(255,255,255,0.01)",
+                                opacity: isVis ? 1 : 0,
+                                transform: isVis ? "translateY(0)" : "translateY(4px)",
+                                transition: "opacity 0.25s ease, transform 0.25s ease",
+                              }}>
+                              <Icon className="w-3 h-3 flex-shrink-0" style={{ color: c.color }} />
+                              <p className="text-xs text-white/70 flex-1">{item.label}</p>
+                              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0"
+                                style={{ background: `${c.color}18`, color: c.color, border: `1px solid ${c.color}28` }}>
+                                {c.badge}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Always Fresh section */}
+                {allLogEntries.length > 0 && (
+                  <p className="text-[9px] uppercase font-black tracking-widest px-1 pt-1"
+                    style={{ color: "rgba(255,255,255,0.18)" }}>
+                    Always Fresh — Not Migrated
+                  </p>
+                )}
+                <div className="rounded-xl overflow-hidden"
+                  style={{ border: "1px solid rgba(239,68,68,0.14)" }}>
+                  {/* Fresh section header */}
+                  <div className="flex items-center gap-2.5 px-4 py-2.5"
+                    style={{ background: "rgba(239,68,68,0.05)", borderBottom: "1px solid rgba(239,68,68,0.12)" }}>
+                    <Lock className="w-3.5 h-3.5 text-red-400/50" />
+                    <p className="text-xs font-black tracking-wide flex-1 text-red-400/70">Historical Operational Data</p>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full"
+                      style={{ background: "rgba(239,68,68,0.10)", color: "rgba(248,113,113,0.70)", border: "1px solid rgba(239,68,68,0.18)" }}>
+                      {blockedEntries.length} modules
+                    </span>
+                  </div>
+                  <div className="divide-y" style={{ borderColor: "rgba(255,255,255,0.04)" }}>
+                    {blockedEntries.map((item, idx) => {
+                      const myIdx = globalIdx++;
+                      const isVis = visibleCount > myIdx;
+                      return (
+                        <div key={`blocked-${item.label}`}
+                          className="flex items-center gap-3 px-4 py-2.5"
+                          style={{
+                            background: "rgba(255,255,255,0.01)",
+                            opacity: isVis ? 1 : 0,
+                            transform: isVis ? "translateY(0)" : "translateY(4px)",
+                            transition: `opacity 0.25s ease ${idx * 40}ms, transform 0.25s ease ${idx * 40}ms`,
+                          }}>
+                          <Lock className="w-3 h-3 flex-shrink-0 text-red-400/30" />
+                          <p className="text-xs text-white/30 flex-1">{item.label}</p>
+                          <span className="text-[9px] font-bold px-2 py-0.5 rounded-full"
+                            style={{ background: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.18)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                            Always Fresh
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+              </div>
+            );
+          })()}
 
           {/* CTA — shown once all entries animated */}
           {allVisible && (
