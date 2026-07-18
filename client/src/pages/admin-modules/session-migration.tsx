@@ -55,6 +55,7 @@ interface CopyResult {
 
 // ── Module catalogue ──────────────────────────────────────────────────────────
 
+// School Setup — the one module whose subIds are always sent to the backend
 const MANDATORY_MODULE = {
   id: "school-setup",
   label: "School Setup",
@@ -67,11 +68,52 @@ const MANDATORY_MODULE = {
   ],
 };
 
+// Always-carried global frameworks (non-session-keyed; shown as permanent in UI)
+// Their subIds are also injected into every migration run automatically.
+const GLOBAL_FRAMEWORK_MODULES = [
+  {
+    id: "teacher-staff",
+    label: "Teacher Registry & Support Staff",
+    emoji: "👩‍🏫",
+    note: "School employees — maintained globally, permissions persist",
+    subIds: [] as string[],
+  },
+  {
+    id: "student-registry",
+    label: "Student Registry",
+    emoji: "🎓",
+    note: "Student identities are permanent — only class assignments change per session",
+    subIds: [] as string[],
+  },
+  {
+    id: "faculty-mapping",
+    label: "Faculty Mapping",
+    emoji: "🗂️",
+    note: "Teacher–class–subject assignment matrix carried into every session",
+    subIds: ["teacher-class-assignments"],
+  },
+  {
+    id: "assets-inventory",
+    label: "Assets & Inventory",
+    emoji: "📦",
+    note: "Asset masters and storage locations are school-wide records",
+    subIds: ["asset-categories", "asset-master", "storage-locations"],
+  },
+  {
+    id: "school-calendar",
+    label: "School Calendar",
+    emoji: "🗓️",
+    note: "Calendar is always available — historical events remain in their session",
+    subIds: [] as string[],
+  },
+];
+
 interface ChooseableMod {
   id: string;
   label: string;
   emoji: string;
   desc: string;
+  note: string;
   subIds: string[];
   accentColor: string;
   accentHex: string;
@@ -82,50 +124,34 @@ const CHOOSEABLE_MODULES: ChooseableMod[] = [
     id: "timetable-master",
     label: "Timetable Master",
     emoji: "📅",
-    desc: "Bell structure and period schedule grid",
-    subIds: ["bell-structure", "period-config"],
+    desc: "Bell Structure layout only · Period schedule grid resets",
+    note: "Copies bell intervals only — the day/hour schedule grid starts blank",
+    subIds: ["bell-structure"],          // period-config intentionally excluded
     accentColor: "#3b82f6",
     accentHex: "59,130,246",
   },
   {
-    id: "faculty-mapping",
-    label: "Faculty Mapping",
-    emoji: "🗂️",
-    desc: "Teacher–class–subject assignment matrix",
-    subIds: ["teacher-class-assignments"],
+    id: "approval-center",
+    label: "Approval Center",
+    emoji: "✅",
+    desc: "Gallery Hub catalog & E-Book Library catalog framework",
+    note: "Retains catalog categories only — all pending leaves & uploads clear out",
+    subIds: ["gallery-catalog", "ebook-catalog"],
     accentColor: "#8b5cf6",
     accentHex: "139,92,246",
-  },
-  {
-    id: "fees-payments",
-    label: "Fees & Payments",
-    emoji: "💰",
-    desc: "Fee structure, categories, fine and concession rules",
-    subIds: ["fee-categories", "fee-heads", "fee-structure", "fine-rules", "concession-rules"],
-    accentColor: "#f59e0b",
-    accentHex: "245,158,11",
-  },
-  {
-    id: "assets-inventory",
-    label: "Assets & Inventory",
-    emoji: "📦",
-    desc: "Asset master, categories and storage locations",
-    subIds: ["asset-categories", "asset-master", "storage-locations"],
-    accentColor: "#f97316",
-    accentHex: "249,115,22",
   },
 ];
 
 const BLOCKED_MODULES = [
-  { id: "student-registry", label: "Student Registry",  emoji: "🎓" },
-  { id: "exam-controller",  label: "Exam Controller",    emoji: "🏆" },
-  { id: "attendance",       label: "Attendance Records", emoji: "📊" },
-  { id: "complaint-hub",    label: "Complaint Hub",      emoji: "🛡️" },
-  { id: "noticeboard",      label: "Noticeboard",        emoji: "🔔" },
-  { id: "visitor-log",      label: "Visitor Log",        emoji: "🚪" },
-  { id: "audit-logs",       label: "Audit Logs",         emoji: "🔐" },
-  { id: "id-card-gen",      label: "ID Card Generator",  emoji: "💳" },
-  { id: "school-calendar",  label: "School Calendar",    emoji: "🗓️" },
+  { id: "exam-controller",       label: "Exam Controller",       emoji: "🏆" },
+  { id: "attendance",            label: "Attendance Overview",    emoji: "📊" },
+  { id: "complaint-hub",         label: "Complaint Hub",          emoji: "🛡️" },
+  { id: "noticeboard",           label: "Noticeboard",            emoji: "🔔" },
+  { id: "visitor-log",           label: "Visitor Log",            emoji: "🚪" },
+  { id: "audit-logs",            label: "Audit Logs",             emoji: "🔐" },
+  { id: "id-card-gen",           label: "ID Card Generator",      emoji: "💳" },
+  { id: "fees-payments",         label: "Fees & Payments",        emoji: "💰" },
+  { id: "performance-analytics", label: "Performance Analytics",  emoji: "📈" },
 ];
 
 // ── Step Bar ──────────────────────────────────────────────────────────────────
@@ -204,6 +230,9 @@ function ChooseTile({ mod, selected, onToggle }: {
             {mod.label}
           </p>
           <p className="text-[10px] text-white/35 mt-0.5 leading-relaxed">{mod.desc}</p>
+          <p className="text-[10px] mt-1 leading-relaxed italic" style={{ color: selected ? `rgba(${mod.accentHex},0.65)` : "rgba(255,255,255,0.18)" }}>
+            {mod.note}
+          </p>
           <p className="text-[10px] mt-1" style={{ color: selected ? mod.accentColor : "rgba(255,255,255,0.20)" }}>
             {mod.subIds.length} configuration{mod.subIds.length !== 1 ? "s" : ""}
           </p>
@@ -354,9 +383,12 @@ export default function SessionMigrationPage() {
     setMigStatus("copying");
     setMigSubMsg("Copying configurations…");
 
-    const mandatorySubIds = MANDATORY_MODULE.subIds;
-    const chosenSubIds    = CHOOSEABLE_MODULES.filter(m => selected.has(m.id)).flatMap(m => m.subIds);
-    const allSubIds       = [...mandatorySubIds, ...chosenSubIds];
+    const mandatorySubIds = [
+      ...MANDATORY_MODULE.subIds,
+      ...GLOBAL_FRAMEWORK_MODULES.flatMap(m => m.subIds),
+    ];
+    const chosenSubIds = CHOOSEABLE_MODULES.filter(m => selected.has(m.id)).flatMap(m => m.subIds);
+    const allSubIds    = [...mandatorySubIds, ...chosenSubIds];
 
     try {
       const mr = await apiRequest(
@@ -463,9 +495,11 @@ export default function SessionMigrationPage() {
             <section className="space-y-3">
               <div className="flex items-center gap-2">
                 <div className="w-1.5 h-5 rounded-full" style={{ background: "linear-gradient(180deg,#10b981,#34d399)" }} />
-                <h3 className="text-[11px] font-black tracking-widest uppercase text-emerald-400/80">Mandatory</h3>
-                <span className="text-[10px] text-white/25">Auto-included · cannot be removed</span>
+                <h3 className="text-[11px] font-black tracking-widest uppercase text-emerald-400/80">Mandatory / Permanent Frameworks</h3>
+                <span className="text-[10px] text-white/25">Never Reset</span>
               </div>
+
+              {/* School Setup hero card */}
               <div className="rounded-xl p-4"
                 style={{ background: "rgba(16,185,129,0.06)", border: "1.5px solid rgba(16,185,129,0.28)", boxShadow: "0 0 24px rgba(16,185,129,0.08)" }}>
                 <div className="flex items-start gap-3">
@@ -492,6 +526,37 @@ export default function SessionMigrationPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Global framework modules — always carried, non-removable */}
+              <div className="rounded-xl overflow-hidden"
+                style={{ background: "rgba(16,185,129,0.03)", border: "1px solid rgba(16,185,129,0.16)" }}>
+                {GLOBAL_FRAMEWORK_MODULES.map((mod, idx) => (
+                  <div key={mod.id}
+                    className="flex items-center gap-3 px-4 py-3"
+                    style={{
+                      borderBottom: idx < GLOBAL_FRAMEWORK_MODULES.length - 1
+                        ? "1px solid rgba(255,255,255,0.05)" : "none",
+                    }}
+                    data-testid={`tile-global-${mod.id}`}>
+                    <span className="text-base w-6 text-center flex-shrink-0 opacity-70">{mod.emoji}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-white/70">{mod.label}</p>
+                      <p className="text-[10px] text-white/30 mt-0.5 leading-relaxed">{mod.note}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {mod.subIds.length > 0 && (
+                        <span className="text-[9px] text-emerald-400/50">
+                          {mod.subIds.length} config{mod.subIds.length !== 1 ? "s" : ""}
+                        </span>
+                      )}
+                      <div className="w-5 h-5 rounded-full flex items-center justify-center"
+                        style={{ background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.30)" }}>
+                        <Check className="w-3 h-3 text-emerald-400" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </section>
 
             {/* CHOOSEABLE */}
@@ -515,7 +580,7 @@ export default function SessionMigrationPage() {
                 <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl text-[10px]"
                   style={{ background: "rgba(34,211,238,0.04)", border: "1px solid rgba(34,211,238,0.10)", color: "rgba(147,197,253,0.60)" }}>
                   <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-blue-400" />
-                  <span>Only School Setup will be migrated. Select modules above to carry additional configurations into the new session.</span>
+                  <span>Only mandatory frameworks will be migrated. Select modules above to carry additional configurations into the new session.</span>
                 </div>
               )}
             </section>
@@ -575,7 +640,7 @@ export default function SessionMigrationPage() {
                 School Setup is always included ·{" "}
                 {selected.size > 0
                   ? `${selected.size} additional module${selected.size !== 1 ? "s" : ""} selected`
-                  : "No extra modules selected"}
+                  : "No optional modules selected"}
               </p>
             </div>
 

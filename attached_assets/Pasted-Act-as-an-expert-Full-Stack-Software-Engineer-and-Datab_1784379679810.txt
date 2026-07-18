@@ -1,0 +1,32 @@
+Act as an expert Full-Stack Software Engineer and Database Architect. I am building Step 2 of our "Session Migration Wizard" (Ref: 1000097465.png, 1000097466.png) for our web-based school management application. I need you to generate the code for both the frontend configuration checklist UI and the corresponding backend migration route handler.
+
+Please use the following blueprint rules to implement the logic:
+
+1. FRONTEND WIZARD INTERFACE (Step 2 Screen):
+- Replicate a premium, modern Glassmorphism-style Wizard layout matching our design tokens.
+- Display a clear list dividing modules into three distinct visual categories based on migration behavior:
+  A. AUTO-MIGRATED & GLOBAL (Label: "MANDATORY / PERMANENT FRAMEWORKS - Never Reset")
+     - School Setup (All configurations: Classes, Sections, Subjects, Exam Types, Policies - Required/Checked by default).
+     - Teacher Registry & Support Staff (Maintained globally; permissions persist).
+     - Student Registry (Explicit note: Student identities are permanent; only class assignments change).
+     - Faculty Mapping (Checked by default to copy the teacher-class assignment matrix).
+     - Assets & Inventory (Keeps all item masters and storage locations).
+     - School Calendar (Retains recurring templates and layout).
+  B. PARTIALLY REUSABLE MIGRATIONS (Checkboxes for selective data copy):
+     - Timetable Master (Only copies the Bell Structure Layout; resets the schedule grid).
+     - Approval Center (Only retains the Gallery Hub catalog framework and E-Book Library catalog).
+  C. ALWAYS START FRESH (Label: "FRESH START - Historical Operational Logs Reset")
+     - Visual grayed-out locked cards with lock icons showing these logs start completely blank in the target session:
+       Audit Logs, Visitor Log, ID Card Generator, Fees & Payments, Performance Analytics, Exam Controller (marks), Attendance Overview, Complaint Hub, and Noticeboard.
+     - Operational Approval items (Teacher/Student leaves, pending uploads, pending checkouts) must be explicitly cleared out.
+
+2. BACKEND DATABASE TRANSACTION CONTROLLER (/api/sessions/migrate):
+- Create a secure POST controller handling the dynamic rollover payload.
+- Execute a strict database transaction:
+  * Step A: Insert the target new session ID block.
+  * Step B: Automatically duplicate the structural rows for 'School Setup' and 'Faculty Mapping' into the new session.
+  * Step C: For 'Timetable Master', copy only the period/bell intervals into the new session row, completely omitting the actual day/hour schedule grid entries.
+  * Step D: For 'Approval Center', preserve catalog categories but clear all transactional pending leave/approval rows.
+  * Step E: Leave all operational transaction tables (Attendance, Grades, Invoices, Notices) completely empty, initialized fresh for the new target session ID.
+
+Please output clean, modular full-stack code (TypeScript/React for the frontend component, and Node.js/Prisma or matching backend framework controllers) implementing this precise lifecycle segmentation.
