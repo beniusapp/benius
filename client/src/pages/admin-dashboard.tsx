@@ -805,6 +805,16 @@ export default function AdminDashboard() {
     enabled: !!me?.schoolId,
   });
 
+  const { data: forwardedStudentLeaves = [] } = useQuery<unknown[]>({
+    queryKey: ["/api/student-leaves/school", me?.schoolId],
+    queryFn: async () => {
+      if (!me?.schoolId) return [];
+      const r = await sessionFetch(`/api/student-leaves/school/${me.schoolId}`);
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!me?.schoolId,
+  });
+
   const { data: galleryItems = [] } = useQuery<unknown[]>({
     queryKey: ["/api/gallery", me?.schoolId, "all"],
     queryFn: async () => {
@@ -858,14 +868,15 @@ export default function AdminDashboard() {
     setViewSessionId(selectedViewSession?.id ?? null);
   }, [selectedViewSession]);
 
-  const pendingLeavesCount   = (pendingLeaves  as { status: string }[]).filter(l => l.status === "pending").length;
-  const pendingGalleryCount  = (galleryItems   as { approved: boolean }[]).filter(g => !g.approved).length;
-  const openComplaintsCount  = (complaints     as { status: string }[]).filter(c => c.status === "open" || c.status === "in_progress").length;
-  const totalActionRequired  = pendingLeavesCount + pendingGalleryCount + pendingEbooks.length;
+  const pendingLeavesCount          = (pendingLeaves          as { status: string }[]).filter(l => l.status === "pending").length;
+  const forwardedStudentLeavesCount = (forwardedStudentLeaves as unknown[]).length;
+  const pendingGalleryCount         = (galleryItems           as { approved: boolean }[]).filter(g => !g.approved).length;
+  const openComplaintsCount         = (complaints             as { status: string }[]).filter(c => c.status === "open" || c.status === "in_progress").length;
+  const totalActionRequired         = pendingLeavesCount + forwardedStudentLeavesCount + pendingGalleryCount + pendingEbooks.length;
 
   const BADGES: Record<string, number> = {
     approvals:        pendingGalleryCount + pendingEbooks.length,
-    "leave-requests": pendingLeavesCount,
+    "leave-requests": pendingLeavesCount + forwardedStudentLeavesCount,
     complaints:       openComplaintsCount,
   };
 
