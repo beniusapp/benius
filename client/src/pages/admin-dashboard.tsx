@@ -26,6 +26,7 @@ const FacultyMapping      = lazy(() => import("./admin-modules/faculty-mapping")
 const TeacherRegistry     = lazy(() => import("./admin-modules/teacher-registry"));
 const NonTeachingStaff    = lazy(() => import("./admin-modules/non-teaching-staff"));
 const ApprovalCenter      = lazy(() => import("./admin-modules/approval-center"));
+const LeaveRequests       = lazy(() => import("./admin-modules/leave-requests"));
 const AuditLogsModule     = lazy(() => import("./admin-modules/audit-logs"));
 const VisitorLogModule    = lazy(() => import("./admin-modules/visitor-log"));
 const AttendanceOverview  = lazy(() => import("./admin-modules/attendance-overview"));
@@ -72,7 +73,8 @@ type ActiveModule =
   | "complaint-hub" | "noticeboard" | "approval-center" | "faculty-mapping"
   | "student-registry" | "analytics" | "audit-logs" | "visitor-log"
   | "id-card-gen" | "assets" | "school-calendar"
-  | "teacher-registry" | "non-teaching-staff" | "fees-manager";
+  | "teacher-registry" | "non-teaching-staff" | "fees-manager"
+  | "leave-requests";
 
 interface TileConfig {
   id: ActiveModule;
@@ -93,7 +95,8 @@ const TILES: TileConfig[] = [
   { id: "exam-controller",    label: "Exam Controller",       icon: Shield,        emoji: "🏆",  group: "Oversight",  desc: "Lock scores & generate report cards",        accentColor: "#f59e0b" },
   { id: "complaint-hub",      label: "Complaint Hub",         icon: MessageSquare, emoji: "🛡️", group: "Oversight",  desc: "All teacher complaints in one place",        accentColor: "#ef4444", badgeKey: "complaints" },
   { id: "noticeboard",        label: "Noticeboard",           icon: Bell,          emoji: "🔔",  group: "Oversight",  desc: "Post notices to classes or whole school",    accentColor: "#eab308" },
-  { id: "approval-center",    label: "Approval Center",       icon: UserCheck,     emoji: "✅",  group: "Management", desc: "Leaves, gallery, e-books — unified",         accentColor: "#10b981", badgeKey: "approvals" },
+  { id: "approval-center",    label: "Approval Center",       icon: UserCheck,     emoji: "✅",  group: "Management", desc: "Gallery & e-book media approvals",            accentColor: "#a855f7", badgeKey: "approvals" },
+  { id: "leave-requests",     label: "Leave Requests",        icon: CalendarDays,  emoji: "📋",  group: "Management", desc: "Teacher leave balances and student leave requests", accentColor: "#22d3ee", badgeKey: "leave-requests" },
   { id: "teacher-registry",   label: "Teacher Registry",      icon: BookOpen,      emoji: "📖",  group: "Management", desc: "Register & manage teaching staff",           accentColor: "#3b82f6" },
   { id: "non-teaching-staff", label: "Support Staff",         icon: UserSquare,    emoji: "👷",  group: "Management", desc: "Admin, security, accounts & more",           accentColor: "#64748b" },
   { id: "faculty-mapping",    label: "Faculty Mapping",       icon: Users,         emoji: "🗂️", group: "Management", desc: "Assign teachers to classes & sections",      accentColor: "#6366f1" },
@@ -684,6 +687,7 @@ export default function AdminDashboard() {
   const [matchedSetupSub,    setupSubParams]         = useRoute("/admin-dashboard/school-setup/:tab");
   const [matchedTimetableSub, timetableSubParams]   = useRoute("/admin-dashboard/timetable/:tab");
   const [matchedApprovalSub,  approvalSubParams]    = useRoute("/admin-dashboard/approval-center/:tab");
+  const [matchedLeaveReqSub,  leaveReqSubParams]    = useRoute("/admin-dashboard/leave-requests/:tab");
   const [matchedComplaintSub, complaintSubParams]   = useRoute("/admin-dashboard/complaint-hub/:tab");
   const [matchedAnalyticsSub, analyticsSubParams]   = useRoute("/admin-dashboard/analytics/:tab");
   const [matchedIdCardSub,    idCardSubParams]       = useRoute("/admin-dashboard/id-card-gen/:tab");
@@ -692,6 +696,7 @@ export default function AdminDashboard() {
       matchedSetupSub     ? "school-setup"
     : matchedTimetableSub ? "timetable"
     : matchedApprovalSub  ? "approval-center"
+    : matchedLeaveReqSub  ? "leave-requests"
     : matchedComplaintSub ? "complaint-hub"
     : matchedAnalyticsSub ? "analytics"
     : matchedIdCardSub    ? "id-card-gen"
@@ -859,8 +864,9 @@ export default function AdminDashboard() {
   const totalActionRequired  = pendingLeavesCount + pendingGalleryCount + pendingEbooks.length;
 
   const BADGES: Record<string, number> = {
-    approvals:  totalActionRequired,
-    complaints: openComplaintsCount,
+    approvals:        pendingGalleryCount + pendingEbooks.length,
+    "leave-requests": pendingLeavesCount,
+    complaints:       openComplaintsCount,
   };
 
   const studentCountAnimated   = useCountUp(me?.studentCount ?? 0);
@@ -934,6 +940,7 @@ export default function AdminDashboard() {
       case "teacher-registry":  return <TeacherRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} onNavigate={(mod) => goToModule(mod as ActiveModule)} allowedSubs={getSubsFor("teacher-registry")} />;
       case "non-teaching-staff":return <NonTeachingStaff schoolId={me.schoolId} allowedSubs={getSubsFor("non-teaching-staff")} />;
       case "approval-center":   return <ApprovalCenter schoolId={me.schoolId} initialSection={approvalSubParams?.tab ?? null} onNavigateSection={(sec) => { if (sec) setLocation(`/admin-dashboard/approval-center/${sec}`); else setLocation("/admin-dashboard/approval-center"); }} allowedSubs={getSubsFor("approval-center")} />;
+      case "leave-requests":    return <LeaveRequests schoolId={me.schoolId} initialSection={leaveReqSubParams?.tab ?? null} onNavigateSection={(sec) => { if (sec) setLocation(`/admin-dashboard/leave-requests/${sec}`); else setLocation("/admin-dashboard/leave-requests"); }} allowedSubs={getSubsFor("leave-requests")} />;
       case "audit-logs":        return <AuditLogsModule schoolId={me.schoolId} />;
       case "visitor-log":       return <VisitorLogModule schoolId={me.schoolId} allowedSubs={getSubsFor("visitor-log")} />;
       case "attendance":        return <AttendanceOverview schoolId={me.schoolId} onViewStudent={() => goToModule("student-registry")} />;

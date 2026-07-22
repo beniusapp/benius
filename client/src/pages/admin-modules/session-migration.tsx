@@ -48,6 +48,7 @@ const GLOBAL_DATA_ITEMS = [
 const FULL_RESET_MODULES = [
   { id: "exam-controller",        label: "Exam Controller",       emoji: "🏆", detail: "All exam marks, scores and grade entries" },
   { id: "attendance",             label: "Attendance Overview",   emoji: "📊", detail: "All attendance records — fresh date window per session" },
+  { id: "leave-requests",         label: "Leave Requests",        emoji: "📋", detail: "All teacher & student leave queues, balances and approval history" },
   { id: "complaint-hub",          label: "Complaint Hub",         emoji: "🛡️", detail: "All complaints, grievances and escalations" },
   { id: "noticeboard",            label: "Noticeboard",           emoji: "🔔", detail: "All posted notices and announcements" },
   { id: "visitor-log",            label: "Visitor Log",           emoji: "🚪", detail: "All visitor entries and check-outs" },
@@ -69,7 +70,7 @@ const PARTIAL_RESET_MODULES = [
     id: "approval-center",
     label: "Approval Center",
     emoji: "✅",
-    resets: ["Teacher Leave Requests", "Student Leave Requests"],
+    resets: ["Pending Gallery approvals", "Pending E-Book verifications"],
     retains: ["Gallery Hub catalog framework", "E-Book Library catalog framework"],
   },
 ];

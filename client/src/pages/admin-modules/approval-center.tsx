@@ -1134,7 +1134,7 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
 }
 
 // ── Sub-section type ───────────────────────────────────────────────────────────
-type ActiveSection = "teacher-leave" | "student-leave" | "gallery-hub" | "ebook" | null;
+type ActiveSection = "gallery-hub" | "ebook" | null;
 
 // ── Landing tile card ──────────────────────────────────────────────────────────
 function ApprovalTile({
@@ -1237,8 +1237,6 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
   useEffect(() => {
     setActiveSection((initialSection as ActiveSection) ?? null);
   }, [initialSection]);
-  const [selectedLeave, setSelectedLeave] = useState<any | null>(null);
-  const [adminComment, setAdminComment] = useState("");
   const [showHistory, setShowHistory] = useState(false);
 
   // E-Book Library state
@@ -1259,15 +1257,6 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
       return r.ok ? r.json() : { teacherLeaves: [], studentLeaves: [], gallery: [], ebooks: [] };
     },
     enabled: !!schoolId && showHistory,
-  });
-
-  const { data: leaveRequests = [], isLoading: leavesLoading } = useQuery<any[]>({
-    queryKey: ["/api/leave/school", schoolId],
-    queryFn: async () => {
-      const r = await fetch(`/api/leave/school/${schoolId}`, { credentials: "include" });
-      return r.ok ? r.json() : [];
-    },
-    enabled: !!schoolId,
   });
 
   const { data: pendingEbooks = [], isLoading: ebooksLoading } = useQuery<any[]>({
@@ -1326,29 +1315,6 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
     onError: (e: Error) => toast({ title: "Upload Failed", description: e.message, variant: "destructive" }),
   });
 
-  const { data: studentLeaves = [], isLoading: sleavesLoading } = useQuery<any[]>({
-    queryKey: ["/api/student-leaves/school", schoolId],
-    queryFn: async () => {
-      const r = await fetch(`/api/student-leaves/school/${schoolId}`, { credentials: "include" });
-      return r.ok ? r.json() : [];
-    },
-    enabled: !!schoolId,
-  });
-
-  const pendingLeaves          = leaveRequests.filter((l: any) => l.status === "pending");
-  const forwardedStudentLeaves = studentLeaves; // server already filters to forwarded_to_admin only
-
-  const leaveStatusMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: number; status: string }) => {
-      await apiRequest("PATCH", `/api/leave/${id}/status`, { status });
-    },
-    onSuccess: (_, vars) => {
-      toast({ title: vars.status === "approved" ? "Leave Approved" : "Leave Rejected" });
-      queryClient.invalidateQueries({ queryKey: ["/api/leave/school", schoolId] });
-    },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-
   const ebookVerifyMutation = useMutation({
     mutationFn: async ({ id, status }: { id: number; status: string }) => {
       await apiRequest("PATCH", `/api/library/books/${id}/verify`, { status });
@@ -1359,25 +1325,7 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
     },
   });
 
-  const studentLeaveApproveMutation = useMutation({
-    mutationFn: async ({ id, action, comment }: { id: number; action: "admin-approve" | "reject"; comment?: string }) => {
-      await apiRequest("PATCH", `/api/student-leaves/${id}/${action}`, { adminComment: comment || undefined });
-    },
-    onSuccess: (_, vars) => {
-      toast({
-        title: vars.action === "admin-approve"
-          ? "Student Leave Approved & Attendance Synced"
-          : "Leave Rejected",
-      });
-      queryClient.invalidateQueries({ queryKey: ["/api/student-leaves/school", schoolId] });
-    },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-
-  const isPending =
-    leaveStatusMutation.isPending ||
-    ebookVerifyMutation.isPending ||
-    studentLeaveApproveMutation.isPending;
+  const isPending = ebookVerifyMutation.isPending;
 
   const { data: allGalleryForCount = [] } = useQuery<any[]>({
     queryKey: ["/api/gallery", schoolId, "all"],
@@ -1395,120 +1343,11 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
     </div>
   );
 
-  /* ── Shared modals (rendered regardless of active section) ── */
-  const StudentLeaveModal = selectedLeave ? (
-    <Dialog open={!!selectedLeave} onOpenChange={() => { setSelectedLeave(null); setAdminComment(""); }}>
-      <DialogContent
-        className="max-w-md"
-        style={{ background: "#1A2942", border: "1px solid rgba(99,102,241,0.30)", color: "white" }}
-      >
-        <DialogHeader>
-          <DialogTitle className="text-white text-lg font-bold">Student Leave Request</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3 py-2">
-          <div className="flex items-center justify-between">
-            <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Student</span>
-            <span className="font-semibold text-white text-sm">
-              {selectedLeave.studentName}
-              <span className="ml-1.5 font-normal" style={{ color: "rgba(255,255,255,0.45)", fontSize: "0.7rem" }}>({selectedLeave.dsid})</span>
-            </span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Class</span>
-            <span className="text-white text-sm">{selectedLeave.class}-{selectedLeave.section}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Dates</span>
-            <span className="text-white text-sm">{fmtDate(selectedLeave.startDate)} – {fmtDate(selectedLeave.endDate)}</span>
-          </div>
-          {selectedLeave.category && (
-            <div className="flex items-center justify-between">
-              <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Category</span>
-              <span className="text-white text-sm">{selectedLeave.category}</span>
-            </div>
-          )}
-          <div className="flex items-start justify-between gap-4">
-            <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }} className="mt-0.5 flex-shrink-0">Reason</span>
-            <span className="text-white text-sm text-right leading-relaxed">{selectedLeave.reason}</span>
-          </div>
-          {selectedLeave.attachmentUrl && (
-            <div className="flex items-center justify-between">
-              <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Attachment</span>
-              <a href={selectedLeave.attachmentUrl} target="_blank" rel="noreferrer"
-                className="flex items-center gap-1 text-indigo-300 hover:text-indigo-100 text-sm transition-colors"
-                data-testid={`link-leave-attachment-${selectedLeave.id}`}>
-                <Paperclip className="w-3 h-3" /> View file
-              </a>
-            </div>
-          )}
-          <div className="flex items-center justify-between">
-            <span style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>Submitted</span>
-            <span className="text-white text-sm">{fmtDate(selectedLeave.createdAt)}</span>
-          </div>
-          <div className="rounded-lg overflow-hidden" style={{ border: "1px solid rgba(99,102,241,0.25)" }}>
-            <div className="flex items-center gap-2 px-3 py-2" style={{ background: "rgba(99,102,241,0.12)" }}>
-              <UserCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: "#818cf8" }} />
-              <div className="flex-1 min-w-0">
-                <p style={{ color: "rgba(255,255,255,0.50)", fontSize: "0.7rem" }}>Forwarded by Teacher</p>
-                <p className="text-white font-semibold text-sm truncate">{selectedLeave.forwardedByTeacherName ?? "—"}</p>
-              </div>
-              <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0"
-                style={{ background: "rgba(99,102,241,0.20)", color: "#818cf8" }}>
-                Awaiting Principal
-              </span>
-            </div>
-            {selectedLeave.teacherComment && (
-              <div className="px-3 py-2 flex items-start gap-2"
-                style={{ background: "rgba(99,102,241,0.06)", borderTop: "1px solid rgba(99,102,241,0.18)" }}>
-                <Paperclip className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: "#818cf8" }} />
-                <div>
-                  <p style={{ color: "rgba(255,255,255,0.45)", fontSize: "0.68rem" }} className="mb-0.5">Teacher's note to principal</p>
-                  <p className="text-sm" style={{ color: "rgba(255,255,255,0.85)" }}>{selectedLeave.teacherComment}</p>
-                </div>
-              </div>
-            )}
-          </div>
-          <div className="space-y-1.5">
-            <label style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.75rem" }}>
-              Principal Comment <span style={{ color: "rgba(255,255,255,0.30)" }}>(optional)</span>
-            </label>
-            <Textarea value={adminComment} onChange={e => setAdminComment(e.target.value)}
-              placeholder="Add a comment or note for this decision…" rows={3} className="resize-none text-sm"
-              style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.15)", color: "white" }}
-              data-testid="textarea-admin-comment" />
-          </div>
-        </div>
-        <DialogFooter className="gap-2 mt-1">
-          <Button variant="outline" onClick={() => { setSelectedLeave(null); setAdminComment(""); }}
-            className="border-white/20 text-white hover:bg-white/10" data-testid="button-close-leave-detail">
-            Close
-          </Button>
-          <button disabled={isPending}
-            onClick={() => { studentLeaveApproveMutation.mutate({ id: selectedLeave.id, action: "reject", comment: adminComment || undefined }); setSelectedLeave(null); setAdminComment(""); }}
-            className="px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
-            style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", border: "1px solid rgba(239,68,68,0.25)" }}
-            data-testid={`button-detail-reject-${selectedLeave.id}`}>
-            ✕ Reject
-          </button>
-          <button disabled={isPending}
-            onClick={() => { studentLeaveApproveMutation.mutate({ id: selectedLeave.id, action: "admin-approve", comment: adminComment || undefined }); setSelectedLeave(null); setAdminComment(""); }}
-            className="px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
-            style={{ background: "linear-gradient(135deg,#22c55e,#16a34a)", color: "white" }}
-            data-testid={`button-detail-approve-${selectedLeave.id}`}>
-            ✓ Approve + Sync
-          </button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  ) : null;
-
-  const hCanTeacherLeaves = !allowedSubs || allowedSubs.includes("teacher-leave");
-  const hCanStudentLeaves = !allowedSubs || allowedSubs.includes("student-leave");
-  const hCanGallery       = !allowedSubs || allowedSubs.includes("gallery-hub");
-  const hCanEbooks        = !allowedSubs || allowedSubs.includes("ebook");
-  const hTabCount = [hCanTeacherLeaves, hCanStudentLeaves, hCanGallery, hCanEbooks].filter(Boolean).length;
-  const hDefaultTab = hCanTeacherLeaves ? "teacher_leaves" : hCanStudentLeaves ? "student_leaves" : hCanGallery ? "gallery" : "ebooks";
-  const hGridCols = hTabCount === 1 ? "grid-cols-1" : hTabCount === 2 ? "grid-cols-2" : hTabCount === 3 ? "grid-cols-3" : "grid-cols-4";
+  const hCanGallery = !allowedSubs || allowedSubs.includes("gallery-hub");
+  const hCanEbooks  = !allowedSubs || allowedSubs.includes("ebook");
+  const hTabCount   = [hCanGallery, hCanEbooks].filter(Boolean).length;
+  const hDefaultTab = hCanGallery ? "gallery" : "ebooks";
+  const hGridCols   = hTabCount === 1 ? "grid-cols-1" : "grid-cols-2";
 
   const HistoryModal = (
     <Dialog open={showHistory} onOpenChange={setShowHistory}>
@@ -1519,23 +1358,13 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
             <History className="w-5 h-5" style={{ color: "#D4AF37" }} />
             Approval History
           </DialogTitle>
-          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.50)" }}>Admin-actioned items across your accessible categories</p>
+          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.50)" }}>Admin-actioned gallery photos and e-books</p>
         </DialogHeader>
         {historyLoading ? (
           <div className="flex items-center justify-center py-16"><Loader2 className="w-8 h-8 animate-spin" style={{ color: "#D4AF37" }} /></div>
         ) : (
           <Tabs defaultValue={hDefaultTab} className="flex-1 flex flex-col min-h-0">
             <TabsList className={`flex-shrink-0 grid ${hGridCols} w-full`} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)" }}>
-              {hCanTeacherLeaves && (
-                <TabsTrigger value="teacher_leaves" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
-                  Teacher Leaves <span className="ml-1 text-[10px] opacity-70">({historyData?.teacherLeaves?.length ?? 0})</span>
-                </TabsTrigger>
-              )}
-              {hCanStudentLeaves && (
-                <TabsTrigger value="student_leaves" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
-                  Student Leaves <span className="ml-1 text-[10px] opacity-70">({historyData?.studentLeaves?.length ?? 0})</span>
-                </TabsTrigger>
-              )}
               {hCanGallery && (
                 <TabsTrigger value="gallery" className="text-xs data-[state=active]:text-white data-[state=active]:bg-amber-600/20" style={{ color: "rgba(255,255,255,0.55)" }}>
                   Gallery <span className="ml-1 text-[10px] opacity-70">({historyData?.gallery?.length ?? 0})</span>
@@ -1547,36 +1376,6 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
                 </TabsTrigger>
               )}
             </TabsList>
-            {hCanTeacherLeaves && (
-            <TabsContent value="teacher_leaves" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
-              {!historyData?.teacherLeaves?.length ? <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No teacher leave history</div>
-                : historyData.teacherLeaves.map((l: any) => (
-                  <HistoryRow key={l.id} status={l.status}>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-semibold text-sm">{l.teacherName}</p>
-                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>{l.leaveType} · {fmtDate(l.startDate)} – {fmtDate(l.endDate)}</p>
-                      {l.reason && <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(255,255,255,0.40)" }}>{l.reason}</p>}
-                    </div>
-                    <StatusChip status={l.status} />
-                  </HistoryRow>
-                ))}
-            </TabsContent>
-            )}
-            {hCanStudentLeaves && (
-            <TabsContent value="student_leaves" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
-              {!historyData?.studentLeaves?.length ? <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No student leave history</div>
-                : historyData.studentLeaves.map((l: any) => (
-                  <HistoryRow key={l.id} status={l.status}>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-semibold text-sm">{l.studentName}</p>
-                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>{l.dsid} · Class {l.class}{l.section ? `-${l.section}` : ""} · {fmtDate(l.startDate)} – {fmtDate(l.endDate)}</p>
-                      {l.adminComment && <p className="text-xs mt-0.5 truncate italic" style={{ color: "rgba(255,255,255,0.40)" }}>Admin note: {l.adminComment}</p>}
-                    </div>
-                    <StatusChip status={l.status} />
-                  </HistoryRow>
-                ))}
-            </TabsContent>
-            )}
             {hCanGallery && (
             <TabsContent value="gallery" className="flex-1 overflow-y-auto mt-3 space-y-2 pr-1">
               {!historyData?.gallery?.length ? <div className="text-center py-10 text-sm" style={{ color: "rgba(255,255,255,0.40)" }}>No gallery approval history</div>
@@ -1622,7 +1421,7 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
           <div>
             <h2 className="text-2xl font-extrabold text-white tracking-tight">Approval Center</h2>
             <p className="text-sm mt-0.5" style={{ color: "rgba(255,255,255,0.55)" }}>
-              Select a category to review pending items
+              Gallery photos and e-book media approvals
             </p>
           </div>
           <button
@@ -1635,32 +1434,8 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
           </button>
         </div>
 
-        {/* 4 tiles */}
+        {/* 2 tiles */}
         <div className="grid grid-cols-2 gap-4">
-          {(!allowedSubs || allowedSubs.includes("teacher-leave")) && (
-          <ApprovalTile
-            title="Teacher Leave"
-            subtitle="Review and approve teacher leave requests. Syncs with leave balance."
-            icon={UserCheck}
-            gradient="linear-gradient(135deg, #0ea5e9, #06b6d4)"
-            glow="rgba(14,165,233,0.18)"
-            badge={pendingLeaves.length}
-            badgeColor="linear-gradient(135deg,#0ea5e9,#06b6d4)"
-            onClick={() => { setActiveSection("teacher-leave"); onNavigateSection?.("teacher-leave"); }}
-          />
-          )}
-          {(!allowedSubs || allowedSubs.includes("student-leave")) && (
-          <ApprovalTile
-            title="Student Leave"
-            subtitle="Admin decisions on student leaves forwarded by teachers."
-            icon={Users}
-            gradient="linear-gradient(135deg, #818cf8, #6366f1)"
-            glow="rgba(99,102,241,0.18)"
-            badge={forwardedStudentLeaves.length}
-            badgeColor="linear-gradient(135deg,#818cf8,#6366f1)"
-            onClick={() => { setActiveSection("student-leave"); onNavigateSection?.("student-leave"); }}
-          />
-          )}
           {(!allowedSubs || allowedSubs.includes("gallery-hub")) && (
           <ApprovalTile
             title="Gallery Hub"
@@ -1695,104 +1470,6 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
   /* ── SUB-SECTION VIEWS ── */
   return (
     <div className="space-y-4">
-      {/* ── Teacher Leave ── */}
-      {activeSection === "teacher-leave" && (
-        <>
-          <SectionHeader
-            title="Teacher Leave Requests"
-            icon={UserCheck}
-            gradient="linear-gradient(135deg,#0ea5e9,#06b6d4)"
-            glow="rgba(14,165,233,0.25)"
-            onBack={() => { setActiveSection(null); onNavigateSection?.(null); }}
-            badge={pendingLeaves.length}
-          />
-          <Section title="Teacher Leave Requests" icon={UserCheck} badge={pendingLeaves.length} variant="teacher">
-        {leavesLoading ? <Spinner /> :
-          pendingLeaves.length === 0
-            ? <EmptyState label="No pending teacher leave requests" variant="teacher" />
-            : (
-              <div className="space-y-2">
-                {pendingLeaves.map((l: any) => (
-                  <ItemRow key={l.id} testId={`card-leave-${l.id}`}>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-semibold text-sm">{l.teacherName}</p>
-                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
-                        {l.leaveType} · {fmtDate(l.startDate)} – {fmtDate(l.endDate)}
-                      </p>
-                      <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(255,255,255,0.45)" }}>
-                        {l.reason}
-                      </p>
-                    </div>
-                    <ActionButtons
-                      disabled={isPending}
-                      onApprove={() => leaveStatusMutation.mutate({ id: l.id, status: "approved" })}
-                      onReject={() => leaveStatusMutation.mutate({ id: l.id, status: "rejected" })}
-                      approveTestId={`button-approve-leave-${l.id}`}
-                      rejectTestId={`button-reject-leave-${l.id}`}
-                    />
-                  </ItemRow>
-                ))}
-              </div>
-            )
-        }
-          </Section>
-        </>
-      )}
-
-      {/* ── Student Leave ── */}
-      {activeSection === "student-leave" && (
-        <>
-          <SectionHeader
-            title="Student Leave Requests"
-            icon={Users}
-            gradient="linear-gradient(135deg,#818cf8,#6366f1)"
-            glow="rgba(99,102,241,0.25)"
-            onBack={() => { setActiveSection(null); onNavigateSection?.(null); }}
-            badge={forwardedStudentLeaves.length}
-          />
-          <Section title="Student Leave Requests (Forwarded by Teacher)" icon={Users} badge={forwardedStudentLeaves.length} variant="student">
-            {sleavesLoading ? <Spinner /> :
-              forwardedStudentLeaves.length === 0
-                ? <EmptyState label="No student leave requests forwarded" variant="student" />
-                : (
-                  <div className="space-y-2">
-                    {forwardedStudentLeaves.map((l: any) => (
-                      <ItemRow key={l.id} testId={`card-student-leave-${l.id}`}>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-white font-semibold text-sm">
-                            {l.studentName}{" "}
-                            <span className="font-normal text-xs" style={{ color: "rgba(255,255,255,0.40)" }}>({l.dsid})</span>
-                          </p>
-                          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
-                            Class {l.class}-{l.section} · {fmtDate(l.startDate)} – {fmtDate(l.endDate)}
-                          </p>
-                          <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(255,255,255,0.45)" }}>{l.reason}</p>
-                        </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <button onClick={() => setSelectedLeave(l)}
-                            className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors"
-                            style={{ background: "rgba(99,102,241,0.15)", color: "#818cf8" }}
-                            data-testid={`button-view-student-leave-${l.id}`} title="View details">
-                            <Eye className="w-4 h-4" />
-                          </button>
-                          <ActionButtons
-                            disabled={isPending}
-                            onApprove={() => studentLeaveApproveMutation.mutate({ id: l.id, action: "admin-approve", comment: undefined })}
-                            onReject={() => studentLeaveApproveMutation.mutate({ id: l.id, action: "reject", comment: undefined })}
-                            approveLabel="Approve + Sync"
-                            approveTestId={`button-approve-student-leave-${l.id}`}
-                            rejectTestId={`button-reject-student-leave-${l.id}`}
-                          />
-                        </div>
-                      </ItemRow>
-                    ))}
-                  </div>
-                )
-            }
-          </Section>
-        </>
-      )}
-
       {/* ── Gallery Hub ── */}
       {activeSection === "gallery-hub" && (
         <>

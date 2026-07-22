@@ -69,6 +69,7 @@ function Router() {
         <Route path="/admin-dashboard/school-setup/:tab" component={AdminDashboard} />
         <Route path="/admin-dashboard/timetable/:tab" component={AdminDashboard} />
         <Route path="/admin-dashboard/approval-center/:tab" component={AdminDashboard} />
+        <Route path="/admin-dashboard/leave-requests/:tab" component={AdminDashboard} />
         <Route path="/admin-dashboard/complaint-hub/:tab" component={AdminDashboard} />
         <Route path="/admin-dashboard/analytics/:tab" component={AdminDashboard} />
         <Route path="/admin-dashboard/id-card-gen/:tab" component={AdminDashboard} />

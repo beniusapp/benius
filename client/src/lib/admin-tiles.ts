@@ -7,6 +7,7 @@ export const ADMIN_TILE_DEFS: { id: string; label: string; emoji: string }[] = [
   { id: "complaint-hub",      label: "Complaint Hub",         emoji: "🛡️" },
   { id: "noticeboard",        label: "Noticeboard",           emoji: "🔔" },
   { id: "approval-center",    label: "Approval Center",       emoji: "✅" },
+  { id: "leave-requests",     label: "Leave Requests",        emoji: "📋" },
   { id: "teacher-registry",   label: "Teacher Registry",      emoji: "📖" },
   { id: "non-teaching-staff", label: "Support Staff",         emoji: "👷" },
   { id: "faculty-mapping",    label: "Faculty Mapping",       emoji: "🗂️" },
@@ -87,12 +88,18 @@ export const MODULE_SUB_MODULES: Record<string, { id: string; label: string }[]>
   ],
 
   // ── Approval Center ────────────────────────────────────────────────────────
-  // Tabs: teacher_leaves | student_leaves | gallery | ebooks  (approval-center.tsx)
+  // Sections: gallery-hub | ebook  (approval-center.tsx)
   "approval-center": [
-    { id: "teacher-leave", label: "Teacher Leave Requests" },
-    { id: "student-leave", label: "Student Leave Requests (forwarded by teacher)" },
-    { id: "gallery-hub",   label: "Gallery Hub Approvals" },
-    { id: "ebook",         label: "E-Book Verification" },
+    { id: "gallery-hub", label: "Gallery Hub Approvals" },
+    { id: "ebook",       label: "E-Book Verification" },
+  ],
+
+  // ── Leave Requests ─────────────────────────────────────────────────────────
+  // Sections: teacher-leave | student-leave | leave-history  (leave-requests.tsx)
+  "leave-requests": [
+    { id: "teacher-leave",  label: "Teacher Leave Requests" },
+    { id: "student-leave",  label: "Student Leave Requests (forwarded by teacher)" },
+    { id: "leave-history",  label: "Leave Approval History" },
   ],
 
   // ── Teacher Registry ───────────────────────────────────────────────────────
