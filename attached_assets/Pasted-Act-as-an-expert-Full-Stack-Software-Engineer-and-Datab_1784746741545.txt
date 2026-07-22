@@ -1,0 +1,57 @@
+Act as an expert Full-Stack Software Engineer and Database Architect. Refactor our 3-Step "Session Migration Wizard" flow (Ref: 1000098606.png, 1000098607.png, 1000098608.png, 1000098609.png, 1000098610.png) based on this explicit Global vs. Session data logic:
+
+---
+
+### 1. PAGE 1: SESSION DETAILS INPUT
+- Screen collects Target Session Name, Start Date, End Date, and baseline source session selection.
+- Clicking "Next" transitions the user directly to Page 2.
+
+---
+
+### 2. PAGE 2: SESSION-BASED RESET CONFIGURATION
+This screen MUST explicitly show only the session-based modules that WILL RESET for the new session.
+
+A. FULL MODULE RESETS (Reset completely for the new session):
+- Exam Controller
+- Attendance Overview
+- Complaint Hub
+- Notice Board
+- Visitor Log
+- Audit Log
+- ID Card Generator
+- Fees & Payments
+- Performance Analytics
+
+B. PARTIAL MODULE RESETS (Specific sub-components reset; foundational frameworks stay):
+- Timetable Master: Resets ONLY the Schedule Grid and Publish Status. (Bell Structure layout remains).
+- Approval Center: Resets ONLY Teacher Leave Requests and Student Leave Requests. (Gallery Hub catalog and E-Book Library frameworks remain).
+
+C. EXPLICIT RULE FOR GLOBAL DATA:
+- All other modules are GLOBAL DATA. Global data NEVER resets under any circumstances, even if 10,000 sessions are created.
+- Display a clear action button at the bottom: [ Create New Session ].
+
+---
+
+### 3. PAGE 3: SUMMARY & PROMOTION HANDOFF
+Upon clicking "Create New Session", create the database record and display Page 3 with a clear summary:
+
+A. GLOBAL DATA SUMMARY SECTION:
+- Display a dedicated badge/list explicitly labeled: "GLOBAL DATA - NOT RESET (Session-Independent Frameworks)".
+- List all preserved global modules (School Setup, Teacher Registry & Support Staff, Student Registry identities, Faculty Mapping matrices, Assets & Inventory, School Calendar, Timetable Bell Structure, and Approval Center Catalogs).
+- Explicitly explain: "These modules never reset because they represent permanent global school structures."
+
+B. SESSION DATA SUMMARY SECTION:
+- Display a dedicated badge/list explicitly labeled: "SESSION DATA - RESET (Fresh Start Operational Logs)".
+- List the 9 full-reset modules and 2 partial-reset sub-modules cleared for the new session ID.
+
+C. ACTION BUTTON:
+- Display a primary call-to-action button: [ Proceed to Promote Students ].
+- Clicking this redirects the admin directly to the Student Promotion Wizard flow.
+
+---
+
+### 4. BACKEND CONTROLLER & DATABASE LOGIC (/api/sessions/create-and-migrate)
+- Create a multi-tenant backend transaction route that:
+  1. Creates the new Academic Session row.
+  2. Retains references to all Global Data tables without modifying or resetting them.
+  3. Clears out and initializes fresh, empty operational log records (Attendance, Exam Marks, Invoices, Complaints, Visitor/Audit logs, Timetable grids, and Leave queues) tied exclusively to the new Session ID.
