@@ -46,6 +46,7 @@ const GLOBAL_DATA_ITEMS = [
 ];
 
 const FULL_RESET_MODULES = [
+  { id: "timetable-master",       label: "Timetable Master",      emoji: "📅", detail: "All schedule grid assignments and published timetables — bell structure stays as global data" },
   { id: "exam-controller",        label: "Exam Controller",       emoji: "🏆", detail: "All exam marks, scores and grade entries" },
   { id: "attendance",             label: "Attendance Overview",   emoji: "📊", detail: "All attendance records — fresh date window per session" },
   { id: "leave-requests",         label: "Leave Requests",        emoji: "📋", detail: "All teacher & student leave queues, balances and approval history" },
@@ -56,23 +57,6 @@ const FULL_RESET_MODULES = [
   { id: "id-card-gen",            label: "ID Card Generator",     emoji: "💳", detail: "All generated ID card records" },
   { id: "fees-payments",          label: "Fees & Payments",       emoji: "💰", detail: "All fee records, invoices and payments" },
   { id: "performance-analytics",  label: "Performance Analytics", emoji: "📈", detail: "All analytics data and report cards" },
-];
-
-const PARTIAL_RESET_MODULES = [
-  {
-    id: "timetable-master",
-    label: "Timetable Master",
-    emoji: "📅",
-    resets: ["Schedule Grid (day/hour assignments)", "Publish Status"],
-    retains: ["Bell Structure layout (period intervals & breaks)"],
-  },
-  {
-    id: "approval-center",
-    label: "Approval Center",
-    emoji: "✅",
-    resets: ["Pending Gallery approvals", "Pending E-Book verifications"],
-    retains: ["Gallery Hub catalog framework", "E-Book Library catalog framework"],
-  },
 ];
 
 // ── Step Bar ──────────────────────────────────────────────────────────────────
@@ -297,59 +281,7 @@ export default function SessionMigrationPage() {
               </div>
             </section>
 
-            {/* ── B. PARTIAL MODULE RESETS ──────────────────────────────── */}
-            <section className="space-y-3">
-              <div className="flex items-center gap-2">
-                <div className="w-1.5 h-5 rounded-full" style={{ background: "linear-gradient(180deg,#f59e0b,#fcd34d)" }} />
-                <h3 className="text-[11px] font-black tracking-widest uppercase text-amber-400/80">Partial Module Resets</h3>
-                <span className="text-[10px] text-white/25">Specific sub-components reset; frameworks stay</span>
-              </div>
-              <div className="space-y-3">
-                {PARTIAL_RESET_MODULES.map(mod => (
-                  <div key={mod.id} className="rounded-xl overflow-hidden"
-                    style={{ background: "rgba(245,158,11,0.04)", border: "1px solid rgba(245,158,11,0.20)" }}>
-                    {/* Module name header */}
-                    <div className="flex items-center gap-2.5 px-4 py-2.5"
-                      style={{ background: "rgba(245,158,11,0.07)", borderBottom: "1px solid rgba(245,158,11,0.14)" }}>
-                      <span className="text-sm opacity-70">{mod.emoji}</span>
-                      <p className="text-xs font-black text-amber-300/80 flex-1">{mod.label}</p>
-                    </div>
-                    <div className="px-4 py-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {/* What resets */}
-                      <div>
-                        <p className="text-[9px] font-black tracking-widest uppercase text-red-400/60 mb-1.5">
-                          🔄 Resets
-                        </p>
-                        <div className="space-y-1">
-                          {mod.resets.map(r => (
-                            <div key={r} className="flex items-center gap-1.5">
-                              <div className="w-1 h-1 rounded-full bg-red-400/40 flex-shrink-0" />
-                              <span className="text-[10px] text-white/45">{r}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      {/* What stays */}
-                      <div>
-                        <p className="text-[9px] font-black tracking-widest uppercase text-emerald-400/60 mb-1.5">
-                          ✓ Stays (Global)
-                        </p>
-                        <div className="space-y-1">
-                          {mod.retains.map(r => (
-                            <div key={r} className="flex items-center gap-1.5">
-                              <div className="w-1 h-1 rounded-full bg-emerald-400/40 flex-shrink-0" />
-                              <span className="text-[10px] text-white/50">{r}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            {/* ── C. GLOBAL DATA — NEVER RESETS ──────────────────────────── */}
+            {/* ── B. GLOBAL DATA — NEVER RESETS ──────────────────────────── */}
             <section className="space-y-3">
               <div className="flex items-center gap-2">
                 <div className="w-1.5 h-5 rounded-full" style={{ background: "linear-gradient(180deg,#10b981,#34d399)" }} />
@@ -528,73 +460,26 @@ export default function SessionMigrationPage() {
               </div>
               <span className="text-[9px] font-bold px-2 py-0.5 rounded-full"
                 style={{ background: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.22)" }}>
-                {FULL_RESET_MODULES.length} full + 2 partial
+                {FULL_RESET_MODULES.length} modules
               </span>
             </div>
 
-            {/* Full resets */}
-            <div>
-              <p className="text-[9px] font-black tracking-widest uppercase px-1 mb-2"
-                style={{ color: "rgba(239,68,68,0.50)" }}>
-                Full Resets — {FULL_RESET_MODULES.length} modules
-              </p>
-              <div className="rounded-xl overflow-hidden"
-                style={{ border: "1px solid rgba(239,68,68,0.16)" }}>
-                {FULL_RESET_MODULES.map((mod, idx) => (
-                  <div key={mod.id} className="flex items-center gap-3 px-4 py-2.5"
-                    style={{ borderBottom: idx < FULL_RESET_MODULES.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
-                    <span className="text-sm opacity-40 w-5 text-center flex-shrink-0">{mod.emoji}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-white/45">{mod.label}</p>
-                      <p className="text-[10px] text-white/22 mt-0.5">{mod.detail}</p>
-                    </div>
-                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0"
-                      style={{ background: "rgba(239,68,68,0.08)", color: "rgba(248,113,113,0.60)", border: "1px solid rgba(239,68,68,0.16)" }}>
-                      Fresh Start
-                    </span>
+            <div className="rounded-xl overflow-hidden"
+              style={{ border: "1px solid rgba(239,68,68,0.16)" }}>
+              {FULL_RESET_MODULES.map((mod, idx) => (
+                <div key={mod.id} className="flex items-center gap-3 px-4 py-2.5"
+                  style={{ borderBottom: idx < FULL_RESET_MODULES.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                  <span className="text-sm opacity-40 w-5 text-center flex-shrink-0">{mod.emoji}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-white/45">{mod.label}</p>
+                    <p className="text-[10px] text-white/22 mt-0.5">{mod.detail}</p>
                   </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Partial resets */}
-            <div>
-              <p className="text-[9px] font-black tracking-widest uppercase px-1 mb-2"
-                style={{ color: "rgba(245,158,11,0.50)" }}>
-                Partial Resets — 2 modules
-              </p>
-              <div className="space-y-2">
-                {PARTIAL_RESET_MODULES.map(mod => (
-                  <div key={mod.id} className="rounded-xl overflow-hidden"
-                    style={{ border: "1px solid rgba(245,158,11,0.20)" }}>
-                    <div className="flex items-center gap-2.5 px-4 py-2.5"
-                      style={{ background: "rgba(245,158,11,0.06)", borderBottom: "1px solid rgba(245,158,11,0.12)" }}>
-                      <span className="text-sm opacity-60">{mod.emoji}</span>
-                      <p className="text-xs font-bold text-amber-300/70 flex-1">{mod.label}</p>
-                    </div>
-                    <div className="px-4 py-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <p className="text-[9px] font-black tracking-widest uppercase text-red-400/50 mb-1.5">Cleared for new session</p>
-                        {mod.resets.map(r => (
-                          <div key={r} className="flex items-center gap-1.5 mb-1">
-                            <div className="w-1 h-1 rounded-full bg-red-400/35 flex-shrink-0" />
-                            <span className="text-[10px] text-white/35">{r}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div>
-                        <p className="text-[9px] font-black tracking-widest uppercase text-emerald-400/50 mb-1.5">Retained (global)</p>
-                        {mod.retains.map(r => (
-                          <div key={r} className="flex items-center gap-1.5 mb-1">
-                            <div className="w-1 h-1 rounded-full bg-emerald-400/35 flex-shrink-0" />
-                            <span className="text-[10px] text-white/40">{r}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0"
+                    style={{ background: "rgba(239,68,68,0.08)", color: "rgba(248,113,113,0.60)", border: "1px solid rgba(239,68,68,0.16)" }}>
+                    Fresh Start
+                  </span>
+                </div>
+              ))}
             </div>
           </section>
 
