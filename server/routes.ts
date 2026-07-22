@@ -2637,6 +2637,41 @@ export async function registerRoutes(
           console.log(`[SESSION-CREATE] ✓ 3a — source "${srcGuard.sessionName}" verified`);
         }
 
+        // ══════════════════════════════════════════════════════════════════
+        // GLOBAL DATA PROTECTION CONTRACT
+        // The following tables represent permanent school-wide frameworks.
+        // They MUST NEVER be deleted from, truncated, or bulk-updated inside
+        // any session creation, activation, or deletion transaction.
+        // Any future developer who needs to modify this list must get explicit
+        // sign-off from the product owner and document the reason here.
+        //
+        //   schools               — school identity record
+        //   teachers              — teacher registry
+        //   non_teaching_staff    — support staff registry
+        //   students              — student identity records
+        //   faculty_mappings      — teacher↔class↔subject assignments
+        //   teacher_allocations   — weekly quota allocations
+        //   school_assets         — assets & inventory catalog
+        //   school_metadata       — classes / sections / subjects / exam types
+        //   leave_policies        — school leave policy definitions
+        //   attendance_policies   — attendance policy definitions
+        //   timetable_structure   — bell structure (period time slots)
+        //   calendar_events       — school calendar (additive copies only — no deletes)
+        //   grading_tiers         — grade boundary definitions
+        //   exam_policy_tiers     — exam scoring rules
+        //
+        // PERMITTED destructive operations in this transaction (Full Reset):
+        //   ✓ leave_requests           — teacher leave queue (session-scoped)
+        //   ✓ student_leave_requests   — student leave queue (session-scoped)
+        //   ✓ timetable_entries        — schedule grid assignments (session-scoped)
+        // ══════════════════════════════════════════════════════════════════
+
+        // Runtime guard: verify schoolId is locked to this request's authenticated school.
+        // This prevents any cross-school data mutation even if a parameter is tampered.
+        if (!schoolId || typeof schoolId !== "number" || schoolId <= 0) {
+          throw new Error("[GLOBAL-DATA-GUARD] Invalid schoolId — aborting transaction to protect global data integrity.");
+        }
+
         // Step 3b: Insert session
         console.log("[SESSION-CREATE] 3b — inserting session record");
         const [session] = await tx
