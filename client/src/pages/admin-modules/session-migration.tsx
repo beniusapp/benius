@@ -470,8 +470,8 @@ export default function SessionMigrationPage() {
                   style={{ borderBottom: idx < FULL_RESET_MODULES.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
                   <span className="text-sm opacity-40 w-5 text-center flex-shrink-0">{mod.emoji}</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold text-white/45">{mod.label}</p>
-                    <p className="text-[10px] text-white/22 mt-0.5">{mod.detail}</p>
+                    <p className="text-xs font-semibold text-white/80">{mod.label}</p>
+                    <p className="text-[10px] text-white/55 mt-0.5">{mod.detail}</p>
                   </div>
                   <span className="text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0"
                     style={{ background: "rgba(239,68,68,0.08)", color: "rgba(248,113,113,0.60)", border: "1px solid rgba(239,68,68,0.16)" }}>
