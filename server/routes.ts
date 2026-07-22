@@ -8,6 +8,7 @@ import {
   schoolMetadata, timetableStructure, timetableEntries, calendarEvents,
   teacherAllocations, leavePolicies, examPolicyTiers, schoolAssets,
   auditLogs, academicSessions, gradingTiers, promotionDecisions,
+  leaveRequests, studentLeaveRequests,
 } from "@shared/schema";
 import { resolvePolicy, isLateCheckIn, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 import bcrypt from "bcryptjs";
@@ -2655,6 +2656,16 @@ export async function registerRoutes(
           .returning();
         executionLog.push(`STEP 3b ✓ — Session record created (ID #${session.id})`);
         console.log(`[SESSION-CREATE] ✓ 3b — session #${session.id} inserted`);
+
+        // Step 3b-reset: Clear session-bound operational data for the school
+        console.log("[SESSION-CREATE] 3b-reset — clearing leave requests and timetable entries");
+        const [delLeaves, delStudentLeaves, delTimetable] = await Promise.all([
+          tx.delete(leaveRequests).where(eq(leaveRequests.schoolId, schoolId)).returning({ id: leaveRequests.id }),
+          tx.delete(studentLeaveRequests).where(eq(studentLeaveRequests.schoolId, schoolId)).returning({ id: studentLeaveRequests.id }),
+          tx.delete(timetableEntries).where(eq(timetableEntries.schoolId, schoolId)).returning({ id: timetableEntries.id }),
+        ]);
+        executionLog.push(`STEP 3b-reset ✓ — Cleared ${delLeaves.length} teacher leave(s), ${delStudentLeaves.length} student leave(s), ${delTimetable.length} timetable entry/entries`);
+        console.log(`[SESSION-CREATE] ✓ 3b-reset — ${delLeaves.length} teacher leaves, ${delStudentLeaves.length} student leaves, ${delTimetable.length} timetable entries deleted`);
 
         // Step 3c: Activate if requested
         if (setAsActive) {
