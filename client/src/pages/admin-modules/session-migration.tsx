@@ -41,12 +41,11 @@ const GLOBAL_DATA_ITEMS = [
   { id: "faculty-mapping",    label: "Faculty Mapping Matrices",           emoji: "🗂️",  detail: "Teacher–class–subject assignment matrix" },
   { id: "assets-inventory",   label: "Assets & Inventory",                 emoji: "📦",  detail: "Asset masters, categories and storage locations" },
   { id: "school-calendar",    label: "School Calendar",                    emoji: "🗓️",  detail: "Calendar is always available — historical events stay in their session" },
-  { id: "bell-structure",     label: "Timetable Bell Structure",           emoji: "🕐",  detail: "Period intervals and break layout — never reset" },
   { id: "approval-catalogs",  label: "Approval Center Catalogs",           emoji: "✅",  detail: "Gallery Hub catalog & E-Book Library catalog framework" },
 ];
 
 const FULL_RESET_MODULES = [
-  { id: "timetable-master",       label: "Timetable Master",      emoji: "📅", detail: "All schedule grid assignments and published timetables — bell structure stays as global data" },
+  { id: "timetable-master",       label: "Timetable Master",      emoji: "📅", detail: "All schedule grid assignments and published timetables" },
   { id: "exam-controller",        label: "Exam Controller",       emoji: "🏆", detail: "All exam marks, scores and grade entries" },
   { id: "attendance",             label: "Attendance Overview",   emoji: "📊", detail: "All attendance records — fresh date window per session" },
   { id: "leave-requests",         label: "Leave Requests",        emoji: "📋", detail: "All teacher & student leave queues, balances and approval history" },
