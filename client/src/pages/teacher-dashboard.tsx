@@ -418,7 +418,7 @@ export default function TeacherDashboard() {
           </div>
 
           {/* Centre: Session look-back picker (only when sessions exist) */}
-          {allSessions.length > 1 && (
+          {allSessions.length > 0 && (
             <div className="flex-1 flex justify-center" ref={sessionDropdownRef}>
               <div className="relative">
                 <button
