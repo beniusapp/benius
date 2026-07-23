@@ -103,8 +103,8 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
 
   /* ── subject dialog (multi-select) ─── */
   const [pendingCells,    setPendingCells]    = useState<{ cls: string; section: string }[] | null>(null);
-  const [pendingSubjects, setPendingSubjects] = useState<Set<string>>(new Set());
-  const [customInput,     setCustomInput]     = useState("");
+  const [pendingSubjects,  setPendingSubjects]  = useState<Set<string>>(new Set());
+  const [subjectSearchQ,   setSubjectSearchQ]   = useState("");
 
   /* ── bottom-table view ─── */
   const [summaryFilter, setSummaryFilter] = useState<"all"|"mapped"|"unmapped">("all");
@@ -233,13 +233,6 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
     });
   }, []);
 
-  const addCustomSubject = useCallback(() => {
-    const trimmed = customInput.trim();
-    if (!trimmed) return;
-    setPendingSubjects(prev => new Set([...prev, trimmed]));
-    setCustomInput("");
-  }, [customInput]);
-
   const confirmSubjectDialog = useCallback(() => {
     if (!pendingCells) return;
     const subjectStr = Array.from(pendingSubjects).join(", ");
@@ -259,13 +252,13 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
     });
     setPendingCells(null);
     setPendingSubjects(new Set());
-    setCustomInput("");
+    setSubjectSearchQ("");
   }, [pendingCells, pendingSubjects]);
 
   const cancelSubjectDialog = useCallback(() => {
     setPendingCells(null);
     setPendingSubjects(new Set());
-    setCustomInput("");
+    setSubjectSearchQ("");
   }, []);
 
   /* ── cell / row / col toggles ─────────────────────────────── */
@@ -468,61 +461,75 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
           )}
 
           <div className="space-y-3">
-            {/* preset subject grid — multi-toggle */}
-            {cfgSubjects.length > 0 && (
-              <div className="grid grid-cols-2 gap-1.5 max-h-44 overflow-y-auto [scrollbar-width:thin] [scrollbar-color:#D4AF37_transparent]">
-                {cfgSubjects.map(s => {
-                  const isChosen = pendingSubjects.has(s);
-                  return (
-                    <button
-                      key={s}
-                      onClick={() => togglePendingSubject(s)}
-                      data-testid={`subject-option-${s}`}
-                      className={`
-                        text-xs px-2.5 py-2 rounded-xl border transition-all text-left
-                        flex items-center justify-between gap-1
-                        ${isChosen
-                          ? "bg-[#D4AF37]/20 border-[#D4AF37]/60 text-[#D4AF37] font-semibold"
-                          : "bg-white/5 border-white/10 text-white/70 hover:bg-white/10 hover:border-white/25"
-                        }
-                      `}
-                    >
-                      <span>{s}</span>
-                      {isChosen && (
-                        <span className="w-4 h-4 rounded-full bg-[#D4AF37] flex items-center justify-center flex-shrink-0">
-                          <svg viewBox="0 0 10 8" className="w-2.5 h-2 fill-[#0A1628]">
-                            <path d="M1 4l2.5 2.5L9 1" stroke="#0A1628" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* custom subject input */}
-            <div className="flex gap-2">
+            {/* subject search filter */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30 pointer-events-none" />
               <Input
-                value={customInput}
-                onChange={e => setCustomInput(e.target.value)}
-                placeholder="Type a custom subject…"
-                className="flex-1 bg-white/5 border-white/15 text-white placeholder:text-white/30 text-sm h-9 rounded-xl focus:border-[#D4AF37]/50"
+                value={subjectSearchQ}
+                onChange={e => setSubjectSearchQ(e.target.value)}
+                placeholder="Search subjects…"
+                className="pl-9 bg-white/5 border-white/15 text-white placeholder:text-white/30 text-sm h-9 rounded-xl focus:border-[#D4AF37]/50"
                 data-testid="input-pending-subject"
-                onKeyDown={e => {
-                  if (e.key === "Enter") { e.preventDefault(); addCustomSubject(); }
-                  if (e.key === "Escape") cancelSubjectDialog();
-                }}
-                autoFocus={cfgSubjects.length === 0}
+                onKeyDown={e => { if (e.key === "Escape") cancelSubjectDialog(); }}
+                autoFocus
               />
-              <button
-                onClick={addCustomSubject}
-                disabled={!customInput.trim()}
-                className="h-9 px-3 rounded-xl text-xs font-semibold bg-white/8 border border-white/15 text-white/60 hover:bg-white/12 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all whitespace-nowrap"
-              >
-                + Add
-              </button>
+              {subjectSearchQ && (
+                <button
+                  onClick={() => setSubjectSearchQ("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
             </div>
+
+            {/* subject grid — filtered, multi-toggle */}
+            {cfgSubjects.length > 0 ? (
+              (() => {
+                const filtered = cfgSubjects.filter(s =>
+                  s.toLowerCase().includes(subjectSearchQ.toLowerCase())
+                );
+                return filtered.length > 0 ? (
+                  <div className="grid grid-cols-2 gap-1.5 max-h-44 overflow-y-auto [scrollbar-width:thin] [scrollbar-color:#D4AF37_transparent]">
+                    {filtered.map(s => {
+                      const isChosen = pendingSubjects.has(s);
+                      return (
+                        <button
+                          key={s}
+                          onClick={() => togglePendingSubject(s)}
+                          data-testid={`subject-option-${s}`}
+                          className={`
+                            text-xs px-2.5 py-2 rounded-xl border transition-all text-left
+                            flex items-center justify-between gap-1
+                            ${isChosen
+                              ? "bg-[#D4AF37]/20 border-[#D4AF37]/60 text-[#D4AF37] font-semibold"
+                              : "bg-white/5 border-white/10 text-white/70 hover:bg-white/10 hover:border-white/25"
+                            }
+                          `}
+                        >
+                          <span>{s}</span>
+                          {isChosen && (
+                            <span className="w-4 h-4 rounded-full bg-[#D4AF37] flex items-center justify-center flex-shrink-0">
+                              <svg viewBox="0 0 10 8" className="w-2.5 h-2">
+                                <path d="M1 4l2.5 2.5L9 1" stroke="#0A1628" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                              </svg>
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-center text-white/30 text-xs py-3">
+                    No subjects match "<span className="text-white/50">{subjectSearchQ}</span>"
+                  </p>
+                );
+              })()
+            ) : (
+              <p className="text-center text-white/20 text-xs py-3">
+                No subjects configured. Ask your admin to add subjects in School Setup.
+              </p>
+            )}
           </div>
 
           <DialogFooter className="gap-2 mt-1">
