@@ -1,0 +1,46 @@
+Act as an expert UI/UX Designer and Lead Full-Stack Developer inspired by modern platforms like Duolingo and BYJU'S. Redesign and refactor our 'Faculty Mapping' view (Ref: 1000098787.png) into an interactive, high-energy, Glassmorphism-style command center.
+
+Please implement the following visual and functional architectural updates:
+
+---
+
+### 1. TOP METRICS & FILTER BAR
+- Re-layout the top action row into a unified search and filter hub:
+  * Global Search Bar: "Search faculty by name, subject, or class..."
+  * Filter Dropdown (Mapping Status): Filter by [ All Faculty | Mapped Only | Unmapped / Unassigned ]
+  * Filter Dropdown (Subject): Filter faculty who teach specific subjects (e.g., Math, Physics, Computer Science).
+  * Filter Dropdown (Class/Section): Filter by specific target classes (e.g., Class 7-A, Class 10-C).
+- Add 2 quick-status summary KPI badges at the top right:
+  * 🟢 Mapped: X Teachers
+  * 🔴 Unmapped: Y Teachers
+
+---
+
+### 2. MODERN SPLIT-PANEL LAYOUT (GLASSMORPHISM CARDS)
+
+Transform the layout into a clean, scannable two-column responsive grid:
+
+A. LEFT PANEL: FACULTY CARDS DIRECTORY
+- Upgrade the teacher list into sleek, interactive cards with micro-interactions and subtle glow/border effects on hover/active states.
+- Each teacher card must visually display:
+  * Teacher Avatar + Full Name + Primary Subjects taught.
+  * Explicit Mapping Badge: 
+    - 🟢 Green "Mapped" badge (showing count of assigned classes, e.g., "3 Classes").
+    - 🔴 Red "Unmapped" badge if 0 classes are assigned.
+- Selecting a teacher highlights their card and dynamically populates the Right Panel grid.
+
+B. RIGHT PANEL: INTERACTIVE CLASS & SUBJECT ASSIGNMENT MATRIX
+- When a teacher is selected:
+  * Display a structured visual grid layout grouped cleanly by Class & Section cards.
+  * Inside each class section, show subject pill tags (e.g., [ Math ], [ Physics ], [ Computer ]).
+  * Allow 1-click toggling to assign or unassign the selected teacher to a class/subject cell with instant micro-animation feedback.
+  * Show real-time collision warnings if a subject in a specific class is already assigned to another teacher.
+
+---
+
+### 3. CURRENT ASSIGNMENTS SUMMARY TABLE (BOTTOM PANEL)
+- Upgrade the 'Current Assignments Summary' section into an elevated glassmorphism data table:
+  * Columns: Teacher Name | Mapped Status | Class & Subject Assignments (styled as vibrant chip pills) | Quick Actions [ Edit | Clear All ].
+  * Ensure unmapped teachers sit cleanly in their own filter view so admins can immediately spot and complete missing assignments.
+
+Please output the refactored React component code, Tailwind CSS/Glassmorphism styling rules, and state management hooks.
