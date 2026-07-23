@@ -4,6 +4,8 @@ import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { ArrowLeft, Clock, Loader2, School, Coffee } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
+import { useSessionView } from "@/contexts/session-view-context";
+import { SessionArchiveBanner } from "@/components/session-archive-banner";
 
 interface StudentMe {
   id: number;
@@ -113,6 +115,7 @@ function getSubjectColor(subject: string): string {
 
 export default function StudentTimetable() {
   const [, setLocation] = useLocation();
+  const { isArchiveMode, selectedSession } = useSessionView();
   const initialDay = (() => {
     const d = new Date().getDay(); // JS: 0=Sun, 1=Mon … 6=Sat
     return d === 0 ? 0 : d - 1;   // admin: Mon=0 … Sat=5; Sunday defaults to Mon
@@ -213,6 +216,13 @@ export default function StudentTimetable() {
           </div>
         </div>
       </header>
+
+      {/* ── Archive mode banner ── */}
+      {isArchiveMode && selectedSession && (
+        <div className="max-w-2xl mx-auto w-full px-4 pt-4">
+          <SessionArchiveBanner sessionName={selectedSession.sessionName} />
+        </div>
+      )}
 
       {/* ── Day Strip ── */}
       <div className="sticky top-14 z-20 border-b bg-white/80 backdrop-blur-sm" style={{ borderColor: "rgba(0,0,0,0.06)" }}>

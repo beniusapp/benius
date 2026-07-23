@@ -1,8 +1,8 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { GraduationCap, Loader2, LogOut, Lock } from "lucide-react";
+import { GraduationCap, Loader2, LogOut, Lock, ChevronDown, History } from "lucide-react";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
@@ -107,6 +107,19 @@ export default function StudentDashboard() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const { sessions, selectedSession, setSelectedSession, isArchiveMode, isSessionsLoading } = useSessionView();
+  const [sessionDropdownOpen, setSessionDropdownOpen] = useState(false);
+  const sessionDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (sessionDropdownRef.current && !sessionDropdownRef.current.contains(e.target as Node)) {
+        setSessionDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   const { data: student, isLoading, isError } = useQuery<StudentMeResponse | null>({
     queryKey: ["/api/student-me"],
@@ -238,37 +251,71 @@ export default function StudentDashboard() {
 
           {/* ── Academic Session Switcher ── */}
           {!isSessionsLoading && sessions.length > 0 && (
-            <div className="flex items-center gap-2">
-              {isArchiveMode && (
-                <span
-                  className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold"
-                  style={{ background: "#fefce8", color: "#b45309", border: "1px solid #fde68a" }}
-                  data-testid="badge-archive-mode"
+            <div className="flex-1 flex justify-center" ref={sessionDropdownRef}>
+              <div className="relative">
+                <button
+                  onClick={() => setSessionDropdownOpen((p) => !p)}
+                  data-testid="button-session-picker"
+                  className="flex items-center gap-2 text-[11px] font-semibold px-3 py-1.5 rounded-full transition-all duration-200"
+                  style={{
+                    background: isArchiveMode ? "rgba(251,191,36,0.12)" : "rgba(16,185,129,0.10)",
+                    border: isArchiveMode ? "1px solid rgba(251,191,36,0.40)" : "1px solid rgba(16,185,129,0.30)",
+                    color: isArchiveMode ? "#b45309" : "#15803d",
+                  }}
                 >
-                  🔒 Archive
-                </span>
-              )}
-              <select
-                value={selectedSession?.id ?? ""}
-                onChange={(e) => {
-                  const found = sessions.find((s) => s.id === parseInt(e.target.value));
-                  if (found) setSelectedSession(found);
-                }}
-                className="text-[11px] font-semibold rounded-full px-3 py-1.5 focus:outline-none cursor-pointer appearance-none"
-                style={{
-                  background: isArchiveMode ? "#fefce8" : "#f0fdf4",
-                  border: isArchiveMode ? "1.5px solid #fde68a" : "1.5px solid #bbf7d0",
-                  color: isArchiveMode ? "#b45309" : "#15803d",
-                }}
-                data-testid="select-academic-session"
-                aria-label="Select academic session"
-              >
-                {sessions.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.sessionName}{!s.isActive ? " · Archive" : ""}
-                  </option>
-                ))}
-              </select>
+                  {isArchiveMode
+                    ? <History className="w-3 h-3 flex-shrink-0" />
+                    : <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" style={{ boxShadow: "0 0 6px #10b981" }} />}
+                  <span className="hidden sm:inline">
+                    {isArchiveMode
+                      ? `${selectedSession?.sessionName} · Archive`
+                      : selectedSession
+                        ? `${selectedSession.sessionName} · Active`
+                        : "Current Session"}
+                  </span>
+                  <ChevronDown
+                    className="w-3 h-3 transition-transform"
+                    style={{ transform: sessionDropdownOpen ? "rotate(180deg)" : "rotate(0deg)" }}
+                  />
+                </button>
+
+                {sessionDropdownOpen && (
+                  <div
+                    className="absolute top-full mt-2 left-1/2 z-[60] rounded-xl overflow-hidden"
+                    style={{
+                      transform: "translateX(-50%)",
+                      minWidth: "220px",
+                      background: "rgba(255,255,255,0.98)",
+                      backdropFilter: "blur(20px)",
+                      border: "1px solid rgba(0,0,0,0.08)",
+                      boxShadow: "0 12px 36px rgba(0,0,0,0.14)",
+                    }}
+                  >
+                    <div className="px-3 py-2 border-b" style={{ borderColor: "rgba(0,0,0,0.06)" }}>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Academic Sessions</p>
+                    </div>
+                    {sessions.map((s) => {
+                      const isViewing = s.id === selectedSession?.id;
+                      return (
+                        <button
+                          key={s.id}
+                          data-testid={`session-option-${s.id}`}
+                          onClick={() => { setSelectedSession(s); setSessionDropdownOpen(false); }}
+                          className="w-full flex items-center justify-between px-3 py-2.5 transition-colors text-left hover:bg-slate-50"
+                          style={{ borderBottom: "1px solid rgba(0,0,0,0.04)" }}
+                        >
+                          <span className="text-xs font-medium text-slate-700">{s.sessionName}</span>
+                          {s.isActive
+                            ? <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold" style={{ background: "rgba(16,185,129,0.12)", color: "#15803d" }}>Active</span>
+                            : isViewing
+                              ? <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold" style={{ background: "rgba(251,191,36,0.15)", color: "#b45309" }}>Viewing</span>
+                              : <History className="w-3 h-3 text-slate-300" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

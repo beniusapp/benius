@@ -9,6 +9,8 @@ import {
   Play, Image as ImageIcon, BookOpen,
 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
+import { useSessionView } from "@/contexts/session-view-context";
+import { SessionArchiveBanner } from "@/components/session-archive-banner";
 
 interface StudentMeResponse {
   id: number;
@@ -262,6 +264,7 @@ function DatePickerModal({ value, onSelect, onClose }: {
 }
 
 export default function StudentClasswork() {
+  const { isArchiveMode, selectedSession } = useSessionView();
   const [, setLocation] = useLocation();
 
   const today = new Date();
@@ -361,6 +364,11 @@ export default function StudentClasswork() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: "easeOut" }}
       >
+        {/* ── Archive mode banner ── */}
+        {isArchiveMode && selectedSession && (
+          <SessionArchiveBanner sessionName={selectedSession.sessionName} />
+        )}
+
         {/* Smart Date Navigation */}
         <div className="rounded-2xl p-3 bg-white/80 border border-white/70 shadow-sm">
           <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">

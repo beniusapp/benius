@@ -7,6 +7,8 @@ import {
   ArrowLeft, Bell, Loader2, Megaphone, BookOpen, AlertTriangle, Info, FileText, X, ExternalLink,
 } from "lucide-react";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
+import { useSessionView } from "@/contexts/session-view-context";
+import { SessionArchiveBanner } from "@/components/session-archive-banner";
 
 interface StudentMe {
   id: number;
@@ -57,6 +59,7 @@ function isImageUrl(url: string): boolean {
 
 export default function StudentNoticeboard() {
   const [, setLocation] = useLocation();
+  const { isArchiveMode, selectedSession } = useSessionView();
   const [selectedNotice, setSelectedNotice] = useState<StudentNotice | null>(null);
 
   const { data: student, isLoading: studentLoading } = useQuery<StudentMe | null>({
@@ -95,7 +98,9 @@ export default function StudentNoticeboard() {
 
   const openNotice = (notice: StudentNotice) => {
     setSelectedNotice(notice);
-    if (!notice.isRead) {
+    // Don't mark-read in archive mode — the mutation would be blocked server-side
+    // anyway (403) but we skip it to avoid a noisy error toast.
+    if (!notice.isRead && !isArchiveMode) {
       markReadMutation.mutate([notice.id]);
     }
   };
@@ -165,6 +170,11 @@ export default function StudentNoticeboard() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: "easeOut" }}
       >
+        {/* ── Archive mode banner ── */}
+        {isArchiveMode && selectedSession && (
+          <SessionArchiveBanner sessionName={selectedSession.sessionName} />
+        )}
+
         {noticesLoading ? (
           <div className="space-y-3">
             {[1, 2, 3].map(i => (

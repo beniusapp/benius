@@ -13,7 +13,7 @@ export interface AcademicSession {
 export interface SessionViewContextValue {
   sessions: AcademicSession[];
   selectedSession: AcademicSession | null;
-  setSelectedSession: (s: AcademicSession) => void;
+  setSelectedSession: (s: AcademicSession | null) => void;
   isArchiveMode: boolean;
   isSessionsLoading: boolean;
 }
@@ -21,7 +21,7 @@ export interface SessionViewContextValue {
 export const SessionViewContext = createContext<SessionViewContextValue>({
   sessions: [],
   selectedSession: null,
-  setSelectedSession: () => {},
+  setSelectedSession: () => { /* noop */ },
   isArchiveMode: false,
   isSessionsLoading: true,
 });

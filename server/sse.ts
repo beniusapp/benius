@@ -26,7 +26,7 @@ export function broadcastSessionActivated(
   const schoolClients = clients.get(schoolId);
   if (!schoolClients || schoolClients.size === 0) return;
   const data = JSON.stringify({ type: "session-activated", ...payload });
-  for (const res of [...schoolClients]) {
+  for (const res of Array.from(schoolClients)) {
     try {
       res.write(`data: ${data}\n\n`);
     } catch {

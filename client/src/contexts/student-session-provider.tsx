@@ -20,6 +20,8 @@ export function StudentSessionProvider({ children }: { children: React.ReactNode
   });
 
   const [selectedSession, setSelectedSession] = useState<AcademicSession | null>(null);
+  // Expose a setter that accepts null (used by SSE listener to reset to active session)
+  const handleSetSelectedSession = (s: AcademicSession | null) => setSelectedSession(s);
 
   useEffect(() => {
     if (sessions.length > 0 && !selectedSession) {
@@ -53,7 +55,7 @@ export function StudentSessionProvider({ children }: { children: React.ReactNode
       value={{
         sessions,
         selectedSession,
-        setSelectedSession,
+        setSelectedSession: handleSetSelectedSession,
         isArchiveMode,
         isSessionsLoading: isLoading,
       }}

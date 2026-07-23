@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useSessionView } from "@/contexts/session-view-context";
+import { SessionArchiveBanner } from "@/components/session-archive-banner";
 
 interface StudentMeResponse {
   id: number;
@@ -131,6 +133,7 @@ function getDayCell(day: DayData): {
 }
 
 export default function StudentAttendance() {
+  const { isArchiveMode, selectedSession } = useSessionView();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [activeTab, setActiveTab] = useState<"monthly" | "yearly">("monthly");
@@ -329,6 +332,11 @@ export default function StudentAttendance() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: "easeOut" }}
       >
+
+        {/* ── Archive mode banner ── */}
+        {isArchiveMode && selectedSession && (
+          <SessionArchiveBanner sessionName={selectedSession.sessionName} />
+        )}
 
         {/* ── Print Header (only in PDF) ── */}
         <div className="hidden print:flex print:items-center print:justify-between print:border-b print:border-slate-200 print:pb-3 print:mb-2">
