@@ -237,7 +237,7 @@ export default function StudentDashboard() {
           </div>
 
           {/* ── Academic Session Switcher ── */}
-          {!isSessionsLoading && sessions.length > 1 && (
+          {!isSessionsLoading && sessions.length > 0 && (
             <div className="flex items-center gap-2">
               {isArchiveMode && (
                 <span
