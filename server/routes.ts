@@ -2695,72 +2695,11 @@ export async function registerRoutes(
         console.log(`[SESSION-CREATE] ✓ 3b — session #${session.id} inserted`);
 
         // ─────────────────────────────────────────────────────────────────
-        // Step 3b-reset: Full Module Reset — ALL 11 session-scoped modules
-        // Every table listed here maps to a module shown in FULL_RESET_MODULES.
-        // Global data tables (see protection contract above) are never touched.
+        // NOTE: Full Module Reset (all 11 session-scoped modules) is performed
+        // at ACTIVATION time only — inside PATCH /activate — NOT here.
+        // This ensures data is wiped only after the admin explicitly confirms.
         // ─────────────────────────────────────────────────────────────────
-        console.log("[SESSION-CREATE] 3b-reset — full module reset: 11 modules");
-
-        const [
-          // (1) Timetable Master
-          delTimetable,
-          // (2) Exam Controller — scores, promotion decisions, overrides
-          delExamScores,
-          delPromotionDecisions,
-          delPromotionOverrides,
-          // (3) Attendance Overview — student records, teacher self-attendance, corrections
-          delAttendance,
-          delTeacherAttendance,
-          delAttendanceCorrections,
-          // (4) Leave Requests — teacher and student
-          delLeaves,
-          delStudentLeaves,
-          // (5) Complaint Hub — notes and complaint_students cascade automatically
-          delComplaints,
-          // (6) Noticeboard — notice_reads cascades automatically
-          delNotices,
-          // (7) Visitor Log
-          delVisitorLogs,
-          // (8) Audit Logs
-          delAuditLogs,
-          // (9) ID Card Generator — no table in DB yet (module planned)
-          // (10) Fees & Payments
-          delFeeRecords,
-          // (11) Performance Analytics — academic history snapshots
-          delAcademicHistory,
-        ] = await Promise.all([
-          tx.delete(timetableEntries).where(eq(timetableEntries.schoolId, schoolId)).returning({ id: timetableEntries.id }),
-          tx.delete(examScores).where(eq(examScores.schoolId, schoolId)).returning({ id: examScores.id }),
-          tx.delete(promotionDecisions).where(eq(promotionDecisions.schoolId, schoolId)).returning({ id: promotionDecisions.id }),
-          tx.delete(promotionOverrides).where(eq(promotionOverrides.schoolId, schoolId)).returning({ id: promotionOverrides.id }),
-          tx.delete(attendanceRecords).where(eq(attendanceRecords.schoolId, schoolId)).returning({ id: attendanceRecords.id }),
-          tx.delete(teacherSelfAttendance).where(eq(teacherSelfAttendance.schoolId, schoolId)).returning({ id: teacherSelfAttendance.id }),
-          tx.delete(attendanceCorrectionRequests).where(eq(attendanceCorrectionRequests.schoolId, schoolId)).returning({ id: attendanceCorrectionRequests.id }),
-          tx.delete(leaveRequests).where(eq(leaveRequests.schoolId, schoolId)).returning({ id: leaveRequests.id }),
-          tx.delete(studentLeaveRequests).where(eq(studentLeaveRequests.schoolId, schoolId)).returning({ id: studentLeaveRequests.id }),
-          tx.delete(complaints).where(eq(complaints.schoolId, schoolId)).returning({ id: complaints.id }),
-          tx.delete(notices).where(eq(notices.schoolId, schoolId)).returning({ id: notices.id }),
-          tx.delete(visitorLogs).where(eq(visitorLogs.schoolId, schoolId)).returning({ id: visitorLogs.id }),
-          tx.delete(auditLogs).where(eq(auditLogs.schoolId, schoolId)).returning({ id: auditLogs.id }),
-          tx.delete(feeRecords).where(eq(feeRecords.schoolId, schoolId)).returning({ id: feeRecords.id }),
-          tx.delete(academicHistory).where(eq(academicHistory.schoolId, schoolId)).returning({ id: academicHistory.id }),
-        ]);
-
-        executionLog.push([
-          `STEP 3b-reset ✓ — Full Module Reset complete:`,
-          `  • Timetable Master      : ${delTimetable.length} schedule entry/entries`,
-          `  • Exam Controller       : ${delExamScores.length} score(s), ${delPromotionDecisions.length} decision(s), ${delPromotionOverrides.length} override(s)`,
-          `  • Attendance Overview   : ${delAttendance.length} student record(s), ${delTeacherAttendance.length} teacher record(s), ${delAttendanceCorrections.length} correction(s)`,
-          `  • Leave Requests        : ${delLeaves.length} teacher leave(s), ${delStudentLeaves.length} student leave(s)`,
-          `  • Complaint Hub         : ${delComplaints.length} complaint(s) [notes+students cascade]`,
-          `  • Noticeboard           : ${delNotices.length} notice(s) [reads cascade]`,
-          `  • Visitor Log           : ${delVisitorLogs.length} visitor entry/entries`,
-          `  • Audit Logs            : ${delAuditLogs.length} audit entry/entries`,
-          `  • ID Card Generator     : no DB table yet (module planned)`,
-          `  • Fees & Payments       : ${delFeeRecords.length} fee record(s)`,
-          `  • Performance Analytics : ${delAcademicHistory.length} history record(s)`,
-        ].join("\n"));
-        console.log(`[SESSION-CREATE] ✓ 3b-reset — timetable:${delTimetable.length} examScores:${delExamScores.length} promotions:${delPromotionDecisions.length} attendance:${delAttendance.length} leaves:${delLeaves.length}+${delStudentLeaves.length} complaints:${delComplaints.length} notices:${delNotices.length} visitors:${delVisitorLogs.length} audits:${delAuditLogs.length} fees:${delFeeRecords.length} history:${delAcademicHistory.length}`);
+        executionLog.push("STEP 3b-reset — skipped at creation; reset runs at activation time");
 
         // Step 3c: Activate if requested
         if (setAsActive) {
@@ -3087,8 +3026,15 @@ export async function registerRoutes(
   });
 
   /*
-   * Activate a session — atomically deactivates all sibling sessions for this
-   * school before marking the target active (see storage.activateAcademicSession).
+   * Activate a session — inside a single atomic transaction:
+   *   1. Full Module Reset: wipes all 11 session-scoped modules for the school.
+   *      Global data tables (teachers, students, school setup, policies, etc.)
+   *      are NEVER touched — they are SELECT-only throughout.
+   *   2. Archives all sibling sessions for this school.
+   *   3. Marks the target session as active.
+   *
+   * The reset intentionally happens HERE (at activation time), not at creation.
+   * This guarantees data is cleared only after the admin explicitly confirms.
    */
   app.patch("/api/admin/academic-sessions/:id/activate", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
@@ -3098,9 +3044,81 @@ export async function registerRoutes(
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid session ID" });
     try {
-      const updated = await storage.activateAcademicSession(id, schoolId);
+      const updated = await db.transaction(async (tx) => {
+
+        // ── Step 1: Full Module Reset ────────────────────────────────────────
+        // All 11 session-scoped modules wiped for this school atomically.
+        // Global data (teachers, students, school setup, policies, timetableStructure,
+        // calendarEvents, schoolAssets, etc.) is NEVER deleted here.
+        console.log(`[SESSION-ACTIVATE] Resetting 11 session-scoped modules for school ${schoolId}`);
+
+        const [
+          delTimetable,
+          delExamScores, delPromotionDecisions, delPromotionOverrides,
+          delAttendance, delTeacherAttendance, delAttendanceCorrections,
+          delLeaves, delStudentLeaves,
+          delComplaints,
+          delNotices,
+          delVisitorLogs,
+          delAuditLogs,
+          delFeeRecords,
+          delAcademicHistory,
+        ] = await Promise.all([
+          // (1) Timetable Master
+          tx.delete(timetableEntries).where(eq(timetableEntries.schoolId, schoolId)).returning({ id: timetableEntries.id }),
+          // (2) Exam Controller
+          tx.delete(examScores).where(eq(examScores.schoolId, schoolId)).returning({ id: examScores.id }),
+          tx.delete(promotionDecisions).where(eq(promotionDecisions.schoolId, schoolId)).returning({ id: promotionDecisions.id }),
+          tx.delete(promotionOverrides).where(eq(promotionOverrides.schoolId, schoolId)).returning({ id: promotionOverrides.id }),
+          // (3) Attendance Overview
+          tx.delete(attendanceRecords).where(eq(attendanceRecords.schoolId, schoolId)).returning({ id: attendanceRecords.id }),
+          tx.delete(teacherSelfAttendance).where(eq(teacherSelfAttendance.schoolId, schoolId)).returning({ id: teacherSelfAttendance.id }),
+          tx.delete(attendanceCorrectionRequests).where(eq(attendanceCorrectionRequests.schoolId, schoolId)).returning({ id: attendanceCorrectionRequests.id }),
+          // (4) Leave Requests
+          tx.delete(leaveRequests).where(eq(leaveRequests.schoolId, schoolId)).returning({ id: leaveRequests.id }),
+          tx.delete(studentLeaveRequests).where(eq(studentLeaveRequests.schoolId, schoolId)).returning({ id: studentLeaveRequests.id }),
+          // (5) Complaint Hub (notes + complaint_students cascade)
+          tx.delete(complaints).where(eq(complaints.schoolId, schoolId)).returning({ id: complaints.id }),
+          // (6) Noticeboard (notice_reads cascade)
+          tx.delete(notices).where(eq(notices.schoolId, schoolId)).returning({ id: notices.id }),
+          // (7) Visitor Log
+          tx.delete(visitorLogs).where(eq(visitorLogs.schoolId, schoolId)).returning({ id: visitorLogs.id }),
+          // (8) Audit Logs
+          tx.delete(auditLogs).where(eq(auditLogs.schoolId, schoolId)).returning({ id: auditLogs.id }),
+          // (9) ID Card Generator — no DB table yet (module planned)
+          // (10) Fees & Payments
+          tx.delete(feeRecords).where(eq(feeRecords.schoolId, schoolId)).returning({ id: feeRecords.id }),
+          // (11) Performance Analytics
+          tx.delete(academicHistory).where(eq(academicHistory.schoolId, schoolId)).returning({ id: academicHistory.id }),
+        ]);
+
+        console.log(
+          `[SESSION-ACTIVATE] ✓ Reset complete — timetable:${delTimetable.length} ` +
+          `examScores:${delExamScores.length} promotions:${delPromotionDecisions.length} ` +
+          `attendance:${delAttendance.length} leaves:${delLeaves.length}+${delStudentLeaves.length} ` +
+          `complaints:${delComplaints.length} notices:${delNotices.length} ` +
+          `visitors:${delVisitorLogs.length} audits:${delAuditLogs.length} ` +
+          `fees:${delFeeRecords.length} history:${delAcademicHistory.length}`
+        );
+
+        // ── Step 2: Archive siblings ─────────────────────────────────────────
+        await tx.update(academicSessions)
+          .set({ isActive: false, status: "archived" })
+          .where(eq(academicSessions.schoolId, schoolId));
+
+        // ── Step 3: Activate target session ─────────────────────────────────
+        const [updated] = await tx.update(academicSessions)
+          .set({ isActive: true, status: "active" })
+          .where(and(eq(academicSessions.id, id), eq(academicSessions.schoolId, schoolId)))
+          .returning();
+
+        if (!updated) throw new Error("Session not found or access denied");
+        return updated;
+      });
+
       res.json(updated);
     } catch (e: any) {
+      console.error("[SESSION-ACTIVATE] ✗ FAILED:", e.message);
       res.status(500).json({ message: e.message || "Failed to activate session" });
     }
   });

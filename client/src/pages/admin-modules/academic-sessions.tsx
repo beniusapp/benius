@@ -1483,66 +1483,60 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
           </div>
 
           {/* ── SECTION 3: Module Impact Summary ─────────────────────────── */}
-          <div className="rounded-xl overflow-hidden"
-            style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
-            <div className="flex items-center gap-2 px-4 py-3"
-              style={{ background: "rgba(34,211,238,0.06)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-              <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white"
-                style={{ background: "rgba(34,211,238,0.20)", border: "1px solid rgba(34,211,238,0.35)" }}>3</div>
-              <p className="text-[11px] font-black tracking-widest uppercase text-cyan-400/80">Module Impact</p>
-              <span className="ml-auto text-[10px] text-white/30">What changes on activation</span>
-            </div>
-
-            <div className="p-4 space-y-4">
-              {!hasCopyData ? (
-                <div className="flex items-center gap-2 text-xs text-white/40">
-                  <Info className="w-3.5 h-3.5 flex-shrink-0" />
-                  All modules start fresh — this session was created without copying from a previous session.
+          {(() => {
+            const SESSION_RESET_MODULES = [
+              { emoji: "📅", label: "Timetable Master",       detail: "All schedule grid assignments and published timetables" },
+              { emoji: "🏆", label: "Exam Controller",        detail: "All exam marks, scores, grade entries, promotion decisions and overrides" },
+              { emoji: "📊", label: "Attendance Overview",    detail: "All attendance records — fresh date window per session" },
+              { emoji: "📋", label: "Leave Requests",         detail: "All teacher & student leave queues, balances and approval history" },
+              { emoji: "🛡️", label: "Complaint Hub",         detail: "All complaints, grievances and escalations" },
+              { emoji: "🔔", label: "Noticeboard",            detail: "All posted notices and announcements" },
+              { emoji: "🪪", label: "Visitor Log",            detail: "All visitor check-ins and check-outs" },
+              { emoji: "🔒", label: "Audit Logs",             detail: "All admin action entries" },
+              { emoji: "💳", label: "ID Card Generator",      detail: "All generated ID card records" },
+              { emoji: "💰", label: "Fees & Payments",        detail: "All fee records and payments" },
+              { emoji: "📈", label: "Performance Analytics",  detail: "All academic history snapshots" },
+            ];
+            return (
+              <div className="rounded-xl overflow-hidden"
+                style={{ border: "1px solid rgba(239,68,68,0.18)" }}>
+                <div className="flex items-center gap-2 px-4 py-3"
+                  style={{ background: "rgba(239,68,68,0.08)", borderBottom: "1px solid rgba(239,68,68,0.14)" }}>
+                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white"
+                    style={{ background: "rgba(239,68,68,0.30)", border: "1px solid rgba(239,68,68,0.50)" }}>3</div>
+                  <p className="text-[11px] font-black tracking-widest uppercase text-red-400/90">Module Impact</p>
+                  <span className="ml-auto text-[10px] font-bold text-red-400/60">{SESSION_RESET_MODULES.length} modules reset</span>
                 </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {/* Carried Forward */}
-                  <div>
-                    <p className="text-[9px] font-black tracking-widest uppercase text-emerald-400/70 mb-2">
-                      ✅ Carried Forward ({carriedForward.length})
-                    </p>
-                    <div className="space-y-1">
-                      {carriedForward.map(e => (
-                        <div key={e.label} className="flex items-center gap-1.5">
-                          <div className="w-1 h-1 rounded-full bg-emerald-400/50 flex-shrink-0" />
-                          <span className="text-[10px] text-white/55">{e.label}</span>
-                          <span className="text-[9px] text-white/25 ml-auto">{e.parent}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  {/* Always Fresh */}
-                  <div>
-                    <p className="text-[9px] font-black tracking-widest uppercase text-red-400/70 mb-2">
-                      🔒 Always Fresh ({alwaysFresh.length})
-                    </p>
-                    <div className="space-y-1">
-                      {alwaysFresh.map(label => (
-                        <div key={label} className="flex items-center gap-1.5">
-                          <div className="w-1 h-1 rounded-full bg-red-400/40 flex-shrink-0" />
-                          <span className="text-[10px] text-white/40 capitalize">{label.replace(/-/g, " ")}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
 
-              <div className="flex items-start gap-2 pt-1 pb-0.5 px-3 py-2 rounded-lg text-[10px]"
-                style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.14)", color: "rgba(252,165,165,0.55)" }}>
-                <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5 text-red-400/50" />
-                <span>
-                  Attendance, Complaints, Noticeboard, Visitor Log, Audit Logs, and Calendar will show
-                  only records within <strong className="text-white/50">{session.sessionName}</strong>'s date window after activation.
-                </span>
+                {/* Fixed list of all 11 session-scoped modules that will be wiped */}
+                <div className="divide-y" style={{ borderColor: "rgba(239,68,68,0.09)" }}>
+                  {SESSION_RESET_MODULES.map(mod => (
+                    <div key={mod.label} className="flex items-start gap-3 px-4 py-2.5"
+                      style={{ background: "rgba(239,68,68,0.02)" }}>
+                      <span className="text-base flex-shrink-0 mt-0.5">{mod.emoji}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-white/80">{mod.label}</p>
+                        <p className="text-[10px] text-white/45 mt-0.5 leading-relaxed">{mod.detail}</p>
+                      </div>
+                      <span className="text-[9px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 mt-0.5"
+                        style={{ background: "rgba(239,68,68,0.14)", color: "rgba(252,165,165,0.80)", border: "1px solid rgba(239,68,68,0.22)" }}>
+                        RESET
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Global data safety note */}
+                <div className="flex items-start gap-2 px-4 py-3"
+                  style={{ background: "rgba(16,185,129,0.04)", borderTop: "1px solid rgba(16,185,129,0.12)" }}>
+                  <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-emerald-400/60" />
+                  <span className="text-[10px] leading-relaxed" style={{ color: "rgba(52,211,153,0.60)" }}>
+                    Global data is <strong style={{ color: "rgba(52,211,153,0.80)" }}>never affected</strong> — School Setup, Teachers, Students, Policies, Timetable Bell Structure, School Calendar and all configurations remain exactly as they are.
+                  </span>
+                </div>
               </div>
-            </div>
-          </div>
+            );
+          })()}
 
           {/* ── SECTION 4: Confirmation Checkboxes ──────────────────────── */}
           <div className="rounded-xl p-4 space-y-3"
