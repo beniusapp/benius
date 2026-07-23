@@ -101,9 +101,10 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
   const [cellSubjects,    setCellSubjects]    = useState<Map<string, string>>(new Map());
   const [savingFor,       setSavingFor]       = useState<number | null>(null);
 
-  /* ── subject dialog ─── */
-  const [pendingCells,   setPendingCells]   = useState<{ cls: string; section: string }[] | null>(null);
-  const [pendingSubject, setPendingSubject] = useState("");
+  /* ── subject dialog (multi-select) ─── */
+  const [pendingCells,    setPendingCells]    = useState<{ cls: string; section: string }[] | null>(null);
+  const [pendingSubjects, setPendingSubjects] = useState<Set<string>>(new Set());
+  const [customInput,     setCustomInput]     = useState("");
 
   /* ── bottom-table view ─── */
   const [summaryFilter, setSummaryFilter] = useState<"all"|"mapped"|"unmapped">("all");
@@ -207,15 +208,41 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
     setCellSubjects(subjects);
   }, [allMappings]);
 
-  /* ── subject dialog ────────────────────────────────────────── */
-  const openSubjectDialogForCells = useCallback((cells: { cls: string; section: string }[]) => {
+  /* ── subject dialog (multi-select) ─────────────────────────── */
+  const openSubjectDialogForCells = useCallback((
+    cells: { cls: string; section: string }[],
+    existingSubject?: string
+  ) => {
     if (cells.length === 0) return;
     setPendingCells(cells);
-    setPendingSubject("");
+    // Pre-populate with existing subjects when editing a single cell
+    const initial = new Set<string>();
+    if (existingSubject) {
+      existingSubject.split(",").map(s => s.trim()).filter(Boolean).forEach(s => initial.add(s));
+    }
+    setPendingSubjects(initial);
+    setCustomInput("");
   }, []);
+
+  const togglePendingSubject = useCallback((subj: string) => {
+    setPendingSubjects(prev => {
+      const next = new Set(prev);
+      if (next.has(subj)) next.delete(subj);
+      else next.add(subj);
+      return next;
+    });
+  }, []);
+
+  const addCustomSubject = useCallback(() => {
+    const trimmed = customInput.trim();
+    if (!trimmed) return;
+    setPendingSubjects(prev => new Set([...prev, trimmed]));
+    setCustomInput("");
+  }, [customInput]);
 
   const confirmSubjectDialog = useCallback(() => {
     if (!pendingCells) return;
+    const subjectStr = Array.from(pendingSubjects).join(", ");
     setSelectedCells(prev => {
       const next = new Set(prev);
       pendingCells.forEach(({ cls, section }) => next.add(`${cls}:${section}`));
@@ -225,30 +252,32 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
       const next = new Map(prev);
       pendingCells.forEach(({ cls, section }) => {
         const key = `${cls}:${section}`;
-        if (pendingSubject.trim()) next.set(key, pendingSubject.trim());
+        if (subjectStr) next.set(key, subjectStr);
         else next.delete(key);
       });
       return next;
     });
     setPendingCells(null);
-    setPendingSubject("");
-  }, [pendingCells, pendingSubject]);
+    setPendingSubjects(new Set());
+    setCustomInput("");
+  }, [pendingCells, pendingSubjects]);
 
   const cancelSubjectDialog = useCallback(() => {
     setPendingCells(null);
-    setPendingSubject("");
+    setPendingSubjects(new Set());
+    setCustomInput("");
   }, []);
 
   /* ── cell / row / col toggles ─────────────────────────────── */
   const toggleCell = useCallback((cls: string, section: string) => {
     const key = `${cls}:${section}`;
     if (selectedCells.has(key)) {
-      setSelectedCells(prev => { const n = new Set(prev); n.delete(key); return n; });
-      setCellSubjects(prev => { const n = new Map(prev); n.delete(key); return n; });
+      // Re-open dialog pre-filled so user can edit subjects (hold Shift to remove directly)
+      openSubjectDialogForCells([{ cls, section }], cellSubjects.get(key));
     } else {
       openSubjectDialogForCells([{ cls, section }]);
     }
-  }, [selectedCells, openSubjectDialogForCells]);
+  }, [selectedCells, cellSubjects, openSubjectDialogForCells]);
 
   const toggleRow = useCallback((cls: string) => {
     const allSelected = cfgSections.every(s => selectedCells.has(`${cls}:${s}`));
@@ -398,54 +427,120 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
         </div>
       </div>
 
-      {/* ── Subject Prompt Dialog ───────────────────────────── */}
+      {/* ── Subject Prompt Dialog (multi-select) ────────────── */}
       <Dialog open={!!pendingCells} onOpenChange={open => { if (!open) cancelSubjectDialog(); }}>
         <DialogContent className="bg-[#0d1b2e]/95 border border-white/10 text-white max-w-sm backdrop-blur-xl">
           <DialogHeader>
             <DialogTitle className="text-white text-base flex items-center gap-2">
-              <BookOpen className="w-4 h-4 text-[#D4AF37]" /> Assign Subject
+              <BookOpen className="w-4 h-4 text-[#D4AF37]" /> Assign Subjects
             </DialogTitle>
           </DialogHeader>
+
+          {/* target label */}
           {pendingCells && (
-            <p className="text-white/50 text-sm">
+            <p className="text-white/50 text-sm -mt-1">
               {pendingCells.length === 1
                 ? <>Class <span className="text-[#D4AF37] font-semibold">{pendingCells[0].cls}</span> – Section <span className="text-[#D4AF37] font-semibold">{pendingCells[0].section}</span></>
-                : <><span className="text-[#D4AF37] font-semibold">{pendingCells.length} cells</span> will be assigned this subject</>
+                : <><span className="text-[#D4AF37] font-semibold">{pendingCells.length} cells</span> will receive these subjects</>
               }
             </p>
           )}
-          <div className="space-y-3 mt-1">
-            {cfgSubjects.length > 0 && (
-              <div className="grid grid-cols-2 gap-1.5 max-h-44 overflow-y-auto [scrollbar-width:thin]">
-                {cfgSubjects.map(s => (
+
+          {/* selected preview chips */}
+          {pendingSubjects.size > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-1">
+              {Array.from(pendingSubjects).map(s => (
+                <span
+                  key={s}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#D4AF37] text-[#0A1628] text-[11px] font-bold"
+                >
+                  {s}
                   <button
-                    key={s}
-                    onClick={() => setPendingSubject(s)}
-                    data-testid={`subject-option-${s}`}
-                    className={`text-xs px-2 py-1.5 rounded-lg border transition-all text-left ${
-                      pendingSubject === s
-                        ? "bg-[#D4AF37] border-[#D4AF37] text-[#0A1628] font-semibold"
-                        : "bg-white/5 border-white/10 text-white/70 hover:bg-white/10 hover:border-white/30"
-                    }`}
+                    onClick={() => togglePendingSubject(s)}
+                    className="hover:opacity-70 transition-opacity ml-0.5"
+                    aria-label={`Remove ${s}`}
                   >
-                    {s}
+                    <X className="w-2.5 h-2.5" />
                   </button>
-                ))}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {/* preset subject grid — multi-toggle */}
+            {cfgSubjects.length > 0 && (
+              <div className="grid grid-cols-2 gap-1.5 max-h-44 overflow-y-auto [scrollbar-width:thin] [scrollbar-color:#D4AF37_transparent]">
+                {cfgSubjects.map(s => {
+                  const isChosen = pendingSubjects.has(s);
+                  return (
+                    <button
+                      key={s}
+                      onClick={() => togglePendingSubject(s)}
+                      data-testid={`subject-option-${s}`}
+                      className={`
+                        text-xs px-2.5 py-2 rounded-xl border transition-all text-left
+                        flex items-center justify-between gap-1
+                        ${isChosen
+                          ? "bg-[#D4AF37]/20 border-[#D4AF37]/60 text-[#D4AF37] font-semibold"
+                          : "bg-white/5 border-white/10 text-white/70 hover:bg-white/10 hover:border-white/25"
+                        }
+                      `}
+                    >
+                      <span>{s}</span>
+                      {isChosen && (
+                        <span className="w-4 h-4 rounded-full bg-[#D4AF37] flex items-center justify-center flex-shrink-0">
+                          <svg viewBox="0 0 10 8" className="w-2.5 h-2 fill-[#0A1628]">
+                            <path d="M1 4l2.5 2.5L9 1" stroke="#0A1628" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             )}
-            <Input
-              value={pendingSubject}
-              onChange={e => setPendingSubject(e.target.value)}
-              placeholder={cfgSubjects.length > 0 ? "Or type a custom subject…" : "Enter subject name (optional)…"}
-              className="bg-white/5 border-white/15 text-white placeholder:text-white/30 text-sm h-9 rounded-xl focus:border-[#D4AF37]/50"
-              data-testid="input-pending-subject"
-              onKeyDown={e => { if (e.key === "Enter") confirmSubjectDialog(); if (e.key === "Escape") cancelSubjectDialog(); }}
-              autoFocus
-            />
+
+            {/* custom subject input */}
+            <div className="flex gap-2">
+              <Input
+                value={customInput}
+                onChange={e => setCustomInput(e.target.value)}
+                placeholder="Type a custom subject…"
+                className="flex-1 bg-white/5 border-white/15 text-white placeholder:text-white/30 text-sm h-9 rounded-xl focus:border-[#D4AF37]/50"
+                data-testid="input-pending-subject"
+                onKeyDown={e => {
+                  if (e.key === "Enter") { e.preventDefault(); addCustomSubject(); }
+                  if (e.key === "Escape") cancelSubjectDialog();
+                }}
+                autoFocus={cfgSubjects.length === 0}
+              />
+              <button
+                onClick={addCustomSubject}
+                disabled={!customInput.trim()}
+                className="h-9 px-3 rounded-xl text-xs font-semibold bg-white/8 border border-white/15 text-white/60 hover:bg-white/12 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all whitespace-nowrap"
+              >
+                + Add
+              </button>
+            </div>
           </div>
+
           <DialogFooter className="gap-2 mt-1">
-            <Button variant="outline" size="sm" className="border-white/20 text-white/60 hover:bg-white/10" onClick={cancelSubjectDialog} data-testid="button-cancel-subject-dialog">Cancel</Button>
-            <Button size="sm" className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold" onClick={confirmSubjectDialog} data-testid="button-confirm-subject-dialog">Assign</Button>
+            <Button variant="outline" size="sm" className="border-white/20 text-white/60 hover:bg-white/10" onClick={cancelSubjectDialog} data-testid="button-cancel-subject-dialog">
+              Cancel
+            </Button>
+            {/* Allow deselecting a cell by confirming with 0 subjects */}
+            <Button
+              size="sm"
+              className="bg-gradient-to-r from-[#D4AF37] to-amber-500 hover:from-[#B8962E] hover:to-amber-600 text-[#0A1628] font-bold"
+              onClick={confirmSubjectDialog}
+              data-testid="button-confirm-subject-dialog"
+            >
+              {pendingSubjects.size === 0
+                ? "Assign (no subject)"
+                : `Assign ${pendingSubjects.size} Subject${pendingSubjects.size > 1 ? "s" : ""}`
+              }
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -681,15 +776,17 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
                           {/* section cells */}
                           <div className="flex flex-wrap gap-2 flex-1">
                             {cfgSections.map(sec => {
-                              const key       = `${cls}:${sec}`;
-                              const isOn      = selectedCells.has(key);
-                              const subj      = cellSubjects.get(key);
-                              const owner     = cellOwnerMap.get(key);
+                              const key            = `${cls}:${sec}`;
+                              const isOn           = selectedCells.has(key);
+                              const subj           = cellSubjects.get(key);
+                              const subjList       = subj ? subj.split(",").map(s => s.trim()).filter(Boolean) : [];
+                              const owner          = cellOwnerMap.get(key);
                               const isOwnedByOther = owner && owner.teacherId !== selectedTeacher.id;
                               const isCollision    = isOwnedByOther && isOn;
 
                               return (
                                 <div key={sec} className="relative group/cell">
+                                  {/* main cell button — click to open edit dialog */}
                                   <button
                                     onClick={() => toggleCell(cls, sec)}
                                     data-testid={`cell-${cls}-${sec}`}
@@ -697,12 +794,13 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
                                       isCollision
                                         ? `⚠️ Collision: ${owner?.teacherName} also has ${cls}-${sec}`
                                         : isOn
-                                          ? `${cls}-${sec}${subj ? `: ${subj}` : ""} (click to remove)`
+                                          ? `Edit subjects for ${cls}-${sec}`
                                           : `Assign Class ${cls} – Section ${sec}`
                                     }
                                     className={`
-                                      relative h-auto min-w-[52px] px-2 py-1.5 rounded-lg border text-[10px] font-semibold
-                                      transition-all duration-150 flex flex-col items-center gap-0.5
+                                      relative h-auto min-w-[56px] max-w-[90px] px-2 py-1.5 rounded-lg border
+                                      text-[10px] font-semibold transition-all duration-150
+                                      flex flex-col items-start gap-0.5 text-left
                                       ${isCollision
                                         ? "bg-amber-500/20 border-amber-500/50 text-amber-300 shadow-md shadow-amber-500/10"
                                         : isOn
@@ -714,14 +812,39 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
                                     <span className="text-[10px] font-bold">{cls}-{sec}</span>
                                     {isOn && (
                                       <>
-                                        {subj
-                                          ? <span className="text-[8px] truncate max-w-[60px] font-normal opacity-90">{subj}</span>
-                                          : <span className="text-[8px] opacity-60">No subj.</span>
+                                        {subjList.length > 0
+                                          ? subjList.map((s, i) => (
+                                              <span key={i} className="text-[8px] font-normal opacity-90 leading-tight truncate max-w-full">
+                                                · {s}
+                                              </span>
+                                            ))
+                                          : <span className="text-[8px] opacity-50 italic">No subject</span>
                                         }
                                         {isCollision && <AlertTriangle className="w-2.5 h-2.5 text-amber-400 mt-0.5" />}
                                       </>
                                     )}
                                   </button>
+
+                                  {/* remove button — only when cell is assigned */}
+                                  {isOn && (
+                                    <button
+                                      onClick={e => {
+                                        e.stopPropagation();
+                                        setSelectedCells(prev => { const n = new Set(prev); n.delete(key); return n; });
+                                        setCellSubjects(prev => { const n = new Map(prev); n.delete(key); return n; });
+                                      }}
+                                      className="
+                                        absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full
+                                        bg-red-500 border border-red-400 text-white
+                                        flex items-center justify-center
+                                        opacity-0 group-hover/cell:opacity-100
+                                        transition-opacity duration-150 z-10
+                                      "
+                                      title={`Remove ${cls}-${sec}`}
+                                    >
+                                      <X className="w-2 h-2" />
+                                    </button>
+                                  )}
 
                                   {/* collision tooltip */}
                                   {isOwnedByOther && !isOn && (
