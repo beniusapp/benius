@@ -38,6 +38,7 @@ const addSchema = z.object({
   gender: z.enum(["Boy", "Girl"]).optional(),
   rollNumber: z.string().optional(),
   guardianName: z.string().optional(),
+  bloodGroup: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional(),
 });
 type AddForm = z.infer<typeof addSchema>;
 
@@ -49,6 +50,7 @@ const editSchema = z.object({
   gender: z.enum(["Boy", "Girl"]).optional().nullable(),
   rollNumber: z.string().optional(),
   guardianName: z.string().optional(),
+  bloodGroup: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional().nullable(),
 });
 type EditForm = z.infer<typeof editSchema>;
 
@@ -172,7 +174,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
 
   const form = useForm<AddForm>({
     resolver: zodResolver(addSchema),
-    defaultValues: { name: "", class: "", section: "", phone: "", dob: "", dateOfAdmission: "", gender: undefined, rollNumber: "", guardianName: "" },
+    defaultValues: { name: "", class: "", section: "", phone: "", dob: "", dateOfAdmission: "", gender: undefined, rollNumber: "", guardianName: "", bloodGroup: undefined },
   });
 
   const addMutation = useMutation({
@@ -209,7 +211,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
 
   const editForm = useForm<EditForm>({
     resolver: zodResolver(editSchema),
-    defaultValues: { name: "", class: "", section: "", phone: "", gender: undefined, rollNumber: "", guardianName: "" },
+    defaultValues: { name: "", class: "", section: "", phone: "", gender: undefined, rollNumber: "", guardianName: "", bloodGroup: undefined },
   });
 
   useEffect(() => {
@@ -222,6 +224,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
         gender: (editTarget.gender as "Boy" | "Girl" | null) ?? undefined,
         rollNumber: editTarget.rollNumber != null ? String(editTarget.rollNumber) : "",
         guardianName: editTarget.guardianName ?? "",
+        bloodGroup: (editTarget.bloodGroup as "A+" | "A-" | "B+" | "B-" | "AB+" | "AB-" | "O+" | "O-" | null) ?? undefined,
       });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -234,6 +237,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
         gender: d.gender ?? null,
         rollNumber: d.rollNumber ? parseInt(d.rollNumber) : null,
         guardianName: d.guardianName || null,
+        bloodGroup: d.bloodGroup ?? null,
       };
       const r = await apiRequest("PATCH", `/api/admin/students/${editTarget!.id}`, payload);
       if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
@@ -472,6 +476,18 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
               <FormField control={form.control} name="dateOfAdmission" render={({ field }) => (
                 <FormItem><FormLabel className="text-white/70">Date of Admission</FormLabel>
                   <FormControl><Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white" data-testid="input-student-admission" /></FormControl>
+                  <FormMessage /></FormItem>
+              )} />
+              <FormField control={form.control} name="bloodGroup" render={({ field }) => (
+                <FormItem><FormLabel className="text-white/70">Blood Group</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value ?? ""}>
+                    <SelectTrigger className="bg-[#0A1628] border-white/20 text-white" data-testid="select-student-bloodgroup"><SelectValue placeholder="Select blood group" /></SelectTrigger>
+                    <SelectContent>
+                      {["A+","A-","B+","B-","AB+","AB-","O+","O-"].map(bg => (
+                        <SelectItem key={bg} value={bg}>{bg}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <FormMessage /></FormItem>
               )} />
               <div className="flex items-end">
@@ -717,6 +733,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                 { label: "Gender", value: viewTarget.gender ?? "Not set" },
                 { label: "Phone", value: viewTarget.phone },
                 { label: "Guardian", value: viewTarget.guardianName ?? "Not recorded" },
+                { label: "Blood Group", value: (viewTarget as any).bloodGroup ?? "Not recorded" },
                 { label: "Date of Birth", value: viewTarget.dob ?? "—" },
                 { label: "Status", value: viewTarget.isActivated ? "Activated" : "Pending activation" },
               ].map(({ label, value, mono, gold }) => (
@@ -825,6 +842,18 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                     <FormItem><FormLabel className="text-white/70">Guardian Name</FormLabel>
                       <FormControl><Input {...field} placeholder="Optional" data-testid="input-edit-guardian"
                         className="bg-[#0A1628] border-white/20 text-white" /></FormControl>
+                      <FormMessage /></FormItem>
+                  )} />
+                  <FormField control={editForm.control} name="bloodGroup" render={({ field }) => (
+                    <FormItem><FormLabel className="text-white/70">Blood Group</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value ?? ""}>
+                        <SelectTrigger className="bg-[#0A1628] border-white/20 text-white" data-testid="select-edit-bloodgroup"><SelectValue placeholder="Select blood group" /></SelectTrigger>
+                        <SelectContent>
+                          {["A+","A-","B+","B-","AB+","AB-","O+","O-"].map(bg => (
+                            <SelectItem key={bg} value={bg}>{bg}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <FormMessage /></FormItem>
                   )} />
                   <div className="flex gap-3 pt-2">

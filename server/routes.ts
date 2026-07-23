@@ -774,6 +774,7 @@ export async function registerRoutes(
     gender: z.enum(["Boy", "Girl"]).optional(),
     rollNumber: z.number().int().positive().optional().nullable(),
     guardianName: z.string().optional(),
+    bloodGroup: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional(),
   });
 
   app.post("/api/schools/:schoolId/students", async (req, res) => {
@@ -797,7 +798,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
       }
 
-      const { name, class: cls, section, phone, dob: dobRaw, enrollmentDate, gender, rollNumber, guardianName } = parsed.data;
+      const { name, class: cls, section, phone, dob: dobRaw, enrollmentDate, gender, rollNumber, guardianName, bloodGroup } = parsed.data;
 
       if (!isValidPhone(phone)) {
         return res.status(400).json({ message: "Invalid phone number" });
@@ -835,6 +836,7 @@ export async function registerRoutes(
         ...(gender ? { gender } : {}),
         ...(rollNumber ? { rollNumber } : {}),
         ...(guardianName ? { guardianName } : {}),
+        ...(bloodGroup ? { bloodGroup } : {}),
       });
 
       // Auto-enrollment: silently attach the student to the currently active
@@ -3511,10 +3513,11 @@ export async function registerRoutes(
     name: z.string().min(2),
     class: z.string().min(1),
     section: z.string().min(1),
-    phone: z.string().regex(/^[0-9+\-\s()]{7,15}$/),
+    phone: z.string().regex(/^\d{10}$/, "Phone must be exactly 10 digits"),
     gender: z.enum(["Boy", "Girl"]).optional().nullable(),
     rollNumber: z.number().int().positive().optional().nullable(),
     guardianName: z.string().optional().nullable(),
+    bloodGroup: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional().nullable(),
   });
 
   app.patch("/api/admin/students/:id", async (req, res) => {
