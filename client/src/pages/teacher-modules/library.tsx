@@ -437,6 +437,31 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                     style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.10)" }}
                     data-testid="multiselect-ebook-class"
                   >
+                    {/* Select All / Deselect All toggle */}
+                    {(() => {
+                      const allSelected = classes.length > 0 && classes.every(c => ebookTargetClasses.includes(c));
+                      return (
+                        <button
+                          key="__select_all__"
+                          type="button"
+                          disabled={isArchiveMode}
+                          onClick={() => {
+                            if (isArchiveMode) return;
+                            setEbookTargetClasses(allSelected ? [] : [...classes]);
+                          }}
+                          className="px-3 py-1.5 rounded-full text-xs font-semibold transition-all disabled:opacity-50"
+                          style={{
+                            background: allSelected ? "rgba(20,184,166,0.30)" : "rgba(255,255,255,0.10)",
+                            color: allSelected ? "#5eead4" : "rgba(255,255,255,0.80)",
+                            border: allSelected ? "1px solid rgba(20,184,166,0.60)" : "1px solid rgba(255,255,255,0.25)",
+                            boxShadow: allSelected ? "0 0 10px rgba(20,184,166,0.25)" : "none",
+                          }}
+                          data-testid="class-pill-select-all"
+                        >
+                          {allSelected ? "✓ All Classes" : "Select All"}
+                        </button>
+                      );
+                    })()}
                     {classes.map(cls => {
                       const checked = ebookTargetClasses.includes(cls);
                       return (
