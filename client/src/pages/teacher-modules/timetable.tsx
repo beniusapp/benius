@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { TeacherMe } from "@/pages/teacher-dashboard";
+import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 
 /* ─────────────────── Types ─────────────────── */
@@ -131,7 +131,7 @@ function structureIsDefault(rows: StructureRow[]) {
 function SlotModal({
   modal, structure, explorerClass, explorerSection,
   subjectList, teacherId, myEntries,
-  onClose, onSaved,
+  onClose, onSaved, isArchiveMode,
 }: {
   modal: ModalState;
   structure: StructureRow[];
@@ -142,6 +142,7 @@ function SlotModal({
   myEntries: TimetableEntry[];
   onClose: () => void;
   onSaved: () => void;
+  isArchiveMode: boolean;
 }) {
   const { toast } = useToast();
   const [subject, setSubject] = useState(modal.existing?.subject ?? "");
@@ -331,13 +332,20 @@ function SlotModal({
             />
           </div>
 
+          {/* Archive Mode notice */}
+          {isArchiveMode && (
+            <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold" data-testid="banner-archive-mode-modal">
+              🔒 Archive Mode — This is a read-only historical session. No changes can be saved.
+            </div>
+          )}
+
           {/* Actions */}
           <div className="flex gap-2 pt-1">
             {modal.existing && (
               <Button
                 variant="outline"
                 onClick={() => deleteMutation.mutate()}
-                disabled={deleteMutation.isPending}
+                disabled={isArchiveMode || deleteMutation.isPending}
                 className="h-12 px-4 text-red-600 border-red-200 hover:bg-red-50"
                 data-testid="button-modal-delete"
               >
@@ -347,7 +355,7 @@ function SlotModal({
             )}
             <Button
               onClick={handleSave}
-              disabled={saveMutation.isPending || isBlocked || collisionChecking}
+              disabled={isArchiveMode || saveMutation.isPending || isBlocked || collisionChecking}
               className="flex-1 h-12 text-base font-bold bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50"
               data-testid="button-modal-save"
             >
@@ -363,6 +371,7 @@ function SlotModal({
 
 /* ─────────────────── Main Component ─────────────────── */
 export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
+  const isArchiveMode = useArchiveMode();
   const [activeTab, setActiveTab] = useState<"explorer" | "schedule">("explorer");
 
   const {
@@ -460,6 +469,13 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
       {/* Page title */}
       <h2 className="text-xl font-bold tracking-tight">My Timetable</h2>
 
+      {/* Archive mode banner */}
+      {isArchiveMode && (
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 text-amber-700 dark:text-amber-400 text-xs font-semibold" data-testid="banner-archive-mode">
+          🔒 Archive Mode — This is a read-only historical session. No changes can be saved.
+        </div>
+      )}
+
       {/* ── Tab Bar ── */}
       <div className="flex gap-2 border-b border-gray-200 pb-0">
         <button
@@ -530,6 +546,7 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
           myEntries={myEntries}
           onClose={() => setModal(null)}
           onSaved={() => setModal(null)}
+          isArchiveMode={isArchiveMode}
         />
       )}
     </div>

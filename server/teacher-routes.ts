@@ -535,10 +535,14 @@ export function registerTeacherRoutes(app: Express) {
     // Normalise section: empty string and the sentinel "all" both mean no section restriction
     const resolvedSection = (targetSection && targetSection !== "all") ? targetSection : null;
 
+    // Tag with the school's current active session so notices are session-scoped
+    const activeSession = await storage.getActiveSession(parseInt(schoolId));
+
     const notice = await storage.createNotice({
       schoolId: parseInt(schoolId), createdById: createdById!, creatorRole, targetType,
       targetClass: targetClass || null, targetSection: resolvedSection,
       noticeType: noticeType || "Routine", content, fileUrl,
+      sessionId: activeSession?.id ?? null,
     });
     res.status(201).json(notice);
   });
@@ -554,16 +558,18 @@ export function registerTeacherRoutes(app: Express) {
 
     const targetType = (req.query.target as string) || "teacher";
 
+    const noticeSessionId: number | null = (req as any).viewSessionId ?? null;
+
     // When a teacher requests their own notices, scope strictly to their
     // class-section assignments so they only see notices relevant to them.
     if (targetType === "teacher" && req.session.teacherId) {
-      const list = await storage.getTeacherScopedNotices(sid, req.session.teacherId);
+      const list = await storage.getTeacherScopedNotices(sid, req.session.teacherId, noticeSessionId);
       return res.json(list);
     }
 
     const cls = req.query.class as string | undefined;
     const section = req.query.section as string | undefined;
-    const list = await storage.getNoticesByTarget(sid, targetType, cls, section);
+    const list = await storage.getNoticesByTarget(sid, targetType, cls, section, noticeSessionId);
     res.json(list);
   });
 
@@ -652,6 +658,9 @@ export function registerTeacherRoutes(app: Express) {
     const isTeacherToStudent = (complaintType || "teacher-to-student") === "teacher-to-student";
     const shouldNotifyAdmin = isTeacherToStudent && (notifyAdmin === "true" || notifyAdmin === true);
 
+    // Tag complaint with the school's current active session
+    const activeSessionForComplaint = await storage.getActiveSession(teacher.schoolId);
+
     const complaint = await storage.createComplaintWithStudents({
       ticketId,
       teacherId: teacher.id,
@@ -665,6 +674,7 @@ export function registerTeacherRoutes(app: Express) {
       notifyAdmin: shouldNotifyAdmin,
       status: shouldNotifyAdmin ? "Escalated" : "Pending",
       batchId: null,
+      sessionId: activeSessionForComplaint?.id ?? null,
     }, studentIds);
 
     res.status(201).json(complaint);
@@ -675,7 +685,8 @@ export function registerTeacherRoutes(app: Express) {
     const tid = parseInt(req.params.teacherId);
     if (tid !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
     const teacher = await storage.getTeacherById(tid);
-    const list = await storage.getComplaintsByTeacher(tid, teacher?.assignedClass, teacher?.assignedSection, teacher?.schoolId);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getComplaintsByTeacher(tid, teacher?.assignedClass, teacher?.assignedSection, teacher?.schoolId, viewSessionId);
     res.json(list);
   });
 
@@ -1462,9 +1473,13 @@ export function registerTeacherRoutes(app: Express) {
       });
     }
 
+    // Tag leave request with the school's current active session
+    const activeSessionForLeave = await storage.getActiveSession(teacher.schoolId);
+
     const leave = await storage.createLeaveRequest({
       teacherId: teacher.id, schoolId: teacher.schoolId, policyId: matchedPolicy.id,
       leaveType, startDate, endDate, reason, status: "pending",
+      sessionId: activeSessionForLeave?.id ?? null,
     });
     res.status(201).json(leave);
   });
@@ -1472,7 +1487,8 @@ export function registerTeacherRoutes(app: Express) {
   app.get("/api/leave/teacher/:teacherId", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     if (req.session.teacherId !== parseInt(req.params.teacherId)) return res.status(403).json({ message: "Not authorized" });
-    const list = await storage.getLeaveRequestsByTeacher(req.session.teacherId);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getLeaveRequestsByTeacher(req.session.teacherId, viewSessionId);
     res.json(list);
   });
 
@@ -1642,7 +1658,8 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const list = await storage.getStudentLeavesByTeacher(teacher.id, teacher.schoolId);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getStudentLeavesByTeacher(teacher.id, teacher.schoolId, viewSessionId);
     res.json(list);
   });
 
@@ -1749,7 +1766,8 @@ export function registerTeacherRoutes(app: Express) {
       if (!teacher || teacher.schoolId !== req.session.schoolId)
         return res.status(403).json({ message: "Not authorized" });
     }
-    const list = await storage.getTimetableByTeacher(tid);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getTimetableByTeacher(tid, viewSessionId);
     res.json(list);
   });
 
@@ -1941,7 +1959,8 @@ export function registerTeacherRoutes(app: Express) {
     } else {
       schoolId = req.session.schoolId!;
     }
-    const list = await storage.getTimetableByClassSection(schoolId, cls, section);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getTimetableByClassSection(schoolId, cls, section, viewSessionId);
     const structure = await storage.getTimetableStructure(schoolId, cls);
     res.json({ entries: list, structure });
   });
@@ -2042,6 +2061,11 @@ export function registerTeacherRoutes(app: Express) {
       }>;
     };
     if (!Array.isArray(changes)) return res.status(400).json({ message: "changes array required" });
+
+    // Tag new timetable entries with the school's active session
+    const activeSessionForTimetable = await storage.getActiveSession(teacher.schoolId);
+    const timetableSessionId = activeSessionForTimetable?.id ?? null;
+
     const saved: unknown[] = [];
     const conflicts: Array<{ dayOfWeek: number; period: number; teacherName: string; subject: string }> = [];
     for (const change of changes) {
@@ -2055,7 +2079,7 @@ export function registerTeacherRoutes(app: Express) {
         conflicts.push({ dayOfWeek, period, teacherName: occupancy.teacherName, subject: occupancy.subject });
         continue;
       }
-      const entry = await storage.upsertTeacherTimetableSlot(teacher.schoolId, teacher.id, { dayOfWeek, period, class: cls, section, subject, room: room || null });
+      const entry = await storage.upsertTeacherTimetableSlot(teacher.schoolId, teacher.id, { dayOfWeek, period, class: cls, section, subject, room: room || null }, timetableSessionId);
       saved.push(entry);
     }
     res.json({ saved, conflicts });

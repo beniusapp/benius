@@ -1953,6 +1953,9 @@ export async function registerRoutes(
       attachmentUrl = `/uploads/leave-attachments/${filename}`;
     }
 
+    // Tag with the school's active session for session-scoped filtering
+    const activeSessionForStudentLeave = await storage.getActiveSession(student.schoolId);
+
     const leave = await storage.createStudentLeaveRequest({
       studentId: student.id,
       schoolId: student.schoolId,
@@ -1962,6 +1965,7 @@ export async function registerRoutes(
       status: "pending_teacher",
       category: category || null,
       attachmentUrl,
+      sessionId: activeSessionForStudentLeave?.id ?? null,
     });
     res.status(201).json(leave);
   });

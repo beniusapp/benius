@@ -142,6 +142,7 @@ export const notices = pgTable("notices", {
   content: text("content").notNull(),
   fileUrl: text("file_url"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
 });
 
 export const noticeReads = pgTable("notice_reads", {
@@ -181,6 +182,7 @@ export const complaints = pgTable("complaints", {
   resolvedAt: timestamp("resolved_at"),
   deletedAt: timestamp("deleted_at"),
   deletedBy: integer("deleted_by"),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
 });
 
 export const complaintNotes = pgTable("complaint_notes", {
@@ -312,6 +314,7 @@ export const leaveRequests = pgTable("leave_requests", {
   status: text("status").notNull().default("pending"),
   approvedBy: integer("approved_by"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
 });
 
 export const schoolMetadata = pgTable("school_metadata", {
@@ -337,6 +340,7 @@ export const timetableEntries = pgTable("timetable_entries", {
   endTime: text("end_time"),
   status: text("status").notNull().default("draft"),
   room: text("room"),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
 }, (table) => [
   uniqueIndex("timetable_class_slot_unique").on(table.schoolId, table.class, table.section, table.dayOfWeek, table.period),
 ]);
@@ -367,6 +371,7 @@ export const studentLeaveRequests = pgTable("student_leave_requests", {
   rejectionReason: text("rejection_reason"),
   adminComment: text("admin_comment"),
   teacherComment: text("teacher_comment"),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
 });
 
 export const auditLogs = pgTable("audit_logs", {

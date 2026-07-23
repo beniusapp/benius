@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { TeacherMe } from "@/pages/teacher-dashboard";
+import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
 
 interface PendingProfile {
   id: number;
@@ -64,6 +64,7 @@ const FIELD_LABELS: { key: keyof ParsedVerifiedProfile | "fullName" | "class" | 
 type ProfileField = keyof Pick<PendingProfile, "fullName" | "class" | "section" | "rollNo" | "fatherName" | "motherName" | "presentAddress">;
 
 export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe }) {
+  const isArchiveMode = useArchiveMode();
   const { toast } = useToast();
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [reviewProfile, setReviewProfile] = useState<PendingProfile | null>(null);
@@ -171,6 +172,12 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
 
   return (
     <div className="space-y-5 max-w-5xl mx-auto">
+      {/* Archive mode banner */}
+      {isArchiveMode && (
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 text-amber-700 dark:text-amber-400 text-xs font-semibold" data-testid="banner-archive-mode">
+          🔒 Archive Mode — This is a read-only historical session. No changes can be saved.
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
@@ -191,7 +198,7 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
             {someSelected && (
               <button
                 onClick={() => bulkApproveMutation.mutate(Array.from(selectedIds))}
-                disabled={bulkApproveMutation.isPending}
+                disabled={isArchiveMode || bulkApproveMutation.isPending}
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold transition-colors disabled:opacity-60 shadow"
                 data-testid="button-bulk-approve"
               >
@@ -497,7 +504,7 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
                     </button>
                     <button
                       onClick={submitRejection}
-                      disabled={rejectMutation.isPending}
+                      disabled={isArchiveMode || rejectMutation.isPending}
                       className="flex-1 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold transition-colors disabled:opacity-60"
                       data-testid="button-confirm-reject"
                     >
@@ -509,7 +516,8 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
                 <div className="flex flex-col sm:flex-row gap-3">
                   <button
                     onClick={() => setShowRejectInput(true)}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm font-semibold hover:bg-red-100 transition-colors"
+                    disabled={isArchiveMode}
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm font-semibold hover:bg-red-100 transition-colors disabled:opacity-50"
                     data-testid="button-reject"
                   >
                     <XCircle className="w-4 h-4" />
@@ -517,7 +525,7 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
                   </button>
                   <button
                     onClick={() => approveMutation.mutate(reviewProfile.studentId)}
-                    disabled={approveMutation.isPending}
+                    disabled={isArchiveMode || approveMutation.isPending}
                     className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold transition-colors disabled:opacity-60 shadow"
                     data-testid="button-approve"
                   >

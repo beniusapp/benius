@@ -679,12 +679,13 @@ export class DatabaseStorage {
     return n ?? null;
   }
 
-  async getNoticesByTarget(schoolId: number, targetType: string, cls?: string, section?: string): Promise<Notice[]> {
+  async getNoticesByTarget(schoolId: number, targetType: string, cls?: string, section?: string, sessionId?: number | null): Promise<Notice[]> {
     const typeFilter = targetType === "student"
       ? or(eq(notices.targetType, "student"), eq(notices.targetType, "whole_school"))!
       : eq(notices.targetType, targetType);
-    const conditions = [eq(notices.schoolId, schoolId), typeFilter];
+    const conditions: any[] = [eq(notices.schoolId, schoolId), typeFilter];
     if (cls) conditions.push(or(eq(notices.targetClass, cls), isNull(notices.targetClass))!);
+    if (sessionId != null) conditions.push(eq(notices.sessionId, sessionId));
     return await db.select().from(notices).where(and(...conditions)).orderBy(desc(notices.createdAt));
   }
 
@@ -742,7 +743,7 @@ export class DatabaseStorage {
    * Students can NEVER see these notices — the targetType:"teacher" filter in
    * getStudentNotices only fetches targetType "whole_school" / "student" / "class".
    */
-  async getTeacherScopedNotices(schoolId: number, teacherId: number): Promise<Notice[]> {
+  async getTeacherScopedNotices(schoolId: number, teacherId: number, sessionId?: number | null): Promise<Notice[]> {
     const [teacherRecord, mappings] = await Promise.all([
       this.getTeacherById(teacherId),
       this.getFacultyMappingsByTeacher(teacherId),
@@ -765,14 +766,16 @@ export class DatabaseStorage {
     }
 
     // Fetch all teacher-type AND whole-school notices for this school in one query
+    const noticeConditions: any[] = [
+      eq(notices.schoolId, schoolId),
+      or(
+        eq(notices.targetType, "teacher"),
+        eq(notices.targetType, "whole_school"),
+      ),
+    ];
+    if (sessionId != null) noticeConditions.push(eq(notices.sessionId, sessionId));
     const allNotices = await db.select().from(notices)
-      .where(and(
-        eq(notices.schoolId, schoolId),
-        or(
-          eq(notices.targetType, "teacher"),
-          eq(notices.targetType, "whole_school"),
-        ),
-      ))
+      .where(and(...noticeConditions))
       .orderBy(desc(notices.createdAt));
 
     return allNotices.filter(notice => {
@@ -1049,19 +1052,18 @@ export class DatabaseStorage {
     });
   }
 
-  async getComplaintsByTeacher(teacherId: number, assignedClass?: string, assignedSection?: string, schoolId?: number): Promise<(Complaint & { studentName: string | null; students: { id: number; name: string; class: string | null; section: string | null }[] })[]> {
+  async getComplaintsByTeacher(teacherId: number, assignedClass?: string, assignedSection?: string, schoolId?: number, sessionId?: number | null): Promise<(Complaint & { studentName: string | null; students: { id: number; name: string; class: string | null; section: string | null }[] })[]> {
     const STUDENT_FILED_TYPES = ["student-to-staff", "student-peer-report"];
-    const ownWhereConditions = [
+    const ownWhereConditions: any[] = [
       eq(complaints.teacherId, teacherId),
       eq(complaints.isDeleted, false),
       sql`${complaints.complaintType} NOT IN ('student-to-staff', 'student-peer-report')`,
-    ] as const;
+    ];
+    if (schoolId) ownWhereConditions.push(eq(complaints.schoolId, schoolId));
+    if (sessionId != null) ownWhereConditions.push(eq(complaints.sessionId, sessionId));
     const ownComplaints = await db.select().from(complaints)
       .leftJoin(students, eq(complaints.studentId, students.id))
-      .where(schoolId
-        ? and(...ownWhereConditions, eq(complaints.schoolId, schoolId))
-        : and(...ownWhereConditions)
-      )
+      .where(and(...ownWhereConditions))
       .orderBy(desc(complaints.createdAt));
 
     const ownResults = ownComplaints.map(r => ({
@@ -1072,18 +1074,18 @@ export class DatabaseStorage {
     let allResults = ownResults;
 
     if (assignedClass && assignedSection && schoolId) {
+      const s2sConditions: any[] = [
+        eq(complaints.isDeleted, false),
+        eq(complaints.complaintType, "student-to-student"),
+        eq(complaints.schoolId, schoolId),
+        sql`${complaints.teacherId} != ${teacherId}`,
+        eq(students.class, assignedClass),
+        eq(students.section, assignedSection),
+      ];
+      if (sessionId != null) s2sConditions.push(eq(complaints.sessionId, sessionId));
       const s2sFromOthers = await db.select().from(complaints)
         .leftJoin(students, eq(complaints.studentId, students.id))
-        .where(
-          and(
-            eq(complaints.isDeleted, false),
-            eq(complaints.complaintType, "student-to-student"),
-            eq(complaints.schoolId, schoolId),
-            sql`${complaints.teacherId} != ${teacherId}`,
-            eq(students.class, assignedClass),
-            eq(students.section, assignedSection)
-          )
-        )
+        .where(and(...s2sConditions))
         .orderBy(desc(complaints.createdAt));
 
       const s2sResults = s2sFromOthers.map(r => ({
@@ -1855,8 +1857,10 @@ export class DatabaseStorage {
     return req;
   }
 
-  async getLeaveRequestsByTeacher(teacherId: number): Promise<LeaveRequest[]> {
-    return await db.select().from(leaveRequests).where(eq(leaveRequests.teacherId, teacherId)).orderBy(desc(leaveRequests.createdAt));
+  async getLeaveRequestsByTeacher(teacherId: number, sessionId?: number | null): Promise<LeaveRequest[]> {
+    const conditions: any[] = [eq(leaveRequests.teacherId, teacherId)];
+    if (sessionId != null) conditions.push(eq(leaveRequests.sessionId, sessionId));
+    return await db.select().from(leaveRequests).where(and(...conditions)).orderBy(desc(leaveRequests.createdAt));
   }
 
   async getLeaveRequestById(id: number): Promise<LeaveRequest | null> {
@@ -1883,8 +1887,10 @@ export class DatabaseStorage {
     return entry;
   }
 
-  async getTimetableByTeacher(teacherId: number): Promise<TimetableEntry[]> {
-    return await db.select().from(timetableEntries).where(eq(timetableEntries.teacherId, teacherId));
+  async getTimetableByTeacher(teacherId: number, sessionId?: number | null): Promise<TimetableEntry[]> {
+    const conditions: any[] = [eq(timetableEntries.teacherId, teacherId)];
+    if (sessionId != null) conditions.push(eq(timetableEntries.sessionId, sessionId));
+    return await db.select().from(timetableEntries).where(and(...conditions));
   }
 
   async getTimetableBySchool(schoolId: number): Promise<(TimetableEntry & { teacherName: string })[]> {
@@ -2042,14 +2048,16 @@ export class DatabaseStorage {
     return { valid: true };
   }
 
-  async getTimetableByClassSection(schoolId: number, cls: string, section: string): Promise<(TimetableEntry & { teacherName: string })[]> {
+  async getTimetableByClassSection(schoolId: number, cls: string, section: string, sessionId?: number | null): Promise<(TimetableEntry & { teacherName: string })[]> {
+    const conditions: any[] = [
+      eq(timetableEntries.schoolId, schoolId),
+      eq(timetableEntries.class, cls),
+      eq(timetableEntries.section, section),
+    ];
+    if (sessionId != null) conditions.push(eq(timetableEntries.sessionId, sessionId));
     const result = await db.select().from(timetableEntries)
       .leftJoin(teachers, eq(timetableEntries.teacherId, teachers.id))
-      .where(and(
-        eq(timetableEntries.schoolId, schoolId),
-        eq(timetableEntries.class, cls),
-        eq(timetableEntries.section, section),
-      ));
+      .where(and(...conditions));
     return result.map(r => ({ ...r.timetable_entries, teacherName: r.teachers?.fullName ?? "" }));
   }
 
@@ -2124,16 +2132,17 @@ export class DatabaseStorage {
   async upsertTeacherTimetableSlot(
     schoolId: number,
     teacherId: number,
-    opts: { dayOfWeek: number; period: number; class: string; section: string; subject: string; room?: string | null }
+    opts: { dayOfWeek: number; period: number; class: string; section: string; subject: string; room?: string | null },
+    sessionId?: number | null
   ): Promise<TimetableEntry> {
-    const existing = await db.select().from(timetableEntries).where(
-      and(
-        eq(timetableEntries.schoolId, schoolId),
-        eq(timetableEntries.teacherId, teacherId),
-        eq(timetableEntries.dayOfWeek, opts.dayOfWeek),
-        eq(timetableEntries.period, opts.period),
-      )
-    );
+    const conditions: any[] = [
+      eq(timetableEntries.schoolId, schoolId),
+      eq(timetableEntries.teacherId, teacherId),
+      eq(timetableEntries.dayOfWeek, opts.dayOfWeek),
+      eq(timetableEntries.period, opts.period),
+    ];
+    if (sessionId != null) conditions.push(eq(timetableEntries.sessionId, sessionId));
+    const existing = await db.select().from(timetableEntries).where(and(...conditions));
     if (existing.length > 0) {
       const [updated] = await db.update(timetableEntries)
         .set({ class: opts.class, section: opts.section, subject: opts.subject, room: opts.room ?? null, status: "draft" })
@@ -2151,6 +2160,7 @@ export class DatabaseStorage {
       subject: opts.subject,
       room: opts.room ?? null,
       status: "draft",
+      sessionId: sessionId ?? null,
     }).returning();
     return created;
   }
@@ -2385,17 +2395,17 @@ export class DatabaseStorage {
     return req;
   }
 
-  async getStudentLeavesByClassSection(schoolId: number, cls: string, section: string): Promise<(StudentLeaveRequest & { studentName: string; dsid: string })[]> {
+  async getStudentLeavesByClassSection(schoolId: number, cls: string, section: string, sessionId?: number | null): Promise<(StudentLeaveRequest & { studentName: string; dsid: string })[]> {
+    const conditions: any[] = [
+      eq(studentLeaveRequests.schoolId, schoolId),
+      eq(students.class, cls),
+      eq(students.section, section),
+      eq(studentLeaveRequests.status, "pending_teacher"),
+    ];
+    if (sessionId != null) conditions.push(eq(studentLeaveRequests.sessionId, sessionId));
     const result = await db.select().from(studentLeaveRequests)
       .innerJoin(students, eq(studentLeaveRequests.studentId, students.id))
-      .where(
-        and(
-          eq(studentLeaveRequests.schoolId, schoolId),
-          eq(students.class, cls),
-          eq(students.section, section),
-          eq(studentLeaveRequests.status, "pending_teacher")
-        )
-      )
+      .where(and(...conditions))
       .orderBy(desc(studentLeaveRequests.createdAt));
     return result.map(r => ({
       ...r.student_leave_requests,
@@ -2407,7 +2417,7 @@ export class DatabaseStorage {
   // Returns all pending_teacher leaves from every class-section a teacher is mapped to.
   // Uses faculty_mappings (the admin-configured multi-class assignment) rather than the
   // single assignedClass/assignedSection field, so multi-class teachers see all their students.
-  async getStudentLeavesByTeacher(teacherId: number, schoolId: number): Promise<(StudentLeaveRequest & { studentName: string; dsid: string; class: string; section: string })[]> {
+  async getStudentLeavesByTeacher(teacherId: number, schoolId: number, sessionId?: number | null): Promise<(StudentLeaveRequest & { studentName: string; dsid: string; class: string; section: string })[]> {
     // 1. Get all class-sections this teacher is mapped to
     const mappings = await db
       .select({ className: facultyMappings.className, section: facultyMappings.section })
@@ -2421,15 +2431,16 @@ export class DatabaseStorage {
       and(eq(students.class, m.className), eq(students.section, m.section))
     );
 
+    const whereConditions: any[] = [
+      eq(studentLeaveRequests.schoolId, schoolId),
+      eq(studentLeaveRequests.status, "pending_teacher"),
+      or(...classConditions),
+    ];
+    if (sessionId != null) whereConditions.push(eq(studentLeaveRequests.sessionId, sessionId));
+
     const result = await db.select().from(studentLeaveRequests)
       .innerJoin(students, eq(studentLeaveRequests.studentId, students.id))
-      .where(
-        and(
-          eq(studentLeaveRequests.schoolId, schoolId),
-          eq(studentLeaveRequests.status, "pending_teacher"),
-          or(...classConditions)
-        )
-      )
+      .where(and(...whereConditions))
       .orderBy(desc(studentLeaveRequests.createdAt));
 
     // Deduplicate in case a student appears in multiple mappings for the same teacher

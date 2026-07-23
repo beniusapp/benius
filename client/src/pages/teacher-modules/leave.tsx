@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { TeacherMe } from "@/pages/teacher-dashboard";
+import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
 
 interface LeaveEntry {
   id: number;
@@ -81,6 +81,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
+  const isArchiveMode = useArchiveMode();
   const { toast } = useToast();
   const [leaveType, setLeaveType] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -221,6 +222,12 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
 
   return (
     <div className="space-y-4">
+      {/* Archive mode banner */}
+      {isArchiveMode && (
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 text-amber-700 dark:text-amber-400 text-xs font-semibold" data-testid="banner-archive-mode">
+          🔒 Archive Mode — This is a read-only historical session. No changes can be saved.
+        </div>
+      )}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="w-full" data-testid="tabs-leave">
           <TabsTrigger value="my-leave" className="flex-1" data-testid="tab-my-leave">
@@ -365,7 +372,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
               />
               <Button
                 onClick={() => submitMutation.mutate()}
-                disabled={!leaveType || !startDate || !endDate || !reason.trim() || submitMutation.isPending || isBalanceZero}
+                disabled={isArchiveMode || !leaveType || !startDate || !endDate || !reason.trim() || submitMutation.isPending || isBalanceZero}
                 data-testid="button-submit-leave"
               >
                 {submitMutation.isPending ? (
@@ -485,7 +492,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                       </p>
                       <p className="text-sm mt-1 mb-2 text-gray-700 line-clamp-2">{sl.reason}</p>
                       {/* ── Action Buttons ── */}
-                      {sl.status === "pending_teacher" && !(pendingAction?.id === sl.id) && (
+                      {sl.status === "pending_teacher" && !(pendingAction?.id === sl.id) && !isArchiveMode && (
                         <div className="flex items-center gap-2 flex-wrap">
                           <Button
                             size="sm"
@@ -545,7 +552,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                               <Button
                                 size="sm"
                                 onClick={() => approveMutation.mutate({ id: sl.id, comment: actionComment })}
-                                disabled={approveMutation.isPending}
+                                disabled={isArchiveMode || approveMutation.isPending}
                                 className="bg-emerald-600 hover:bg-emerald-700 text-white"
                                 data-testid={`button-confirm-approve-${sl.id}`}
                               >
@@ -558,7 +565,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                                 size="sm"
                                 variant="destructive"
                                 onClick={() => rejectMutation.mutate({ id: sl.id, reason: actionComment })}
-                                disabled={rejectMutation.isPending}
+                                disabled={isArchiveMode || rejectMutation.isPending}
                                 data-testid={`button-confirm-reject-${sl.id}`}
                               >
                                 {rejectMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <XCircle className="w-3 h-3 mr-1" />}
@@ -569,7 +576,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                               <Button
                                 size="sm"
                                 onClick={() => forwardMutation.mutate({ id: sl.id, comment: actionComment })}
-                                disabled={forwardMutation.isPending}
+                                disabled={isArchiveMode || forwardMutation.isPending}
                                 className="bg-blue-600 hover:bg-blue-700 text-white"
                                 data-testid={`button-confirm-escalate-${sl.id}`}
                               >
@@ -665,7 +672,7 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
               <Button variant="outline" onClick={() => setSelectedLeave(null)} data-testid="button-close-leave-detail">
                 Close
               </Button>
-              {selectedLeave.status === "pending_teacher" && (
+              {selectedLeave.status === "pending_teacher" && !isArchiveMode && (
                 <>
                   <Button
                     variant="outline"
