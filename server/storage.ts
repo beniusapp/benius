@@ -4623,9 +4623,36 @@ export class DatabaseStorage {
 
   /** Hard-delete a session. Cascades to enrollments via FK. */
   async deleteAcademicSession(id: number, schoolId: number): Promise<void> {
-    await db
-      .delete(academicSessions)
-      .where(and(eq(academicSessions.id, id), eq(academicSessions.schoolId, schoolId)));
+    await db.transaction(async (tx) => {
+      // Check if the session being deleted is currently active
+      const [target] = await tx
+        .select({ isActive: academicSessions.isActive })
+        .from(academicSessions)
+        .where(and(eq(academicSessions.id, id), eq(academicSessions.schoolId, schoolId)));
+
+      if (!target) return; // not found / wrong school — no-op
+
+      await tx
+        .delete(academicSessions)
+        .where(and(eq(academicSessions.id, id), eq(academicSessions.schoolId, schoolId)));
+
+      // If the deleted session was active, promote the most recent remaining session
+      if (target.isActive) {
+        const remaining = await tx
+          .select({ id: academicSessions.id })
+          .from(academicSessions)
+          .where(eq(academicSessions.schoolId, schoolId))
+          .orderBy(desc(academicSessions.id))
+          .limit(1);
+
+        if (remaining.length > 0) {
+          await tx
+            .update(academicSessions)
+            .set({ isActive: true, status: "active" })
+            .where(and(eq(academicSessions.id, remaining[0].id), eq(academicSessions.schoolId, schoolId)));
+        }
+      }
+    });
   }
 
   /**
