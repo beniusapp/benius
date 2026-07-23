@@ -1794,7 +1794,6 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
         </>
       )}
 
-      {StudentLeaveModal}
       {HistoryModal}
     </div>
   );
