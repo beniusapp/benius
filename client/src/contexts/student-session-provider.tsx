@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { SessionViewContext, AcademicSession } from "./session-view-context";
 
 async function fetchSessions(): Promise<AcademicSession[]> {
@@ -10,6 +10,8 @@ async function fetchSessions(): Promise<AcademicSession[]> {
 }
 
 export function StudentSessionProvider({ children }: { children: React.ReactNode }) {
+  const queryClient = useQueryClient();
+
   const { data: sessions = [], isLoading } = useQuery<AcademicSession[]>({
     queryKey: ["/api/student/academic-sessions"],
     queryFn: fetchSessions,
@@ -25,6 +27,24 @@ export function StudentSessionProvider({ children }: { children: React.ReactNode
       setSelectedSession(active);
     }
   }, [sessions, selectedSession]);
+
+  // ── Real-time session activation listener ────────────────────────────────
+  // When admin activates a new session, snap the student back to the new
+  // active session instantly without a page refresh.
+  useEffect(() => {
+    const es = new EventSource("/api/events/session-change");
+    es.onmessage = (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data as string);
+        if (data.type === "session-activated") {
+          // Reset selection — the useEffect above will pick the new active session
+          setSelectedSession(null);
+          queryClient.invalidateQueries({ queryKey: ["/api/student/academic-sessions"] });
+        }
+      } catch { /* malformed event — ignore */ }
+    };
+    return () => es.close();
+  }, [queryClient]);
 
   const isArchiveMode = selectedSession !== null && selectedSession.isActive === false;
 

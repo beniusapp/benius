@@ -19,6 +19,7 @@ import multer from "multer";
 import { parse } from "csv-parse/sync";
 import * as XLSX from "xlsx";
 import { registerTeacherRoutes } from "./teacher-routes";
+import { addSSEClient, broadcastSessionActivated } from "./sse";
 import { db } from "./db";
 import { eq, and, sql, inArray, not } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
@@ -3036,6 +3037,30 @@ export async function registerRoutes(
    * The reset intentionally happens HERE (at activation time), not at creation.
    * This guarantees data is cleared only after the admin explicitly confirms.
    */
+  // ── SSE endpoint — real-time session activation push ──────────────────────
+  // Teachers and students connect here on login. When admin activates a
+  // session, broadcastSessionActivated() pushes the event to all of them.
+  app.get("/api/events/session-change", (req, res) => {
+    const schoolId = req.session.schoolId;
+    if (!req.session.userId || !schoolId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // prevent nginx from buffering SSE
+    res.flushHeaders();
+    // Confirm connection to client
+    res.write(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
+    // Register this client for its school
+    addSSEClient(schoolId, res);
+    // Heartbeat every 25 s to keep the connection alive through proxies
+    const heartbeat = setInterval(() => {
+      try { res.write(": heartbeat\n\n"); } catch { clearInterval(heartbeat); }
+    }, 25000);
+    res.on("close", () => clearInterval(heartbeat));
+  });
+
   app.patch("/api/admin/academic-sessions/:id/activate", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
@@ -3117,6 +3142,8 @@ export async function registerRoutes(
       });
 
       res.json(updated);
+      // Push real-time event to all connected teachers and students for this school
+      broadcastSessionActivated(schoolId, { sessionId: updated.id, sessionName: updated.sessionName });
     } catch (e: any) {
       console.error("[SESSION-ACTIVATE] ✗ FAILED:", e.message);
       res.status(500).json({ message: e.message || "Failed to activate session" });

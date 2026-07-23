@@ -294,6 +294,28 @@ export default function TeacherDashboard() {
     setViewSessionId(viewingSessionId);
   }, [viewingSessionId]);
 
+  // ── Real-time session activation listener ────────────────────────────────
+  // When admin activates a new session, the server pushes a session-activated
+  // SSE event. We reset to the new active session instantly.
+  useEffect(() => {
+    if (!teacher) return;
+    const es = new EventSource("/api/events/session-change");
+    es.onmessage = (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data as string);
+        if (data.type === "session-activated") {
+          setViewingSessionId(null); // snap back to active session
+          queryClient.invalidateQueries({ queryKey: ["/api/teacher/academic-sessions"] });
+          toast({
+            title: "Session switched",
+            description: `${data.sessionName} is now the active session.`,
+          });
+        }
+      } catch { /* malformed event — ignore */ }
+    };
+    return () => es.close();
+  }, [teacher?.id]);
+
   // On unmount (logout / route away), always reset the global session context.
   useEffect(() => {
     return () => { setViewSessionId(null); };
