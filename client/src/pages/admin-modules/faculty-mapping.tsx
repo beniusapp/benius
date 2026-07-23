@@ -221,7 +221,7 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
       existingSubject.split(",").map(s => s.trim()).filter(Boolean).forEach(s => initial.add(s));
     }
     setPendingSubjects(initial);
-    setCustomInput("");
+    setSubjectSearchQ("");
   }, []);
 
   const togglePendingSubject = useCallback((subj: string) => {
