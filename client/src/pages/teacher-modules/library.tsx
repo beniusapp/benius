@@ -451,10 +451,10 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                           }}
                           className="px-3 py-1.5 rounded-full text-xs font-semibold transition-all disabled:opacity-50"
                           style={{
-                            background: allSelected ? "rgba(20,184,166,0.30)" : "rgba(255,255,255,0.10)",
-                            color: allSelected ? "#5eead4" : "rgba(255,255,255,0.80)",
-                            border: allSelected ? "1px solid rgba(20,184,166,0.60)" : "1px solid rgba(255,255,255,0.25)",
-                            boxShadow: allSelected ? "0 0 10px rgba(20,184,166,0.25)" : "none",
+                            background: allSelected ? "rgba(20,184,166,0.22)" : "rgba(255,255,255,0.06)",
+                            color: allSelected ? "#5eead4" : "rgba(255,255,255,0.50)",
+                            border: allSelected ? "1px solid rgba(20,184,166,0.45)" : "1px solid rgba(255,255,255,0.10)",
+                            boxShadow: allSelected ? "0 0 8px rgba(20,184,166,0.20)" : "none",
                           }}
                           data-testid="class-pill-select-all"
                         >
