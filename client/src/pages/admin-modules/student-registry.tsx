@@ -735,6 +735,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                 { label: "Guardian", value: viewTarget.guardianName ?? "Not recorded" },
                 { label: "Blood Group", value: (viewTarget as any).bloodGroup ?? "Not recorded" },
                 { label: "Date of Birth", value: viewTarget.dob ?? "—" },
+                { label: "Date of Admission", value: viewTarget.enrollmentDate ?? "Not recorded" },
                 { label: "Status", value: viewTarget.isActivated ? "Activated" : "Pending activation" },
               ].map(({ label, value, mono, gold }) => (
                 <div key={label} className="flex justify-between items-start gap-3 text-sm">
