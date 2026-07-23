@@ -768,8 +768,9 @@ export async function registerRoutes(
     name: z.string().min(1),
     class: z.string().min(1),
     section: z.string().min(1),
-    phone: z.string().min(7),
+    phone: z.string().regex(/^\d{10}$/, "Phone must be exactly 10 digits"),
     dob: z.string().min(1),
+    enrollmentDate: z.string().optional(),
     gender: z.enum(["Boy", "Girl"]).optional(),
     rollNumber: z.number().int().positive().optional().nullable(),
     guardianName: z.string().optional(),
@@ -796,7 +797,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
       }
 
-      const { name, class: cls, section, phone, dob: dobRaw, gender, rollNumber, guardianName } = parsed.data;
+      const { name, class: cls, section, phone, dob: dobRaw, enrollmentDate, gender, rollNumber, guardianName } = parsed.data;
 
       if (!isValidPhone(phone)) {
         return res.status(400).json({ message: "Invalid phone number" });
@@ -830,6 +831,7 @@ export async function registerRoutes(
         dob,
         passwordHash,
         isActivated: false,
+        ...(enrollmentDate ? { enrollmentDate } : {}),
         ...(gender ? { gender } : {}),
         ...(rollNumber ? { rollNumber } : {}),
         ...(guardianName ? { guardianName } : {}),

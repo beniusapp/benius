@@ -32,8 +32,9 @@ const addSchema = z.object({
   name: z.string().min(1, "Name required"),
   class: z.string().min(1, "Class required"),
   section: z.string().min(1, "Section required"),
-  phone: z.string().min(7, "Valid phone required"),
+  phone: z.string().regex(/^\d{10}$/, "Phone must be exactly 10 digits"),
   dob: z.string().min(1, "Date of birth required"),
+  dateOfAdmission: z.string().optional(),
   gender: z.enum(["Boy", "Girl"]).optional(),
   rollNumber: z.string().optional(),
   guardianName: z.string().optional(),
@@ -44,7 +45,7 @@ const editSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
   class: z.string().min(1, "Class is required"),
   section: z.string().min(1, "Section is required"),
-  phone: z.string().regex(/^[0-9+\-\s()]{7,15}$/, "Invalid phone number (7–15 digits)"),
+  phone: z.string().regex(/^\d{10}$/, "Phone must be exactly 10 digits"),
   gender: z.enum(["Boy", "Girl"]).optional().nullable(),
   rollNumber: z.string().optional(),
   guardianName: z.string().optional(),
@@ -171,7 +172,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
 
   const form = useForm<AddForm>({
     resolver: zodResolver(addSchema),
-    defaultValues: { name: "", class: "", section: "", phone: "", dob: "", gender: undefined, rollNumber: "", guardianName: "" },
+    defaultValues: { name: "", class: "", section: "", phone: "", dob: "", dateOfAdmission: "", gender: undefined, rollNumber: "", guardianName: "" },
   });
 
   const addMutation = useMutation({
@@ -179,6 +180,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
       const payload = {
         ...d,
         rollNumber: d.rollNumber ? parseInt(d.rollNumber) : undefined,
+        ...(d.dateOfAdmission ? { enrollmentDate: d.dateOfAdmission } : {}),
       };
       const r = await apiRequest("POST", `/api/schools/${schoolId}/students`, payload);
       return r.json();
@@ -450,12 +452,26 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
               )} />
               <FormField control={form.control} name="phone" render={({ field }) => (
                 <FormItem><FormLabel className="text-white/70">Phone</FormLabel>
-                  <FormControl><Input {...field} className="bg-[#0A1628] border-white/20 text-white" data-testid="input-student-phone" /></FormControl>
+                  <FormControl><Input
+                    {...field}
+                    type="tel"
+                    inputMode="numeric"
+                    maxLength={10}
+                    placeholder="10-digit mobile number"
+                    onChange={e => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                    className="bg-[#0A1628] border-white/20 text-white"
+                    data-testid="input-student-phone"
+                  /></FormControl>
                   <FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="dob" render={({ field }) => (
                 <FormItem><FormLabel className="text-white/70">Date of Birth</FormLabel>
                   <FormControl><Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white" data-testid="input-student-dob" /></FormControl>
+                  <FormMessage /></FormItem>
+              )} />
+              <FormField control={form.control} name="dateOfAdmission" render={({ field }) => (
+                <FormItem><FormLabel className="text-white/70">Date of Admission</FormLabel>
+                  <FormControl><Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white" data-testid="input-student-admission" /></FormControl>
                   <FormMessage /></FormItem>
               )} />
               <div className="flex items-end">
@@ -793,8 +809,16 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                   </div>
                   <FormField control={editForm.control} name="phone" render={({ field }) => (
                     <FormItem><FormLabel className="text-white/70">Phone Number</FormLabel>
-                      <FormControl><Input {...field} data-testid="input-edit-phone" placeholder="e.g. 9876543210"
-                        className="bg-[#0A1628] border-white/20 text-white" /></FormControl>
+                      <FormControl><Input
+                        {...field}
+                        type="tel"
+                        inputMode="numeric"
+                        maxLength={10}
+                        placeholder="10-digit mobile number"
+                        onChange={e => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                        data-testid="input-edit-phone"
+                        className="bg-[#0A1628] border-white/20 text-white"
+                      /></FormControl>
                       <FormMessage /></FormItem>
                   )} />
                   <FormField control={editForm.control} name="guardianName" render={({ field }) => (
