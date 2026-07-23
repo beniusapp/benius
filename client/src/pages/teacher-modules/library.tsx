@@ -451,14 +451,22 @@ export default function LibraryModule({ teacher }: { teacher: TeacherMe }) {
                           }}
                           className="px-3 py-1.5 rounded-full text-xs font-semibold transition-all disabled:opacity-50"
                           style={{
-                            background: allSelected ? "rgba(20,184,166,0.22)" : "rgba(255,255,255,0.06)",
-                            color: allSelected ? "#5eead4" : "rgba(255,255,255,0.50)",
-                            border: allSelected ? "1px solid rgba(20,184,166,0.45)" : "1px solid rgba(255,255,255,0.10)",
-                            boxShadow: allSelected ? "0 0 8px rgba(20,184,166,0.20)" : "none",
+                            background: allSelected
+                              ? "linear-gradient(135deg, rgba(20,184,166,0.35), rgba(59,130,246,0.30))"
+                              : "linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.06))",
+                            color: allSelected ? "#5eead4" : "#ffffff",
+                            border: allSelected
+                              ? "1.5px solid rgba(20,184,166,0.70)"
+                              : "1.5px solid rgba(255,255,255,0.35)",
+                            boxShadow: allSelected
+                              ? "0 0 12px rgba(20,184,166,0.30)"
+                              : "0 0 6px rgba(255,255,255,0.08)",
+                            fontWeight: 700,
+                            letterSpacing: "0.02em",
                           }}
                           data-testid="class-pill-select-all"
                         >
-                          {allSelected ? "✓ All Classes" : "Select All"}
+                          {allSelected ? "✓ All Classes" : "⊞ Select All"}
                         </button>
                       );
                     })()}
