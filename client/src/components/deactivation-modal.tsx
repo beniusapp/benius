@@ -21,7 +21,7 @@ interface DeactivationModalProps {
 const STUDENT_REASONS = ["Graduated", "Transferred", "Disciplinary", "Long Absence", "Fee Default", "Other"];
 const TEACHER_REASONS = ["Resigned", "Transferred", "Terminated", "Retired", "Contract Ended", "Other"];
 
-const BATCH_YEARS = Array.from({ length: 15 }, (_, i) => {
+const BATCH_YEARS = Array.from({ length: 86 }, (_, i) => {
   const start = 2015 + i;
   return `${start}-${start + 1}`;
 });

@@ -285,7 +285,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
     setBulkPassword(""); setBulkShowPw(false); setBulkPwError("");
   }
 
-  const BULK_BATCH_YEARS = Array.from({ length: 15 }, (_, i) => {
+  const BULK_BATCH_YEARS = Array.from({ length: 86 }, (_, i) => {
     const s = 2015 + i; return `${s}-${s + 1}`;
   });
 
