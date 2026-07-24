@@ -1084,7 +1084,7 @@ export async function registerRoutes(
     if (isNaN(schoolId) || isNaN(studentId)) return res.status(400).json({ message: "Invalid ID" });
     if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
 
-    const { reason, password } = req.body;
+    const { reason, batchYear, comments, password } = req.body;
     if (!reason) return res.status(400).json({ message: "Reason is required" });
     if (!password) return res.status(400).json({ message: "Admin password confirmation is required" });
 
@@ -1096,6 +1096,9 @@ export async function registerRoutes(
     if (!student.isActive) return res.status(409).json({ message: "Student is already deactivated" });
 
     await storage.deactivateStudent(studentId);
+    const detailParts1 = [`Student ${student.name} (${student.digitalStudentId}) deactivated. Reason: ${reason}`];
+    if (batchYear) detailParts1.push(`Batch: ${batchYear}`);
+    if (comments) detailParts1.push(`Comments: ${comments}`);
     await storage.createAuditLog({
       schoolId,
       actionType: "deactivate",
@@ -1103,7 +1106,7 @@ export async function registerRoutes(
       entityId: studentId,
       actionBy: req.session.userId!,
       actionByRole: "admin",
-      details: `Student ${student.name} (${student.digitalStudentId}) deactivated. Reason: ${reason}`,
+      details: detailParts1.join(". "),
     });
     res.json({ message: "Student deactivated successfully" });
   });
@@ -1149,7 +1152,7 @@ export async function registerRoutes(
     const studentId = parseInt(req.params.studentId);
     if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
 
-    const { reason, password } = req.body;
+    const { reason, batchYear, comments, password } = req.body;
     if (!reason) return res.status(400).json({ message: "Reason is required" });
     if (!password) return res.status(400).json({ message: "Admin password confirmation is required" });
 
@@ -1162,6 +1165,9 @@ export async function registerRoutes(
     if (!student.isActive) return res.status(409).json({ message: "Student is already deactivated" });
 
     await storage.deactivateStudent(studentId);
+    const detailParts = [`Student ${student.name} (${student.digitalStudentId}) deactivated. Reason: ${reason}`];
+    if (batchYear) detailParts.push(`Batch: ${batchYear}`);
+    if (comments) detailParts.push(`Comments: ${comments}`);
     await storage.createAuditLog({
       schoolId: req.session.schoolId!,
       actionType: "deactivate",
@@ -1169,7 +1175,7 @@ export async function registerRoutes(
       entityId: studentId,
       actionBy: req.session.userId!,
       actionByRole: "admin",
-      details: `Student ${student.name} (${student.digitalStudentId}) deactivated. Reason: ${reason}`,
+      details: detailParts.join(". "),
     });
     res.json({ message: "Student deactivated successfully" });
   });
@@ -3681,10 +3687,18 @@ export async function registerRoutes(
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const schoolId = parseInt(req.params.schoolId);
     if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
-    const { ids } = req.body;
+    const { ids, reason, batchYear, comments, password } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids must be a non-empty array" });
+    if (!reason) return res.status(400).json({ message: "Reason is required" });
+    if (!batchYear) return res.status(400).json({ message: "Batch year is required" });
+    if (!password) return res.status(400).json({ message: "Admin password confirmation is required" });
+    const passwordOk = await storage.verifyAdminPassword(req.session.userId, password);
+    if (!passwordOk) return res.status(401).json({ message: "Incorrect password" });
     const numIds = ids.map(Number).filter(n => !isNaN(n));
     const deactivated = await storage.bulkDeactivateStudents(numIds, schoolId);
+    const detailParts = [`Bulk deactivated ${deactivated} students. Reason: ${reason}. Batch: ${batchYear}`];
+    if (comments) detailParts.push(`Comments: ${comments}`);
+    detailParts.push(`IDs: ${numIds.slice(0, 20).join(",")}`);
     await storage.createAuditLog({
       schoolId,
       actionType: "bulk_deactivate",
@@ -3692,7 +3706,7 @@ export async function registerRoutes(
       entityId: schoolId,
       actionBy: req.session.userId!,
       actionByRole: "admin",
-      details: `Bulk deactivated ${deactivated} students (IDs: ${numIds.slice(0, 20).join(",")})`,
+      details: detailParts.join(". "),
     });
     res.json({ deactivated });
   });

@@ -4,10 +4,11 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Search, ChevronLeft, ChevronRight, UserPlus, Upload, X,
   Loader2, Users, UserX, Pencil, AlignJustify, FileDown,
-  RotateCcw, Hash, Eye, Trash2, CheckSquare, History,
+  RotateCcw, Hash, Eye, EyeOff, Trash2, CheckSquare, History, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -102,6 +103,12 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
   const [isExporting, setIsExporting] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
+  const [bulkReason, setBulkReason]       = useState("");
+  const [bulkBatchYear, setBulkBatchYear] = useState("");
+  const [bulkComments, setBulkComments]   = useState("");
+  const [bulkPassword, setBulkPassword]   = useState("");
+  const [bulkShowPw, setBulkShowPw]       = useState(false);
+  const [bulkPwError, setBulkPwError]     = useState("");
 
   const handleSearch = useCallback((val: string) => {
     setQ(val);
@@ -272,19 +279,39 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
     onError: (e: Error) => toast({ title: "Auto-Assign Failed", description: e.message, variant: "destructive" }),
   });
 
+  function handleBulkClose() {
+    setShowBulkConfirm(false);
+    setBulkReason(""); setBulkBatchYear(""); setBulkComments("");
+    setBulkPassword(""); setBulkShowPw(false); setBulkPwError("");
+  }
+
+  const BULK_BATCH_YEARS = Array.from({ length: 15 }, (_, i) => {
+    const s = 2015 + i; return `${s}-${s + 1}`;
+  });
+
   const bulkDeactivateMutation = useMutation({
     mutationFn: async () => {
       const ids = Array.from(selected);
-      const r = await apiRequest("POST", `/api/schools/${schoolId}/students/bulk-deactivate`, { ids });
+      // Pre-verify password for fast UX feedback
+      const vr = await apiRequest("POST", "/api/admin/verify-password", { password: bulkPassword });
+      const vd: { valid: boolean } = await vr.json();
+      if (!vd.valid) { setBulkPwError("Incorrect password"); throw new Error("Incorrect password"); }
+      const r = await apiRequest("POST", `/api/schools/${schoolId}/students/bulk-deactivate`, {
+        ids, reason: bulkReason, batchYear: bulkBatchYear, comments: bulkComments, password: bulkPassword,
+      });
       if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
       return r.json();
     },
     onSuccess: (d) => {
       toast({ title: "Students Deactivated", description: `${d.deactivated} student(s) deactivated.` });
-      setSelected(new Set()); setShowBulkConfirm(false);
+      setSelected(new Set()); handleBulkClose();
       queryClient.invalidateQueries({ queryKey: ["/api/schools", schoolId, "students"] });
     },
-    onError: (e: Error) => toast({ title: "Bulk Deactivate Failed", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => {
+      if (!e.message.includes("Incorrect")) {
+        toast({ title: "Bulk Deactivate Failed", description: e.message, variant: "destructive" });
+      }
+    },
   });
 
   function commitGotoPage() {
@@ -910,29 +937,119 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
       {/* Bulk Deactivate Confirm Modal */}
       {showBulkConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" data-testid="modal-bulk-confirm">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowBulkConfirm(false)} />
-          <div className="relative z-10 w-full max-w-sm rounded-2xl border border-white/10 bg-[#1A2942] shadow-2xl p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-lg bg-red-500/20 flex items-center justify-center shrink-0">
-                <CheckSquare className="w-5 h-5 text-red-400" />
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={handleBulkClose} />
+          <div
+            className="relative z-10 w-full max-w-md rounded-2xl border border-red-500/30 bg-[#1A0A0A] shadow-2xl shadow-red-900/20 p-6 space-y-4 overflow-y-auto"
+            style={{ maxHeight: "90vh" }}
+          >
+            {/* Header */}
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-500/15 flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5 text-red-400" />
               </div>
               <div>
-                <h3 className="font-semibold text-white">Confirm Bulk Deactivation</h3>
-                <p className="text-xs text-white/50">This will deactivate {selected.size} student(s)</p>
+                <h3 className="text-lg font-bold text-red-400">Bulk Deactivate Students</h3>
+                <p className="text-sm text-white/60 mt-0.5">
+                  This will deactivate <span className="text-white font-semibold">{selected.size} student(s)</span>.
+                  Their logins will be blocked and they will be removed from active lists.
+                  This action is logged and cannot be undone without database access.
+                </p>
               </div>
             </div>
-            <p className="text-sm text-white/60 mb-5">
-              Deactivated students will lose portal access. This action can be reversed by reactivating individual students.
-            </p>
-            <div className="flex gap-3">
-              <Button variant="outline" className="flex-1 border-white/20 text-white/60 h-11"
-                onClick={() => setShowBulkConfirm(false)} data-testid="button-cancel-bulk">Cancel</Button>
-              <Button className="flex-1 h-11 bg-red-500 hover:bg-red-600 text-white font-semibold"
+
+            {/* Reason */}
+            <div className="space-y-1">
+              <label className="text-sm text-white/70 font-medium">
+                Reason for Deactivation <span className="text-red-400">*</span>
+              </label>
+              <Select value={bulkReason} onValueChange={setBulkReason}>
+                <SelectTrigger className="bg-[#0A0808] border-red-500/30 text-white">
+                  <SelectValue placeholder="Select a reason…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {["Graduated", "Transferred", "Disciplinary", "Long Absence", "Fee Default", "Other"].map(r => (
+                    <SelectItem key={r} value={r}>{r}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Batch Year */}
+            <div className="space-y-1">
+              <label className="text-sm text-white/70 font-medium">
+                Batch Year <span className="text-red-400">*</span>
+              </label>
+              <Select value={bulkBatchYear} onValueChange={setBulkBatchYear}>
+                <SelectTrigger className="bg-[#0A0808] border-red-500/30 text-white">
+                  <SelectValue placeholder="Select batch year…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {BULK_BATCH_YEARS.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Comments */}
+            <div className="space-y-1">
+              <label className="text-sm text-white/70 font-medium">
+                Comments <span className="text-white/30 text-xs font-normal">(optional)</span>
+              </label>
+              <Textarea
+                value={bulkComments}
+                onChange={e => setBulkComments(e.target.value)}
+                placeholder="Add any additional notes or context…"
+                className="bg-[#0A0808] border-red-500/30 text-white placeholder:text-white/30 resize-none"
+                rows={3}
+              />
+            </div>
+
+            {/* Admin Password */}
+            <div className="space-y-1">
+              <label className="text-sm text-white/70 font-medium">
+                Confirm Your Admin Password <span className="text-red-400">*</span>
+              </label>
+              <div className="relative">
+                <Input
+                  type={bulkShowPw ? "text" : "password"}
+                  value={bulkPassword}
+                  onChange={e => { setBulkPassword(e.target.value); setBulkPwError(""); }}
+                  placeholder="Enter your password to confirm"
+                  className="bg-[#0A0808] border-red-500/30 text-white pr-10 placeholder:text-white/30"
+                  data-testid="input-bulk-admin-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setBulkShowPw(s => !s)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white"
+                >
+                  {bulkShowPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              {bulkPwError && <p className="text-red-400 text-xs mt-1">{bulkPwError}</p>}
+            </div>
+
+            {/* Warning */}
+            <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-4 py-3">
+              <p className="text-red-300 text-xs leading-relaxed">
+                <strong>Warning:</strong> You are about to deactivate{" "}
+                <strong>{selected.size} student(s)</strong>. All selected students will
+                immediately lose portal access. This action is audit-logged.
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3 pt-1">
+              <Button variant="outline" className="flex-1 border-white/20 text-white/70 hover:bg-white/10 h-11"
+                onClick={handleBulkClose} data-testid="button-cancel-bulk">Cancel</Button>
+              <Button
+                className="flex-1 h-11 bg-red-600 hover:bg-red-700 text-white font-semibold disabled:opacity-40"
                 onClick={() => bulkDeactivateMutation.mutate()}
-                disabled={bulkDeactivateMutation.isPending}
-                data-testid="button-confirm-bulk">
-                {bulkDeactivateMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                Deactivate {selected.size}
+                disabled={!bulkReason || !bulkBatchYear || !bulkPassword || bulkDeactivateMutation.isPending}
+                data-testid="button-confirm-bulk"
+              >
+                {bulkDeactivateMutation.isPending
+                  ? <><Loader2 className="w-4 h-4 animate-spin mr-2" />Deactivating…</>
+                  : `Deactivate ${selected.size}`}
               </Button>
             </div>
           </div>
