@@ -1,9 +1,10 @@
 import { useState, useCallback, useEffect, type KeyboardEvent } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Search, ChevronLeft, ChevronRight, UserPlus, Upload, X,
   Loader2, Users, UserX, Pencil, AlignJustify, FileDown,
-  RotateCcw, Hash, Eye, Trash2, CheckSquare, ChevronDown, ChevronUp, History,
+  RotateCcw, Hash, Eye, Trash2, CheckSquare, History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -85,6 +86,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
   const canDeactivate = allowedSubs === undefined || allowedSubs.includes("deactivate");
   const canExport     = allowedSubs === undefined || allowedSubs.includes("export");
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [cls, setCls] = useState("");
@@ -98,7 +100,6 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
   const [editTarget, setEditTarget] = useState<Student | null>(null);
   const [viewTarget, setViewTarget] = useState<Student | null>(null);
   const [isExporting, setIsExporting] = useState(false);
-  const [showDeactivated, setShowDeactivated] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
 
@@ -172,23 +173,6 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
   });
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
-
-  type DeactivatedStudent = {
-    id: number; digitalStudentId: string; name: string; class: string; section: string;
-    phone: string; gender: string | null; guardianName: string | null;
-    dob: string | null; enrollmentDate: string | null; bloodGroup: string | null;
-    rollNumber: number | null; deactivatedAt: string | null; deactivationReason: string | null;
-  };
-
-  const { data: deactivatedList, isLoading: deactivatedLoading } = useQuery<DeactivatedStudent[]>({
-    queryKey: ["/api/schools", schoolId, "students", "deactivated"],
-    queryFn: async () => {
-      const r = await fetch(`/api/schools/${schoolId}/students/deactivated`, { credentials: "include" });
-      if (!r.ok) throw new Error("Failed");
-      return r.json();
-    },
-    enabled: !!schoolId && showDeactivated,
-  });
 
   const uploadRef = { current: null as HTMLInputElement | null };
 
@@ -971,106 +955,26 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
         />
       )}
 
-      {/* ===== DEACTIVATED STUDENTS HISTORY ===== */}
-      <div className="mt-6 rounded-xl border border-red-500/20 bg-[#1A2942] overflow-hidden">
-        {/* Header / Toggle Button */}
-        <button
-          type="button"
-          onClick={() => setShowDeactivated(v => !v)}
-          className="w-full flex items-center justify-between px-5 py-4 hover:bg-white/5 transition-colors"
-          data-testid="button-toggle-deactivated"
-        >
+      {/* ===== DEACTIVATED STUDENTS — NAV CARD ===== */}
+      <button
+        type="button"
+        onClick={() => navigate("/admin-dashboard/student-registry/deactivated")}
+        className="w-full rounded-xl border border-red-500/20 bg-[#1A2942] hover:bg-[#1f3352] transition-colors overflow-hidden"
+        data-testid="button-goto-deactivated"
+      >
+        <div className="flex items-center justify-between px-5 py-4">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-red-500/15 flex items-center justify-center shrink-0">
               <History className="w-4 h-4 text-red-400" />
             </div>
             <div className="text-left">
               <p className="text-sm font-semibold text-white">Deactivated Students</p>
-              <p className="text-xs text-white/40">View students who have had their accounts deactivated</p>
+              <p className="text-xs text-white/40">View full details, search, filter and export deactivated student records</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {deactivatedList && (
-              <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-500/20 text-red-400">
-                {deactivatedList.length}
-              </span>
-            )}
-            {showDeactivated
-              ? <ChevronUp className="w-4 h-4 text-white/40" />
-              : <ChevronDown className="w-4 h-4 text-white/40" />}
-          </div>
-        </button>
-
-        {/* Collapsible Content */}
-        {showDeactivated && (
-          <div className="border-t border-white/10">
-            {deactivatedLoading ? (
-              <div className="flex items-center justify-center py-10 gap-2 text-white/40">
-                <Loader2 className="w-4 h-4 animate-spin" /> Loading deactivated students…
-              </div>
-            ) : !deactivatedList || deactivatedList.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-white/30">
-                <Users className="w-8 h-8 mb-2 opacity-40" />
-                <p className="text-sm">No deactivated students on record</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="text-xs w-full" style={{ minWidth: "1100px", tableLayout: "fixed" }}>
-                  <colgroup>
-                    <col style={{ width: "120px" }} />
-                    <col style={{ width: "auto" }} />
-                    <col style={{ width: "55px" }} />
-                    <col style={{ width: "55px" }} />
-                    <col style={{ width: "55px" }} />
-                    <col style={{ width: "110px" }} />
-                    <col style={{ width: "120px" }} />
-                    <col style={{ width: "90px" }} />
-                    <col style={{ width: "90px" }} />
-                    <col style={{ width: "70px" }} />
-                    <col style={{ width: "130px" }} />
-                    <col style={{ width: "250px" }} />
-                  </colgroup>
-                  <thead className="bg-[#0F1E35]">
-                    <tr>
-                      {["DSID","Name","Class","Sec","Gender","Phone","Guardian","DOB","Admission","Blood","Deactivated On","Reason"].map(h => (
-                        <th key={h} className="text-left py-2.5 px-3 text-white/50 font-medium text-[10px] uppercase tracking-wide">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {deactivatedList.map(s => (
-                      <tr key={s.id} className="border-b border-white/5 hover:bg-red-500/5 transition-colors">
-                        <td className="py-2.5 px-3 font-mono text-red-400/80 truncate">{s.digitalStudentId}</td>
-                        <td className="py-2.5 px-3 text-white/80 font-medium truncate">{s.name}</td>
-                        <td className="py-2.5 px-3 text-white/60">{s.class}</td>
-                        <td className="py-2.5 px-3 text-white/60">{s.section}</td>
-                        <td className="py-2.5 px-3">
-                          {s.gender
-                            ? <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold ${s.gender === "Boy" ? "bg-blue-500/20 text-blue-300" : "bg-pink-500/20 text-pink-300"}`}>{s.gender}</span>
-                            : <span className="text-white/20">—</span>}
-                        </td>
-                        <td className="py-2.5 px-3 text-white/60 font-mono">{s.phone}</td>
-                        <td className="py-2.5 px-3 text-white/60 truncate">{s.guardianName ?? "—"}</td>
-                        <td className="py-2.5 px-3 text-white/50 font-mono">{s.dob ?? "—"}</td>
-                        <td className="py-2.5 px-3 text-white/50 font-mono">{s.enrollmentDate ?? "—"}</td>
-                        <td className="py-2.5 px-3 text-white/60">{s.bloodGroup ?? "—"}</td>
-                        <td className="py-2.5 px-3 text-white/50 font-mono">
-                          {s.deactivatedAt ? new Date(s.deactivatedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
-                        </td>
-                        <td className="py-2.5 px-3 text-white/40 truncate" title={s.deactivationReason ?? ""}>
-                          {s.deactivationReason
-                            ? s.deactivationReason.replace(/^Student .+? deactivated\. Reason:\s*/i, "")
-                            : "—"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+          <ChevronRight className="w-4 h-4 text-white/30 shrink-0" />
+        </div>
+      </button>
     </div>
   );
 }

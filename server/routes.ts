@@ -3564,6 +3564,104 @@ export async function registerRoutes(
     res.json({ assigned, message: `Roll numbers 1–${assigned} assigned to ${cls}-${section} alphabetically` });
   });
 
+  // ===== ADMIN: DEACTIVATED STUDENTS — EXPORT =====
+  app.get("/api/schools/:schoolId/students/deactivated/export", async (req, res) => {
+    try {
+      if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+      const schoolId = parseInt(req.params.schoolId);
+      if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+
+      const { q, cls, section } = req.query as Record<string, string | undefined>;
+      let rows = await storage.getDeactivatedStudents(schoolId);
+
+      // Apply filters
+      if (q) {
+        const lq = q.toLowerCase();
+        rows = rows.filter(r =>
+          r.name.toLowerCase().includes(lq) ||
+          r.digitalStudentId.toLowerCase().includes(lq) ||
+          r.phone.includes(q)
+        );
+      }
+      if (cls) rows = rows.filter(r => r.class === cls);
+      if (section) rows = rows.filter(r => r.section === section);
+
+      const ExcelJS = (await import("exceljs")).default;
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = "BENIUS";
+      workbook.created = new Date();
+
+      const sheet = workbook.addWorksheet("Deactivated Students", {
+        views: [{ state: "frozen", ySplit: 1 }],
+      });
+
+      sheet.columns = [
+        { header: "Student ID",        key: "digitalStudentId", width: 20 },
+        { header: "Full Name",         key: "name",             width: 28 },
+        { header: "Class",             key: "class",            width: 10 },
+        { header: "Section",           key: "section",          width: 10 },
+        { header: "Roll Number",       key: "rollNumber",       width: 14 },
+        { header: "Gender",            key: "gender",           width: 12 },
+        { header: "Guardian Name",     key: "guardianName",     width: 26 },
+        { header: "Phone",             key: "phone",            width: 18 },
+        { header: "Date of Birth",     key: "dob",              width: 16 },
+        { header: "Date of Admission", key: "enrollmentDate",   width: 20 },
+        { header: "Blood Group",       key: "bloodGroup",       width: 14 },
+        { header: "Deactivated On",    key: "deactivatedAt",    width: 22 },
+        { header: "Reason",            key: "reason",           width: 40 },
+        { header: "Status",            key: "status",           width: 14 },
+      ];
+
+      const headerRow = sheet.getRow(1);
+      headerRow.eachCell(cell => {
+        cell.font = { bold: true, color: { argb: "FF1A1A1A" } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFB91C1C" } };
+        cell.alignment = { vertical: "middle", horizontal: "left" };
+        cell.border = { bottom: { style: "thin", color: { argb: "FF991B1B" } } };
+      });
+      headerRow.height = 20;
+
+      for (const r of rows) {
+        const rawReason = r.deactivationReason ?? "";
+        const cleanedReason = rawReason.replace(/^Student .+? deactivated\. Reason:\s*/i, "") || rawReason;
+        sheet.addRow({
+          digitalStudentId: r.digitalStudentId,
+          name:             r.name,
+          class:            r.class,
+          section:          r.section,
+          rollNumber:       r.rollNumber ?? "",
+          gender:           r.gender ?? "",
+          guardianName:     r.guardianName ?? "",
+          phone:            r.phone,
+          dob:              r.dob ?? "",
+          enrollmentDate:   r.enrollmentDate ?? "",
+          bloodGroup:       r.bloodGroup ?? "",
+          deactivatedAt:    r.deactivatedAt
+            ? new Date(r.deactivatedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+            : "",
+          reason:           cleanedReason,
+          status:           "Deactive",
+        });
+      }
+
+      const filterParts: string[] = [];
+      if (cls)     filterParts.push(`Class ${cls}`);
+      if (section) filterParts.push(`Section ${section}`);
+      if (q)       filterParts.push(`Search "${q}"`);
+      const filterLabel = filterParts.length ? ` (${filterParts.join(", ")})` : "";
+      const filename = `Deactivated_Students${filterLabel}_${new Date().toISOString().slice(0, 10)}.xlsx`
+        .replace(/[^\w\s()._-]/g, "_");
+
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      await workbook.xlsx.write(res);
+      res.end();
+    } catch (err) {
+      console.error("Deactivated export error:", err);
+      res.status(500).json({ message: "Export failed" });
+    }
+  });
+
   // ===== ADMIN: DEACTIVATED STUDENT HISTORY =====
   app.get("/api/schools/:schoolId/students/deactivated", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
