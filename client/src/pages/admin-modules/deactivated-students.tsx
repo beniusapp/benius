@@ -88,8 +88,6 @@ export default function DeactivatedStudentsPage() {
 
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
-  const [cls, setCls] = useState("");
-  const [section, setSection] = useState("");
   const [page, setPage] = useState(1);
   const [gotoPage, setGotoPage] = useState("");
   const [compact, setCompact] = useState(false);
@@ -133,43 +131,22 @@ export default function DeactivatedStudentsPage() {
   }, [debounceTimer]);
 
   function handleResetFilters() {
-    setQ(""); setDebouncedQ(""); setCls(""); setSection(""); setPage(1);
+    setQ(""); setDebouncedQ(""); setPage(1);
   }
 
-  const hasFilters = q || cls || section;
-
-  // ── Derived class/section lists ────────────────────────────────────────────
-  const classList = useMemo(() => {
-    const set = new Set(allStudents?.map(s => s.class) ?? []);
-    return [...set].sort((a, b) => {
-      const na = parseInt(a), nb = parseInt(b);
-      if (!isNaN(na) && !isNaN(nb)) return na - nb;
-      return a.localeCompare(b);
-    });
-  }, [allStudents]);
-
-  const sectionList = useMemo(() => {
-    const set = new Set(allStudents?.map(s => s.section) ?? []);
-    return [...set].sort();
-  }, [allStudents]);
+  const hasFilters = !!q;
 
   // ── Filtered list ──────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     if (!allStudents) return [];
-    return allStudents.filter(s => {
-      if (debouncedQ) {
-        const lq = debouncedQ.toLowerCase();
-        if (
-          !s.name.toLowerCase().includes(lq) &&
-          !s.digitalStudentId.toLowerCase().includes(lq) &&
-          !s.phone.includes(debouncedQ)
-        ) return false;
-      }
-      if (cls && s.class !== cls) return false;
-      if (section && s.section !== section) return false;
-      return true;
-    });
-  }, [allStudents, debouncedQ, cls, section]);
+    if (!debouncedQ) return allStudents;
+    const lq = debouncedQ.toLowerCase();
+    return allStudents.filter(s =>
+      s.name.toLowerCase().includes(lq) ||
+      s.digitalStudentId.toLowerCase().includes(lq) ||
+      s.phone.includes(debouncedQ)
+    );
+  }, [allStudents, debouncedQ]);
 
   // ── Stats ──────────────────────────────────────────────────────────────────
   const stats = useMemo(() => ({
@@ -198,8 +175,6 @@ export default function DeactivatedStudentsPage() {
     try {
       const exportParams = new URLSearchParams();
       if (debouncedQ) exportParams.set("q", debouncedQ);
-      if (cls) exportParams.set("cls", cls);
-      if (section) exportParams.set("section", section);
       const r = await fetch(
         `/api/schools/${schoolId}/students/deactivated/export?${exportParams}`,
         { credentials: "include" },
@@ -225,9 +200,9 @@ export default function DeactivatedStudentsPage() {
   }
 
   const cell = compact ? "py-1.5 px-3 text-xs" : "py-3 px-3 text-sm";
-  // Normal: DSID Name Roll# Class Sec Gender Phone Guardian DOB Admission Blood DeactivatedOn Reason View Status = 15
-  // Compact: DSID Name Roll# Class Sec Gender Phone View Status = 9
-  const colCount = compact ? 9 : 15;
+  // Normal: DSID Name Gender Phone Guardian DOB Admission Blood DeactivatedOn Reason View Status = 12
+  // Compact: DSID Name Gender Phone View Status = 6
+  const colCount = compact ? 6 : 12;
 
   return (
     <div className="min-h-screen" style={{ background: "#080c14" }}>
@@ -352,24 +327,6 @@ export default function DeactivatedStudentsPage() {
               className="pl-9 bg-[#1A2942] border-white/20 text-white placeholder:text-white/30"
             />
           </div>
-          <Select value={cls || "all"} onValueChange={v => { setCls(v === "all" ? "" : v); setPage(1); }}>
-            <SelectTrigger className="w-32 bg-[#1A2942] border-white/20 text-white">
-              <SelectValue placeholder="All Classes" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Classes</SelectItem>
-              {classList.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={section || "all"} onValueChange={v => { setSection(v === "all" ? "" : v); setPage(1); }}>
-            <SelectTrigger className="w-32 bg-[#1A2942] border-white/20 text-white">
-              <SelectValue placeholder="All Sections" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Sections</SelectItem>
-              {sectionList.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-            </SelectContent>
-          </Select>
           {hasFilters && (
             <Button
               size="sm" variant="outline" onClick={handleResetFilters}
@@ -390,9 +347,6 @@ export default function DeactivatedStudentsPage() {
               <colgroup>
                 <col style={{ width: "128px" }} />
                 <col style={{ width: "auto" }} />
-                <col style={{ width: "58px" }} />
-                <col style={{ width: "62px" }} />
-                <col style={{ width: "58px" }} />
                 <col style={{ width: "70px" }} />
                 <col style={{ width: "112px" }} />
                 {!compact && <col style={{ width: "130px" }} />}
@@ -408,9 +362,6 @@ export default function DeactivatedStudentsPage() {
                 <tr>
                   <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">DSID</th>
                   <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Name</th>
-                  <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Roll#</th>
-                  <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Class</th>
-                  <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Sec</th>
                   <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Gender</th>
                   <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Phone</th>
                   {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Guardian</th>}
@@ -444,13 +395,6 @@ export default function DeactivatedStudentsPage() {
                       <span className="text-red-400/80 truncate block">{s.digitalStudentId}</span>
                     </td>
                     <td className={`${cell} text-white/80 font-medium overflow-hidden text-ellipsis`}>{s.name}</td>
-                    <td className={`${cell} text-white/50 font-mono`}>
-                      {s.rollNumber != null
-                        ? <span className="text-white/70">{s.rollNumber}</span>
-                        : <span className="text-white/20">—</span>}
-                    </td>
-                    <td className={`${cell} text-white/70`}>{s.class}</td>
-                    <td className={`${cell} text-white/70`}>{s.section}</td>
                     <td className={cell}><GenderBadge gender={s.gender} /></td>
                     <td className={`${cell} text-white/60 overflow-hidden text-ellipsis font-mono`}>{s.phone}</td>
                     {!compact && <td className={`${cell} text-white/60 overflow-hidden text-ellipsis`}>{s.guardianName ?? "—"}</td>}
@@ -556,8 +500,6 @@ export default function DeactivatedStudentsPage() {
               {[
                 { label: "Full Name",        value: viewTarget.name },
                 { label: "DSID",             value: viewTarget.digitalStudentId, mono: true, gold: true },
-                { label: "Class",            value: `${viewTarget.class} – ${viewTarget.section}` },
-                { label: "Roll Number",      value: viewTarget.rollNumber != null ? String(viewTarget.rollNumber) : "Not assigned" },
                 { label: "Gender",           value: viewTarget.gender ?? "Not set" },
                 { label: "Phone",            value: viewTarget.phone },
                 { label: "Guardian",         value: viewTarget.guardianName ?? "Not recorded" },
