@@ -2898,6 +2898,46 @@ export class DatabaseStorage {
     return { data: rows.map(r => ({ ...r.teachers, email: r.users.email })), total: Number(total) };
   }
 
+  // ===== DEACTIVATED STUDENT HISTORY =====
+  async getDeactivatedStudents(schoolId: number): Promise<Array<{
+    id: number; digitalStudentId: string; name: string; class: string; section: string;
+    phone: string; gender: string | null; guardianName: string | null;
+    dob: string | null; enrollmentDate: string | null; bloodGroup: string | null;
+    rollNumber: number | null;
+    deactivatedAt: Date | null; deactivationReason: string | null;
+  }>> {
+    const rows = await db
+      .select({
+        id: students.id,
+        digitalStudentId: students.digitalStudentId,
+        name: students.name,
+        class: students.class,
+        section: students.section,
+        phone: students.phone,
+        gender: students.gender,
+        guardianName: students.guardianName,
+        dob: students.dob,
+        enrollmentDate: students.enrollmentDate,
+        bloodGroup: students.bloodGroup,
+        rollNumber: students.rollNumber,
+        deactivatedAt: auditLogs.createdAt,
+        deactivationReason: auditLogs.details,
+      })
+      .from(students)
+      .leftJoin(
+        auditLogs,
+        and(
+          eq(auditLogs.entityId, students.id),
+          eq(auditLogs.entityType, "student"),
+          eq(auditLogs.actionType, "deactivate"),
+          eq(auditLogs.schoolId, schoolId),
+        )
+      )
+      .where(and(eq(students.schoolId, schoolId), eq(students.isActive, false)))
+      .orderBy(desc(auditLogs.createdAt));
+    return rows;
+  }
+
   // ===== DEACTIVATION (Soft Delete) =====
   async deactivateStudent(studentId: number): Promise<Student> {
     const [s] = await db.update(students).set({ isActive: false }).where(eq(students.id, studentId)).returning();

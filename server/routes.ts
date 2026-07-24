@@ -3564,6 +3564,15 @@ export async function registerRoutes(
     res.json({ assigned, message: `Roll numbers 1–${assigned} assigned to ${cls}-${section} alphabetically` });
   });
 
+  // ===== ADMIN: DEACTIVATED STUDENT HISTORY =====
+  app.get("/api/schools/:schoolId/students/deactivated", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const rows = await storage.getDeactivatedStudents(schoolId);
+    res.json(rows);
+  });
+
   // ===== ADMIN: BULK DEACTIVATE STUDENTS =====
   app.post("/api/schools/:schoolId/students/bulk-deactivate", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
