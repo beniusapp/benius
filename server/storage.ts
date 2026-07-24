@@ -2906,36 +2906,40 @@ export class DatabaseStorage {
     rollNumber: number | null;
     deactivatedAt: Date | null; deactivationReason: string | null;
   }>> {
-    const rows = await db
-      .select({
-        id: students.id,
-        digitalStudentId: students.digitalStudentId,
-        name: students.name,
-        class: students.class,
-        section: students.section,
-        phone: students.phone,
-        gender: students.gender,
-        guardianName: students.guardianName,
-        dob: students.dob,
-        enrollmentDate: students.enrollmentDate,
-        bloodGroup: students.bloodGroup,
-        rollNumber: students.rollNumber,
-        deactivatedAt: auditLogs.createdAt,
-        deactivationReason: auditLogs.details,
-      })
-      .from(students)
-      .leftJoin(
-        auditLogs,
-        and(
-          eq(auditLogs.entityId, students.id),
-          eq(auditLogs.entityType, "student"),
-          eq(auditLogs.actionType, "deactivate"),
-          eq(auditLogs.schoolId, schoolId),
-        )
-      )
-      .where(and(eq(students.schoolId, schoolId), eq(students.isActive, false)))
-      .orderBy(desc(auditLogs.createdAt));
-    return rows;
+    const result = await pool.query<{
+      id: number; digital_student_id: string; name: string; class: string; section: string;
+      phone: string; gender: string | null; guardian_name: string | null;
+      dob: string | null; enrollment_date: string | null; blood_group: string | null;
+      roll_number: number | null; deactivated_at: Date | null; deactivation_reason: string | null;
+    }>(
+      `SELECT s.id, s.digital_student_id, s.name, s.class, s.section, s.phone,
+              s.gender, s.guardian_name, s.dob, s.enrollment_date, s.blood_group, s.roll_number,
+              a.created_at AS deactivated_at, a.details AS deactivation_reason
+       FROM students s
+       LEFT JOIN audit_logs a ON (
+         a.entity_id = s.id AND a.entity_type = 'student'
+         AND a.action_type = 'deactivate' AND a.school_id = $1
+       )
+       WHERE s.school_id = $1 AND s.is_active = false
+       ORDER BY a.created_at DESC NULLS LAST`,
+      [schoolId]
+    );
+    return result.rows.map(r => ({
+      id: r.id,
+      digitalStudentId: r.digital_student_id,
+      name: r.name,
+      class: r.class,
+      section: r.section,
+      phone: r.phone,
+      gender: r.gender,
+      guardianName: r.guardian_name,
+      dob: r.dob,
+      enrollmentDate: r.enrollment_date,
+      bloodGroup: r.blood_group,
+      rollNumber: r.roll_number,
+      deactivatedAt: r.deactivated_at,
+      deactivationReason: r.deactivation_reason,
+    }));
   }
 
   // ===== DEACTIVATION (Soft Delete) =====
