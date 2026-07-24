@@ -2766,6 +2766,7 @@ export class DatabaseStorage {
     rollNo: string | null; rollNumber: number | null; phone: string;
     gender: string | null; guardianName: string | null;
     isActivated: boolean; isActive: boolean; enrollmentDate: string | null;
+    dob: string | null; bloodGroup: string | null;
   }>> {
     const { q, cls, section } = opts;
     const conditions = [eq(students.schoolId, schoolId), eq(students.isActive, true)];
@@ -2785,6 +2786,8 @@ export class DatabaseStorage {
         isActivated: students.isActivated,
         isActive: students.isActive,
         enrollmentDate: students.enrollmentDate,
+        dob: students.dob,
+        bloodGroup: students.bloodGroup,
         rollNo: studentProfiles.rollNo,
       })
       .from(students)
@@ -2796,7 +2799,8 @@ export class DatabaseStorage {
 
   async updateStudent(id: number, schoolId: number, data: {
     name: string; class: string; section: string; phone: string;
-    gender?: string; rollNumber?: number | null; guardianName?: string;
+    gender?: string | null; rollNumber?: number | null; guardianName?: string | null;
+    dob?: string; enrollmentDate?: string; bloodGroup?: string | null;
   }): Promise<Student | undefined> {
     const setData: Record<string, unknown> = {
       name: data.name, class: data.class, section: data.section, phone: data.phone,
@@ -2804,6 +2808,9 @@ export class DatabaseStorage {
     if (data.gender !== undefined) setData.gender = data.gender;
     if (data.rollNumber !== undefined) setData.rollNumber = data.rollNumber;
     if (data.guardianName !== undefined) setData.guardianName = data.guardianName;
+    if (data.dob) setData.dob = data.dob;
+    if (data.enrollmentDate) setData.enrollmentDate = data.enrollmentDate;
+    if (data.bloodGroup !== undefined) setData.bloodGroup = data.bloodGroup;
     const [updated] = await db.update(students)
       .set(setData as Partial<typeof students.$inferInsert>)
       .where(and(eq(students.id, id), eq(students.schoolId, schoolId)))

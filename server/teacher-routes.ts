@@ -2185,15 +2185,18 @@ export function registerTeacherRoutes(app: Express) {
       });
 
       sheet.columns = [
-        { header: "Student ID",    key: "digitalStudentId", width: 20 },
-        { header: "Full Name",     key: "name",             width: 28 },
-        { header: "Class",         key: "class",            width: 10 },
-        { header: "Section",       key: "section",          width: 10 },
-        { header: "Roll Number",   key: "rollNumber",       width: 14 },
-        { header: "Gender",        key: "gender",           width: 12 },
-        { header: "Guardian Name", key: "guardianName",     width: 26 },
-        { header: "Phone",         key: "phone",            width: 18 },
-        { header: "Status",        key: "status",           width: 14 },
+        { header: "Student ID",       key: "digitalStudentId", width: 20 },
+        { header: "Full Name",        key: "name",             width: 28 },
+        { header: "Class",            key: "class",            width: 10 },
+        { header: "Section",          key: "section",          width: 10 },
+        { header: "Roll Number",      key: "rollNumber",       width: 14 },
+        { header: "Gender",           key: "gender",           width: 12 },
+        { header: "Guardian Name",    key: "guardianName",     width: 26 },
+        { header: "Phone",            key: "phone",            width: 18 },
+        { header: "Date of Birth",    key: "dob",              width: 16 },
+        { header: "Date of Admission",key: "enrollmentDate",   width: 20 },
+        { header: "Blood Group",      key: "bloodGroup",       width: 14 },
+        { header: "Status",           key: "status",           width: 14 },
       ];
 
       const headerRow = sheet.getRow(1);
@@ -2217,6 +2220,9 @@ export function registerTeacherRoutes(app: Express) {
           gender:           r.gender ?? "",
           guardianName:     r.guardianName ?? "",
           phone:            r.phone,
+          dob:              r.dob ?? "",
+          enrollmentDate:   r.enrollmentDate ?? "",
+          bloodGroup:       r.bloodGroup ?? "",
           status:           r.isActivated ? "Active" : "Pending",
         });
       }

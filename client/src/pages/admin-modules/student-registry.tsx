@@ -318,7 +318,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
     setSelected(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
   }
 
-  const colCount = 9;
+  const colCount = compact ? 9 : 13;
 
   return (
     <div className="space-y-4">
@@ -565,7 +565,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
       {/* Table */}
       <div className="rounded-xl border border-white/10 bg-[#1A2942]">
         <div className="overflow-x-auto" style={{ maxHeight: "70vh", overflowY: "auto" }}>
-          <table className="text-sm" style={{ minWidth: "800px", width: "100%", tableLayout: "fixed" }}>
+          <table className="text-sm" style={{ minWidth: compact ? "800px" : "1200px", width: "100%", tableLayout: "fixed" }}>
             <colgroup>
               <col style={{ width: "40px" }} />
               <col style={{ width: "130px" }} />
@@ -575,6 +575,10 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
               <col style={{ width: "65px" }} />
               <col style={{ width: "72px" }} />
               <col style={{ width: "115px" }} />
+              {!compact && <col style={{ width: "130px" }} />}
+              {!compact && <col style={{ width: "110px" }} />}
+              {!compact && <col style={{ width: "120px" }} />}
+              {!compact && <col style={{ width: "90px" }} />}
               <col style={{ width: "108px" }} />
             </colgroup>
             <thead className="bg-[#0F1E35] sticky top-0 z-10">
@@ -598,6 +602,10 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                 <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Sec</th>
                 <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Gender</th>
                 <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Phone</th>
+                {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Guardian</th>}
+                {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">DOB</th>}
+                {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Admission</th>}
+                {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Blood Grp</th>}
                 <th className="text-left py-3 px-2 text-white/60 font-medium text-xs uppercase tracking-wide"></th>
               </tr>
             </thead>
@@ -644,6 +652,10 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                       <td className={`${cell} text-white/70`}>{s.section}</td>
                       <td className={`${cell}`}><GenderBadge gender={s.gender} /></td>
                       <td className={`${cell} text-white/70 overflow-hidden text-ellipsis`}>{s.phone}</td>
+                      {!compact && <td className={`${cell} text-white/70 overflow-hidden text-ellipsis`}>{(s as any).guardianName ?? "—"}</td>}
+                      {!compact && <td className={`${cell} text-white/60 font-mono`}>{(s as any).dob ?? "—"}</td>}
+                      {!compact && <td className={`${cell} text-white/60 font-mono`}>{(s as any).enrollmentDate ?? "—"}</td>}
+                      {!compact && <td className={`${cell} text-white/70`}>{(s as any).bloodGroup ?? "—"}</td>}
                       <td className={`${compact ? "py-1.5 px-2" : "py-2 px-2"} whitespace-nowrap`}>
                         <div className="flex items-center gap-0.5">
                           <Button variant="ghost" size="icon"
