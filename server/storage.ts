@@ -2904,7 +2904,7 @@ export class DatabaseStorage {
     phone: string; gender: string | null; guardianName: string | null;
     dob: string | null; enrollmentDate: string | null; bloodGroup: string | null;
     rollNumber: number | null;
-    deactivatedAt: Date | null; deactivationReason: string | null;
+    deactivatedAt: Date | null; deactivationReason: string | null; batchYear: string | null;
   }>> {
     const result = await pool.query<{
       id: number; digital_student_id: string; name: string; class: string; section: string;
@@ -2924,22 +2924,27 @@ export class DatabaseStorage {
        ORDER BY a.created_at DESC NULLS LAST`,
       [schoolId]
     );
-    return result.rows.map(r => ({
-      id: r.id,
-      digitalStudentId: r.digital_student_id,
-      name: r.name,
-      class: r.class,
-      section: r.section,
-      phone: r.phone,
-      gender: r.gender,
-      guardianName: r.guardian_name,
-      dob: r.dob,
-      enrollmentDate: r.enrollment_date,
-      bloodGroup: r.blood_group,
-      rollNumber: r.roll_number,
-      deactivatedAt: r.deactivated_at,
-      deactivationReason: r.deactivation_reason,
-    }));
+    return result.rows.map(r => {
+      const details = r.deactivation_reason ?? "";
+      const batchMatch = details.match(/Batch:\s*(\d{4}-\d{4})/);
+      return {
+        id: r.id,
+        digitalStudentId: r.digital_student_id,
+        name: r.name,
+        class: r.class,
+        section: r.section,
+        phone: r.phone,
+        gender: r.gender,
+        guardianName: r.guardian_name,
+        dob: r.dob,
+        enrollmentDate: r.enrollment_date,
+        bloodGroup: r.blood_group,
+        rollNumber: r.roll_number,
+        deactivatedAt: r.deactivated_at,
+        deactivationReason: r.deactivation_reason,
+        batchYear: batchMatch ? batchMatch[1] : null,
+      };
+    });
   }
 
   // ===== DEACTIVATION (Soft Delete) =====

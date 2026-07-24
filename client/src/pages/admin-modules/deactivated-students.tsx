@@ -31,6 +31,7 @@ type DeactivatedStudent = {
   rollNumber: number | null;
   deactivatedAt: string | null;
   deactivationReason: string | null;
+  batchYear: string | null;
 };
 
 type Me = {
@@ -200,9 +201,9 @@ export default function DeactivatedStudentsPage() {
   }
 
   const cell = compact ? "py-1.5 px-3 text-xs" : "py-3 px-3 text-sm";
-  // Normal: DSID Name Gender Phone Guardian DOB Admission Blood DeactivatedOn Reason View Status = 12
-  // Compact: DSID Name Gender Phone View Status = 6
-  const colCount = compact ? 6 : 12;
+  // Normal: DSID Name Gender Phone Guardian DOB Admission Blood DeactivatedOn BatchYear Reason View Status = 13
+  // Compact: DSID Name Gender Phone BatchYear View Status = 7
+  const colCount = compact ? 7 : 13;
 
   return (
     <div className="min-h-screen" style={{ background: "#080c14" }}>
@@ -349,6 +350,7 @@ export default function DeactivatedStudentsPage() {
                 <col style={{ width: "auto" }} />
                 <col style={{ width: "70px" }} />
                 <col style={{ width: "112px" }} />
+                <col style={{ width: "96px" }} />
                 {!compact && <col style={{ width: "130px" }} />}
                 {!compact && <col style={{ width: "96px" }} />}
                 {!compact && <col style={{ width: "108px" }} />}
@@ -364,6 +366,7 @@ export default function DeactivatedStudentsPage() {
                   <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Name</th>
                   <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Gender</th>
                   <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Phone</th>
+                  <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Batch Year</th>
                   {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Guardian</th>}
                   {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">DOB</th>}
                   {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Admission</th>}
@@ -397,6 +400,7 @@ export default function DeactivatedStudentsPage() {
                     <td className={`${cell} text-white/80 font-medium overflow-hidden text-ellipsis`}>{s.name}</td>
                     <td className={cell}><GenderBadge gender={s.gender} /></td>
                     <td className={`${cell} text-white/60 overflow-hidden text-ellipsis font-mono`}>{s.phone}</td>
+                    <td className={`${cell} text-white/70 font-mono`}>{s.batchYear ?? <span className="text-white/20">—</span>}</td>
                     {!compact && <td className={`${cell} text-white/60 overflow-hidden text-ellipsis`}>{s.guardianName ?? "—"}</td>}
                     {!compact && <td className={`${cell} text-white/50 font-mono`}>{s.dob ?? "—"}</td>}
                     {!compact && <td className={`${cell} text-white/50 font-mono`}>{s.enrollmentDate ?? "—"}</td>}
@@ -500,6 +504,7 @@ export default function DeactivatedStudentsPage() {
               {[
                 { label: "Full Name",        value: viewTarget.name },
                 { label: "DSID",             value: viewTarget.digitalStudentId, mono: true, gold: true },
+                { label: "Batch Year",       value: viewTarget.batchYear ?? "Not recorded" },
                 { label: "Gender",           value: viewTarget.gender ?? "Not set" },
                 { label: "Phone",            value: viewTarget.phone },
                 { label: "Guardian",         value: viewTarget.guardianName ?? "Not recorded" },
