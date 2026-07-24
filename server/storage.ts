@@ -2904,7 +2904,8 @@ export class DatabaseStorage {
     phone: string; gender: string | null; guardianName: string | null;
     dob: string | null; enrollmentDate: string | null; bloodGroup: string | null;
     rollNumber: number | null;
-    deactivatedAt: Date | null; deactivationReason: string | null; batchYear: string | null;
+    deactivatedAt: Date | null; deactivationReason: string | null;
+    batchYear: string | null; comments: string | null;
   }>> {
     const result = await pool.query<{
       id: number; digital_student_id: string; name: string; class: string; section: string;
@@ -2926,7 +2927,8 @@ export class DatabaseStorage {
     );
     return result.rows.map(r => {
       const details = r.deactivation_reason ?? "";
-      const batchMatch = details.match(/Batch:\s*(\d{4}-\d{4})/);
+      const batchMatch    = details.match(/Batch:\s*(\d{4}-\d{5}|\d{4}-\d{4})/);
+      const commentsMatch = details.match(/Comments:\s*(.+)$/);
       return {
         id: r.id,
         digitalStudentId: r.digital_student_id,
@@ -2942,7 +2944,8 @@ export class DatabaseStorage {
         rollNumber: r.roll_number,
         deactivatedAt: r.deactivated_at,
         deactivationReason: r.deactivation_reason,
-        batchYear: batchMatch ? batchMatch[1] : null,
+        batchYear: batchMatch    ? batchMatch[1]    : null,
+        comments:  commentsMatch ? commentsMatch[1] : null,
       };
     });
   }

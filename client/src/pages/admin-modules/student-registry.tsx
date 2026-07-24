@@ -992,7 +992,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
             {/* Comments */}
             <div className="space-y-1">
               <label className="text-sm text-white/70 font-medium">
-                Comments <span className="text-white/30 text-xs font-normal">(optional)</span>
+                Comments <span className="text-red-400">*</span>
               </label>
               <Textarea
                 value={bulkComments}
@@ -1044,7 +1044,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
               <Button
                 className="flex-1 h-11 bg-red-600 hover:bg-red-700 text-white font-semibold disabled:opacity-40"
                 onClick={() => bulkDeactivateMutation.mutate()}
-                disabled={!bulkReason || !bulkBatchYear || !bulkPassword || bulkDeactivateMutation.isPending}
+                disabled={!bulkReason || !bulkBatchYear || !bulkComments.trim() || !bulkPassword || bulkDeactivateMutation.isPending}
                 data-testid="button-confirm-bulk"
               >
                 {bulkDeactivateMutation.isPending

@@ -32,6 +32,7 @@ type DeactivatedStudent = {
   deactivatedAt: string | null;
   deactivationReason: string | null;
   batchYear: string | null;
+  comments: string | null;
 };
 
 type Me = {
@@ -89,6 +90,7 @@ export default function DeactivatedStudentsPage() {
 
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
+  const [batchYearFilter, setBatchYearFilter] = useState("");
   const [page, setPage] = useState(1);
   const [gotoPage, setGotoPage] = useState("");
   const [compact, setCompact] = useState(false);
@@ -132,22 +134,39 @@ export default function DeactivatedStudentsPage() {
   }, [debounceTimer]);
 
   function handleResetFilters() {
-    setQ(""); setDebouncedQ(""); setPage(1);
+    setQ(""); setDebouncedQ(""); setBatchYearFilter(""); setPage(1);
   }
 
-  const hasFilters = !!q;
+  const hasFilters = !!q || !!batchYearFilter;
 
-  // ── Filtered list ──────────────────────────────────────────────────────────
+  // ── Unique batch years for filter dropdown ─────────────────────────────────
+  const batchYearList = useMemo(() => {
+    const set = new Set(
+      (allStudents ?? []).map(s => s.batchYear).filter((v): v is string => !!v)
+    );
+    return [...set].sort();
+  }, [allStudents]);
+
+  // ── Filtered list (search all columns + batch year filter) ─────────────────
   const filtered = useMemo(() => {
     if (!allStudents) return [];
-    if (!debouncedQ) return allStudents;
-    const lq = debouncedQ.toLowerCase();
-    return allStudents.filter(s =>
-      s.name.toLowerCase().includes(lq) ||
-      s.digitalStudentId.toLowerCase().includes(lq) ||
-      s.phone.includes(debouncedQ)
-    );
-  }, [allStudents, debouncedQ]);
+    return allStudents.filter(s => {
+      if (batchYearFilter && s.batchYear !== batchYearFilter) return false;
+      if (!debouncedQ) return true;
+      const lq = debouncedQ.toLowerCase();
+      return (
+        s.name.toLowerCase().includes(lq) ||
+        s.digitalStudentId.toLowerCase().includes(lq) ||
+        s.phone.includes(debouncedQ) ||
+        (s.batchYear ?? "").toLowerCase().includes(lq) ||
+        (s.gender ?? "").toLowerCase().includes(lq) ||
+        (s.guardianName ?? "").toLowerCase().includes(lq) ||
+        (s.bloodGroup ?? "").toLowerCase().includes(lq) ||
+        (s.comments ?? "").toLowerCase().includes(lq) ||
+        cleanReason(s.deactivationReason).toLowerCase().includes(lq)
+      );
+    });
+  }, [allStudents, debouncedQ, batchYearFilter]);
 
   // ── Stats ──────────────────────────────────────────────────────────────────
   const stats = useMemo(() => ({
@@ -176,6 +195,7 @@ export default function DeactivatedStudentsPage() {
     try {
       const exportParams = new URLSearchParams();
       if (debouncedQ) exportParams.set("q", debouncedQ);
+      if (batchYearFilter) exportParams.set("batchYear", batchYearFilter);
       const r = await fetch(
         `/api/schools/${schoolId}/students/deactivated/export?${exportParams}`,
         { credentials: "include" },
@@ -201,9 +221,9 @@ export default function DeactivatedStudentsPage() {
   }
 
   const cell = compact ? "py-1.5 px-3 text-xs" : "py-3 px-3 text-sm";
-  // Normal: DSID Name Gender Phone Guardian DOB Admission Blood DeactivatedOn BatchYear Reason View Status = 13
+  // Normal: DSID Name Gender Phone BatchYear Guardian DOB Admission Blood DeactivatedOn Reason Comments View Status = 14
   // Compact: DSID Name Gender Phone BatchYear View Status = 7
-  const colCount = compact ? 7 : 13;
+  const colCount = compact ? 7 : 14;
 
   return (
     <div className="min-h-screen" style={{ background: "#080c14" }}>
@@ -328,6 +348,15 @@ export default function DeactivatedStudentsPage() {
               className="pl-9 bg-[#1A2942] border-white/20 text-white placeholder:text-white/30"
             />
           </div>
+          <Select value={batchYearFilter || "all"} onValueChange={v => { setBatchYearFilter(v === "all" ? "" : v); setPage(1); }}>
+            <SelectTrigger className="w-36 bg-[#1A2942] border-white/20 text-white">
+              <SelectValue placeholder="All Batches" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Batches</SelectItem>
+              {batchYearList.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+            </SelectContent>
+          </Select>
           {hasFilters && (
             <Button
               size="sm" variant="outline" onClick={handleResetFilters}
@@ -356,6 +385,7 @@ export default function DeactivatedStudentsPage() {
                 {!compact && <col style={{ width: "108px" }} />}
                 {!compact && <col style={{ width: "78px" }} />}
                 {!compact && <col style={{ width: "118px" }} />}
+                {!compact && <col style={{ width: "160px" }} />}
                 {!compact && <col style={{ width: "200px" }} />}
                 <col style={{ width: "52px" }} />
                 <col style={{ width: "96px" }} />
@@ -373,6 +403,7 @@ export default function DeactivatedStudentsPage() {
                   {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Blood Grp</th>}
                   {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Deactivated On</th>}
                   {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Reason</th>}
+                  {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Comments</th>}
                   <th className="py-3 px-2" />
                   <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Status</th>
                 </tr>
@@ -416,6 +447,14 @@ export default function DeactivatedStudentsPage() {
                         title={cleanReason(s.deactivationReason)}
                       >
                         {cleanReason(s.deactivationReason)}
+                      </td>
+                    )}
+                    {!compact && (
+                      <td
+                        className={`${cell} text-white/40 overflow-hidden text-ellipsis`}
+                        title={s.comments ?? ""}
+                      >
+                        {s.comments ?? <span className="text-white/20">—</span>}
                       </td>
                     )}
                     <td className={compact ? "py-1.5 px-2" : "py-2 px-2"}>
@@ -533,6 +572,14 @@ export default function DeactivatedStudentsPage() {
                     {cleanReason(viewTarget.deactivationReason)}
                   </span>
                 </div>
+                {viewTarget.comments && (
+                  <div className="flex justify-between items-start gap-3 text-sm">
+                    <span className="text-white/50 shrink-0">Comments</span>
+                    <span className="text-white/60 text-right break-words max-w-[180px]">
+                      {viewTarget.comments}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between items-start gap-3 text-sm">
                   <span className="text-white/50 shrink-0">Status</span>
                   <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-red-500/15 text-red-400 border border-red-500/20">

@@ -75,7 +75,7 @@ export default function DeactivationModal({
 
   if (!open) return null;
 
-  const canSubmit = reason && batchYear && password && !deactivateMutation.isPending;
+  const canSubmit = reason && batchYear && comments.trim() && password && !deactivateMutation.isPending;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -136,8 +136,7 @@ export default function DeactivationModal({
         {/* Comments */}
         <div className="space-y-1">
           <label className="text-sm text-white/70 font-medium">
-            Comments{" "}
-            <span className="text-white/30 text-xs font-normal">(optional)</span>
+            Comments <span className="text-red-400">*</span>
           </label>
           <Textarea
             value={comments}
