@@ -1,9 +1,10 @@
 import { useState, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { sessionFetch } from "@/lib/queryClient";
 import {
   Search, ChevronLeft, ChevronRight, AlignJustify, FileDown,
-  RotateCcw, Eye, Loader2, ArrowLeft, X, UserX,
+  RotateCcw, Eye, Loader2, ArrowLeft, X, UserX, RefreshCw, AlertCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -100,7 +101,7 @@ export default function DeactivatedStudentsPage() {
   const { data: me } = useQuery<Me>({
     queryKey: ["/api/me"],
     queryFn: async () => {
-      const r = await fetch("/api/me", { credentials: "include" });
+      const r = await sessionFetch("/api/me");
       if (!r.ok) throw new Error("Not authenticated");
       return r.json();
     },
@@ -108,14 +109,19 @@ export default function DeactivatedStudentsPage() {
   const schoolId = me?.schoolId;
 
   // ── Data ───────────────────────────────────────────────────────────────────
-  const { data: allStudents, isLoading } = useQuery<DeactivatedStudent[]>({
+  const { data: allStudents, isLoading, isError, error, refetch } = useQuery<DeactivatedStudent[]>({
     queryKey: ["/api/schools", schoolId, "students", "deactivated"],
     queryFn: async () => {
-      const r = await fetch(`/api/schools/${schoolId}/students/deactivated`, { credentials: "include" });
-      if (!r.ok) throw new Error("Failed to load deactivated students");
+      const r = await sessionFetch(`/api/schools/${schoolId}/students/deactivated`);
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.message ?? `Server error ${r.status}`);
+      }
       return r.json();
     },
     enabled: !!schoolId,
+    staleTime: 0,       // always re-fetch on mount for this page
+    retry: 1,
   });
 
   // ── Search ─────────────────────────────────────────────────────────────────
@@ -251,6 +257,22 @@ export default function DeactivatedStudentsPage() {
 
       {/* ── Main content ────────────────────────────────────────────────── */}
       <div className="max-w-screen-2xl mx-auto px-6 py-6 space-y-4">
+
+        {/* Error state */}
+        {isError && (
+          <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-5 py-4 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-red-300">Failed to load deactivated students</p>
+              <p className="text-xs text-red-400/70 mt-0.5 break-all">{(error as Error)?.message}</p>
+            </div>
+            <Button size="sm" variant="outline"
+              className="border-red-500/30 text-red-400 hover:bg-red-500/10 shrink-0"
+              onClick={() => refetch()}>
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Retry
+            </Button>
+          </div>
+        )}
 
         {/* Header row */}
         <div className="flex items-center justify-between flex-wrap gap-3">

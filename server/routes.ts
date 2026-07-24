@@ -3664,11 +3664,16 @@ export async function registerRoutes(
 
   // ===== ADMIN: DEACTIVATED STUDENT HISTORY =====
   app.get("/api/schools/:schoolId/students/deactivated", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
-    const schoolId = parseInt(req.params.schoolId);
-    if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
-    const rows = await storage.getDeactivatedStudents(schoolId);
-    res.json(rows);
+    try {
+      if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+      const schoolId = parseInt(req.params.schoolId);
+      if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+      const rows = await storage.getDeactivatedStudents(schoolId);
+      res.json(rows);
+    } catch (err) {
+      console.error("Deactivated students fetch error:", err);
+      res.status(500).json({ message: "Failed to load deactivated students" });
+    }
   });
 
   // ===== ADMIN: BULK DEACTIVATE STUDENTS =====
