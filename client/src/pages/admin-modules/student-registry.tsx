@@ -47,6 +47,8 @@ const editSchema = z.object({
   class: z.string().min(1, "Class is required"),
   section: z.string().min(1, "Section is required"),
   phone: z.string().regex(/^\d{10}$/, "Phone must be exactly 10 digits"),
+  dob: z.string().optional(),
+  dateOfAdmission: z.string().optional(),
   gender: z.enum(["Boy", "Girl"]).optional().nullable(),
   rollNumber: z.string().optional(),
   guardianName: z.string().optional(),
@@ -211,7 +213,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
 
   const editForm = useForm<EditForm>({
     resolver: zodResolver(editSchema),
-    defaultValues: { name: "", class: "", section: "", phone: "", gender: undefined, rollNumber: "", guardianName: "", bloodGroup: undefined },
+    defaultValues: { name: "", class: "", section: "", phone: "", dob: "", dateOfAdmission: "", gender: undefined, rollNumber: "", guardianName: "", bloodGroup: undefined },
   });
 
   useEffect(() => {
@@ -221,6 +223,8 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
         class: editTarget.class,
         section: editTarget.section,
         phone: editTarget.phone,
+        dob: editTarget.dob ?? "",
+        dateOfAdmission: editTarget.enrollmentDate ?? "",
         gender: (editTarget.gender as "Boy" | "Girl" | null) ?? undefined,
         rollNumber: editTarget.rollNumber != null ? String(editTarget.rollNumber) : "",
         guardianName: editTarget.guardianName ?? "",
@@ -234,6 +238,8 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
     mutationFn: async (d: EditForm) => {
       const payload = {
         name: d.name, class: d.class, section: d.section, phone: d.phone,
+        ...(d.dob ? { dob: d.dob } : {}),
+        ...(d.dateOfAdmission ? { enrollmentDate: d.dateOfAdmission } : {}),
         gender: d.gender ?? null,
         rollNumber: d.rollNumber ? parseInt(d.rollNumber) : null,
         guardianName: d.guardianName || null,
@@ -837,6 +843,18 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                         data-testid="input-edit-phone"
                         className="bg-[#0A1628] border-white/20 text-white"
                       /></FormControl>
+                      <FormMessage /></FormItem>
+                  )} />
+                  <FormField control={editForm.control} name="dob" render={({ field }) => (
+                    <FormItem><FormLabel className="text-white/70">Date of Birth</FormLabel>
+                      <FormControl><Input {...field} type="date" data-testid="input-edit-dob"
+                        className="bg-[#0A1628] border-white/20 text-white" /></FormControl>
+                      <FormMessage /></FormItem>
+                  )} />
+                  <FormField control={editForm.control} name="dateOfAdmission" render={({ field }) => (
+                    <FormItem><FormLabel className="text-white/70">Date of Admission</FormLabel>
+                      <FormControl><Input {...field} type="date" data-testid="input-edit-admission"
+                        className="bg-[#0A1628] border-white/20 text-white" /></FormControl>
                       <FormMessage /></FormItem>
                   )} />
                   <FormField control={editForm.control} name="guardianName" render={({ field }) => (

@@ -3514,6 +3514,8 @@ export async function registerRoutes(
     class: z.string().min(1),
     section: z.string().min(1),
     phone: z.string().regex(/^\d{10}$/, "Phone must be exactly 10 digits"),
+    dob: z.string().optional(),
+    enrollmentDate: z.string().optional(),
     gender: z.enum(["Boy", "Girl"]).optional().nullable(),
     rollNumber: z.number().int().positive().optional().nullable(),
     guardianName: z.string().optional().nullable(),
