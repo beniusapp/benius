@@ -199,6 +199,7 @@ export default function StudentProfile() {
   const currentPasswordRef = useRef<HTMLInputElement>(null);
   const cropImgRef    = useRef<HTMLImageElement>(null);
   const dragStartRef  = useRef<{ px: number; py: number; ox: number; oy: number } | null>(null);
+  const cropCircleSizeRef = useRef<number>(CROP_SIZE);
 
   // ── Crop modal state ───────────────────────────────────────────────────────
   const [cropSrc,  setCropSrc]  = useState<string | null>(null);
@@ -420,6 +421,7 @@ export default function StudentProfile() {
     }
     const reader = new FileReader();
     reader.onload = (ev) => {
+      cropCircleSizeRef.current = Math.min(CROP_SIZE, Math.round(window.innerWidth * 0.65));
       setCropSrc(ev.target?.result as string);
       setCropPos({ x: 0, y: 0 });
       setCropZoom(1);
@@ -435,11 +437,12 @@ export default function StudentProfile() {
 
   function handleCropDragMove(e: React.PointerEvent<HTMLDivElement>) {
     if (!dragStartRef.current) return;
-    const baseScale = CROP_SIZE / Math.min(imgNatural.w, imgNatural.h);
+    const cs = cropCircleSizeRef.current;
+    const baseScale = cs / Math.min(imgNatural.w, imgNatural.h);
     const displayW  = imgNatural.w * baseScale * cropZoom;
     const displayH  = imgNatural.h * baseScale * cropZoom;
-    const maxX = Math.max(0, (displayW - CROP_SIZE) / 2);
-    const maxY = Math.max(0, (displayH - CROP_SIZE) / 2);
+    const maxX = Math.max(0, (displayW - cs) / 2);
+    const maxY = Math.max(0, (displayH - cs) / 2);
     const dx = e.clientX - dragStartRef.current.px;
     const dy = e.clientY - dragStartRef.current.py;
     setCropPos({
@@ -452,11 +455,12 @@ export default function StudentProfile() {
 
   function handleCropZoomChange(newZoom: number) {
     // When zoom changes, re-clamp the existing offset
-    const baseScale = CROP_SIZE / Math.min(imgNatural.w, imgNatural.h);
+    const cs = cropCircleSizeRef.current;
+    const baseScale = cs / Math.min(imgNatural.w, imgNatural.h);
     const displayW  = imgNatural.w * baseScale * newZoom;
     const displayH  = imgNatural.h * baseScale * newZoom;
-    const maxX = Math.max(0, (displayW - CROP_SIZE) / 2);
-    const maxY = Math.max(0, (displayH - CROP_SIZE) / 2);
+    const maxX = Math.max(0, (displayW - cs) / 2);
+    const maxY = Math.max(0, (displayH - cs) / 2);
     setCropZoom(newZoom);
     setCropPos(p => ({
       x: Math.max(-maxX, Math.min(maxX, p.x)),
@@ -467,15 +471,16 @@ export default function StudentProfile() {
   function handleCropConfirm() {
     const img = cropImgRef.current;
     if (!img || !cropSrc) return;
-    const baseScale = CROP_SIZE / Math.min(imgNatural.w, imgNatural.h);
+    const cs = cropCircleSizeRef.current;
+    const baseScale = cs / Math.min(imgNatural.w, imgNatural.h);
     const displayW  = imgNatural.w * baseScale * cropZoom;
     const displayH  = imgNatural.h * baseScale * cropZoom;
-    const imgX = CROP_SIZE / 2 - displayW / 2 + cropPos.x;
-    const imgY = CROP_SIZE / 2 - displayH / 2 + cropPos.y;
+    const imgX = cs / 2 - displayW / 2 + cropPos.x;
+    const imgY = cs / 2 - displayH / 2 + cropPos.y;
     const sx = (-imgX) / displayW * imgNatural.w;
     const sy = (-imgY) / displayH * imgNatural.h;
-    const sw = CROP_SIZE / displayW * imgNatural.w;
-    const sh = CROP_SIZE / displayH * imgNatural.h;
+    const sw = cs / displayW * imgNatural.w;
+    const sh = cs / displayH * imgNatural.h;
     const canvas = document.createElement("canvas");
     canvas.width  = 400;
     canvas.height = 400;
@@ -1263,32 +1268,50 @@ export default function StudentProfile() {
 
       {/* ── Crop Modal ──────────────────────────────────────────────────────── */}
       {cropSrc && createPortal((() => {
-        const baseScale = CROP_SIZE / Math.min(imgNatural.w, imgNatural.h);
+        const circlePx = cropCircleSizeRef.current;
+        const baseScale = circlePx / Math.min(imgNatural.w, imgNatural.h);
         const displayW  = imgNatural.w * baseScale * cropZoom;
         const displayH  = imgNatural.h * baseScale * cropZoom;
-        const imgX = CROP_SIZE / 2 - displayW / 2 + cropPos.x;
-        const imgY = CROP_SIZE / 2 - displayH / 2 + cropPos.y;
         return (
-          <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black/80 px-4" style={{ backdropFilter: "blur(4px)" }}>
-            <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl overflow-hidden">
+          <div
+            style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)",
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end",
+              padding: 0 }}
+          >
+            {/* Tap-outside to cancel */}
+            <div style={{ position: "absolute", inset: 0 }} onClick={() => setCropSrc(null)} />
+
+            {/* Sheet */}
+            <div style={{ position: "relative", width: "100%", maxWidth: 420, background: "#fff",
+              borderRadius: "20px 20px 0 0", boxShadow: "0 -8px 40px rgba(0,0,0,0.2)",
+              display: "flex", flexDirection: "column", maxHeight: "92vh" }}>
+
+              {/* Drag handle */}
+              <div style={{ width: 40, height: 4, borderRadius: 2, background: "#e2e8f0",
+                margin: "12px auto 0" }} />
+
               {/* Header */}
-              <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-                <div className="flex items-center gap-2">
-                  <CropIcon className="w-4 h-4 text-[#10b981]" />
-                  <h2 className="text-sm font-bold text-slate-800">Crop Photo</h2>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "10px 20px 10px", borderBottom: "1px solid #f1f5f9" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <CropIcon style={{ width: 16, height: 16, color: "#10b981" }} />
+                  <span style={{ fontSize: 14, fontWeight: 700, color: "#1e293b" }}>Crop Photo</span>
                 </div>
-                <button onClick={() => setCropSrc(null)} className="p-1.5 rounded-full hover:bg-slate-100 transition-colors">
-                  <X className="w-4 h-4 text-slate-500" />
+                <button onClick={() => setCropSrc(null)}
+                  style={{ background: "none", border: "none", cursor: "pointer", padding: 6,
+                    borderRadius: "50%", display: "flex", alignItems: "center" }}>
+                  <X style={{ width: 18, height: 18, color: "#64748b" }} />
                 </button>
               </div>
 
-              {/* Crop area */}
-              <div className="flex flex-col items-center gap-4 px-5 py-6">
-                <p className="text-xs text-slate-400 text-center">Drag to reposition · Use slider to zoom</p>
-
-                {/* Circle crop preview */}
+              {/* Crop circle */}
+              <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column",
+                alignItems: "center", gap: 12, padding: "16px 20px 0" }}>
+                <p style={{ fontSize: 11, color: "#94a3b8", textAlign: "center", margin: 0 }}>
+                  Drag to reposition · Use slider to zoom
+                </p>
                 <div
-                  style={{ width: CROP_SIZE, height: CROP_SIZE, borderRadius: "50%", overflow: "hidden",
+                  style={{ width: circlePx, height: circlePx, borderRadius: "50%", overflow: "hidden",
                     border: "3px solid #10b981", cursor: "grab", touchAction: "none", position: "relative",
                     boxShadow: "0 0 0 4px rgba(16,185,129,0.15)", flexShrink: 0 }}
                   onPointerDown={handleCropDragStart}
@@ -1305,41 +1328,49 @@ export default function StudentProfile() {
                       const img = e.currentTarget;
                       setImgNatural({ w: img.naturalWidth, h: img.naturalHeight });
                     }}
-                    style={{ position: "absolute", left: imgX, top: imgY,
+                    style={{ position: "absolute",
+                      left: circlePx / 2 - displayW / 2 + cropPos.x,
+                      top: circlePx / 2 - displayH / 2 + cropPos.y,
                       width: displayW, height: displayH,
                       userSelect: "none", pointerEvents: "none" }}
                   />
                 </div>
 
                 {/* Zoom slider */}
-                <div className="w-full flex items-center gap-3">
-                  <ZoomIn className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                <div style={{ width: "100%", display: "flex", alignItems: "center", gap: 10 }}>
+                  <ZoomIn style={{ width: 16, height: 16, color: "#94a3b8", flexShrink: 0 }} />
                   <input
                     type="range" min={1} max={3} step={0.01}
                     value={cropZoom}
                     onChange={(e) => handleCropZoomChange(parseFloat(e.target.value))}
-                    className="flex-1 accent-[#10b981] h-1.5 rounded-full"
+                    style={{ flex: 1, accentColor: "#10b981", height: 6 }}
                   />
-                  <span className="text-xs text-slate-400 w-9 text-right">{cropZoom.toFixed(1)}×</span>
+                  <span style={{ fontSize: 11, color: "#94a3b8", width: 36, textAlign: "right" }}>
+                    {cropZoom.toFixed(1)}×
+                  </span>
                 </div>
               </div>
 
-              {/* Actions */}
-              <div className="flex gap-3 px-5 pb-5">
+              {/* Action buttons — always pinned at bottom */}
+              <div style={{ display: "flex", gap: 12, padding: "14px 20px 28px", flexShrink: 0 }}>
                 <button
                   onClick={() => setCropSrc(null)}
-                  className="flex-1 py-3 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"
+                  style={{ flex: 1, padding: "13px 0", borderRadius: 14, border: "1.5px solid #e2e8f0",
+                    background: "#fff", color: "#475569", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleCropConfirm}
                   disabled={photoMutation.isPending}
-                  className="flex-1 py-3 rounded-xl bg-[#10b981] hover:bg-emerald-600 text-white text-sm font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
+                  style={{ flex: 1, padding: "13px 0", borderRadius: 14, border: "none",
+                    background: photoMutation.isPending ? "#86efac" : "#10b981",
+                    color: "#fff", fontSize: 14, fontWeight: 700, cursor: photoMutation.isPending ? "not-allowed" : "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
                 >
                   {photoMutation.isPending
-                    ? <Loader2 className="w-4 h-4 animate-spin" />
-                    : <CropIcon className="w-4 h-4" />}
+                    ? <Loader2 style={{ width: 16, height: 16, animation: "spin 1s linear infinite" }} />
+                    : <CropIcon style={{ width: 16, height: 16 }} />}
                   {photoMutation.isPending ? "Uploading…" : "Crop & Upload"}
                 </button>
               </div>
