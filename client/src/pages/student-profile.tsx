@@ -748,7 +748,7 @@ export default function StudentProfile() {
                   {student.bloodGroup && <InfoRow label="Blood Group" value={student.bloodGroup} />}
                   {(profile?.fatherName || student.fatherName) && <InfoRow label="Father's Name" value={profile?.fatherName || student.fatherName!} />}
                   {(profile?.motherName || student.motherName) && <InfoRow label="Mother's Name" value={profile?.motherName || student.motherName!} />}
-                  {(profile?.aadharNumber || student.aadharNumber) && <InfoRow label="Aadhaar No." value={profile?.aadharNumber || student.aadharNumber!} mono />}
+                  <InfoRow label="Aadhaar No." value={profile?.aadharNumber || student.aadharNumber || "—"} mono />
                   {(profile?.presentAddress || student.address) && <InfoRow label="Address" value={profile?.presentAddress || student.address!} />}
                 </div>
               </div>
