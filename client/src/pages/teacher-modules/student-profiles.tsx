@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   CheckCircle, XCircle, Clock, Loader2, User, Eye,
-  Users, FileText, ChevronLeft, ShieldCheck, Pencil, Save,
+  Users, FileText, ChevronLeft, ShieldCheck, Pencil, Save, Camera,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -117,6 +117,8 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
   const [showRejectInput,  setShowRejectInput]  = useState(false);
   const [editMode,         setEditMode]         = useState(false);
   const [editedFields,     setEditedFields]     = useState<EditableFields>({ fullName:"", rollNo:"", fatherName:"", motherName:"", presentAddress:"", aadharNumber:"", gender:"", phone:"", dob:"", enrollmentDate:"", guardianName:"", bloodGroup:"" });
+  const [livePhotoUrl,     setLivePhotoUrl]     = useState<string | null>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   const { data: profiles = [], isLoading } = useQuery<PendingProfile[]>({
     queryKey: ["/api/teacher/pending-profiles"],
@@ -149,6 +151,35 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
     onError: (e: Error) => toast({ title: "Rejection failed", description: e.message, variant: "destructive" }),
   });
 
+  const photoUploadMutation = useMutation({
+    mutationFn: async ({ studentId, file }: { studentId: number; file: File }) => {
+      const fd = new FormData();
+      fd.append("photo", file);
+      const r = await fetch(`/api/teacher/students/${studentId}/photo`, {
+        method: "POST", body: fd, credentials: "include",
+      });
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.message || "Upload failed"); }
+      return r.json() as Promise<{ photoUrl: string }>;
+    },
+    onSuccess: (data) => {
+      setLivePhotoUrl(data.photoUrl);
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/pending-profiles"] });
+      toast({ title: "Photo updated!" });
+    },
+    onError: (e: Error) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
+  });
+
+  function handlePhotoFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !reviewProfile) return;
+    e.target.value = "";
+    if (file.size > 1 * 1024 * 1024) {
+      toast({ title: "Image too large", description: "Please upload an image smaller than 1 MB.", variant: "destructive" });
+      return;
+    }
+    photoUploadMutation.mutate({ studentId: reviewProfile.studentId, file });
+  }
+
   const bulkApproveMutation = useMutation({
     mutationFn: async (ids: number[]) => apiRequest("POST", "/api/teacher/profiles/bulk-approve", { studentIds: ids }),
     onSuccess: () => {
@@ -178,6 +209,7 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
 
   function openReview(p: PendingProfile) {
     setReviewProfile(p);
+    setLivePhotoUrl(null);
     setEditedFields(initEdits(p));
     setEditMode(false);
     setRejectNote("");
@@ -514,22 +546,52 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
                   const liveData = parseProfile(reviewProfile.currentVerifiedProfile);
                   return (
                     <div className="space-y-3">
-                      {reviewProfile.photoUrl && (
-                        <div className="flex justify-center mb-3">
-                          <div className="relative">
+                      {/* Photo with teacher upload button */}
+                      <div className="flex flex-col items-center gap-2 mb-3">
+                        <div className="relative">
+                          {(livePhotoUrl || reviewProfile.photoUrl) ? (
                             <img
-                              src={reviewProfile.photoUrl}
-                              alt="Pending photo"
+                              src={livePhotoUrl || reviewProfile.photoUrl!}
+                              alt="Student photo"
                               className="w-20 h-20 rounded-full object-cover border-4 border-emerald-400 shadow"
                             />
-                            {reviewProfile.photoStatus === "pending" && (
-                              <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[9px] font-bold bg-yellow-400 text-white px-2 py-0.5 rounded-full whitespace-nowrap shadow">
-                                PHOTO PENDING
-                              </span>
-                            )}
-                          </div>
+                          ) : (
+                            <div className="w-20 h-20 rounded-full bg-gray-100 border-4 border-gray-200 flex items-center justify-center">
+                              <User className="w-8 h-8 text-gray-300" />
+                            </div>
+                          )}
+                          {reviewProfile.photoStatus === "pending" && !livePhotoUrl && (
+                            <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[9px] font-bold bg-yellow-400 text-white px-2 py-0.5 rounded-full whitespace-nowrap shadow">
+                              PHOTO PENDING
+                            </span>
+                          )}
+                          {livePhotoUrl && (
+                            <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[9px] font-bold bg-emerald-500 text-white px-2 py-0.5 rounded-full whitespace-nowrap shadow">
+                              UPDATED
+                            </span>
+                          )}
                         </div>
-                      )}
+                        {!isArchiveMode && (
+                          <button
+                            onClick={() => photoInputRef.current?.click()}
+                            disabled={photoUploadMutation.isPending}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 text-[11px] font-semibold hover:bg-emerald-50 transition-colors disabled:opacity-50"
+                          >
+                            {photoUploadMutation.isPending
+                              ? <Loader2 className="w-3 h-3 animate-spin" />
+                              : <Camera className="w-3 h-3" />}
+                            {photoUploadMutation.isPending ? "Uploading…" : "Change Photo"}
+                          </button>
+                        )}
+                        <input
+                          ref={photoInputRef}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handlePhotoFile}
+                        />
+                        <p className="text-[10px] text-gray-400">Max 1 MB · Teacher can change anytime</p>
+                      </div>
                       {FIELD_LABELS.map(({ key, label, editable }) => {
                         const rawVal = (reviewProfile as any)[key] as string | null;
                         const oldVal = liveData ? (liveData as any)[key] : null;

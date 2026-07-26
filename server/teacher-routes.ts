@@ -27,6 +27,29 @@ const diskUpload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
 });
 
+const studentPhotoUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      const dir = path.join(process.cwd(), "uploads", "student-photos");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const mimeToExt: Record<string, string> = {
+        "image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png",
+        "image/webp": ".webp", "image/gif": ".gif", "image/avif": ".avif",
+      };
+      const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
+      cb(null, unique + (mimeToExt[file.mimetype] || ".jpg"));
+    },
+  }),
+  limits: { fileSize: 1 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files are allowed"));
+  },
+});
+
 const createTeacherSchema = z.object({
   fullName: z.string().min(2),
   email: z.string().email(),
@@ -3140,6 +3163,41 @@ Thank you for your prompt attention to this matter.
 
     res.json(profile);
   });
+
+  // Teacher overrides a student's live photo directly (no approval needed, unlimited times, ≤1 MB)
+  app.post(
+    "/api/teacher/students/:studentId/photo",
+    async (req, res, next) => {
+      if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+      next();
+    },
+    studentPhotoUpload.single("photo"),
+    async (req: any, res) => {
+      if (!req.file) return res.status(400).json({ message: "No image uploaded" });
+      const studentId = parseInt(req.params.studentId);
+      if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
+
+      const teacher = await storage.getTeacherById(req.session.teacherId!);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+      const student = await storage.getStudentById(studentId);
+      if (!student || student.schoolId !== teacher.schoolId)
+        return res.status(403).json({ message: "Access denied" });
+
+      const photoUrl = `/uploads/student-photos/${req.file.filename}`;
+      await storage.updateStudentLivePhoto(studentId, photoUrl);
+
+      // Also update the student_profiles photo if a profile exists
+      const profile = await storage.getStudentProfile(studentId);
+      if (profile) {
+        await db.update(studentProfiles)
+          .set({ photoUrl, photoStatus: "approved", updatedAt: new Date() })
+          .where(eq(studentProfiles.studentId, studentId));
+      }
+
+      res.json({ photoUrl });
+    },
+  );
 
   const rejectProfileSchema = z.object({
     note: z.string().optional().default(""),
