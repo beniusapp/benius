@@ -1,11 +1,13 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   ArrowLeft, Camera, CheckCircle, Clock, XCircle, AlertCircle, Loader2,
   User, Lock, Eye, EyeOff, GraduationCap, FileText, Shield,
-  ChevronRight, AlertTriangle, MoreVertical, X,
+  ChevronRight, AlertTriangle, MoreVertical, X, ZoomIn, CropIcon,
 } from "lucide-react";
+
+const CROP_SIZE = 260; // diameter of crop circle in px
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
@@ -173,10 +175,18 @@ function ReadOnlyField({ label, value, testId }: { label: string; value: string;
 export default function StudentProfile() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const fullNameRef = useRef<HTMLInputElement>(null);
+  const fileInputRef  = useRef<HTMLInputElement>(null);
+  const menuRef       = useRef<HTMLDivElement>(null);
+  const fullNameRef   = useRef<HTMLInputElement>(null);
   const currentPasswordRef = useRef<HTMLInputElement>(null);
+  const cropImgRef    = useRef<HTMLImageElement>(null);
+  const dragStartRef  = useRef<{ px: number; py: number; ox: number; oy: number } | null>(null);
+
+  // ── Crop modal state ───────────────────────────────────────────────────────
+  const [cropSrc,  setCropSrc]  = useState<string | null>(null);
+  const [cropPos,  setCropPos]  = useState({ x: 0, y: 0 });
+  const [cropZoom, setCropZoom] = useState(1);
+  const [imgNatural, setImgNatural] = useState({ w: 1, h: 1 });
 
   const [isEditing, setIsEditing] = useState(false);
   const [securityOpen, setSecurityOpen] = useState(false);
@@ -367,8 +377,75 @@ export default function StudentProfile() {
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    photoMutation.mutate(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setCropSrc(ev.target?.result as string);
+      setCropPos({ x: 0, y: 0 });
+      setCropZoom(1);
+    };
+    reader.readAsDataURL(file);
     e.target.value = "";
+  }
+
+  function handleCropDragStart(e: React.PointerEvent<HTMLDivElement>) {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragStartRef.current = { px: e.clientX, py: e.clientY, ox: cropPos.x, oy: cropPos.y };
+  }
+
+  function handleCropDragMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!dragStartRef.current) return;
+    const baseScale = CROP_SIZE / Math.min(imgNatural.w, imgNatural.h);
+    const displayW  = imgNatural.w * baseScale * cropZoom;
+    const displayH  = imgNatural.h * baseScale * cropZoom;
+    const maxX = Math.max(0, (displayW - CROP_SIZE) / 2);
+    const maxY = Math.max(0, (displayH - CROP_SIZE) / 2);
+    const dx = e.clientX - dragStartRef.current.px;
+    const dy = e.clientY - dragStartRef.current.py;
+    setCropPos({
+      x: Math.max(-maxX, Math.min(maxX, dragStartRef.current.ox + dx)),
+      y: Math.max(-maxY, Math.min(maxY, dragStartRef.current.oy + dy)),
+    });
+  }
+
+  function handleCropDragEnd() { dragStartRef.current = null; }
+
+  function handleCropZoomChange(newZoom: number) {
+    // When zoom changes, re-clamp the existing offset
+    const baseScale = CROP_SIZE / Math.min(imgNatural.w, imgNatural.h);
+    const displayW  = imgNatural.w * baseScale * newZoom;
+    const displayH  = imgNatural.h * baseScale * newZoom;
+    const maxX = Math.max(0, (displayW - CROP_SIZE) / 2);
+    const maxY = Math.max(0, (displayH - CROP_SIZE) / 2);
+    setCropZoom(newZoom);
+    setCropPos(p => ({
+      x: Math.max(-maxX, Math.min(maxX, p.x)),
+      y: Math.max(-maxY, Math.min(maxY, p.y)),
+    }));
+  }
+
+  function handleCropConfirm() {
+    const img = cropImgRef.current;
+    if (!img || !cropSrc) return;
+    const baseScale = CROP_SIZE / Math.min(imgNatural.w, imgNatural.h);
+    const displayW  = imgNatural.w * baseScale * cropZoom;
+    const displayH  = imgNatural.h * baseScale * cropZoom;
+    const imgX = CROP_SIZE / 2 - displayW / 2 + cropPos.x;
+    const imgY = CROP_SIZE / 2 - displayH / 2 + cropPos.y;
+    const sx = (-imgX) / displayW * imgNatural.w;
+    const sy = (-imgY) / displayH * imgNatural.h;
+    const sw = CROP_SIZE / displayW * imgNatural.w;
+    const sh = CROP_SIZE / displayH * imgNatural.h;
+    const canvas = document.createElement("canvas");
+    canvas.width  = 400;
+    canvas.height = 400;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 400, 400);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const file = new File([blob], "profile.jpg", { type: "image/jpeg" });
+      setCropSrc(null);
+      photoMutation.mutate(file);
+    }, "image/jpeg", 0.92);
   }
 
   function handleStartEditing() {
@@ -1098,6 +1175,94 @@ export default function StudentProfile() {
 
         </div>
       </motion.main>
+
+      {/* ── Crop Modal ──────────────────────────────────────────────────────── */}
+      {cropSrc && (() => {
+        const baseScale = CROP_SIZE / Math.min(imgNatural.w, imgNatural.h);
+        const displayW  = imgNatural.w * baseScale * cropZoom;
+        const displayH  = imgNatural.h * baseScale * cropZoom;
+        const imgX = CROP_SIZE / 2 - displayW / 2 + cropPos.x;
+        const imgY = CROP_SIZE / 2 - displayH / 2 + cropPos.y;
+        return (
+          <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm px-4">
+            <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <CropIcon className="w-4 h-4 text-[#10b981]" />
+                  <h2 className="text-sm font-bold text-slate-800">Crop Photo</h2>
+                </div>
+                <button onClick={() => setCropSrc(null)} className="p-1.5 rounded-full hover:bg-slate-100 transition-colors">
+                  <X className="w-4 h-4 text-slate-500" />
+                </button>
+              </div>
+
+              {/* Crop area */}
+              <div className="flex flex-col items-center gap-4 px-5 py-6">
+                <p className="text-xs text-slate-400 text-center">Drag to reposition · Use slider to zoom</p>
+
+                {/* Circle crop preview */}
+                <div
+                  style={{ width: CROP_SIZE, height: CROP_SIZE, borderRadius: "50%", overflow: "hidden",
+                    border: "3px solid #10b981", cursor: "grab", touchAction: "none", position: "relative",
+                    boxShadow: "0 0 0 4px rgba(16,185,129,0.15)", flexShrink: 0 }}
+                  onPointerDown={handleCropDragStart}
+                  onPointerMove={handleCropDragMove}
+                  onPointerUp={handleCropDragEnd}
+                  onPointerLeave={handleCropDragEnd}
+                >
+                  <img
+                    ref={cropImgRef}
+                    src={cropSrc}
+                    alt="Crop preview"
+                    draggable={false}
+                    onLoad={(e) => {
+                      const img = e.currentTarget;
+                      setImgNatural({ w: img.naturalWidth, h: img.naturalHeight });
+                    }}
+                    style={{ position: "absolute", left: imgX, top: imgY,
+                      width: displayW, height: displayH,
+                      userSelect: "none", pointerEvents: "none" }}
+                  />
+                </div>
+
+                {/* Zoom slider */}
+                <div className="w-full flex items-center gap-3">
+                  <ZoomIn className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                  <input
+                    type="range" min={1} max={3} step={0.01}
+                    value={cropZoom}
+                    onChange={(e) => handleCropZoomChange(parseFloat(e.target.value))}
+                    className="flex-1 accent-[#10b981] h-1.5 rounded-full"
+                  />
+                  <span className="text-xs text-slate-400 w-9 text-right">{cropZoom.toFixed(1)}×</span>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-3 px-5 pb-5">
+                <button
+                  onClick={() => setCropSrc(null)}
+                  className="flex-1 py-3 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCropConfirm}
+                  disabled={photoMutation.isPending}
+                  className="flex-1 py-3 rounded-xl bg-[#10b981] hover:bg-emerald-600 text-white text-sm font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
+                >
+                  {photoMutation.isPending
+                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                    : <CropIcon className="w-4 h-4" />}
+                  {photoMutation.isPending ? "Uploading…" : "Crop & Upload"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
     </div>
   );
 }
