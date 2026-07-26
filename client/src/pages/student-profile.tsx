@@ -256,25 +256,25 @@ export default function StudentProfile() {
   const approvedSnapshot = profileData?.approvedSnapshot ?? null;
 
   useEffect(() => {
-    if (profile) {
-      const vals = {
-        fullName:       profile.fullName       || "",
-        rollNo:         profile.rollNo         || "",
-        fatherName:     profile.fatherName     || "",
-        motherName:     profile.motherName     || "",
-        presentAddress: profile.presentAddress || "",
-        aadharNumber:   profile.aadharNumber   || "",
-        gender:        (profile.gender         || student?.gender        || "") as "" | "Boy" | "Girl",
-        phone:          profile.phone          || student?.phone         || "",
-        dob:            profile.dob            || student?.dob           || "",
-        enrollmentDate: profile.enrollmentDate || student?.enrollmentDate|| "",
-        guardianName:   profile.guardianName   || student?.guardianName  || "",
-        bloodGroup:    (profile.bloodGroup     || student?.bloodGroup    || "") as "" | "A+" | "A-" | "B+" | "B-" | "AB+" | "AB-" | "O+" | "O-",
-      };
-      setForm(vals);
-      originalFormRef.current = vals;
-    }
-  }, [profile?.id]);
+    if (!student) return;
+    // Build pre-filled values: prefer saved profile fields, fall back to live student record
+    const vals = {
+      fullName:       profile?.fullName       || student.name            || "",
+      rollNo:         profile?.rollNo         || (student.rollNumber != null ? String(student.rollNumber) : ""),
+      fatherName:     profile?.fatherName     || student.fatherName      || "",
+      motherName:     profile?.motherName     || student.motherName      || "",
+      presentAddress: profile?.presentAddress || student.address         || "",
+      aadharNumber:   profile?.aadharNumber   || student.aadharNumber    || "",
+      gender:        (profile?.gender         || student.gender          || "") as "" | "Boy" | "Girl",
+      phone:          profile?.phone          || student.phone           || "",
+      dob:            profile?.dob            || student.dob             || "",
+      enrollmentDate: profile?.enrollmentDate || student.enrollmentDate  || "",
+      guardianName:   profile?.guardianName   || student.guardianName    || "",
+      bloodGroup:    (profile?.bloodGroup     || student.bloodGroup      || "") as "" | "A+" | "A-" | "B+" | "B-" | "AB+" | "AB-" | "O+" | "O-",
+    };
+    setForm(vals);
+    originalFormRef.current = vals;
+  }, [profile?.id, student?.id]);
 
   useEffect(() => {
     if (!securityOpen) {
@@ -884,19 +884,17 @@ export default function StudentProfile() {
                       <span className="text-2xl font-bold text-[#10b981]/70">{initials}</span>
                     </div>
                   )}
-                  {profile?.photoStatus !== "approved" && (
-                    <button
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={photoMutation.isPending}
-                      className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                      title="Upload photo"
-                      data-testid="button-upload-photo"
-                    >
-                      {photoMutation.isPending
-                        ? <Loader2 className="w-6 h-6 text-white animate-spin" />
-                        : <Camera className="w-6 h-6 text-white" />}
-                    </button>
-                  )}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={photoMutation.isPending}
+                    className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Upload photo"
+                    data-testid="button-upload-photo"
+                  >
+                    {photoMutation.isPending
+                      ? <Loader2 className="w-6 h-6 text-white animate-spin" />
+                      : <Camera className="w-6 h-6 text-white" />}
+                  </button>
                   {photoIsApproved && (
                     <span className="absolute -bottom-1 -right-1 bg-[#10b981] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-white">
                       ✓ VERIFIED
@@ -911,17 +909,15 @@ export default function StudentProfile() {
                   </div>
                 )}
 
-                {profile?.photoStatus !== "approved" && (
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={photoMutation.isPending}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-emerald-200 text-[#10b981] text-xs font-medium hover:bg-emerald-50 transition-colors"
-                    data-testid="button-upload-photo-alt"
-                  >
-                    {photoMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
-                    {profile?.photoStatus === "pending" ? "Replace Photo" : "Upload Photo"}
-                  </button>
-                )}
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={photoMutation.isPending}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-emerald-200 text-[#10b981] text-xs font-medium hover:bg-emerald-50 transition-colors"
+                  data-testid="button-upload-photo-alt"
+                >
+                  {photoMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+                  {profile?.photoStatus === "pending" ? "Replace Photo" : "Upload Photo"}
+                </button>
               </div>
 
               {/* Form fields card — no overflow-hidden to prevent Android keyboard clipping */}
