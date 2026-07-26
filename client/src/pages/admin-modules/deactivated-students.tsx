@@ -433,8 +433,8 @@ export default function DeactivatedStudentsPage() {
                     <td className={`${cell} text-white/60 overflow-hidden text-ellipsis font-mono`}>{s.phone}</td>
                     <td className={`${cell} text-white/70 font-mono`}>{s.batchYear ?? <span className="text-white/20">—</span>}</td>
                     {!compact && <td className={`${cell} text-white/60 overflow-hidden text-ellipsis`}>{s.guardianName ?? "—"}</td>}
-                    {!compact && <td className={`${cell} text-white/50 font-mono`}>{s.dob ?? "—"}</td>}
-                    {!compact && <td className={`${cell} text-white/50 font-mono`}>{s.enrollmentDate ?? "—"}</td>}
+                    {!compact && <td className={`${cell} text-white/50`}>{s.dob ? new Date(s.dob).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}</td>}
+                    {!compact && <td className={`${cell} text-white/50`}>{s.enrollmentDate ? new Date(s.enrollmentDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}</td>}
                     {!compact && <td className={`${cell} text-white/60`}>{s.bloodGroup ?? "—"}</td>}
                     {!compact && (
                       <td className={`${cell} text-white/50 font-mono`}>
@@ -548,8 +548,8 @@ export default function DeactivatedStudentsPage() {
                 { label: "Phone",            value: viewTarget.phone },
                 { label: "Guardian",         value: viewTarget.guardianName ?? "Not recorded" },
                 { label: "Blood Group",      value: viewTarget.bloodGroup ?? "Not recorded" },
-                { label: "Date of Birth",    value: viewTarget.dob ?? "—" },
-                { label: "Date of Admission",value: viewTarget.enrollmentDate ?? "Not recorded" },
+                { label: "Date of Birth",    value: viewTarget.dob ? new Date(viewTarget.dob).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—" },
+                { label: "Date of Admission",value: viewTarget.enrollmentDate ? new Date(viewTarget.enrollmentDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "Not recorded" },
               ].map(({ label, value, mono, gold }) => (
                 <div key={label} className="flex justify-between items-start gap-3 text-sm">
                   <span className="text-white/50 shrink-0">{label}</span>
