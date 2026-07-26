@@ -41,6 +41,10 @@ const addSchema = z.object({
   rollNumber: z.string().optional(),
   guardianName: z.string().optional(),
   bloodGroup: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional(),
+  fatherName: z.string().optional(),
+  motherName: z.string().optional(),
+  address: z.string().optional(),
+  aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits").optional(),
 });
 type AddForm = z.infer<typeof addSchema>;
 
@@ -55,6 +59,10 @@ const editSchema = z.object({
   rollNumber: z.string().optional(),
   guardianName: z.string().optional(),
   bloodGroup: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional().nullable(),
+  fatherName: z.string().optional(),
+  motherName: z.string().optional(),
+  address: z.string().optional(),
+  aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits").optional(),
 });
 type EditForm = z.infer<typeof editSchema>;
 
@@ -185,7 +193,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
 
   const form = useForm<AddForm>({
     resolver: zodResolver(addSchema),
-    defaultValues: { name: "", class: "", section: "", phone: "", dob: "", dateOfAdmission: "", gender: undefined, rollNumber: "", guardianName: "", bloodGroup: undefined },
+    defaultValues: { name: "", class: "", section: "", phone: "", dob: "", dateOfAdmission: "", gender: undefined, rollNumber: "", guardianName: "", bloodGroup: undefined, fatherName: "", motherName: "", address: "", aadharNumber: "" },
   });
 
   const addMutation = useMutation({
@@ -194,6 +202,10 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
         ...d,
         rollNumber: d.rollNumber ? parseInt(d.rollNumber) : undefined,
         ...(d.dateOfAdmission ? { enrollmentDate: d.dateOfAdmission } : {}),
+        fatherName:   d.fatherName   || undefined,
+        motherName:   d.motherName   || undefined,
+        address:      d.address      || undefined,
+        aadharNumber: d.aadharNumber || undefined,
       };
       const r = await apiRequest("POST", `/api/schools/${schoolId}/students`, payload);
       return r.json();
@@ -222,7 +234,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
 
   const editForm = useForm<EditForm>({
     resolver: zodResolver(editSchema),
-    defaultValues: { name: "", class: "", section: "", phone: "", dob: "", dateOfAdmission: "", gender: undefined, rollNumber: "", guardianName: "", bloodGroup: undefined },
+    defaultValues: { name: "", class: "", section: "", phone: "", dob: "", dateOfAdmission: "", gender: undefined, rollNumber: "", guardianName: "", bloodGroup: undefined, fatherName: "", motherName: "", address: "", aadharNumber: "" },
   });
 
   useEffect(() => {
@@ -238,6 +250,10 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
         rollNumber: editTarget.rollNumber != null ? String(editTarget.rollNumber) : "",
         guardianName: editTarget.guardianName ?? "",
         bloodGroup: (editTarget.bloodGroup as "A+" | "A-" | "B+" | "B-" | "AB+" | "AB-" | "O+" | "O-" | null) ?? undefined,
+        fatherName:   (editTarget as any).fatherName   ?? "",
+        motherName:   (editTarget as any).motherName   ?? "",
+        address:      (editTarget as any).address      ?? "",
+        aadharNumber: (editTarget as any).aadharNumber ?? "",
       });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -249,10 +265,14 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
         name: d.name, class: d.class, section: d.section, phone: d.phone,
         ...(d.dob ? { dob: d.dob } : {}),
         ...(d.dateOfAdmission ? { enrollmentDate: d.dateOfAdmission } : {}),
-        gender: d.gender ?? null,
-        rollNumber: d.rollNumber ? parseInt(d.rollNumber) : null,
+        gender:       d.gender       ?? null,
+        rollNumber:   d.rollNumber   ? parseInt(d.rollNumber) : null,
         guardianName: d.guardianName || null,
-        bloodGroup: d.bloodGroup ?? null,
+        bloodGroup:   d.bloodGroup   ?? null,
+        fatherName:   d.fatherName   || null,
+        motherName:   d.motherName   || null,
+        address:      d.address      || null,
+        aadharNumber: d.aadharNumber || null,
       };
       const r = await apiRequest("PATCH", `/api/admin/students/${editTarget!.id}`, payload);
       if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
@@ -525,8 +545,36 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                   </Select>
                   <FormMessage /></FormItem>
               )} />
-              <div className="flex items-end">
-                <Button type="submit" disabled={addMutation.isPending} className="w-full bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold" data-testid="button-submit-student">
+              <FormField control={form.control} name="fatherName" render={({ field }) => (
+                <FormItem><FormLabel className="text-white/70">Father's Name</FormLabel>
+                  <FormControl><Input {...field} placeholder="Optional" className="bg-[#0A1628] border-white/20 text-white" data-testid="input-student-father" /></FormControl>
+                  <FormMessage /></FormItem>
+              )} />
+              <FormField control={form.control} name="motherName" render={({ field }) => (
+                <FormItem><FormLabel className="text-white/70">Mother's Name</FormLabel>
+                  <FormControl><Input {...field} placeholder="Optional" className="bg-[#0A1628] border-white/20 text-white" data-testid="input-student-mother" /></FormControl>
+                  <FormMessage /></FormItem>
+              )} />
+              <FormField control={form.control} name="aadharNumber" render={({ field }) => (
+                <FormItem><FormLabel className="text-white/70">Aadhaar Number</FormLabel>
+                  <FormControl><Input
+                    {...field}
+                    inputMode="numeric"
+                    maxLength={12}
+                    placeholder="12-digit Aadhaar (optional)"
+                    onChange={e => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 12))}
+                    className="bg-[#0A1628] border-white/20 text-white font-mono tracking-widest"
+                    data-testid="input-student-aadhar"
+                  /></FormControl>
+                  <FormMessage /></FormItem>
+              )} />
+              <FormField control={form.control} name="address" render={({ field }) => (
+                <FormItem className="col-span-2 md:col-span-3"><FormLabel className="text-white/70">Address</FormLabel>
+                  <FormControl><Textarea {...field} placeholder="Optional" rows={2} className="bg-[#0A1628] border-white/20 text-white resize-none" data-testid="input-student-address" /></FormControl>
+                  <FormMessage /></FormItem>
+              )} />
+              <div className="flex items-end col-span-2 md:col-span-3 justify-end">
+                <Button type="submit" disabled={addMutation.isPending} className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold px-8" data-testid="button-submit-student">
                   {addMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add Student"}
                 </Button>
               </div>
@@ -780,6 +828,10 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                 { label: "Gender", value: viewTarget.gender ?? "Not set" },
                 { label: "Phone", value: viewTarget.phone },
                 { label: "Guardian", value: viewTarget.guardianName ?? "Not recorded" },
+                { label: "Father's Name", value: (viewTarget as any).fatherName ?? "Not recorded" },
+                { label: "Mother's Name", value: (viewTarget as any).motherName ?? "Not recorded" },
+                { label: "Address", value: (viewTarget as any).address ?? "Not recorded" },
+                { label: "Aadhaar No.", value: (viewTarget as any).aadharNumber ?? "Not recorded" },
                 { label: "Blood Group", value: (viewTarget as any).bloodGroup ?? "Not recorded" },
                 { label: "Date of Birth", value: viewTarget.dob ?? "—" },
                 { label: "Date of Admission", value: viewTarget.enrollmentDate ?? "Not recorded" },
@@ -914,6 +966,37 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                           ))}
                         </SelectContent>
                       </Select>
+                      <FormMessage /></FormItem>
+                  )} />
+                  <FormField control={editForm.control} name="fatherName" render={({ field }) => (
+                    <FormItem><FormLabel className="text-white/70">Father's Name</FormLabel>
+                      <FormControl><Input {...field} placeholder="Optional" data-testid="input-edit-father"
+                        className="bg-[#0A1628] border-white/20 text-white" /></FormControl>
+                      <FormMessage /></FormItem>
+                  )} />
+                  <FormField control={editForm.control} name="motherName" render={({ field }) => (
+                    <FormItem><FormLabel className="text-white/70">Mother's Name</FormLabel>
+                      <FormControl><Input {...field} placeholder="Optional" data-testid="input-edit-mother"
+                        className="bg-[#0A1628] border-white/20 text-white" /></FormControl>
+                      <FormMessage /></FormItem>
+                  )} />
+                  <FormField control={editForm.control} name="aadharNumber" render={({ field }) => (
+                    <FormItem><FormLabel className="text-white/70">Aadhaar Number</FormLabel>
+                      <FormControl><Input
+                        {...field}
+                        inputMode="numeric"
+                        maxLength={12}
+                        placeholder="12-digit Aadhaar (optional)"
+                        onChange={e => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 12))}
+                        data-testid="input-edit-aadhar"
+                        className="bg-[#0A1628] border-white/20 text-white font-mono tracking-widest"
+                      /></FormControl>
+                      <FormMessage /></FormItem>
+                  )} />
+                  <FormField control={editForm.control} name="address" render={({ field }) => (
+                    <FormItem><FormLabel className="text-white/70">Address</FormLabel>
+                      <FormControl><Textarea {...field} placeholder="Optional" rows={2} data-testid="input-edit-address"
+                        className="bg-[#0A1628] border-white/20 text-white resize-none" /></FormControl>
                       <FormMessage /></FormItem>
                   )} />
                   <div className="flex gap-3 pt-2">

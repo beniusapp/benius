@@ -765,6 +765,11 @@ export async function registerRoutes(
   });
 
   const manualStudentSchema = z.object({
+    fatherName: z.string().optional(),
+    motherName: z.string().optional(),
+    address: z.string().optional(),
+    aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits").optional(),
+    // existing fields below — do not move
     name: z.string().min(1),
     class: z.string().min(1),
     section: z.string().min(1),
@@ -798,7 +803,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
       }
 
-      const { name, class: cls, section, phone, dob: dobRaw, enrollmentDate, gender, rollNumber, guardianName, bloodGroup } = parsed.data;
+      const { name, class: cls, section, phone, dob: dobRaw, enrollmentDate, gender, rollNumber, guardianName, bloodGroup, fatherName, motherName, address, aadharNumber } = parsed.data;
 
       if (!isValidPhone(phone)) {
         return res.status(400).json({ message: "Invalid phone number" });
@@ -835,8 +840,12 @@ export async function registerRoutes(
         ...(enrollmentDate ? { enrollmentDate } : {}),
         ...(gender ? { gender } : {}),
         ...(rollNumber ? { rollNumber } : {}),
-        ...(guardianName ? { guardianName } : {}),
-        ...(bloodGroup ? { bloodGroup } : {}),
+        ...(guardianName    ? { guardianName }    : {}),
+        ...(bloodGroup     ? { bloodGroup }     : {}),
+        ...(fatherName     ? { fatherName }     : {}),
+        ...(motherName     ? { motherName }     : {}),
+        ...(address        ? { address }        : {}),
+        ...(aadharNumber   ? { aadharNumber }   : {}),
       });
 
       // Auto-enrollment: silently attach the student to the currently active
@@ -3529,6 +3538,10 @@ export async function registerRoutes(
     rollNumber: z.number().int().positive().optional().nullable(),
     guardianName: z.string().optional().nullable(),
     bloodGroup: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional().nullable(),
+    fatherName: z.string().optional().nullable(),
+    motherName: z.string().optional().nullable(),
+    address: z.string().optional().nullable(),
+    aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits").optional().nullable(),
   });
 
   app.patch("/api/admin/students/:id", async (req, res) => {
@@ -3547,7 +3560,14 @@ export async function registerRoutes(
         return res.status(409).json({ message: `Roll number ${rollNumber} is already assigned in ${rest.class}-${rest.section}` });
       }
     }
-    const updated = await storage.updateStudent(id, schoolId, { ...rest, rollNumber: rollNumber ?? null });
+    const updated = await storage.updateStudent(id, schoolId, {
+      ...rest,
+      rollNumber:   rollNumber   ?? null,
+      fatherName:   rest.fatherName   ?? null,
+      motherName:   rest.motherName   ?? null,
+      address:      rest.address      ?? null,
+      aadharNumber: rest.aadharNumber ?? null,
+    });
     if (!updated) return res.status(404).json({ message: "Student not found" });
     res.json(updated);
   });

@@ -2801,6 +2801,8 @@ export class DatabaseStorage {
     name: string; class: string; section: string; phone: string;
     gender?: string | null; rollNumber?: number | null; guardianName?: string | null;
     dob?: string; enrollmentDate?: string; bloodGroup?: string | null;
+    fatherName?: string | null; motherName?: string | null;
+    address?: string | null; aadharNumber?: string | null;
   }): Promise<Student | undefined> {
     const setData: Record<string, unknown> = {
       name: data.name, class: data.class, section: data.section, phone: data.phone,
@@ -2811,6 +2813,10 @@ export class DatabaseStorage {
     if (data.dob) setData.dob = data.dob;
     if (data.enrollmentDate) setData.enrollmentDate = data.enrollmentDate;
     if (data.bloodGroup !== undefined) setData.bloodGroup = data.bloodGroup;
+    if (data.fatherName !== undefined) setData.fatherName = data.fatherName;
+    if (data.motherName !== undefined) setData.motherName = data.motherName;
+    if (data.address !== undefined) setData.address = data.address;
+    if (data.aadharNumber !== undefined) setData.aadharNumber = data.aadharNumber;
     const [updated] = await db.update(students)
       .set(setData as Partial<typeof students.$inferInsert>)
       .where(and(eq(students.id, id), eq(students.schoolId, schoolId)))

@@ -46,6 +46,10 @@ export const students = pgTable("students", {
   guardianName: text("guardian_name"),
   bloodGroup: varchar("blood_group", { length: 5 }),
   idCardPendingReissue: boolean("id_card_pending_reissue").notNull().default(false),
+  fatherName: text("father_name"),
+  motherName: text("mother_name"),
+  address: text("address"),
+  aadharNumber: varchar("aadhar_number", { length: 12 }),
 });
 
 export const teachers = pgTable("teachers", {
