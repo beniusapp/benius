@@ -901,6 +901,11 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                           {new Date(parsed.verifiedAt).toLocaleDateString("en-GB")}
                         </span>
                       </div>
+                      {parsed.approvedByName && (
+                        <p className="text-[10px] text-emerald-300/70">
+                          Approved by: <span className="font-semibold text-emerald-300">{parsed.approvedByName}</span>
+                        </p>
+                      )}
                       <p className="text-[10px] text-white/40">These fields were student-submitted and teacher-approved:</p>
                       <div className="grid grid-cols-2 gap-x-3 gap-y-1">
                         {changedFields.map(f => (

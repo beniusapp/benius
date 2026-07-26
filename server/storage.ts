@@ -3292,6 +3292,7 @@ export class DatabaseStorage {
         const verifiedJson = JSON.stringify({
           ...JSON.parse(snapshot),
           verifiedAt: now.toISOString(),
+          approvedByName,
         });
         await tx.update(students).set({ verifiedProfile: verifiedJson }).where(eq(students.id, studentId));
       }

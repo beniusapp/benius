@@ -3141,6 +3141,7 @@ Thank you for your prompt attention to this matter.
       verifiedAt:     profile.verifiedAt instanceof Date
                         ? profile.verifiedAt.toISOString()
                         : profile.verifiedAt,
+      approvedByName: teacher.fullName ?? null,
     });
     await storage.updateStudentVerifiedProfile(studentId, verifiedProfileJson);
 
