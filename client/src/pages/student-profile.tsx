@@ -48,6 +48,12 @@ interface StudentProfileRecord {
   motherName: string | null;
   presentAddress: string | null;
   aadharNumber: string | null;
+  gender: string | null;
+  phone: string | null;
+  dob: string | null;
+  enrollmentDate: string | null;
+  guardianName: string | null;
+  bloodGroup: string | null;
   photoUrl: string | null;
   photoStatus: "none" | "pending" | "approved";
   rejectionNote: string | null;
@@ -210,6 +216,12 @@ export default function StudentProfile() {
     motherName: "",
     presentAddress: "",
     aadharNumber: "",
+    gender: "" as "" | "Boy" | "Girl",
+    phone: "",
+    dob: "",
+    enrollmentDate: "",
+    guardianName: "",
+    bloodGroup: "" as "" | "A+" | "A-" | "B+" | "B-" | "AB+" | "AB-" | "O+" | "O-",
   });
 
   const originalFormRef = useRef(form);
@@ -246,12 +258,18 @@ export default function StudentProfile() {
   useEffect(() => {
     if (profile) {
       const vals = {
-        fullName: profile.fullName || "",
-        rollNo: profile.rollNo || "",
-        fatherName: profile.fatherName || "",
-        motherName: profile.motherName || "",
+        fullName:       profile.fullName       || "",
+        rollNo:         profile.rollNo         || "",
+        fatherName:     profile.fatherName     || "",
+        motherName:     profile.motherName     || "",
         presentAddress: profile.presentAddress || "",
-        aadharNumber: profile.aadharNumber || "",
+        aadharNumber:   profile.aadharNumber   || "",
+        gender:        (profile.gender         || student?.gender        || "") as "" | "Boy" | "Girl",
+        phone:          profile.phone          || student?.phone         || "",
+        dob:            profile.dob            || student?.dob           || "",
+        enrollmentDate: profile.enrollmentDate || student?.enrollmentDate|| "",
+        guardianName:   profile.guardianName   || student?.guardianName  || "",
+        bloodGroup:    (profile.bloodGroup     || student?.bloodGroup    || "") as "" | "A+" | "A-" | "B+" | "B-" | "AB+" | "AB-" | "O+" | "O-",
       };
       setForm(vals);
       originalFormRef.current = vals;
@@ -915,112 +933,122 @@ export default function StudentProfile() {
                 <div className="p-5 space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
-                    {/* Full Name — editable */}
-                    <div>
-                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">
-                        Full Name <span className="text-red-400">*</span>
-                      </label>
-                      <input
-                        ref={fullNameRef}
-                        type="text"
-                        value={form.fullName}
+                    {/* Full Name */}
+                    <div className="sm:col-span-2">
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Full Name <span className="text-red-400">*</span></label>
+                      <input ref={fullNameRef} type="text" value={form.fullName}
                         onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
                         placeholder="Full name as in certificate"
-                        className={`${inputBase} ${editingBorder}`}
-                        style={inputStyle}
-                        data-testid="input-full-name"
-                      />
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-full-name" />
                     </div>
 
-                    {/* Roll Number — editable */}
-                    <div>
-                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Roll Number</label>
-                      <input
-                        type="text"
-                        value={form.rollNo}
-                        onChange={(e) => setForm((f) => ({ ...f, rollNo: e.target.value }))}
-                        placeholder="e.g. 01"
-                        className={`${inputBase} ${editingBorder}`}
-                        style={inputStyle}
-                        data-testid="input-roll-no"
-                      />
-                    </div>
-
-                    {/* Class — read-only (system-assigned) */}
+                    {/* Class — read-only */}
                     <ReadOnlyField label="Class (System-assigned)" value={`Class ${student.class}`} testId="select-class" />
 
-                    {/* Section — read-only (system-assigned) */}
+                    {/* Section — read-only */}
                     <ReadOnlyField label="Section (System-assigned)" value={`Section ${student.section}`} testId="select-section" />
 
-                    {/* Father's Name — editable */}
+                    {/* Gender */}
                     <div>
-                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">
-                        Father's Name <span className="text-red-400">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={form.fatherName}
-                        onChange={(e) => setForm((f) => ({ ...f, fatherName: e.target.value }))}
-                        placeholder="Father's full name"
-                        className={`${inputBase} ${editingBorder}`}
-                        style={inputStyle}
-                        data-testid="input-father-name"
-                      />
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Gender</label>
+                      <select value={form.gender} onChange={(e) => setForm((f) => ({ ...f, gender: e.target.value as "Boy" | "Girl" | "" }))}
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-gender">
+                        <option value="">Select gender</option>
+                        <option value="Boy">Boy</option>
+                        <option value="Girl">Girl</option>
+                      </select>
                     </div>
 
-                    {/* Mother's Name — editable */}
+                    {/* Roll Number */}
                     <div>
-                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">
-                        Mother's Name <span className="text-red-400">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={form.motherName}
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Roll Number</label>
+                      <input type="text" value={form.rollNo}
+                        onChange={(e) => setForm((f) => ({ ...f, rollNo: e.target.value }))}
+                        placeholder="e.g. 01" className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-roll-no" />
+                    </div>
+
+                    {/* Guardian Name */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Guardian Name</label>
+                      <input type="text" value={form.guardianName}
+                        onChange={(e) => setForm((f) => ({ ...f, guardianName: e.target.value }))}
+                        placeholder="Guardian's full name"
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-guardian-name" />
+                    </div>
+
+                    {/* Phone */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Phone</label>
+                      <input type="tel" inputMode="numeric" maxLength={10} value={form.phone}
+                        onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 10); setForm((f) => ({ ...f, phone: v })); }}
+                        placeholder="10-digit mobile number"
+                        className={`${inputBase} ${editingBorder} font-mono`} style={inputStyle} data-testid="input-phone" />
+                    </div>
+
+                    {/* Date of Birth */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Date of Birth</label>
+                      <input type="date" value={form.dob}
+                        onChange={(e) => setForm((f) => ({ ...f, dob: e.target.value }))}
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-dob" />
+                    </div>
+
+                    {/* Date of Admission */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Date of Admission</label>
+                      <input type="date" value={form.enrollmentDate}
+                        onChange={(e) => setForm((f) => ({ ...f, enrollmentDate: e.target.value }))}
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-enrollment-date" />
+                    </div>
+
+                    {/* Blood Group */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Blood Group</label>
+                      <select value={form.bloodGroup} onChange={(e) => setForm((f) => ({ ...f, bloodGroup: e.target.value as typeof form.bloodGroup }))}
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-blood-group">
+                        <option value="">Select blood group</option>
+                        {["A+","A-","B+","B-","AB+","AB-","O+","O-"].map(bg => <option key={bg} value={bg}>{bg}</option>)}
+                      </select>
+                    </div>
+
+                    {/* Father's Name */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Father's Name <span className="text-red-400">*</span></label>
+                      <input type="text" value={form.fatherName}
+                        onChange={(e) => setForm((f) => ({ ...f, fatherName: e.target.value }))}
+                        placeholder="Father's full name"
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-father-name" />
+                    </div>
+
+                    {/* Mother's Name */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Mother's Name <span className="text-red-400">*</span></label>
+                      <input type="text" value={form.motherName}
                         onChange={(e) => setForm((f) => ({ ...f, motherName: e.target.value }))}
                         placeholder="Mother's full name"
-                        className={`${inputBase} ${editingBorder}`}
-                        style={inputStyle}
-                        data-testid="input-mother-name"
-                      />
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-mother-name" />
                     </div>
                   </div>
 
-                  {/* Aadhaar Number — editable, full-width */}
+                  {/* Aadhaar Number */}
                   <div>
                     <label className="text-xs font-medium text-slate-500 mb-1.5 block">Aadhaar Number</label>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={12}
-                      value={form.aadharNumber}
-                      onChange={(e) => {
-                        const v = e.target.value.replace(/\D/g, "").slice(0, 12);
-                        setForm((f) => ({ ...f, aadharNumber: v }));
-                      }}
+                    <input type="text" inputMode="numeric" maxLength={12} value={form.aadharNumber}
+                      onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 12); setForm((f) => ({ ...f, aadharNumber: v })); }}
                       placeholder="12-digit Aadhaar number"
-                      className={`${inputBase} ${editingBorder} font-mono tracking-widest`}
-                      style={inputStyle}
-                      data-testid="input-aadhar-number"
-                    />
+                      className={`${inputBase} ${editingBorder} font-mono tracking-widest`} style={inputStyle} data-testid="input-aadhar-number" />
                     {form.aadharNumber && form.aadharNumber.length !== 12 && (
                       <p className="text-[11px] text-red-400 mt-1">Must be exactly 12 digits</p>
                     )}
                   </div>
 
-                  {/* Address — editable, full-width */}
+                  {/* Address */}
                   <div>
-                    <label className="text-xs font-medium text-slate-500 mb-1.5 block">
-                      Present Address <span className="text-red-400">*</span>
-                    </label>
-                    <textarea
-                      value={form.presentAddress}
+                    <label className="text-xs font-medium text-slate-500 mb-1.5 block">Present Address <span className="text-red-400">*</span></label>
+                    <textarea value={form.presentAddress}
                       onChange={(e) => setForm((f) => ({ ...f, presentAddress: e.target.value }))}
-                      placeholder="Full residential address"
-                      rows={3}
-                      className={`${inputBase} ${editingBorder} resize-none`}
-                      style={inputStyle}
-                      data-testid="input-address"
-                    />
+                      placeholder="Full residential address" rows={3}
+                      className={`${inputBase} ${editingBorder} resize-none`} style={inputStyle} data-testid="input-address" />
                   </div>
                 </div>
               </div>

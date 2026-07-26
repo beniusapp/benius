@@ -1319,6 +1319,12 @@ export async function registerRoutes(
     motherName: z.string().optional(),
     presentAddress: z.string().optional(),
     aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits or empty").optional(),
+    gender: z.enum(["Boy", "Girl"]).optional(),
+    phone: z.string().regex(/^\d{10}$/, "Phone must be 10 digits").optional().or(z.literal("")),
+    dob: z.string().optional(),
+    enrollmentDate: z.string().optional(),
+    guardianName: z.string().optional(),
+    bloodGroup: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional(),
   });
 
   app.post("/api/student/profile", async (req, res) => {

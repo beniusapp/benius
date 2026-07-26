@@ -3108,6 +3108,12 @@ Thank you for your prompt attention to this matter.
       motherName:     profile.motherName,
       presentAddress: profile.presentAddress,
       aadharNumber:   profile.aadharNumber,
+      gender:         profile.gender,
+      phone:          profile.phone,
+      dob:            profile.dob,
+      enrollmentDate: profile.enrollmentDate,
+      guardianName:   profile.guardianName,
+      bloodGroup:     profile.bloodGroup,
       photoUrl:       profile.photoUrl,
       verifiedAt:     profile.verifiedAt instanceof Date
                         ? profile.verifiedAt.toISOString()
@@ -3115,10 +3121,19 @@ Thank you for your prompt attention to this matter.
     });
     await storage.updateStudentVerifiedProfile(studentId, verifiedProfileJson);
 
-    // Propagate fullName and aadharNumber to the live student record
-    const liveUpdates: Record<string, string> = {};
-    if (profile.fullName) liveUpdates.name = profile.fullName;
-    if (profile.aadharNumber) liveUpdates.aadharNumber = profile.aadharNumber;
+    // Propagate all profile fields to the live student record
+    const liveUpdates: Record<string, unknown> = {};
+    if (profile.fullName)     liveUpdates.name          = profile.fullName;
+    if (profile.aadharNumber) liveUpdates.aadharNumber  = profile.aadharNumber;
+    if (profile.gender)       liveUpdates.gender        = profile.gender;
+    if (profile.phone)        liveUpdates.phone         = profile.phone;
+    if (profile.dob)          liveUpdates.dob           = profile.dob;
+    if (profile.enrollmentDate) liveUpdates.enrollmentDate = profile.enrollmentDate;
+    if (profile.guardianName) liveUpdates.guardianName  = profile.guardianName;
+    if (profile.bloodGroup)   liveUpdates.bloodGroup    = profile.bloodGroup;
+    if (profile.fatherName)   liveUpdates.fatherName    = profile.fatherName;
+    if (profile.motherName)   liveUpdates.motherName    = profile.motherName;
+    if (profile.presentAddress) liveUpdates.address     = profile.presentAddress;
     if (Object.keys(liveUpdates).length > 0) {
       await db.update(students).set(liveUpdates).where(eq(students.id, studentId));
     }
