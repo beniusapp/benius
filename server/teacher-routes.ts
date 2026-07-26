@@ -3233,6 +3233,16 @@ Thank you for your prompt attention to this matter.
     res.json(profile);
   });
 
+  // ===== TEACHER APPROVAL HISTORY =====
+
+  app.get("/api/teacher/profiles/approval-history", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const history = await storage.getTeacherApprovalHistory(req.session.teacherId, teacher.schoolId);
+    res.json(history);
+  });
+
   // ===== ASSET LIFECYCLE MANAGER =====
 
   const createAssetSchema = z.object({

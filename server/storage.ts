@@ -3349,6 +3349,35 @@ export class DatabaseStorage {
     return updated;
   }
 
+  async getTeacherApprovalHistory(
+    teacherId: number,
+    schoolId: number,
+  ): Promise<(StudentProfile & { studentName: string; dsid: string; class: string; section: string })[]> {
+    const approved = await db
+      .select()
+      .from(studentProfiles)
+      .where(and(
+        eq(studentProfiles.schoolId, schoolId),
+        eq(studentProfiles.verifiedBy, teacherId),
+        eq(studentProfiles.status, "approved"),
+      ))
+      .orderBy(desc(studentProfiles.verifiedAt));
+
+    const result = [];
+    for (const p of approved) {
+      const student = await this.getStudentById(p.studentId);
+      if (!student) continue;
+      result.push({
+        ...p,
+        studentName: student.name,
+        dsid: student.digitalStudentId,
+        class: student.class,
+        section: student.section,
+      });
+    }
+    return result;
+  }
+
   async updateStudentPassword(studentId: number, passwordHash: string): Promise<void> {
     await db.update(students).set({ passwordHash }).where(eq(students.id, studentId));
   }
