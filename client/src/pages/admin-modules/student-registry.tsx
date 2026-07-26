@@ -642,11 +642,11 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
       {/* Table */}
       <div className="rounded-xl border border-white/10 bg-[#1A2942]">
         <div className="overflow-x-auto" style={{ maxHeight: "70vh", overflowY: "auto" }}>
-          <table className="text-sm" style={{ minWidth: compact ? "800px" : "1600px", width: "100%", tableLayout: "fixed" }}>
+          <table className="text-sm" style={{ minWidth: compact ? "800px" : "1900px", width: "100%", tableLayout: "fixed" }}>
             <colgroup>
               <col style={{ width: "40px" }} />
               <col style={{ width: "130px" }} />
-              <col style={{ width: "auto" }} />
+              <col style={{ width: "150px" }} />
               <col style={{ width: "60px" }} />
               <col style={{ width: "65px" }} />
               <col style={{ width: "65px" }} />
