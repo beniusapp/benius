@@ -3045,7 +3045,8 @@ Thank you for your prompt attention to this matter.
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const profiles = await storage.getPendingProfilesForTeacher(teacher.schoolId, teacher.assignedClass, teacher.assignedSection);
+    // Pass teacherId so storage resolves all class-sections via faculty_mappings too
+    const profiles = await storage.getPendingProfilesForTeacher(teacher.schoolId, req.session.teacherId);
     res.json(profiles);
   });
 
@@ -3053,8 +3054,8 @@ Thank you for your prompt attention to this matter.
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const count = await storage.getPendingProfilesCountForTeacher(teacher.schoolId, teacher.assignedClass, teacher.assignedSection);
-    res.json({ count });
+    const profiles = await storage.getPendingProfilesForTeacher(teacher.schoolId, req.session.teacherId);
+    res.json({ count: profiles.length });
   });
 
   app.post("/api/teacher/profiles/:studentId/approve", async (req, res) => {
@@ -3065,10 +3066,15 @@ Thank you for your prompt attention to this matter.
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
-    const student = await storage.getStudentById(studentId);
+    const [student, mappings] = await Promise.all([
+      storage.getStudentById(studentId),
+      storage.getFacultyMappingsByTeacher(req.session.teacherId),
+    ]);
     if (!student || student.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Access denied" });
-    if (student.class !== teacher.assignedClass || student.section !== teacher.assignedSection)
-      return res.status(403).json({ message: "Student is not in your assigned class" });
+    const coversClass =
+      (teacher.assignedClass === student.class && teacher.assignedSection === student.section) ||
+      mappings.some(m => m.className === student.class && m.section === student.section);
+    if (!coversClass) return res.status(403).json({ message: "Student is not in your assigned class" });
 
     const existing = await storage.getStudentProfile(studentId);
     if (!existing) return res.status(404).json({ message: "Student profile not found" });
@@ -3109,10 +3115,15 @@ Thank you for your prompt attention to this matter.
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
-    const student = await storage.getStudentById(studentId);
+    const [student, mappings] = await Promise.all([
+      storage.getStudentById(studentId),
+      storage.getFacultyMappingsByTeacher(req.session.teacherId),
+    ]);
     if (!student || student.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Access denied" });
-    if (student.class !== teacher.assignedClass || student.section !== teacher.assignedSection)
-      return res.status(403).json({ message: "Student is not in your assigned class" });
+    const coversClass =
+      (teacher.assignedClass === student.class && teacher.assignedSection === student.section) ||
+      mappings.some(m => m.className === student.class && m.section === student.section);
+    if (!coversClass) return res.status(403).json({ message: "Student is not in your assigned class" });
 
     const existing = await storage.getStudentProfile(studentId);
     if (!existing) return res.status(404).json({ message: "Student profile not found" });

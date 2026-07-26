@@ -3186,18 +3186,55 @@ export class DatabaseStorage {
     return updated;
   }
 
-  async getPendingProfilesForTeacher(schoolId: number, cls: string, section: string): Promise<(StudentProfile & { studentName: string; dsid: string; currentVerifiedProfile: string | null })[]> {
-    const profiles = await db
+  async getPendingProfilesForTeacher(
+    schoolId: number,
+    teacherIdOrPrimaryClass: string | number,
+    primarySection?: string,
+  ): Promise<(StudentProfile & { studentName: string; dsid: string; currentVerifiedProfile: string | null })[]> {
+    // Build the full set of class-sections this teacher covers.
+    // Accepts either (schoolId, teacherId) or legacy (schoolId, cls, section).
+    const assignments: Array<{ cls: string; sec: string }> = [];
+
+    if (typeof teacherIdOrPrimaryClass === "number") {
+      // New path: resolve via teacher record + faculty_mappings
+      const [teacherRecord, mappings] = await Promise.all([
+        this.getTeacherById(teacherIdOrPrimaryClass),
+        this.getFacultyMappingsByTeacher(teacherIdOrPrimaryClass),
+      ]);
+      if (teacherRecord?.assignedClass && teacherRecord?.assignedSection) {
+        assignments.push({ cls: teacherRecord.assignedClass, sec: teacherRecord.assignedSection });
+      }
+      for (const m of mappings) {
+        if (!assignments.some(a => a.cls === m.className && a.sec === m.section)) {
+          assignments.push({ cls: m.className, sec: m.section });
+        }
+      }
+    } else {
+      // Legacy path: caller passes cls+section strings directly
+      const cls = teacherIdOrPrimaryClass;
+      const sec = primarySection ?? "";
+      if (cls) assignments.push({ cls, sec });
+    }
+
+    if (assignments.length === 0) return [];
+
+    const allPending = await db
       .select()
       .from(studentProfiles)
       .where(and(eq(studentProfiles.schoolId, schoolId), eq(studentProfiles.status, "pending")))
       .orderBy(desc(studentProfiles.submittedAt));
+
     const result = [];
-    for (const p of profiles) {
+    for (const p of allPending) {
       const student = await this.getStudentById(p.studentId);
       if (!student) continue;
-      if (student.class !== cls || student.section !== section) continue;
-      result.push({ ...p, studentName: student.name, dsid: student.digitalStudentId, currentVerifiedProfile: student.verifiedProfile || null });
+      if (!assignments.some(a => a.cls === student.class && a.sec === student.section)) continue;
+      result.push({
+        ...p,
+        studentName: student.name,
+        dsid: student.digitalStudentId,
+        currentVerifiedProfile: student.verifiedProfile || null,
+      });
     }
     return result;
   }
