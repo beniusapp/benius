@@ -408,6 +408,15 @@ export default function StudentProfile() {
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > 1 * 1024 * 1024) {
+      toast({
+        title: "Image too large",
+        description: "Please upload an image smaller than 1 MB.",
+        variant: "destructive",
+      });
+      e.target.value = "";
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (ev) => {
       setCropSrc(ev.target?.result as string);
