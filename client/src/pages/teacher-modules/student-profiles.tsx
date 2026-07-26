@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   CheckCircle, XCircle, Clock, Loader2, User, Eye,
-  Users, FileText, ChevronLeft, ShieldCheck,
+  Users, FileText, ChevronLeft, ShieldCheck, Pencil, Save,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -51,26 +51,44 @@ function getRequestType(profile: PendingProfile): string {
   return profile.currentVerifiedProfile ? "Data Update" : "New Registration";
 }
 
-const FIELD_LABELS: { key: keyof ParsedVerifiedProfile | "fullName" | "class" | "section" | "rollNo" | "fatherName" | "motherName" | "presentAddress"; label: string }[] = [
-  { key: "fullName", label: "Full Name" },
-  { key: "class", label: "Class" },
-  { key: "section", label: "Section" },
-  { key: "rollNo", label: "Roll Number" },
-  { key: "fatherName", label: "Father's Name" },
-  { key: "motherName", label: "Mother's Name" },
-  { key: "presentAddress", label: "Present Address" },
+const FIELD_LABELS: { key: string; label: string; editable: boolean }[] = [
+  { key: "fullName",       label: "Full Name",       editable: true  },
+  { key: "class",          label: "Class",            editable: false },
+  { key: "section",        label: "Section",          editable: false },
+  { key: "rollNo",         label: "Roll Number",      editable: true  },
+  { key: "fatherName",     label: "Father's Name",    editable: true  },
+  { key: "motherName",     label: "Mother's Name",    editable: true  },
+  { key: "presentAddress", label: "Present Address",  editable: true  },
 ];
 
-type ProfileField = keyof Pick<PendingProfile, "fullName" | "class" | "section" | "rollNo" | "fatherName" | "motherName" | "presentAddress">;
+type EditableFields = {
+  fullName: string;
+  rollNo: string;
+  fatherName: string;
+  motherName: string;
+  presentAddress: string;
+};
+
+function initEdits(p: PendingProfile): EditableFields {
+  return {
+    fullName:       p.fullName       ?? "",
+    rollNo:         p.rollNo         ?? "",
+    fatherName:     p.fatherName     ?? "",
+    motherName:     p.motherName     ?? "",
+    presentAddress: p.presentAddress ?? "",
+  };
+}
 
 export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe }) {
   const isArchiveMode = useArchiveMode();
   const { toast } = useToast();
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [reviewProfile, setReviewProfile] = useState<PendingProfile | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
-  const [rejectNote, setRejectNote] = useState("");
-  const [showRejectInput, setShowRejectInput] = useState(false);
+  const [selectedIds,      setSelectedIds]      = useState<Set<number>>(new Set());
+  const [reviewProfile,    setReviewProfile]    = useState<PendingProfile | null>(null);
+  const [photoPreview,     setPhotoPreview]     = useState<string | null>(null);
+  const [rejectNote,       setRejectNote]       = useState("");
+  const [showRejectInput,  setShowRejectInput]  = useState(false);
+  const [editMode,         setEditMode]         = useState(false);
+  const [editedFields,     setEditedFields]     = useState<EditableFields>({ fullName:"", rollNo:"", fatherName:"", motherName:"", presentAddress:"" });
 
   const { data: profiles = [], isLoading } = useQuery<PendingProfile[]>({
     queryKey: ["/api/teacher/pending-profiles"],
@@ -78,54 +96,40 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
   });
 
   const approveMutation = useMutation({
-    mutationFn: async (studentId: number) => {
-      return await apiRequest("POST", `/api/teacher/profiles/${studentId}/approve`);
+    mutationFn: async ({ studentId, corrections }: { studentId: number; corrections?: Record<string, string> }) => {
+      return apiRequest("POST", `/api/teacher/profiles/${studentId}/approve`, { corrections });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/pending-profiles"] });
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/pending-profiles/count"] });
-      setReviewProfile(null);
-      toast({ title: "Profile approved", description: "The student's profile has been approved and verified." });
+      toast({ title: "Profile approved!" });
+      closeModal();
     },
-    onError: (e: Error) => {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
-    },
+    onError: (e: Error) => toast({ title: "Approval failed", description: e.message, variant: "destructive" }),
   });
 
   const rejectMutation = useMutation({
     mutationFn: async ({ studentId, note }: { studentId: number; note: string }) => {
-      return await apiRequest("POST", `/api/teacher/profiles/${studentId}/reject`, { note });
+      return apiRequest("POST", `/api/teacher/profiles/${studentId}/reject`, { note });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/pending-profiles"] });
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/pending-profiles/count"] });
-      setReviewProfile(null);
-      setRejectNote("");
-      setShowRejectInput(false);
-      toast({ title: "Profile rejected", description: "The student has been notified with your feedback." });
+      toast({ title: "Profile rejected." });
+      closeModal();
     },
-    onError: (e: Error) => {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
-    },
+    onError: (e: Error) => toast({ title: "Rejection failed", description: e.message, variant: "destructive" }),
   });
 
   const bulkApproveMutation = useMutation({
-    mutationFn: async (studentIds: number[]) => {
-      const res = await apiRequest("POST", "/api/teacher/profiles/bulk-approve", { studentIds });
-      return res.json() as Promise<{ approved: number; skipped: number }>;
-    },
-    onSuccess: (data: { approved: number; skipped: number }) => {
+    mutationFn: async (ids: number[]) => apiRequest("POST", "/api/teacher/profiles/bulk-approve", { studentIds: ids }),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/pending-profiles"] });
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/pending-profiles/count"] });
+      toast({ title: "Profiles approved!" });
       setSelectedIds(new Set());
-      toast({
-        title: `Bulk approved ${data.approved} profile${data.approved !== 1 ? "s" : ""}`,
-        description: data.skipped > 0 ? `${data.skipped} were skipped (already processed).` : "All selected profiles approved.",
-      });
     },
-    onError: (e: Error) => {
-      toast({ title: "Bulk approve failed", description: e.message, variant: "destructive" });
-    },
+    onError: (e: Error) => toast({ title: "Bulk approval failed", description: e.message, variant: "destructive" }),
   });
 
   function toggleSelect(id: number) {
@@ -146,8 +150,17 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
 
   function openReview(p: PendingProfile) {
     setReviewProfile(p);
+    setEditedFields(initEdits(p));
+    setEditMode(false);
     setRejectNote("");
     setShowRejectInput(false);
+  }
+
+  function closeModal() {
+    setReviewProfile(null);
+    setEditMode(false);
+    setShowRejectInput(false);
+    setRejectNote("");
   }
 
   function submitRejection() {
@@ -158,6 +171,29 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
     if (!reviewProfile) return;
     rejectMutation.mutate({ studentId: reviewProfile.studentId, note: rejectNote });
   }
+
+  function handleApprove() {
+    if (!reviewProfile) return;
+    // Build corrections: only changed editable fields
+    const corrections: Record<string, string> = {};
+    (Object.keys(editedFields) as (keyof EditableFields)[]).forEach((k) => {
+      const original = (reviewProfile[k as keyof PendingProfile] as string | null) ?? "";
+      if (editedFields[k] !== original) corrections[k] = editedFields[k];
+    });
+    approveMutation.mutate({ studentId: reviewProfile.studentId, corrections: Object.keys(corrections).length > 0 ? corrections : undefined });
+  }
+
+  // Build subtitle: list all classes this teacher covers
+  const classCoverage = (() => {
+    const pairs: string[] = [];
+    if (teacher.assignedClass && teacher.assignedSection)
+      pairs.push(`${teacher.assignedClass}-${teacher.assignedSection}`);
+    (teacher.mappings ?? []).forEach(m => {
+      const label = `${m.className}-${m.section}`;
+      if (!pairs.includes(label)) pairs.push(label);
+    });
+    return pairs.length > 0 ? pairs.join(", ") : "No class assigned";
+  })();
 
   if (isLoading) {
     return (
@@ -186,7 +222,7 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
             Approval Center
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Class {teacher.assignedClass}-{teacher.assignedSection} · {profiles.length} pending
+            Class {classCoverage} · {profiles.length} pending
           </p>
         </div>
         {profiles.length > 0 && (
@@ -337,7 +373,7 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
       {reviewProfile && (
         <div
           className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-3 sm:p-6"
-          onClick={() => { setReviewProfile(null); setShowRejectInput(false); setRejectNote(""); }}
+          onClick={closeModal}
           data-testid="modal-review"
         >
           <div
@@ -348,7 +384,7 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
             <div className="flex items-center justify-between px-5 py-4 border-b border-border bg-[#0A1628] rounded-t-2xl">
               <div className="flex items-center gap-3">
                 <button
-                  onClick={() => { setReviewProfile(null); setShowRejectInput(false); setRejectNote(""); }}
+                  onClick={closeModal}
                   className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
                   data-testid="button-close-modal"
                 >
@@ -359,11 +395,26 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
                   <p className="text-xs text-blue-200 font-mono">{reviewProfile.dsid} · {getRequestType(reviewProfile)}</p>
                 </div>
               </div>
-              {reviewProfile.submittedAt && (
-                <span className="text-xs text-blue-200 hidden sm:block">
-                  Submitted: {new Date(reviewProfile.submittedAt).toLocaleDateString("en-GB")}
-                </span>
-              )}
+              <div className="flex items-center gap-2">
+                {reviewProfile.submittedAt && (
+                  <span className="text-xs text-blue-200 hidden sm:block">
+                    Submitted: {new Date(reviewProfile.submittedAt).toLocaleDateString("en-GB")}
+                  </span>
+                )}
+                {!isArchiveMode && !showRejectInput && (
+                  <button
+                    onClick={() => setEditMode(e => !e)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      editMode
+                        ? "bg-amber-400 text-amber-900 hover:bg-amber-300"
+                        : "bg-white/10 hover:bg-white/20 text-white"
+                    }`}
+                  >
+                    {editMode ? <Save className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
+                    {editMode ? "Editing…" : "Edit"}
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Side-by-side content */}
@@ -403,7 +454,7 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
                         <div key={key} className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
                           <p className="text-xs text-gray-400 font-medium">{label}</p>
                           <p className="text-sm font-semibold text-gray-700 mt-0.5">
-                            {liveData[key as keyof ParsedVerifiedProfile] || <span className="text-gray-300 italic">—</span>}
+                            {(liveData as any)[key] || <span className="text-gray-300 italic">—</span>}
                           </p>
                         </div>
                       ))}
@@ -417,13 +468,17 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
                 })()}
               </div>
 
-              {/* RIGHT: Pending submission */}
+              {/* RIGHT: Pending submission (editable in edit mode) */}
               <div className="flex-1 p-5 space-y-4 bg-emerald-50/30">
                 <div className="flex items-center gap-2 mb-4">
                   <Clock className="w-4 h-4 text-emerald-600" />
                   <h4 className="text-sm font-bold text-emerald-700">Pending Submission</h4>
-                  <span className="ml-auto text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">
-                    AWAITING REVIEW
+                  <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                    editMode
+                      ? "bg-amber-100 text-amber-700 border-amber-300"
+                      : "bg-emerald-100 text-emerald-700 border-emerald-200"
+                  }`}>
+                    {editMode ? "EDITING" : "AWAITING REVIEW"}
                   </span>
                 </div>
 
@@ -447,28 +502,60 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
                           </div>
                         </div>
                       )}
-                      {FIELD_LABELS.map(({ key, label }) => {
-                        const newVal = reviewProfile[key as ProfileField];
-                        const oldVal = liveData ? liveData[key as keyof ParsedVerifiedProfile] : null;
-                        const changed = liveData && newVal !== oldVal;
+                      {FIELD_LABELS.map(({ key, label, editable }) => {
+                        const rawVal = (reviewProfile as any)[key] as string | null;
+                        const oldVal = liveData ? (liveData as any)[key] : null;
+                        const currentVal = (editMode && editable)
+                          ? (editedFields as any)[key]
+                          : (rawVal ?? "");
+                        const changed = liveData && rawVal !== oldVal;
+
                         return (
                           <div
                             key={key}
                             className={`rounded-lg border px-3 py-2 transition-colors ${
-                              changed
-                                ? "bg-emerald-50 border-emerald-300 ring-1 ring-emerald-200"
-                                : "bg-white border-gray-100"
+                              editMode && editable
+                                ? "bg-amber-50 border-amber-300 ring-1 ring-amber-200"
+                                : changed
+                                  ? "bg-emerald-50 border-emerald-300 ring-1 ring-emerald-200"
+                                  : "bg-white border-gray-100"
                             }`}
                           >
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 mb-0.5">
                               <p className="text-xs text-gray-400 font-medium">{label}</p>
-                              {changed && (
+                              {!editMode && changed && (
                                 <span className="text-[9px] font-bold bg-emerald-500 text-white px-1.5 py-0.5 rounded-full">CHANGED</span>
                               )}
+                              {editMode && editable && (
+                                <span className="text-[9px] font-bold bg-amber-400 text-white px-1.5 py-0.5 rounded-full">EDITABLE</span>
+                              )}
+                              {editMode && !editable && (
+                                <span className="text-[9px] text-gray-400 italic ml-auto">system-assigned</span>
+                              )}
                             </div>
-                            <p className={`text-sm font-semibold mt-0.5 ${changed ? "text-emerald-700" : "text-gray-700"}`}>
-                              {newVal || <span className="text-gray-300 italic">—</span>}
-                            </p>
+                            {editMode && editable ? (
+                              key === "presentAddress" ? (
+                                <textarea
+                                  value={(editedFields as any)[key]}
+                                  onChange={(e) => setEditedFields(prev => ({ ...prev, [key]: e.target.value }))}
+                                  rows={2}
+                                  className="w-full text-sm font-semibold text-amber-800 bg-transparent border-none outline-none resize-none placeholder-amber-300"
+                                  placeholder={`Enter ${label}…`}
+                                />
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={(editedFields as any)[key]}
+                                  onChange={(e) => setEditedFields(prev => ({ ...prev, [key]: e.target.value }))}
+                                  className="w-full text-sm font-semibold text-amber-800 bg-transparent border-none outline-none placeholder-amber-300"
+                                  placeholder={`Enter ${label}…`}
+                                />
+                              )
+                            ) : (
+                              <p className={`text-sm font-semibold mt-0.5 ${changed ? "text-emerald-700" : "text-gray-700"}`}>
+                                {rawVal || <span className="text-gray-300 italic">—</span>}
+                              </p>
+                            )}
                           </div>
                         );
                       })}
@@ -524,13 +611,17 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
                     Reject
                   </button>
                   <button
-                    onClick={() => approveMutation.mutate(reviewProfile.studentId)}
+                    onClick={handleApprove}
                     disabled={isArchiveMode || approveMutation.isPending}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold transition-colors disabled:opacity-60 shadow"
+                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors disabled:opacity-60 shadow ${
+                      editMode
+                        ? "bg-amber-500 hover:bg-amber-600"
+                        : "bg-emerald-500 hover:bg-emerald-600"
+                    }`}
                     data-testid="button-approve"
                   >
                     {approveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                    Approve Profile
+                    {editMode ? "Save Edits & Approve" : "Approve Profile"}
                   </button>
                 </div>
               )}

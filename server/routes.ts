@@ -1320,6 +1320,9 @@ export async function registerRoutes(
       {
         studentId: req.session.studentId,
         schoolId: student.schoolId,
+        // Always mirror the live class/section so the teacher review always shows them
+        class:   student.class,
+        section: student.section,
         ...parsed.data,
       },
       resetStatus,

@@ -8,7 +8,7 @@ import path from "path";
 import fs from "fs";
 import ExcelJS from "exceljs";
 import { db } from "./db";
-import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions } from "@shared/schema";
+import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions, studentProfiles, students } from "@shared/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 
@@ -3080,23 +3080,45 @@ Thank you for your prompt attention to this matter.
     if (!existing) return res.status(404).json({ message: "Student profile not found" });
     if (existing.status !== "pending") return res.status(409).json({ message: "Profile is not in pending state" });
 
+    // Optional teacher corrections applied before finalising approval
+    const { corrections } = req.body as { corrections?: Record<string, string> };
+    if (corrections && Object.keys(corrections).length > 0) {
+      const allowed = ["fullName", "rollNo", "fatherName", "motherName", "presentAddress", "class", "section"];
+      const safe = Object.fromEntries(Object.entries(corrections).filter(([k]) => allowed.includes(k)));
+      if (Object.keys(safe).length > 0) {
+        await db.update(studentProfiles).set(safe).where(eq(studentProfiles.studentId, studentId));
+      }
+    }
+
     const profile = await storage.approveStudentProfile(studentId, req.session.teacherId);
     if (!profile) return res.status(500).json({ message: "Failed to approve profile" });
+
+    // Propagate photo to live student record
     if (profile.photoUrl) {
       await storage.updateStudentLivePhoto(studentId, profile.photoUrl);
     }
+
+    // Build verified profile JSON — fall back to live student data for class/section
     const verifiedProfileJson = JSON.stringify({
-      fullName: profile.fullName,
-      class: profile.class,
-      section: profile.section,
-      rollNo: profile.rollNo,
-      fatherName: profile.fatherName,
-      motherName: profile.motherName,
+      fullName:       profile.fullName,
+      class:          profile.class    || student.class,
+      section:        profile.section  || student.section,
+      rollNo:         profile.rollNo,
+      fatherName:     profile.fatherName,
+      motherName:     profile.motherName,
       presentAddress: profile.presentAddress,
-      photoUrl: profile.photoUrl,
-      verifiedAt: profile.verifiedAt,
+      photoUrl:       profile.photoUrl,
+      verifiedAt:     profile.verifiedAt instanceof Date
+                        ? profile.verifiedAt.toISOString()
+                        : profile.verifiedAt,
     });
     await storage.updateStudentVerifiedProfile(studentId, verifiedProfileJson);
+
+    // Propagate fullName to the live student record so it appears everywhere
+    if (profile.fullName) {
+      await db.update(students).set({ name: profile.fullName }).where(eq(students.id, studentId));
+    }
+
     res.json(profile);
   });
 
