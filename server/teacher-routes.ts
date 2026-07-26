@@ -3083,7 +3083,7 @@ Thank you for your prompt attention to this matter.
     // Optional teacher corrections applied before finalising approval
     const { corrections } = req.body as { corrections?: Record<string, string> };
     if (corrections && Object.keys(corrections).length > 0) {
-      const allowed = ["fullName", "rollNo", "fatherName", "motherName", "presentAddress", "class", "section"];
+      const allowed = ["fullName", "rollNo", "fatherName", "motherName", "presentAddress", "aadharNumber", "class", "section"];
       const safe = Object.fromEntries(Object.entries(corrections).filter(([k]) => allowed.includes(k)));
       if (Object.keys(safe).length > 0) {
         await db.update(studentProfiles).set(safe).where(eq(studentProfiles.studentId, studentId));
@@ -3107,6 +3107,7 @@ Thank you for your prompt attention to this matter.
       fatherName:     profile.fatherName,
       motherName:     profile.motherName,
       presentAddress: profile.presentAddress,
+      aadharNumber:   profile.aadharNumber,
       photoUrl:       profile.photoUrl,
       verifiedAt:     profile.verifiedAt instanceof Date
                         ? profile.verifiedAt.toISOString()
@@ -3114,9 +3115,12 @@ Thank you for your prompt attention to this matter.
     });
     await storage.updateStudentVerifiedProfile(studentId, verifiedProfileJson);
 
-    // Propagate fullName to the live student record so it appears everywhere
-    if (profile.fullName) {
-      await db.update(students).set({ name: profile.fullName }).where(eq(students.id, studentId));
+    // Propagate fullName and aadharNumber to the live student record
+    const liveUpdates: Record<string, string> = {};
+    if (profile.fullName) liveUpdates.name = profile.fullName;
+    if (profile.aadharNumber) liveUpdates.aadharNumber = profile.aadharNumber;
+    if (Object.keys(liveUpdates).length > 0) {
+      await db.update(students).set(liveUpdates).where(eq(students.id, studentId));
     }
 
     res.json(profile);

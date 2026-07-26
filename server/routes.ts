@@ -1310,6 +1310,7 @@ export async function registerRoutes(
     fatherName: z.string().optional(),
     motherName: z.string().optional(),
     presentAddress: z.string().optional(),
+    aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits or empty").optional(),
   });
 
   app.post("/api/student/profile", async (req, res) => {

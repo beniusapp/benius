@@ -419,6 +419,7 @@ export const studentProfiles = pgTable("student_profiles", {
   fatherName: text("father_name"),
   motherName: text("mother_name"),
   presentAddress: text("present_address"),
+  aadharNumber: varchar("aadhar_number", { length: 12 }),
   photoUrl: text("photo_url"),
   photoStatus: varchar("photo_status", { length: 20 }).notNull().default("none"),
   rejectionNote: text("rejection_note"),

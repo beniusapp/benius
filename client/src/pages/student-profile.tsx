@@ -39,6 +39,7 @@ interface StudentProfileRecord {
   fatherName: string | null;
   motherName: string | null;
   presentAddress: string | null;
+  aadharNumber: string | null;
   photoUrl: string | null;
   photoStatus: "none" | "pending" | "approved";
   rejectionNote: string | null;
@@ -198,6 +199,7 @@ export default function StudentProfile() {
     fatherName: "",
     motherName: "",
     presentAddress: "",
+    aadharNumber: "",
   });
 
   const originalFormRef = useRef(form);
@@ -239,6 +241,7 @@ export default function StudentProfile() {
         fatherName: profile.fatherName || "",
         motherName: profile.motherName || "",
         presentAddress: profile.presentAddress || "",
+        aadharNumber: profile.aadharNumber || "",
       };
       setForm(vals);
       originalFormRef.current = vals;
@@ -467,6 +470,10 @@ export default function StudentProfile() {
         description: "Please fill in Full Name, Father's Name, Mother's Name, and Address.",
         variant: "destructive",
       });
+      return;
+    }
+    if (form.aadharNumber && form.aadharNumber.length !== 12) {
+      toast({ title: "Invalid Aadhaar", description: "Aadhaar number must be exactly 12 digits.", variant: "destructive" });
       return;
     }
     submitMutation.mutate();
@@ -729,6 +736,7 @@ export default function StudentProfile() {
                   {profile?.rollNo && <InfoRow label="Roll No" value={profile.rollNo} />}
                   {profile?.fatherName && <InfoRow label="Father's Name" value={profile.fatherName} />}
                   {profile?.motherName && <InfoRow label="Mother's Name" value={profile.motherName} />}
+                  {profile?.aadharNumber && <InfoRow label="Aadhaar No." value={profile.aadharNumber} mono />}
                   {profile?.presentAddress && <InfoRow label="Address" value={profile.presentAddress} />}
                 </div>
               </div>
@@ -957,6 +965,28 @@ export default function StudentProfile() {
                         data-testid="input-mother-name"
                       />
                     </div>
+                  </div>
+
+                  {/* Aadhaar Number — editable, full-width */}
+                  <div>
+                    <label className="text-xs font-medium text-slate-500 mb-1.5 block">Aadhaar Number</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={12}
+                      value={form.aadharNumber}
+                      onChange={(e) => {
+                        const v = e.target.value.replace(/\D/g, "").slice(0, 12);
+                        setForm((f) => ({ ...f, aadharNumber: v }));
+                      }}
+                      placeholder="12-digit Aadhaar number"
+                      className={`${inputBase} ${editingBorder} font-mono tracking-widest`}
+                      style={inputStyle}
+                      data-testid="input-aadhar-number"
+                    />
+                    {form.aadharNumber && form.aadharNumber.length !== 12 && (
+                      <p className="text-[11px] text-red-400 mt-1">Must be exactly 12 digits</p>
+                    )}
                   </div>
 
                   {/* Address — editable, full-width */}
