@@ -3083,7 +3083,7 @@ Thank you for your prompt attention to this matter.
     // Optional teacher corrections applied before finalising approval
     const { corrections } = req.body as { corrections?: Record<string, string> };
     if (corrections && Object.keys(corrections).length > 0) {
-      const allowed = ["fullName", "rollNo", "fatherName", "motherName", "presentAddress", "aadharNumber", "class", "section"];
+      const allowed = ["fullName", "rollNo", "fatherName", "motherName", "presentAddress", "aadharNumber", "gender", "phone", "dob", "enrollmentDate", "guardianName", "bloodGroup", "class", "section"];
       const safe = Object.fromEntries(Object.entries(corrections).filter(([k]) => allowed.includes(k)));
       if (Object.keys(safe).length > 0) {
         await db.update(studentProfiles).set(safe).where(eq(studentProfiles.studentId, studentId));

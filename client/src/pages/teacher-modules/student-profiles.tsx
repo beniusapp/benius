@@ -20,6 +20,13 @@ interface PendingProfile {
   fatherName: string | null;
   motherName: string | null;
   presentAddress: string | null;
+  aadharNumber: string | null;
+  gender: string | null;
+  phone: string | null;
+  dob: string | null;
+  enrollmentDate: string | null;
+  guardianName: string | null;
+  bloodGroup: string | null;
   photoUrl: string | null;
   photoStatus: string;
   rejectionNote: string | null;
@@ -52,13 +59,20 @@ function getRequestType(profile: PendingProfile): string {
 }
 
 const FIELD_LABELS: { key: string; label: string; editable: boolean }[] = [
-  { key: "fullName",       label: "Full Name",       editable: true  },
-  { key: "class",          label: "Class",            editable: false },
-  { key: "section",        label: "Section",          editable: false },
-  { key: "rollNo",         label: "Roll Number",      editable: true  },
-  { key: "fatherName",     label: "Father's Name",    editable: true  },
-  { key: "motherName",     label: "Mother's Name",    editable: true  },
-  { key: "presentAddress", label: "Present Address",  editable: true  },
+  { key: "fullName",       label: "Full Name",         editable: true  },
+  { key: "class",          label: "Class",              editable: false },
+  { key: "section",        label: "Section",            editable: false },
+  { key: "gender",         label: "Gender",             editable: true  },
+  { key: "rollNo",         label: "Roll Number",        editable: true  },
+  { key: "guardianName",   label: "Guardian Name",      editable: true  },
+  { key: "phone",          label: "Phone",              editable: true  },
+  { key: "dob",            label: "Date of Birth",      editable: true  },
+  { key: "enrollmentDate", label: "Date of Admission",  editable: true  },
+  { key: "bloodGroup",     label: "Blood Group",        editable: true  },
+  { key: "fatherName",     label: "Father's Name",      editable: true  },
+  { key: "motherName",     label: "Mother's Name",      editable: true  },
+  { key: "aadharNumber",   label: "Aadhaar Number",     editable: true  },
+  { key: "presentAddress", label: "Present Address",    editable: true  },
 ];
 
 type EditableFields = {
@@ -67,6 +81,13 @@ type EditableFields = {
   fatherName: string;
   motherName: string;
   presentAddress: string;
+  aadharNumber: string;
+  gender: string;
+  phone: string;
+  dob: string;
+  enrollmentDate: string;
+  guardianName: string;
+  bloodGroup: string;
 };
 
 function initEdits(p: PendingProfile): EditableFields {
@@ -76,6 +97,13 @@ function initEdits(p: PendingProfile): EditableFields {
     fatherName:     p.fatherName     ?? "",
     motherName:     p.motherName     ?? "",
     presentAddress: p.presentAddress ?? "",
+    aadharNumber:   p.aadharNumber   ?? "",
+    gender:         p.gender         ?? "",
+    phone:          p.phone          ?? "",
+    dob:            p.dob            ?? "",
+    enrollmentDate: p.enrollmentDate ?? "",
+    guardianName:   p.guardianName   ?? "",
+    bloodGroup:     p.bloodGroup     ?? "",
   };
 }
 
@@ -88,7 +116,7 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
   const [rejectNote,       setRejectNote]       = useState("");
   const [showRejectInput,  setShowRejectInput]  = useState(false);
   const [editMode,         setEditMode]         = useState(false);
-  const [editedFields,     setEditedFields]     = useState<EditableFields>({ fullName:"", rollNo:"", fatherName:"", motherName:"", presentAddress:"" });
+  const [editedFields,     setEditedFields]     = useState<EditableFields>({ fullName:"", rollNo:"", fatherName:"", motherName:"", presentAddress:"", aadharNumber:"", gender:"", phone:"", dob:"", enrollmentDate:"", guardianName:"", bloodGroup:"" });
 
   const { data: profiles = [], isLoading } = useQuery<PendingProfile[]>({
     queryKey: ["/api/teacher/pending-profiles"],
