@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
@@ -1261,14 +1262,14 @@ export default function StudentProfile() {
       </motion.main>
 
       {/* ── Crop Modal ──────────────────────────────────────────────────────── */}
-      {cropSrc && (() => {
+      {cropSrc && createPortal((() => {
         const baseScale = CROP_SIZE / Math.min(imgNatural.w, imgNatural.h);
         const displayW  = imgNatural.w * baseScale * cropZoom;
         const displayH  = imgNatural.h * baseScale * cropZoom;
         const imgX = CROP_SIZE / 2 - displayW / 2 + cropPos.x;
         const imgY = CROP_SIZE / 2 - displayH / 2 + cropPos.y;
         return (
-          <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm px-4">
+          <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black/80 px-4" style={{ backdropFilter: "blur(4px)" }}>
             <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl overflow-hidden">
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
@@ -1345,7 +1346,7 @@ export default function StudentProfile() {
             </div>
           </div>
         );
-      })()}
+      })(), document.body)}
 
     </div>
   );
