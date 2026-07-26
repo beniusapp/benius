@@ -501,12 +501,12 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
               )} />
               <FormField control={form.control} name="rollNumber" render={({ field }) => (
                 <FormItem><FormLabel className="text-white/70">Roll Number</FormLabel>
-                  <FormControl><Input {...field} type="number" min="1" placeholder="Optional" className="bg-[#0A1628] border-white/20 text-white" data-testid="input-student-roll" /></FormControl>
+                  <FormControl><Input {...field} type="number" min="1" placeholder="" className="bg-[#0A1628] border-white/20 text-white" data-testid="input-student-roll" /></FormControl>
                   <FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="guardianName" render={({ field }) => (
                 <FormItem><FormLabel className="text-white/70">Guardian Name</FormLabel>
-                  <FormControl><Input {...field} placeholder="Optional" className="bg-[#0A1628] border-white/20 text-white" data-testid="input-student-guardian" /></FormControl>
+                  <FormControl><Input {...field} placeholder="" className="bg-[#0A1628] border-white/20 text-white" data-testid="input-student-guardian" /></FormControl>
                   <FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="phone" render={({ field }) => (
@@ -547,12 +547,12 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
               )} />
               <FormField control={form.control} name="fatherName" render={({ field }) => (
                 <FormItem><FormLabel className="text-white/70">Father's Name</FormLabel>
-                  <FormControl><Input {...field} placeholder="Optional" className="bg-[#0A1628] border-white/20 text-white" data-testid="input-student-father" /></FormControl>
+                  <FormControl><Input {...field} placeholder="" className="bg-[#0A1628] border-white/20 text-white" data-testid="input-student-father" /></FormControl>
                   <FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="motherName" render={({ field }) => (
                 <FormItem><FormLabel className="text-white/70">Mother's Name</FormLabel>
-                  <FormControl><Input {...field} placeholder="Optional" className="bg-[#0A1628] border-white/20 text-white" data-testid="input-student-mother" /></FormControl>
+                  <FormControl><Input {...field} placeholder="" className="bg-[#0A1628] border-white/20 text-white" data-testid="input-student-mother" /></FormControl>
                   <FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="aadharNumber" render={({ field }) => (
@@ -570,7 +570,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
               )} />
               <FormField control={form.control} name="address" render={({ field }) => (
                 <FormItem className="col-span-2 md:col-span-3"><FormLabel className="text-white/70">Address</FormLabel>
-                  <FormControl><Textarea {...field} placeholder="Optional" rows={2} className="bg-[#0A1628] border-white/20 text-white resize-none" data-testid="input-student-address" /></FormControl>
+                  <FormControl><Textarea {...field} placeholder="" rows={2} className="bg-[#0A1628] border-white/20 text-white resize-none" data-testid="input-student-address" /></FormControl>
                   <FormMessage /></FormItem>
               )} />
               <div className="flex items-end col-span-2 md:col-span-3 justify-end">
@@ -919,7 +919,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                     )} />
                     <FormField control={editForm.control} name="rollNumber" render={({ field }) => (
                       <FormItem><FormLabel className="text-white/70">Roll Number</FormLabel>
-                        <FormControl><Input {...field} type="number" min="1" placeholder="Optional" data-testid="input-edit-roll"
+                        <FormControl><Input {...field} type="number" min="1" placeholder="" data-testid="input-edit-roll"
                           className="bg-[#0A1628] border-white/20 text-white" /></FormControl>
                         <FormMessage /></FormItem>
                     )} />
@@ -952,7 +952,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                   )} />
                   <FormField control={editForm.control} name="guardianName" render={({ field }) => (
                     <FormItem><FormLabel className="text-white/70">Guardian Name</FormLabel>
-                      <FormControl><Input {...field} placeholder="Optional" data-testid="input-edit-guardian"
+                      <FormControl><Input {...field} placeholder="" data-testid="input-edit-guardian"
                         className="bg-[#0A1628] border-white/20 text-white" /></FormControl>
                       <FormMessage /></FormItem>
                   )} />
@@ -970,13 +970,13 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                   )} />
                   <FormField control={editForm.control} name="fatherName" render={({ field }) => (
                     <FormItem><FormLabel className="text-white/70">Father's Name</FormLabel>
-                      <FormControl><Input {...field} placeholder="Optional" data-testid="input-edit-father"
+                      <FormControl><Input {...field} placeholder="" data-testid="input-edit-father"
                         className="bg-[#0A1628] border-white/20 text-white" /></FormControl>
                       <FormMessage /></FormItem>
                   )} />
                   <FormField control={editForm.control} name="motherName" render={({ field }) => (
                     <FormItem><FormLabel className="text-white/70">Mother's Name</FormLabel>
-                      <FormControl><Input {...field} placeholder="Optional" data-testid="input-edit-mother"
+                      <FormControl><Input {...field} placeholder="" data-testid="input-edit-mother"
                         className="bg-[#0A1628] border-white/20 text-white" /></FormControl>
                       <FormMessage /></FormItem>
                   )} />
@@ -995,7 +995,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                   )} />
                   <FormField control={editForm.control} name="address" render={({ field }) => (
                     <FormItem><FormLabel className="text-white/70">Address</FormLabel>
-                      <FormControl><Textarea {...field} placeholder="Optional" rows={2} data-testid="input-edit-address"
+                      <FormControl><Textarea {...field} placeholder="" rows={2} data-testid="input-edit-address"
                         className="bg-[#0A1628] border-white/20 text-white resize-none" /></FormControl>
                       <FormMessage /></FormItem>
                   )} />
