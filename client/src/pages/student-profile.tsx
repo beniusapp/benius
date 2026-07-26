@@ -157,11 +157,13 @@ function StatusBadge({ status, profile }: { status: string; profile: StudentProf
   );
 }
 
-function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function InfoField({ label, value, mono, full }: { label: string; value: string; mono?: boolean; full?: boolean }) {
   return (
-    <div className="flex items-center justify-between gap-4 py-2.5 border-b border-slate-100 last:border-0">
-      <span className="text-xs text-slate-400 uppercase tracking-wide flex-shrink-0">{label}</span>
-      <span className={`text-sm font-semibold text-slate-800 text-right ${mono ? "font-mono" : ""}`}>{value}</span>
+    <div className={`flex flex-col gap-0.5 ${full ? "col-span-2" : ""}`}>
+      <span className="text-[10px] text-slate-400 uppercase tracking-widest font-medium">{label}</span>
+      <span className={`text-sm font-semibold text-slate-800 break-words ${mono ? "font-mono tracking-wider" : ""}`}>
+        {value || "—"}
+      </span>
     </div>
   );
 }
@@ -735,21 +737,25 @@ export default function StudentProfile() {
                   </div>
                 </div>
 
-                <div className="px-5 pb-5 space-y-0">
-                  <InfoRow label="DSID" value={student.digitalStudentId} mono />
-                  <InfoRow label="School" value={student.schoolCode} mono />
-                  <InfoRow label="Class / Section" value={`${student.class} – ${student.section}`} />
-                  {student.gender && <InfoRow label="Gender" value={student.gender} />}
-                  {student.rollNumber != null && <InfoRow label="Roll Number" value={String(student.rollNumber)} />}
-                  <InfoRow label="Phone" value={student.phone} mono />
-                  <InfoRow label="Date of Birth" value={dob} />
-                  <InfoRow label="Date of Admission" value={enrollmentDateDisplay} />
-                  {student.guardianName && <InfoRow label="Guardian Name" value={student.guardianName} />}
-                  {student.bloodGroup && <InfoRow label="Blood Group" value={student.bloodGroup} />}
-                  {(profile?.fatherName || student.fatherName) && <InfoRow label="Father's Name" value={profile?.fatherName || student.fatherName!} />}
-                  {(profile?.motherName || student.motherName) && <InfoRow label="Mother's Name" value={profile?.motherName || student.motherName!} />}
-                  <InfoRow label="Aadhaar No." value={profile?.aadharNumber || student.aadharNumber || "—"} mono />
-                  {(profile?.presentAddress || student.address) && <InfoRow label="Address" value={profile?.presentAddress || student.address!} />}
+                <div className="px-5 pb-5">
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-4 pt-1">
+                    <InfoField label="Full Name" value={profile?.fullName || student.name} full />
+                    <InfoField label="Class" value={student.class} />
+                    <InfoField label="Section" value={student.section} />
+                    <InfoField label="Gender" value={student.gender || "—"} />
+                    <InfoField label="Roll Number" value={student.rollNumber != null ? String(student.rollNumber) : "—"} />
+                    <InfoField label="Guardian Name" value={student.guardianName || "—"} />
+                    <InfoField label="Phone" value={student.phone} mono />
+                    <InfoField label="Date of Birth" value={dob} />
+                    <InfoField label="Date of Admission" value={enrollmentDateDisplay} />
+                    <InfoField label="Blood Group" value={student.bloodGroup || "—"} />
+                    <InfoField label="Father's Name" value={profile?.fatherName || student.fatherName || "—"} />
+                    <InfoField label="Mother's Name" value={profile?.motherName || student.motherName || "—"} />
+                    <InfoField label="Aadhaar Number" value={profile?.aadharNumber || student.aadharNumber || "—"} mono />
+                    <InfoField label="Address" value={profile?.presentAddress || student.address || "—"} full />
+                    <InfoField label="DSID" value={student.digitalStudentId} mono />
+                    <InfoField label="School" value={student.schoolCode} mono />
+                  </div>
                 </div>
               </div>
 
