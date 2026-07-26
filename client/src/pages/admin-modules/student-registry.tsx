@@ -729,7 +729,24 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                           )}
                         </div>
                       </td>
-                      <td className={`${cell} text-white font-medium overflow-hidden text-ellipsis`}>{s.name}</td>
+                      <td className={`${cell} text-white font-medium overflow-hidden`}>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="truncate">{s.name}</span>
+                          {(() => {
+                            const vp = (s as any).verifiedProfile;
+                            if (!vp) return null;
+                            try {
+                              const parsed = typeof vp === "string" ? JSON.parse(vp) : vp;
+                              if (!parsed?.verifiedAt) return null;
+                              return (
+                                <span className="text-[9px] font-semibold text-emerald-400 leading-none flex items-center gap-0.5">
+                                  ✓ Verified {new Date(parsed.verifiedAt).toLocaleDateString("en-GB")}
+                                </span>
+                              );
+                            } catch { return null; }
+                          })()}
+                        </div>
+                      </td>
                       <td className={`${cell} text-white/50 font-mono`}>
                         {s.rollNumber != null ? <span className="text-white/80">{s.rollNumber}</span> : <span className="text-white/20">—</span>}
                       </td>
@@ -854,6 +871,49 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                   <span className={`text-right break-all ${mono ? "font-mono" : ""} ${gold ? "text-[#D4AF37]" : "text-white"}`}>{value}</span>
                 </div>
               ))}
+              {/* Profile verification block */}
+              {(() => {
+                const vp = (viewTarget as any).verifiedProfile;
+                if (!vp) return null;
+                try {
+                  const parsed = typeof vp === "string" ? JSON.parse(vp) : vp;
+                  if (!parsed?.verifiedAt) return null;
+                  const verifiedFields: { label: string; key: string }[] = [
+                    { label: "Full Name",         key: "fullName" },
+                    { label: "Gender",            key: "gender" },
+                    { label: "Roll No.",          key: "rollNo" },
+                    { label: "Guardian",          key: "guardianName" },
+                    { label: "Phone",             key: "phone" },
+                    { label: "Date of Birth",     key: "dob" },
+                    { label: "Date of Admission", key: "enrollmentDate" },
+                    { label: "Blood Group",       key: "bloodGroup" },
+                    { label: "Father's Name",     key: "fatherName" },
+                    { label: "Mother's Name",     key: "motherName" },
+                    { label: "Aadhaar No.",       key: "aadharNumber" },
+                    { label: "Address",           key: "presentAddress" },
+                  ];
+                  const changedFields = verifiedFields.filter(f => parsed[f.key]);
+                  return (
+                    <div className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3 space-y-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-emerald-400 text-xs font-bold">✓ Student-Verified Profile</span>
+                        <span className="ml-auto text-[10px] text-white/40">
+                          {new Date(parsed.verifiedAt).toLocaleDateString("en-GB")}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-white/40">These fields were student-submitted and teacher-approved:</p>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                        {changedFields.map(f => (
+                          <div key={f.key} className="text-[10px]">
+                            <span className="text-white/40">{f.label}: </span>
+                            <span className="text-emerald-300 font-medium">{parsed[f.key]}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                } catch { return null; }
+              })()}
             </div>
             <div className="px-5 pb-5">
               {canEdit && (

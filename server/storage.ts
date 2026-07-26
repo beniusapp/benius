@@ -3255,7 +3255,7 @@ export class DatabaseStorage {
   }
 
   async bulkApproveStudentProfiles(studentIds: number[], teacherId: number): Promise<{ approved: number; skipped: number }> {
-    const eligible: { studentId: number; snapshot: string }[] = [];
+    const eligible: { studentId: number; snapshot: string; profile: StudentProfile }[] = [];
     const photoUpdates: { studentId: number; photoUrl: string }[] = [];
 
     for (const studentId of studentIds) {
@@ -3264,9 +3264,12 @@ export class DatabaseStorage {
       const snap = JSON.stringify({
         fullName: existing.fullName, class: existing.class, section: existing.section,
         rollNo: existing.rollNo, fatherName: existing.fatherName, motherName: existing.motherName,
-        presentAddress: existing.presentAddress, photoUrl: existing.photoUrl, approvedAt: new Date().toISOString(),
+        presentAddress: existing.presentAddress, aadharNumber: existing.aadharNumber,
+        gender: existing.gender, phone: existing.phone, dob: existing.dob,
+        enrollmentDate: existing.enrollmentDate, guardianName: existing.guardianName,
+        bloodGroup: existing.bloodGroup, photoUrl: existing.photoUrl, approvedAt: new Date().toISOString(),
       });
-      eligible.push({ studentId, snapshot: snap });
+      eligible.push({ studentId, snapshot: snap, profile: existing });
       if (existing.photoUrl) photoUpdates.push({ studentId, photoUrl: existing.photoUrl });
     }
 
@@ -3304,15 +3307,22 @@ export class DatabaseStorage {
     const existing = await this.getStudentProfile(studentId);
     const snapshot = existing
       ? JSON.stringify({
-          fullName: existing.fullName,
-          class: existing.class,
-          section: existing.section,
-          rollNo: existing.rollNo,
-          fatherName: existing.fatherName,
-          motherName: existing.motherName,
+          fullName:       existing.fullName,
+          class:          existing.class,
+          section:        existing.section,
+          rollNo:         existing.rollNo,
+          fatherName:     existing.fatherName,
+          motherName:     existing.motherName,
           presentAddress: existing.presentAddress,
-          photoUrl: existing.photoUrl,
-          approvedAt: new Date().toISOString(),
+          aadharNumber:   existing.aadharNumber,
+          gender:         existing.gender,
+          phone:          existing.phone,
+          dob:            existing.dob,
+          enrollmentDate: existing.enrollmentDate,
+          guardianName:   existing.guardianName,
+          bloodGroup:     existing.bloodGroup,
+          photoUrl:       existing.photoUrl,
+          approvedAt:     new Date().toISOString(),
         })
       : null;
     const [updated] = await db
