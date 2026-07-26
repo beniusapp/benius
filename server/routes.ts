@@ -3695,20 +3695,24 @@ export async function registerRoutes(
     const passwordOk = await storage.verifyAdminPassword(req.session.userId, password);
     if (!passwordOk) return res.status(401).json({ message: "Incorrect password" });
     const numIds = ids.map(Number).filter(n => !isNaN(n));
-    const deactivated = await storage.bulkDeactivateStudents(numIds, schoolId);
-    const detailParts = [`Bulk deactivated ${deactivated} students. Reason: ${reason}. Batch: ${batchYear}`];
-    if (comments) detailParts.push(`Comments: ${comments}`);
-    detailParts.push(`IDs: ${numIds.slice(0, 20).join(",")}`);
-    await storage.createAuditLog({
-      schoolId,
-      actionType: "bulk_deactivate",
-      entityType: "student",
-      entityId: schoolId,
-      actionBy: req.session.userId!,
-      actionByRole: "admin",
-      details: detailParts.join(". "),
-    });
-    res.json({ deactivated });
+    const deactivatedStudents = await storage.bulkDeactivateStudents(numIds, schoolId);
+    // Write one per-student audit log (same format as single deactivation) so the
+    // Deactivated Students page JOIN finds each student individually.
+    const commentsPart = comments ? `. Comments: ${comments}` : "";
+    await Promise.all(
+      deactivatedStudents.map(s =>
+        storage.createAuditLog({
+          schoolId,
+          actionType: "deactivate",
+          entityType: "student",
+          entityId: s.id,
+          actionBy: req.session.userId!,
+          actionByRole: "admin",
+          details: `Student ${s.name} (${s.digitalStudentId}) deactivated. Reason: ${reason}. Batch: ${batchYear}${commentsPart}`,
+        })
+      )
+    );
+    res.json({ deactivated: deactivatedStudents.length });
   });
 
   // ===== ADMIN: FEE RECORDS =====

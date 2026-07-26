@@ -2851,13 +2851,16 @@ export class DatabaseStorage {
     return list.length;
   }
 
-  async bulkDeactivateStudents(ids: number[], schoolId: number): Promise<number> {
-    if (ids.length === 0) return 0;
+  async bulkDeactivateStudents(
+    ids: number[],
+    schoolId: number,
+  ): Promise<{ id: number; name: string; digitalStudentId: string }[]> {
+    if (ids.length === 0) return [];
     const updated = await db.update(students)
       .set({ isActive: false })
       .where(and(inArray(students.id, ids), eq(students.schoolId, schoolId)))
-      .returning({ id: students.id });
-    return updated.length;
+      .returning({ id: students.id, name: students.name, digitalStudentId: students.digitalStudentId });
+    return updated;
   }
 
   // ===== PAGINATED TEACHERS (Big Data) =====
@@ -2913,22 +2916,46 @@ export class DatabaseStorage {
       dob: string | null; enrollment_date: string | null; blood_group: string | null;
       roll_number: number | null; deactivated_at: Date | null; deactivation_reason: string | null;
     }>(
-      `SELECT s.id, s.digital_student_id, s.name, s.class, s.section, s.phone,
-              s.gender, s.guardian_name, s.dob, s.enrollment_date, s.blood_group, s.roll_number,
-              a.created_at AS deactivated_at, a.details AS deactivation_reason
-       FROM students s
-       LEFT JOIN audit_logs a ON (
-         a.entity_id = s.id AND a.entity_type = 'student'
-         AND a.action_type = 'deactivate' AND a.school_id = $1
+      `WITH best_log AS (
+         SELECT DISTINCT ON (s.id)
+           s.id AS student_id,
+           a.created_at,
+           a.details,
+           -- prefer individual 'deactivate' logs over bulk ones
+           (a.action_type = 'deactivate') AS is_individual
+         FROM students s
+         LEFT JOIN audit_logs a ON (
+           a.school_id = $1
+           AND a.entity_type = 'student'
+           AND (
+             (a.action_type = 'deactivate' AND a.entity_id = s.id)
+             OR
+             (a.action_type = 'bulk_deactivate'
+              AND SUBSTRING(a.details FROM 'IDs:[[:space:]]*(([[:digit:]]|,)+)')
+                  ~ (E'(^|,)' || s.id::text || E'(,|$)'))
+           )
+         )
+         WHERE s.school_id = $1 AND s.is_active = false
+         ORDER BY s.id,
+                  (a.id IS NOT NULL) DESC,
+                  (a.action_type = 'deactivate') DESC,
+                  a.created_at DESC NULLS LAST
        )
+       SELECT s.id, s.digital_student_id, s.name, s.class, s.section, s.phone,
+              s.gender, s.guardian_name, s.dob, s.enrollment_date, s.blood_group, s.roll_number,
+              bl.created_at AS deactivated_at, bl.details AS deactivation_reason
+       FROM students s
+       LEFT JOIN best_log bl ON bl.student_id = s.id
        WHERE s.school_id = $1 AND s.is_active = false
-       ORDER BY a.created_at DESC NULLS LAST`,
+       ORDER BY bl.created_at DESC NULLS LAST`,
       [schoolId]
     );
     return result.rows.map(r => {
       const details = r.deactivation_reason ?? "";
-      const batchMatch    = details.match(/Batch:\s*(\d{4}-\d{5}|\d{4}-\d{4})/);
-      const commentsMatch = details.match(/Comments:\s*(.+)$/);
+      const batchMatch = details.match(/Batch:\s*(\d{4}-\d{4})/);
+      // Extract comments; strip trailing ". IDs: ..." that appears in bulk logs
+      const rawComments = details.match(/Comments:\s*(.+)/)?.[1] ?? null;
+      const comments = rawComments ? rawComments.replace(/\.\s*IDs:.*$/i, "").trim() : null;
       return {
         id: r.id,
         digitalStudentId: r.digital_student_id,
@@ -2944,8 +2971,8 @@ export class DatabaseStorage {
         rollNumber: r.roll_number,
         deactivatedAt: r.deactivated_at,
         deactivationReason: r.deactivation_reason,
-        batchYear: batchMatch    ? batchMatch[1]    : null,
-        comments:  commentsMatch ? commentsMatch[1] : null,
+        batchYear: batchMatch ? batchMatch[1] : null,
+        comments,
       };
     });
   }
