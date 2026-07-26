@@ -2915,12 +2915,16 @@ export class DatabaseStorage {
     rollNumber: number | null;
     deactivatedAt: Date | null; deactivationReason: string | null;
     batchYear: string | null; comments: string | null;
+    fatherName: string | null; motherName: string | null;
+    address: string | null; aadharNumber: string | null;
   }>> {
     const result = await pool.query<{
       id: number; digital_student_id: string; name: string; class: string; section: string;
       phone: string; gender: string | null; guardian_name: string | null;
       dob: string | null; enrollment_date: string | null; blood_group: string | null;
       roll_number: number | null; deactivated_at: Date | null; deactivation_reason: string | null;
+      father_name: string | null; mother_name: string | null;
+      address: string | null; aadhar_number: string | null;
     }>(
       `WITH best_log AS (
          SELECT DISTINCT ON (s.id)
@@ -2949,6 +2953,7 @@ export class DatabaseStorage {
        )
        SELECT s.id, s.digital_student_id, s.name, s.class, s.section, s.phone,
               s.gender, s.guardian_name, s.dob, s.enrollment_date, s.blood_group, s.roll_number,
+              s.father_name, s.mother_name, s.address, s.aadhar_number,
               bl.created_at AS deactivated_at, bl.details AS deactivation_reason
        FROM students s
        LEFT JOIN best_log bl ON bl.student_id = s.id
@@ -2979,6 +2984,10 @@ export class DatabaseStorage {
         deactivationReason: r.deactivation_reason,
         batchYear: batchMatch ? batchMatch[1] : null,
         comments,
+        fatherName:   r.father_name   ?? null,
+        motherName:   r.mother_name   ?? null,
+        address:      r.address       ?? null,
+        aadharNumber: r.aadhar_number ?? null,
       };
     });
   }

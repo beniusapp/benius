@@ -33,6 +33,10 @@ type DeactivatedStudent = {
   deactivationReason: string | null;
   batchYear: string | null;
   comments: string | null;
+  fatherName: string | null;
+  motherName: string | null;
+  address: string | null;
+  aadharNumber: string | null;
 };
 
 type Me = {
@@ -163,6 +167,10 @@ export default function DeactivatedStudentsPage() {
         (s.guardianName ?? "").toLowerCase().includes(lq) ||
         (s.bloodGroup ?? "").toLowerCase().includes(lq) ||
         (s.comments ?? "").toLowerCase().includes(lq) ||
+        (s.fatherName ?? "").toLowerCase().includes(lq) ||
+        (s.motherName ?? "").toLowerCase().includes(lq) ||
+        (s.address ?? "").toLowerCase().includes(lq) ||
+        (s.aadharNumber ?? "").includes(debouncedQ) ||
         cleanReason(s.deactivationReason).toLowerCase().includes(lq)
       );
     });
@@ -221,9 +229,9 @@ export default function DeactivatedStudentsPage() {
   }
 
   const cell = compact ? "py-1.5 px-3 text-xs" : "py-3 px-3 text-sm";
-  // Normal: DSID Name Gender Phone BatchYear Guardian DOB Admission Blood DeactivatedOn Reason Comments View Status = 14
+  // Normal: DSID Name Gender Phone BatchYear Guardian Father Mother AadharNo Address DOB Admission Blood DeactivatedOn Reason Comments View Status = 18
   // Compact: DSID Name Gender Phone BatchYear View Status = 7
-  const colCount = compact ? 7 : 14;
+  const colCount = compact ? 7 : 18;
 
   return (
     <div className="min-h-screen" style={{ background: "#080c14" }}>
@@ -381,6 +389,10 @@ export default function DeactivatedStudentsPage() {
                 <col style={{ width: "112px" }} />
                 <col style={{ width: "96px" }} />
                 {!compact && <col style={{ width: "130px" }} />}
+                {!compact && <col style={{ width: "130px" }} />}
+                {!compact && <col style={{ width: "130px" }} />}
+                {!compact && <col style={{ width: "120px" }} />}
+                {!compact && <col style={{ width: "180px" }} />}
                 {!compact && <col style={{ width: "96px" }} />}
                 {!compact && <col style={{ width: "108px" }} />}
                 {!compact && <col style={{ width: "78px" }} />}
@@ -398,6 +410,10 @@ export default function DeactivatedStudentsPage() {
                   <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Phone</th>
                   <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Batch Year</th>
                   {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Guardian</th>}
+                  {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Father</th>}
+                  {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Mother</th>}
+                  {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Aadhaar No.</th>}
+                  {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Address</th>}
                   {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">DOB</th>}
                   {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Admission</th>}
                   {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Blood Grp</th>}
@@ -433,6 +449,10 @@ export default function DeactivatedStudentsPage() {
                     <td className={`${cell} text-white/60 overflow-hidden text-ellipsis font-mono`}>{s.phone}</td>
                     <td className={`${cell} text-white/70 font-mono`}>{s.batchYear ?? <span className="text-white/20">—</span>}</td>
                     {!compact && <td className={`${cell} text-white/60 overflow-hidden text-ellipsis`}>{s.guardianName ?? "—"}</td>}
+                    {!compact && <td className={`${cell} text-white/60 overflow-hidden text-ellipsis`}>{s.fatherName ?? "—"}</td>}
+                    {!compact && <td className={`${cell} text-white/60 overflow-hidden text-ellipsis`}>{s.motherName ?? "—"}</td>}
+                    {!compact && <td className={`${cell} text-white/50 font-mono tracking-widest`}>{s.aadharNumber ?? "—"}</td>}
+                    {!compact && <td className={`${cell} text-white/50 overflow-hidden text-ellipsis`} title={s.address ?? ""}>{s.address ?? "—"}</td>}
                     {!compact && <td className={`${cell} text-white/50`}>{s.dob ? new Date(s.dob).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}</td>}
                     {!compact && <td className={`${cell} text-white/50`}>{s.enrollmentDate ? new Date(s.enrollmentDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}</td>}
                     {!compact && <td className={`${cell} text-white/60`}>{s.bloodGroup ?? "—"}</td>}
@@ -547,6 +567,10 @@ export default function DeactivatedStudentsPage() {
                 { label: "Gender",           value: viewTarget.gender ?? "Not set" },
                 { label: "Phone",            value: viewTarget.phone },
                 { label: "Guardian",         value: viewTarget.guardianName ?? "Not recorded" },
+                { label: "Father's Name",    value: viewTarget.fatherName ?? "Not recorded" },
+                { label: "Mother's Name",    value: viewTarget.motherName ?? "Not recorded" },
+                { label: "Aadhaar No.",      value: viewTarget.aadharNumber ?? "Not recorded", mono: true },
+                { label: "Address",          value: viewTarget.address ?? "Not recorded" },
                 { label: "Blood Group",      value: viewTarget.bloodGroup ?? "Not recorded" },
                 { label: "Date of Birth",    value: viewTarget.dob ? new Date(viewTarget.dob).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—" },
                 { label: "Date of Admission",value: viewTarget.enrollmentDate ? new Date(viewTarget.enrollmentDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "Not recorded" },
