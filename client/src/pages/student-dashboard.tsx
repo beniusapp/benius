@@ -15,6 +15,7 @@ interface StudentMeResponse {
   section: string;
   phone: string;
   dob: string;
+  photoUrl?: string | null;
   schoolName: string;
   schoolCode: string;
   schoolId?: number;
@@ -355,11 +356,19 @@ export default function StudentDashboard() {
           <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
             {/* Avatar */}
             <div
-              className="flex-shrink-0 w-[72px] h-[72px] sm:w-20 sm:h-20 rounded-full flex items-center justify-center shadow-lg"
+              className="flex-shrink-0 w-[72px] h-[72px] sm:w-20 sm:h-20 rounded-full shadow-lg overflow-hidden flex items-center justify-center"
               style={{ background: "linear-gradient(135deg, #3b82f6, #8b5cf6)" }}
               data-testid="avatar-student"
             >
-              <span className="text-white font-bold text-2xl sm:text-3xl select-none">{initials}</span>
+              {student.photoUrl ? (
+                <img
+                  src={student.photoUrl}
+                  alt={student.name}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <span className="text-white font-bold text-2xl sm:text-3xl select-none">{initials}</span>
+              )}
             </div>
 
             {/* Greeting + info */}
