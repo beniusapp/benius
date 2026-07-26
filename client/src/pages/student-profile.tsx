@@ -909,15 +909,18 @@ export default function StudentProfile() {
                   </div>
                 )}
 
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={photoMutation.isPending}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-emerald-200 text-[#10b981] text-xs font-medium hover:bg-emerald-50 transition-colors"
-                  data-testid="button-upload-photo-alt"
-                >
-                  {photoMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
-                  {profile?.photoStatus === "pending" ? "Replace Photo" : "Upload Photo"}
-                </button>
+                <div className="flex flex-col items-center gap-1">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={photoMutation.isPending}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-emerald-200 text-[#10b981] text-xs font-medium hover:bg-emerald-50 transition-colors"
+                    data-testid="button-upload-photo-alt"
+                  >
+                    {photoMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+                    {profile?.photoStatus === "pending" ? "Replace Photo" : "Upload Photo"}
+                  </button>
+                  <p className="text-[10px] text-slate-400">Max size: 1 MB</p>
+                </div>
               </div>
 
               {/* Form fields card — no overflow-hidden to prevent Android keyboard clipping */}
@@ -940,7 +943,7 @@ export default function StudentProfile() {
 
                     {/* Full Name */}
                     <div className="sm:col-span-2">
-                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Full Name <span className="text-red-400">*</span></label>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Full Name</label>
                       <input ref={fullNameRef} type="text" value={form.fullName}
                         onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
                         placeholder="Full name as in certificate"
@@ -1018,7 +1021,7 @@ export default function StudentProfile() {
 
                     {/* Father's Name */}
                     <div>
-                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Father's Name <span className="text-red-400">*</span></label>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Father's Name</label>
                       <input type="text" value={form.fatherName}
                         onChange={(e) => setForm((f) => ({ ...f, fatherName: e.target.value }))}
                         placeholder="Father's full name"
@@ -1027,7 +1030,7 @@ export default function StudentProfile() {
 
                     {/* Mother's Name */}
                     <div>
-                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Mother's Name <span className="text-red-400">*</span></label>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Mother's Name</label>
                       <input type="text" value={form.motherName}
                         onChange={(e) => setForm((f) => ({ ...f, motherName: e.target.value }))}
                         placeholder="Mother's full name"
@@ -1049,7 +1052,7 @@ export default function StudentProfile() {
 
                   {/* Address */}
                   <div>
-                    <label className="text-xs font-medium text-slate-500 mb-1.5 block">Present Address <span className="text-red-400">*</span></label>
+                    <label className="text-xs font-medium text-slate-500 mb-1.5 block">Present Address</label>
                     <textarea value={form.presentAddress}
                       onChange={(e) => setForm((f) => ({ ...f, presentAddress: e.target.value }))}
                       placeholder="Full residential address" rows={3}
