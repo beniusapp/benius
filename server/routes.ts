@@ -996,6 +996,14 @@ export async function registerRoutes(
       dob: data.student.dob,
       photoUrl: data.student.photoUrl,
       enrollmentDate: data.student.enrollmentDate,
+      gender: data.student.gender,
+      rollNumber: data.student.rollNumber,
+      guardianName: data.student.guardianName,
+      bloodGroup: data.student.bloodGroup,
+      fatherName: data.student.fatherName,
+      motherName: data.student.motherName,
+      address: data.student.address,
+      aadharNumber: data.student.aadharNumber,
       verifiedProfile: data.student.verifiedProfile
         ? (() => { try { return JSON.parse(data.student.verifiedProfile); } catch { return null; } })()
         : null,

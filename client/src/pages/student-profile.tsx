@@ -22,6 +22,14 @@ interface StudentMeResponse {
   dob: string;
   photoUrl: string | null;
   enrollmentDate: string | null;
+  gender: string | null;
+  rollNumber: number | null;
+  guardianName: string | null;
+  bloodGroup: string | null;
+  fatherName: string | null;
+  motherName: string | null;
+  address: string | null;
+  aadharNumber: string | null;
   schoolName: string;
   schoolCode: string;
   schoolId?: number;
@@ -731,13 +739,17 @@ export default function StudentProfile() {
                   <InfoRow label="DSID" value={student.digitalStudentId} mono />
                   <InfoRow label="School" value={student.schoolCode} mono />
                   <InfoRow label="Class / Section" value={`${student.class} – ${student.section}`} />
+                  {student.gender && <InfoRow label="Gender" value={student.gender} />}
+                  {student.rollNumber != null && <InfoRow label="Roll Number" value={String(student.rollNumber)} />}
+                  <InfoRow label="Phone" value={student.phone} mono />
                   <InfoRow label="Date of Birth" value={dob} />
-                  <InfoRow label="Enrolled" value={enrollmentDateDisplay} />
-                  {profile?.rollNo && <InfoRow label="Roll No" value={profile.rollNo} />}
-                  {profile?.fatherName && <InfoRow label="Father's Name" value={profile.fatherName} />}
-                  {profile?.motherName && <InfoRow label="Mother's Name" value={profile.motherName} />}
-                  {profile?.aadharNumber && <InfoRow label="Aadhaar No." value={profile.aadharNumber} mono />}
-                  {profile?.presentAddress && <InfoRow label="Address" value={profile.presentAddress} />}
+                  <InfoRow label="Date of Admission" value={enrollmentDateDisplay} />
+                  {student.guardianName && <InfoRow label="Guardian Name" value={student.guardianName} />}
+                  {student.bloodGroup && <InfoRow label="Blood Group" value={student.bloodGroup} />}
+                  {(profile?.fatherName || student.fatherName) && <InfoRow label="Father's Name" value={profile?.fatherName || student.fatherName!} />}
+                  {(profile?.motherName || student.motherName) && <InfoRow label="Mother's Name" value={profile?.motherName || student.motherName!} />}
+                  {(profile?.aadharNumber || student.aadharNumber) && <InfoRow label="Aadhaar No." value={profile?.aadharNumber || student.aadharNumber!} mono />}
+                  {(profile?.presentAddress || student.address) && <InfoRow label="Address" value={profile?.presentAddress || student.address!} />}
                 </div>
               </div>
 
