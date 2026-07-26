@@ -367,7 +367,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
     setSelected(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
   }
 
-  const colCount = compact ? 9 : 13;
+  const colCount = compact ? 9 : 17;
 
   return (
     <div className="space-y-4">
@@ -642,7 +642,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
       {/* Table */}
       <div className="rounded-xl border border-white/10 bg-[#1A2942]">
         <div className="overflow-x-auto" style={{ maxHeight: "70vh", overflowY: "auto" }}>
-          <table className="text-sm" style={{ minWidth: compact ? "800px" : "1200px", width: "100%", tableLayout: "fixed" }}>
+          <table className="text-sm" style={{ minWidth: compact ? "800px" : "1600px", width: "100%", tableLayout: "fixed" }}>
             <colgroup>
               <col style={{ width: "40px" }} />
               <col style={{ width: "130px" }} />
@@ -653,6 +653,10 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
               <col style={{ width: "72px" }} />
               <col style={{ width: "115px" }} />
               {!compact && <col style={{ width: "130px" }} />}
+              {!compact && <col style={{ width: "130px" }} />}
+              {!compact && <col style={{ width: "130px" }} />}
+              {!compact && <col style={{ width: "120px" }} />}
+              {!compact && <col style={{ width: "180px" }} />}
               {!compact && <col style={{ width: "110px" }} />}
               {!compact && <col style={{ width: "120px" }} />}
               {!compact && <col style={{ width: "90px" }} />}
@@ -680,6 +684,10 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                 <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Gender</th>
                 <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Phone</th>
                 {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Guardian</th>}
+                {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Father</th>}
+                {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Mother</th>}
+                {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Aadhaar No.</th>}
+                {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Address</th>}
                 {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">DOB</th>}
                 {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Admission</th>}
                 {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Blood Grp</th>}
@@ -730,6 +738,10 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                       <td className={`${cell}`}><GenderBadge gender={s.gender} /></td>
                       <td className={`${cell} text-white/70 overflow-hidden text-ellipsis`}>{s.phone}</td>
                       {!compact && <td className={`${cell} text-white/70 overflow-hidden text-ellipsis`}>{(s as any).guardianName ?? "—"}</td>}
+                      {!compact && <td className={`${cell} text-white/60 overflow-hidden text-ellipsis`}>{(s as any).fatherName ?? "—"}</td>}
+                      {!compact && <td className={`${cell} text-white/60 overflow-hidden text-ellipsis`}>{(s as any).motherName ?? "—"}</td>}
+                      {!compact && <td className={`${cell} text-white/50 font-mono tracking-widest`}>{(s as any).aadharNumber ?? "—"}</td>}
+                      {!compact && <td className={`${cell} text-white/50 overflow-hidden text-ellipsis`} title={(s as any).address ?? ""}>{(s as any).address ?? "—"}</td>}
                       {!compact && <td className={`${cell} text-white/60 font-mono`}>{(s as any).dob ?? "—"}</td>}
                       {!compact && <td className={`${cell} text-white/60 font-mono`}>{(s as any).enrollmentDate ?? "—"}</td>}
                       {!compact && <td className={`${cell} text-white/70`}>{(s as any).bloodGroup ?? "—"}</td>}
