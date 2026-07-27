@@ -295,6 +295,30 @@ export class DatabaseStorage {
     return true;
   }
 
+  async deactivateTeacher(teacherId: number, schoolId: number, reason: string): Promise<Teacher | undefined> {
+    const teacher = await this.getTeacherById(teacherId);
+    if (!teacher || teacher.schoolId !== schoolId) return undefined;
+    // Block the teacher's login account
+    await db.update(users).set({ isActive: false }).where(eq(users.id, teacher.userId));
+    // Record deactivation metadata on the teacher row
+    const [updated] = await db.update(teachers)
+      .set({ isActive: false, deactivatedAt: new Date(), deactivationReason: reason })
+      .where(eq(teachers.id, teacherId))
+      .returning();
+    return updated;
+  }
+
+  async reactivateTeacher(teacherId: number, schoolId: number): Promise<Teacher | undefined> {
+    const teacher = await this.getTeacherById(teacherId);
+    if (!teacher || teacher.schoolId !== schoolId) return undefined;
+    await db.update(users).set({ isActive: true }).where(eq(users.id, teacher.userId));
+    const [updated] = await db.update(teachers)
+      .set({ isActive: true, deactivatedAt: null, deactivationReason: null })
+      .where(eq(teachers.id, teacherId))
+      .returning();
+    return updated;
+  }
+
   // ===== ATTENDANCE METHODS =====
   async getAttendanceByClassDate(schoolId: number, cls: string, section: string, date: string): Promise<AttendanceRecord[]> {
     return await db.select().from(attendanceRecords).where(

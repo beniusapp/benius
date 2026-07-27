@@ -77,6 +77,9 @@ export const teachers = pgTable("teachers", {
   govtIdNumber: text("govt_id_number"),
   address: text("address"),
   joiningDate: text("joining_date"),
+  isActive: boolean("is_active").notNull().default(true),
+  deactivatedAt: timestamp("deactivated_at"),
+  deactivationReason: text("deactivation_reason"),
 });
 
 export const attendanceRecords = pgTable("attendance_records", {

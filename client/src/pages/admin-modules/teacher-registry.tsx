@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Search, UserPlus, Trash2, Pencil, ChevronLeft, ChevronRight, Loader2, X, Save, Eye, BadgeCheck, Calendar, MapPin, CreditCard, GraduationCap, User } from "lucide-react";
+import { Search, UserPlus, Trash2, Pencil, ChevronLeft, ChevronRight, Loader2, X, Save, Eye, BadgeCheck, Calendar, MapPin, CreditCard, GraduationCap, User, PowerOff, Power, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -86,6 +86,11 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
   const [editTarget, setEditTarget] = useState<TeacherWithEmail | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TeacherWithEmail | null>(null);
   const [viewTarget, setViewTarget] = useState<TeacherWithEmail | null>(null);
+  const [deactivateTarget, setDeactivateTarget] = useState<TeacherWithEmail | null>(null);
+  const [deactivateReason, setDeactivateReason] = useState("");
+  const [deactivatePassword, setDeactivatePassword] = useState("");
+  const [reactivateTarget, setReactivateTarget] = useState<TeacherWithEmail | null>(null);
+  const [reactivatePassword, setReactivatePassword] = useState("");
   const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(null);
 
   const { data: schoolConfig } = useQuery<{ classes: string[]; sections: string[]; subjects: string[] }>({
@@ -203,6 +208,34 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
       queryClient.invalidateQueries({ queryKey: ["/api/admin/faculty-mappings"] });
     },
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+  });
+
+  const deactivateMutation = useMutation({
+    mutationFn: async ({ id, reason, adminPassword }: { id: number; reason: string; adminPassword: string }) => {
+      const r = await apiRequest("POST", `/api/admin/teachers/${id}/deactivate`, { reason, adminPassword });
+      if (!r.ok) { const j = await r.json(); throw new Error(j.message || "Failed"); }
+      return r.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Teacher ID Deactivated", description: `${deactivateTarget?.fullName}'s ID has been deactivated.` });
+      setDeactivateTarget(null); setDeactivateReason(""); setDeactivatePassword("");
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
+    },
+    onError: (e: Error) => toast({ title: "Deactivation Failed", description: e.message, variant: "destructive" }),
+  });
+
+  const reactivateMutation = useMutation({
+    mutationFn: async ({ id, adminPassword }: { id: number; adminPassword: string }) => {
+      const r = await apiRequest("POST", `/api/admin/teachers/${id}/reactivate`, { adminPassword });
+      if (!r.ok) { const j = await r.json(); throw new Error(j.message || "Failed"); }
+      return r.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Teacher ID Reactivated", description: `${reactivateTarget?.fullName}'s ID has been reactivated.` });
+      setReactivateTarget(null); setReactivatePassword("");
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
+    },
+    onError: (e: Error) => toast({ title: "Reactivation Failed", description: e.message, variant: "destructive" }),
   });
 
   const rangeStart = data ? ((page - 1) * PAGE_SIZE) + 1 : 0;
@@ -490,9 +523,23 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
                             {/* Edit */}
                             {(!allowedSubs || allowedSubs.includes("edit")) && (
                               <Button variant="ghost" size="icon" className="text-[#D4AF37] hover:text-yellow-300 hover:bg-yellow-400/10 h-8 w-8"
-                                onClick={() => setEditTarget(t)} disabled={isArchiveMode} title="Edit" data-testid={`button-edit-teacher-reg-${t.id}`}>
+                                onClick={() => setEditTarget(t)} disabled={isArchiveMode || isInactive} title="Edit" data-testid={`button-edit-teacher-reg-${t.id}`}>
                                 <Pencil className="w-3.5 h-3.5" />
                               </Button>
+                            )}
+                            {/* Deactivate / Reactivate */}
+                            {(!allowedSubs || allowedSubs.includes("deactivate")) && (
+                              isInactive ? (
+                                <Button variant="ghost" size="icon" className="text-green-400 hover:text-green-300 hover:bg-green-400/10 h-8 w-8"
+                                  onClick={() => { setReactivateTarget(t); setReactivatePassword(""); }} disabled={isArchiveMode} title="Reactivate ID" data-testid={`button-reactivate-teacher-reg-${t.id}`}>
+                                  <Power className="w-3.5 h-3.5" />
+                                </Button>
+                              ) : (
+                                <Button variant="ghost" size="icon" className="text-orange-400 hover:text-orange-300 hover:bg-orange-400/10 h-8 w-8"
+                                  onClick={() => { setDeactivateTarget(t); setDeactivateReason(""); setDeactivatePassword(""); }} disabled={isArchiveMode} title="Deactivate ID" data-testid={`button-deactivate-teacher-reg-${t.id}`}>
+                                  <PowerOff className="w-3.5 h-3.5" />
+                                </Button>
+                              )
                             )}
                             {/* Delete */}
                             {(!allowedSubs || allowedSubs.includes("deactivate")) && (
@@ -766,6 +813,145 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
                 Remove
               </Button>
               <Button variant="outline" className="border-white/20 text-white hover:bg-white/10" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Deactivate ID Confirmation Modal ── */}
+      {deactivateTarget && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={e => { if (e.target === e.currentTarget) { setDeactivateTarget(null); setDeactivateReason(""); setDeactivatePassword(""); } }}>
+          <div className="w-full max-w-md rounded-2xl bg-[#1A2942] border border-orange-500/30 shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-orange-500/10">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-orange-500/20 flex items-center justify-center">
+                  <PowerOff className="w-4 h-4 text-orange-400" />
+                </div>
+                <div>
+                  <h3 className="text-white font-semibold text-sm">Deactivate Teacher ID</h3>
+                  <p className="text-white/40 text-xs">{deactivateTarget.fullName} · {(deactivateTarget as any).digitalTeacherId}</p>
+                </div>
+              </div>
+              <button onClick={() => { setDeactivateTarget(null); setDeactivateReason(""); setDeactivatePassword(""); }}
+                className="p-2 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <p className="text-white/60 text-sm">
+                Deactivating this ID will <span className="text-orange-300 font-medium">block the teacher's login</span> immediately. All their data and assignments are preserved and can be restored.
+              </p>
+
+              {/* Reason */}
+              <div className="space-y-1.5">
+                <label className="text-white/70 text-xs font-medium uppercase tracking-wide">Reason for Deactivation <span className="text-orange-400">*</span></label>
+                <textarea
+                  value={deactivateReason}
+                  onChange={e => setDeactivateReason(e.target.value)}
+                  placeholder="Enter reason (e.g. On leave, Suspended, Transferred…)"
+                  rows={3}
+                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/30 focus:outline-none focus:border-orange-400/60 resize-none"
+                />
+                {deactivateReason.length > 0 && deactivateReason.length < 5 && (
+                  <p className="text-orange-400 text-xs">Minimum 5 characters required</p>
+                )}
+              </div>
+
+              {/* Admin Password */}
+              <div className="space-y-1.5">
+                <label className="text-white/70 text-xs font-medium uppercase tracking-wide flex items-center gap-1.5">
+                  <Lock className="w-3 h-3" /> Admin Password <span className="text-orange-400">*</span>
+                </label>
+                <Input
+                  type="password"
+                  value={deactivatePassword}
+                  onChange={e => setDeactivatePassword(e.target.value)}
+                  placeholder="Enter your admin password to confirm"
+                  className="bg-[#0A1628] border-white/20 text-white h-10 placeholder:text-white/30"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <Button
+                  onClick={() => deactivateMutation.mutate({ id: deactivateTarget.id, reason: deactivateReason, adminPassword: deactivatePassword })}
+                  disabled={isArchiveMode || deactivateMutation.isPending || deactivateReason.length < 5 || !deactivatePassword}
+                  className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-semibold"
+                  data-testid="button-confirm-deactivate-teacher">
+                  {deactivateMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <PowerOff className="w-4 h-4 mr-1" />}
+                  Deactivate ID
+                </Button>
+                <Button variant="outline" className="border-white/20 text-white hover:bg-white/10"
+                  onClick={() => { setDeactivateTarget(null); setDeactivateReason(""); setDeactivatePassword(""); }}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Reactivate ID Confirmation Modal ── */}
+      {reactivateTarget && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={e => { if (e.target === e.currentTarget) { setReactivateTarget(null); setReactivatePassword(""); } }}>
+          <div className="w-full max-w-md rounded-2xl bg-[#1A2942] border border-green-500/30 shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-green-500/10">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-green-500/20 flex items-center justify-center">
+                  <Power className="w-4 h-4 text-green-400" />
+                </div>
+                <div>
+                  <h3 className="text-white font-semibold text-sm">Reactivate Teacher ID</h3>
+                  <p className="text-white/40 text-xs">{reactivateTarget.fullName} · {(reactivateTarget as any).digitalTeacherId}</p>
+                </div>
+              </div>
+              <button onClick={() => { setReactivateTarget(null); setReactivatePassword(""); }}
+                className="p-2 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <p className="text-white/60 text-sm">
+                This will <span className="text-green-300 font-medium">restore the teacher's login access</span>. They will be able to log in again immediately.
+              </p>
+              {(reactivateTarget as any).deactivationReason && (
+                <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg px-3 py-2">
+                  <p className="text-orange-400 text-[10px] uppercase tracking-wide mb-0.5">Deactivation Reason</p>
+                  <p className="text-white/70 text-xs">{(reactivateTarget as any).deactivationReason}</p>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-white/70 text-xs font-medium uppercase tracking-wide flex items-center gap-1.5">
+                  <Lock className="w-3 h-3" /> Admin Password <span className="text-green-400">*</span>
+                </label>
+                <Input
+                  type="password"
+                  value={reactivatePassword}
+                  onChange={e => setReactivatePassword(e.target.value)}
+                  placeholder="Enter your admin password to confirm"
+                  className="bg-[#0A1628] border-white/20 text-white h-10 placeholder:text-white/30"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <Button
+                  onClick={() => reactivateMutation.mutate({ id: reactivateTarget.id, adminPassword: reactivatePassword })}
+                  disabled={isArchiveMode || reactivateMutation.isPending || !reactivatePassword}
+                  className="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold"
+                  data-testid="button-confirm-reactivate-teacher">
+                  {reactivateMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Power className="w-4 h-4 mr-1" />}
+                  Reactivate ID
+                </Button>
+                <Button variant="outline" className="border-white/20 text-white hover:bg-white/10"
+                  onClick={() => { setReactivateTarget(null); setReactivatePassword(""); }}>
+                  Cancel
+                </Button>
+              </div>
             </div>
           </div>
         </div>

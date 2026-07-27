@@ -3689,6 +3689,55 @@ Thank you for your prompt attention to this matter.
     }
   });
 
+  // ===== DEACTIVATE / REACTIVATE TEACHER ID =====
+  app.post("/api/admin/teachers/:id/deactivate", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const teacherId = parseInt(req.params.id);
+    if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
+    const parsed = z.object({
+      reason: z.string().min(5, "Please provide a reason (min 5 characters)"),
+      adminPassword: z.string().min(1, "Admin password is required"),
+    }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      // Verify admin password
+      const adminUser = await storage.getUserById(req.session.userId);
+      if (!adminUser) return res.status(403).json({ message: "Admin not found" });
+      const valid = await bcrypt.compare(parsed.data.adminPassword, adminUser.passwordHash);
+      if (!valid) return res.status(401).json({ message: "Incorrect password" });
+      const updated = await storage.deactivateTeacher(teacherId, schoolId, parsed.data.reason);
+      if (!updated) return res.status(404).json({ message: "Teacher not found" });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to deactivate teacher" });
+    }
+  });
+
+  app.post("/api/admin/teachers/:id/reactivate", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const teacherId = parseInt(req.params.id);
+    if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
+    const parsed = z.object({
+      adminPassword: z.string().min(1, "Admin password is required"),
+    }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      const adminUser = await storage.getUserById(req.session.userId);
+      if (!adminUser) return res.status(403).json({ message: "Admin not found" });
+      const valid = await bcrypt.compare(parsed.data.adminPassword, adminUser.passwordHash);
+      if (!valid) return res.status(401).json({ message: "Incorrect password" });
+      const updated = await storage.reactivateTeacher(teacherId, schoolId);
+      if (!updated) return res.status(404).json({ message: "Teacher not found" });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to reactivate teacher" });
+    }
+  });
+
   // ===== NON-TEACHING STAFF (admin CRUD) =====
   const ntsCreateSchema = z.object({
     fullName: z.string().min(2),
