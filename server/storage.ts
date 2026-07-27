@@ -4311,7 +4311,7 @@ export class DatabaseStorage {
       .orderBy(facultyMappings.className, facultyMappings.section);
   }
 
-  async getTeachersBySchoolPaginated(schoolId: number, q: string, page: number, pageSize: number, filterClass?: string, filterSection?: string): Promise<{ data: (Teacher & { email: string; mappings: { className: string; section: string }[] })[]; total: number }> {
+  async getTeachersBySchoolPaginated(schoolId: number, q: string, page: number, pageSize: number, filterClass?: string, filterSection?: string): Promise<{ data: (Teacher & { email: string; mappings: { className: string; section: string; subject: string | null }[] })[]; total: number }> {
     const baseWhere = eq(teachers.schoolId, schoolId);
     const searchCondition = q
       ? and(baseWhere, or(
@@ -4364,13 +4364,14 @@ export class DatabaseStorage {
       .offset((page - 1) * pageSize);
 
     const teacherIds = data.map(r => r.teachers.id);
-    let mappingsByTeacher: Record<number, { className: string; section: string }[]> = {};
+    let mappingsByTeacher: Record<number, { className: string; section: string; subject: string | null }[]> = {};
 
     if (teacherIds.length > 0) {
       const allMappings = await db.select({
         teacherId: facultyMappings.teacherId,
         className: facultyMappings.className,
         section: facultyMappings.section,
+        subject: facultyMappings.subject,
       }).from(facultyMappings)
         .where(and(
           eq(facultyMappings.schoolId, schoolId),
@@ -4379,7 +4380,7 @@ export class DatabaseStorage {
 
       for (const m of allMappings) {
         if (!mappingsByTeacher[m.teacherId]) mappingsByTeacher[m.teacherId] = [];
-        mappingsByTeacher[m.teacherId].push({ className: m.className, section: m.section });
+        mappingsByTeacher[m.teacherId].push({ className: m.className, section: m.section, subject: m.subject });
       }
     }
 

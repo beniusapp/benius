@@ -14,7 +14,7 @@ import type { Teacher } from "@shared/schema";
 import { useSessionView } from "@/contexts/session-view-context";
 
 interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[]; onNavigate?: (module: string) => void; allowedSubs?: string[]; }
-type TeacherWithEmail = Teacher & { email: string; mappings: { className: string; section: string }[] };
+type TeacherWithEmail = Teacher & { email: string; mappings: { className: string; section: string; subject: string | null }[] };
 
 const PAGE_SIZE = 20;
 
@@ -322,7 +322,12 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
                       <td className="py-3 px-4 text-white font-medium">{t.fullName}</td>
                       <td className="py-3 px-4 text-white/70 text-xs">{t.email}</td>
                       <td className="py-3 px-4 text-white/70 text-xs">{t.phone}</td>
-                      <td className="py-3 px-4 text-[#D4AF37] text-xs">{t.subject}</td>
+                      <td className="py-3 px-4 text-[#D4AF37] text-xs">
+                        {(() => {
+                          const subjects = [...new Set((t.mappings ?? []).map(m => m.subject).filter(Boolean))] as string[];
+                          return subjects.length > 0 ? subjects.join(", ") : (t.subject || "—");
+                        })()}
+                      </td>
                       <td className="py-3 px-4">
                         <div className="flex flex-wrap gap-1" data-testid={`cell-sections-${t.id}`}>
                           {(t.mappings ?? []).length > 0
