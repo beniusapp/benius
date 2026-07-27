@@ -47,6 +47,14 @@ export interface TeacherMe {
   subject: string;
   assignedClass: string;
   assignedSection: string;
+  designation: string | null;
+  gender: string | null;
+  dateOfBirth: string | null;
+  govtIdType: string | null;
+  govtIdNumber: string | null;
+  address: string | null;
+  joiningDate: string | null;
+  qualifications: string | null;
   mustChangePassword: boolean;
   schoolId: number;
   schoolName: string;

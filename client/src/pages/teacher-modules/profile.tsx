@@ -5,6 +5,7 @@ import {
   User, Mail, Phone, BookOpen, GraduationCap, BadgeCheck,
   Camera, Loader2, Lock, Eye, EyeOff, CheckCircle, X,
   ZoomIn, ZoomOut, MoreVertical, ShieldCheck,
+  Briefcase, Calendar, MapPin, CreditCard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -143,12 +144,22 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
   })();
 
   const fields = [
-    { icon: BadgeCheck, label: "Teacher ID (DTID)", value: teacher.digitalTeacherId || "—" },
-    { icon: User, label: "Full Name", value: teacher.fullName },
-    { icon: Mail, label: "Email", value: teacher.email },
-    { icon: Phone, label: "Phone", value: teacher.phone || "—" },
-    { icon: BookOpen, label: "Subject", value: mappedSubjectValue },
-    { icon: GraduationCap, label: "Assigned Classes", value: mappedClassValue },
+    { icon: BadgeCheck,    label: "Teacher ID (DTID)",   value: teacher.digitalTeacherId || "—" },
+    { icon: User,          label: "Full Name",            value: teacher.fullName },
+    { icon: Mail,          label: "Email",                value: teacher.email },
+    { icon: Phone,         label: "Phone",                value: teacher.phone || "—" },
+    { icon: Briefcase,     label: "Designation",          value: teacher.designation || "—" },
+    { icon: BookOpen,      label: "Subject",              value: mappedSubjectValue },
+    { icon: GraduationCap, label: "Assigned Classes",     value: mappedClassValue },
+    { icon: User,          label: "Gender",               value: teacher.gender || "—" },
+    { icon: Calendar,      label: "Date of Birth",        value: teacher.dateOfBirth || "—" },
+    { icon: Calendar,      label: "Joining Date",         value: teacher.joiningDate || "—" },
+    { icon: GraduationCap, label: "Qualification",        value: teacher.qualifications || "—" },
+    { icon: CreditCard,    label: "Government ID",
+      value: teacher.govtIdType && teacher.govtIdNumber
+        ? `${teacher.govtIdType}: ${teacher.govtIdNumber}`
+        : teacher.govtIdNumber || "—" },
+    { icon: MapPin,        label: "Address",              value: teacher.address || "—" },
   ];
 
   const uploadMutation = useMutation({
