@@ -7,7 +7,8 @@ import {
   promotionOverrides, gradingTiers, gradingRules, academicHistory,
   schoolAssets, assetLogs, verificationLogs, timetableStructure, securityAudit, leavePolicies,
   nonTeachingStaff, facultyMappings, feeRecords, examPolicyTiers, promotionDecisions,
-  academicSessions, enrollments,
+  academicSessions, enrollments, removedTeachersLog,
+  type RemovedTeacherLog,
   type PromotionDecision,
   type School, type InsertSchool, type Student, type InsertStudent,
   type User, type InsertUser, type Teacher, type InsertTeacher,
@@ -293,6 +294,54 @@ export class DatabaseStorage {
     await db.delete(teachers).where(eq(teachers.id, teacherId));
     await db.delete(users).where(eq(users.id, teacher.userId));
     return true;
+  }
+
+  async logRemovedTeacher(entry: {
+    schoolId: number;
+    digitalTeacherId: string | null;
+    fullName: string;
+    email: string | null;
+    phone: string | null;
+    subject: string | null;
+    assignedClass: string | null;
+    assignedSection: string | null;
+    designation: string | null;
+    gender: string | null;
+    dateOfBirth: string | null;
+    govtIdType: string | null;
+    govtIdNumber: string | null;
+    address: string | null;
+    joiningDate: string | null;
+    qualifications: string | null;
+    removalReason: string;
+    removedByEmail: string | null;
+  }): Promise<void> {
+    await db.insert(removedTeachersLog).values(entry);
+  }
+
+  async getRemovedTeachersLog(schoolId: number, opts: { page: number; limit: number; q?: string }): Promise<{ data: RemovedTeacherLog[]; total: number; pages: number }> {
+    const offset = (opts.page - 1) * opts.limit;
+    const baseWhere = opts.q?.trim()
+      ? and(
+          eq(removedTeachersLog.schoolId, schoolId),
+          or(
+            ilike(removedTeachersLog.fullName, `%${opts.q}%`),
+            ilike(removedTeachersLog.digitalTeacherId, `%${opts.q}%`),
+            ilike(removedTeachersLog.email, `%${opts.q}%`),
+          )
+        )
+      : eq(removedTeachersLog.schoolId, schoolId);
+
+    const [totalRow] = await db.select({ count: count() }).from(removedTeachersLog).where(baseWhere);
+    const total = Number(totalRow.count);
+
+    const data = await db.select().from(removedTeachersLog)
+      .where(baseWhere)
+      .orderBy(desc(removedTeachersLog.removedAt))
+      .limit(opts.limit)
+      .offset(offset);
+
+    return { data, total, pages: Math.max(1, Math.ceil(total / opts.limit)) };
   }
 
   async deactivateTeacher(teacherId: number, schoolId: number, reason: string): Promise<Teacher | undefined> {

@@ -38,7 +38,8 @@ const TimetableMaster     = lazy(() => import("./admin-modules/timetable-master"
 const IdCardGen           = lazy(() => import("./admin-modules/id-card-gen"));
 const AssetsInventory     = lazy(() => import("./admin-modules/assets-inventory"));
 const SchoolCalendar      = lazy(() => import("./admin-modules/school-calendar"));
-const FeesManager         = lazy(() => import("./admin-modules/fees-manager"));
+const FeesManager              = lazy(() => import("./admin-modules/fees-manager"));
+const RemovedTeacherHistory    = lazy(() => import("./admin-modules/removed-teacher-history"));
 
 interface MeResponse {
   id: number; email: string; role: string;
@@ -74,7 +75,7 @@ type ActiveModule =
   | "student-registry" | "analytics" | "audit-logs" | "visitor-log"
   | "id-card-gen" | "assets" | "school-calendar"
   | "teacher-registry" | "non-teaching-staff" | "fees-manager"
-  | "leave-requests";
+  | "leave-requests" | "removed-teacher-history";
 
 interface TileConfig {
   id: ActiveModule;
@@ -964,6 +965,7 @@ export default function AdminDashboard() {
       case "assets":            return <AssetsInventory schoolId={me.schoolId} allowedSubs={getSubsFor("assets")} />;
       case "school-calendar":   return <SchoolCalendar allowedSubs={getSubsFor("school-calendar")} />;
       case "fees-manager":      return <FeesManager schoolId={me.schoolId} allowedSubs={getSubsFor("fees-manager")} />;
+      case "removed-teacher-history": return <RemovedTeacherHistory schoolId={me.schoolId} onBack={() => goToModule("teacher-registry")} />;
       default: return null;
     }
   };

@@ -8,7 +8,7 @@ import path from "path";
 import fs from "fs";
 import ExcelJS from "exceljs";
 import { db } from "./db";
-import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions, studentProfiles, students } from "@shared/schema";
+import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions, studentProfiles, students, removedTeachersLog, users } from "@shared/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 
@@ -3697,10 +3697,52 @@ Thank you for your prompt attention to this matter.
       const teacher = await storage.getTeacherById(teacherId);
       if (!teacher || teacher.schoolId !== schoolId)
         return res.status(404).json({ message: "Teacher not found" });
+
+      // Fetch teacher's email from users table before deletion
+      const [teacherUser] = await db.select({ email: users.email }).from(users).where(eq(users.id, teacher.userId));
+
+      // Log the removal before deleting
+      await storage.logRemovedTeacher({
+        schoolId,
+        digitalTeacherId: teacher.digitalTeacherId ?? null,
+        fullName: teacher.fullName,
+        email: teacherUser?.email ?? null,
+        phone: teacher.phone ?? null,
+        subject: teacher.subject ?? null,
+        assignedClass: teacher.assignedClass ?? null,
+        assignedSection: teacher.assignedSection ?? null,
+        designation: teacher.designation ?? null,
+        gender: teacher.gender ?? null,
+        dateOfBirth: teacher.dateOfBirth ?? null,
+        govtIdType: teacher.govtIdType ?? null,
+        govtIdNumber: teacher.govtIdNumber ?? null,
+        address: teacher.address ?? null,
+        joiningDate: teacher.joiningDate ?? null,
+        qualifications: teacher.qualifications ?? null,
+        removalReason: parsed.data.reason,
+        removedByEmail: adminUser.email,
+      });
+
       await storage.deleteTeacher(teacherId);
       res.json({ message: "Teacher removed from registry" });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to delete teacher" });
+    }
+  });
+
+  // ===== REMOVED TEACHER HISTORY =====
+  app.get("/api/admin/teachers/removed-history", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const page = Math.max(1, parseInt(String(req.query.page ?? "1")));
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? "20"))));
+    const q = String(req.query.q ?? "").trim();
+    try {
+      const result = await storage.getRemovedTeachersLog(schoolId, { page, limit, q: q || undefined });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch history" });
     }
   });
 

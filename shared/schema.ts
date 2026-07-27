@@ -911,3 +911,29 @@ export const enrollments = pgTable("enrollments", {
 export const insertEnrollmentSchema = createInsertSchema(enrollments).omit({ id: true });
 export type InsertEnrollment = z.infer<typeof insertEnrollmentSchema>;
 export type Enrollment = typeof enrollments.$inferSelect;
+
+// ── Removed Teachers Audit Log ─────────────────────────────────────────────
+export const removedTeachersLog = pgTable("removed_teachers_log", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull(),
+  digitalTeacherId: text("digital_teacher_id"),
+  fullName: text("full_name").notNull(),
+  email: text("email"),
+  phone: varchar("phone", { length: 20 }),
+  subject: text("subject"),
+  assignedClass: varchar("assigned_class", { length: 20 }),
+  assignedSection: varchar("assigned_section", { length: 10 }),
+  designation: text("designation"),
+  gender: varchar("gender", { length: 10 }),
+  dateOfBirth: text("date_of_birth"),
+  govtIdType: text("govt_id_type"),
+  govtIdNumber: text("govt_id_number"),
+  address: text("address"),
+  joiningDate: text("joining_date"),
+  qualifications: text("qualifications"),
+  removalReason: text("removal_reason").notNull(),
+  removedByEmail: text("removed_by_email"),
+  removedAt: timestamp("removed_at").notNull().defaultNow(),
+});
+
+export type RemovedTeacherLog = typeof removedTeachersLog.$inferSelect;

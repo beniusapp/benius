@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Search, UserPlus, Trash2, Pencil, ChevronLeft, ChevronRight, Loader2, X, Save, Eye, Calendar, MapPin, CreditCard, GraduationCap, User, Lock } from "lucide-react";
+import { Search, UserPlus, Trash2, Pencil, ChevronLeft, ChevronRight, Loader2, X, Save, Eye, Calendar, MapPin, CreditCard, GraduationCap, User, Lock, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -231,12 +231,20 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
             {data?.total ?? "..."} teacher{(data?.total ?? 0) !== 1 ? "s" : ""} · Page {page} of {totalPages}
           </p>
         </div>
-        {(!allowedSubs || allowedSubs.includes("add")) && (
-          <Button size="sm" className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
-            onClick={() => setShowForm(!showForm)} disabled={isArchiveMode} data-testid="button-add-teacher-toggle">
-            <UserPlus className="w-4 h-4 mr-1" /> Add Teacher
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline"
+            className="border-white/20 text-white/70 hover:text-white hover:bg-white/10 text-xs h-8 px-3"
+            onClick={() => onNavigate?.("removed-teacher-history")}
+            title="View removed teacher history">
+            <History className="w-3.5 h-3.5 mr-1.5" /> Removed History
           </Button>
-        )}
+          {(!allowedSubs || allowedSubs.includes("add")) && (
+            <Button size="sm" className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
+              onClick={() => setShowForm(!showForm)} disabled={isArchiveMode} data-testid="button-add-teacher-toggle">
+              <UserPlus className="w-4 h-4 mr-1" /> Add Teacher
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* ── Register New Teacher Form ── */}
