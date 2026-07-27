@@ -3638,8 +3638,9 @@ Thank you for your prompt attention to this matter.
     if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
     const editSchema = z.object({
       fullName: z.string().min(2).optional(),
-      phone: z.string().min(7).optional(),
+      phone: z.string().length(10).regex(/^\d{10}$/).optional(),
       designation: z.string().optional(),
+      department: z.string().optional(),
       gender: z.string().optional(),
       dateOfBirth: z.string().optional(),
       govtIdType: z.string().optional(),
@@ -3654,20 +3655,25 @@ Thank you for your prompt attention to this matter.
       const teacher = await storage.getTeacherById(teacherId);
       if (!teacher || teacher.schoolId !== schoolId)
         return res.status(404).json({ message: "Teacher not found" });
+      // Use || to treat empty string the same as "not provided" — preserves existing values
+      // when optional selects/inputs are left blank, only overwrites when user provides a real value
+      const str = (v: string | undefined | null, fallback: string | null | undefined) =>
+        v || fallback || undefined;
       const updated = await storage.updateTeacherAssignment(teacherId, schoolId, {
-        fullName: parsed.data.fullName ?? teacher.fullName,
+        fullName: parsed.data.fullName || teacher.fullName,
         subject: teacher.subject,
         assignedClass: teacher.assignedClass,
         assignedSection: teacher.assignedSection,
-        phone: parsed.data.phone ?? teacher.phone,
+        phone: parsed.data.phone || teacher.phone,
         designation: parsed.data.designation ?? teacher.designation ?? "",
-        gender: parsed.data.gender ?? teacher.gender ?? undefined,
-        dateOfBirth: parsed.data.dateOfBirth ?? teacher.dateOfBirth ?? undefined,
-        govtIdType: parsed.data.govtIdType ?? teacher.govtIdType ?? undefined,
-        govtIdNumber: parsed.data.govtIdNumber ?? teacher.govtIdNumber ?? undefined,
-        address: parsed.data.address ?? teacher.address ?? undefined,
-        joiningDate: parsed.data.joiningDate ?? teacher.joiningDate ?? undefined,
-        qualifications: parsed.data.qualifications ?? teacher.qualifications ?? undefined,
+        department: str(parsed.data.department, teacher.department),
+        gender: str(parsed.data.gender, teacher.gender),
+        dateOfBirth: str(parsed.data.dateOfBirth, teacher.dateOfBirth),
+        govtIdType: str(parsed.data.govtIdType, teacher.govtIdType),
+        govtIdNumber: str(parsed.data.govtIdNumber, teacher.govtIdNumber),
+        address: str(parsed.data.address, teacher.address),
+        joiningDate: str(parsed.data.joiningDate, teacher.joiningDate),
+        qualifications: str(parsed.data.qualifications, teacher.qualifications),
       });
       res.json(updated);
     } catch (err: any) {

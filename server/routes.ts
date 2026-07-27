@@ -2207,57 +2207,6 @@ export async function registerRoutes(
     res.status(201).json(note);
   });
 
-  // ===== ADMIN TEACHERS: PATCH (edit assignment — strict session-scoped) =====
-  const editTeacherSchema = z.object({
-    fullName: z.string().min(2, "Name must be at least 2 characters").optional(),
-    phone: z.string().length(10).regex(/^\d{10}$/).optional(),
-    designation: z.string().optional(),
-    subject: z.string().optional(),
-    assignedClass: z.string().optional(),
-    assignedSection: z.string().optional(),
-    department: z.string().optional(),
-    gender: z.string().optional(),
-    dateOfBirth: z.string().optional(),
-    govtIdType: z.string().optional(),
-    govtIdNumber: z.string().optional(),
-    address: z.string().optional(),
-    joiningDate: z.string().optional(),
-    qualifications: z.string().optional(),
-  });
-
-  app.patch("/api/admin/teachers/:id", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
-    const schoolId = req.session.schoolId;
-    if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
-    const teacherId = parseInt(req.params.id);
-    if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
-    const parsed = editTeacherSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-    try {
-      const existing = await storage.getTeacherById(teacherId);
-      if (!existing || existing.schoolId !== schoolId) return res.status(404).json({ message: "Teacher not found" });
-      const updated = await storage.updateTeacherAssignment(teacherId, schoolId, {
-        fullName: parsed.data.fullName ?? existing.fullName,
-        subject: parsed.data.subject ?? existing.subject,
-        assignedClass: parsed.data.assignedClass ?? existing.assignedClass,
-        assignedSection: parsed.data.assignedSection ?? existing.assignedSection,
-        phone: parsed.data.phone ?? existing.phone,
-        designation: parsed.data.designation ?? existing.designation ?? "",
-        department: parsed.data.department,
-        gender: parsed.data.gender,
-        dateOfBirth: parsed.data.dateOfBirth,
-        govtIdType: parsed.data.govtIdType,
-        govtIdNumber: parsed.data.govtIdNumber,
-        address: parsed.data.address,
-        joiningDate: parsed.data.joiningDate,
-        qualifications: parsed.data.qualifications,
-      });
-      res.json(updated);
-    } catch (err) {
-      res.status(500).json({ message: "Failed to update teacher" });
-    }
-  });
-
   // ===== ADMIN SCHOOL CONFIG (strict session-scoped) =====
   app.get("/api/admin/school-config", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });

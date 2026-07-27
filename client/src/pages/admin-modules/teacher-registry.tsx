@@ -692,19 +692,6 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
                   <div>
                     <p className="text-[#D4AF37] text-[10px] uppercase tracking-widest mb-2 font-semibold">Assignment</p>
                     <div className="grid grid-cols-2 gap-3">
-                      <FormField control={editForm.control} name="subject" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-white/70 text-xs">Subject</FormLabel>
-                          <Select value={field.value || ""} onValueChange={field.onChange}>
-                            <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-10">
-                              <SelectValue placeholder="Select subject" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {subjects.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                        </FormItem>
-                      )} />
                       <FormField control={editForm.control} name="department" render={({ field }) => (
                         <FormItem>
                           <FormLabel className="text-white/70 text-xs">Department</FormLabel>
