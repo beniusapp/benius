@@ -15,7 +15,7 @@
  *  D – Generated after creation (blue info banner)
  */
 
-import { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -26,6 +26,7 @@ import {
   ToggleLeft, ToggleRight, GraduationCap, Settings,
   Lock, Info, CreditCard, Package, MapPin, Calendar,
   FileText, BarChart2, Bell, UserSquare, CheckSquare,
+  Eye, EyeOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1606,41 +1607,94 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
 interface DeleteModalProps {
   session:   AcademicSession;
   onClose:   () => void;
-  onConfirm: () => void;
+  onConfirm: (password: string) => void;
   isPending: boolean;
 }
 function DeleteModal({ session, onClose, onConfirm, isPending }: DeleteModalProps) {
+  const [password, setPassword] = React.useState("");
+  const [showPw, setShowPw]     = React.useState(false);
+
+  function handleClose() {
+    setPassword("");
+    setShowPw(false);
+    onClose();
+  }
+
+  function handleConfirm() {
+    if (!password.trim()) return;
+    onConfirm(password);
+  }
+
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={GLASS.modalOverlay} onClick={onClose}>
-      <div className="w-full max-w-sm rounded-2xl p-6 space-y-4"
+      style={GLASS.modalOverlay} onClick={handleClose}>
+      <div className="w-full max-w-sm rounded-2xl p-6 space-y-5"
         style={{ ...GLASS.modal, border: "1px solid rgba(239,68,68,0.25)" }}
         onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-            style={{ background: "rgba(239,68,68,0.12)" }}>
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+            style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.20)" }}>
             <Trash2 className="w-4 h-4 text-red-400" />
           </div>
           <div>
             <h3 className="font-bold text-white">Delete Session</h3>
-            <p className="text-xs text-white/50">
-              "{session.sessionName}" and all its enrollment records will be permanently removed.
+            <p className="text-xs text-white/45 mt-0.5 leading-relaxed">
+              "{session.sessionName}" and all its archived records will be permanently removed.
             </p>
           </div>
         </div>
-        <div className="flex gap-3 pt-1">
-          <Button variant="outline" onClick={onClose}
+
+        {/* Password field */}
+        <div className="space-y-1.5">
+          <label className="text-[11px] font-semibold text-white/50 tracking-wide uppercase">
+            Confirm with your admin password
+          </label>
+          <div className="relative">
+            <input
+              type={showPw ? "text" : "password"}
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleConfirm()}
+              placeholder="Enter your password"
+              autoFocus
+              className="w-full h-10 rounded-lg px-3 pr-10 text-sm text-white placeholder-white/25 outline-none transition-all"
+              style={{
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.10)",
+              }}
+              data-testid="input-delete-password"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPw(v => !v)}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors"
+              tabIndex={-1}>
+              {showPw
+                ? <EyeOff className="w-4 h-4" />
+                : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
+
+        {/* Buttons */}
+        <div className="flex gap-3">
+          <Button variant="outline" onClick={handleClose}
             className="flex-1 border-white/15 text-white/60"
             data-testid="button-delete-cancel">Cancel</Button>
-          <button disabled={isPending} onClick={onConfirm}
+          <button
+            disabled={isPending || !password.trim()}
+            onClick={handleConfirm}
             data-testid="button-delete-confirm"
             className="flex-1 h-9 rounded-lg font-semibold text-sm text-white flex items-center justify-center gap-2
-              disabled:opacity-50 hover:brightness-110 active:scale-95 transition-all"
+              disabled:opacity-40 hover:brightness-110 active:scale-95 transition-all"
             style={{ background: "linear-gradient(135deg,#dc2626,#ef4444)" }}>
             {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
             Delete
           </button>
         </div>
+
       </div>
     </div>
   , document.body);
@@ -1722,8 +1776,8 @@ export default function AcademicSessions({ schoolId }: Props) {
 
   // ── Delete mutation ───────────────────────────────────────────────────────
   const deleteMut = useMutation({
-    mutationFn: async (id: number) => {
-      const r = await apiRequest("DELETE", `/api/admin/academic-sessions/${id}`, undefined);
+    mutationFn: async ({ id, password }: { id: number; password: string }) => {
+      const r = await apiRequest("DELETE", `/api/admin/academic-sessions/${id}`, { password });
       if (!r.ok) { const err = await r.json(); throw new Error(err.message || "Failed to delete"); }
     },
     onSuccess: () => {
@@ -1925,7 +1979,7 @@ export default function AcademicSessions({ schoolId }: Props) {
         <DeleteModal
           session={deleteTarget}
           onClose={() => setDeleteTarget(null)}
-          onConfirm={() => deleteMut.mutate(deleteTarget.id)}
+          onConfirm={(password) => deleteMut.mutate({ id: deleteTarget.id, password })}
           isPending={deleteMut.isPending}
         />
       )}

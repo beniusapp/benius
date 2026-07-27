@@ -3189,7 +3189,18 @@ export async function registerRoutes(
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid session ID" });
+
+    // Require admin password confirmation
+    const { password } = req.body as { password?: string };
+    if (!password) return res.status(400).json({ message: "Password is required to delete a session" });
+
     try {
+      // Verify the admin's own password
+      const adminUser = await storage.getUserById(req.session.userId);
+      if (!adminUser) return res.status(403).json({ message: "Admin account not found" });
+      const valid = await bcrypt.compare(password, adminUser.passwordHash);
+      if (!valid) return res.status(401).json({ message: "Incorrect password" });
+
       await storage.deleteAcademicSession(id, schoolId);
       res.json({ message: "Session deleted" });
     } catch (e: any) {
