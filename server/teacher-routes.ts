@@ -190,6 +190,7 @@ export function registerTeacherRoutes(app: Express) {
       schoolCode: data.school.code,
       attendanceDoneToday: todayDone,
       profileImageUrl: data.teacher.profileImageUrl || null,
+      digitalTeacherId: data.teacher.digitalTeacherId || null,
       mappings,
     });
   });
@@ -3585,6 +3586,11 @@ Thank you for your prompt attention to this matter.
     try {
       const existing = await storage.getUserByEmail(parsed.data.email);
       if (existing) return res.status(409).json({ message: "A user with this email already exists" });
+      const userData = await storage.getUserWithSchool(req.session.userId!);
+      if (!userData) return res.status(403).json({ message: "School not found" });
+      const schoolCode = userData.school.code;
+      const currentSerial = await storage.getMaxDtidSerialForSchool(schoolCode);
+      const dtid = `${schoolCode}-T${String(currentSerial + 1).padStart(3, "0")}`;
       const passwordHash = await bcrypt.hash(parsed.data.password, 10);
       const teacher = await storage.createTeacher({
         schoolId,
@@ -3595,6 +3601,7 @@ Thank you for your prompt attention to this matter.
         assignedSection: parsed.data.assignedSection,
         designation: parsed.data.designation,
         mustChangePassword: true,
+        digitalTeacherId: dtid,
       }, parsed.data.email, passwordHash);
       res.status(201).json(teacher);
     } catch (err: any) {

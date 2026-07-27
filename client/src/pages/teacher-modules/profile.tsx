@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import {
-  User, Mail, Phone, BookOpen, GraduationCap,
+  User, Mail, Phone, BookOpen, GraduationCap, BadgeCheck,
   Camera, Loader2, Lock, Eye, EyeOff, CheckCircle, X,
   ZoomIn, ZoomOut, MoreVertical, ShieldCheck,
 } from "lucide-react";
@@ -143,6 +143,7 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
   })();
 
   const fields = [
+    { icon: BadgeCheck, label: "Teacher ID (DTID)", value: teacher.digitalTeacherId || "—" },
     { icon: User, label: "Full Name", value: teacher.fullName },
     { icon: Mail, label: "Email", value: teacher.email },
     { icon: Phone, label: "Phone", value: teacher.phone || "—" },

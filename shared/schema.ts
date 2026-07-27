@@ -70,6 +70,7 @@ export const teachers = pgTable("teachers", {
   designation: text("designation"),
   qualifications: text("qualifications"),
   department: text("department"),
+  digitalTeacherId: text("digital_teacher_id").unique(),
 });
 
 export const attendanceRecords = pgTable("attendance_records", {

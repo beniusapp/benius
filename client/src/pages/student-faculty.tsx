@@ -35,6 +35,7 @@ interface FacultyMember {
   qualifications: string | null;
   department: string | null;
   profileImageUrl: string | null;
+  digitalTeacherId: string | null;
   mappings: { className: string; section: string; subject: string | null }[];
 }
 
@@ -233,6 +234,11 @@ function DetailModal({ member, onClose }: { member: FacultyMember; onClose: () =
             <h2 className="text-xl font-bold text-gray-900">{member.fullName}</h2>
             {member.designation && (
               <p className="text-sm text-gray-500 mt-0.5 font-medium">{member.designation}</p>
+            )}
+            {member.digitalTeacherId && (
+              <p className="text-xs font-mono font-semibold mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                ID: {member.digitalTeacherId}
+              </p>
             )}
 
             <div className="mt-4 space-y-3">

@@ -37,7 +37,7 @@ type EditForm = z.infer<typeof editSchema>;
 function SkeletonRow() {
   return (
     <tr className="border-b border-white/5">
-      {Array.from({ length: 7 }).map((_, i) => (
+      {Array.from({ length: 8 }).map((_, i) => (
         <td key={i} className="py-3 px-4">
           <div className="h-4 rounded bg-white/10 animate-pulse" style={{ width: `${45 + (i * 11) % 50}%` }} />
         </td>
@@ -299,7 +299,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
           <table className="w-full text-sm min-w-[760px]">
             <thead className="sticky top-0 z-10 bg-[#0F1E35]">
               <tr>
-                {["Name","Email","Phone","Subject","Assigned Sections","Designation","Actions"].map(h => (
+                {["DTID","Name","Email","Phone","Subject","Assigned Sections","Designation","Actions"].map(h => (
                   <th key={h} className="text-left py-3 px-4 text-white/60 font-medium text-xs uppercase tracking-wide border-b border-white/10">{h}</th>
                 ))}
               </tr>
@@ -317,6 +317,9 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
                   )
                   : data.data.map(t => (
                     <tr key={t.id} className="border-b border-white/5 hover:bg-white/5 transition-colors" data-testid={`row-teacher-reg-${t.id}`}>
+                      <td className="py-3 px-4">
+                        <span className="text-[#D4AF37] font-mono text-xs font-semibold tracking-wide">{(t as any).digitalTeacherId || "—"}</span>
+                      </td>
                       <td className="py-3 px-4 text-white font-medium">{t.fullName}</td>
                       <td className="py-3 px-4 text-white/70 text-xs">{t.email}</td>
                       <td className="py-3 px-4 text-white/70 text-xs">{t.phone}</td>
@@ -401,6 +404,9 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
               <div>
                 <h3 className="text-sm font-semibold text-white flex items-center gap-2"><Pencil className="w-4 h-4 text-[#D4AF37]" /> Edit Teacher</h3>
                 <p className="text-xs text-white/40">{editTarget.email}</p>
+                {(editTarget as any).digitalTeacherId && (
+                  <p className="text-xs text-[#D4AF37] font-mono font-semibold mt-0.5">{(editTarget as any).digitalTeacherId}</p>
+                )}
               </div>
               <button onClick={() => setEditTarget(null)} className="p-2 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors" data-testid="button-close-edit-teacher-registry">
                 <X className="w-4 h-4" />

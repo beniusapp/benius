@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Search, User, Phone, BookOpen } from "lucide-react";
+import { Loader2, Search, User, Phone, BookOpen, BadgeCheck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
@@ -12,6 +12,7 @@ interface FacultyMember {
   phone: string;
   assignedClass: string;
   assignedSection: string;
+  digitalTeacherId: string | null;
   mappings: { className: string; section: string; subject: string | null }[];
 }
 
@@ -69,6 +70,11 @@ export default function FacultyInfoModule({ teacher }: { teacher: TeacherMe }) {
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="font-medium text-sm">{f.fullName}</p>
+                      {f.digitalTeacherId && (
+                        <p className="text-xs font-mono font-semibold text-primary flex items-center gap-1 mt-0.5">
+                          <BadgeCheck className="w-3 h-3 flex-shrink-0" /> {f.digitalTeacherId}
+                        </p>
+                      )}
                       <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                         <BookOpen className="w-3 h-3 flex-shrink-0" /> {f.subject}
                       </p>

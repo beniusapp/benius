@@ -171,6 +171,22 @@ export class DatabaseStorage {
     return max;
   }
 
+  async getMaxDtidSerialForSchool(schoolCode: string): Promise<number> {
+    const prefix = `${schoolCode}-T`;
+    const rows = await db
+      .select({ digitalTeacherId: teachers.digitalTeacherId })
+      .from(teachers)
+      .where(like(teachers.digitalTeacherId, `${prefix}%`));
+    let max = 0;
+    for (const row of rows) {
+      if (!row.digitalTeacherId) continue;
+      const suffix = row.digitalTeacherId.replace(prefix, "");
+      const num = parseInt(suffix, 10);
+      if (!isNaN(num) && num > max) max = num;
+    }
+    return max;
+  }
+
   async bulkCreateStudents(studentRecords: InsertStudent[]): Promise<Student[]> {
     if (studentRecords.length === 0) return [];
     return await db.transaction(async (tx) => {
@@ -1612,6 +1628,7 @@ export class DatabaseStorage {
     assignedClass: string; assignedSection: string;
     designation: string | null; qualifications: string | null;
     department: string | null; profileImageUrl: string | null;
+    digitalTeacherId: string | null;
     mappings: { className: string; section: string; subject: string | null }[];
   }[]> {
     const teacherRows = await db.select({
@@ -1625,6 +1642,7 @@ export class DatabaseStorage {
       qualifications: teachers.qualifications,
       department: teachers.department,
       profileImageUrl: teachers.profileImageUrl,
+      digitalTeacherId: teachers.digitalTeacherId,
     }).from(teachers).where(eq(teachers.schoolId, schoolId)).orderBy(teachers.fullName);
 
     const mappingRows = await db.select({
