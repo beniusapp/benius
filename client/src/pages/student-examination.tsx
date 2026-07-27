@@ -184,7 +184,7 @@ function PrintStyles() {
       @media print {
         body * { visibility: hidden !important; }
         #exam-print-area, #exam-print-area * { visibility: visible !important; }
-        #exam-print-area { position: fixed; top: 0; left: 0; width: 100%; padding: 20px; background: #fff; color: #000; }
+        #exam-print-area { position: absolute; top: 0; left: 0; width: 100%; padding: 20px; background: #fff; color: #000; }
         .no-print { display: none !important; }
       }
       @keyframes fadeSlideDown {
