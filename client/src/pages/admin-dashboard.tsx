@@ -143,7 +143,7 @@ const changePinSchema = z.object({
 
 const profileSchema = z.object({
   recoveryEmail: z.string().email("Valid email").optional().or(z.literal("")),
-  recoveryPhone: z.string().max(20).optional().or(z.literal("")),
+  recoveryPhone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Only digits allowed").optional().or(z.literal("")),
 });
 
 function useCountUp(target: number, duration = 1100) {
@@ -472,7 +472,7 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
                       <FormControl>
                         <div className="relative">
                           <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-                          <Input className="pl-8 text-sm" placeholder="+91 98765 43210" data-testid="input-profile-recovery-phone" {...field} />
+                          <Input className="pl-8 text-sm" placeholder="10-digit mobile number" inputMode="numeric" maxLength={10} data-testid="input-profile-recovery-phone" {...field} onChange={e => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 10))} />
                         </div>
                       </FormControl>
                       <FormMessage />

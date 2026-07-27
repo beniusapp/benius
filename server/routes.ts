@@ -105,7 +105,7 @@ function parseUploadedFile(buffer: Buffer, filename: string): Record<string, str
 
 function isValidPhone(phone: string): boolean {
   const cleaned = phone.replace(/[\s\-\(\)\+]/g, "");
-  return cleaned.length >= 7 && /^\d+$/.test(cleaned);
+  return cleaned.length === 10 && /^\d{10}$/.test(cleaned);
 }
 
 function parseDate(value: string): string | null {
@@ -347,7 +347,7 @@ export async function registerRoutes(
       pin: z.string().length(6).regex(/^\d{6}$/, "PIN must be 6 digits"),
       confirmPin: z.string().length(6),
       recoveryEmail: z.string().email("Enter a valid recovery email"),
-      recoveryPhone: z.string().min(7, "Enter a valid phone number").max(20),
+      recoveryPhone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Phone must contain only digits"),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid data" });
@@ -536,7 +536,7 @@ export async function registerRoutes(
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
     const schema = z.object({
       recoveryEmail: z.string().email().optional().or(z.literal("")),
-      recoveryPhone: z.string().min(7, "Enter a valid phone number").max(20).optional().or(z.literal("")),
+      recoveryPhone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Phone must contain only digits").optional().or(z.literal("")),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid data" });
@@ -877,7 +877,7 @@ export async function registerRoutes(
 
   const verifyStudentSchema = z.object({
     dsid: z.string().min(1),
-    phone: z.string().min(1),
+    phone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Only digits allowed"),
     dob: z.string().min(1),
   });
 
@@ -907,7 +907,7 @@ export async function registerRoutes(
 
   const activateStudentSchema = z.object({
     dsid: z.string().min(1),
-    phone: z.string().min(1),
+    phone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Only digits allowed"),
     dob: z.string().min(1),
     password: z.string().min(6, "Password must be at least 6 characters"),
   });
@@ -2210,7 +2210,7 @@ export async function registerRoutes(
   // ===== ADMIN TEACHERS: PATCH (edit assignment — strict session-scoped) =====
   const editTeacherSchema = z.object({
     fullName: z.string().min(2, "Name must be at least 2 characters").optional(),
-    phone: z.string().min(7).optional(),
+    phone: z.string().length(10).regex(/^\d{10}$/).optional(),
     designation: z.string().optional(),
     subject: z.string().optional(),
     assignedClass: z.string().optional(),

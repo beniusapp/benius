@@ -21,7 +21,7 @@ const DESIGNATIONS = ["Principal", "Vice Principal", "Admin", "Accountant", "Lib
 const addSchema = z.object({
   fullName: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Valid email required"),
-  phone: z.string().optional(),
+  phone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Only digits allowed").optional().or(z.literal("")),
   designation: z.string().min(1, "Designation required"),
   customDesignation: z.string().optional(),
   password: z.string().min(6, "Password must be at least 6 characters"),
@@ -31,7 +31,7 @@ const addSchema = z.object({
 const editSchema = z.object({
   fullName: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Valid email required"),
-  phone: z.string().optional(),
+  phone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Only digits allowed").optional().or(z.literal("")),
   designation: z.string().min(1, "Designation required"),
   customDesignation: z.string().optional(),
 });
@@ -417,7 +417,7 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
                 <FormField control={addForm.control} name="phone" render={({ field }) => (
                   <FormItem>
                     <FormLabel className="text-white/70 text-xs">Phone</FormLabel>
-                    <FormControl><Input {...field} className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-nts-add-phone" /></FormControl>
+                    <FormControl><Input {...field} inputMode="numeric" maxLength={10} placeholder="10-digit mobile number" className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-nts-add-phone" onChange={e => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 10))} /></FormControl>
                     <FormMessage />
                   </FormItem>
                 )} />
@@ -639,7 +639,7 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
                     <FormField control={editForm.control} name="phone" render={({ field }) => (
                       <FormItem>
                         <FormLabel className="text-white/70 text-xs">Phone</FormLabel>
-                        <FormControl><Input {...field} className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-nts-edit-phone" /></FormControl>
+                        <FormControl><Input {...field} inputMode="numeric" maxLength={10} placeholder="10-digit mobile number" className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-nts-edit-phone" onChange={e => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 10))} /></FormControl>
                         <FormMessage />
                       </FormItem>
                     )} />

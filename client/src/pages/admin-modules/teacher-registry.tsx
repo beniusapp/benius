@@ -24,7 +24,7 @@ const addSchema = z.object({
   fullName: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Valid email required"),
   password: z.string().min(6, "Password must be at least 6 characters"),
-  phone: z.string().min(7, "Phone number required"),
+  phone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Only digits allowed"),
   designation: z.string().optional(),
   gender: z.string().optional(),
   dateOfBirth: z.string().optional(),
@@ -38,7 +38,7 @@ type AddForm = z.infer<typeof addSchema>;
 
 const editSchema = z.object({
   fullName: z.string().min(2),
-  phone: z.string().min(7),
+  phone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Only digits allowed"),
   designation: z.string().optional(),
   subject: z.string().optional(),
   assignedClass: z.string().optional(),
@@ -78,7 +78,7 @@ function InfoRow({ label, value, icon: Icon }: { label: string; value?: string |
   );
 }
 
-export default function TeacherRegistry({ schoolId, classes, sections, onNavigate, allowedSubs }: Props) {
+export default function TeacherRegistry({ schoolId, classes, sections, subjects, onNavigate, allowedSubs }: Props) {
   const { toast } = useToast();
   const { isArchiveMode } = useSessionView();
   const [q, setQ] = useState("");
@@ -278,7 +278,8 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
                         <FormControl>
                           <Input {...field} type={name === "password" ? "password" : "text"}
                             className="bg-[#0A1628] border-white/20 text-white h-9 text-sm"
-                            data-testid={`input-reg-teacher-${name}`} />
+                            data-testid={`input-reg-teacher-${name}`}
+                            {...(name === "phone" ? { inputMode: "numeric" as const, maxLength: 10, placeholder: "10-digit mobile number", onChange: (e: React.ChangeEvent<HTMLInputElement>) => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 10)) } : {})} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -674,7 +675,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
                       <FormField control={editForm.control} name="phone" render={({ field }) => (
                         <FormItem>
                           <FormLabel className="text-white/70 text-xs">Phone</FormLabel>
-                          <FormControl><Input {...field} className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-edit-reg-phone" /></FormControl>
+                          <FormControl><Input {...field} inputMode="numeric" maxLength={10} placeholder="10-digit mobile number" className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-edit-reg-phone" onChange={e => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 10))} /></FormControl>
                           <FormMessage />
                         </FormItem>
                       )} />

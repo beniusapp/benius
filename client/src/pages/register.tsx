@@ -13,7 +13,7 @@ import { apiRequest } from "@/lib/queryClient";
 
 const verifySchema = z.object({
   dsid: z.string().min(1, "DSID is required"),
-  phone: z.string().min(7, "Valid phone number is required"),
+  phone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Only digits allowed"),
   dob: z.string().min(1, "Date of birth is required"),
 });
 
@@ -133,7 +133,7 @@ export default function Register() {
                         <FormItem>
                           <FormLabel>Phone Number</FormLabel>
                           <FormControl>
-                            <Input placeholder="e.g. 9876543210" data-testid="input-verify-phone" {...field} />
+                            <Input placeholder="e.g. 9876543210" inputMode="numeric" maxLength={10} data-testid="input-verify-phone" {...field} onChange={e => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 10))} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
