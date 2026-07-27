@@ -867,6 +867,9 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     setViewSessionId(selectedViewSession?.id ?? null);
+    // Bust every cached query so all modules immediately refetch
+    // scoped to the newly-selected session.
+    queryClient.invalidateQueries();
   }, [selectedViewSession]);
 
   const pendingLeavesCount          = (pendingLeaves          as { status: string }[]).filter(l => l.status === "pending").length;
