@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Search, UserPlus, Trash2, Pencil, ChevronLeft, ChevronRight, Loader2, X, Save } from "lucide-react";
+import { Search, UserPlus, Trash2, Pencil, ChevronLeft, ChevronRight, Loader2, X, Save, Eye, BadgeCheck, Calendar, MapPin, CreditCard, GraduationCap, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -18,12 +18,21 @@ type TeacherWithEmail = Teacher & { email: string; mappings: { className: string
 
 const PAGE_SIZE = 20;
 
+const GOVT_ID_TYPES = ["Aadhar", "Voter ID", "PAN", "Driving Licence"];
+
 const addSchema = z.object({
   fullName: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Valid email required"),
   password: z.string().min(6, "Password must be at least 6 characters"),
   phone: z.string().min(7, "Phone number required"),
   designation: z.string().optional(),
+  gender: z.string().optional(),
+  dateOfBirth: z.string().optional(),
+  govtIdType: z.string().optional(),
+  govtIdNumber: z.string().optional(),
+  address: z.string().optional(),
+  joiningDate: z.string().optional(),
+  qualifications: z.string().optional(),
 });
 type AddForm = z.infer<typeof addSchema>;
 
@@ -31,18 +40,37 @@ const editSchema = z.object({
   fullName: z.string().min(2),
   phone: z.string().min(7),
   designation: z.string().optional(),
+  gender: z.string().optional(),
+  dateOfBirth: z.string().optional(),
+  govtIdType: z.string().optional(),
+  govtIdNumber: z.string().optional(),
+  address: z.string().optional(),
+  joiningDate: z.string().optional(),
+  qualifications: z.string().optional(),
 });
 type EditForm = z.infer<typeof editSchema>;
 
 function SkeletonRow() {
   return (
     <tr className="border-b border-white/5">
-      {Array.from({ length: 8 }).map((_, i) => (
+      {Array.from({ length: 9 }).map((_, i) => (
         <td key={i} className="py-3 px-4">
           <div className="h-4 rounded bg-white/10 animate-pulse" style={{ width: `${45 + (i * 11) % 50}%` }} />
         </td>
       ))}
     </tr>
+  );
+}
+
+function InfoRow({ label, value, icon: Icon }: { label: string; value?: string | null; icon?: any }) {
+  return (
+    <div className="flex items-start gap-3 py-2.5 border-b border-white/5 last:border-0">
+      {Icon && <Icon className="w-3.5 h-3.5 text-[#D4AF37] mt-0.5 shrink-0" />}
+      <div className="flex-1 min-w-0">
+        <p className="text-white/40 text-[10px] uppercase tracking-wide mb-0.5">{label}</p>
+        <p className="text-white text-xs font-medium break-words">{value || "—"}</p>
+      </div>
+    </div>
   );
 }
 
@@ -57,6 +85,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
   const [showForm, setShowForm] = useState(false);
   const [editTarget, setEditTarget] = useState<TeacherWithEmail | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TeacherWithEmail | null>(null);
+  const [viewTarget, setViewTarget] = useState<TeacherWithEmail | null>(null);
   const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(null);
 
   const { data: schoolConfig } = useQuery<{ classes: string[]; sections: string[]; subjects: string[] }>({
@@ -77,15 +106,8 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
     setDebounceTimer(t);
   }, [debounceTimer]);
 
-  const handleFilterClass = (val: string) => {
-    setFilterClass(val === "__all__" ? "" : val);
-    setPage(1);
-  };
-
-  const handleFilterSection = (val: string) => {
-    setFilterSection(val === "__all__" ? "" : val);
-    setPage(1);
-  };
+  const handleFilterClass = (val: string) => { setFilterClass(val === "__all__" ? "" : val); setPage(1); };
+  const handleFilterSection = (val: string) => { setFilterSection(val === "__all__" ? "" : val); setPage(1); };
 
   const hasFilters = debouncedQ || filterClass || filterSection;
   const clearFilters = () => {
@@ -110,10 +132,13 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
 
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 1;
 
+  // ── Add form ──────────────────────────────────────────────
   const addForm = useForm<AddForm>({
     resolver: zodResolver(addSchema),
-    defaultValues: { fullName: "", email: "", password: "", phone: "", designation: "" },
+    defaultValues: { fullName: "", email: "", password: "", phone: "", designation: "", gender: "", dateOfBirth: "", govtIdType: "", govtIdNumber: "", address: "", joiningDate: "", qualifications: "" },
   });
+
+  const watchGovtIdType = addForm.watch("govtIdType");
 
   const addMutation = useMutation({
     mutationFn: async (d: AddForm) => {
@@ -129,10 +154,13 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
+  // ── Edit form ─────────────────────────────────────────────
   const editForm = useForm<EditForm>({
     resolver: zodResolver(editSchema),
-    defaultValues: { fullName: "", phone: "", designation: "" },
+    defaultValues: { fullName: "", phone: "", designation: "", gender: "", dateOfBirth: "", govtIdType: "", govtIdNumber: "", address: "", joiningDate: "", qualifications: "" },
   });
+
+  const watchEditGovtIdType = editForm.watch("govtIdType");
 
   useEffect(() => {
     if (editTarget) {
@@ -140,6 +168,13 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
         fullName: editTarget.fullName,
         phone: editTarget.phone,
         designation: editTarget.designation ?? "",
+        gender: (editTarget as any).gender ?? "",
+        dateOfBirth: (editTarget as any).dateOfBirth ?? "",
+        govtIdType: (editTarget as any).govtIdType ?? "",
+        govtIdNumber: (editTarget as any).govtIdNumber ?? "",
+        address: (editTarget as any).address ?? "",
+        joiningDate: (editTarget as any).joiningDate ?? "",
+        qualifications: (editTarget as any).qualifications ?? "",
       });
     }
   }, [editTarget]);
@@ -159,9 +194,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await apiRequest("DELETE", `/api/admin/teachers/${id}`);
-    },
+    mutationFn: async (id: number) => { await apiRequest("DELETE", `/api/admin/teachers/${id}`); },
     onSuccess: () => {
       toast({ title: "Teacher Removed", description: `${deleteTarget?.fullName} has been removed from the registry.` });
       setDeleteTarget(null);
@@ -175,6 +208,12 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
   const rangeStart = data ? ((page - 1) * PAGE_SIZE) + 1 : 0;
   const rangeEnd = data ? Math.min(page * PAGE_SIZE, data.total) : 0;
 
+  // ── helper to get subjects from mappings ──────────────────
+  const getSubjects = (t: TeacherWithEmail) => {
+    const subjects = [...new Set((t.mappings ?? []).map(m => m.subject).filter(Boolean))] as string[];
+    return subjects.length > 0 ? subjects.join(", ") : (t.subject || "—");
+  };
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -186,56 +225,147 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
           </p>
         </div>
         {(!allowedSubs || allowedSubs.includes("add")) && (
-        <Button
-          size="sm"
-          className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
-          onClick={() => setShowForm(!showForm)}
-          disabled={isArchiveMode}
-          data-testid="button-add-teacher-toggle"
-        >
-          <UserPlus className="w-4 h-4 mr-1" /> Add Teacher
-        </Button>
+          <Button size="sm" className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
+            onClick={() => setShowForm(!showForm)} disabled={isArchiveMode} data-testid="button-add-teacher-toggle">
+            <UserPlus className="w-4 h-4 mr-1" /> Add Teacher
+          </Button>
         )}
       </div>
 
-      {/* Add Teacher Form */}
+      {/* ── Register New Teacher Form ── */}
       {showForm && (
         <div className="rounded-xl border border-[#D4AF37]/30 bg-[#1A2942] p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold text-white">Register New Teacher</h3>
-            <button onClick={() => setShowForm(false)} className="text-white/40 hover:text-white p-1">
-              <X className="w-4 h-4" />
-            </button>
+            <button onClick={() => setShowForm(false)} className="text-white/40 hover:text-white p-1"><X className="w-4 h-4" /></button>
           </div>
           <Form {...addForm}>
-            <form onSubmit={addForm.handleSubmit(d => addMutation.mutate(d))} className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {(["fullName", "email", "password", "phone", "designation"] as const).map(name => (
-                <FormField key={name} control={addForm.control} name={name} render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-white/70 text-xs">
-                      {name === "fullName" ? "Full Name" : name.charAt(0).toUpperCase() + name.slice(1)}
-                    </FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        type={name === "password" ? "password" : "text"}
-                        className="bg-[#0A1628] border-white/20 text-white h-9 text-sm"
-                        data-testid={`input-reg-teacher-${name}`}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )} />
-              ))}
-              <div className="flex items-end col-span-2 md:col-span-3">
-                <Button
-                  type="submit"
-                  disabled={isArchiveMode || addMutation.isPending}
+            <form onSubmit={addForm.handleSubmit(d => addMutation.mutate(d))} className="space-y-4">
+
+              {/* Row 1 – Account credentials */}
+              <div>
+                <p className="text-[#D4AF37] text-[10px] uppercase tracking-widest mb-2 font-semibold">Account Info</p>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {(["fullName", "email", "password", "phone", "designation"] as const).map(name => (
+                    <FormField key={name} control={addForm.control} name={name} render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-white/70 text-xs">
+                          {name === "fullName" ? "Full Name" : name.charAt(0).toUpperCase() + name.slice(1)}
+                        </FormLabel>
+                        <FormControl>
+                          <Input {...field} type={name === "password" ? "password" : "text"}
+                            className="bg-[#0A1628] border-white/20 text-white h-9 text-sm"
+                            data-testid={`input-reg-teacher-${name}`} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                  ))}
+                </div>
+              </div>
+
+              {/* Row 2 – Personal details */}
+              <div>
+                <p className="text-[#D4AF37] text-[10px] uppercase tracking-widest mb-2 font-semibold">Personal Details</p>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {/* Gender */}
+                  <FormField control={addForm.control} name="gender" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-white/70 text-xs">Gender</FormLabel>
+                      <Select value={field.value || ""} onValueChange={field.onChange}>
+                        <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-9 text-sm">
+                          <SelectValue placeholder="Select gender" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Male">Male</SelectItem>
+                          <SelectItem value="Female">Female</SelectItem>
+                          <SelectItem value="Other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </FormItem>
+                  )} />
+
+                  {/* Date of Birth */}
+                  <FormField control={addForm.control} name="dateOfBirth" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-white/70 text-xs">Date of Birth</FormLabel>
+                      <FormControl>
+                        <Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white h-9 text-sm" />
+                      </FormControl>
+                    </FormItem>
+                  )} />
+
+                  {/* Joining Date */}
+                  <FormField control={addForm.control} name="joiningDate" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-white/70 text-xs">Joining Date</FormLabel>
+                      <FormControl>
+                        <Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white h-9 text-sm" />
+                      </FormControl>
+                    </FormItem>
+                  )} />
+
+                  {/* Qualification */}
+                  <FormField control={addForm.control} name="qualifications" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-white/70 text-xs">Qualification</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="e.g. B.Ed, M.Sc" className="bg-[#0A1628] border-white/20 text-white h-9 text-sm" />
+                      </FormControl>
+                    </FormItem>
+                  )} />
+
+                  {/* Govt ID Type */}
+                  <FormField control={addForm.control} name="govtIdType" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-white/70 text-xs">Government ID Type</FormLabel>
+                      <Select value={field.value || ""} onValueChange={field.onChange}>
+                        <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-9 text-sm">
+                          <SelectValue placeholder="Select ID type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {GOVT_ID_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </FormItem>
+                  )} />
+
+                  {/* Govt ID Number – only show when type selected */}
+                  {watchGovtIdType && (
+                    <FormField control={addForm.control} name="govtIdNumber" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-white/70 text-xs">{watchGovtIdType} Number</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="Enter ID number" className="bg-[#0A1628] border-white/20 text-white h-9 text-sm" />
+                        </FormControl>
+                      </FormItem>
+                    )} />
+                  )}
+                </div>
+
+                {/* Address – full width */}
+                <div className="mt-3">
+                  <FormField control={addForm.control} name="address" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-white/70 text-xs">Address</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Full residential address" className="bg-[#0A1628] border-white/20 text-white h-9 text-sm" />
+                      </FormControl>
+                    </FormItem>
+                  )} />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <Button type="submit" disabled={isArchiveMode || addMutation.isPending}
                   className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
-                  data-testid="button-submit-register-teacher"
-                >
+                  data-testid="button-submit-register-teacher">
                   {addMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <UserPlus className="w-4 h-4 mr-1" />}
                   Register Teacher
+                </Button>
+                <Button type="button" variant="ghost" className="text-white/50 hover:text-white hover:bg-white/10"
+                  onClick={() => { setShowForm(false); addForm.reset(); }}>
+                  Cancel
                 </Button>
               </div>
             </form>
@@ -243,23 +373,16 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
         </div>
       )}
 
-      {/* Search + Filters */}
+      {/* ── Search + Filters ── */}
       <div className="flex flex-wrap gap-2 items-center">
         <div className="relative flex-1 min-w-[180px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40 pointer-events-none" />
-          <Input
-            value={q}
-            onChange={e => handleSearch(e.target.value)}
-            placeholder="Search by name or email…"
+          <Input value={q} onChange={e => handleSearch(e.target.value)} placeholder="Search by name or email…"
             className="pl-9 bg-[#1A2942] border-white/20 text-white placeholder:text-white/30 h-10"
-            data-testid="input-search-teacher-registry"
-          />
+            data-testid="input-search-teacher-registry" />
         </div>
         <Select value={filterClass || "__all__"} onValueChange={handleFilterClass}>
-          <SelectTrigger
-            className="bg-[#1A2942] border-white/20 text-white h-10 w-[130px]"
-            data-testid="select-filter-class"
-          >
+          <SelectTrigger className="bg-[#1A2942] border-white/20 text-white h-10 w-[130px]" data-testid="select-filter-class">
             <SelectValue placeholder="All Classes" />
           </SelectTrigger>
           <SelectContent>
@@ -268,10 +391,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
           </SelectContent>
         </Select>
         <Select value={filterSection || "__all__"} onValueChange={handleFilterSection}>
-          <SelectTrigger
-            className="bg-[#1A2942] border-white/20 text-white h-10 w-[130px]"
-            data-testid="select-filter-section"
-          >
+          <SelectTrigger className="bg-[#1A2942] border-white/20 text-white h-10 w-[130px]" data-testid="select-filter-section">
             <SelectValue placeholder="All Sections" />
           </SelectTrigger>
           <SelectContent>
@@ -280,26 +400,21 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
           </SelectContent>
         </Select>
         {hasFilters && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={clearFilters}
-            className="text-white/50 hover:text-white hover:bg-white/10 h-10 px-3"
-            data-testid="button-clear-teacher-filters"
-          >
+          <Button size="sm" variant="ghost" onClick={clearFilters}
+            className="text-white/50 hover:text-white hover:bg-white/10 h-10 px-3" data-testid="button-clear-teacher-filters">
             <X className="w-4 h-4 mr-1" /> Clear
           </Button>
         )}
       </div>
 
-      {/* Table */}
+      {/* ── Table ── */}
       <div className="rounded-xl border border-white/10 bg-[#1A2942] overflow-hidden">
-        <div className="max-h-[480px] overflow-y-auto [scrollbar-width:thin] [scrollbar-color:#D4AF37_#0A1628]">
-          <table className="w-full text-sm min-w-[760px]">
+        <div className="max-h-[480px] overflow-y-auto overflow-x-auto [scrollbar-width:thin] [scrollbar-color:#D4AF37_#0A1628]">
+          <table className="w-full text-sm min-w-[1100px]">
             <thead className="sticky top-0 z-10 bg-[#0F1E35]">
               <tr>
-                {["DTID","Name","Email","Phone","Subject","Assigned Sections","Designation","Actions"].map(h => (
-                  <th key={h} className="text-left py-3 px-4 text-white/60 font-medium text-xs uppercase tracking-wide border-b border-white/10">{h}</th>
+                {["DTID","Name","Email","Phone","Subject","Sections","Designation","Gender","DOB","Joining","Qualification","Govt ID","Actions"].map(h => (
+                  <th key={h} className="text-left py-3 px-4 text-white/60 font-medium text-xs uppercase tracking-wide border-b border-white/10 whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
@@ -308,83 +423,98 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
                 ? Array.from({ length: 6 }).map((_, i) => <SkeletonRow key={i} />)
                 : !data?.data.length
                   ? (
-                    <tr><td colSpan={7} className="py-12 text-center text-white/40">
+                    <tr><td colSpan={13} className="py-12 text-center text-white/40">
                       {hasFilters
                         ? `No teachers found${filterClass ? ` in Class ${filterClass}` : ""}${filterSection ? ` Section ${filterSection}` : ""}${debouncedQ ? ` matching "${debouncedQ}"` : ""}`
                         : "No teachers registered yet"}
                     </td></tr>
                   )
-                  : data.data.map(t => (
-                    <tr key={t.id} className="border-b border-white/5 hover:bg-white/5 transition-colors" data-testid={`row-teacher-reg-${t.id}`}>
-                      <td className="py-3 px-4">
-                        <span className="text-[#D4AF37] font-mono text-xs font-semibold tracking-wide">{(t as any).digitalTeacherId || "—"}</span>
-                      </td>
-                      <td className="py-3 px-4 text-white font-medium">{t.fullName}</td>
-                      <td className="py-3 px-4 text-white/70 text-xs">{t.email}</td>
-                      <td className="py-3 px-4 text-white/70 text-xs">{t.phone}</td>
-                      <td className="py-3 px-4 text-[#D4AF37] text-xs">
-                        {(() => {
-                          const subjects = [...new Set((t.mappings ?? []).map(m => m.subject).filter(Boolean))] as string[];
-                          return subjects.length > 0 ? subjects.join(", ") : (t.subject || "—");
-                        })()}
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex flex-wrap gap-1" data-testid={`cell-sections-${t.id}`}>
-                          {(t.mappings ?? []).length > 0
-                            ? (t.mappings ?? []).map((m, idx) => (
-                                <button
-                                  key={idx}
-                                  onClick={() => onNavigate?.("faculty-mapping")}
-                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 hover:bg-[#D4AF37]/30 transition-colors cursor-pointer"
-                                  title="Go to Faculty Mapping"
-                                  data-testid={`badge-section-${t.id}-${idx}`}
-                                >
-                                  {m.className}-{m.section}
-                                </button>
-                              ))
-                            : (
-                                <button
-                                  onClick={() => onNavigate?.("faculty-mapping")}
+                  : data.data.map(t => {
+                    const ta = t as any;
+                    return (
+                      <tr key={t.id} className="border-b border-white/5 hover:bg-white/5 transition-colors" data-testid={`row-teacher-reg-${t.id}`}>
+                        {/* DTID */}
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          <span className="text-[#D4AF37] font-mono text-xs font-semibold tracking-wide">{ta.digitalTeacherId || "—"}</span>
+                        </td>
+                        {/* Name */}
+                        <td className="py-3 px-4 text-white font-medium whitespace-nowrap">{t.fullName}</td>
+                        {/* Email */}
+                        <td className="py-3 px-4 text-white/70 text-xs">{t.email}</td>
+                        {/* Phone */}
+                        <td className="py-3 px-4 text-white/70 text-xs whitespace-nowrap">{t.phone}</td>
+                        {/* Subject */}
+                        <td className="py-3 px-4 text-[#D4AF37] text-xs">{getSubjects(t)}</td>
+                        {/* Sections */}
+                        <td className="py-3 px-4">
+                          <div className="flex flex-wrap gap-1" data-testid={`cell-sections-${t.id}`}>
+                            {(t.mappings ?? []).length > 0
+                              ? (t.mappings ?? []).map((m, idx) => (
+                                  <button key={idx} onClick={() => onNavigate?.("faculty-mapping")}
+                                    className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 hover:bg-[#D4AF37]/30 transition-colors cursor-pointer"
+                                    title="Go to Faculty Mapping" data-testid={`badge-section-${t.id}-${idx}`}>
+                                    {m.className}-{m.section}
+                                  </button>
+                                ))
+                              : (
+                                <button onClick={() => onNavigate?.("faculty-mapping")}
                                   className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-white/5 text-white/40 border border-white/10 hover:bg-white/10 transition-colors cursor-pointer"
-                                  title="Go to Faculty Mapping"
-                                  data-testid={`badge-section-primary-${t.id}`}
-                                >
+                                  title="Go to Faculty Mapping" data-testid={`badge-section-primary-${t.id}`}>
                                   {t.assignedClass}-{t.assignedSection}
                                 </button>
-                              )
-                          }
-                        </div>
-                      </td>
-                      <td className="py-3 px-4 text-white/50 text-xs">{t.designation || "—"}</td>
-                      <td className="py-3 px-4">
-                        <div className="flex items-center gap-1">
-                          {(!allowedSubs || allowedSubs.includes("edit")) && (
-                          <Button variant="ghost" size="icon" className="text-[#D4AF37] hover:text-yellow-300 hover:bg-yellow-400/10 h-8 w-8"
-                            onClick={() => setEditTarget(t)} disabled={isArchiveMode} data-testid={`button-edit-teacher-reg-${t.id}`} title="Edit">
-                            <Pencil className="w-3.5 h-3.5" />
-                          </Button>
-                          )}
-                          {(!allowedSubs || allowedSubs.includes("deactivate")) && (
-                          <Button variant="ghost" size="icon" className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-8 w-8"
-                            onClick={() => setDeleteTarget(t)} disabled={isArchiveMode} data-testid={`button-delete-teacher-reg-${t.id}`} title="Remove">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                              )}
+                          </div>
+                        </td>
+                        {/* Designation */}
+                        <td className="py-3 px-4 text-white/50 text-xs whitespace-nowrap">{t.designation || "—"}</td>
+                        {/* Gender */}
+                        <td className="py-3 px-4 text-white/70 text-xs whitespace-nowrap">{ta.gender || "—"}</td>
+                        {/* DOB */}
+                        <td className="py-3 px-4 text-white/70 text-xs whitespace-nowrap">{ta.dateOfBirth || "—"}</td>
+                        {/* Joining Date */}
+                        <td className="py-3 px-4 text-white/70 text-xs whitespace-nowrap">{ta.joiningDate || "—"}</td>
+                        {/* Qualification */}
+                        <td className="py-3 px-4 text-white/70 text-xs">{ta.qualifications || "—"}</td>
+                        {/* Govt ID */}
+                        <td className="py-3 px-4 text-white/70 text-xs whitespace-nowrap">
+                          {ta.govtIdType ? <span>{ta.govtIdType}{ta.govtIdNumber ? ` · ${ta.govtIdNumber}` : ""}</span> : "—"}
+                        </td>
+                        {/* Actions */}
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-1">
+                            {/* View */}
+                            <Button variant="ghost" size="icon" className="text-blue-400 hover:text-blue-300 hover:bg-blue-400/10 h-8 w-8"
+                              onClick={() => setViewTarget(t)} title="View Details" data-testid={`button-view-teacher-reg-${t.id}`}>
+                              <Eye className="w-3.5 h-3.5" />
+                            </Button>
+                            {/* Edit */}
+                            {(!allowedSubs || allowedSubs.includes("edit")) && (
+                              <Button variant="ghost" size="icon" className="text-[#D4AF37] hover:text-yellow-300 hover:bg-yellow-400/10 h-8 w-8"
+                                onClick={() => setEditTarget(t)} disabled={isArchiveMode} title="Edit" data-testid={`button-edit-teacher-reg-${t.id}`}>
+                                <Pencil className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                            {/* Delete */}
+                            {(!allowedSubs || allowedSubs.includes("deactivate")) && (
+                              <Button variant="ghost" size="icon" className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-8 w-8"
+                                onClick={() => setDeleteTarget(t)} disabled={isArchiveMode} title="Remove" data-testid={`button-delete-teacher-reg-${t.id}`}>
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
               }
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Pagination */}
+      {/* ── Pagination ── */}
       <div className="flex items-center justify-between">
-        <p className="text-white/40 text-sm">
-          {data?.total ? `${rangeStart}–${rangeEnd} of ${data.total}` : "No results"}
-        </p>
+        <p className="text-white/40 text-sm">{data?.total ? `${rangeStart}–${rangeEnd} of ${data.total}` : "No results"}</p>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" disabled={page === 1} onClick={() => setPage(p => p - 1)}
             className="border-white/20 text-white hover:bg-white/10" data-testid="button-registry-prev">
@@ -398,12 +528,101 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
         </div>
       </div>
 
-      {/* Edit Modal */}
+      {/* ── View Details Modal ── */}
+      {viewTarget && (() => {
+        const va = viewTarget as any;
+        const subjects = [...new Set((viewTarget.mappings ?? []).map(m => m.subject).filter(Boolean))] as string[];
+        return (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            onClick={e => { if (e.target === e.currentTarget) setViewTarget(null); }}>
+            <div className="w-full max-w-lg rounded-2xl bg-[#1A2942] border border-white/10 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-[#0F1E35]">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-[#D4AF37]/20 flex items-center justify-center">
+                    <User className="w-5 h-5 text-[#D4AF37]" />
+                  </div>
+                  <div>
+                    <h3 className="text-white font-semibold text-sm">{viewTarget.fullName}</h3>
+                    {va.digitalTeacherId && <p className="text-[#D4AF37] font-mono text-xs">{va.digitalTeacherId}</p>}
+                    <p className="text-white/40 text-xs">{viewTarget.email}</p>
+                  </div>
+                </div>
+                <button onClick={() => setViewTarget(null)} className="p-2 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="overflow-y-auto p-5 space-y-4 [scrollbar-width:thin]">
+                {/* Account */}
+                <div>
+                  <p className="text-[#D4AF37] text-[10px] uppercase tracking-widest mb-1 font-semibold">Account Info</p>
+                  <div className="bg-[#0A1628]/50 rounded-xl px-4">
+                    <InfoRow label="Email" value={viewTarget.email} />
+                    <InfoRow label="Phone" value={viewTarget.phone} />
+                    <InfoRow label="Designation" value={viewTarget.designation} />
+                  </div>
+                </div>
+
+                {/* Personal */}
+                <div>
+                  <p className="text-[#D4AF37] text-[10px] uppercase tracking-widest mb-1 font-semibold">Personal Details</p>
+                  <div className="bg-[#0A1628]/50 rounded-xl px-4">
+                    <InfoRow label="Gender" value={va.gender} icon={User} />
+                    <InfoRow label="Date of Birth" value={va.dateOfBirth} icon={Calendar} />
+                    <InfoRow label="Joining Date" value={va.joiningDate} icon={Calendar} />
+                    <InfoRow label="Qualification" value={va.qualifications} icon={GraduationCap} />
+                    <InfoRow label="Address" value={va.address} icon={MapPin} />
+                  </div>
+                </div>
+
+                {/* Govt ID */}
+                {(va.govtIdType || va.govtIdNumber) && (
+                  <div>
+                    <p className="text-[#D4AF37] text-[10px] uppercase tracking-widest mb-1 font-semibold">Government ID</p>
+                    <div className="bg-[#0A1628]/50 rounded-xl px-4">
+                      <InfoRow label="ID Type" value={va.govtIdType} icon={CreditCard} />
+                      <InfoRow label="ID Number" value={va.govtIdNumber} />
+                    </div>
+                  </div>
+                )}
+
+                {/* Assignments */}
+                <div>
+                  <p className="text-[#D4AF37] text-[10px] uppercase tracking-widest mb-1 font-semibold">Faculty Assignments</p>
+                  <div className="bg-[#0A1628]/50 rounded-xl px-4">
+                    <InfoRow label="Subjects" value={subjects.length > 0 ? subjects.join(", ") : (viewTarget.subject || "—")} />
+                    <div className="py-2.5">
+                      <p className="text-white/40 text-[10px] uppercase tracking-wide mb-1.5">Assigned Sections</p>
+                      {(viewTarget.mappings ?? []).length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {(viewTarget.mappings ?? []).map((m, idx) => (
+                            <span key={idx} className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30">
+                              {m.className}-{m.section}{m.subject ? ` (${m.subject})` : ""}
+                            </span>
+                          ))}
+                        </div>
+                      ) : <p className="text-white text-xs">—</p>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="px-5 py-3 border-t border-white/10 flex justify-end">
+                <Button variant="outline" className="border-white/20 text-white hover:bg-white/10" onClick={() => setViewTarget(null)}>Close</Button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Edit Modal ── */}
       {editTarget && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
           data-testid="modal-edit-teacher-registry"
           onClick={e => { if (e.target === e.currentTarget) setEditTarget(null); }}>
-          <div className="w-full max-w-lg rounded-2xl bg-[#1A2942] border border-white/10 shadow-2xl overflow-hidden">
+          <div className="w-full max-w-2xl rounded-2xl bg-[#1A2942] border border-white/10 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
               <div>
                 <h3 className="text-sm font-semibold text-white flex items-center gap-2"><Pencil className="w-4 h-4 text-[#D4AF37]" /> Edit Teacher</h3>
@@ -416,34 +635,109 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="p-5">
+            <div className="p-5 overflow-y-auto [scrollbar-width:thin] space-y-4">
               <Form {...editForm}>
-                <form onSubmit={editForm.handleSubmit(d => editMutation.mutate(d))} className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <FormField control={editForm.control} name="fullName" render={({ field }) => (
-                      <FormItem className="col-span-2">
-                        <FormLabel className="text-white/70 text-xs">Full Name</FormLabel>
-                        <FormControl><Input {...field} className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-edit-reg-name" /></FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )} />
-                    <FormField control={editForm.control} name="phone" render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-white/70 text-xs">Phone</FormLabel>
-                        <FormControl><Input {...field} className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-edit-reg-phone" /></FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )} />
-                    <FormField control={editForm.control} name="designation" render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-white/70 text-xs">Designation</FormLabel>
-                        <FormControl><Input {...field} placeholder="e.g. HOD, Senior Teacher" className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-edit-reg-designation" /></FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )} />
+                <form onSubmit={editForm.handleSubmit(d => editMutation.mutate(d))} className="space-y-4">
+
+                  {/* Account */}
+                  <div>
+                    <p className="text-[#D4AF37] text-[10px] uppercase tracking-widest mb-2 font-semibold">Account Info</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <FormField control={editForm.control} name="fullName" render={({ field }) => (
+                        <FormItem className="col-span-2">
+                          <FormLabel className="text-white/70 text-xs">Full Name</FormLabel>
+                          <FormControl><Input {...field} className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-edit-reg-name" /></FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
+                      <FormField control={editForm.control} name="phone" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-white/70 text-xs">Phone</FormLabel>
+                          <FormControl><Input {...field} className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-edit-reg-phone" /></FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
+                      <FormField control={editForm.control} name="designation" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-white/70 text-xs">Designation</FormLabel>
+                          <FormControl><Input {...field} placeholder="e.g. HOD, Senior Teacher" className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-edit-reg-designation" /></FormControl>
+                        </FormItem>
+                      )} />
+                    </div>
                   </div>
+
+                  {/* Personal */}
+                  <div>
+                    <p className="text-[#D4AF37] text-[10px] uppercase tracking-widest mb-2 font-semibold">Personal Details</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <FormField control={editForm.control} name="gender" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-white/70 text-xs">Gender</FormLabel>
+                          <Select value={field.value || ""} onValueChange={field.onChange}>
+                            <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-10">
+                              <SelectValue placeholder="Select gender" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="Male">Male</SelectItem>
+                              <SelectItem value="Female">Female</SelectItem>
+                              <SelectItem value="Other">Other</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </FormItem>
+                      )} />
+                      <FormField control={editForm.control} name="dateOfBirth" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-white/70 text-xs">Date of Birth</FormLabel>
+                          <FormControl><Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white h-10" /></FormControl>
+                        </FormItem>
+                      )} />
+                      <FormField control={editForm.control} name="joiningDate" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-white/70 text-xs">Joining Date</FormLabel>
+                          <FormControl><Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white h-10" /></FormControl>
+                        </FormItem>
+                      )} />
+                      <FormField control={editForm.control} name="qualifications" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-white/70 text-xs">Qualification</FormLabel>
+                          <FormControl><Input {...field} placeholder="e.g. B.Ed, M.Sc" className="bg-[#0A1628] border-white/20 text-white h-10" /></FormControl>
+                        </FormItem>
+                      )} />
+                      <FormField control={editForm.control} name="govtIdType" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-white/70 text-xs">Government ID Type</FormLabel>
+                          <Select value={field.value || ""} onValueChange={field.onChange}>
+                            <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-10">
+                              <SelectValue placeholder="Select ID type" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {GOVT_ID_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        </FormItem>
+                      )} />
+                      {watchEditGovtIdType && (
+                        <FormField control={editForm.control} name="govtIdNumber" render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-white/70 text-xs">{watchEditGovtIdType} Number</FormLabel>
+                            <FormControl><Input {...field} placeholder="Enter ID number" className="bg-[#0A1628] border-white/20 text-white h-10" /></FormControl>
+                          </FormItem>
+                        )} />
+                      )}
+                    </div>
+                    <div className="mt-3">
+                      <FormField control={editForm.control} name="address" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-white/70 text-xs">Address</FormLabel>
+                          <FormControl><Input {...field} placeholder="Full residential address" className="bg-[#0A1628] border-white/20 text-white h-10" /></FormControl>
+                        </FormItem>
+                      )} />
+                    </div>
+                  </div>
+
                   <div className="flex gap-2 pt-2">
-                    <Button type="submit" disabled={isArchiveMode || editMutation.isPending} className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold flex-1" data-testid="button-save-edit-teacher-registry">
+                    <Button type="submit" disabled={isArchiveMode || editMutation.isPending}
+                      className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold flex-1" data-testid="button-save-edit-teacher-registry">
                       {editMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
                       Save Changes
                     </Button>
@@ -456,7 +750,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
         </div>
       )}
 
-      {/* Delete Confirm Modal */}
+      {/* ── Delete Confirm Modal ── */}
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
           data-testid="modal-delete-teacher-registry"
@@ -468,12 +762,8 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
             </p>
             <p className="text-red-400 text-xs mb-5">Their login account and all assignments will also be deleted.</p>
             <div className="flex gap-2">
-              <Button
-                onClick={() => deleteMutation.mutate(deleteTarget.id)}
-                disabled={isArchiveMode || deleteMutation.isPending}
-                className="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold"
-                data-testid="button-confirm-delete-teacher-registry"
-              >
+              <Button onClick={() => deleteMutation.mutate(deleteTarget.id)} disabled={isArchiveMode || deleteMutation.isPending}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold" data-testid="button-confirm-delete-teacher-registry">
                 {deleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Trash2 className="w-4 h-4 mr-1" />}
                 Remove
               </Button>

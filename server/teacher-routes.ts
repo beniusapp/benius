@@ -59,6 +59,13 @@ const createTeacherSchema = z.object({
   assignedClass: z.string().optional().default(""),
   assignedSection: z.string().optional().default(""),
   designation: z.string().optional(),
+  gender: z.string().optional(),
+  dateOfBirth: z.string().optional(),
+  govtIdType: z.string().optional(),
+  govtIdNumber: z.string().optional(),
+  address: z.string().optional(),
+  joiningDate: z.string().optional(),
+  qualifications: z.string().optional(),
 });
 
 const teacherLoginSchema = z.object({
@@ -3600,6 +3607,13 @@ Thank you for your prompt attention to this matter.
         assignedClass: parsed.data.assignedClass,
         assignedSection: parsed.data.assignedSection,
         designation: parsed.data.designation,
+        gender: parsed.data.gender,
+        dateOfBirth: parsed.data.dateOfBirth,
+        govtIdType: parsed.data.govtIdType,
+        govtIdNumber: parsed.data.govtIdNumber,
+        address: parsed.data.address,
+        joiningDate: parsed.data.joiningDate,
+        qualifications: parsed.data.qualifications,
         mustChangePassword: true,
         digitalTeacherId: dtid,
       }, parsed.data.email, passwordHash);
@@ -3621,6 +3635,13 @@ Thank you for your prompt attention to this matter.
       fullName: z.string().min(2).optional(),
       phone: z.string().min(7).optional(),
       designation: z.string().optional(),
+      gender: z.string().optional(),
+      dateOfBirth: z.string().optional(),
+      govtIdType: z.string().optional(),
+      govtIdNumber: z.string().optional(),
+      address: z.string().optional(),
+      joiningDate: z.string().optional(),
+      qualifications: z.string().optional(),
     });
     const parsed = editSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
@@ -3635,6 +3656,13 @@ Thank you for your prompt attention to this matter.
         assignedSection: teacher.assignedSection,
         phone: parsed.data.phone ?? teacher.phone,
         designation: parsed.data.designation ?? teacher.designation ?? "",
+        gender: parsed.data.gender ?? teacher.gender ?? undefined,
+        dateOfBirth: parsed.data.dateOfBirth ?? teacher.dateOfBirth ?? undefined,
+        govtIdType: parsed.data.govtIdType ?? teacher.govtIdType ?? undefined,
+        govtIdNumber: parsed.data.govtIdNumber ?? teacher.govtIdNumber ?? undefined,
+        address: parsed.data.address ?? teacher.address ?? undefined,
+        joiningDate: parsed.data.joiningDate ?? teacher.joiningDate ?? undefined,
+        qualifications: parsed.data.qualifications ?? teacher.qualifications ?? undefined,
       });
       res.json(updated);
     } catch (err: any) {

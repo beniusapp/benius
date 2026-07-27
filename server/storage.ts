@@ -2890,7 +2890,7 @@ export class DatabaseStorage {
   }
 
   // ===== PAGINATED TEACHERS (Big Data) =====
-  async updateTeacherAssignment(teacherId: number, schoolId: number, data: { fullName: string; subject: string; assignedClass: string; assignedSection: string; phone?: string; designation?: string }): Promise<Teacher | undefined> {
+  async updateTeacherAssignment(teacherId: number, schoolId: number, data: { fullName: string; subject: string; assignedClass: string; assignedSection: string; phone?: string; designation?: string; gender?: string; dateOfBirth?: string; govtIdType?: string; govtIdNumber?: string; address?: string; joiningDate?: string; qualifications?: string }): Promise<Teacher | undefined> {
     const setData: Partial<typeof teachers.$inferInsert> = {
       fullName: data.fullName,
       subject: data.subject,
@@ -2899,6 +2899,13 @@ export class DatabaseStorage {
     };
     if (data.phone !== undefined) setData.phone = data.phone;
     if (data.designation !== undefined) setData.designation = data.designation;
+    if (data.gender !== undefined) setData.gender = data.gender;
+    if (data.dateOfBirth !== undefined) setData.dateOfBirth = data.dateOfBirth;
+    if (data.govtIdType !== undefined) setData.govtIdType = data.govtIdType;
+    if (data.govtIdNumber !== undefined) setData.govtIdNumber = data.govtIdNumber;
+    if (data.address !== undefined) setData.address = data.address;
+    if (data.joiningDate !== undefined) setData.joiningDate = data.joiningDate;
+    if (data.qualifications !== undefined) setData.qualifications = data.qualifications;
     const [updated] = await db.update(teachers)
       .set(setData)
       .where(and(eq(teachers.id, teacherId), eq(teachers.schoolId, schoolId)))
