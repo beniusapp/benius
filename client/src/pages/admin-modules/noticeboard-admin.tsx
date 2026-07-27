@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
 
 interface Props {
   schoolId: number;
@@ -132,7 +132,7 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
   const { data: allNotices = [], isLoading } = useQuery<Notice[]>({
     queryKey: ["/api/notices", schoolId, "all"],
     queryFn: async () => {
-      const r = await fetch(`/api/notices/${schoolId}/all`, { credentials: "include" });
+      const r = await sessionFetch(`/api/notices/${schoolId}/all`);
       return r.ok ? r.json() : [];
     },
     enabled: !!schoolId,

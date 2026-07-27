@@ -9,7 +9,7 @@ import { fmtDateTime } from "@/lib/dateUtils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 
 interface Props { schoolId: number; allowedSubs?: string[] }
@@ -174,7 +174,7 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
   const { data: visitors = [], isLoading } = useQuery<VisitorEntry[]>({
     queryKey: ["/api/visitor-logs", schoolId],
     queryFn: async () => {
-      const r = await fetch(`/api/visitor-logs/${schoolId}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/visitor-logs/${schoolId}`);
       return r.ok ? r.json() : [];
     },
     enabled: !!schoolId,

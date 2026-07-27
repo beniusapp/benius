@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
 
 interface Props {
   schoolId: number;
@@ -225,7 +225,7 @@ export default function LeaveRequests({ schoolId, initialSection, onNavigateSect
   const { data: leaveRequests = [], isLoading: leavesLoading } = useQuery<any[]>({
     queryKey: ["/api/leave/school", schoolId],
     queryFn: async () => {
-      const r = await fetch(`/api/leave/school/${schoolId}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/leave/school/${schoolId}`);
       return r.ok ? r.json() : [];
     },
     enabled: !!schoolId,
@@ -234,7 +234,7 @@ export default function LeaveRequests({ schoolId, initialSection, onNavigateSect
   const { data: studentLeaves = [], isLoading: sleavesLoading } = useQuery<any[]>({
     queryKey: ["/api/student-leaves/school", schoolId],
     queryFn: async () => {
-      const r = await fetch(`/api/student-leaves/school/${schoolId}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/student-leaves/school/${schoolId}`);
       return r.ok ? r.json() : [];
     },
     enabled: !!schoolId,

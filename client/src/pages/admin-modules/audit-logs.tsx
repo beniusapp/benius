@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { sessionFetch } from "@/lib/queryClient";
 import { Shield, Loader2 } from "lucide-react";
 import { fmtDateTime } from "@/lib/dateUtils";
 
@@ -15,7 +16,7 @@ export default function AuditLogs({ schoolId }: Props) {
   const { data: logs = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/audit-logs", schoolId],
     queryFn: async () => {
-      const r = await fetch(`/api/audit-logs/${schoolId}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/audit-logs/${schoolId}`);
       return r.ok ? r.json() : [];
     },
     enabled: !!schoolId,

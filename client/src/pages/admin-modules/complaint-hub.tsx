@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
 
 interface Props { schoolId: number; initialTab?: string; onNavigateTab?: (tab: string) => void; allowedSubs?: string[]; }
 
@@ -433,7 +433,7 @@ export default function ComplaintHub({ schoolId, initialTab, onNavigateTab, allo
   const { data: all = [], isLoading } = useQuery<AdminComplaint[]>({
     queryKey: ["/api/complaints/school", schoolId],
     queryFn: async () => {
-      const r = await fetch(`/api/complaints/school/${schoolId}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/complaints/school/${schoolId}`);
       return r.ok ? r.json() : [];
     },
     enabled: !!schoolId,
