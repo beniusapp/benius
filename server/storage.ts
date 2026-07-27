@@ -157,35 +157,31 @@ export class DatabaseStorage {
     return result?.value ?? 0;
   }
 
-  async getMaxDsidSerialForSchool(schoolCode: string): Promise<number> {
-    const prefix = `${schoolCode}-`;
-    const rows = await db
-      .select({ digitalStudentId: students.digitalStudentId })
-      .from(students)
-      .where(like(students.digitalStudentId, `${prefix}%`));
-    let max = 0;
-    for (const row of rows) {
-      const suffix = row.digitalStudentId.replace(prefix, "");
-      const num = parseInt(suffix, 10);
-      if (!isNaN(num) && num > max) max = num;
-    }
-    return max;
+  /**
+   * Issues the next unique serial for a school's DTID or DSID.
+   * Uses an atomic DB-level increment so the counter NEVER decreases,
+   * even if teachers/students are deleted. A serial is never reused.
+   */
+  async issueNextIdSerial(schoolId: number, type: "dtid" | "dsid"): Promise<number> {
+    const result = await pool.query<{ last_issued: number }>(
+      `INSERT INTO id_sequences (school_id, type, last_issued)
+         VALUES ($1, $2, 1)
+       ON CONFLICT (school_id, type) DO UPDATE
+         SET last_issued = id_sequences.last_issued + 1
+       RETURNING last_issued`,
+      [schoolId, type],
+    );
+    return result.rows[0].last_issued;
   }
 
-  async getMaxDtidSerialForSchool(schoolCode: string): Promise<number> {
-    const prefix = `${schoolCode}-T`;
-    const rows = await db
-      .select({ digitalTeacherId: teachers.digitalTeacherId })
-      .from(teachers)
-      .where(like(teachers.digitalTeacherId, `${prefix}%`));
-    let max = 0;
-    for (const row of rows) {
-      if (!row.digitalTeacherId) continue;
-      const suffix = row.digitalTeacherId.replace(prefix, "");
-      const num = parseInt(suffix, 10);
-      if (!isNaN(num) && num > max) max = num;
-    }
-    return max;
+  /** @deprecated Use issueNextIdSerial instead */
+  async getMaxDsidSerialForSchool(_schoolCode: string): Promise<number> {
+    throw new Error("getMaxDsidSerialForSchool is deprecated — use issueNextIdSerial");
+  }
+
+  /** @deprecated Use issueNextIdSerial instead */
+  async getMaxDtidSerialForSchool(_schoolCode: string): Promise<number> {
+    throw new Error("getMaxDtidSerialForSchool is deprecated — use issueNextIdSerial");
   }
 
   async bulkCreateStudents(studentRecords: InsertStudent[]): Promise<Student[]> {

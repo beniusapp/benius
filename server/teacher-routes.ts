@@ -3604,8 +3604,8 @@ Thank you for your prompt attention to this matter.
       const userData = await storage.getUserWithSchool(req.session.userId!);
       if (!userData) return res.status(403).json({ message: "School not found" });
       const schoolCode = userData.school.code;
-      const currentSerial = await storage.getMaxDtidSerialForSchool(schoolCode);
-      const dtid = `${schoolCode}-T${String(currentSerial + 1).padStart(3, "0")}`;
+      const serial = await storage.issueNextIdSerial(schoolId, "dtid");
+      const dtid = `${schoolCode}-T${String(serial).padStart(3, "0")}`;
       const passwordHash = await bcrypt.hash(parsed.data.password, 10);
       const teacher = await storage.createTeacher({
         schoolId,

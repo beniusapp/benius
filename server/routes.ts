@@ -685,7 +685,6 @@ export async function registerRoutes(
       }
 
       const schoolCode = userData.school.code;
-      let currentSerial = await storage.getMaxDsidSerialForSchool(schoolCode);
 
       const warnings: string[] = [];
       const validStudents: {
@@ -731,8 +730,8 @@ export async function registerRoutes(
           continue;
         }
 
-        currentSerial++;
-        const dsid = `${schoolCode}-${String(currentSerial).padStart(4, "0")}`;
+        const serial = await storage.issueNextIdSerial(schoolId, "dsid");
+        const dsid = `${schoolCode}-${String(serial).padStart(4, "0")}`;
         const passwordHash = await bcrypt.hash(dsid, 10);
 
         validStudents.push({
@@ -823,8 +822,8 @@ export async function registerRoutes(
       }
 
       const schoolCode = userData.school.code;
-      const currentSerial = await storage.getMaxDsidSerialForSchool(schoolCode);
-      const dsid = `${schoolCode}-${String(currentSerial + 1).padStart(4, "0")}`;
+      const serial = await storage.issueNextIdSerial(schoolId, "dsid");
+      const dsid = `${schoolCode}-${String(serial).padStart(4, "0")}`;
       const passwordHash = await bcrypt.hash(dsid, 10);
 
       const student = await storage.createStudent({
