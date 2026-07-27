@@ -257,7 +257,8 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
   ];
 
   const phoneError = phone.length > 0 && !/^\d{10}$/.test(phone);
-  const canSubmit  = !isArchiveMode && !!name && !!purpose && !!host && !phoneError && !checkinMutation.isPending;
+  const emailError = email.length > 0 && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const canSubmit  = !isArchiveMode && !!name && !!purpose && !!host && !phoneError && !emailError && !checkinMutation.isPending;
 
   return (
     <div className="space-y-5">
@@ -388,6 +389,8 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
             ))}
             {formFields.filter(f => f.half).map(f => {
               const isPhone = f.testid === "input-visitor-phone";
+              const isEmail = f.testid === "input-visitor-email";
+              const hasError = (isPhone && phoneError) || (isEmail && emailError);
               return (
                 <div key={f.testid} className="col-span-1">
                   <label className="block text-xs text-white/60 mb-1 font-medium">{f.label}</label>
@@ -399,12 +402,15 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
                       else f.set(e.target.value);
                     }}
                     className={`bg-[#0A1628] text-white placeholder:text-white/20 focus:ring-[#D4AF37]/20 ${
-                      isPhone && phoneError ? "border-red-500/70 focus:border-red-500" : "border-white/20 focus:border-[#D4AF37]/60"
+                      hasError ? "border-red-500/70 focus:border-red-500" : "border-white/20 focus:border-[#D4AF37]/60"
                     }`}
                     data-testid={f.testid}
                   />
                   {isPhone && phoneError && (
                     <p className="text-red-400 text-[10px] mt-1 font-medium">Must be exactly 10 digits</p>
+                  )}
+                  {isEmail && emailError && (
+                    <p className="text-red-400 text-[10px] mt-1 font-medium">Enter a valid email address</p>
                   )}
                 </div>
               );
