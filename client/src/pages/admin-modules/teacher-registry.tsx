@@ -711,32 +711,6 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
                           <FormControl><Input {...field} placeholder="e.g. Science, Arts" className="bg-[#0A1628] border-white/20 text-white h-10" /></FormControl>
                         </FormItem>
                       )} />
-                      <FormField control={editForm.control} name="assignedClass" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-white/70 text-xs">Assigned Class</FormLabel>
-                          <Select value={field.value || ""} onValueChange={field.onChange}>
-                            <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-10">
-                              <SelectValue placeholder="Select class" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {classes.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                        </FormItem>
-                      )} />
-                      <FormField control={editForm.control} name="assignedSection" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-white/70 text-xs">Assigned Section</FormLabel>
-                          <Select value={field.value || ""} onValueChange={field.onChange}>
-                            <SelectTrigger className="bg-[#0A1628] border-white/20 text-white h-10">
-                              <SelectValue placeholder="Select section" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {sections.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                        </FormItem>
-                      )} />
                     </div>
                   </div>
 
