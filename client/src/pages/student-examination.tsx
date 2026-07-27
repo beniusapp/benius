@@ -182,6 +182,7 @@ function PrintStyles() {
   return (
     <style>{`
       @media print {
+        html, body { height: auto !important; overflow: hidden !important; }
         body * { visibility: hidden !important; }
         #exam-print-area, #exam-print-area * { visibility: visible !important; }
         #exam-print-area { position: absolute; top: 0; left: 0; width: 100%; padding: 20px; background: #fff; color: #000; }
