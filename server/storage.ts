@@ -1000,6 +1000,7 @@ export class DatabaseStorage {
   async getComplaintsBySchool(schoolId: number, from?: Date, to?: Date): Promise<(Complaint & {
     studentName: string | null;
     teacherName: string | null;
+    teacherDtid: string | null;
     complainantName: string | null;
     complainantClass: string | null;
     complainantSection: string | null;
@@ -1010,7 +1011,7 @@ export class DatabaseStorage {
     const result = await db.select({
       complaint: complaints,
       reportedStudent: { name: students.name },
-      teacher: { fullName: teachers.fullName },
+      teacher: { fullName: teachers.fullName, digitalTeacherId: teachers.digitalTeacherId },
       complainant: {
         name: complainantStudents.name,
         class: complainantStudents.class,
@@ -1057,6 +1058,7 @@ export class DatabaseStorage {
         : [];
       return {
         ...r.complaint,
+        teacherDtid: r.teacher?.digitalTeacherId ?? null,
         studentName: r.reportedStudent?.name ?? (csStudents[0]?.name ?? null),
         teacherName: r.teacher?.fullName ?? null,
         complainantName: r.complainant?.name ?? null,
@@ -1886,12 +1888,12 @@ export class DatabaseStorage {
     return req || null;
   }
 
-  async getLeaveRequestsBySchool(schoolId: number): Promise<(LeaveRequest & { teacherName: string })[]> {
+  async getLeaveRequestsBySchool(schoolId: number): Promise<(LeaveRequest & { teacherName: string; teacherDtid: string | null })[]> {
     const result = await db.select().from(leaveRequests)
       .innerJoin(teachers, eq(leaveRequests.teacherId, teachers.id))
       .where(eq(leaveRequests.schoolId, schoolId))
       .orderBy(desc(leaveRequests.createdAt));
-    return result.map(r => ({ ...r.leave_requests, teacherName: r.teachers.fullName }));
+    return result.map(r => ({ ...r.leave_requests, teacherName: r.teachers.fullName, teacherDtid: r.teachers.digitalTeacherId ?? null }));
   }
 
   async updateLeaveStatus(id: number, status: string): Promise<LeaveRequest> {

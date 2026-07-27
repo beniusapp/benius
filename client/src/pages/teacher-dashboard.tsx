@@ -549,7 +549,11 @@ export default function TeacherDashboard() {
               <p className="text-xs font-semibold text-white leading-none" data-testid="text-teacher-name">
                 {teacher.fullName}
               </p>
-              <p className="text-[10px] text-white/40 mt-0.5">{teacher.subject}</p>
+              {teacher.digitalTeacherId ? (
+                <p className="text-[10px] font-mono font-bold text-teal-400 mt-0.5">{teacher.digitalTeacherId}</p>
+              ) : (
+                <p className="text-[10px] text-white/40 mt-0.5">{teacher.subject}</p>
+              )}
             </div>
 
             <button

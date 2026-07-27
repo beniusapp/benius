@@ -497,7 +497,10 @@ export default function LeaveRequests({ schoolId, initialSection, onNavigateSect
                       : historyData.teacherLeaves.map((l: any) => (
                           <HistoryRow key={l.id} status={l.status}>
                             <div className="flex-1 min-w-0">
-                              <p className="text-white font-semibold text-sm">{l.teacherName}</p>
+                              <div className="flex items-baseline gap-2">
+                                <p className="text-white font-semibold text-sm">{l.teacherName}</p>
+                                {l.teacherDtid && <span className="font-mono text-[10px] font-bold text-[#D4AF37]/80">{l.teacherDtid}</span>}
+                              </div>
                               <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
                                 {l.leaveType} · {fmtDate(l.startDate)} – {fmtDate(l.endDate)}
                               </p>
@@ -565,7 +568,10 @@ export default function LeaveRequests({ schoolId, initialSection, onNavigateSect
                     {pendingLeaves.map((l: any) => (
                       <ItemRow key={l.id} testId={`card-leave-${l.id}`}>
                         <div className="flex-1 min-w-0">
-                          <p className="text-white font-semibold text-sm">{l.teacherName}</p>
+                          <div className="flex items-baseline gap-2">
+                            <p className="text-white font-semibold text-sm">{l.teacherName}</p>
+                            {l.teacherDtid && <span className="font-mono text-[10px] font-bold text-[#D4AF37]/80">{l.teacherDtid}</span>}
+                          </div>
                           <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.60)" }}>
                             {l.leaveType} · {fmtDate(l.startDate)} – {fmtDate(l.endDate)}
                           </p>

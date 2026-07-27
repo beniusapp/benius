@@ -2445,6 +2445,7 @@ export async function registerRoutes(
         return {
           teacherId: t.id,
           name: t.fullName,
+          digitalTeacherId: t.digitalTeacherId ?? null,
           assignedClass: t.assignedClass ?? "",
           assignedSection: t.assignedSection ?? "",
           assignedClassSections,

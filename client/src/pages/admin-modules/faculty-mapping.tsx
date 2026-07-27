@@ -627,6 +627,9 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
                           <p className={`text-sm font-semibold truncate leading-tight ${isSelected ? "text-[#D4AF37]" : "text-white"}`}>
                             {t.fullName}
                           </p>
+                          {(t as any).digitalTeacherId && (
+                            <p className="text-[10px] font-mono font-bold text-[#D4AF37]/70 leading-none mt-0.5">{(t as any).digitalTeacherId}</p>
+                          )}
                           <p className="text-[11px] text-white/40 truncate mt-0.5">{t.subject || "—"}</p>
                         </div>
 
@@ -701,6 +704,9 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-white truncate">{selectedTeacher.fullName}</p>
+                    {(selectedTeacher as any).digitalTeacherId && (
+                      <p className="text-[10px] font-mono font-bold text-[#D4AF37] leading-none mb-0.5">{(selectedTeacher as any).digitalTeacherId}</p>
+                    )}
                     <p className="text-[11px] text-white/40 truncate">
                       {selectedTeacher.subject} · <span className="text-[#D4AF37]">{selectedCells.size}</span> cell{selectedCells.size !== 1 ? "s" : ""} selected
                     </p>

@@ -26,6 +26,7 @@ interface AdminComplaint {
   studentName: string | null;
   students?: { id: number; name: string; class: string | null; section: string | null }[];
   teacherName: string | null;
+  teacherDtid: string | null;
   complainantName: string | null;
   complainantClass: string | null;
   complainantSection: string | null;
@@ -109,11 +110,21 @@ function ComplaintCard({ c, schoolId, showRemarksInput }: {
                   {c.complainantPhone && <p className="text-xs text-slate-500 font-semibold">Phone: {c.complainantPhone}</p>}
                 </div>
               )}
-              {c.teacherName && <p className="text-xs font-bold text-slate-800 mt-0.5">Against: <span className="text-rose-700">{c.teacherName}</span></p>}
+              {c.teacherName && (
+                <p className="text-xs font-bold text-slate-800 mt-0.5">
+                  Against: <span className="text-rose-700">{c.teacherName}</span>
+                  {c.teacherDtid && <span className="ml-1 font-mono text-[10px] font-semibold text-rose-400/80">({c.teacherDtid})</span>}
+                </p>
+              )}
             </>
           ) : (
             <>
-              {c.teacherName && <p className="text-xs font-bold text-slate-800">From: {c.teacherName}</p>}
+              {c.teacherName && (
+                <p className="text-xs font-bold text-slate-800">
+                  From: {c.teacherName}
+                  {c.teacherDtid && <span className="ml-1 font-mono text-[10px] font-semibold text-slate-400">({c.teacherDtid})</span>}
+                </p>
+              )}
               {(c.students?.length ?? 0) > 0 && (
                 <div className="mt-0.5" data-testid={`students-admin-${c.id}`}>
                   <span className="text-xs font-bold text-slate-500 mr-1">Against:</span>

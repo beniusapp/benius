@@ -65,6 +65,7 @@ interface ClassDetailResponse {
 interface TeacherRow {
   teacherId: number;
   name: string;
+  digitalTeacherId: string | null;
   assignedClass: string;
   assignedSection: string;
   assignedClassSections: string[];
@@ -804,6 +805,9 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
                                 </span>
                               )}
                             </div>
+                            {t.digitalTeacherId && (
+                              <p className="text-[#D4AF37] text-[10px] font-mono font-semibold mt-0.5">{t.digitalTeacherId}</p>
+                            )}
                             {t.subject && <p className="text-white/30 text-xs flex items-center gap-1 mt-0.5"><BookOpen className="w-3 h-3" />{t.subject}</p>}
                           </div>
                         </div>
