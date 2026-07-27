@@ -8,7 +8,7 @@ import path from "path";
 import fs from "fs";
 import ExcelJS from "exceljs";
 import { db } from "./db";
-import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions, studentProfiles, students, removedTeachersLog, users } from "@shared/schema";
+import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions, studentProfiles, students, removedTeachersLog, users, facultyMappings } from "@shared/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 
@@ -3709,6 +3709,22 @@ Thank you for your prompt attention to this matter.
       // Fetch teacher's email from users table before deletion
       const [teacherUser] = await db.select({ email: users.email }).from(users).where(eq(users.id, teacher.userId));
 
+      // Snapshot faculty_mappings — real class/section/subject data lives here, not on the teachers row
+      const mappings = await db
+        .select({ className: facultyMappings.className, section: facultyMappings.section, subject: facultyMappings.subject })
+        .from(facultyMappings)
+        .where(and(eq(facultyMappings.teacherId, teacherId), eq(facultyMappings.schoolId, schoolId)));
+
+      // Build compound strings: "3-A, 5-B" and "Physics, Math"
+      const snapshotClass = mappings.length
+        ? mappings.map(m => `${m.className}-${m.section}`).join(", ")
+        : (teacher.assignedClass && teacher.assignedSection
+            ? `${teacher.assignedClass}-${teacher.assignedSection}`
+            : (teacher.assignedClass || null));
+      const snapshotSubject = mappings.length
+        ? [...new Set(mappings.map(m => m.subject).filter(Boolean))].join(", ") || null
+        : (teacher.subject || null);
+
       // Log the removal before deleting
       await storage.logRemovedTeacher({
         schoolId,
@@ -3716,9 +3732,9 @@ Thank you for your prompt attention to this matter.
         fullName: teacher.fullName,
         email: teacherUser?.email ?? null,
         phone: teacher.phone ?? null,
-        subject: teacher.subject ?? null,
-        assignedClass: teacher.assignedClass ?? null,
-        assignedSection: teacher.assignedSection ?? null,
+        subject: snapshotSubject,
+        assignedClass: snapshotClass,
+        assignedSection: null,
         designation: teacher.designation ?? null,
         gender: teacher.gender ?? null,
         dateOfBirth: teacher.dateOfBirth ?? null,

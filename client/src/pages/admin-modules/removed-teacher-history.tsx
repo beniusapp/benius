@@ -149,8 +149,8 @@ export default function RemovedTeacherHistory({ schoolId, onBack }: Props) {
                   {/* Subject */}
                   <td className="py-3 px-3 whitespace-nowrap text-white/60 text-xs">{r.subject || "—"}</td>
                   {/* Class/Section */}
-                  <td className="py-3 px-3 whitespace-nowrap text-white/60 text-xs">
-                    {r.assignedClass && r.assignedSection ? `${r.assignedClass}-${r.assignedSection}` : "—"}
+                  <td className="py-3 px-3 text-white/60 text-xs max-w-[120px]">
+                    {r.assignedClass || "—"}
                   </td>
                   {/* Designation */}
                   <td className="py-3 px-3 whitespace-nowrap text-white/60 text-xs">{r.designation || "—"}</td>
