@@ -3043,7 +3043,9 @@ Thank you for your prompt attention to this matter.
       .where(and(eq(academicSessions.schoolId, schoolId), eq(academicSessions.isActive, true)))
       .limit(1);
     const from = activeSession ? new Date(activeSession.startDate + "T00:00:00.000Z") : undefined;
-    const to   = activeSession ? new Date(activeSession.endDate   + "T23:59:59.999Z") : undefined;
+    const sessionEnd = activeSession ? new Date(activeSession.endDate + "T23:59:59.999Z") : undefined;
+    // Use whichever is later — session end or now — so records beyond an overdue end date still appear
+    const to = sessionEnd ? (sessionEnd > new Date() ? sessionEnd : new Date()) : undefined;
     const list = await storage.getVisitorLogsBySchool(schoolId, from, to);
     res.json(list);
   });
