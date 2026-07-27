@@ -1484,55 +1484,55 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
 
           {/* ── SECTION 3: Module Impact Summary ─────────────────────────── */}
           {(() => {
-            const SESSION_RESET_MODULES = [
-              { emoji: "📅", label: "Timetable Master",       detail: "All schedule grid assignments and published timetables" },
-              { emoji: "🏆", label: "Exam Controller",        detail: "All exam marks, scores, grade entries, promotion decisions and overrides" },
-              { emoji: "📊", label: "Attendance Overview",    detail: "All attendance records — fresh date window per session" },
-              { emoji: "📋", label: "Leave Requests",         detail: "All teacher & student leave queues, balances and approval history" },
-              { emoji: "🛡️", label: "Complaint Hub",         detail: "All complaints, grievances and escalations" },
-              { emoji: "🔔", label: "Noticeboard",            detail: "All posted notices and announcements" },
-              { emoji: "🪪", label: "Visitor Log",            detail: "All visitor check-ins and check-outs" },
-              { emoji: "🔒", label: "Audit Logs",             detail: "All admin action entries" },
-              { emoji: "💳", label: "ID Card Generator",      detail: "All generated ID card records" },
-              { emoji: "💰", label: "Fees & Payments",        detail: "All fee records and payments" },
-              { emoji: "📈", label: "Performance Analytics",  detail: "All academic history snapshots" },
+            const SESSION_ARCHIVED_MODS = [
+              { emoji: "📅", label: "Timetable Master",       detail: "Saved per session — previous timetable viewable in archive" },
+              { emoji: "🏆", label: "Exam Controller",        detail: "Exam marks and grades preserved — viewable per session in archive" },
+              { emoji: "📊", label: "Attendance Overview",    detail: "Attendance records archived — viewable per session in archive" },
+              { emoji: "📋", label: "Leave Requests",         detail: "Leave history preserved — viewable per session in archive" },
+              { emoji: "🛡️", label: "Complaint Hub",         detail: "Complaints archived — viewable per session" },
+              { emoji: "🔔", label: "Noticeboard",            detail: "Notices preserved — viewable per session in archive" },
+              { emoji: "🪪", label: "Visitor Log",            detail: "Visitor entries archived — viewable per session" },
+              { emoji: "🔒", label: "Audit Logs",             detail: "Action trail preserved — viewable per session in archive" },
+              { emoji: "💳", label: "ID Card Generator",      detail: "Generated ID card records preserved per session" },
+              { emoji: "💰", label: "Fees & Payments",        detail: "Fee records archived — viewable per session" },
+              { emoji: "📈", label: "Performance Analytics",  detail: "Academic history snapshots preserved per session" },
             ];
             return (
-              <div className="rounded-xl overflow-hidden"
-                style={{ border: "1px solid rgba(239,68,68,0.18)" }}>
-                <div className="flex items-center gap-2 px-4 py-3"
-                  style={{ background: "rgba(239,68,68,0.08)", borderBottom: "1px solid rgba(239,68,68,0.14)" }}>
-                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white"
-                    style={{ background: "rgba(239,68,68,0.30)", border: "1px solid rgba(239,68,68,0.50)" }}>3</div>
-                  <p className="text-[11px] font-black tracking-widest uppercase text-red-400/90">Module Impact</p>
-                  <span className="ml-auto text-[10px] font-bold text-red-400/60">{SESSION_RESET_MODULES.length} modules reset</span>
-                </div>
+              <div className="space-y-3">
+                <div className="rounded-xl overflow-hidden"
+                  style={{ border: "1px solid rgba(34,211,238,0.18)" }}>
+                  <div className="flex items-center gap-2 px-4 py-3"
+                    style={{ background: "rgba(34,211,238,0.07)", borderBottom: "1px solid rgba(34,211,238,0.12)" }}>
+                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white"
+                      style={{ background: "rgba(34,211,238,0.25)", border: "1px solid rgba(34,211,238,0.40)" }}>3</div>
+                    <p className="text-[11px] font-black tracking-widest uppercase text-cyan-400/90">Module Impact</p>
+                    <span className="ml-auto text-[10px] font-bold text-cyan-400/60">{SESSION_ARCHIVED_MODS.length} modules — all archived</span>
+                  </div>
 
-                {/* Fixed list of all 11 session-scoped modules that will be wiped */}
-                <div className="divide-y" style={{ borderColor: "rgba(239,68,68,0.09)" }}>
-                  {SESSION_RESET_MODULES.map(mod => (
-                    <div key={mod.label} className="flex items-start gap-3 px-4 py-2.5"
-                      style={{ background: "rgba(239,68,68,0.02)" }}>
-                      <span className="text-base flex-shrink-0 mt-0.5">{mod.emoji}</span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-white/80">{mod.label}</p>
-                        <p className="text-[10px] text-white/45 mt-0.5 leading-relaxed">{mod.detail}</p>
+                  <div className="divide-y" style={{ borderColor: "rgba(34,211,238,0.07)" }}>
+                    {SESSION_ARCHIVED_MODS.map(mod => (
+                      <div key={mod.label} className="flex items-start gap-3 px-4 py-2.5">
+                        <span className="text-base flex-shrink-0 mt-0.5">{mod.emoji}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-white/80">{mod.label}</p>
+                          <p className="text-[10px] text-white/45 mt-0.5 leading-relaxed">{mod.detail}</p>
+                        </div>
+                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 mt-0.5"
+                          style={{ background: "rgba(34,211,238,0.10)", color: "rgba(103,232,249,0.80)", border: "1px solid rgba(34,211,238,0.22)" }}>
+                          ARCHIVED
+                        </span>
                       </div>
-                      <span className="text-[9px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 mt-0.5"
-                        style={{ background: "rgba(239,68,68,0.14)", color: "rgba(252,165,165,0.80)", border: "1px solid rgba(239,68,68,0.22)" }}>
-                        RESET
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
 
-                {/* Global data safety note */}
-                <div className="flex items-start gap-2 px-4 py-3"
-                  style={{ background: "rgba(16,185,129,0.04)", borderTop: "1px solid rgba(16,185,129,0.12)" }}>
-                  <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-emerald-400/60" />
-                  <span className="text-[10px] leading-relaxed" style={{ color: "rgba(52,211,153,0.60)" }}>
-                    Global data is <strong style={{ color: "rgba(52,211,153,0.80)" }}>never affected</strong> — School Setup, Teachers, Students, Policies, Timetable Bell Structure, School Calendar and all configurations remain exactly as they are.
-                  </span>
+                  {/* Global data safety note */}
+                  <div className="flex items-start gap-2 px-4 py-3"
+                    style={{ background: "rgba(16,185,129,0.04)", borderTop: "1px solid rgba(16,185,129,0.12)" }}>
+                    <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-emerald-400/60" />
+                    <span className="text-[10px] leading-relaxed" style={{ color: "rgba(52,211,153,0.60)" }}>
+                      Global data is <strong style={{ color: "rgba(52,211,153,0.80)" }}>never affected</strong> — School Setup, Teachers, Students, Policies, Bell Structure, Calendar and all configurations remain intact.
+                    </span>
+                  </div>
                 </div>
               </div>
             );
@@ -1560,7 +1560,7 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
               </div>
             )}
             <CheckRow checked={moduleChecked} onChange={() => setModuleChecked(v => !v)}>
-              I understand that the modules listed above will reset when this session is activated.
+              I understand that session modules will be <strong className="text-white/70">archived</strong> (viewable in archive mode) and attendance records will <strong className="text-white/70">reset</strong> when this session is activated.
             </CheckRow>
           </div>
 

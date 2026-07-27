@@ -2288,12 +2288,16 @@ export async function registerRoutes(
         );
       // SQL-level filter: school_id + date + student_id IN (...) — no in-memory scan
       const studentIdList = studentRows.map(s => s.id);
+      const cdViewSessionId = (req as any).viewSessionId as number | undefined;
+      const cdActiveSession = !cdViewSessionId ? await storage.getActiveSession(schoolId) : null;
+      const cdFilterSessionId = cdViewSessionId ?? cdActiveSession?.id;
       const filteredRecords = studentIdList.length > 0
         ? await db.select().from(attendanceRecords).where(
             and(
               eq(attendanceRecords.schoolId, schoolId),
               eq(attendanceRecords.date, date),
-              inArray(attendanceRecords.studentId, studentIdList)
+              inArray(attendanceRecords.studentId, studentIdList),
+              ...(cdFilterSessionId ? [eq(attendanceRecords.sessionId, cdFilterSessionId)] : [])
             )
           )
         : [];
@@ -2350,8 +2354,15 @@ export async function registerRoutes(
         .where(and(eq(studentsTable.schoolId, schoolId), eq(studentsTable.isActive, true)));
       const enrolledTotal = enrolledRows.length;
 
+      const viewSessionId = (req as any).viewSessionId as number | undefined;
+      const activeSession = !viewSessionId ? await storage.getActiveSession(schoolId) : null;
+      const filterSessionId = viewSessionId ?? activeSession?.id;
       const recs = await db.select().from(attendanceRecords)
-        .where(and(eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.date, date)));
+        .where(and(
+          eq(attendanceRecords.schoolId, schoolId),
+          eq(attendanceRecords.date, date),
+          ...(filterSessionId ? [eq(attendanceRecords.sessionId, filterSessionId)] : [])
+        ));
 
       const markedTotal = recs.length;
       const present = recs.filter(r => r.status === "present").length;
@@ -2372,17 +2383,32 @@ export async function registerRoutes(
     const { date } = req.query as { date?: string };
     if (!date) return res.status(400).json({ message: "date is required" });
     try {
+      const tsViewSessionId = (req as any).viewSessionId as number | undefined;
+      const tsActiveSession = !tsViewSessionId ? await storage.getActiveSession(schoolId) : null;
+      const tsFilterSessionId = tsViewSessionId ?? tsActiveSession?.id;
       const [allTeachers, selfAttRows, mappingRows, corrRows, studentRecords, policyRows] = await Promise.all([
         storage.getTeachersBySchool(schoolId),
         db.select().from(teacherSelfAttendance).where(
-          and(eq(teacherSelfAttendance.schoolId, schoolId), eq(teacherSelfAttendance.attendanceDate, date))
+          and(
+            eq(teacherSelfAttendance.schoolId, schoolId),
+            eq(teacherSelfAttendance.attendanceDate, date),
+            ...(tsFilterSessionId ? [eq(teacherSelfAttendance.sessionId, tsFilterSessionId)] : [])
+          )
         ),
         db.select().from(facultyMappings).where(eq(facultyMappings.schoolId, schoolId)),
         db.select().from(attendanceCorrectionRequests).where(
-          and(eq(attendanceCorrectionRequests.schoolId, schoolId), eq(attendanceCorrectionRequests.attendanceDate, date))
+          and(
+            eq(attendanceCorrectionRequests.schoolId, schoolId),
+            eq(attendanceCorrectionRequests.attendanceDate, date),
+            ...(tsFilterSessionId ? [eq(attendanceCorrectionRequests.sessionId, tsFilterSessionId)] : [])
+          )
         ),
         db.select().from(attendanceRecords).where(
-          and(eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.date, date))
+          and(
+            eq(attendanceRecords.schoolId, schoolId),
+            eq(attendanceRecords.date, date),
+            ...(tsFilterSessionId ? [eq(attendanceRecords.sessionId, tsFilterSessionId)] : [])
+          )
         ),
         db.select().from(attendancePolicies).where(
           and(eq(attendancePolicies.schoolId, schoolId), eq(attendancePolicies.isActive, true))
@@ -3112,66 +3138,24 @@ export async function registerRoutes(
     try {
       const updated = await db.transaction(async (tx) => {
 
-        // ── Step 1: Full Module Reset ────────────────────────────────────────
-        // All 11 session-scoped modules wiped for this school atomically.
-        // Global data (teachers, students, school setup, policies, timetableStructure,
-        // calendarEvents, schoolAssets, etc.) is NEVER deleted here.
-        console.log(`[SESSION-ACTIVATE] Resetting 11 session-scoped modules for school ${schoolId}`);
+        // ── Step 1: Promotion Overrides Reset ───────────────────────────────
+        // ALL 11 session modules now carry session_id and are self-scoping.
+        // Activating a new session leaves all historical data intact — archive
+        // mode shows each session's own records.
+        //
+        // Only promotion_overrides is reset here because it has no session_id
+        // and is per-exam-cycle (not per-session-ID).
+        console.log(`[SESSION-ACTIVATE] Clearing promotion overrides for school ${schoolId}`);
 
-        const [
-          delTimetable,
-          delExamScores, delPromotionDecisions, delPromotionOverrides,
-          delAttendance, delTeacherAttendance, delAttendanceCorrections,
-          delLeaves, delStudentLeaves,
-          delComplaints,
-          delNotices,
-          delVisitorLogs,
-          delAuditLogs,
-          delFeeRecords,
-          delAcademicHistory,
-          delHomework,
-          delClasswork,
-        ] = await Promise.all([
-          // (1) Timetable Master
-          tx.delete(timetableEntries).where(eq(timetableEntries.schoolId, schoolId)).returning({ id: timetableEntries.id }),
-          // (2) Exam Controller
-          tx.delete(examScores).where(eq(examScores.schoolId, schoolId)).returning({ id: examScores.id }),
-          tx.delete(promotionDecisions).where(eq(promotionDecisions.schoolId, schoolId)).returning({ id: promotionDecisions.id }),
+        const [delPromotionOverrides] = await Promise.all([
           tx.delete(promotionOverrides).where(eq(promotionOverrides.schoolId, schoolId)).returning({ id: promotionOverrides.id }),
-          // (3) Attendance Overview
-          tx.delete(attendanceRecords).where(eq(attendanceRecords.schoolId, schoolId)).returning({ id: attendanceRecords.id }),
-          tx.delete(teacherSelfAttendance).where(eq(teacherSelfAttendance.schoolId, schoolId)).returning({ id: teacherSelfAttendance.id }),
-          tx.delete(attendanceCorrectionRequests).where(eq(attendanceCorrectionRequests.schoolId, schoolId)).returning({ id: attendanceCorrectionRequests.id }),
-          // (4) Leave Requests
-          tx.delete(leaveRequests).where(eq(leaveRequests.schoolId, schoolId)).returning({ id: leaveRequests.id }),
-          tx.delete(studentLeaveRequests).where(eq(studentLeaveRequests.schoolId, schoolId)).returning({ id: studentLeaveRequests.id }),
-          // (5) Complaint Hub (notes + complaint_students cascade)
-          tx.delete(complaints).where(eq(complaints.schoolId, schoolId)).returning({ id: complaints.id }),
-          // (6) Noticeboard (notice_reads cascade)
-          tx.delete(notices).where(eq(notices.schoolId, schoolId)).returning({ id: notices.id }),
-          // (7) Visitor Log
-          tx.delete(visitorLogs).where(eq(visitorLogs.schoolId, schoolId)).returning({ id: visitorLogs.id }),
-          // (8) Audit Logs
-          tx.delete(auditLogs).where(eq(auditLogs.schoolId, schoolId)).returning({ id: auditLogs.id }),
-          // (9) ID Card Generator — no DB table yet (module planned)
-          // (10) Fees & Payments
-          tx.delete(feeRecords).where(eq(feeRecords.schoolId, schoolId)).returning({ id: feeRecords.id }),
-          // (11) Performance Analytics
-          tx.delete(academicHistory).where(eq(academicHistory.schoolId, schoolId)).returning({ id: academicHistory.id }),
-          // (12) Homework (homeworkViews + homeworkSubmissions cascade via FK)
-          tx.delete(homework).where(eq(homework.schoolId, schoolId)).returning({ id: homework.id }),
-          // (13) Classwork
-          tx.delete(classwork).where(eq(classwork.schoolId, schoolId)).returning({ id: classwork.id }),
         ]);
 
         console.log(
-          `[SESSION-ACTIVATE] ✓ Reset complete — timetable:${delTimetable.length} ` +
-          `examScores:${delExamScores.length} promotions:${delPromotionDecisions.length} ` +
-          `attendance:${delAttendance.length} leaves:${delLeaves.length}+${delStudentLeaves.length} ` +
-          `complaints:${delComplaints.length} notices:${delNotices.length} ` +
-          `visitors:${delVisitorLogs.length} audits:${delAuditLogs.length} ` +
-          `fees:${delFeeRecords.length} history:${delAcademicHistory.length} ` +
-          `homework:${delHomework.length} classwork:${delClasswork.length}`
+          `[SESSION-ACTIVATE] ✓ Reset complete — promotionOverrides:${delPromotionOverrides.length}. ` +
+          `All 11 session modules (timetable, exams, attendance, leaves, complaints, ` +
+          `notices, visitor-log, audit-log, fees, history, homework/classwork) ` +
+          `preserved in archive — each tagged with their session_id.`
         );
 
         // ── Step 2: Archive siblings ─────────────────────────────────────────

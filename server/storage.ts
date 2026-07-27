@@ -380,9 +380,15 @@ export class DatabaseStorage {
     return allRecords.filter(r => studentIds.includes(r.studentId));
   }
 
-  async upsertAttendance(records: { studentId: number; teacherId: number; schoolId: number; date: string; status: string; markedBy: string; class?: string; section?: string; academicYear?: string }[]): Promise<AttendanceRecord[]> {
+  async upsertAttendance(records: { studentId: number; teacherId: number; schoolId: number; date: string; status: string; markedBy: string; class?: string; section?: string; academicYear?: string; sessionId?: number }[]): Promise<AttendanceRecord[]> {
     const results: AttendanceRecord[] = [];
     for (const rec of records) {
+      // Auto-resolve active session if not provided
+      let resolvedSessionId = rec.sessionId;
+      if (!resolvedSessionId) {
+        const active = await this.getActiveSession(rec.schoolId);
+        resolvedSessionId = active?.id ?? undefined;
+      }
       const existing = await db.select().from(attendanceRecords).where(
         and(eq(attendanceRecords.studentId, rec.studentId), eq(attendanceRecords.date, rec.date))
       );
@@ -397,6 +403,7 @@ export class DatabaseStorage {
           ...(rec.class && { class: rec.class }),
           ...(rec.section && { section: rec.section }),
           ...(rec.academicYear && { academicYear: rec.academicYear }),
+          ...(resolvedSessionId && { sessionId: resolvedSessionId }),
         }).where(eq(attendanceRecords.id, current.id)).returning();
         results.push(updated);
       } else {
@@ -404,6 +411,7 @@ export class DatabaseStorage {
           studentId: rec.studentId,
           teacherId: rec.teacherId,
           schoolId: rec.schoolId,
+          sessionId: resolvedSessionId ?? null,
           date: rec.date,
           status: rec.status,
           editCount: 0,

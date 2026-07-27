@@ -15,7 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft, ArrowRight, Check, CheckCircle2, Lock,
   AlertTriangle, AlertCircle, Loader2, Info,
-  Globe, RefreshCw, GraduationCap, Shield,
+  Globe, RefreshCw, GraduationCap, Shield, Archive,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -44,18 +44,19 @@ const GLOBAL_DATA_ITEMS = [
   { id: "approval-catalogs",  label: "Approval Center Catalogs",           emoji: "✅",  detail: "Gallery Hub catalog & E-Book Library catalog framework" },
 ];
 
-const FULL_RESET_MODULES = [
-  { id: "timetable-master",       label: "Timetable Master",      emoji: "📅", detail: "All schedule grid assignments and published timetables" },
-  { id: "exam-controller",        label: "Exam Controller",       emoji: "🏆", detail: "All exam marks, scores and grade entries" },
-  { id: "attendance",             label: "Attendance Overview",   emoji: "📊", detail: "All attendance records — fresh date window per session" },
-  { id: "leave-requests",         label: "Leave Requests",        emoji: "📋", detail: "All teacher & student leave queues, balances and approval history" },
-  { id: "complaint-hub",          label: "Complaint Hub",         emoji: "🛡️", detail: "All complaints, grievances and escalations" },
-  { id: "noticeboard",            label: "Noticeboard",           emoji: "🔔", detail: "All posted notices and announcements" },
-  { id: "visitor-log",            label: "Visitor Log",           emoji: "🚪", detail: "All visitor entries and check-outs" },
-  { id: "audit-logs",             label: "Audit Logs",            emoji: "🔐", detail: "All audit trail entries" },
-  { id: "id-card-gen",            label: "ID Card Generator",     emoji: "💳", detail: "All generated ID card records" },
-  { id: "fees-payments",          label: "Fees & Payments",       emoji: "💰", detail: "All fee records, invoices and payments" },
-  { id: "performance-analytics",  label: "Performance Analytics", emoji: "📈", detail: "All analytics data and report cards" },
+// All 11 modules carry session_id — data is preserved and viewable in archive mode.
+const SESSION_ARCHIVED_MODULES = [
+  { id: "timetable-master",       label: "Timetable Master",      emoji: "📅", detail: "Schedule grid saved per session — previous session's timetable stays in archive" },
+  { id: "exam-controller",        label: "Exam Controller",       emoji: "🏆", detail: "Exam marks and grade entries preserved per session" },
+  { id: "attendance",             label: "Attendance Overview",   emoji: "📊", detail: "Attendance records archived per session — viewable in archive mode" },
+  { id: "leave-requests",         label: "Leave Requests",        emoji: "📋", detail: "Teacher & student leave history preserved per session" },
+  { id: "complaint-hub",          label: "Complaint Hub",         emoji: "🛡️", detail: "Complaints and grievances archived per session" },
+  { id: "noticeboard",            label: "Noticeboard",           emoji: "🔔", detail: "Notices and announcements preserved per session" },
+  { id: "visitor-log",            label: "Visitor Log",           emoji: "🚪", detail: "Visitor entries archived per session — viewable in archive mode" },
+  { id: "audit-logs",             label: "Audit Logs",            emoji: "🔐", detail: "Admin action trail preserved per session" },
+  { id: "id-card-gen",            label: "ID Card Generator",     emoji: "💳", detail: "Generated ID card records preserved per session" },
+  { id: "fees-payments",          label: "Fees & Payments",       emoji: "💰", detail: "Fee records and payments archived per session" },
+  { id: "performance-analytics",  label: "Performance Analytics", emoji: "📈", detail: "Academic history snapshots preserved per session" },
 ];
 
 // ── Step Bar ──────────────────────────────────────────────────────────────────
@@ -242,43 +243,46 @@ export default function SessionMigrationPage() {
               </p>
             </div>
 
-            {/* ── A. FULL MODULE RESETS ─────────────────────────────────── */}
+            {/* ── A. SESSION-ARCHIVED MODULES ───────────────────────────── */}
             <section className="space-y-3">
               <div className="flex items-center gap-2">
-                <div className="w-1.5 h-5 rounded-full" style={{ background: "linear-gradient(180deg,#ef4444,#f87171)" }} />
-                <h3 className="text-[11px] font-black tracking-widest uppercase text-red-400/80">Full Module Resets</h3>
-                <span className="text-[10px] text-white/25">Reset completely for the new session</span>
+                <div className="w-1.5 h-5 rounded-full" style={{ background: "linear-gradient(180deg,#22d3ee,#6366f1)" }} />
+                <h3 className="text-[11px] font-black tracking-widest uppercase text-cyan-400/80">Session-Archived Modules</h3>
+                <span className="text-[10px] text-white/25">Preserved — viewable in archive mode</span>
               </div>
               <div className="rounded-xl overflow-hidden"
-                style={{ background: "rgba(239,68,68,0.03)", border: "1px solid rgba(239,68,68,0.18)" }}>
-                {/* Header row */}
+                style={{ background: "rgba(34,211,238,0.02)", border: "1px solid rgba(34,211,238,0.18)" }}>
                 <div className="flex items-center gap-2.5 px-4 py-2.5"
-                  style={{ background: "rgba(239,68,68,0.08)", borderBottom: "1px solid rgba(239,68,68,0.14)" }}>
-                  <RefreshCw className="w-3.5 h-3.5 text-red-400/70" />
-                  <p className="text-[10px] font-black tracking-widest uppercase text-red-400/70 flex-1">
-                    {FULL_RESET_MODULES.length} modules — all data cleared for new session ID
+                  style={{ background: "rgba(34,211,238,0.07)", borderBottom: "1px solid rgba(34,211,238,0.12)" }}>
+                  <Archive className="w-3.5 h-3.5 text-cyan-400/70" />
+                  <p className="text-[10px] font-black tracking-widest uppercase text-cyan-400/70 flex-1">
+                    {SESSION_ARCHIVED_MODULES.length} modules — data tagged &amp; preserved per session
                   </p>
                 </div>
-                {FULL_RESET_MODULES.map((mod, idx) => (
+                {SESSION_ARCHIVED_MODULES.map((mod, idx) => (
                   <div key={mod.id}
                     className="flex items-start gap-3 px-4 py-3"
-                    style={{ borderBottom: idx < FULL_RESET_MODULES.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}
-                    data-testid={`reset-full-${mod.id}`}>
+                    style={{ borderBottom: idx < SESSION_ARCHIVED_MODULES.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}
+                    data-testid={`archived-${mod.id}`}>
                     <span className="text-sm opacity-50 flex-shrink-0 mt-0.5">{mod.emoji}</span>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold text-white/60">{mod.label}</p>
                       <p className="text-[10px] text-white/25 mt-0.5">{mod.detail}</p>
                     </div>
-                    <Lock className="w-3 h-3 text-red-400/35 flex-shrink-0 mt-1" />
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 mt-1"
+                      style={{ background: "rgba(34,211,238,0.10)", color: "rgba(103,232,249,0.75)", border: "1px solid rgba(34,211,238,0.20)" }}>
+                      ARCHIVED
+                    </span>
                   </div>
                 ))}
                 <div className="mx-3 mb-3 mt-2 flex items-start gap-2 px-3 py-2 rounded-lg text-[10px]"
-                  style={{ background: "rgba(239,68,68,0.06)", color: "rgba(252,165,165,0.55)" }}>
-                  <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5 text-red-400/50" />
-                  <span>These records are tied to a specific academic period and cannot be carried over.</span>
+                  style={{ background: "rgba(34,211,238,0.05)", color: "rgba(103,232,249,0.55)" }}>
+                  <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5 text-cyan-400/50" />
+                  <span>These records are saved with the session ID. Switch to archive mode anytime to view them.</span>
                 </div>
               </div>
             </section>
+
 
             {/* ── B. GLOBAL DATA — NEVER RESETS ──────────────────────────── */}
             <section className="space-y-3">
@@ -352,7 +356,7 @@ export default function SessionMigrationPage() {
                 </button>
               </div>
               <p className="text-[10px] text-center text-white/20">
-                Global data is never modified · Session data starts fresh
+                Global data is never modified · Session modules archived · Attendance resets fresh
               </p>
             </div>
 
@@ -449,33 +453,33 @@ export default function SessionMigrationPage() {
           <section className="space-y-3">
             {/* Section header badge */}
             <div className="flex items-center gap-2 px-3 py-2 rounded-xl"
-              style={{ background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.22)" }}>
-              <RefreshCw className="w-4 h-4 text-red-400 flex-shrink-0" />
+              style={{ background: "rgba(34,211,238,0.07)", border: "1px solid rgba(34,211,238,0.20)" }}>
+              <Archive className="w-4 h-4 text-cyan-400 flex-shrink-0" />
               <div className="flex-1">
-                <p className="text-[11px] font-black tracking-widest uppercase text-red-400">
-                  Session Data — Reset
+                <p className="text-[11px] font-black tracking-widest uppercase text-cyan-400">
+                  Session-Archived Data
                 </p>
-                <p className="text-[10px] text-red-400/50">Fresh Start Operational Logs</p>
+                <p className="text-[10px] text-cyan-400/50">All 11 modules preserved — viewable in archive mode</p>
               </div>
               <span className="text-[9px] font-bold px-2 py-0.5 rounded-full"
-                style={{ background: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.22)" }}>
-                {FULL_RESET_MODULES.length} modules
+                style={{ background: "rgba(34,211,238,0.10)", color: "#67e8f9", border: "1px solid rgba(34,211,238,0.22)" }}>
+                {SESSION_ARCHIVED_MODULES.length} modules
               </span>
             </div>
 
             <div className="rounded-xl overflow-hidden"
-              style={{ border: "1px solid rgba(239,68,68,0.16)" }}>
-              {FULL_RESET_MODULES.map((mod, idx) => (
+              style={{ border: "1px solid rgba(34,211,238,0.14)" }}>
+              {SESSION_ARCHIVED_MODULES.map((mod, idx) => (
                 <div key={mod.id} className="flex items-center gap-3 px-4 py-2.5"
-                  style={{ borderBottom: idx < FULL_RESET_MODULES.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                  style={{ borderBottom: idx < SESSION_ARCHIVED_MODULES.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
                   <span className="text-sm opacity-40 w-5 text-center flex-shrink-0">{mod.emoji}</span>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-semibold text-white/80">{mod.label}</p>
                     <p className="text-[10px] text-white/55 mt-0.5">{mod.detail}</p>
                   </div>
                   <span className="text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0"
-                    style={{ background: "rgba(239,68,68,0.08)", color: "rgba(248,113,113,0.60)", border: "1px solid rgba(239,68,68,0.16)" }}>
-                    Fresh Start
+                    style={{ background: "rgba(34,211,238,0.08)", color: "rgba(103,232,249,0.70)", border: "1px solid rgba(34,211,238,0.16)" }}>
+                    ARCHIVED
                   </span>
                 </div>
               ))}

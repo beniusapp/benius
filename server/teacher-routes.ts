@@ -1554,8 +1554,10 @@ export function registerTeacherRoutes(app: Express) {
         const [existing] = await db.select().from(teacherSelfAttendance)
           .where(and(eq(teacherSelfAttendance.teacherId, leave.teacherId), eq(teacherSelfAttendance.attendanceDate, dateStr)));
         if (!existing) {
+          const leaveActiveSession = await storage.getActiveSession(leave.schoolId);
           await db.insert(teacherSelfAttendance).values({
             teacherId: leave.teacherId, schoolId: leave.schoolId,
+            sessionId: leaveActiveSession?.id ?? null,
             attendanceDate: dateStr, status: "Leave",
             totalWorkingMinutes: 0,
           });
@@ -4295,14 +4297,17 @@ Thank you for your prompt attention to this matter.
       const evalResult = evaluateAttendanceStatus(utcToISTHHMM(now), policy);
       const status = evalResult.displayStatus; // "Present", "Late", "Half Day", or "Leave"
 
+      const activeSessionForCheckIn = await storage.getActiveSession(teacher.schoolId);
+      const checkInSessionId = activeSessionForCheckIn?.id ?? null;
       let record;
       if (existing) {
         [record] = await db.update(teacherSelfAttendance)
-          .set({ checkInTime: now, status, locationVerified: !!locationVerified, latitude: latitude?.toString() ?? null, longitude: longitude?.toString() ?? null, updatedAt: now })
+          .set({ checkInTime: now, status, locationVerified: !!locationVerified, latitude: latitude?.toString() ?? null, longitude: longitude?.toString() ?? null, updatedAt: now, ...(checkInSessionId ? { sessionId: checkInSessionId } : {}) })
           .where(eq(teacherSelfAttendance.id, existing.id)).returning();
       } else {
         [record] = await db.insert(teacherSelfAttendance).values({
           teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: today,
+          sessionId: checkInSessionId,
           checkInTime: now, status, locationVerified: !!locationVerified,
           latitude: latitude?.toString() ?? null, longitude: longitude?.toString() ?? null,
         }).returning();
@@ -4428,14 +4433,17 @@ Thank you for your prompt attention to this matter.
       const [existing] = await db.select().from(teacherSelfAttendance).where(
         and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), eq(teacherSelfAttendance.attendanceDate, date))
       );
+      const activeSessionForCorr = await storage.getActiveSession(teacher.schoolId);
+      const corrSessionId = activeSessionForCorr?.id ?? null;
       let attendanceRecord;
       if (existing) {
         [attendanceRecord] = await db.update(teacherSelfAttendance)
-          .set({ checkInTime: checkInIST, checkOutTime: checkOutIST, totalWorkingMinutes: workingMinutes, status, locationVerified: existing.locationVerified, updatedAt: now })
+          .set({ checkInTime: checkInIST, checkOutTime: checkOutIST, totalWorkingMinutes: workingMinutes, status, locationVerified: existing.locationVerified, updatedAt: now, ...(corrSessionId ? { sessionId: corrSessionId } : {}) })
           .where(eq(teacherSelfAttendance.id, existing.id)).returning();
       } else {
         [attendanceRecord] = await db.insert(teacherSelfAttendance).values({
           teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: date,
+          sessionId: corrSessionId,
           checkInTime: checkInIST, checkOutTime: checkOutIST, totalWorkingMinutes: workingMinutes,
           status, locationVerified: false,
         }).returning();
@@ -4444,6 +4452,7 @@ Thank you for your prompt attention to this matter.
       // Log the correction as auto-approved for audit history
       const [correction] = await db.insert(attendanceCorrectionRequests).values({
         teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: date,
+        sessionId: corrSessionId,
         requestedCheckIn, requestedCheckOut, reason: reason.trim(), status: "Approved",
       }).returning();
 
