@@ -79,6 +79,77 @@ function DateLabel({ icon, text }: { icon: React.ReactNode; text: string }) {
   );
 }
 
+// ── Report generator ──────────────────────────────────────────────────────────
+function generateAssetReport(asset: Asset, schoolName: string) {
+  const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+  const now = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  const conditionColor: Record<string, string> = {
+    "New": "#10b981", "Good": "#3b82f6", "Fair": "#f59e0b", "Poor": "#ef4444", "Broken": "#dc2626",
+  };
+  const color = conditionColor[asset.condition] ?? "#6b7280";
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Asset Report – ${asset.name}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Segoe UI',Arial,sans-serif;background:#f8fafc;color:#1e293b;padding:32px}
+    .page{max-width:680px;margin:0 auto;background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.08);overflow:hidden}
+    .header{background:linear-gradient(135deg,#0A1628 0%,#1A2942 100%);padding:28px 32px;color:#fff}
+    .header h1{font-size:22px;font-weight:700;letter-spacing:.3px}
+    .header p{font-size:12px;color:#94a3b8;margin-top:4px}
+    .badge{display:inline-block;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600;margin-top:10px;border:1px solid;color:${color};border-color:${color};background:${color}1a}
+    .body{padding:28px 32px}
+    .section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#94a3b8;margin-bottom:10px;margin-top:22px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .field{background:#f1f5f9;border-radius:8px;padding:12px 14px}
+    .field label{font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px}
+    .field span{font-size:14px;font-weight:600;color:#0f172a}
+    .full{grid-column:1/-1}
+    .divider{border:none;border-top:1px solid #e2e8f0;margin:20px 0}
+    .footer{background:#f8fafc;border-top:1px solid #e2e8f0;padding:14px 32px;display:flex;justify-content:space-between;align-items:center}
+    .footer p{font-size:10px;color:#94a3b8}
+    @media print{body{padding:0}html,body{height:100%}.page{box-shadow:none;border-radius:0}@page{margin:0}}
+  </style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <h1>${schoolName}</h1>
+    <p>Assets &amp; Inventory — Individual Asset Report</p>
+    <div class="badge">${asset.condition}</div>
+  </div>
+  <div class="body">
+    <div class="section-title">Asset Identity</div>
+    <div class="grid">
+      <div class="field full"><label>Asset Name</label><span>${asset.name}</span></div>
+      <div class="field"><label>Asset Code / Serial</label><span>${asset.assetCode || "—"}</span></div>
+      <div class="field"><label>Category</label><span>${asset.category}</span></div>
+    </div>
+    <div class="section-title">Details</div>
+    <div class="grid">
+      <div class="field"><label>Quantity</label><span>${asset.quantity}</span></div>
+      <div class="field"><label>Condition</label><span style="color:${color}">${asset.condition}</span></div>
+      <div class="field"><label>Location</label><span>${asset.location || "—"}</span></div>
+      <div class="field"><label>Purchase Date</label><span>${fmt(asset.purchasedDate)}</span></div>
+      <div class="field"><label>Warranty Expiry</label><span>${fmt(asset.warrantyExpiry)}</span></div>
+      <div class="field"><label>Registered On</label><span>${fmt(asset.createdAt)}</span></div>
+    </div>
+    <hr class="divider"/>
+  </div>
+  <div class="footer">
+    <p>Generated on ${now}</p>
+    <p>BENIUS School Management · ${schoolName}</p>
+  </div>
+</div>
+<script>window.onload=function(){window.print();}</script>
+</body>
+</html>`;
+  const win = window.open("", "_blank");
+  if (win) { win.document.write(html); win.document.close(); }
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function AssetsInventory({ schoolId: _schoolId, allowedSubs }: Props) {
   const canAdd    = allowedSubs === undefined || allowedSubs.includes("add");
@@ -86,6 +157,7 @@ export default function AssetsInventory({ schoolId: _schoolId, allowedSubs }: Pr
   const canDelete = allowedSubs === undefined || allowedSubs.includes("delete");
   const { toast } = useToast();
   const { isArchiveMode } = useSessionView();
+  const { data: me } = useQuery<{ schoolName?: string }>({ queryKey: ["/api/me"] });
 
   // ── Search / condition / location filters ────────────────────────────────────
   const [search, setSearch]               = useState("");
@@ -735,8 +807,8 @@ export default function AssetsInventory({ schoolId: _schoolId, allowedSubs }: Pr
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuItem
-                              className="text-white/60 hover:text-white cursor-pointer"
-                              onClick={() => toast({ title: "Coming Soon", description: "Report generation will be available in Phase 2." })}
+                              className="text-[#D4AF37] hover:text-yellow-300 cursor-pointer"
+                              onClick={() => generateAssetReport(a, me?.schoolName ?? "School")}
                               data-testid={`menu-report-${a.id}`}
                             >
                               <FileText className="w-3.5 h-3.5 mr-2 text-[#D4AF37]" /> Generate Report
