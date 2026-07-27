@@ -3015,7 +3015,8 @@ Thank you for your prompt attention to this matter.
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
     const { visitorName, purpose, hostName, phone, email, visitorIdNumber, address } = req.body;
     if (!visitorName || !purpose || !hostName) return res.status(400).json({ message: "Name, purpose, and host are required" });
-    const v = await storage.createVisitorLog({ schoolId: req.session.schoolId!, visitorName, purpose, hostName, phone: phone || null, email: email || null, visitorIdNumber: visitorIdNumber || null, address: address || null, badge: null });
+    const activeSession = await storage.getActiveSession(req.session.schoolId!);
+    const v = await storage.createVisitorLog({ schoolId: req.session.schoolId!, sessionId: activeSession?.id ?? null, visitorName, purpose, hostName, phone: phone || null, email: email || null, visitorIdNumber: visitorIdNumber || null, address: address || null, badge: null });
     await storage.createAuditLog({
       schoolId: req.session.schoolId!, actionType: "checkin", entityType: "visitor", entityId: v.id,
       actionBy: req.session.userId!, actionByRole: "admin",
@@ -3028,8 +3029,12 @@ Thank you for your prompt attention to this matter.
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
     const schoolId = parseInt(req.params.schoolId);
     if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
-    // No date filtering — show all records for this session; data resets on session activation
-    const list = await storage.getVisitorLogsBySchool(schoolId);
+    // Filter by viewed session so archive mode shows only that session's data
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId
+      ? viewSessionId
+      : (await storage.getActiveSession(schoolId))?.id ?? null;
+    const list = await storage.getVisitorLogsBySchool(schoolId, sessionFilter);
     res.json(list);
   });
 

@@ -3212,10 +3212,9 @@ export class DatabaseStorage {
     return v;
   }
 
-  async getVisitorLogsBySchool(schoolId: number, from?: Date, to?: Date): Promise<VisitorLog[]> {
+  async getVisitorLogsBySchool(schoolId: number, sessionId?: number | null): Promise<VisitorLog[]> {
     const conditions = [eq(visitorLogs.schoolId, schoolId)];
-    if (from) conditions.push(gte(visitorLogs.checkIn, from));
-    if (to)   conditions.push(lte(visitorLogs.checkIn, to));
+    if (sessionId != null) conditions.push(eq(visitorLogs.sessionId, sessionId));
     return db.select().from(visitorLogs).where(and(...conditions)).orderBy(desc(visitorLogs.createdAt)).limit(200);
   }
 

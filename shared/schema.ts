@@ -404,6 +404,7 @@ export const auditLogs = pgTable("audit_logs", {
 export const visitorLogs = pgTable("visitor_logs", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull(),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
   visitorName: text("visitor_name").notNull(),
   purpose: text("purpose").notNull(),
   hostName: text("host_name").notNull(),
