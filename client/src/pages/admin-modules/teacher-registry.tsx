@@ -214,7 +214,6 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
                   <FormItem>
                     <FormLabel className="text-white/70 text-xs">
                       {name === "fullName" ? "Full Name" : name.charAt(0).toUpperCase() + name.slice(1)}
-                      {name === "designation" && <span className="text-white/30 ml-1">(optional)</span>}
                     </FormLabel>
                     <FormControl>
                       <Input
