@@ -577,16 +577,14 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
                   </div>
                 </div>
 
-                {/* Govt ID */}
-                {(va.govtIdType || va.govtIdNumber) && (
-                  <div>
-                    <p className="text-[#D4AF37] text-[10px] uppercase tracking-widest mb-1 font-semibold">Government ID</p>
-                    <div className="bg-[#0A1628]/50 rounded-xl px-4">
-                      <InfoRow label="ID Type" value={va.govtIdType} icon={CreditCard} />
-                      <InfoRow label="ID Number" value={va.govtIdNumber} />
-                    </div>
+                {/* Govt ID – always visible */}
+                <div>
+                  <p className="text-[#D4AF37] text-[10px] uppercase tracking-widest mb-1 font-semibold">Government ID</p>
+                  <div className="bg-[#0A1628]/50 rounded-xl px-4">
+                    <InfoRow label="ID Type" value={va.govtIdType} icon={CreditCard} />
+                    <InfoRow label="ID Number" value={va.govtIdNumber} />
                   </div>
-                )}
+                </div>
 
                 {/* Assignments */}
                 <div>
