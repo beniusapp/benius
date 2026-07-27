@@ -10,7 +10,7 @@ import {
   auditLogs, academicSessions, gradingTiers, promotionDecisions,
   leaveRequests, studentLeaveRequests,
   examScores, promotionOverrides, complaints, notices, visitorLogs,
-  feeRecords, academicHistory,
+  feeRecords, academicHistory, homework, classwork,
 } from "@shared/schema";
 import { resolvePolicy, isLateCheckIn, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 import bcrypt from "bcryptjs";
@@ -3129,6 +3129,8 @@ export async function registerRoutes(
           delAuditLogs,
           delFeeRecords,
           delAcademicHistory,
+          delHomework,
+          delClasswork,
         ] = await Promise.all([
           // (1) Timetable Master
           tx.delete(timetableEntries).where(eq(timetableEntries.schoolId, schoolId)).returning({ id: timetableEntries.id }),
@@ -3156,6 +3158,10 @@ export async function registerRoutes(
           tx.delete(feeRecords).where(eq(feeRecords.schoolId, schoolId)).returning({ id: feeRecords.id }),
           // (11) Performance Analytics
           tx.delete(academicHistory).where(eq(academicHistory.schoolId, schoolId)).returning({ id: academicHistory.id }),
+          // (12) Homework (homeworkViews + homeworkSubmissions cascade via FK)
+          tx.delete(homework).where(eq(homework.schoolId, schoolId)).returning({ id: homework.id }),
+          // (13) Classwork
+          tx.delete(classwork).where(eq(classwork.schoolId, schoolId)).returning({ id: classwork.id }),
         ]);
 
         console.log(
@@ -3164,7 +3170,8 @@ export async function registerRoutes(
           `attendance:${delAttendance.length} leaves:${delLeaves.length}+${delStudentLeaves.length} ` +
           `complaints:${delComplaints.length} notices:${delNotices.length} ` +
           `visitors:${delVisitorLogs.length} audits:${delAuditLogs.length} ` +
-          `fees:${delFeeRecords.length} history:${delAcademicHistory.length}`
+          `fees:${delFeeRecords.length} history:${delAcademicHistory.length} ` +
+          `homework:${delHomework.length} classwork:${delClasswork.length}`
         );
 
         // ── Step 2: Archive siblings ─────────────────────────────────────────
