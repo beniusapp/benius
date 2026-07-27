@@ -182,10 +182,6 @@ function PrintStyles() {
   return (
     <style>{`
       @media print {
-        html, body { height: auto !important; overflow: hidden !important; }
-        body * { visibility: hidden !important; }
-        #exam-print-area, #exam-print-area * { visibility: visible !important; }
-        #exam-print-area { position: absolute; top: 0; left: 0; width: 100%; padding: 20px; background: #fff; color: #000; }
         .no-print { display: none !important; }
       }
       @keyframes fadeSlideDown {
@@ -1227,7 +1223,32 @@ export default function StudentExamination() {
 
   const attPct       = attendanceData?.overallPercent ?? null;
   const isDataLoading = policyLoading || scoresLoading;
-  const handlePrint   = useCallback(() => window.print(), []);
+  const handlePrint = useCallback(() => {
+    const el = document.getElementById("exam-print-area");
+    if (!el) { window.print(); return; }
+    const win = window.open("", "_blank");
+    if (!win) { window.print(); return; }
+    // Copy all compiled stylesheets from the current document
+    const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))
+      .map(s => s.outerHTML).join("\n");
+    win.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Student Result</title>
+  ${styles}
+  <style>
+    body { background: #fff !important; padding: 20px; margin: 0; }
+    .no-print { display: none !important; }
+    @media print { .no-print { display: none !important; } }
+  </style>
+</head>
+<body>${el.outerHTML}<script>window.onload=function(){setTimeout(function(){window.print();window.close();},400);}<\/script>
+</body>
+</html>`);
+    win.document.close();
+  }, []);
 
   // ── Auth gate ────────────────────────────────────────────────────────────────
   if (studentLoading || !student) {
