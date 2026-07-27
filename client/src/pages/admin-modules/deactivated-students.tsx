@@ -380,11 +380,11 @@ export default function DeactivatedStudentsPage() {
           <div className="overflow-x-auto" style={{ maxHeight: "70vh", overflowY: "auto" }}>
             <table
               className="text-sm"
-              style={{ minWidth: compact ? "780px" : "1400px", width: "100%", tableLayout: "fixed" }}
+              style={{ minWidth: compact ? "780px" : "2220px", width: "100%", tableLayout: "fixed" }}
             >
               <colgroup>
                 <col style={{ width: "128px" }} />
-                <col style={{ width: "auto" }} />
+                <col style={{ width: "160px" }} />
                 <col style={{ width: "70px" }} />
                 <col style={{ width: "112px" }} />
                 <col style={{ width: "96px" }} />
