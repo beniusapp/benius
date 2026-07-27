@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Search, UserPlus, Trash2, Pencil, ChevronLeft, ChevronRight, Loader2, X, Save, Eye, Calendar, MapPin, CreditCard, GraduationCap, User } from "lucide-react";
+import { Search, UserPlus, Trash2, Pencil, ChevronLeft, ChevronRight, Loader2, X, Save, Eye, Calendar, MapPin, CreditCard, GraduationCap, User, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -85,6 +85,8 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
   const [showForm, setShowForm] = useState(false);
   const [editTarget, setEditTarget] = useState<TeacherWithEmail | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TeacherWithEmail | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
+  const [deletePassword, setDeletePassword] = useState("");
   const [viewTarget, setViewTarget] = useState<TeacherWithEmail | null>(null);
   const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(null);
 
@@ -194,10 +196,14 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: number) => { await apiRequest("DELETE", `/api/admin/teachers/${id}`); },
+    mutationFn: async ({ id, reason, adminPassword }: { id: number; reason: string; adminPassword: string }) => {
+      await apiRequest("DELETE", `/api/admin/teachers/${id}`, { reason, adminPassword });
+    },
     onSuccess: () => {
       toast({ title: "Teacher Removed", description: `${deleteTarget?.fullName} has been removed from the registry.` });
       setDeleteTarget(null);
+      setDeleteReason("");
+      setDeletePassword("");
       queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/schools", schoolId, "teachers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/faculty-mappings"] });
@@ -751,22 +757,83 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
 
       {/* ── Delete Confirm Modal ── */}
       {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
           data-testid="modal-delete-teacher-registry"
-          onClick={e => { if (e.target === e.currentTarget) setDeleteTarget(null); }}>
-          <div className="w-full max-w-sm rounded-2xl bg-[#1A2942] border border-red-500/30 shadow-2xl p-6">
-            <h3 className="text-white font-semibold mb-2">Remove Teacher?</h3>
-            <p className="text-white/60 text-sm mb-1">
-              This will permanently remove <span className="text-white font-medium">{deleteTarget.fullName}</span> from the registry.
-            </p>
-            <p className="text-red-400 text-xs mb-5">Their login account and all assignments will also be deleted.</p>
-            <div className="flex gap-2">
-              <Button onClick={() => deleteMutation.mutate(deleteTarget.id)} disabled={isArchiveMode || deleteMutation.isPending}
-                className="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold" data-testid="button-confirm-delete-teacher-registry">
-                {deleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Trash2 className="w-4 h-4 mr-1" />}
-                Remove
-              </Button>
-              <Button variant="outline" className="border-white/20 text-white hover:bg-white/10" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+          onClick={e => { if (e.target === e.currentTarget) { setDeleteTarget(null); setDeleteReason(""); setDeletePassword(""); } }}>
+          <div className="w-full max-w-md rounded-2xl bg-[#1A2942] border border-red-500/30 shadow-2xl overflow-hidden">
+
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-red-500/10">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-red-500/20 flex items-center justify-center">
+                  <Trash2 className="w-4 h-4 text-red-400" />
+                </div>
+                <div>
+                  <h3 className="text-white font-semibold text-sm">Remove Teacher?</h3>
+                  <p className="text-white/40 text-xs">{deleteTarget.fullName} · {(deleteTarget as any).digitalTeacherId || deleteTarget.email}</p>
+                </div>
+              </div>
+              <button onClick={() => { setDeleteTarget(null); setDeleteReason(""); setDeletePassword(""); }}
+                className="p-2 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <p className="text-white/60 text-sm">
+                This will <span className="text-red-300 font-medium">permanently remove</span> this teacher from the registry. Their login account and all assignments will also be deleted.
+              </p>
+
+              {/* Reason */}
+              <div className="space-y-1.5">
+                <label className="text-white/70 text-xs font-medium uppercase tracking-wide">
+                  Reason for Removal <span className="text-red-400">*</span>
+                </label>
+                <textarea
+                  value={deleteReason}
+                  onChange={e => setDeleteReason(e.target.value)}
+                  placeholder="Enter reason (e.g. Resigned, Transferred, Duplicate record…)"
+                  rows={3}
+                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/30 focus:outline-none focus:border-red-400/60 resize-none"
+                />
+                {deleteReason.length > 0 && deleteReason.length < 5 && (
+                  <p className="text-red-400 text-xs">Minimum 5 characters required</p>
+                )}
+              </div>
+
+              {/* Admin Password */}
+              <div className="space-y-1.5">
+                <label className="text-white/70 text-xs font-medium uppercase tracking-wide flex items-center gap-1.5">
+                  <Lock className="w-3 h-3" /> Admin Password <span className="text-red-400">*</span>
+                </label>
+                <Input
+                  type="password"
+                  value={deletePassword}
+                  onChange={e => setDeletePassword(e.target.value)}
+                  placeholder="Enter your admin password to confirm"
+                  className="bg-[#0A1628] border-white/20 text-white h-10 placeholder:text-white/30"
+                  onKeyDown={e => {
+                    if (e.key === "Enter" && deleteReason.length >= 5 && deletePassword) {
+                      deleteMutation.mutate({ id: deleteTarget.id, reason: deleteReason, adminPassword: deletePassword });
+                    }
+                  }}
+                />
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <Button
+                  onClick={() => deleteMutation.mutate({ id: deleteTarget.id, reason: deleteReason, adminPassword: deletePassword })}
+                  disabled={isArchiveMode || deleteMutation.isPending || deleteReason.length < 5 || !deletePassword}
+                  className="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold"
+                  data-testid="button-confirm-delete-teacher-registry">
+                  {deleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Trash2 className="w-4 h-4 mr-1" />}
+                  Remove Teacher
+                </Button>
+                <Button variant="outline" className="border-white/20 text-white hover:bg-white/10"
+                  onClick={() => { setDeleteTarget(null); setDeleteReason(""); setDeletePassword(""); }}>
+                  Cancel
+                </Button>
+              </div>
             </div>
           </div>
         </div>

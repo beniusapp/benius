@@ -3678,7 +3678,22 @@ Thank you for your prompt attention to this matter.
     const schoolId = req.session.schoolId!;
     const teacherId = parseInt(req.params.id);
     if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
+
+    // Validate reason + admin password
+    const parsed = z.object({
+      reason: z.string().min(5, "Please provide a reason (min 5 characters)"),
+      adminPassword: z.string().min(1, "Admin password is required"),
+    }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
     try {
+      // Verify admin password
+      const adminUserId = req.session.userId ?? req.session.staffId;
+      const adminUser = await storage.getUserById(adminUserId!);
+      if (!adminUser) return res.status(403).json({ message: "Admin not found" });
+      const valid = await bcrypt.compare(parsed.data.adminPassword, adminUser.passwordHash);
+      if (!valid) return res.status(401).json({ message: "Incorrect password" });
+
       const teacher = await storage.getTeacherById(teacherId);
       if (!teacher || teacher.schoolId !== schoolId)
         return res.status(404).json({ message: "Teacher not found" });
