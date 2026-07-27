@@ -464,6 +464,8 @@ export default function VisitorLog({ schoolId, allowedSubs }: Props) {
                         <div>
                           <span className="text-white font-semibold text-sm leading-tight">{v.visitorName}</span>
                           {v.visitorIdNumber && <p className="text-white/35 text-[10px] mt-0.5">ID: {v.visitorIdNumber}</p>}
+                          {v.phone && <p className="text-white/45 text-[10px] mt-0.5">📞 {v.phone}</p>}
+                          {v.email && <p className="text-white/45 text-[10px] mt-0.5 truncate max-w-[160px]">✉ {v.email}</p>}
                           {v.address && <p className="text-white/30 text-[10px] mt-0.5 truncate max-w-[160px]">{v.address}</p>}
                         </div>
                       </div>
