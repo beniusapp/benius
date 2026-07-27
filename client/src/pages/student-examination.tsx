@@ -182,8 +182,110 @@ function PrintStyles() {
   return (
     <style>{`
       @media print {
+        /* ── Page setup ──────────────────────────────────────────────────── */
+        @page { margin: 1.2cm 1.5cm; size: A4 portrait; }
+
         .no-print { display: none !important; }
+
+        /* ── Whole card: white background, dark text ─────────────────────── */
+        #exam-print-area,
+        #exam-print-area * {
+          background: #fff !important;
+          background-color: #fff !important;
+          color: #1e293b !important;
+          border-color: #cbd5e1 !important;
+          box-shadow: none !important;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+
+        /* ── Card wrapper border ─────────────────────────────────────────── */
+        #exam-print-area .rounded-2xl {
+          border: 1px solid #cbd5e1 !important;
+          border-radius: 8px !important;
+          overflow: visible !important;
+        }
+
+        /* ── Student info bar: light teal header ────────────────────────── */
+        #exam-print-area [style*="rgba(30,41,59,0.5)"],
+        #exam-print-area [style*="background: rgba(30,41,59"] {
+          background: #f0fdf4 !important;
+        }
+
+        /* ── Stats bar cells ─────────────────────────────────────────────── */
+        #exam-print-area [style*="background: #0f172a"],
+        #exam-print-area [style*="background:#0f172a"] {
+          background: #f8fafc !important;
+        }
+
+        /* ── Subject header rows ─────────────────────────────────────────── */
+        #exam-print-area [style*="rgba(30,41,59,0.6)"] {
+          background: #f1f5f9 !important;
+        }
+
+        /* ── Subject breakdown background ───────────────────────────────── */
+        #exam-print-area [style*="rgba(30,41,59,0.3)"] {
+          background: #f8fafc !important;
+        }
+
+        /* ── Table footer aggregate row ─────────────────────────────────── */
+        #exam-print-area [style*="rgba(30,41,59,0.4)"] {
+          background: #f1f5f9 !important;
+        }
+
+        /* ── Accent colours: preserve with print-color-adjust ─────────────
+           emerald = pass/score, red = fail, amber/yellow = contribution,
+           orange = absent, slate = pending                                  */
+        #exam-print-area .text-emerald-400 { color: #059669 !important; }
+        #exam-print-area .text-red-400     { color: #dc2626 !important; }
+        #exam-print-area .text-yellow-400  { color: #d97706 !important; }
+        #exam-print-area .text-amber-400   { color: #d97706 !important; }
+        #exam-print-area .text-orange-400  { color: #ea580c !important; }
+        #exam-print-area .text-slate-300   { color: #334155 !important; }
+        #exam-print-area .text-slate-400   { color: #475569 !important; }
+        #exam-print-area .text-slate-500   { color: #64748b !important; }
+        #exam-print-area .text-slate-600   { color: #64748b !important; }
+        #exam-print-area .text-white       { color: #0f172a !important; }
+
+        /* ── Badge backgrounds: keep coloured pills legible ─────────────── */
+        #exam-print-area .bg-emerald-500\/20 { background: #d1fae5 !important; }
+        #exam-print-area .bg-red-500\/20     { background: #fee2e2 !important; }
+        #exam-print-area .bg-orange-500\/20  { background: #ffedd5 !important; }
+        #exam-print-area .bg-slate-500\/20   { background: #f1f5f9 !important; }
+        #exam-print-area .border-emerald-500\/30 { border-color: #6ee7b7 !important; }
+        #exam-print-area .border-red-500\/30     { border-color: #fca5a5 !important; }
+        #exam-print-area .border-orange-500\/30  { border-color: #fdba74 !important; }
+
+        /* ── Avatar circle ───────────────────────────────────────────────── */
+        #exam-print-area [style*="rgba(16,185,129,0.15)"] {
+          background: #d1fae5 !important;
+          border-color: #6ee7b7 !important;
+        }
+
+        /* ── Failure count term pills ────────────────────────────────────── */
+        #exam-print-area .bg-red-500\/10    { background: #fee2e2 !important; }
+        #exam-print-area .bg-emerald-500\/10{ background: #d1fae5 !important; }
+        #exam-print-area .border-red-500\/30{ border-color: #fca5a5 !important; }
+        #exam-print-area .border-emerald-500\/30 { border-color: #6ee7b7 !important; }
+
+        /* ── Policy note box ─────────────────────────────────────────────── */
+        #exam-print-area .rounded-xl {
+          border-radius: 6px !important;
+        }
+
+        /* ── Signature dashes ────────────────────────────────────────────── */
+        #exam-print-area .border-dashed {
+          border-color: #94a3b8 !important;
+        }
+
+        /* ── Prevent page break inside a subject card ────────────────────── */
+        #exam-print-area .rounded-xl { page-break-inside: avoid; break-inside: avoid; }
+
+        /* ── Ensure table doesn't overflow ───────────────────────────────── */
+        #exam-print-area table { width: 100% !important; }
+        #exam-print-area .overflow-x-auto { overflow: visible !important; }
       }
+
       @keyframes fadeSlideDown {
         from { opacity: 0; transform: translateY(-6px) scale(0.98); }
         to   { opacity: 1; transform: translateY(0)   scale(1); }
@@ -1226,28 +1328,29 @@ export default function StudentExamination() {
   const handlePrint = useCallback(() => {
     const el = document.getElementById("exam-print-area");
     if (!el) { window.print(); return; }
-    const win = window.open("", "_blank");
-    if (!win) { window.print(); return; }
-    // Copy all compiled stylesheets from the current document
-    const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))
-      .map(s => s.outerHTML).join("\n");
-    win.document.write(`<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Student Result</title>
-  ${styles}
-  <style>
-    body { background: #fff !important; padding: 20px; margin: 0; }
-    .no-print { display: none !important; }
-    @media print { .no-print { display: none !important; } }
-  </style>
-</head>
-<body>${el.outerHTML}<script>window.onload=function(){setTimeout(function(){window.print();window.close();},400);}<\/script>
-</body>
-</html>`);
-    win.document.close();
+
+    // Walk up from the print area to <body>, hiding every sibling at each level.
+    // This collapses the page to exactly the print area height — no blank pages,
+    // no popup required (works on Android Chrome).
+    const hidden: { el: HTMLElement; prev: string }[] = [];
+    let node: HTMLElement | null = el;
+    while (node && node !== document.body) {
+      const parent = node.parentElement;
+      if (parent) {
+        Array.from(parent.children).forEach(child => {
+          if (child !== node && child instanceof HTMLElement) {
+            hidden.push({ el: child, prev: child.style.display });
+            child.style.display = "none";
+          }
+        });
+      }
+      node = parent;
+    }
+
+    window.print();
+
+    // Restore everything
+    hidden.forEach(({ el: e, prev }) => { e.style.display = prev; });
   }, []);
 
   // ── Auth gate ────────────────────────────────────────────────────────────────
