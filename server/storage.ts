@@ -2974,7 +2974,7 @@ export class DatabaseStorage {
   }
 
   // ===== PAGINATED TEACHERS (Big Data) =====
-  async updateTeacherAssignment(teacherId: number, schoolId: number, data: { fullName: string; subject: string; assignedClass: string; assignedSection: string; phone?: string; designation?: string; gender?: string; dateOfBirth?: string; govtIdType?: string; govtIdNumber?: string; address?: string; joiningDate?: string; qualifications?: string }): Promise<Teacher | undefined> {
+  async updateTeacherAssignment(teacherId: number, schoolId: number, data: { fullName: string; subject: string; assignedClass: string; assignedSection: string; phone?: string; designation?: string; department?: string; gender?: string; dateOfBirth?: string; govtIdType?: string; govtIdNumber?: string; address?: string; joiningDate?: string; qualifications?: string }): Promise<Teacher | undefined> {
     const setData: Partial<typeof teachers.$inferInsert> = {
       fullName: data.fullName,
       subject: data.subject,
@@ -2983,6 +2983,7 @@ export class DatabaseStorage {
     };
     if (data.phone !== undefined) setData.phone = data.phone;
     if (data.designation !== undefined) setData.designation = data.designation;
+    if (data.department !== undefined) setData.department = data.department;
     if (data.gender !== undefined) setData.gender = data.gender;
     if (data.dateOfBirth !== undefined) setData.dateOfBirth = data.dateOfBirth;
     if (data.govtIdType !== undefined) setData.govtIdType = data.govtIdType;

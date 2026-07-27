@@ -2212,6 +2212,17 @@ export async function registerRoutes(
     fullName: z.string().min(2, "Name must be at least 2 characters").optional(),
     phone: z.string().min(7).optional(),
     designation: z.string().optional(),
+    subject: z.string().optional(),
+    assignedClass: z.string().optional(),
+    assignedSection: z.string().optional(),
+    department: z.string().optional(),
+    gender: z.string().optional(),
+    dateOfBirth: z.string().optional(),
+    govtIdType: z.string().optional(),
+    govtIdNumber: z.string().optional(),
+    address: z.string().optional(),
+    joiningDate: z.string().optional(),
+    qualifications: z.string().optional(),
   });
 
   app.patch("/api/admin/teachers/:id", async (req, res) => {
@@ -2227,11 +2238,19 @@ export async function registerRoutes(
       if (!existing || existing.schoolId !== schoolId) return res.status(404).json({ message: "Teacher not found" });
       const updated = await storage.updateTeacherAssignment(teacherId, schoolId, {
         fullName: parsed.data.fullName ?? existing.fullName,
-        subject: existing.subject,
-        assignedClass: existing.assignedClass,
-        assignedSection: existing.assignedSection,
+        subject: parsed.data.subject ?? existing.subject,
+        assignedClass: parsed.data.assignedClass ?? existing.assignedClass,
+        assignedSection: parsed.data.assignedSection ?? existing.assignedSection,
         phone: parsed.data.phone ?? existing.phone,
         designation: parsed.data.designation ?? existing.designation ?? "",
+        department: parsed.data.department,
+        gender: parsed.data.gender,
+        dateOfBirth: parsed.data.dateOfBirth,
+        govtIdType: parsed.data.govtIdType,
+        govtIdNumber: parsed.data.govtIdNumber,
+        address: parsed.data.address,
+        joiningDate: parsed.data.joiningDate,
+        qualifications: parsed.data.qualifications,
       });
       res.json(updated);
     } catch (err) {
