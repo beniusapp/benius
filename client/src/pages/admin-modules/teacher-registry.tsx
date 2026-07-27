@@ -43,7 +43,6 @@ const editSchema = z.object({
   subject: z.string().optional(),
   assignedClass: z.string().optional(),
   assignedSection: z.string().optional(),
-  department: z.string().optional(),
   gender: z.string().optional(),
   dateOfBirth: z.string().optional(),
   govtIdType: z.string().optional(),
@@ -163,7 +162,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
   // ── Edit form ─────────────────────────────────────────────
   const editForm = useForm<EditForm>({
     resolver: zodResolver(editSchema),
-    defaultValues: { fullName: "", phone: "", designation: "", subject: "", assignedClass: "", assignedSection: "", department: "", gender: "", dateOfBirth: "", govtIdType: "", govtIdNumber: "", address: "", joiningDate: "", qualifications: "" },
+    defaultValues: { fullName: "", phone: "", designation: "", subject: "", assignedClass: "", assignedSection: "", gender: "", dateOfBirth: "", govtIdType: "", govtIdNumber: "", address: "", joiningDate: "", qualifications: "" },
   });
 
   const watchEditGovtIdType = editForm.watch("govtIdType");
@@ -177,7 +176,6 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
         subject: editTarget.subject ?? "",
         assignedClass: editTarget.assignedClass ?? "",
         assignedSection: editTarget.assignedSection ?? "",
-        department: (editTarget as any).department ?? "",
         gender: (editTarget as any).gender ?? "",
         dateOfBirth: (editTarget as any).dateOfBirth ?? "",
         govtIdType: (editTarget as any).govtIdType ?? "",
@@ -683,19 +681,6 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
                         <FormItem>
                           <FormLabel className="text-white/70 text-xs">Designation</FormLabel>
                           <FormControl><Input {...field} placeholder="e.g. HOD, Senior Teacher" className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-edit-reg-designation" /></FormControl>
-                        </FormItem>
-                      )} />
-                    </div>
-                  </div>
-
-                  {/* Assignment */}
-                  <div>
-                    <p className="text-[#D4AF37] text-[10px] uppercase tracking-widest mb-2 font-semibold">Assignment</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <FormField control={editForm.control} name="department" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-white/70 text-xs">Department</FormLabel>
-                          <FormControl><Input {...field} placeholder="e.g. Science, Arts" className="bg-[#0A1628] border-white/20 text-white h-10" /></FormControl>
                         </FormItem>
                       )} />
                     </div>
