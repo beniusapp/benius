@@ -700,10 +700,9 @@ export class DatabaseStorage {
     return n;
   }
 
-  async getAllSchoolNotices(schoolId: number, limit = 500, from?: Date, to?: Date): Promise<(Notice & { creatorName: string | null })[]> {
+  async getAllSchoolNotices(schoolId: number, limit = 500, sessionId?: number | null): Promise<(Notice & { creatorName: string | null })[]> {
     const conditions: SQL[] = [eq(notices.schoolId, schoolId)];
-    if (from) conditions.push(gte(notices.createdAt, from));
-    if (to)   conditions.push(lte(notices.createdAt, to));
+    if (sessionId != null) conditions.push(eq(notices.sessionId, sessionId));
     const rows = await db
       .select({
         id: notices.id,
@@ -1066,7 +1065,7 @@ export class DatabaseStorage {
     return ids.length;
   }
 
-  async getComplaintsBySchool(schoolId: number, from?: Date, to?: Date): Promise<(Complaint & {
+  async getComplaintsBySchool(schoolId: number, sessionId?: number | null): Promise<(Complaint & {
     studentName: string | null;
     teacherName: string | null;
     teacherDtid: string | null;
@@ -1095,8 +1094,7 @@ export class DatabaseStorage {
       .where(and(
         eq(complaints.schoolId, schoolId),
         eq(complaints.isDeleted, false),
-        ...(from ? [gte(complaints.createdAt, from)] : []),
-        ...(to   ? [lte(complaints.createdAt, to)]   : []),
+        ...(sessionId != null ? [eq(complaints.sessionId, sessionId)] : []),
       ))
       .orderBy(desc(complaints.createdAt));
 
@@ -1957,10 +1955,12 @@ export class DatabaseStorage {
     return req || null;
   }
 
-  async getLeaveRequestsBySchool(schoolId: number): Promise<(LeaveRequest & { teacherName: string; teacherDtid: string | null })[]> {
+  async getLeaveRequestsBySchool(schoolId: number, sessionId?: number | null): Promise<(LeaveRequest & { teacherName: string; teacherDtid: string | null })[]> {
+    const conditions: any[] = [eq(leaveRequests.schoolId, schoolId)];
+    if (sessionId != null) conditions.push(eq(leaveRequests.sessionId, sessionId));
     const result = await db.select().from(leaveRequests)
       .innerJoin(teachers, eq(leaveRequests.teacherId, teachers.id))
-      .where(eq(leaveRequests.schoolId, schoolId))
+      .where(and(...conditions))
       .orderBy(desc(leaveRequests.createdAt));
     return result.map(r => ({ ...r.leave_requests, teacherName: r.teachers.fullName, teacherDtid: r.teachers.digitalTeacherId ?? null }));
   }
@@ -1982,10 +1982,12 @@ export class DatabaseStorage {
     return await db.select().from(timetableEntries).where(and(...conditions));
   }
 
-  async getTimetableBySchool(schoolId: number): Promise<(TimetableEntry & { teacherName: string })[]> {
+  async getTimetableBySchool(schoolId: number, sessionId?: number | null): Promise<(TimetableEntry & { teacherName: string })[]> {
+    const conditions: any[] = [eq(timetableEntries.schoolId, schoolId)];
+    if (sessionId != null) conditions.push(eq(timetableEntries.sessionId, sessionId));
     const result = await db.select().from(timetableEntries)
       .leftJoin(teachers, eq(timetableEntries.teacherId, teachers.id))
-      .where(eq(timetableEntries.schoolId, schoolId));
+      .where(and(...conditions));
     return result.map(r => ({ ...r.timetable_entries, teacherName: r.teachers?.fullName ?? "" }));
   }
 
@@ -2637,7 +2639,12 @@ export class DatabaseStorage {
 
   // ===== AUDIT LOGS =====
   async createAuditLog(data: InsertAuditLog): Promise<AuditLog> {
-    const [log] = await db.insert(auditLogs).values(data).returning();
+    let sessionId = data.sessionId;
+    if (sessionId === undefined) {
+      const active = await this.getActiveSession(data.schoolId);
+      sessionId = active?.id ?? null;
+    }
+    const [log] = await db.insert(auditLogs).values({ ...data, sessionId }).returning();
     return log;
   }
 
@@ -3136,17 +3143,18 @@ export class DatabaseStorage {
   }
 
   // ===== AUDIT LOGS READER =====
-  async getAuditLogsBySchool(schoolId: number, limit = 100, from?: Date, to?: Date): Promise<AuditLog[]> {
-    const conditions = [eq(auditLogs.schoolId, schoolId)];
-    if (from) conditions.push(gte(auditLogs.createdAt, from));
-    if (to)   conditions.push(lte(auditLogs.createdAt, to));
+  async getAuditLogsBySchool(schoolId: number, limit = 100, sessionId?: number | null): Promise<AuditLog[]> {
+    const conditions: any[] = [eq(auditLogs.schoolId, schoolId)];
+    if (sessionId != null) conditions.push(eq(auditLogs.sessionId, sessionId));
     return db.select().from(auditLogs).where(and(...conditions)).orderBy(desc(auditLogs.createdAt)).limit(limit);
   }
 
   // ===== STUDENT LEAVES FOR ADMIN (forwarded_to_admin only — teacher tier stays hidden) =====
-  async getStudentLeavesForAdmin(schoolId: number): Promise<(StudentLeaveRequest & { studentName: string; dsid: string; class: string; section: string; forwardedByTeacherName: string | null })[]> {
+  async getStudentLeavesForAdmin(schoolId: number, sessionId?: number | null): Promise<(StudentLeaveRequest & { studentName: string; dsid: string; class: string; section: string; forwardedByTeacherName: string | null })[]> {
+    const conditions: any[] = [eq(studentLeaveRequests.schoolId, schoolId), eq(studentLeaveRequests.status, "forwarded_to_admin")];
+    if (sessionId != null) conditions.push(eq(studentLeaveRequests.sessionId, sessionId));
     const leaves = await db.select().from(studentLeaveRequests).where(
-      and(eq(studentLeaveRequests.schoolId, schoolId), eq(studentLeaveRequests.status, "forwarded_to_admin"))
+      and(...conditions)
     ).orderBy(desc(studentLeaveRequests.createdAt));
     const result = [];
     for (const l of leaves) {
@@ -3229,8 +3237,10 @@ export class DatabaseStorage {
   }
 
   // ===== EXAM SCORES AGGREGATION FOR ANALYTICS =====
-  async getExamScoresBySchool(schoolId: number): Promise<ExamScore[]> {
-    return db.select().from(examScores).where(eq(examScores.schoolId, schoolId)).orderBy(desc(examScores.createdAt)).limit(500);
+  async getExamScoresBySchool(schoolId: number, sessionId?: number | null): Promise<ExamScore[]> {
+    const conditions: any[] = [eq(examScores.schoolId, schoolId)];
+    if (sessionId != null) conditions.push(eq(examScores.sessionId, sessionId));
+    return db.select().from(examScores).where(and(...conditions)).orderBy(desc(examScores.createdAt)).limit(500);
   }
 
   // ===== STUDENT PROFILES =====
@@ -3896,12 +3906,12 @@ export class DatabaseStorage {
       .where(and(eq(examScores.schoolId, schoolId), inArray(examScores.studentId, studentIds)));
   }
 
-  async getAcademicHistory(schoolId: number, studentId?: number): Promise<typeof academicHistory.$inferSelect[]> {
-    const conditions = studentId
-      ? and(eq(academicHistory.schoolId, schoolId), eq(academicHistory.studentId, studentId))
-      : eq(academicHistory.schoolId, schoolId);
+  async getAcademicHistory(schoolId: number, studentId?: number, sessionId?: number | null): Promise<typeof academicHistory.$inferSelect[]> {
+    const conditions: any[] = [eq(academicHistory.schoolId, schoolId)];
+    if (studentId) conditions.push(eq(academicHistory.studentId, studentId));
+    if (sessionId != null) conditions.push(eq(academicHistory.sessionId, sessionId));
     return await db.select().from(academicHistory)
-      .where(conditions)
+      .where(and(...conditions))
       .orderBy(desc(academicHistory.archivedAt));
   }
 
@@ -3995,7 +4005,7 @@ export class DatabaseStorage {
   async getAnalyticsData(
     schoolId: number,
     cls: string,
-    opts: { section?: string; examType?: string; subject?: string; search?: string }
+    opts: { section?: string; examType?: string; subject?: string; search?: string; sessionId?: number }
   ): Promise<{
     students: Array<{
       studentId: number; dsid: string; name: string;
@@ -4017,6 +4027,7 @@ export class DatabaseStorage {
     ];
     if (opts.section) conditions.push(eq(examScores.section, opts.section));
     if (opts.examType) conditions.push(eq(examScores.examType, opts.examType));
+    if (opts.sessionId != null) conditions.push(eq(examScores.sessionId, opts.sessionId));
 
     const rows = await db.select().from(examScores)
       .innerJoin(students, and(eq(examScores.studentId, students.id), eq(students.schoolId, schoolId)))
@@ -4480,10 +4491,11 @@ export class DatabaseStorage {
       .orderBy(desc(feeRecords.dueDate));
   }
 
-  async getFeeRecordsBySchool(schoolId: number, opts?: { studentId?: number; status?: string }): Promise<FeeRecord[]> {
-    const conditions = [eq(feeRecords.schoolId, schoolId)];
+  async getFeeRecordsBySchool(schoolId: number, opts?: { studentId?: number; status?: string; sessionId?: number | null }): Promise<FeeRecord[]> {
+    const conditions: any[] = [eq(feeRecords.schoolId, schoolId)];
     if (opts?.studentId) conditions.push(eq(feeRecords.studentId, opts.studentId));
     if (opts?.status) conditions.push(eq(feeRecords.status, opts.status));
+    if (opts?.sessionId != null) conditions.push(eq(feeRecords.sessionId, opts.sessionId!));
     return await db.select().from(feeRecords)
       .where(and(...conditions))
       .orderBy(desc(feeRecords.createdAt));

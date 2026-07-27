@@ -392,6 +392,7 @@ export const studentLeaveRequests = pgTable("student_leave_requests", {
 export const auditLogs = pgTable("audit_logs", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull(),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
   actionType: text("action_type").notNull(),
   entityType: text("entity_type").notNull(),
   entityId: integer("entity_id").notNull(),
@@ -591,6 +592,7 @@ export const feeRecords = pgTable("fee_records", {
   id: serial("id").primaryKey(),
   studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
   feeType: varchar("fee_type", { length: 100 }).notNull(),
   amount: integer("amount").notNull(),
   dueDate: date("due_date").notNull(),
@@ -697,6 +699,7 @@ export type AssetLog = typeof assetLogs.$inferSelect;
 export const academicHistory = pgTable("academic_history", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
   studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
   fromClass: text("from_class").notNull(),
   fromSection: text("from_section").notNull(),

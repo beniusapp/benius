@@ -3778,7 +3778,9 @@ export async function registerRoutes(
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const { studentId, status } = req.query as { studentId?: string; status?: string };
-    const opts: { studentId?: number; status?: string } = {};
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const opts: { studentId?: number; status?: string; sessionId?: number | null } = { sessionId: sessionFilter };
     if (studentId) opts.studentId = parseInt(studentId);
     if (status) opts.status = status;
     const records = await storage.getFeeRecordsBySchool(schoolId, opts);
@@ -3802,7 +3804,8 @@ export async function registerRoutes(
     const [studentCheck] = await db.select({ id: students.id }).from(students)
       .where(and(eq(students.id, parsed.data.studentId), eq(students.schoolId, schoolId)));
     if (!studentCheck) return res.status(400).json({ message: "Student does not belong to this school" });
-    const rec = await storage.createFeeRecord({ ...parsed.data, schoolId, createdBy: req.session.userId });
+    const activeSession = await storage.getActiveSession(schoolId);
+    const rec = await storage.createFeeRecord({ ...parsed.data, schoolId, sessionId: activeSession?.id ?? null, createdBy: req.session.userId });
     res.status(201).json(rec);
   });
 

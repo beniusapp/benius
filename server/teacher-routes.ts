@@ -615,8 +615,9 @@ export function registerTeacherRoutes(app: Express) {
   app.get("/api/notices/:schoolId/all", async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const sid = parseInt(req.params.schoolId);
-    // No date filtering — show all records; data resets on session activation
-    const list = await storage.getAllSchoolNotices(sid, 500);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(sid))?.id ?? null;
+    const list = await storage.getAllSchoolNotices(sid, 500, sessionFilter);
     res.json(list);
   });
 
@@ -1522,8 +1523,11 @@ export function registerTeacherRoutes(app: Express) {
 
   app.get("/api/leave/school/:schoolId", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
-    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
-    const list = await storage.getLeaveRequestsBySchool(parseInt(req.params.schoolId));
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const list = await storage.getLeaveRequestsBySchool(schoolId, sessionFilter);
     res.json(list);
   });
 
@@ -1801,11 +1805,12 @@ export function registerTeacherRoutes(app: Express) {
 
   app.get("/api/timetable/school/:schoolId", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
-    // Enforce session school — never trust path param for authorization
     const requestedSchoolId = parseInt(req.params.schoolId);
     if (requestedSchoolId !== req.session.schoolId)
       return res.status(403).json({ message: "Not authorized" });
-    const list = await storage.getTimetableBySchool(req.session.schoolId!);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(req.session.schoolId!))?.id ?? null;
+    const list = await storage.getTimetableBySchool(req.session.schoolId!, sessionFilter);
     res.json(list);
   });
 
@@ -2892,12 +2897,9 @@ Thank you for your prompt attention to this matter.
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const schoolId = parseInt(req.params.schoolId);
     if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
-    const [activeSession] = await db.select().from(academicSessions)
-      .where(and(eq(academicSessions.schoolId, schoolId), eq(academicSessions.isActive, true)))
-      .limit(1);
-    const from = activeSession ? new Date(activeSession.startDate + "T00:00:00.000Z") : undefined;
-    const to   = activeSession ? new Date(activeSession.endDate   + "T23:59:59.999Z") : undefined;
-    const list = await storage.getComplaintsBySchool(schoolId, from, to);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const list = await storage.getComplaintsBySchool(schoolId, sessionFilter);
     res.json(list);
   });
 
@@ -2906,20 +2908,20 @@ Thank you for your prompt attention to this matter.
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
     const schoolId = parseInt(req.params.schoolId);
     if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
-    const [activeSession] = await db.select().from(academicSessions)
-      .where(and(eq(academicSessions.schoolId, schoolId), eq(academicSessions.isActive, true)))
-      .limit(1);
-    const from = activeSession ? new Date(activeSession.startDate + "T00:00:00.000Z") : undefined;
-    const to   = activeSession ? new Date(activeSession.endDate   + "T23:59:59.999Z") : undefined;
-    const list = await storage.getAuditLogsBySchool(schoolId, 100, from, to);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const list = await storage.getAuditLogsBySchool(schoolId, 100, sessionFilter);
     res.json(list);
   });
 
   // ===== STUDENT LEAVES FOR ADMIN =====
   app.get("/api/student-leaves/school/:schoolId", async (req, res) => {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
-    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
-    const list = await storage.getStudentLeavesForAdmin(parseInt(req.params.schoolId));
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const list = await storage.getStudentLeavesForAdmin(schoolId, sessionFilter);
     res.json(list);
   });
 
@@ -3393,11 +3395,14 @@ Thank you for your prompt attention to this matter.
     if (!cls) return res.status(400).json({ message: "class is required" });
     const schoolId = req.session.schoolId!;
     try {
+      const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+      const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? undefined;
       const data = await storage.getAnalyticsData(schoolId, cls, {
         section: section || undefined,
         examType: examType || undefined,
         subject: subject || undefined,
         search: search || undefined,
+        sessionId: sessionFilter,
       });
       res.json(data);
     } catch (error: any) {
