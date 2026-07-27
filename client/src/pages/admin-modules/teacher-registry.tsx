@@ -464,11 +464,15 @@ export default function TeacherRegistry({ schoolId, classes, sections, onNavigat
                   )
                   : data.data.map(t => {
                     const ta = t as any;
+                    const isInactive = ta.isActive === false;
                     return (
-                      <tr key={t.id} className="border-b border-white/5 hover:bg-white/5 transition-colors" data-testid={`row-teacher-reg-${t.id}`}>
+                      <tr key={t.id} className={`border-b border-white/5 hover:bg-white/5 transition-colors ${isInactive ? "opacity-60" : ""}`} data-testid={`row-teacher-reg-${t.id}`}>
                         {/* DTID */}
                         <td className="py-3 px-4 whitespace-nowrap">
-                          <span className="text-[#D4AF37] font-mono text-xs font-semibold tracking-wide">{ta.digitalTeacherId || "—"}</span>
+                          <div className="flex flex-col gap-0.5">
+                            <span className={`font-mono text-xs font-semibold tracking-wide ${isInactive ? "text-white/40 line-through" : "text-[#D4AF37]"}`}>{ta.digitalTeacherId || "—"}</span>
+                            {isInactive && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 uppercase tracking-wide w-fit">Inactive</span>}
+                          </div>
                         </td>
                         {/* Name */}
                         <td className="py-3 px-4 text-white font-medium whitespace-nowrap">{t.fullName}</td>
