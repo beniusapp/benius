@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
+import { useSessionView } from "@/contexts/session-view-context";
 
 interface Props {
   schoolId: number;
@@ -79,6 +80,7 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
   const canCreate    = allowedSubs === undefined || allowedSubs.includes("create");
   const canBulkDel   = allowedSubs === undefined || allowedSubs.includes("bulk-delete");
   const { toast } = useToast();
+  const { isArchiveMode } = useSessionView();
 
   // Form state
   const [content, setContent] = useState("");
@@ -301,7 +303,7 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
         />
 
         <Button
-          disabled={!canPost || postMutation.isPending || !canCreate}
+          disabled={!canPost || postMutation.isPending || !canCreate || isArchiveMode}
           onClick={() => postMutation.mutate()}
           className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold"
           data-testid="button-post-notice"
@@ -404,6 +406,7 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
                 <Button
                   size="sm"
                   onClick={() => { setPendingDays(bulkDays); setConfirmOpen(true); }}
+                  disabled={isArchiveMode}
                   className="h-9 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg shrink-0"
                   data-testid="button-bulk-notice-delete-open"
                 >
@@ -520,7 +523,7 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
                           {canBulkDel && (
                             <button
                               onClick={() => deleteMutation.mutate(n.id)}
-                              disabled={deleteMutation.isPending}
+                              disabled={deleteMutation.isPending || isArchiveMode}
                               className="p-1.5 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-400/10 transition-colors disabled:opacity-40"
                               title="Delete notice"
                               data-testid={`button-delete-notice-${n.id}`}
@@ -548,7 +551,7 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
                       <div className="flex gap-2">
                         <button
                           onClick={() => editMutation.mutate({ id: n.id, content: editContent })}
-                          disabled={!editContent.trim() || editMutation.isPending}
+                          disabled={!editContent.trim() || editMutation.isPending || isArchiveMode}
                           className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] text-xs font-semibold disabled:opacity-50 transition-colors"
                           data-testid={`button-save-notice-${n.id}`}
                         >
@@ -627,7 +630,7 @@ export default function NoticeboardAdmin({ schoolId, classes, sections, adminUse
               <Button
                 size="sm"
                 onClick={() => bulkDeleteMutation.mutate(pendingDays)}
-                disabled={bulkDeleteMutation.isPending}
+                disabled={bulkDeleteMutation.isPending || isArchiveMode}
                 className="flex-1 h-9 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl"
                 data-testid="button-bulk-notice-confirm"
               >

@@ -5,7 +5,8 @@ import {
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
+import { useSessionView } from "@/contexts/session-view-context";
 
 interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[]; initialTab?: string; onNavigateTab?: (tab: string) => void; allowedSubs?: string[] }
 
@@ -50,6 +51,7 @@ type TabType = "schedule" | "structure" | "publish";
 
 export default function TimetableMaster({ schoolId, classes, sections, subjects, initialTab, onNavigateTab, allowedSubs }: Props) {
   const { toast } = useToast();
+  const { isArchiveMode } = useSessionView();
   const CLASS_LIST = classes;
   const SECTION_LIST = sections;
   const SUBJECT_LIST = subjects;
@@ -77,7 +79,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
   const { data: teachers = [] } = useQuery<{ id: number; fullName: string }[]>({
     queryKey: ["/api/schools", schoolId, "teachers"],
     queryFn: async () => {
-      const r = await fetch(`/api/schools/${schoolId}/teachers`, { credentials: "include" });
+      const r = await sessionFetch(`/api/schools/${schoolId}/teachers`);
       return r.ok ? r.json() : [];
     },
     enabled: !!schoolId,
@@ -86,7 +88,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
   const { data: classViewData, isLoading: gridLoading } = useQuery<{ entries: SlotEntry[]; structure: StructureRow[] }>({
     queryKey: ["/api/timetable/class-view", selectedClass, selectedSection],
     queryFn: async () => {
-      const r = await fetch(`/api/timetable/class-view?class=${selectedClass}&section=${selectedSection}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/timetable/class-view?class=${selectedClass}&section=${selectedSection}`);
       if (!r.ok) return { entries: [], structure: [] };
       return r.json();
     },
@@ -99,7 +101,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
   const { data: savedStructure = [], isLoading: structLoading } = useQuery<StructureRow[]>({
     queryKey: ["/api/timetable/structure", structClass],
     queryFn: async () => {
-      const r = await fetch(`/api/timetable/structure?class=${encodeURIComponent(structClass)}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/timetable/structure?class=${encodeURIComponent(structClass)}`);
       return r.ok ? r.json() : [];
     },
     enabled: !!structClass,
@@ -645,11 +647,12 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
 
 function PublishTab({ schoolId }: { schoolId: number }) {
   const { toast } = useToast();
+  const { isArchiveMode } = useSessionView();
 
   const { data: statuses = [], isLoading, refetch } = useQuery<{ class: string; section: string; totalCount: number; draftCount: number; publishedCount: number }[]>({
     queryKey: ["/api/timetable/class-status"],
     queryFn: async () => {
-      const r = await fetch("/api/timetable/class-status", { credentials: "include" });
+      const r = await sessionFetch("/api/timetable/class-status");
       return r.ok ? r.json() : [];
     },
   });
@@ -716,7 +719,7 @@ function PublishTab({ schoolId }: { schoolId: number }) {
               {hasUnpublished && (
                 <button
                   onClick={() => publishMutation.mutate({ cls: s.class, section: s.section })}
-                  disabled={publishMutation.isPending}
+                  disabled={publishMutation.isPending || isArchiveMode}
                   className="w-full h-10 rounded-lg bg-[#D4AF37] hover:bg-[#c9a632] disabled:opacity-60 text-[#0A1628] font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
                   data-testid={`button-publish-${s.class}-${s.section}`}
                 >

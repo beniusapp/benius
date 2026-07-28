@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
+import { useSessionView } from "@/contexts/session-view-context";
 
 interface Props {
   schoolId: number;
@@ -211,6 +212,7 @@ function Spinner() {
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function LeaveRequests({ schoolId, initialSection, onNavigateSection, allowedSubs }: Props) {
   const { toast } = useToast();
+  const { isArchiveMode } = useSessionView();
   const [activeSection, setActiveSection] = useState<ActiveSection>((initialSection as ActiveSection) ?? null);
   useEffect(() => { setActiveSection((initialSection as ActiveSection) ?? null); }, [initialSection]);
 
@@ -362,14 +364,14 @@ export default function LeaveRequests({ schoolId, initialSection, onNavigateSect
             className="border-white/20 text-white hover:bg-white/10" data-testid="button-close-leave-detail">
             Close
           </Button>
-          <button disabled={isPending}
+          <button disabled={isPending || isArchiveMode}
             onClick={() => { studentLeaveApproveMutation.mutate({ id: selectedLeave.id, action: "reject", comment: adminComment || undefined }); setSelectedLeave(null); setAdminComment(""); }}
             className="px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
             style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", border: "1px solid rgba(239,68,68,0.25)" }}
             data-testid={`button-detail-reject-${selectedLeave.id}`}>
             ✕ Reject
           </button>
-          <button disabled={isPending}
+          <button disabled={isPending || isArchiveMode}
             onClick={() => { studentLeaveApproveMutation.mutate({ id: selectedLeave.id, action: "admin-approve", comment: adminComment || undefined }); setSelectedLeave(null); setAdminComment(""); }}
             className="px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
             style={{ background: "linear-gradient(135deg,#22c55e,#16a34a)", color: "white" }}
@@ -578,7 +580,7 @@ export default function LeaveRequests({ schoolId, initialSection, onNavigateSect
                           <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(255,255,255,0.45)" }}>{l.reason}</p>
                         </div>
                         <ActionButtons
-                          disabled={isPending}
+                          disabled={isPending || isArchiveMode}
                           onApprove={() => leaveStatusMutation.mutate({ id: l.id, status: "approved" })}
                           onReject={() => leaveStatusMutation.mutate({ id: l.id, status: "rejected" })}
                           approveTestId={`button-approve-leave-${l.id}`}
@@ -630,7 +632,7 @@ export default function LeaveRequests({ schoolId, initialSection, onNavigateSect
                             <Eye className="w-4 h-4" />
                           </button>
                           <ActionButtons
-                            disabled={isPending}
+                            disabled={isPending || isArchiveMode}
                             onApprove={() => studentLeaveApproveMutation.mutate({ id: l.id, action: "admin-approve", comment: undefined })}
                             onReject={() => studentLeaveApproveMutation.mutate({ id: l.id, action: "reject", comment: undefined })}
                             approveLabel="Approve + Sync"

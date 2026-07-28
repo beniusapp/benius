@@ -12,7 +12,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
+import { useSessionView } from "@/contexts/session-view-context";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -131,6 +132,7 @@ function LedgerPills({ row }: { row: LedgerRow }) {
 export default function ExamController({ examTypes, classes: schoolClasses, sections: schoolSections, allowedSubs }: Props) {
   const canWizard = allowedSubs === undefined || allowedSubs.includes("wizard");
   const { toast } = useToast();
+  const { isArchiveMode } = useSessionView();
 
   // ── Core view state ───────────────────────────────────────────────────────
   const [view, setView]                 = useState<"table"|"wizard">("table");
@@ -183,7 +185,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     queryKey: ["/api/admin/ledger-status", selectedTerm],
     queryFn: async () => {
       if (!selectedTerm) return [];
-      const r = await fetch(`/api/admin/ledger-status?term=${encodeURIComponent(selectedTerm)}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/admin/ledger-status?term=${encodeURIComponent(selectedTerm)}`);
       return r.ok ? r.json() : [];
     },
     enabled: !!selectedTerm,
@@ -207,7 +209,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     queryFn: async () => {
       if (!cohort || !examType) return null;
       const p = new URLSearchParams({ class: cohort.class, section: cohort.section, examType, term: cohort.term });
-      const r = await fetch(`/api/admin/exam/aggregated?${p}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/admin/exam/aggregated?${p}`);
       return r.ok ? r.json() : null;
     },
     enabled: !!cohort && !!examType,
@@ -969,6 +971,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                   }}
                   className="h-9 px-6 font-semibold text-sm"
                   style={{ background: "linear-gradient(135deg,#D4AF37,#b8972e)", color: "#0A1628" }}
+                  disabled={isArchiveMode}
                   data-testid="btn-step2-next">
                   {selectedStudents.size > 0
                     ? `Next — Execute for ${selectedStudents.size} Selected →`
@@ -1147,7 +1150,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                 ← Back to Review
               </Button>
               <Button
-                disabled={!confirmed || executeMut.isPending || !agg || counters.total === 0}
+                disabled={!confirmed || executeMut.isPending || !agg || counters.total === 0 || isArchiveMode}
                 onClick={() => executeMut.mutate()}
                 className="h-9 px-8 font-bold text-sm"
                 style={{ background: confirmed ? "linear-gradient(135deg,#D4AF37,#b8972e)" : undefined, color: confirmed ? "#0A1628" : undefined }}
@@ -1228,7 +1231,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
             termToDelete === selectedTerm ? (
               <div className="flex items-center gap-2 bg-red-900/30 border border-red-500/40 rounded-lg px-3 py-2">
                 <span className="text-xs text-red-300">Delete all ledger data for <strong>"{selectedTerm}"</strong>?</span>
-                <button onClick={() => deleteTermMut.mutate(selectedTerm)} disabled={deleteTermMut.isPending}
+                <button onClick={() => deleteTermMut.mutate(selectedTerm)} disabled={deleteTermMut.isPending || isArchiveMode}
                   className="text-xs font-semibold text-red-300 hover:text-white border border-red-500/50 px-2 py-0.5 rounded"
                   data-testid="btn-confirm-delete-term">
                   {deleteTermMut.isPending ? "Deleting…" : "Yes, Delete"}
@@ -1237,6 +1240,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
               </div>
             ) : (
               <Button variant="outline" size="sm" onClick={() => setTermToDelete(selectedTerm)}
+                disabled={isArchiveMode}
                 className="border-red-900/50 text-red-400 hover:bg-red-900/20 hover:text-red-300 h-9 px-3 text-xs"
                 data-testid="btn-delete-term">
                 <Trash2 className="w-3.5 h-3.5 mr-1.5" />Delete Term
@@ -1492,6 +1496,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                                     className="text-xs h-8 font-semibold px-3"
                                     style={{ background:"linear-gradient(135deg,#D4AF37,#b8972e)", color:"#0A1628" }}
                                     onClick={() => openWizard(row)}
+                                    disabled={isArchiveMode}
                                     data-testid={`btn-review-${row.class}-${row.section}`}>
                                     <Play className="w-3 h-3 mr-1.5"/>Review & Execute
                                   </Button>

@@ -8,6 +8,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
+import { useSessionView } from "@/contexts/session-view-context";
 
 interface Props { schoolId: number; initialTab?: string; onNavigateTab?: (tab: string) => void; allowedSubs?: string[]; }
 
@@ -71,6 +72,7 @@ function ComplaintCard({ c, schoolId, showRemarksInput }: {
   c: AdminComplaint; schoolId: number; showRemarksInput?: boolean;
 }) {
   const { toast } = useToast();
+  const { isArchiveMode } = useSessionView();
   const [expanded, setExpanded] = useState(false);
   const [remarks, setRemarks] = useState("");
   const [showRemarks, setShowRemarks] = useState(false);
@@ -163,7 +165,7 @@ function ComplaintCard({ c, schoolId, showRemarksInput }: {
         </div>
       )}
 
-      {isActive && (
+      {isActive && !isArchiveMode && (
         <div className="flex flex-wrap gap-2 pt-1">
           {showRemarksInput && !showRemarks && (
             <Button size="sm" onClick={() => setShowRemarks(true)} className="h-8 px-3 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs" data-testid={`button-post-remarks-${c.id}`}>
@@ -181,7 +183,7 @@ function ComplaintCard({ c, schoolId, showRemarksInput }: {
         </div>
       )}
 
-      {showRemarksInput && showRemarks && isActive && (
+      {showRemarksInput && showRemarks && isActive && !isArchiveMode && (
         <div className="space-y-2 pt-1 border-t border-slate-200">
           <label className="text-xs font-bold text-slate-600">Principal's Remarks *</label>
           <textarea value={remarks} onChange={e => setRemarks(e.target.value)} rows={3} placeholder="Write your decision or feedback..."
@@ -212,6 +214,7 @@ function TabSettings({ tabKey, schoolId, complaintTypes, onBulkDeleted }: {
   onBulkDeleted: () => void;
 }) {
   const { toast } = useToast();
+  const { isArchiveMode } = useSessionView();
   const [bulkDays, setBulkDays] = useState(0);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingDays, setPendingDays] = useState<number | null>(null);
@@ -258,6 +261,7 @@ function TabSettings({ tabKey, schoolId, complaintTypes, onBulkDeleted }: {
             <Button
               size="sm"
               onClick={() => { setPendingDays(bulkDays); setConfirmOpen(true); }}
+              disabled={isArchiveMode}
               className="h-8 px-3 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg"
               data-testid={`button-bulk-delete-open-${tabKey}`}
             >
@@ -295,7 +299,7 @@ function TabSettings({ tabKey, schoolId, complaintTypes, onBulkDeleted }: {
                 className="flex-1 h-9 text-white/60 hover:text-white font-bold text-xs border border-white/10 rounded-xl" data-testid={`button-bulk-cancel-${tabKey}`}>
                 Cancel
               </Button>
-              <Button size="sm" onClick={() => bulkDeleteMutation.mutate(pendingDays)} disabled={bulkDeleteMutation.isPending}
+              <Button size="sm" onClick={() => bulkDeleteMutation.mutate(pendingDays)} disabled={bulkDeleteMutation.isPending || isArchiveMode}
                 className="flex-1 h-9 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl" data-testid={`button-bulk-confirm-${tabKey}`}>
                 {bulkDeleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Trash2 className="w-3.5 h-3.5 mr-1" /> Delete Now</>}
               </Button>

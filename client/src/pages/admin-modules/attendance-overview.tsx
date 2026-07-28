@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { sessionFetch } from "@/lib/queryClient";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Users, UserX, Loader2, Calendar, Filter, CheckCircle, Search, Eye,
@@ -235,7 +236,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   const { data: schoolConfig, isLoading: configLoading } = useQuery<SchoolConfig>({
     queryKey: ["/api/admin/school-config"],
     queryFn: async () => {
-      const r = await fetch("/api/admin/school-config", { credentials: "include" });
+      const r = await sessionFetch("/api/admin/school-config");
       return r.ok ? r.json() : { classes: [], sections: [], subjects: [] };
     },
     enabled: !!schoolId,
@@ -247,7 +248,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   const { data: overview, isLoading: overviewLoading } = useQuery<AttendanceOverview>({
     queryKey: ["/api/admin/attendance/overview", date],
     queryFn: async () => {
-      const r = await fetch(`/api/admin/attendance/overview?date=${date}`, { credentials: "include", cache: "no-store" });
+      const r = await sessionFetch(`/api/admin/attendance/overview?date=${date}`);
       return r.ok ? r.json() : { enrolledTotal: 0, markedTotal: 0, present: 0, absent: 0, leave: 0, percentage: 0 };
     },
     enabled: !!schoolId,
@@ -258,7 +259,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   const { data: teacherSummaryData, isLoading: teacherLoading } = useQuery<TeacherSummaryResponse>({
     queryKey: ["/api/admin/attendance/teacher-summary", date],
     queryFn: async () => {
-      const r = await fetch(`/api/admin/attendance/teacher-summary?date=${date}`, { credentials: "include", cache: "no-store" });
+      const r = await sessionFetch(`/api/admin/attendance/teacher-summary?date=${date}`);
       return r.ok ? r.json() : { summary: { totalFaculty: 0, present: 0, notMarked: 0, lateArrivals: 0, pendingCorrections: 0, totalCorrections: 0 }, teachers: [] };
     },
     enabled: !!schoolId,
@@ -269,9 +270,8 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   const { data: classDetail, isLoading: studentLoading } = useQuery<ClassDetailResponse>({
     queryKey: ["/api/admin/attendance/class-detail", filterClass, filterSection, date],
     queryFn: async () => {
-      const r = await fetch(
-        `/api/admin/attendance/class-detail?class=${encodeURIComponent(filterClass)}&section=${encodeURIComponent(filterSection)}&date=${date}`,
-        { credentials: "include", cache: "no-store" }
+      const r = await sessionFetch(
+        `/api/admin/attendance/class-detail?class=${encodeURIComponent(filterClass)}&section=${encodeURIComponent(filterSection)}&date=${date}`
       );
       return r.ok ? r.json() : { meta: { isSubmitted: false, submittedBy: null, submittedAt: null, lastModifiedAt: null, modifiedBy: null }, students: [] };
     },
@@ -283,7 +283,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   const { data: studentPolicy } = useQuery<{ attendanceTarget: number }>({
     queryKey: ["/api/admin/attendance-policies/resolve", "STUDENT"],
     queryFn: async () => {
-      const r = await fetch("/api/admin/attendance-policies/resolve?role=STUDENT", { credentials: "include" });
+      const r = await sessionFetch("/api/admin/attendance-policies/resolve?role=STUDENT");
       return r.ok ? r.json() : { attendanceTarget: 85 };
     },
     enabled: !!schoolId,
@@ -346,7 +346,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   const { data: selectedStudentDetail, isLoading: studentDetailLoading } = useQuery<StudentSummary>({
     queryKey: ["/api/admin/students", selectedStudentId, "summary"],
     queryFn: async () => {
-      const r = await fetch(`/api/admin/students/${selectedStudentId}/summary`, { credentials: "include" });
+      const r = await sessionFetch(`/api/admin/students/${selectedStudentId}/summary`);
       if (!r.ok) throw new Error("Failed to fetch student");
       return r.json();
     },

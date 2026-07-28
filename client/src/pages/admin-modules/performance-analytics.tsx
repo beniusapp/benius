@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from "react";
+import { sessionFetch } from "@/lib/queryClient";
 import { useQuery } from "@tanstack/react-query";
 import {
   Loader2, Award, BarChart3, Search, X, FileText, Printer, TrendingUp,
@@ -280,7 +281,7 @@ function AdminStudentTimeline({
   const { data: scores = [], isLoading } = useQuery<StudentExamScore[]>({
     queryKey: ["/api/admin/analytics/student-scores", studentId],
     queryFn: async () => {
-      const r = await fetch(`/api/admin/analytics/student-scores/${studentId}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/admin/analytics/student-scores/${studentId}`);
       return r.ok ? r.json() : [];
     },
     staleTime: 0,
@@ -289,9 +290,8 @@ function AdminStudentTimeline({
   const { data: classAverages = [] } = useQuery<ClassAvgEntry[]>({
     queryKey: ["/api/admin/analytics/class-average", viewClass, viewSection, subject],
     queryFn: async () => {
-      const r = await fetch(
-        `/api/admin/analytics/class-average/${encodeURIComponent(viewClass)}/${encodeURIComponent(viewSection)}/${encodeURIComponent(subject)}`,
-        { credentials: "include" }
+      const r = await sessionFetch(
+        `/api/admin/analytics/class-average/${encodeURIComponent(viewClass)}/${encodeURIComponent(viewSection)}/${encodeURIComponent(subject)}`
       );
       return r.ok ? r.json() : [];
     },
@@ -683,9 +683,8 @@ export default function PerformanceAnalytics({
   const { data: viewScores = [], isLoading: viewLoading } = useQuery<ExamScoreEntry[]>({
     queryKey: ["/api/admin/analytics/view-marks", viewClass, viewSection, viewSubject, viewExamType],
     queryFn: async () => {
-      const res = await fetch(
-        `/api/admin/analytics/view-marks/${encodeURIComponent(viewClass)}/${encodeURIComponent(viewSection)}/${encodeURIComponent(viewSubject)}/${encodeURIComponent(viewExamType)}`,
-        { credentials: "include" }
+      const res = await sessionFetch(
+        `/api/admin/analytics/view-marks/${encodeURIComponent(viewClass)}/${encodeURIComponent(viewSection)}/${encodeURIComponent(viewSubject)}/${encodeURIComponent(viewExamType)}`
       );
       if (!res.ok) throw new Error("Failed to fetch scores");
       return res.json();
@@ -743,7 +742,7 @@ export default function PerformanceAnalytics({
   } = useQuery<ExamPolicyTier | null>({
     queryKey: ["/api/admin/analytics/exam-policy", resClass],
     queryFn: async () => {
-      const r = await fetch(`/api/admin/analytics/exam-policy/${encodeURIComponent(resClass)}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/admin/analytics/exam-policy/${encodeURIComponent(resClass)}`);
       if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error((b as any).message || `No policy for class ${resClass}`); }
       return r.json();
     },
@@ -757,7 +756,7 @@ export default function PerformanceAnalytics({
   useEffect(() => {
     if (!resClass) { setGradingRules([]); setGradingPassPct(35); return; }
     let cancelled = false;
-    fetch(`/api/admin/analytics/grading-rules/${encodeURIComponent(resClass)}`, { credentials: "include" })
+    sessionFetch(`/api/admin/analytics/grading-rules/${encodeURIComponent(resClass)}`)
       .then(r => r.ok ? r.json() : { rules: [], passPercentage: 35 })
       .then(d => { if (!cancelled) { setGradingRules(d.rules ?? []); setGradingPassPct(d.passPercentage ?? 35); } })
       .catch(() => { if (!cancelled) { setGradingRules([]); setGradingPassPct(35); } });
@@ -769,7 +768,7 @@ export default function PerformanceAnalytics({
   const { data: classScores = [], isLoading: scoresLoading } = useQuery<RawStudentScore[]>({
     queryKey: ["/api/admin/analytics/class-scores", resClass, resSection],
     queryFn: async () => {
-      const res = await fetch(`/api/admin/analytics/class-scores/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`, { credentials: "include" });
+      const res = await sessionFetch(`/api/admin/analytics/class-scores/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`);
       if (!res.ok) throw new Error("Failed to fetch scores");
       return res.json();
     },
@@ -780,7 +779,7 @@ export default function PerformanceAnalytics({
   const { data: attendanceSummary = [] } = useQuery<AttendanceSummary[]>({
     queryKey: ["/api/admin/analytics/attendance-summary", resClass, resSection],
     queryFn: async () => {
-      const res = await fetch(`/api/admin/analytics/attendance-summary/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`, { credentials: "include" });
+      const res = await sessionFetch(`/api/admin/analytics/attendance-summary/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`);
       return res.ok ? res.json() : [];
     },
     enabled: !!resClass && !!resSection, staleTime: 0, refetchOnMount: "always",
@@ -837,7 +836,7 @@ export default function PerformanceAnalytics({
   const { data: savedDecisions = [] } = useQuery<Array<{ studentId: number; decision: string; targetClass: string; targetSection: string; editCount: number; locked: boolean }>>({
     queryKey: ["/api/admin/analytics/promotion-decisions", resClass, resSection, resTerm],
     queryFn: async () => {
-      const r = await fetch(`/api/admin/analytics/promotion-decisions/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}/${encodeURIComponent(resTerm)}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/admin/analytics/promotion-decisions/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}/${encodeURIComponent(resTerm)}`);
       return r.ok ? r.json() : [];
     },
     enabled: !!resClass && !!resSection && !!resTerm, staleTime: 0, refetchInterval: 30000,

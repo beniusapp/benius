@@ -5,3 +5,4 @@
 - [Session View Context pattern](session-view-context.md) — SessionViewContext in contexts/; Provider wraps AdminDashboard's return JSX (not a split outer/inner component); SessionSwitcher is a prop-driven sub-component defined above AdminDashboard in the same file.
 - [Support Staff Auth & Sub-Module Enforcement](support-staff-auth.md) — login bug fix (userRole was "admin", now "support_staff"); allowedSubs pattern for UI filtering; backend route auth pattern for staff vs admin.
 - [Print Fixes](print-fixes.md) — new-window pattern for student results print (no blank page); asset report inline-HTML pattern; what NOT to do with @media print visibility/position tricks.
+- [Admin Module Session Scoping](admin-module-session-scoping.md) — pattern for wiring all admin modules to the session-switcher: sessionFetch for GETs + useSessionView for isArchiveMode on mutation buttons.

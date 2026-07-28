@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
+import { useSessionView } from "@/contexts/session-view-context";
 
 interface Props { schoolId: number; schoolName: string; classes: string[]; sections: string[]; initialTab?: string; onNavigateTab?: (tab: string) => void; allowedSubs?: string[]; }
 
@@ -48,6 +49,7 @@ function IDCard({ student, schoolName, showReissueBanner }: { student: any; scho
 }
 
 export default function IdCardGen({ schoolId, schoolName, classes, sections, initialTab, onNavigateTab, allowedSubs }: Props) {
+  const { isArchiveMode } = useSessionView();
   const { toast } = useToast();
   const defaultIdTab = (allowedSubs ? (allowedSubs.includes("search") ? "search" : allowedSubs[0]) : "search") as "search" | "reissue";
   const [tab, setTab] = useState<"search" | "reissue">(
@@ -69,7 +71,7 @@ export default function IdCardGen({ schoolId, schoolName, classes, sections, ini
   const { data, isLoading } = useQuery<{ data: any[]; total: number }>({
     queryKey: ["/api/schools", schoolId, "students", "paginated", q, cls, section, 1, tab],
     queryFn: async () => {
-      const r = await fetch(`/api/schools/${schoolId}/students/paginated?${params}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/schools/${schoolId}/students/paginated?${params}`);
       return r.ok ? r.json() : { data: [], total: 0 };
     },
     enabled: !!schoolId && (tab === "reissue" || searched),
@@ -186,7 +188,7 @@ export default function IdCardGen({ schoolId, schoolName, classes, sections, ini
             {reissueStudents.length > 0 && (
               <Button variant="outline"
                 onClick={() => clearFlagMut.mutate(reissueStudents.map(s => s.id))}
-                disabled={clearFlagMut.isPending}
+                disabled={clearFlagMut.isPending || isArchiveMode}
                 className="border-orange-400/40 text-orange-400 hover:bg-orange-400/10 shrink-0"
                 data-testid="button-mark-printed">
                 {clearFlagMut.isPending ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1.5" />}
