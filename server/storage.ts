@@ -284,10 +284,10 @@ export class DatabaseStorage {
     await db.update(teachers).set({ mustChangePassword }).where(eq(teachers.userId, userId));
   }
 
-  async deleteTeacher(teacherId: number): Promise<boolean> {
+  async deleteTeacher(teacherId: number, schoolId: number): Promise<boolean> {
     const teacher = await this.getTeacherById(teacherId);
-    if (!teacher) return false;
-    await db.delete(teachers).where(eq(teachers.id, teacherId));
+    if (!teacher || teacher.schoolId !== schoolId) return false;
+    await db.delete(teachers).where(and(eq(teachers.id, teacherId), eq(teachers.schoolId, schoolId)));
     await db.delete(users).where(eq(users.id, teacher.userId));
     return true;
   }
@@ -493,13 +493,13 @@ export class DatabaseStorage {
     return rows.map(r => r.student);
   }
 
-  async updateHomework(id: number, data: { content: string; subject: string; fileUrl: string | null; dueDate?: string | null }): Promise<Homework> {
-    const [updated] = await db.update(homework).set(data).where(eq(homework.id, id)).returning();
+  async updateHomework(id: number, schoolId: number, data: { content: string; subject: string; fileUrl: string | null; dueDate?: string | null }): Promise<Homework> {
+    const [updated] = await db.update(homework).set(data).where(and(eq(homework.id, id), eq(homework.schoolId, schoolId))).returning();
     return updated;
   }
 
-  async deleteHomework(id: number): Promise<void> {
-    await db.delete(homework).where(eq(homework.id, id));
+  async deleteHomework(id: number, schoolId: number): Promise<void> {
+    await db.delete(homework).where(and(eq(homework.id, id), eq(homework.schoolId, schoolId)));
   }
 
   async getHomeworkById(id: number): Promise<Homework | undefined> {
@@ -762,12 +762,12 @@ export class DatabaseStorage {
     return n ?? null;
   }
 
-  async deleteNotice(id: number): Promise<void> {
-    await db.delete(notices).where(eq(notices.id, id));
+  async deleteNotice(id: number, schoolId: number): Promise<void> {
+    await db.delete(notices).where(and(eq(notices.id, id), eq(notices.schoolId, schoolId)));
   }
 
-  async updateNotice(id: number, content: string): Promise<Notice | null> {
-    const [n] = await db.update(notices).set({ content }).where(eq(notices.id, id)).returning();
+  async updateNotice(id: number, schoolId: number, content: string): Promise<Notice | null> {
+    const [n] = await db.update(notices).set({ content }).where(and(eq(notices.id, id), eq(notices.schoolId, schoolId))).returning();
     return n ?? null;
   }
 
@@ -2709,13 +2709,13 @@ export class DatabaseStorage {
     return policy;
   }
 
-  async updateLeavePolicy(id: number, data: Partial<InsertLeavePolicy>): Promise<LeavePolicy> {
-    const [policy] = await db.update(leavePolicies).set(data).where(eq(leavePolicies.id, id)).returning();
+  async updateLeavePolicy(id: number, schoolId: number, data: Partial<InsertLeavePolicy>): Promise<LeavePolicy> {
+    const [policy] = await db.update(leavePolicies).set(data).where(and(eq(leavePolicies.id, id), eq(leavePolicies.schoolId, schoolId))).returning();
     return policy;
   }
 
-  async deleteLeavePolicy(id: number): Promise<void> {
-    await db.delete(leavePolicies).where(eq(leavePolicies.id, id));
+  async deleteLeavePolicy(id: number, schoolId: number): Promise<void> {
+    await db.delete(leavePolicies).where(and(eq(leavePolicies.id, id), eq(leavePolicies.schoolId, schoolId)));
   }
 
   async getLeavePolicyById(id: number): Promise<LeavePolicy | null> {
@@ -3105,15 +3105,9 @@ export class DatabaseStorage {
   }
 
   // ===== DEACTIVATION (Soft Delete) =====
-  async deactivateStudent(studentId: number): Promise<Student> {
-    const [s] = await db.update(students).set({ isActive: false }).where(eq(students.id, studentId)).returning();
+  async deactivateStudent(studentId: number, schoolId: number): Promise<Student> {
+    const [s] = await db.update(students).set({ isActive: false }).where(and(eq(students.id, studentId), eq(students.schoolId, schoolId))).returning();
     return s;
-  }
-
-  async deactivateTeacher(teacherId: number): Promise<void> {
-    const teacher = await this.getTeacherById(teacherId);
-    if (!teacher) return;
-    await db.update(users).set({ isActive: false }).where(eq(users.id, teacher.userId));
   }
 
   async verifyAdminPassword(userId: number, password: string): Promise<boolean> {

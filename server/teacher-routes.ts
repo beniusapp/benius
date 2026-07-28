@@ -477,7 +477,7 @@ export function registerTeacherRoutes(app: Express) {
 
     const { content, subject, dueDate } = req.body;
     const fileUrl = req.file ? `/uploads/${req.file.filename}` : (req.body.keepFile === "true" ? hw.fileUrl : null);
-    const updated = await storage.updateHomework(id, { content: content || hw.content, subject: subject || hw.subject, fileUrl, dueDate: dueDate !== undefined ? (dueDate || null) : hw.dueDate });
+    const updated = await storage.updateHomework(id, req.session.schoolId!, { content: content || hw.content, subject: subject || hw.subject, fileUrl, dueDate: dueDate !== undefined ? (dueDate || null) : hw.dueDate });
     res.json(updated);
   });
 
@@ -487,7 +487,7 @@ export function registerTeacherRoutes(app: Express) {
     const hw = await storage.getHomeworkById(id);
     if (!hw) return res.status(404).json({ message: "Homework not found" });
     if (hw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
-    await storage.deleteHomework(id);
+    await storage.deleteHomework(id, req.session.schoolId!);
     res.json({ message: "Homework deleted" });
   });
 
@@ -648,7 +648,7 @@ export function registerTeacherRoutes(app: Express) {
         return res.status(403).json({ message: "Not authorized to delete this notice" });
       }
     }
-    await storage.deleteNotice(id);
+    await storage.deleteNotice(id, req.session.schoolId!);
     res.json({ message: "Notice deleted" });
   });
 
@@ -665,7 +665,7 @@ export function registerTeacherRoutes(app: Express) {
         return res.status(403).json({ message: "Not authorized to edit this notice" });
       }
     }
-    const updated = await storage.updateNotice(id, content.trim());
+    const updated = await storage.updateNotice(id, req.session.schoolId!, content.trim());
     if (!updated) return res.status(404).json({ message: "Notice not found" });
     res.json(updated);
   });
@@ -1664,7 +1664,7 @@ export function registerTeacherRoutes(app: Express) {
         return res.status(409).json({ message: `A leave policy named "${name.trim()}" already exists for this school.` });
       }
     }
-    const updated = await storage.updateLeavePolicy(id, {
+    const updated = await storage.updateLeavePolicy(id, req.session.schoolId!, {
       ...(name !== undefined && { name: name.trim() }),
       ...(annualLimit !== undefined && { annualLimit: parseInt(annualLimit) }),
       ...(targetRoles !== undefined && { targetRoles }),
@@ -1682,7 +1682,7 @@ export function registerTeacherRoutes(app: Express) {
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
     const existing = await storage.getLeavePolicyById(id);
     if (!existing || existing.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
-    await storage.deleteLeavePolicy(id);
+    await storage.deleteLeavePolicy(id, req.session.schoolId!);
     res.json({ message: "Policy deleted" });
   });
 
@@ -3748,7 +3748,7 @@ Thank you for your prompt attention to this matter.
         removedByEmail: adminUser.email,
       });
 
-      await storage.deleteTeacher(teacherId);
+      await storage.deleteTeacher(teacherId, schoolId);
       res.json({ message: "Teacher removed from registry" });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to delete teacher" });

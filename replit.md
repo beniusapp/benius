@@ -45,3 +45,25 @@ The system is built on a full-stack architecture using React + Vite for the fron
 - **ORM:** Drizzle ORM
 - **Authentication/Session Management:** bcryptjs, express-session, connect-pg-simple
 - **File Uploads:** multer
+
+## Multi-Tenant Rules
+
+BENIUS serves multiple schools from a single database. Every API route and storage mutation **must** be scoped to the requesting session's school. Violating this allows School A to read or mutate School B's data.
+
+### Rules for contributors
+
+1. **Never trust `schoolId` from the URL or request body.** Always use `req.session.schoolId` as the authoritative school identifier. URL params like `:schoolId` may be cross-checked against the session, but the session value wins.
+
+2. **Always call `assertSchoolOwnership` after any `getXxxById` fetch** before acting on the result:
+   ```ts
+   const student = await storage.getStudentById(studentId);
+   if (!student) return res.status(404).json({ message: "Not found" });
+   assertSchoolOwnership(student.schoolId, req.session.schoolId!);
+   // safe to proceed
+   ```
+
+3. **Always pass `schoolId` to storage mutation functions.** All mutation storage functions (`deleteTeacher`, `deactivateStudent`, `updateHomework`, `deleteHomework`, `updateNotice`, `deleteNotice`, `updateLeavePolicy`, `deleteLeavePolicy`, etc.) require `schoolId` as a parameter and enforce it in their WHERE clause. Never call them with only an entity ID.
+
+4. **The `requireSchoolId` middleware** is registered on all `/api/admin` and `/api/teacher` route groups. It rejects any authenticated request where `req.session.schoolId` is falsy with 401, preventing incomplete sessions from reaching business logic.
+
+5. **Super-admin routes** (`DELETE /api/schools/:id`, `POST /api/schools`, etc.) are intentional cross-school operations and are exempt from the same-school check. They require a separate super-admin role guard.

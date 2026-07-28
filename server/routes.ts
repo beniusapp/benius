@@ -160,6 +160,58 @@ function parseDate(value: string): string | null {
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /**
+ * requireSchoolId — middleware for authenticated admin/teacher route groups.
+ *
+ * Only enforces school context for FULLY AUTHENTICATED sessions — those where
+ * req.session.userId, req.session.teacherId, or req.session.staffId is set.
+ *
+ * Pre-auth flows (admin login/init/PIN/forgot-password, teacher forgot-password
+ * / OTP / reset-password) run before a school-bound session is established.
+ * These requests have no userId/teacherId in session yet, so the middleware
+ * passes them through unchanged and lets each route's own auth check handle them.
+ *
+ * For authenticated sessions, rejects with 401 if req.session.schoolId is
+ * missing or not a valid positive integer. This prevents a fully-logged-in
+ * user from operating without a school context.
+ *
+ * Apply this to all /api/admin and /api/teacher route groups.
+ */
+function requireSchoolId(
+  req: import("express").Request,
+  res: import("express").Response,
+  next: import("express").NextFunction
+) {
+  // Pre-auth flows have no userId/teacherId/staffId yet — pass them through.
+  const isAuthenticated =
+    req.session?.userId ||
+    req.session?.teacherId ||
+    req.session?.staffId;
+  if (!isAuthenticated) return next();
+
+  const sid = req.session?.schoolId;
+  if (!sid || !Number.isInteger(sid) || sid <= 0) {
+    return res.status(401).json({ error: "No school context in session" });
+  }
+  next();
+}
+
+/**
+ * assertSchoolOwnership — throws a 403-typed error if the entity's schoolId
+ * does not match the session's schoolId.
+ *
+ * Usage: assertSchoolOwnership(entity.schoolId, req.session.schoolId!);
+ * Place this call immediately after any getXxxById fetch, before acting on
+ * the result. Never trust a schoolId from the URL or request body.
+ */
+function assertSchoolOwnership(entitySchoolId: number, sessionSchoolId: number): void {
+  if (entitySchoolId !== sessionSchoolId) {
+    const err: any = new Error("Access denied: entity belongs to a different school");
+    err.status = 403;
+    throw err;
+  }
+}
+
+/**
  * checkSessionContext — global middleware that runs on EVERY incoming request.
  *
  * For ALL request methods (GET included):
@@ -224,6 +276,11 @@ export async function registerRoutes(
 ): Promise<Server> {
   /* ── Session context middleware: applied globally to ALL routes ── */
   app.use(checkSessionContext);
+
+  /* ── School-ID guard: every authenticated admin/teacher route must have a
+     schoolId in session. Rejects 401 when schoolId is missing or invalid. ── */
+  app.use("/api/admin", requireSchoolId);
+  app.use("/api/teacher", requireSchoolId);
 
   app.get("/api/schools", async (_req, res) => {
     const schools = await storage.getSchools();
@@ -1111,7 +1168,7 @@ export async function registerRoutes(
     if (!student || student.schoolId !== schoolId) return res.status(404).json({ message: "Student not found" });
     if (!student.isActive) return res.status(409).json({ message: "Student is already deactivated" });
 
-    await storage.deactivateStudent(studentId);
+    await storage.deactivateStudent(studentId, schoolId);
     const detailParts1 = [`Student ${student.name} (${student.digitalStudentId}) deactivated. Reason: ${reason}`];
     if (batchYear) detailParts1.push(`Batch: ${batchYear}`);
     if (comments) detailParts1.push(`Comments: ${comments}`);
@@ -1147,7 +1204,7 @@ export async function registerRoutes(
     const teacher = await storage.getTeacherById(teacherId);
     if (!teacher || teacher.schoolId !== schoolId) return res.status(404).json({ message: "Teacher not found" });
 
-    await storage.deactivateTeacher(teacherId);
+    await storage.deactivateTeacher(teacherId, schoolId, reason);
     await storage.createAuditLog({
       schoolId,
       actionType: "deactivate",
@@ -1180,7 +1237,7 @@ export async function registerRoutes(
     if (student.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Access denied" });
     if (!student.isActive) return res.status(409).json({ message: "Student is already deactivated" });
 
-    await storage.deactivateStudent(studentId);
+    await storage.deactivateStudent(studentId, req.session.schoolId!);
     const detailParts = [`Student ${student.name} (${student.digitalStudentId}) deactivated. Reason: ${reason}`];
     if (batchYear) detailParts.push(`Batch: ${batchYear}`);
     if (comments) detailParts.push(`Comments: ${comments}`);
@@ -1242,7 +1299,7 @@ export async function registerRoutes(
     if (!teacher) return res.status(404).json({ message: "Teacher not found" });
     if (teacher.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Access denied" });
 
-    await storage.deactivateTeacher(teacherId);
+    await storage.deactivateTeacher(teacherId, req.session.schoolId!, reason);
     await storage.createAuditLog({
       schoolId: req.session.schoolId!,
       actionType: "deactivate",
