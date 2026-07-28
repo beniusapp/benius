@@ -539,10 +539,11 @@ export function registerTeacherRoutes(app: Express) {
     const cw = await storage.getClassworkById(id);
     if (!cw) return res.status(404).json({ message: "Classwork not found" });
     if (cw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+    if (cw.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
 
     const { content, subject } = req.body;
     const fileUrl = req.file ? `/uploads/${req.file.filename}` : (req.body.keepFile === "true" ? cw.fileUrl : null);
-    const updated = await storage.updateClasswork(id, { content: content || cw.content, subject: subject || cw.subject, fileUrl });
+    const updated = await storage.updateClasswork(id, req.session.schoolId!, { content: content || cw.content, subject: subject || cw.subject, fileUrl });
     res.json(updated);
   });
 
@@ -552,7 +553,8 @@ export function registerTeacherRoutes(app: Express) {
     const cw = await storage.getClassworkById(id);
     if (!cw) return res.status(404).json({ message: "Classwork not found" });
     if (cw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
-    await storage.deleteClasswork(id);
+    if (cw.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    await storage.deleteClasswork(id, req.session.schoolId!);
     res.json({ message: "Classwork deleted" });
   });
 
@@ -1335,7 +1337,8 @@ export function registerTeacherRoutes(app: Express) {
 
   app.delete("/api/calendar/:id", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
-    await storage.deleteCalendarEvent(parseInt(req.params.id));
+    const deleted = await storage.deleteCalendarEventBySchool(parseInt(req.params.id), req.session.schoolId!);
+    if (!deleted) return res.status(404).json({ message: "Event not found" });
     res.json({ message: "Event deleted" });
   });
 

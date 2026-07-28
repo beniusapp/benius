@@ -693,13 +693,13 @@ export class DatabaseStorage {
     return cw;
   }
 
-  async updateClasswork(id: number, data: { content?: string; subject?: string; fileUrl?: string | null }): Promise<Classwork> {
-    const [cw] = await db.update(classwork).set(data).where(eq(classwork.id, id)).returning();
+  async updateClasswork(id: number, schoolId: number, data: { content?: string; subject?: string; fileUrl?: string | null }): Promise<Classwork> {
+    const [cw] = await db.update(classwork).set(data).where(and(eq(classwork.id, id), eq(classwork.schoolId, schoolId))).returning();
     return cw;
   }
 
-  async deleteClasswork(id: number): Promise<void> {
-    await db.delete(classwork).where(eq(classwork.id, id));
+  async deleteClasswork(id: number, schoolId: number): Promise<void> {
+    await db.delete(classwork).where(and(eq(classwork.id, id), eq(classwork.schoolId, schoolId)));
   }
 
   // ===== NOTICE METHODS =====

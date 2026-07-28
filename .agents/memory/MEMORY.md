@@ -6,3 +6,4 @@
 - [Support Staff Auth & Sub-Module Enforcement](support-staff-auth.md) — login bug fix (userRole was "admin", now "support_staff"); allowedSubs pattern for UI filtering; backend route auth pattern for staff vs admin.
 - [Print Fixes](print-fixes.md) — new-window pattern for student results print (no blank page); asset report inline-HTML pattern; what NOT to do with @media print visibility/position tricks.
 - [Admin Module Session Scoping](admin-module-session-scoping.md) — pattern for wiring all admin modules to the session-switcher: sessionFetch for GETs + useSessionView for isArchiveMode on mutation buttons.
+- [Cross-School Isolation Audit](cross-school-isolation.md) — 3 confirmed vulnerabilities fixed (calendar delete, classwork update/delete); correct storage mutation pattern; which read functions are intentionally ID-only.
