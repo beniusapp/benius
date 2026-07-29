@@ -13,6 +13,7 @@ interface FacultyMember {
   assignedClass: string;
   assignedSection: string;
   digitalTeacherId: string | null;
+  profileImageUrl?: string | null;
   mappings: { className: string; section: string; subject: string | null }[];
 }
 
@@ -65,8 +66,10 @@ export default function FacultyInfoModule({ teacher }: { teacher: TeacherMe }) {
                 const hasMappings = (f.mappings ?? []).length > 0;
                 return (
                   <div key={f.id} className="p-4 rounded-md border flex items-start gap-3" data-testid={`card-faculty-${f.id}`}>
-                    <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 flex-shrink-0">
-                      <User className="w-5 h-5 text-primary" />
+                    <div className="w-10 h-10 rounded-full bg-primary/10 flex-shrink-0 overflow-hidden flex items-center justify-center">
+                      {f.profileImageUrl
+                        ? <img src={f.profileImageUrl} alt={f.fullName} className="w-full h-full object-cover rounded-full" />
+                        : <User className="w-5 h-5 text-primary" />}
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="font-medium text-sm">{f.fullName}</p>

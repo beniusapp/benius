@@ -216,8 +216,9 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 8 * 1024 * 1024) {
-      toast({ title: "File too large", description: "Maximum 8MB.", variant: "destructive" });
+    if (file.size > 1 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Maximum 1 MB allowed. Please choose a smaller image.", variant: "destructive" });
+      e.target.value = "";
       return;
     }
     const reader = new FileReader();
@@ -274,6 +275,7 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
             <DialogTitle className="text-white text-base font-semibold flex items-center gap-2">
               <Camera className="w-4 h-4 text-[#10b981]" /> Crop Profile Photo
             </DialogTitle>
+            <p className="text-xs text-white/40 mt-0.5">Maximum file size: <span className="text-amber-400 font-semibold">1 MB</span></p>
           </DialogHeader>
 
           <div className="relative w-full h-72 bg-black">
@@ -542,6 +544,16 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
                   <span className="text-2xl font-bold text-[#10b981]">{initials}</span>
                 </div>
               )}
+              {/* Verified tick — shown when a profile photo exists */}
+              {teacher.profileImageUrl && (
+                <div
+                  className="absolute bottom-0 right-0 w-7 h-7 rounded-full bg-[#0a1628] border-2 border-[#10b981]/60 flex items-center justify-center shadow-md"
+                  title="Photo verified"
+                  data-testid="badge-photo-verified"
+                >
+                  <BadgeCheck className="w-4 h-4 text-[#10b981]" />
+                </div>
+              )}
               {!isArchiveMode && (
                 <button
                   onClick={() => fileInputRef.current?.click()}
@@ -555,13 +567,16 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
             </div>
 
             {!isArchiveMode && (
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="mt-1 flex items-center gap-1.5 text-xs text-[#10b981] hover:text-emerald-400 font-medium transition-colors py-1 px-3 rounded-full border border-[#10b981]/30 hover:border-[#10b981]/60 hover:bg-[#10b981]/[0.08]"
-                data-testid="button-change-photo"
-              >
-                <Camera className="w-3 h-3" /> Change Photo
-              </button>
+              <div className="flex flex-col items-center gap-1">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="mt-1 flex items-center gap-1.5 text-xs text-[#10b981] hover:text-emerald-400 font-medium transition-colors py-1 px-3 rounded-full border border-[#10b981]/30 hover:border-[#10b981]/60 hover:bg-[#10b981]/[0.08]"
+                  data-testid="button-change-photo"
+                >
+                  <Camera className="w-3 h-3" /> Change Photo
+                </button>
+                <p className="text-[10px] text-white/30">Max size: <span className="text-amber-400/80 font-medium">1 MB</span></p>
+              </div>
             )}
 
             <h2 className="mt-3 text-xl font-bold text-white" data-testid="text-profile-name">

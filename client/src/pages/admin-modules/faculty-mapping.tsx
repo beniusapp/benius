@@ -616,12 +616,14 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
                         {/* avatar */}
                         <div className={`
                           w-10 h-10 rounded-xl bg-gradient-to-br ${palette.bg}
-                          flex items-center justify-center flex-shrink-0
+                          flex items-center justify-center flex-shrink-0 overflow-hidden
                           ring-2 ${isSelected ? "ring-[#D4AF37]/50" : `${palette.ring} ring-offset-0`}
                           text-white text-xs font-bold shadow-lg
                           transition-transform group-hover:scale-105
                         `}>
-                          {initials}
+                          {(t as any).profileImageUrl
+                            ? <img src={(t as any).profileImageUrl} alt={t.fullName} className="w-full h-full object-cover" />
+                            : initials}
                         </div>
 
                         {/* info */}

@@ -21,8 +21,10 @@ function IDCard({ student, schoolName, showReissueBanner }: { student: any; scho
         </div>
       )}
       <div className="flex items-center gap-3 mb-3 border-b border-[#D4AF37]/30 pb-3">
-        <div className="w-10 h-10 rounded-full bg-[#D4AF37] flex items-center justify-center text-[#0A1628] font-bold text-lg">
-          {student.name?.charAt(0).toUpperCase()}
+        <div className="w-10 h-10 rounded-full bg-[#D4AF37] flex items-center justify-center text-[#0A1628] font-bold text-lg overflow-hidden">
+          {student.photoUrl
+            ? <img src={student.photoUrl} alt={student.name} className="w-full h-full object-cover rounded-full" />
+            : student.name?.charAt(0).toUpperCase()}
         </div>
         <div>
           <p className="text-[#D4AF37] text-xs font-semibold tracking-wider">BENIUS</p>

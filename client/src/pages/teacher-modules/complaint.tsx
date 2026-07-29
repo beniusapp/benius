@@ -59,6 +59,7 @@ interface ClassFeedEntry {
   resolutionRemarks: string | null;
   escalatedToPrincipal: boolean | null;
   complainantStudentName: string | null;
+  complainantPhotoUrl?: string | null;
   createdAt: string;
 }
 

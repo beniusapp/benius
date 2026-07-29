@@ -27,6 +27,27 @@ const diskUpload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
 });
 
+// Dedicated uploader for teacher profile pictures — hard 1 MB cap
+const teacherProfilePhotoUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      const dir = path.join(process.cwd(), "uploads");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
+      cb(null, unique + path.extname(file.originalname));
+    },
+  }),
+  limits: { fileSize: 1 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Only JPG, PNG, or WebP images are allowed"));
+  },
+});
+
 const studentPhotoUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => {
@@ -241,7 +262,17 @@ export function registerTeacherRoutes(app: Express) {
     res.json({ message: "Password changed successfully" });
   });
 
-  app.post("/api/teacher/profile-picture", diskUpload.single("file"), async (req, res) => {
+  app.post("/api/teacher/profile-picture",
+    (req: any, res: any, next: any) => {
+      teacherProfilePhotoUpload.single("file")(req, res, (err: any) => {
+        if (err && err.code === "LIMIT_FILE_SIZE") {
+          return res.status(400).json({ message: "File too large. Maximum size is 1 MB." });
+        }
+        if (err) return res.status(400).json({ message: err.message || "Upload error" });
+        next();
+      });
+    },
+    async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
@@ -339,6 +370,7 @@ export function registerTeacherRoutes(app: Express) {
         studentId: student.id,
         name: student.name,
         dsid: student.digitalStudentId,
+        photoUrl: student.photoUrl ?? null,
         // Never default to "present" — an unmarked student is "not-marked"
         status: (record && record.status) ? record.status : "not-marked",
         editCount: record?.editCount ?? 0,

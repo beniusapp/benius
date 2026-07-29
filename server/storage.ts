@@ -1374,6 +1374,7 @@ export class DatabaseStorage {
     return result.map(r => ({
       ...r.complaints,
       complainantStudentName: r.students?.name || null,
+      complainantPhotoUrl: r.students?.photoUrl ?? null,
     }));
   }
 
@@ -1485,6 +1486,7 @@ export class DatabaseStorage {
       ...r.exam_scores,
       studentName: r.students.name,
       dsid: r.students.digitalStudentId,
+      photoUrl: r.students.photoUrl ?? null,
     }));
   }
 
@@ -2510,6 +2512,7 @@ export class DatabaseStorage {
       ...r.student_leave_requests,
       studentName: r.students.name,
       dsid: r.students.digitalStudentId,
+      photoUrl: r.students.photoUrl ?? null,
     }));
   }
 
@@ -2550,6 +2553,7 @@ export class DatabaseStorage {
         ...r.student_leave_requests,
         studentName: r.students.name,
         dsid: r.students.digitalStudentId,
+        photoUrl: r.students.photoUrl ?? null,
         class: r.students.class,
         section: r.students.section,
       }));
@@ -2571,6 +2575,7 @@ export class DatabaseStorage {
       ...r.student_leave_requests,
       studentName: r.students.name,
       dsid: r.students.digitalStudentId,
+      photoUrl: r.students.photoUrl ?? null,
       class: r.students.class,
       section: r.students.section,
     }));

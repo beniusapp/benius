@@ -22,7 +22,7 @@ import {
 // ── Shared types ──────────────────────────────────────────────────────────────
 interface StudentInfo { studentId: number; name: string; dsid: string; }
 interface ExamScoreEntry {
-  id: number; studentId: number; studentName: string; dsid: string;
+  id: number; studentId: number; studentName: string; dsid: string; photoUrl?: string | null;
   marks: number; totalMarks: number; isAbsent: boolean;
   updatedBy?: string | null; updatedAt?: string | null;
 }
@@ -2275,7 +2275,17 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                             <tr className="border-b last:border-0 hover:bg-muted/20 cursor-pointer" onClick={() => setExpandedStudent(isExpanded ? null : s.studentId)} data-testid={`row-view-${s.studentId}`}>
                               <td className="py-2 px-3 text-xs text-muted-foreground">{idx + 1}</td>
                               <td className="py-2 px-3 font-mono text-xs">{s.dsid}</td>
-                              <td className="py-2 px-3 text-sm font-medium text-indigo-600 hover:underline">{s.studentName}</td>
+                              <td className="py-2 px-3">
+                                <div className="flex items-center gap-2">
+                                  {(s as any).photoUrl
+                                    ? <img src={(s as any).photoUrl} alt={s.studentName} className="w-6 h-6 rounded-full object-cover shrink-0" />
+                                    : <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-[10px] font-bold flex items-center justify-center shrink-0">
+                                        {s.studentName.charAt(0).toUpperCase()}
+                                      </div>
+                                  }
+                                  <span className="text-sm font-medium text-indigo-600 hover:underline">{s.studentName}</span>
+                                </div>
+                              </td>
                               <td className="py-2 px-3 text-center text-xs">{s.isAbsent ? <span className="font-bold text-gray-500">AB</span> : `${s.marks}/${s.totalMarks}`}</td>
                               <td className="py-2 px-3 text-center text-xs font-medium">{s.isAbsent ? "—" : `${pct}%`}</td>
                               <td className="py-2 px-3 text-center">

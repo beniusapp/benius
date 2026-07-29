@@ -45,6 +45,9 @@ interface StudentLeaveEntry {
   id: number;
   studentId: number;
   studentName?: string;
+  photoUrl?: string | null;
+  class?: string;
+  section?: string;
   studentClass?: string;
   studentSection?: string;
   startDate: string;
@@ -466,6 +469,12 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                     <div key={sl.id} className="p-3 rounded-md border border-gray-100 bg-gray-50" data-testid={`card-student-leave-${sl.id}`}>
                       <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
                         <div className="flex items-center gap-2 min-w-0">
+                          {sl.photoUrl
+                            ? <img src={sl.photoUrl} alt={sl.studentName || ""} className="w-7 h-7 rounded-full object-cover shrink-0 border border-gray-200" />
+                            : <div className="w-7 h-7 rounded-full bg-violet-100 text-violet-700 text-xs font-bold flex items-center justify-center shrink-0">
+                                {(sl.studentName || "?").charAt(0).toUpperCase()}
+                              </div>
+                          }
                           <span className="font-medium text-sm text-gray-900" data-testid={`text-student-name-${sl.id}`}>
                             {sl.studentName || `Student #${sl.studentId}`}
                           </span>
@@ -753,7 +762,14 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                     data-testid={`history-student-leave-${sl.id}`}
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        {sl.photoUrl
+                          ? <img src={sl.photoUrl} alt={sl.studentName || ""} className="w-8 h-8 rounded-full object-cover shrink-0 border border-gray-200" />
+                          : <div className="w-8 h-8 rounded-full bg-violet-100 text-violet-700 text-sm font-bold flex items-center justify-center shrink-0">
+                              {(sl.studentName || "?").charAt(0).toUpperCase()}
+                            </div>
+                        }
+                        <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-semibold text-sm text-gray-900">{sl.studentName || `Student #${sl.studentId}`}</span>
                           {sl.class && (
@@ -777,7 +793,8 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                             <p className="text-xs text-red-600 italic">Reason: {sl.rejectionReason}</p>
                           </div>
                         )}
-                      </div>
+                      </div>{/* closes min-w-0 flex-1 text content */}
+                      </div>{/* closes photo+content flex row */}
                       <span
                         className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
                         style={{

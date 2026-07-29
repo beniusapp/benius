@@ -722,21 +722,29 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                         </div>
                       </td>
                       <td className={`${cell} text-white font-medium overflow-hidden`}>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="truncate">{s.name}</span>
-                          {(() => {
-                            const vp = (s as any).verifiedProfile;
-                            if (!vp) return null;
-                            try {
-                              const parsed = typeof vp === "string" ? JSON.parse(vp) : vp;
-                              if (!parsed?.verifiedAt) return null;
-                              return (
-                                <span className="text-[9px] font-semibold text-emerald-400 leading-none flex items-center gap-0.5">
-                                  ✓ Verified {new Date(parsed.verifiedAt).toLocaleDateString("en-GB")}
-                                </span>
-                              );
-                            } catch { return null; }
-                          })()}
+                        <div className="flex items-center gap-2">
+                          {s.photoUrl
+                            ? <img src={s.photoUrl} alt={s.name} className="w-7 h-7 rounded-full object-cover shrink-0 border border-white/10" />
+                            : <div className="w-7 h-7 rounded-full bg-[#D4AF37]/20 text-[#D4AF37] text-xs font-bold flex items-center justify-center shrink-0">
+                                {s.name.charAt(0).toUpperCase()}
+                              </div>
+                          }
+                          <div className="flex flex-col gap-0.5 min-w-0">
+                            <span className="truncate">{s.name}</span>
+                            {(() => {
+                              const vp = (s as any).verifiedProfile;
+                              if (!vp) return null;
+                              try {
+                                const parsed = typeof vp === "string" ? JSON.parse(vp) : vp;
+                                if (!parsed?.verifiedAt) return null;
+                                return (
+                                  <span className="text-[9px] font-semibold text-emerald-400 leading-none flex items-center gap-0.5">
+                                    ✓ Verified {new Date(parsed.verifiedAt).toLocaleDateString("en-GB")}
+                                  </span>
+                                );
+                              } catch { return null; }
+                            })()}
+                          </div>
                         </div>
                       </td>
                       <td className={`${cell} text-white/50 font-mono`}>

@@ -460,7 +460,17 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
                           <span className="text-[#D4AF37] font-mono text-xs font-semibold tracking-wide">{ta.digitalTeacherId || "—"}</span>
                         </td>
                         {/* Name */}
-                        <td className="py-3 px-4 text-white font-medium whitespace-nowrap">{t.fullName}</td>
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            {ta.profileImageUrl
+                              ? <img src={ta.profileImageUrl} alt={t.fullName} className="w-7 h-7 rounded-full object-cover shrink-0 border border-white/10" />
+                              : <div className="w-7 h-7 rounded-full bg-[#D4AF37]/20 text-[#D4AF37] text-xs font-bold flex items-center justify-center shrink-0">
+                                  {t.fullName.charAt(0).toUpperCase()}
+                                </div>
+                            }
+                            <span className="text-white font-medium">{t.fullName}</span>
+                          </div>
+                        </td>
                         {/* Email */}
                         <td className="py-3 px-4 text-white/70 text-xs">{t.email}</td>
                         {/* Phone */}
@@ -561,8 +571,10 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-[#0F1E35]">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-[#D4AF37]/20 flex items-center justify-center">
-                    <User className="w-5 h-5 text-[#D4AF37]" />
+                  <div className="w-10 h-10 rounded-full bg-[#D4AF37]/20 flex items-center justify-center overflow-hidden shrink-0">
+                    {va.profileImageUrl
+                      ? <img src={va.profileImageUrl} alt={viewTarget.fullName} className="w-full h-full object-cover rounded-full" />
+                      : <User className="w-5 h-5 text-[#D4AF37]" />}
                   </div>
                   <div>
                     <h3 className="text-white font-semibold text-sm">{viewTarget.fullName}</h3>

@@ -15,6 +15,7 @@ interface StudentAttendance {
   studentId: number;
   name: string;
   dsid: string;
+  photoUrl?: string | null;
   status: string;
   editCount: number;
   markedBy: string | null;
@@ -545,8 +546,10 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                       className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3 text-sm"
                       data-testid={`history-card-${r.studentId}-${r.date}`}
                     >
-                      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold ${getAvatarColor(r.studentName)}`}>
-                        {getInitials(r.studentName)}
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden ${getAvatarColor(r.studentName)}`}>
+                        {(r as any).photoUrl
+                          ? <img src={(r as any).photoUrl} alt={r.studentName} className="w-full h-full object-cover rounded-full" />
+                          : getInitials(r.studentName)}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium truncate text-white">{r.studentName}</p>
@@ -692,8 +695,10 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                   </div>
                 )}
                 <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0 ${getAvatarColor(student.name)}`}>
-                    {getInitials(student.name)}
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0 overflow-hidden ${getAvatarColor(student.name)}`}>
+                    {student.photoUrl
+                      ? <img src={student.photoUrl} alt={student.name} className="w-full h-full object-cover rounded-full" />
+                      : getInitials(student.name)}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm truncate text-white" data-testid={`text-student-name-${student.studentId}`}>{student.name}</p>
