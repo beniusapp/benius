@@ -951,7 +951,7 @@ export default function StudentComplaints() {
             ) : (
             <div className="rounded-2xl p-5 bg-white/80 border border-white/70 shadow-sm" data-testid="form-peer-report">
               <h2 className="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2">
-                <UserX className="w-4 h-4 text-[#10b981]" /> Report Peer Misconduct
+                <UserX className="w-4 h-4 text-[#10b981]" /> Report a Student Issue
               </h2>
               <form onSubmit={handlePeerSubmit} className="space-y-4">
 
