@@ -18,14 +18,11 @@ export function addSSEClient(schoolId: number, res: Response): void {
   });
 }
 
-/** Push a session-activated event to all connected clients for a school. */
-export function broadcastSessionActivated(
-  schoolId: number,
-  payload: { sessionId: number; sessionName: string }
-): void {
+/** Push any event payload to all connected clients for a school. */
+function broadcastToSchool(schoolId: number, payload: object): void {
   const schoolClients = clients.get(schoolId);
   if (!schoolClients || schoolClients.size === 0) return;
-  const data = JSON.stringify({ type: "session-activated", ...payload });
+  const data = JSON.stringify(payload);
   for (const res of Array.from(schoolClients)) {
     try {
       res.write(`data: ${data}\n\n`);
@@ -33,4 +30,20 @@ export function broadcastSessionActivated(
       schoolClients.delete(res);
     }
   }
+}
+
+/** Push a session-activated event to all connected clients for a school. */
+export function broadcastSessionActivated(
+  schoolId: number,
+  payload: { sessionId: number; sessionName: string }
+): void {
+  broadcastToSchool(schoolId, { type: "session-activated", ...payload });
+}
+
+/** Push a session-deleted event to all connected clients for a school. */
+export function broadcastSessionDeleted(
+  schoolId: number,
+  payload: { sessionId: number }
+): void {
+  broadcastToSchool(schoolId, { type: "session-deleted", ...payload });
 }

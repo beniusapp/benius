@@ -19,7 +19,7 @@ import multer from "multer";
 import { parse } from "csv-parse/sync";
 import * as XLSX from "xlsx";
 import { registerTeacherRoutes } from "./teacher-routes";
-import { addSSEClient, broadcastSessionActivated } from "./sse";
+import { addSSEClient, broadcastSessionActivated, broadcastSessionDeleted } from "./sse";
 import { db } from "./db";
 import { eq, and, sql, inArray, not } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
@@ -3228,6 +3228,9 @@ export async function registerRoutes(
 
       await storage.deleteAcademicSession(id, schoolId);
       res.json({ message: "Session deleted" });
+      // Notify all connected teachers and students so their session lists
+      // update instantly — no page refresh required.
+      broadcastSessionDeleted(schoolId, { sessionId: id });
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to delete session" });
     }

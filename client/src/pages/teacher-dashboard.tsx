@@ -319,6 +319,13 @@ export default function TeacherDashboard() {
             title: "Session switched",
             description: `${data.sessionName} is now the active session.`,
           });
+        } else if (data.type === "session-deleted") {
+          setViewingSessionId(null); // reset in case the viewed session was deleted
+          queryClient.invalidateQueries({ queryKey: ["/api/teacher/academic-sessions"] });
+          toast({
+            title: "Session removed",
+            description: "An academic session was deleted by admin.",
+          });
         }
       } catch { /* malformed event — ignore */ }
     };

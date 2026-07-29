@@ -38,7 +38,7 @@ export function StudentSessionProvider({ children }: { children: React.ReactNode
     es.onmessage = (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data as string);
-        if (data.type === "session-activated") {
+        if (data.type === "session-activated" || data.type === "session-deleted") {
           // Reset selection — the useEffect above will pick the new active session
           setSelectedSession(null);
           queryClient.invalidateQueries({ queryKey: ["/api/student/academic-sessions"] });
