@@ -16,6 +16,10 @@ export interface SessionViewContextValue {
   setSelectedSession: (s: AcademicSession | null) => void;
   isArchiveMode: boolean;
   isSessionsLoading: boolean;
+  /** Set when admin activates a new session; cleared once the student confirms. */
+  pendingActivation: AcademicSession | null;
+  /** Call this when the student taps "Confirm & Continue" in the activation modal. */
+  confirmActivation: () => void;
 }
 
 export const SessionViewContext = createContext<SessionViewContextValue>({
@@ -24,6 +28,8 @@ export const SessionViewContext = createContext<SessionViewContextValue>({
   setSelectedSession: () => { /* noop */ },
   isArchiveMode: false,
   isSessionsLoading: true,
+  pendingActivation: null,
+  confirmActivation: () => { /* noop */ },
 });
 
 export function useSessionView() {

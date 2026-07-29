@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { motion } from "framer-motion";
-import { GraduationCap, Loader2, LogOut, Lock, ChevronDown, History } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { GraduationCap, Loader2, LogOut, Lock, ChevronDown, History, PartyPopper, RefreshCw, Shield } from "lucide-react";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
@@ -104,10 +104,32 @@ function getGreeting() {
   return "Good Evening";
 }
 
+// ── Session-based modules (reset to empty on new session) ───────────────────
+const SESSION_MODULES = [
+  { emoji: "✅", label: "Attendance" },
+  { emoji: "📝", label: "Homework" },
+  { emoji: "📚", label: "Classwork" },
+  { emoji: "🔔", label: "Noticeboard" },
+  { emoji: "💳", label: "Fees" },
+  { emoji: "🏆", label: "Examination" },
+  { emoji: "🎭", label: "Complaints" },
+  { emoji: "🌴", label: "Leave" },
+  { emoji: "🗓️", label: "Timetable" },
+];
+
+// ── Global modules (never reset — session independent) ───────────────────────
+const GLOBAL_MODULES = [
+  { emoji: "🎓", label: "Profile" },
+  { emoji: "🎨", label: "Gallery" },
+  { emoji: "👨‍🏫", label: "Faculty Info" },
+  { emoji: "📅", label: "School Calendar" },
+  { emoji: "📖", label: "E-Library" },
+];
+
 export default function StudentDashboard() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
-  const { sessions, selectedSession, setSelectedSession, isArchiveMode, isSessionsLoading } = useSessionView();
+  const { sessions, selectedSession, setSelectedSession, isArchiveMode, isSessionsLoading, pendingActivation, confirmActivation } = useSessionView();
   const [sessionDropdownOpen, setSessionDropdownOpen] = useState(false);
   const sessionDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -585,6 +607,125 @@ export default function StudentDashboard() {
           © {new Date().getFullYear()} BENIUS · {student.schoolName}
         </motion.p>
       </main>
+
+      {/* ── New Session Activation Modal (blocking) ── */}
+      <AnimatePresence>
+        {pendingActivation && (
+          <motion.div
+            key="session-activation-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+            style={{ background: "rgba(15,23,42,0.72)", backdropFilter: "blur(6px)" }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.88, y: 28 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.92, y: 16 }}
+              transition={{ type: "spring", stiffness: 380, damping: 30 }}
+              className="w-full max-w-sm rounded-[28px] overflow-hidden"
+              style={{
+                background: "rgba(255,255,255,0.98)",
+                boxShadow: "0 32px 80px rgba(0,0,0,0.28), 0 0 0 1px rgba(255,255,255,0.6)",
+              }}
+            >
+              {/* Header band */}
+              <div
+                className="px-6 pt-7 pb-5 text-center"
+                style={{ background: "linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)" }}
+              >
+                <div
+                  className="mx-auto mb-3 flex items-center justify-center rounded-2xl"
+                  style={{ width: 64, height: 64, background: "rgba(255,255,255,0.18)" }}
+                >
+                  <PartyPopper className="w-8 h-8 text-white" />
+                </div>
+                <h2 className="text-white font-extrabold text-xl leading-tight">
+                  New Academic Session!
+                </h2>
+                <p className="text-blue-100 text-sm mt-1 font-medium">
+                  Your school has started a new year
+                </p>
+              </div>
+
+              {/* Body */}
+              <div className="px-6 py-5 space-y-4">
+                {/* Session pill */}
+                <div className="flex items-center justify-center">
+                  <span
+                    className="px-4 py-1.5 rounded-full text-sm font-bold"
+                    style={{ background: "rgba(99,102,241,0.10)", color: "#4f46e5", border: "1.5px solid rgba(99,102,241,0.25)" }}
+                  >
+                    🎓 {pendingActivation.sessionName}
+                  </span>
+                </div>
+
+                <p className="text-slate-600 text-sm text-center leading-relaxed">
+                  Tap <strong>Confirm</strong> to switch your portal to the new session.
+                </p>
+
+                {/* What resets */}
+                <div className="rounded-2xl overflow-hidden border border-slate-100">
+                  <div className="flex items-center gap-2 px-4 py-2.5" style={{ background: "#fff7ed", borderBottom: "1px solid #fed7aa" }}>
+                    <RefreshCw className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" />
+                    <span className="text-xs font-bold text-orange-700 uppercase tracking-wide">Starts fresh this session</span>
+                  </div>
+                  <div className="px-4 py-3 flex flex-wrap gap-1.5" style={{ background: "#fffbf5" }}>
+                    {SESSION_MODULES.map((m) => (
+                      <span
+                        key={m.label}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold"
+                        style={{ background: "#fff", border: "1px solid #fed7aa", color: "#9a3412" }}
+                      >
+                        {m.emoji} {m.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* What stays */}
+                <div className="rounded-2xl overflow-hidden border border-slate-100">
+                  <div className="flex items-center gap-2 px-4 py-2.5" style={{ background: "#f0fdf4", borderBottom: "1px solid #bbf7d0" }}>
+                    <Shield className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
+                    <span className="text-xs font-bold text-emerald-700 uppercase tracking-wide">Always available</span>
+                  </div>
+                  <div className="px-4 py-3 flex flex-wrap gap-1.5" style={{ background: "#f9fffe" }}>
+                    {GLOBAL_MODULES.map((m) => (
+                      <span
+                        key={m.label}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold"
+                        style={{ background: "#fff", border: "1px solid #bbf7d0", color: "#166534" }}
+                      >
+                        {m.emoji} {m.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Confirm button */}
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={confirmActivation}
+                  className="w-full py-3.5 rounded-2xl text-white font-bold text-base shadow-lg"
+                  style={{
+                    background: "linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)",
+                    boxShadow: "0 8px 24px rgba(99,102,241,0.35)",
+                  }}
+                >
+                  Confirm &amp; Continue →
+                </motion.button>
+
+                <p className="text-center text-[11px] text-slate-400 pb-1">
+                  You can always browse past sessions from the session picker
+                </p>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
