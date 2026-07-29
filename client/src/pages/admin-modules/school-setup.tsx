@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-interface Props { schoolId: number; section?: string; onNavigateSection?: (section: string | null) => void; }
+interface Props { schoolId: number; section?: string; onNavigateSection?: (section: string | null) => void; isArchiveMode?: boolean; }
 
 const CLASS_ORDER = ["LKG","UKG","1","2","3","4","5","6","7","8","9","10","11","12"];
 
@@ -56,9 +56,9 @@ function TagList({ items, onRemove }: { items: string[]; onRemove: (v: string) =
   );
 }
 
-function MetaSection({ title, icon: Icon, items, onAdd, onRemove, onSave, input, setInput, testId, isPending }: {
+function MetaSection({ title, icon: Icon, items, onAdd, onRemove, onSave, input, setInput, testId, isPending, readOnly = false }: {
   title: string; icon: any; items: string[]; onAdd: () => void; onRemove: (v: string) => void;
-  onSave: () => void; input: string; setInput: (v: string) => void; testId: string; isPending: boolean;
+  onSave: () => void; input: string; setInput: (v: string) => void; testId: string; isPending: boolean; readOnly?: boolean;
 }) {
   return (
     <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5">
@@ -69,22 +69,35 @@ function MetaSection({ title, icon: Icon, items, onAdd, onRemove, onSave, input,
         <h3 className="font-semibold text-white">{title}</h3>
         <span className="ml-auto text-xs text-white/40">{items.length} configured</span>
       </div>
-      <div className="flex gap-2 mb-2">
-        <Input
-          value={input} onChange={e => setInput(e.target.value)}
-          placeholder={`Add ${title.toLowerCase()}...`}
-          className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30 flex-1"
-          data-testid={`input-${testId}`}
-          onKeyDown={e => e.key === "Enter" && onAdd()}
-        />
-        <Button onClick={onAdd} size="sm" variant="outline" className="border-[#D4AF37]/40 text-[#D4AF37] hover:bg-[#D4AF37]/10" data-testid={`button-add-${testId}`}>
-          <Plus className="w-4 h-4" />
-        </Button>
-      </div>
-      <TagList items={items} onRemove={onRemove} />
-      <Button onClick={onSave} disabled={isPending} size="sm" className="mt-3 bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold" data-testid={`button-save-${testId}`}>
-        <Save className="w-3.5 h-3.5 mr-1" /> Save {title}
-      </Button>
+      {readOnly ? (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {items.map(v => (
+            <span key={v} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-white/5 border border-white/10 text-white/50">
+              {v}
+            </span>
+          ))}
+          {items.length === 0 && <span className="text-xs text-white/25">No {title.toLowerCase()} configured</span>}
+        </div>
+      ) : (
+        <>
+          <div className="flex gap-2 mb-2">
+            <Input
+              value={input} onChange={e => setInput(e.target.value)}
+              placeholder={`Add ${title.toLowerCase()}...`}
+              className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30 flex-1"
+              data-testid={`input-${testId}`}
+              onKeyDown={e => e.key === "Enter" && onAdd()}
+            />
+            <Button onClick={onAdd} size="sm" variant="outline" className="border-[#D4AF37]/40 text-[#D4AF37] hover:bg-[#D4AF37]/10" data-testid={`button-add-${testId}`}>
+              <Plus className="w-4 h-4" />
+            </Button>
+          </div>
+          <TagList items={items} onRemove={onRemove} />
+          <Button onClick={onSave} disabled={isPending} size="sm" className="mt-3 bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold" data-testid={`button-save-${testId}`}>
+            <Save className="w-3.5 h-3.5 mr-1" /> Save {title}
+          </Button>
+        </>
+      )}
     </div>
   );
 }
@@ -1328,7 +1341,7 @@ function ExamPolicyTierAccordion({ tier, classesList, examTypesList, onChange, o
   );
 }
 
-export default function SchoolSetup({ schoolId, section, onNavigateSection }: Props) {
+export default function SchoolSetup({ schoolId, section, onNavigateSection, isArchiveMode = false }: Props) {
   const { toast } = useToast();
   const [classes, setClasses] = useState<string[]>([]);
   const [sections, setSections] = useState<string[]>([]);
@@ -1846,7 +1859,7 @@ export default function SchoolSetup({ schoolId, section, onNavigateSection }: Pr
             border: "1px solid rgba(34,211,238,0.15)",
           }}
         >
-          <AcademicSessions schoolId={schoolId} />
+          <AcademicSessions schoolId={schoolId} isArchiveMode={isArchiveMode} />
         </div>
       )}
 
@@ -1855,7 +1868,7 @@ export default function SchoolSetup({ schoolId, section, onNavigateSection }: Pr
           onAdd={() => addTo(classes, setClasses, classInput, setClassInput)}
           onRemove={v => removeFrom(classes, setClasses, v)}
           onSave={() => saveMutation.mutate({ key: "classes", values: classes })}
-          testId="classes" isPending={saveMutation.isPending} />
+          testId="classes" isPending={saveMutation.isPending} readOnly={isArchiveMode} />
       )}
 
       {/* ─── sections ─── */}
@@ -1864,7 +1877,7 @@ export default function SchoolSetup({ schoolId, section, onNavigateSection }: Pr
           onAdd={() => addTo(sections, setSections, sectionInput, setSectionInput)}
           onRemove={v => removeFrom(sections, setSections, v)}
           onSave={() => saveMutation.mutate({ key: "sections", values: sections })}
-          testId="sections" isPending={saveMutation.isPending} />
+          testId="sections" isPending={saveMutation.isPending} readOnly={isArchiveMode} />
       )}
 
       {/* ─── subjects ─── */}
@@ -1873,7 +1886,7 @@ export default function SchoolSetup({ schoolId, section, onNavigateSection }: Pr
           onAdd={() => addTo(subjects, setSubjects, subjectInput, setSubjectInput)}
           onRemove={v => removeFrom(subjects, setSubjects, v)}
           onSave={() => saveMutation.mutate({ key: "subjects", values: subjects })}
-          testId="subjects" isPending={saveMutation.isPending} />
+          testId="subjects" isPending={saveMutation.isPending} readOnly={isArchiveMode} />
       )}
 
       {/* ─── exam-types ─── */}
@@ -1882,7 +1895,7 @@ export default function SchoolSetup({ schoolId, section, onNavigateSection }: Pr
           onAdd={() => addTo(examTypes, setExamTypes, examInput, setExamInput)}
           onRemove={v => removeFrom(examTypes, setExamTypes, v)}
           onSave={() => saveMutation.mutate({ key: "exam_types", values: examTypes })}
-          testId="exam-types" isPending={saveMutation.isPending} />
+          testId="exam-types" isPending={saveMutation.isPending} readOnly={isArchiveMode} />
       )}
 
       {/* ─── class-section-mapping ─── */}
@@ -2130,18 +2143,20 @@ export default function SchoolSetup({ schoolId, section, onNavigateSection }: Pr
 
       {/* ─── leave-policy ─── */}
       {section === "attendance-policy" && (
-        <AttendancePolicySetup schoolId={schoolId} />
+        <AttendancePolicySetup schoolId={schoolId} isArchiveMode={isArchiveMode} />
       )}
 
       {section === "leave-policy" && (
         <div className="space-y-4">
           <div className="flex items-center gap-3">
             <p className="text-white/40 text-xs flex-1">Configure leave types, annual quotas, renewal dates and expiry rules for your school.</p>
-            <Button size="sm" onClick={() => setLeavePolicies(prev => [...prev, emptyPolicy()])}
-              className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-9 shrink-0"
-              data-testid="btn-add-leave-policy">
-              <Plus className="w-4 h-4 mr-1" /> Add Leave Type
-            </Button>
+            {!isArchiveMode && (
+              <Button size="sm" onClick={() => setLeavePolicies(prev => [...prev, emptyPolicy()])}
+                className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-9 shrink-0"
+                data-testid="btn-add-leave-policy">
+                <Plus className="w-4 h-4 mr-1" /> Add Leave Type
+              </Button>
+            )}
           </div>
 
           {leavePolicies.length === 0 && (
@@ -2166,25 +2181,29 @@ export default function SchoolSetup({ schoolId, section, onNavigateSection }: Pr
                         {policy.annualLimit} days/year · Renews {MONTHS[parseInt(policy.renewalMonth) - 1]} {policy.renewalDay} · {policy.expiryBehavior === "carry_forward" ? "Carry forward" : "Expires"} · {policy.isActive ? "Active" : "Inactive"}
                       </p>
                     </div>
-                    <Button size="sm" variant="ghost" onClick={() => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, editing: true } : p))}
-                      className="text-gray-500 hover:text-gray-900 h-8 text-xs" data-testid={`btn-edit-leave-policy-${idx}`}>
-                      Edit
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={async () => {
-                      if (policy.id) {
-                        try {
-                          await apiRequest("DELETE", `/api/admin/leave-policies/${policy.id}`, undefined);
-                          queryClient.invalidateQueries({ queryKey: ["/api/admin/leave-policies"] });
-                          toast({ title: "Leave type deleted" });
-                        } catch {
-                          toast({ title: "Delete failed", variant: "destructive" });
-                          return;
+                    {!isArchiveMode && (
+                      <Button size="sm" variant="ghost" onClick={() => setLeavePolicies(prev => prev.map((p, i) => i === idx ? { ...p, editing: true } : p))}
+                        className="text-gray-500 hover:text-gray-900 h-8 text-xs" data-testid={`btn-edit-leave-policy-${idx}`}>
+                        Edit
+                      </Button>
+                    )}
+                    {!isArchiveMode && (
+                      <Button size="sm" variant="ghost" onClick={async () => {
+                        if (policy.id) {
+                          try {
+                            await apiRequest("DELETE", `/api/admin/leave-policies/${policy.id}`, undefined);
+                            queryClient.invalidateQueries({ queryKey: ["/api/admin/leave-policies"] });
+                            toast({ title: "Leave type deleted" });
+                          } catch {
+                            toast({ title: "Delete failed", variant: "destructive" });
+                            return;
+                          }
                         }
-                      }
-                      setLeavePolicies(prev => prev.filter((_, i) => i !== idx));
-                    }} className="text-red-400 hover:text-red-600 h-8" data-testid={`btn-delete-leave-policy-${idx}`}>
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
+                        setLeavePolicies(prev => prev.filter((_, i) => i !== idx));
+                      }} className="text-red-400 hover:text-red-600 h-8" data-testid={`btn-delete-leave-policy-${idx}`}>
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    )}
                   </div>
                 ) : (
                   <div className="p-5 space-y-4">

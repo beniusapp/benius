@@ -343,6 +343,7 @@ function ClassFeedDrawer({
   onClose: () => void;
 }) {
   const { toast } = useToast();
+  const isArchiveMode = useArchiveMode();
   const [resolveRemarks, setResolveRemarks] = useState("");
   const [showResolveBox, setShowResolveBox] = useState(false);
 

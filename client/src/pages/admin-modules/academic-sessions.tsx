@@ -76,7 +76,7 @@ interface AcademicSession {
   executionLog?: string[];
 }
 
-interface Props { schoolId: number }
+interface Props { schoolId: number; isArchiveMode?: boolean }
 
 // ── Module Tree — 4-Category Classification ────────────────────────────────────
 type ModuleCategory = "A" | "B" | "C";
@@ -1723,7 +1723,7 @@ function EmptyState() {
 // ══════════════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
 // ══════════════════════════════════════════════════════════════════════════════
-export default function AcademicSessions({ schoolId }: Props) {
+export default function AcademicSessions({ schoolId, isArchiveMode = false }: Props) {
   const { toast }       = useToast();
   const [, setLocation] = useLocation();
 
@@ -1799,18 +1799,20 @@ export default function AcademicSessions({ schoolId }: Props) {
             {sessions.length} session{sessions.length !== 1 ? "s" : ""} · Only one may be active at a time
           </p>
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          data-testid="button-add-session"
-          className="flex items-center gap-2 h-9 px-4 rounded-xl text-sm font-semibold text-white
-            transition-all hover:brightness-110 active:scale-95"
-          style={{
-            background: "linear-gradient(135deg,#22d3ee,#6366f1)",
-            boxShadow:  "0 4px 16px rgba(34,211,238,0.25)",
-          }}
-        >
-          <Plus className="w-4 h-4" /> New Session
-        </button>
+        {!isArchiveMode && (
+          <button
+            onClick={() => setShowCreate(true)}
+            data-testid="button-add-session"
+            className="flex items-center gap-2 h-9 px-4 rounded-xl text-sm font-semibold text-white
+              transition-all hover:brightness-110 active:scale-95"
+            style={{
+              background: "linear-gradient(135deg,#22d3ee,#6366f1)",
+              boxShadow:  "0 4px 16px rgba(34,211,238,0.25)",
+            }}
+          >
+            <Plus className="w-4 h-4" /> New Session
+          </button>
+        )}
       </div>
 
       {/* Loading */}
@@ -1912,7 +1914,7 @@ export default function AcademicSessions({ schoolId }: Props) {
                     <Settings className="w-3.5 h-3.5" />
                   </button>
 
-                  {!isActive && (
+                  {!isActive && !isArchiveMode && (
                     <button
                       onClick={() => setRolloverTarget(session)}
                       data-testid={`button-activate-${session.id}`}
@@ -1924,9 +1926,9 @@ export default function AcademicSessions({ schoolId }: Props) {
                     </button>
                   )}
 
-                  {isActive ? (
-                    <span className="text-[10px] text-white/20 px-2" title="Cannot delete the active session">
-                      Protected
+                  {isActive || isArchiveMode ? (
+                    <span className="text-[10px] text-white/20 px-2" title={isArchiveMode ? "View only in archive mode" : "Cannot delete the active session"}>
+                      {isArchiveMode ? "View Only" : "Protected"}
                     </span>
                   ) : (
                     <button

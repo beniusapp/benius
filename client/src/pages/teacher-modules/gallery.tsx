@@ -13,6 +13,7 @@ import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { fmtDate } from "@/lib/dateUtils";
+import { useArchiveMode } from "@/pages/teacher-dashboard";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
 
 interface GalleryEntry {
@@ -30,6 +31,7 @@ interface GalleryEntry {
 
 export default function GalleryModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
+  const isArchiveMode = useArchiveMode();
 
   const [showUpload, setShowUpload] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -228,20 +230,22 @@ export default function GalleryModule({ teacher }: { teacher: TeacherMe }) {
         </button>
       </div>
 
-      {/* ── FAB: + Upload button (fixed bottom-right) ── */}
-      <button
-        onClick={() => setShowUpload(true)}
-        className="fixed bottom-6 right-4 flex items-center gap-2 px-4 py-3 rounded-2xl font-bold text-sm shadow-2xl z-50 transition-all active:scale-95"
-        style={{
-          background: "linear-gradient(135deg, #7c3aed, #6d28d9)",
-          color: "#fff",
-          boxShadow: "0 8px 32px rgba(124,58,237,0.50)",
-        }}
-        data-testid="button-fab-upload"
-      >
-        <Plus className="w-5 h-5" />
-        Upload
-      </button>
+      {/* ── FAB: + Upload button (hidden in archive mode) ── */}
+      {!isArchiveMode && (
+        <button
+          onClick={() => setShowUpload(true)}
+          className="fixed bottom-6 right-4 flex items-center gap-2 px-4 py-3 rounded-2xl font-bold text-sm shadow-2xl z-50 transition-all active:scale-95"
+          style={{
+            background: "linear-gradient(135deg, #7c3aed, #6d28d9)",
+            color: "#fff",
+            boxShadow: "0 8px 32px rgba(124,58,237,0.50)",
+          }}
+          data-testid="button-fab-upload"
+        >
+          <Plus className="w-5 h-5" />
+          Upload
+        </button>
+      )}
 
       {/* ── Upload Dialog ── */}
       <Dialog open={showUpload} onOpenChange={(v) => { if (!v) resetForm(); setShowUpload(v); }}>

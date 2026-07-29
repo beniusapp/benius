@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import type { Teacher } from "@shared/schema";
 
-interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[]; allowedSubs?: string[] }
+interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[]; allowedSubs?: string[]; isArchiveMode?: boolean }
 type TeacherWithEmail = Teacher & { email: string };
 type MappingRow = { id: number; teacherId: number; teacherName: string; email: string; className: string; section: string; schoolId: number; subject?: string | null };
 
@@ -85,7 +85,7 @@ function KpiBadge({ color, icon: Icon, label, count }: {
 }
 
 /* ════════════════════════════════════════════════════════════════════════ */
-export default function FacultyMapping({ schoolId, classes, sections, allowedSubs }: Props) {
+export default function FacultyMapping({ schoolId, classes, sections, allowedSubs, isArchiveMode = false }: Props) {
   const canAssign = allowedSubs === undefined || allowedSubs.includes("assign");
   const { toast } = useToast();
 
@@ -715,22 +715,25 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => { setSelectedCells(new Set()); setCellSubjects(new Map()); }}
-                    className="h-8 px-3 rounded-xl text-xs text-white/50 hover:text-white border border-white/10 hover:border-white/20 hover:bg-white/8 transition-all flex items-center gap-1.5"
-                    data-testid="button-clear-grid-selection"
-                  >
-                    <X className="w-3 h-3" /> Clear
-                  </button>
+                  {!isArchiveMode && (
+                    <button
+                      onClick={() => { setSelectedCells(new Set()); setCellSubjects(new Map()); }}
+                      className="h-8 px-3 rounded-xl text-xs text-white/50 hover:text-white border border-white/10 hover:border-white/20 hover:bg-white/8 transition-all flex items-center gap-1.5"
+                      data-testid="button-clear-grid-selection"
+                    >
+                      <X className="w-3 h-3" /> Clear
+                    </button>
+                  )}
                   <Button
                     size="sm"
-                    className="h-8 bg-gradient-to-r from-[#D4AF37] to-amber-500 hover:from-[#B8962E] hover:to-amber-600 text-[#0A1628] font-bold text-xs px-4 rounded-xl shadow-lg shadow-[#D4AF37]/20"
-                    onClick={() => saveMutation.mutate()}
-                    disabled={saveMutation.isPending || !canAssign}
+                    className="h-8 bg-gradient-to-r from-[#D4AF37] to-amber-500 hover:from-[#B8962E] hover:to-amber-600 text-[#0A1628] font-bold text-xs px-4 rounded-xl shadow-lg shadow-[#D4AF37]/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                    onClick={() => !isArchiveMode && saveMutation.mutate()}
+                    disabled={saveMutation.isPending || !canAssign || isArchiveMode}
+                    title={isArchiveMode ? "View only in archive mode" : undefined}
                     data-testid="button-save-faculty-mapping"
                   >
                     {saveMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1.5" /> : <Save className="w-3 h-3 mr-1.5" />}
-                    Save Mapping
+                    {isArchiveMode ? "View Only" : "Save Mapping"}
                   </Button>
                 </div>
               </div>

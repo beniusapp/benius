@@ -949,12 +949,12 @@ export default function AdminDashboard() {
       );
     }
     switch (activeModule) {
-      case "school-setup":      return <SchoolSetup schoolId={me.schoolId} section={setupSection} onNavigateSection={(sec) => { if (sec === null) setLocation("/admin-dashboard/school-setup"); else setLocation(`/admin-dashboard/school-setup/${sec}`); }} />;
+      case "school-setup":      return <SchoolSetup schoolId={me.schoolId} section={setupSection} onNavigateSection={(sec) => { if (sec === null) setLocation("/admin-dashboard/school-setup"); else setLocation(`/admin-dashboard/school-setup/${sec}`); }} isArchiveMode={isArchiveMode} />;
       case "student-registry":  return <StudentRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} viewSessionId={selectedViewSession?.id} isArchiveMode={isArchiveMode} allowedSubs={getSubsFor("student-registry")} />;
-      case "faculty-mapping":   return <FacultyMapping schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} allowedSubs={getSubsFor("faculty-mapping")} />;
+      case "faculty-mapping":   return <FacultyMapping schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} allowedSubs={getSubsFor("faculty-mapping")} isArchiveMode={isArchiveMode} />;
       case "teacher-registry":  return <TeacherRegistry schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} onNavigate={(mod) => goToModule(mod as ActiveModule)} allowedSubs={getSubsFor("teacher-registry")} />;
       case "non-teaching-staff":return <NonTeachingStaff schoolId={me.schoolId} allowedSubs={getSubsFor("non-teaching-staff")} />;
-      case "approval-center":   return <ApprovalCenter schoolId={me.schoolId} initialSection={approvalSubParams?.tab ?? null} onNavigateSection={(sec) => { if (sec) setLocation(`/admin-dashboard/approval-center/${sec}`); else setLocation("/admin-dashboard/approval-center"); }} allowedSubs={getSubsFor("approval-center")} />;
+      case "approval-center":   return <ApprovalCenter schoolId={me.schoolId} initialSection={approvalSubParams?.tab ?? null} onNavigateSection={(sec) => { if (sec) setLocation(`/admin-dashboard/approval-center/${sec}`); else setLocation("/admin-dashboard/approval-center"); }} allowedSubs={getSubsFor("approval-center")} isArchiveMode={isArchiveMode} />;
       case "leave-requests":    return <LeaveRequests schoolId={me.schoolId} initialSection={leaveReqSubParams?.tab ?? null} onNavigateSection={(sec) => { if (sec) setLocation(`/admin-dashboard/leave-requests/${sec}`); else setLocation("/admin-dashboard/leave-requests"); }} allowedSubs={getSubsFor("leave-requests")} />;
       case "audit-logs":        return <AuditLogsModule schoolId={me.schoolId} />;
       case "visitor-log":       return <VisitorLogModule schoolId={me.schoolId} allowedSubs={getSubsFor("visitor-log")} />;
@@ -987,6 +987,8 @@ export default function AdminDashboard() {
       setSelectedSession: setSelectedViewSession,
       isArchiveMode,
       isSessionsLoading,
+      pendingActivation: null,
+      confirmActivation: () => { /* admin portal never shows the activation modal */ },
     }}>
     <div className="min-h-screen text-white flex flex-col" style={{ background: "#0f172a" }}>
 

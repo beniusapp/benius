@@ -113,9 +113,10 @@ interface PolicyCardProps {
   onUpdate: (localId: string, patch: Partial<LocalCard>) => void;
   onSaved:  (localId: string, saved: ServerPolicy) => void;
   onDelete: (localId: string, serverId: number | null) => void;
+  isArchiveMode?: boolean;
 }
 
-function PolicyCard({ card, classes, targetRole, onUpdate, onSaved, onDelete }: PolicyCardProps) {
+function PolicyCard({ card, classes, targetRole, onUpdate, onSaved, onDelete, isArchiveMode = false }: PolicyCardProps) {
   const { toast } = useToast();
   const { form, expanded, serverId, localId } = card;
 
@@ -244,14 +245,16 @@ function PolicyCard({ card, classes, targetRole, onUpdate, onSaved, onDelete }: 
           }`}>
             {form.isActive ? "Active" : "Inactive"}
           </span>
-          <button
-            onClick={e => { e.stopPropagation(); deleteMut.mutate(); }}
-            disabled={deleteMut.isPending}
-            className="p-1 rounded text-white/20 hover:text-red-400 transition-colors"
-            data-testid={`btn-delete-${localId}`}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
+          {!isArchiveMode && (
+            <button
+              onClick={e => { e.stopPropagation(); deleteMut.mutate(); }}
+              disabled={deleteMut.isPending}
+              className="p-1 rounded text-white/20 hover:text-red-400 transition-colors"
+              data-testid={`btn-delete-${localId}`}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
           {expanded
             ? <ChevronUp   className="w-4 h-4 text-white/25" />
             : <ChevronDown className="w-4 h-4 text-white/25" />}
@@ -423,13 +426,13 @@ function PolicyCard({ card, classes, targetRole, onUpdate, onSaved, onDelete }: 
           {/* Save */}
           <div className="flex items-center gap-3">
             <Button
-              onClick={() => saveMut.mutate()}
-              disabled={!form.policyName.trim() || saveMut.isPending}
-              className="h-9 font-semibold px-6 text-sm"
+              onClick={() => !isArchiveMode && saveMut.mutate()}
+              disabled={!form.policyName.trim() || saveMut.isPending || isArchiveMode}
+              className="h-9 font-semibold px-6 text-sm disabled:opacity-40"
               style={{ background: accent, color: isTeacher ? "#0A1628" : "#0A1628" }}
               data-testid={`btn-save-${localId}`}
             >
-              {saveMut.isPending ? "Saving…" : serverId ? "Save Changes" : "Create Policy"}
+              {saveMut.isPending ? "Saving…" : isArchiveMode ? "View Only" : serverId ? "Save Changes" : "Create Policy"}
             </Button>
             {!form.policyName.trim() && (
               <p className="text-xs text-white/25">Enter a policy name to save.</p>
@@ -447,9 +450,10 @@ interface PolicySectionProps {
   targetRole: "TEACHER" | "STUDENT";
   classes: string[];
   allPolicies: ServerPolicy[];
+  isArchiveMode?: boolean;
 }
 
-function PolicySection({ targetRole, classes, allPolicies }: PolicySectionProps) {
+function PolicySection({ targetRole, classes, allPolicies, isArchiveMode = false }: PolicySectionProps) {
   const [cards, setCards] = useState<LocalCard[]>([]);
   const initialised = useRef(false);
 
@@ -516,15 +520,17 @@ function PolicySection({ targetRole, classes, allPolicies }: PolicySectionProps)
             </p>
           </div>
         </div>
-        <Button
-          onClick={addCard}
-          className="flex items-center gap-1.5 text-xs font-semibold h-8 px-4"
-          style={{ background: accent, color: "#0A1628" }}
-          data-testid={`btn-add-${targetRole}`}
-        >
-          <Plus className="w-3.5 h-3.5" />
-          Add Policy
-        </Button>
+        {!isArchiveMode && (
+          <Button
+            onClick={addCard}
+            className="flex items-center gap-1.5 text-xs font-semibold h-8 px-4"
+            style={{ background: accent, color: "#0A1628" }}
+            data-testid={`btn-add-${targetRole}`}
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add Policy
+          </Button>
+        )}
       </div>
 
       {/* Cards list */}
@@ -533,14 +539,16 @@ function PolicySection({ targetRole, classes, allPolicies }: PolicySectionProps)
           <div className="flex flex-col items-center justify-center py-8 gap-2 border border-dashed border-white/8 rounded-xl">
             <Timer className="w-7 h-7 text-white/15" />
             <p className="text-white/25 text-xs">No {label.toLowerCase()} policies yet.</p>
-            <button
-              onClick={addCard}
-              className="text-xs font-semibold mt-1"
-              style={{ color: accent }}
-              data-testid={`btn-add-first-${targetRole}`}
-            >
-              + Add first policy
-            </button>
+            {!isArchiveMode && (
+              <button
+                onClick={addCard}
+                className="text-xs font-semibold mt-1"
+                style={{ color: accent }}
+                data-testid={`btn-add-first-${targetRole}`}
+              >
+                + Add first policy
+              </button>
+            )}
           </div>
         ) : (
           cards.map(card => (
@@ -552,6 +560,7 @@ function PolicySection({ targetRole, classes, allPolicies }: PolicySectionProps)
               onUpdate={handleUpdate}
               onSaved={handleSaved}
               onDelete={handleDelete}
+              isArchiveMode={isArchiveMode}
             />
           ))
         )}
@@ -574,7 +583,7 @@ function PolicySection({ targetRole, classes, allPolicies }: PolicySectionProps)
 
 // ── Main export ────────────────────────────────────────────────────────────────
 
-export function AttendancePolicySetup({ schoolId }: { schoolId: number }) {
+export function AttendancePolicySetup({ schoolId, isArchiveMode = false }: { schoolId: number; isArchiveMode?: boolean }) {
   // Fetch school config for class list
   const { data: adminConfig } = useQuery<{ classes: string[] }>({
     queryKey: ["/api/admin/school-config"],
@@ -623,6 +632,7 @@ export function AttendancePolicySetup({ schoolId }: { schoolId: number }) {
         targetRole="TEACHER"
         classes={classes}
         allPolicies={serverPolicies}
+        isArchiveMode={isArchiveMode}
       />
 
       {/* Student section */}
@@ -630,6 +640,7 @@ export function AttendancePolicySetup({ schoolId }: { schoolId: number }) {
         targetRole="STUDENT"
         classes={classes}
         allPolicies={serverPolicies}
+        isArchiveMode={isArchiveMode}
       />
     </div>
   );

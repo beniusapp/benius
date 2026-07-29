@@ -5,9 +5,10 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft, MapPin, AlertTriangle, CheckCircle, Clock, Timer,
   LogIn, LogOut, TrendingUp, Calendar, Edit3, ChevronDown,
-  Loader2, Flame, BarChart2, X, UserX, History, ChevronRight,
+  Loader2, Flame, BarChart2, X, UserX, History, ChevronRight, Archive,
 } from "lucide-react";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
+import { useArchiveMode } from "@/pages/teacher-dashboard";
 import AttendanceHistoryView from "./attendance-history";
 
 interface SelfAttRecord {
@@ -89,6 +90,7 @@ function isWeekend(dateStr: string): boolean {
 
 export default function MyAttendanceModule({ teacher, onBack }: { teacher: TeacherMe; onBack: () => void }) {
   const { toast } = useToast();
+  const isArchiveMode = useArchiveMode();
 
   // ── Reactive today date — updates automatically at local midnight ─────────────
   const [today, setToday] = useState(getLocalDateStr);
@@ -303,9 +305,15 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
         <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-white/60 hover:text-white transition-colors" data-testid="button-back">
           <ArrowLeft className="w-4 h-4" /> Back
         </button>
-        <button onClick={() => setShowModal(true)} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 text-white/70 hover:bg-white/10 transition-colors" data-testid="button-request-correction">
-          <Edit3 className="w-3.5 h-3.5" /> Correct Attendance
-        </button>
+        {isArchiveMode ? (
+          <span className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-white/10 bg-white/3 text-white/30 cursor-not-allowed" title="View only in archive mode">
+            <Archive className="w-3.5 h-3.5" /> View Only
+          </span>
+        ) : (
+          <button onClick={() => setShowModal(true)} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 text-white/70 hover:bg-white/10 transition-colors" data-testid="button-request-correction">
+            <Edit3 className="w-3.5 h-3.5" /> Correct Attendance
+          </button>
+        )}
       </div>
 
       <div>
@@ -383,20 +391,27 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
               </div>
             )}
             <p className="text-white/40 text-sm">Not Checked In</p>
-            <button
-              onClick={() => checkInMut.mutate()}
-              disabled={checkInMut.isPending}
-              className={`relative inline-flex items-center gap-2 px-8 py-3 rounded-xl font-semibold text-sm transition-all active:scale-95 disabled:opacity-60 ${
-                isSchoolOver
-                  ? "bg-slate-600 hover:bg-slate-500 text-white"
-                  : "bg-emerald-500 hover:bg-emerald-400 text-white"
-              }`}
-              data-testid="button-check-in"
-            >
-              {!isSchoolOver && <span className="absolute -inset-1 rounded-xl bg-emerald-500/30 animate-ping opacity-75" />}
-              {checkInMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
-              {isSchoolOver ? "Record as Leave" : "Check In"}
-            </button>
+            {isArchiveMode ? (
+              <div className="flex flex-col items-center gap-2 py-2">
+                <Archive className="w-8 h-8 text-white/20" />
+                <p className="text-sm text-white/30">Viewing archive — check-in unavailable</p>
+              </div>
+            ) : (
+              <button
+                onClick={() => checkInMut.mutate()}
+                disabled={checkInMut.isPending}
+                className={`relative inline-flex items-center gap-2 px-8 py-3 rounded-xl font-semibold text-sm transition-all active:scale-95 disabled:opacity-60 ${
+                  isSchoolOver
+                    ? "bg-slate-600 hover:bg-slate-500 text-white"
+                    : "bg-emerald-500 hover:bg-emerald-400 text-white"
+                }`}
+                data-testid="button-check-in"
+              >
+                {!isSchoolOver && <span className="absolute -inset-1 rounded-xl bg-emerald-500/30 animate-ping opacity-75" />}
+                {checkInMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
+                {isSchoolOver ? "Record as Leave" : "Check In"}
+              </button>
+            )}
           </div>
         ) : shiftState === "leave" ? (
           <div className="text-center py-4 space-y-2">
@@ -428,13 +443,13 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
               Shift Active
             </div>
             <button
-              onClick={() => checkOutMut.mutate()}
-              disabled={checkOutMut.isPending}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-red-500/20 border border-red-500/30 text-red-300 font-semibold text-sm hover:bg-red-500/30 transition-all active:scale-95 disabled:opacity-60"
+              onClick={() => !isArchiveMode && checkOutMut.mutate()}
+              disabled={checkOutMut.isPending || isArchiveMode}
+              className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm transition-all active:scale-95 disabled:opacity-60 ${isArchiveMode ? "bg-white/5 border border-white/10 text-white/30 cursor-not-allowed" : "bg-red-500/20 border border-red-500/30 text-red-300 hover:bg-red-500/30"}`}
               data-testid="button-check-out"
             >
-              {checkOutMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
-              Check Out
+              {checkOutMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : isArchiveMode ? <Archive className="w-4 h-4" /> : <LogOut className="w-4 h-4" />}
+              {isArchiveMode ? "View Only" : "Check Out"}
             </button>
           </div>
         ) : (

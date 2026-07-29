@@ -5,7 +5,7 @@ import {
   User, Mail, Phone, BookOpen, GraduationCap, BadgeCheck,
   Camera, Loader2, Lock, Eye, EyeOff, CheckCircle, X,
   ZoomIn, ZoomOut, MoreVertical, ShieldCheck,
-  Briefcase, Calendar, MapPin, CreditCard,
+  Briefcase, Calendar, MapPin, CreditCard, Archive,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import Cropper from "react-easy-crop";
 import type { Area } from "react-easy-crop";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
+import { useArchiveMode } from "@/pages/teacher-dashboard";
 
 async function getCroppedImg(imageSrc: string, pixelCrop: Area): Promise<Blob> {
   const image = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -81,6 +82,7 @@ const modalVariants = {
 export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const isArchiveMode = useArchiveMode();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -510,14 +512,16 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
                   className="absolute right-0 top-12 w-52 rounded-2xl bg-[#0f1c30] border border-white/15 shadow-2xl overflow-hidden z-30"
                   data-testid="menu-options"
                 >
-                  <button
-                    onClick={() => { setMenuOpen(false); setSecurityOpen(true); }}
-                    className="w-full flex items-center gap-3 px-4 py-3.5 text-sm text-white/80 hover:text-white hover:bg-white/[0.08] active:bg-white/[0.12] transition-colors min-h-[44px]"
-                    data-testid="menu-security-option"
-                  >
-                    <Lock className="w-4 h-4 text-[#10b981] flex-shrink-0" />
-                    Security & Credentials
-                  </button>
+                  {!isArchiveMode && (
+                    <button
+                      onClick={() => { setMenuOpen(false); setSecurityOpen(true); }}
+                      className="w-full flex items-center gap-3 px-4 py-3.5 text-sm text-white/80 hover:text-white hover:bg-white/[0.08] active:bg-white/[0.12] transition-colors min-h-[44px]"
+                      data-testid="menu-security-option"
+                    >
+                      <Lock className="w-4 h-4 text-[#10b981] flex-shrink-0" />
+                      Security & Credentials
+                    </button>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -538,23 +542,27 @@ export default function ProfileModule({ teacher }: { teacher: TeacherMe }) {
                   <span className="text-2xl font-bold text-[#10b981]">{initials}</span>
                 </div>
               )}
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer backdrop-blur-sm"
-                aria-label="Change photo"
-                data-testid="button-upload-photo"
-              >
-                <Camera className="w-6 h-6 text-white" />
-              </button>
+              {!isArchiveMode && (
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer backdrop-blur-sm"
+                  aria-label="Change photo"
+                  data-testid="button-upload-photo"
+                >
+                  <Camera className="w-6 h-6 text-white" />
+                </button>
+              )}
             </div>
 
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="mt-1 flex items-center gap-1.5 text-xs text-[#10b981] hover:text-emerald-400 font-medium transition-colors py-1 px-3 rounded-full border border-[#10b981]/30 hover:border-[#10b981]/60 hover:bg-[#10b981]/[0.08]"
-              data-testid="button-change-photo"
-            >
-              <Camera className="w-3 h-3" /> Change Photo
-            </button>
+            {!isArchiveMode && (
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="mt-1 flex items-center gap-1.5 text-xs text-[#10b981] hover:text-emerald-400 font-medium transition-colors py-1 px-3 rounded-full border border-[#10b981]/30 hover:border-[#10b981]/60 hover:bg-[#10b981]/[0.08]"
+                data-testid="button-change-photo"
+              >
+                <Camera className="w-3 h-3" /> Change Photo
+              </button>
+            )}
 
             <h2 className="mt-3 text-xl font-bold text-white" data-testid="text-profile-name">
               {teacher.fullName}

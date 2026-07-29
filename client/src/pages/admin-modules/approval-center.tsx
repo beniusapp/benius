@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 
-interface Props { schoolId: number; initialSection?: string | null; onNavigateSection?: (sec: string | null) => void; allowedSubs?: string[]; }
+interface Props { schoolId: number; initialSection?: string | null; onNavigateSection?: (sec: string | null) => void; allowedSubs?: string[]; isArchiveMode?: boolean; }
 
 // ── Section colours keyed by variant ──────────────────────────────────────────
 const VARIANTS = {
@@ -227,7 +227,7 @@ function MetaRow({ label, value }: { label: string; value: string }) {
 }
 
 // ── Gallery Hub ────────────────────────────────────────────────────────────────
-function GalleryHub({ schoolId }: { schoolId: number }) {
+function GalleryHub({ schoolId, isArchiveMode = false }: { schoolId: number; isArchiveMode?: boolean }) {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<"gallery-images" | "gallery-approval">("gallery-images");
   const [showUpload, setShowUpload] = useState(false);
@@ -384,14 +384,16 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
             {pendingItems.length} pending
           </span>
         )}
-        <button
-          onClick={() => setShowUpload(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all hover:brightness-110 active:scale-95"
-          style={{ background: "linear-gradient(135deg, #a855f7, #ec4899)", color: "#fff", boxShadow: "0 4px 16px rgba(168,85,247,0.40)" }}
-          data-testid="button-gallery-hub-upload"
-        >
-          <Plus className="w-3.5 h-3.5" /> Upload
-        </button>
+        {!isArchiveMode && (
+          <button
+            onClick={() => setShowUpload(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all hover:brightness-110 active:scale-95"
+            style={{ background: "linear-gradient(135deg, #a855f7, #ec4899)", color: "#fff", boxShadow: "0 4px 16px rgba(168,85,247,0.40)" }}
+            data-testid="button-gallery-hub-upload"
+          >
+            <Plus className="w-3.5 h-3.5" /> Upload
+          </button>
+        )}
       </div>
 
       {/* ── Tab Switcher ── */}
@@ -1098,8 +1100,8 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
               style={{ borderTop: "1px solid rgba(255,255,255,0.10)" }}
             >
               <button
-                disabled={isPendingMutation}
-                onClick={() => batchDeleteMutation.mutate({ ids: viewGroup.map(i => i.id), reason: "rejected" })}
+                disabled={isPendingMutation || isArchiveMode}
+                onClick={() => !isArchiveMode && batchDeleteMutation.mutate({ ids: viewGroup.map(i => i.id), reason: "rejected" })}
                 className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold
                   transition-all disabled:opacity-50 hover:brightness-110 active:scale-95"
                 style={{
@@ -1112,8 +1114,8 @@ function GalleryHub({ schoolId }: { schoolId: number }) {
                 <X className="w-4 h-4" /> Reject Submission
               </button>
               <button
-                disabled={isPendingMutation}
-                onClick={() => approveMutation.mutate(viewGroup.map(i => i.id))}
+                disabled={isPendingMutation || isArchiveMode}
+                onClick={() => !isArchiveMode && approveMutation.mutate(viewGroup.map(i => i.id))}
                 className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold
                   transition-all disabled:opacity-50 hover:brightness-110 active:scale-95"
                 style={{
@@ -1231,7 +1233,7 @@ function SectionHeader({
 // ── Main component ─────────────────────────────────────────────────────────────
 const EBOOK_CATEGORIES = ["Fiction", "Non-Fiction", "Science", "Mathematics", "History", "Literature", "Technology", "Arts", "Reference", "Other"];
 
-export default function ApprovalCenter({ schoolId, initialSection, onNavigateSection, allowedSubs }: Props) {
+export default function ApprovalCenter({ schoolId, initialSection, onNavigateSection, allowedSubs, isArchiveMode = false }: Props) {
   const { toast } = useToast();
   const [activeSection, setActiveSection] = useState<ActiveSection>((initialSection as ActiveSection) ?? null);
   useEffect(() => {
@@ -1481,7 +1483,7 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
             onBack={() => { setActiveSection(null); onNavigateSection?.(null); }}
             badge={galleryPendingCount}
           />
-          <GalleryHub schoolId={schoolId} />
+          <GalleryHub schoolId={schoolId} isArchiveMode={isArchiveMode} />
         </>
       )}
 
@@ -1597,14 +1599,16 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
                                 <Download className="w-3 h-3" />
                               </button>
                             </>)}
-                            <button
-                              onClick={() => { if (confirm(`Delete "${b.title}"? This removes it for all teachers and students.`)) ebookDeleteMutation.mutate(b.id); }}
-                              disabled={ebookDeleteMutation.isPending}
-                              className="flex items-center justify-center px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-125 disabled:opacity-50"
-                              style={{ background: "rgba(239,68,68,0.10)", color: "#f87171", border: "1px solid rgba(239,68,68,0.22)" }}
-                              data-testid={`button-delete-catalog-${b.id}`}>
-                              <Trash2 className="w-3 h-3" />
-                            </button>
+                            {!isArchiveMode && (
+                              <button
+                                onClick={() => { if (confirm(`Delete "${b.title}"? This removes it for all teachers and students.`)) ebookDeleteMutation.mutate(b.id); }}
+                                disabled={ebookDeleteMutation.isPending}
+                                className="flex items-center justify-center px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-125 disabled:opacity-50"
+                                style={{ background: "rgba(239,68,68,0.10)", color: "#f87171", border: "1px solid rgba(239,68,68,0.22)" }}
+                                data-testid={`button-delete-catalog-${b.id}`}>
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -1646,9 +1650,9 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
                               )}
                             </div>
                             <ActionButtons
-                              disabled={ebookVerifyMutation.isPending}
-                              onApprove={() => ebookVerifyMutation.mutate({ id: b.id, status: "approved" })}
-                              onReject={() => ebookVerifyMutation.mutate({ id: b.id, status: "rejected" })}
+                              disabled={ebookVerifyMutation.isPending || isArchiveMode}
+                              onApprove={() => !isArchiveMode && ebookVerifyMutation.mutate({ id: b.id, status: "approved" })}
+                              onReject={() => !isArchiveMode && ebookVerifyMutation.mutate({ id: b.id, status: "rejected" })}
                               approveTestId={`button-approve-ebook-${b.id}`}
                               rejectTestId={`button-reject-ebook-${b.id}`}
                             />
@@ -1689,7 +1693,7 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
                 if (adminEbookClasses.length > 0) fd.append("targetClass", adminEbookClasses.join(","));
                 if (adminEbookCategory) fd.append("category", adminEbookCategory);
                 fd.append("file", adminEbookFile);
-                adminEbookUploadMutation.mutate(fd);
+                if (!isArchiveMode) adminEbookUploadMutation.mutate(fd);
               }} className="space-y-4">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">

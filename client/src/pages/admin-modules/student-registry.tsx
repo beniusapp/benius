@@ -414,14 +414,6 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
             </Button>
           )}
           {canAdd && (
-            <Button size="sm" variant="outline" className="border-[#D4AF37]/40 text-[#D4AF37] hover:bg-[#D4AF37]/10 h-11"
-              onClick={() => uploadRef.current?.click()} data-testid="button-upload-csv" disabled={isArchiveMode || uploadMutation.isPending}>
-              <Upload className="w-4 h-4 mr-1" /> {uploadMutation.isPending ? "Uploading…" : "Bulk CSV"}
-            </Button>
-          )}
-          <input ref={el => uploadRef.current = el} type="file" accept=".csv,.xlsx" className="hidden"
-            onChange={e => { const f = e.target.files?.[0]; if (f) uploadMutation.mutate(f); }} />
-          {canAdd && (
             <Button size="sm" className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-11"
               onClick={() => setShowForm(!showForm)} disabled={isArchiveMode} data-testid="button-add-student-toggle">
               <UserPlus className="w-4 h-4 mr-1" /> Add Student
