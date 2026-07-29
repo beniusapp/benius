@@ -3097,11 +3097,17 @@ Thank you for your prompt attention to this matter.
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
     const uniqueIds = Array.from(new Set(parsed.data.studentIds));
+    const [mappings] = await Promise.all([
+      storage.getFacultyMappingsByTeacher(req.session.teacherId),
+    ]);
     const validIds: number[] = [];
     for (const sid of uniqueIds) {
       const student = await storage.getStudentById(sid);
       if (!student || student.schoolId !== teacher.schoolId) continue;
-      if (student.class !== teacher.assignedClass || student.section !== teacher.assignedSection) continue;
+      const covers =
+        (teacher.assignedClass === student.class && teacher.assignedSection === student.section) ||
+        mappings.some(m => m.className === student.class && m.section === student.section);
+      if (!covers) continue;
       validIds.push(sid);
     }
 
@@ -4089,6 +4095,7 @@ Thank you for your prompt attention to this matter.
           name: s.name,
           digitalStudentId: s.digitalStudentId,
           rollNumber: s.rollNumber,
+          photoUrl: s.photoUrl ?? null,
           scores: scores.map(sc => ({
             subject: sc.subject,
             examType: sc.examType,

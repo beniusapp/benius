@@ -834,8 +834,10 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
           <div className="relative z-10 w-full max-w-sm rounded-2xl border border-white/10 bg-[#1A2942] shadow-2xl overflow-hidden">
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
-                  <Eye className="w-4 h-4 text-white/60" />
+                <div className="w-10 h-10 rounded-full overflow-hidden flex-shrink-0 bg-white/10 flex items-center justify-center">
+                  {(viewTarget as any).photoUrl
+                    ? <img src={(viewTarget as any).photoUrl} alt={viewTarget.name} className="w-full h-full object-cover rounded-full" />
+                    : <span className="text-white/70 font-bold text-sm">{viewTarget.name.charAt(0).toUpperCase()}</span>}
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-white">Student Profile</h3>

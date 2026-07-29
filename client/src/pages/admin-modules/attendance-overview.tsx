@@ -25,6 +25,7 @@ interface StudentSummary {
   fatherName: string;
   presentAddress: string;
   isActive: boolean;
+  photoUrl?: string | null;
 }
 
 interface SchoolConfig {
@@ -47,6 +48,7 @@ interface StudentAttendance {
   name: string;
   rollNo: string;
   digitalStudentId: string;
+  photoUrl?: string | null;
   status: "present" | "absent" | "leave" | "late" | "halfday" | "not-marked";
 }
 
@@ -653,9 +655,16 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
                         >
                           <td className="px-3 py-3 text-white/60 text-xs font-mono">{s.rollNo || "—"}</td>
                           <td className="px-3 py-3">
-                            <div>
-                              <p className="text-white text-sm font-medium">{s.name}</p>
-                              <p className="text-white/30 text-xs">{s.digitalStudentId}</p>
+                            <div className="flex items-center gap-2">
+                              <div className="w-7 h-7 rounded-full flex-shrink-0 overflow-hidden bg-[#D4AF37]/20 flex items-center justify-center">
+                                {s.photoUrl
+                                  ? <img src={s.photoUrl} alt={s.name} className="w-full h-full object-cover rounded-full" />
+                                  : <span className="text-[#D4AF37] font-bold text-xs">{s.name.charAt(0).toUpperCase()}</span>}
+                              </div>
+                              <div>
+                                <p className="text-white text-sm font-medium">{s.name}</p>
+                                <p className="text-white/30 text-xs">{s.digitalStudentId}</p>
+                              </div>
                             </div>
                           </td>
                           <td className="px-3 py-3"><StatusBadge status={s.status} /></td>
@@ -922,8 +931,10 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
             ) : selectedStudentDetail ? (
               <div className="p-5 space-y-4">
                 <div className="flex items-start gap-3">
-                  <div className="w-12 h-12 rounded-full bg-[#D4AF37]/20 border border-[#D4AF37]/30 flex items-center justify-center flex-shrink-0">
-                    <span className="text-[#D4AF37] font-bold text-lg">{selectedStudentDetail.name.charAt(0).toUpperCase()}</span>
+                  <div className="w-12 h-12 rounded-full bg-[#D4AF37]/20 border border-[#D4AF37]/30 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                    {selectedStudentDetail.photoUrl
+                      ? <img src={selectedStudentDetail.photoUrl} alt={selectedStudentDetail.name} className="w-full h-full object-cover rounded-full" />
+                      : <span className="text-[#D4AF37] font-bold text-lg">{selectedStudentDetail.name.charAt(0).toUpperCase()}</span>}
                   </div>
                   <div>
                     <p className="text-white font-semibold" data-testid="text-modal-student-name">{selectedStudentDetail.name}</p>

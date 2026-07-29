@@ -1270,6 +1270,7 @@ export async function registerRoutes(
         digitalStudentId: studentsTable.digitalStudentId,
         phone: studentsTable.phone,
         isActive: studentsTable.isActive,
+        photoUrl: studentsTable.photoUrl,
         rollNo: sql<string>`COALESCE(${studentProfiles.rollNo}, '')`.as("roll_no"),
         fatherName: sql<string>`COALESCE(${studentProfiles.fatherName}, '')`.as("father_name"),
         presentAddress: sql<string>`COALESCE(${studentProfiles.presentAddress}, '')`.as("present_address"),
@@ -2299,6 +2300,7 @@ export async function registerRoutes(
           id: studentsTable.id,
           name: studentsTable.name,
           digitalStudentId: studentsTable.digitalStudentId,
+          photoUrl: studentsTable.photoUrl,
           rollNo: sql<string>`COALESCE(${studentProfiles.rollNo}, '')`.as("roll_no"),
         })
         .from(studentsTable)

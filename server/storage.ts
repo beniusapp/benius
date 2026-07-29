@@ -3349,8 +3349,14 @@ export class DatabaseStorage {
     const allPending = await db
       .select()
       .from(studentProfiles)
-      .where(and(eq(studentProfiles.schoolId, schoolId), eq(studentProfiles.status, "pending")))
-      .orderBy(desc(studentProfiles.submittedAt));
+      .where(and(
+        eq(studentProfiles.schoolId, schoolId),
+        or(
+          eq(studentProfiles.status, "pending"),        // full profile submitted
+          eq(studentProfiles.photoStatus, "pending"),   // photo-only upload awaiting review
+        ),
+      ))
+      .orderBy(desc(studentProfiles.updatedAt));
 
     const result = [];
     for (const p of allPending) {
@@ -3368,12 +3374,15 @@ export class DatabaseStorage {
   }
 
   async bulkApproveStudentProfiles(studentIds: number[], teacherId: number): Promise<{ approved: number; skipped: number }> {
+    const teacherRecord = await this.getTeacherById(teacherId);
+    const approverName = teacherRecord?.fullName ?? "Teacher";
     const eligible: { studentId: number; snapshot: string; profile: StudentProfile }[] = [];
     const photoUpdates: { studentId: number; photoUrl: string }[] = [];
 
     for (const studentId of studentIds) {
       const existing = await this.getStudentProfile(studentId);
-      if (!existing || existing.status !== "pending") continue;
+      // Accept full-profile pending OR photo-only pending
+      if (!existing || (existing.status !== "pending" && existing.photoStatus !== "pending")) continue;
       const snap = JSON.stringify({
         fullName: existing.fullName, class: existing.class, section: existing.section,
         rollNo: existing.rollNo, fatherName: existing.fatherName, motherName: existing.motherName,
@@ -3392,22 +3401,26 @@ export class DatabaseStorage {
 
     await db.transaction(async (tx) => {
       const now = new Date();
-      for (const { studentId, snapshot } of eligible) {
+      for (const { studentId, snapshot, profile } of eligible) {
+        // For photo-only pending (status = draft), only approve the photo — do not flip overall status
+        const isPhotoOnly = profile.status !== "pending" && profile.photoStatus === "pending";
         await tx.update(studentProfiles).set({
-          status: "approved",
+          ...(isPhotoOnly ? {} : { status: "approved", approvedSnapshot: snapshot }),
           verifiedAt: now,
           verifiedBy: teacherId,
           photoStatus: "approved",
-          approvedSnapshot: snapshot,
           updatedAt: now,
         }).where(eq(studentProfiles.studentId, studentId));
 
-        const verifiedJson = JSON.stringify({
-          ...JSON.parse(snapshot),
-          verifiedAt: now.toISOString(),
-          approvedByName,
-        });
-        await tx.update(students).set({ verifiedProfile: verifiedJson }).where(eq(students.id, studentId));
+        // Only write a new verifiedProfile snapshot for full-profile approvals
+        if (!isPhotoOnly) {
+          const verifiedJson = JSON.stringify({
+            ...JSON.parse(snapshot),
+            verifiedAt: now.toISOString(),
+            approvedByName: approverName,
+          });
+          await tx.update(students).set({ verifiedProfile: verifiedJson }).where(eq(students.id, studentId));
+        }
       }
       for (const { studentId, photoUrl } of photoUpdates) {
         await tx.update(students).set({ photoUrl }).where(eq(students.id, studentId));
@@ -3419,6 +3432,23 @@ export class DatabaseStorage {
 
   async approveStudentProfile(studentId: number, teacherId: number): Promise<StudentProfile> {
     const existing = await this.getStudentProfile(studentId);
+    if (!existing) throw new Error("Profile not found");
+
+    // Photo-only approval: profile is still draft/rejected but a new photo is pending
+    if (existing.status !== "pending" && existing.photoStatus === "pending") {
+      const [updated] = await db
+        .update(studentProfiles)
+        .set({ photoStatus: "approved", verifiedBy: teacherId, updatedAt: new Date() })
+        .where(eq(studentProfiles.studentId, studentId))
+        .returning();
+      // Propagate the approved photo to the live students record immediately
+      if (existing.photoUrl) {
+        await db.update(students).set({ photoUrl: existing.photoUrl }).where(eq(students.id, studentId));
+      }
+      return updated;
+    }
+
+    // Full profile approval
     const snapshot = existing
       ? JSON.stringify({
           fullName:       existing.fullName,
