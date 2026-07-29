@@ -1523,31 +1523,57 @@ export async function registerRoutes(
   app.get("/api/student/attendance/yearly", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
 
-    const academicYear = (req.query.academicYear as string) || "";
-    const dates = getAcademicYearDates(academicYear);
-    if (!dates) return res.status(400).json({ message: "Invalid academicYear format. Use YYYY-YY (e.g. 2025-26)" });
+    // Prefer explicit startDate/endDate (from a real session), fall back to legacy year string
+    let startDate: string;
+    let endDate: string;
+    let label: string;
+
+    const directStart = (req.query.startDate as string) || "";
+    const directEnd   = (req.query.endDate   as string) || "";
+    if (directStart && directEnd) {
+      startDate = directStart;
+      endDate   = directEnd;
+      label     = (req.query.sessionName as string) || directStart.slice(0, 4);
+    } else {
+      const academicYear = (req.query.academicYear as string) || "";
+      const dates = getAcademicYearDates(academicYear);
+      if (!dates) return res.status(400).json({ message: "Invalid academicYear format. Use YYYY-YY (e.g. 2025-26)" });
+      startDate = dates.startDate;
+      endDate   = dates.endDate;
+      label     = academicYear;
+    }
 
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
 
-    const data = await storage.getStudentYearlyAttendance(student.id, student.schoolId, student.class, student.section, dates.startDate, dates.endDate);
-    res.json({ schoolId: student.schoolId, studentId: student.id, academicYear, months: data });
+    const data = await storage.getStudentYearlyAttendance(student.id, student.schoolId, student.class, student.section, startDate, endDate);
+    res.json({ schoolId: student.schoolId, studentId: student.id, sessionName: label, months: data });
   });
 
   app.get("/api/student/attendance/stats", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
 
-    const academicYear = (req.query.academicYear as string) || "";
-    const dates = academicYear ? getAcademicYearDates(academicYear) : null;
+    // Prefer explicit startDate/endDate (from a real session), fall back to legacy year string
+    let startDate: string;
+    let endDate: string | undefined;
 
-    const now = new Date();
-    const academicStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
-    const startDate = dates ? dates.startDate : `${academicStartYear}-04-01`;
+    const directStart = (req.query.startDate as string) || "";
+    const directEnd   = (req.query.endDate   as string) || "";
+    if (directStart) {
+      startDate = directStart;
+      endDate   = directEnd || undefined;
+    } else {
+      const academicYear = (req.query.academicYear as string) || "";
+      const dates = academicYear ? getAcademicYearDates(academicYear) : null;
+      const now = new Date();
+      const academicStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+      startDate = dates ? dates.startDate : `${academicStartYear}-04-01`;
+      endDate   = dates ? dates.endDate : undefined;
+    }
 
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
 
-    const endDate = dates ? dates.endDate : undefined;
     const stats = await storage.getStudentAttendanceStats(student.id, student.schoolId, student.class, student.section, startDate, endDate);
     res.json({ schoolId: student.schoolId, studentId: student.id, startDate, ...stats });
   });

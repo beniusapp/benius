@@ -373,10 +373,11 @@ export class DatabaseStorage {
     });
   }
 
-  async getAttendanceForStudentsOnDate(studentIds: number[], date: string): Promise<AttendanceRecord[]> {
+  async getAttendanceForStudentsOnDate(studentIds: number[], date: string, sessionId?: number | null): Promise<AttendanceRecord[]> {
     if (studentIds.length === 0) return [];
-    const allRecords = await db.select().from(attendanceRecords)
-      .where(eq(attendanceRecords.date, date));
+    const conditions = [eq(attendanceRecords.date, date)];
+    if (sessionId) conditions.push(eq(attendanceRecords.sessionId, sessionId));
+    const allRecords = await db.select().from(attendanceRecords).where(and(...conditions));
     return allRecords.filter(r => studentIds.includes(r.studentId));
   }
 
@@ -427,17 +428,17 @@ export class DatabaseStorage {
     return results;
   }
 
-  async getAttendanceHistory(schoolId: number, cls: string, section: string, startDate: string, endDate: string): Promise<(AttendanceRecord & { studentName: string; dsid: string })[]> {
+  async getAttendanceHistory(schoolId: number, cls: string, section: string, startDate: string, endDate: string, sessionId?: number | null): Promise<(AttendanceRecord & { studentName: string; dsid: string })[]> {
     const studentList = await this.getStudentsByClassSection(schoolId, cls, section);
     const studentIds = studentList.map(s => s.id);
     if (studentIds.length === 0) return [];
-    const allRecords = await db.select().from(attendanceRecords).where(
-      and(
-        eq(attendanceRecords.schoolId, schoolId),
-        gte(attendanceRecords.date, startDate),
-        lte(attendanceRecords.date, endDate)
-      )
-    );
+    const conditions = [
+      eq(attendanceRecords.schoolId, schoolId),
+      gte(attendanceRecords.date, startDate),
+      lte(attendanceRecords.date, endDate),
+    ];
+    if (sessionId) conditions.push(eq(attendanceRecords.sessionId, sessionId));
+    const allRecords = await db.select().from(attendanceRecords).where(and(...conditions));
     const filtered = allRecords.filter(r => studentIds.includes(r.studentId));
     const studentMap = new Map(studentList.map(s => [s.id, s]));
     return filtered.map(r => ({
@@ -1335,6 +1336,7 @@ export class DatabaseStorage {
     mappings: { className: string; section: string }[],
     filterClass?: string,
     filterSection?: string,
+    sessionId?: number | null,
   ): Promise<(Complaint & { complainantStudentName: string | null })[]> {
     // Narrow mappings to the selected filter (if any)
     const activeMappings = filterClass
@@ -1351,25 +1353,42 @@ export class DatabaseStorage {
       and(eq(students.class, m.className), eq(students.section, m.section))
     ) as SQL[];
 
-    const targetStudentRows = await db.select({ id: students.id })
-      .from(students)
-      .where(and(
-        eq(students.schoolId, schoolId),
-        eq(students.isActive, true),
-        or(...classSectionConditions),
-      ));
-    const targetIds = targetStudentRows.map(s => s.id);
+    let targetIds: number[];
+    if (sessionId) {
+      // Archive mode: resolve student list via session enrollments
+      const enrolled = await db.select({ studentId: enrollments.studentId })
+        .from(enrollments)
+        .innerJoin(students, eq(enrollments.studentId, students.id))
+        .where(and(
+          eq(enrollments.sessionId, sessionId),
+          eq(students.schoolId, schoolId),
+          or(...classSectionConditions),
+        ));
+      targetIds = enrolled.map(e => e.studentId);
+    } else {
+      const targetStudentRows = await db.select({ id: students.id })
+        .from(students)
+        .where(and(
+          eq(students.schoolId, schoolId),
+          eq(students.isActive, true),
+          or(...classSectionConditions),
+        ));
+      targetIds = targetStudentRows.map(s => s.id);
+    }
     if (targetIds.length === 0) return [];
 
     // Step 2: fetch peer-reports where studentId (the TARGET) is in those IDs
+    const feedConditions = [
+      eq(complaints.schoolId, schoolId),
+      eq(complaints.complaintType, "student-peer-report"),
+      inArray(complaints.studentId, targetIds),
+      eq(complaints.isDeleted, false),
+    ] as SQL[];
+    if (sessionId) feedConditions.push(eq(complaints.sessionId, sessionId) as SQL);
+
     const result = await db.select().from(complaints)
       .leftJoin(students, eq(complaints.complainantStudentId, students.id))
-      .where(and(
-        eq(complaints.schoolId, schoolId),
-        eq(complaints.complaintType, "student-peer-report"),
-        inArray(complaints.studentId, targetIds),
-        eq(complaints.isDeleted, false),
-      ))
+      .where(and(...feedConditions))
       .orderBy(desc(complaints.createdAt));
     return result.map(r => ({
       ...r.complaints,
@@ -1490,10 +1509,10 @@ export class DatabaseStorage {
     }));
   }
 
-  async getExamScoresByStudent(studentId: number, schoolId: number): Promise<ExamScore[]> {
-    return await db.select().from(examScores)
-      .where(and(eq(examScores.studentId, studentId), eq(examScores.schoolId, schoolId)))
-      .orderBy(examScores.examType);
+  async getExamScoresByStudent(studentId: number, schoolId: number, sessionId?: number | null): Promise<ExamScore[]> {
+    const conditions = [eq(examScores.studentId, studentId), eq(examScores.schoolId, schoolId)];
+    if (sessionId) conditions.push(eq(examScores.sessionId, sessionId));
+    return await db.select().from(examScores).where(and(...conditions)).orderBy(examScores.examType);
   }
 
   async getStudentDistinctClasses(schoolId: number, studentId: number): Promise<string[]> {
@@ -1591,18 +1610,16 @@ export class DatabaseStorage {
     return { rank: rank || studentPcts.length, total: studentPcts.length };
   }
 
-  async getClassAverages(schoolId: number, cls: string, section: string, subject: string): Promise<{ examType: string; avgPercentage: number }[]> {
-    const studentList = await this.getStudentsByClassSection(schoolId, cls, section);
+  async getClassAverages(schoolId: number, cls: string, section: string, subject: string, sessionId?: number | null): Promise<{ examType: string; avgPercentage: number }[]> {
+    const studentList = sessionId
+      ? await this.getStudentsByClassSectionInSession(schoolId, cls, section, sessionId)
+      : await this.getStudentsByClassSection(schoolId, cls, section);
     const studentIds = studentList.map(s => s.id);
     if (studentIds.length === 0) return [];
 
-    const allScores = await db.select().from(examScores).where(
-      and(
-        eq(examScores.schoolId, schoolId),
-        eq(examScores.subject, subject),
-        eq(examScores.isAbsent, false)
-      )
-    );
+    const scoreConditions = [eq(examScores.schoolId, schoolId), eq(examScores.subject, subject), eq(examScores.isAbsent, false)];
+    if (sessionId) scoreConditions.push(eq(examScores.sessionId, sessionId));
+    const allScores = await db.select().from(examScores).where(and(...scoreConditions));
 
     const filtered = allScores.filter(s => studentIds.includes(s.studentId));
     const grouped: Record<string, { total: number; count: number }> = {};
@@ -3318,6 +3335,7 @@ export class DatabaseStorage {
     schoolId: number,
     teacherIdOrPrimaryClass: string | number,
     primarySection?: string,
+    sessionId?: number | null,
   ): Promise<(StudentProfile & { studentName: string; dsid: string; currentVerifiedProfile: string | null })[]> {
     // Build the full set of class-sections this teacher covers.
     // Accepts either (schoolId, teacherId) or legacy (schoolId, cls, section).
@@ -3346,6 +3364,16 @@ export class DatabaseStorage {
 
     if (assignments.length === 0) return [];
 
+    // Pre-fetch all students for the assignments — session-scoped if sessionId provided
+    const allowedStudentIds = new Set<number>();
+    for (const { cls, sec } of assignments) {
+      const list = sessionId
+        ? await this.getStudentsByClassSectionInSession(schoolId, cls, sec, sessionId)
+        : await this.getStudentsByClassSection(schoolId, cls, sec);
+      list.forEach(s => allowedStudentIds.add(s.id));
+    }
+    if (allowedStudentIds.size === 0) return [];
+
     const allPending = await db
       .select()
       .from(studentProfiles)
@@ -3360,9 +3388,9 @@ export class DatabaseStorage {
 
     const result = [];
     for (const p of allPending) {
+      if (!allowedStudentIds.has(p.studentId)) continue;
       const student = await this.getStudentById(p.studentId);
       if (!student) continue;
-      if (!assignments.some(a => a.cls === student.class && a.sec === student.section)) continue;
       result.push({
         ...p,
         studentName: student.name,
@@ -3496,15 +3524,33 @@ export class DatabaseStorage {
   async getTeacherApprovalHistory(
     teacherId: number,
     schoolId: number,
+    sessionId?: number | null,
   ): Promise<(StudentProfile & { studentName: string; dsid: string; class: string; section: string })[]> {
+    // When sessionId provided, restrict to the session's date window
+    let startDate: Date | null = null;
+    let endDate: Date | null = null;
+    if (sessionId) {
+      const [sess] = await db.select().from(academicSessions).where(eq(academicSessions.id, sessionId));
+      if (sess) {
+        startDate = new Date(sess.startDate + "T00:00:00");
+        endDate   = new Date(sess.endDate   + "T23:59:59");
+      }
+    }
+
+    const conditions = [
+      eq(studentProfiles.schoolId, schoolId),
+      eq(studentProfiles.verifiedBy, teacherId),
+      eq(studentProfiles.status, "approved"),
+    ] as SQL[];
+    if (startDate && endDate) {
+      conditions.push(gte(studentProfiles.verifiedAt, startDate) as SQL);
+      conditions.push(lte(studentProfiles.verifiedAt, endDate) as SQL);
+    }
+
     const approved = await db
       .select()
       .from(studentProfiles)
-      .where(and(
-        eq(studentProfiles.schoolId, schoolId),
-        eq(studentProfiles.verifiedBy, teacherId),
-        eq(studentProfiles.status, "approved"),
-      ))
+      .where(and(...conditions))
       .orderBy(desc(studentProfiles.verifiedAt));
 
     const result = [];

@@ -5,11 +5,19 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft, MapPin, AlertTriangle, CheckCircle, Clock, Timer,
   LogIn, LogOut, TrendingUp, Calendar, Edit3, ChevronDown,
-  Loader2, Flame, BarChart2, X, UserX, History, ChevronRight, Archive,
+  Loader2, Flame, BarChart2, X, UserX, History, ChevronRight, ChevronLeft, Archive,
 } from "lucide-react";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
 import { useArchiveMode } from "@/pages/teacher-dashboard";
 import AttendanceHistoryView from "./attendance-history";
+
+interface AcademicSession {
+  id: number;
+  sessionName: string;
+  startDate: string;
+  endDate: string;
+  isActive: boolean;
+}
 
 interface SelfAttRecord {
   id: number;
@@ -126,6 +134,27 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
     );
   }, []);
 
+  // ── Session selector ─────────────────────────────────────────────────────────
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
+
+  const { data: sessions = [] } = useQuery<AcademicSession[]>({
+    queryKey: ["/api/teacher/academic-sessions"],
+    queryFn: async () => { const r = await fetch("/api/teacher/academic-sessions", { credentials: "include" }); return r.ok ? r.json() : []; },
+    staleTime: 300000,
+  });
+
+  useEffect(() => {
+    if (sessions.length > 0 && selectedSessionId === null) {
+      setSelectedSessionId((sessions.find(s => s.isActive) ?? sessions[0]).id);
+    }
+  }, [sessions, selectedSessionId]);
+
+  const currentSession: AcademicSession | null =
+    sessions.find(s => s.id === selectedSessionId) ?? sessions.find(s => s.isActive) ?? sessions[0] ?? null;
+  const sessionStartDate = currentSession?.startDate ?? "";
+  const sessionEndDate   = currentSession?.endDate   ?? "";
+  const sessionName      = currentSession?.sessionName ?? "";
+
   // ── Queries ──────────────────────────────────────────────────────────────────
   const { data: todayRaw, isLoading: todayLoading } = useQuery<SelfAttRecord | null>({
     queryKey: ["/api/teacher/self-attendance/today", today],
@@ -139,8 +168,14 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   const todayRec = todayRaw?.attendanceDate === today ? todayRaw : null;
 
   const { data: history = [], isLoading: historyLoading } = useQuery<SelfAttRecord[]>({
-    queryKey: ["/api/teacher/self-attendance/history"],
-    queryFn: async () => { const r = await fetch("/api/teacher/self-attendance/history?days=30", { credentials: "include" }); return r.ok ? r.json() : []; },
+    queryKey: ["/api/teacher/self-attendance/history", sessionStartDate, sessionEndDate],
+    queryFn: async () => {
+      if (!sessionStartDate || !sessionEndDate) return [];
+      const params = new URLSearchParams({ startDate: sessionStartDate, endDate: sessionEndDate });
+      const r = await fetch(`/api/teacher/self-attendance/history?${params}`, { credentials: "include" });
+      return r.ok ? r.json() : [];
+    },
+    enabled: !!sessionStartDate,
     staleTime: 60000,
   });
 
@@ -160,7 +195,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   // ── Mutations ────────────────────────────────────────────────────────────────
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/today"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/history"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/history", sessionStartDate, sessionEndDate] });
   };
 
   const checkInMut = useMutation({
@@ -243,9 +278,38 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
     });
   }, [history, todayRec, today]);
 
-  // ── Monthly calendar ─────────────────────────────────────────────────────────
+  // ── Navigable monthly calendar ───────────────────────────────────────────────
+  const [calYear,  setCalYear]  = useState(() => new Date().getFullYear());
+  const [calMonth, setCalMonth] = useState(() => new Date().getMonth()); // 0-indexed
+
+  // Keep calendar within session bounds when session changes
+  useEffect(() => {
+    if (!sessionStartDate) return;
+    const start = new Date(sessionStartDate + "T12:00:00");
+    const end   = new Date(sessionEndDate   + "T12:00:00");
+    const now   = new Date();
+    // Default to today if within session, else clamp to session start
+    if (now >= start && now <= end) {
+      setCalYear(now.getFullYear()); setCalMonth(now.getMonth());
+    } else {
+      setCalYear(start.getFullYear()); setCalMonth(start.getMonth());
+    }
+  }, [sessionStartDate, sessionEndDate]);
+
+  const calPrevMonthDisabled = useMemo(() => {
+    if (!sessionStartDate) return false;
+    const s = new Date(sessionStartDate + "T12:00:00");
+    return calYear < s.getFullYear() || (calYear === s.getFullYear() && calMonth <= s.getMonth());
+  }, [calYear, calMonth, sessionStartDate]);
+
+  const calNextMonthDisabled = useMemo(() => {
+    if (!sessionEndDate) return false;
+    const e = new Date(sessionEndDate + "T12:00:00");
+    return calYear > e.getFullYear() || (calYear === e.getFullYear() && calMonth >= e.getMonth());
+  }, [calYear, calMonth, sessionEndDate]);
+
   const calDays = useMemo(() => {
-    const now = new Date(), yr = now.getFullYear(), mo = now.getMonth();
+    const yr = calYear, mo = calMonth;
     const first = new Date(yr, mo, 1), last = new Date(yr, mo + 1, 0);
     const cells: Array<{ d: number; dateStr: string; rec?: SelfAttRecord; isToday: boolean; isWeekend: boolean } | null> = [];
     for (let i = 0; i < first.getDay(); i++) cells.push(null);
@@ -254,7 +318,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
       cells.push({ d, dateStr, rec: history.find(r => r.attendanceDate === dateStr), isToday: dateStr === today, isWeekend: new Date(yr, mo, d).getDay() === 0 || new Date(yr, mo, d).getDay() === 6 });
     }
     return cells;
-  }, [history, today]);
+  }, [history, today, calYear, calMonth]);
 
   // ── Correction modal ─────────────────────────────────────────────────────────
   const [showModal, setShowModal] = useState(false);
@@ -507,6 +571,25 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
         <p className="text-[10px] text-white/30 text-right leading-tight">Consecutive<br/>workdays</p>
       </div>
 
+      {/* ── Session selector ── */}
+      {sessions.length > 0 && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-white/40 uppercase tracking-wider shrink-0">Session</span>
+          <select
+            value={selectedSessionId ?? ""}
+            onChange={e => setSelectedSessionId(Number(e.target.value))}
+            className="flex-1 bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/40 min-h-[40px]"
+            data-testid="select-session"
+          >
+            {sessions.map(s => (
+              <option key={s.id} value={s.id}>
+                {s.sessionName}{s.isActive ? " (Active)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {/* ── Timeline / Calendar toggle ── */}
       <div className="flex rounded-xl overflow-hidden border border-white/10 bg-white/5 p-0.5 gap-0.5" data-testid="tab-toggle">
         {(["timeline", "calendar"] as const).map(tab => (
@@ -565,9 +648,26 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
       {/* ── Monthly Calendar ── */}
       {activeTab === "calendar" && (
         <div className="rounded-2xl border border-white/10 bg-[#1A2942] p-4 space-y-3" data-testid="section-calendar">
-          <p className="text-sm font-semibold text-white text-center">
-            {new Date().toLocaleDateString("en-IN", { month: "long", year: "numeric" })}
-          </p>
+          {/* Month navigation */}
+          <div className="flex items-center justify-between gap-2">
+            <button
+              onClick={() => { if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); }}
+              disabled={calPrevMonthDisabled}
+              className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <p className="text-sm font-semibold text-white text-center">
+              {new Date(calYear, calMonth, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" })}
+            </p>
+            <button
+              onClick={() => { if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}
+              disabled={calNextMonthDisabled}
+              className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
           <div className="grid grid-cols-7 gap-px">
             {["S","M","T","W","T","F","S"].map((d, i) => (
               <div key={i} className="text-center text-[10px] font-bold text-white/30 py-1">{d}</div>

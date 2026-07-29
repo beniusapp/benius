@@ -362,7 +362,7 @@ export function registerTeacherRoutes(app: Express) {
     const studentList = viewSessionId
       ? await storage.getStudentsByClassSectionInSession(sid, cls, section, viewSessionId)
       : await storage.getStudentsByClassSection(sid, cls, section);
-    const records = await storage.getAttendanceForStudentsOnDate(studentList.map(s => s.id), date);
+    const records = await storage.getAttendanceForStudentsOnDate(studentList.map(s => s.id), date, viewSessionId);
 
     const result = studentList.map(student => {
       const record = records.find(r => r.studentId === student.id);
@@ -439,8 +439,9 @@ export function registerTeacherRoutes(app: Express) {
     const sid = parseInt(schoolId);
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     try {
-      const records = await storage.getAttendanceHistory(sid, cls, section, startDate, endDate);
+      const records = await storage.getAttendanceHistory(sid, cls, section, startDate, endDate, viewSessionId);
       res.json(records);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch attendance history" });
@@ -931,7 +932,8 @@ export function registerTeacherRoutes(app: Express) {
 
     const filterClass = (req.query.cls as string) || undefined;
     const filterSection = (req.query.section as string) || undefined;
-    const list = await storage.getClassFeedComplaints(teacher.schoolId, allMappings, filterClass, filterSection);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getClassFeedComplaints(teacher.schoolId, allMappings, filterClass, filterSection, viewSessionId);
     res.json(list);
   });
 
@@ -1101,7 +1103,8 @@ export function registerTeacherRoutes(app: Express) {
       const sid = parseInt(schoolId);
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
-      const averages = await storage.getClassAverages(sid, decodeURIComponent(cls), decodeURIComponent(section), decodeURIComponent(subject));
+      const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+      const averages = await storage.getClassAverages(sid, decodeURIComponent(cls), decodeURIComponent(section), decodeURIComponent(subject), viewSessionId);
       res.json(averages);
     } catch (err: any) {
       console.error("GET /api/exam-scores/class-average error:", err);
@@ -1116,7 +1119,8 @@ export function registerTeacherRoutes(app: Express) {
       const schoolId = parseInt(req.params.schoolId);
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher || teacher.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized for this school" });
-      const list = await storage.getExamScoresByStudent(studentId, schoolId);
+      const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+      const list = await storage.getExamScoresByStudent(studentId, schoolId, viewSessionId);
       res.json(list);
     } catch (err: any) {
       console.error("GET /api/exam-scores/student error:", err);
@@ -3119,8 +3123,9 @@ Thank you for your prompt attention to this matter.
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     // Pass teacherId so storage resolves all class-sections via faculty_mappings too
-    const profiles = await storage.getPendingProfilesForTeacher(teacher.schoolId, req.session.teacherId);
+    const profiles = await storage.getPendingProfilesForTeacher(teacher.schoolId, req.session.teacherId, undefined, viewSessionId);
     res.json(profiles);
   });
 
@@ -3128,7 +3133,8 @@ Thank you for your prompt attention to this matter.
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const profiles = await storage.getPendingProfilesForTeacher(teacher.schoolId, req.session.teacherId);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const profiles = await storage.getPendingProfilesForTeacher(teacher.schoolId, req.session.teacherId, undefined, viewSessionId);
     res.json({ count: profiles.length });
   });
 
@@ -3291,7 +3297,8 @@ Thank you for your prompt attention to this matter.
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const history = await storage.getTeacherApprovalHistory(req.session.teacherId, teacher.schoolId);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const history = await storage.getTeacherApprovalHistory(req.session.teacherId, teacher.schoolId, viewSessionId);
     res.json(history);
   });
 
@@ -4406,14 +4413,23 @@ Thank you for your prompt attention to this matter.
     }
   });
 
-  // GET history (default last 30 days)
+  // GET history — accepts startDate/endDate (session bounds) or falls back to last N days
   app.get("/api/teacher/self-attendance/history", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
-      const days   = Math.min(parseInt(req.query.days as string) || 30, 90);
       const istNow = Date.now() + 19800000;
-      const end    = new Date(istNow).toISOString().split("T")[0];
-      const start  = new Date(istNow - (days - 1) * 86400000).toISOString().split("T")[0];
+      let start: string;
+      let end: string;
+      if (req.query.startDate && req.query.endDate) {
+        // Session-scoped: use the session's actual boundaries
+        start = req.query.startDate as string;
+        end   = req.query.endDate   as string;
+      } else {
+        // Legacy: last N days (max 90)
+        const days = Math.min(parseInt(req.query.days as string) || 30, 90);
+        end   = new Date(istNow).toISOString().split("T")[0];
+        start = new Date(istNow - (days - 1) * 86400000).toISOString().split("T")[0];
+      }
 
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });

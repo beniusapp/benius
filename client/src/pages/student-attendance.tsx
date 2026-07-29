@@ -85,20 +85,12 @@ const MONTH_NAMES = [
 ];
 const DAY_LABELS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
-function getCurrentAcademicYear(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  const startYear = m >= 3 ? y : y - 1;
-  return `${startYear}-${String(startYear + 1).slice(-2)}`;
-}
-
-function getAcademicYearOptions(): string[] {
-  const base = new Date().getFullYear();
-  return Array.from({ length: 5 }, (_, i) => {
-    const y = base - 2 + i;
-    return `${y}-${String(y + 1).slice(-2)}`;
-  }).reverse();
+interface AcademicSession {
+  id: number;
+  sessionName: string;
+  startDate: string;
+  endDate: string;
+  isActive: boolean;
 }
 
 function getDayCell(day: DayData): {
@@ -141,7 +133,7 @@ export default function StudentAttendance() {
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
-  const [academicYear, setAcademicYear] = useState(getCurrentAcademicYear);
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
   const [tooltip, setTooltip] = useState<{ day: DayData; x: number; y: number } | null>(null);
 
   const calendarRef = useRef<HTMLDivElement>(null);
@@ -159,14 +151,39 @@ export default function StudentAttendance() {
     staleTime: 300000,
   });
 
+  // Fetch all academic sessions created by the admin
+  const { data: sessions = [] } = useQuery<AcademicSession[]>({
+    queryKey: ["/api/student/academic-sessions"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!student,
+    staleTime: 300000,
+  });
+
+  // Auto-select the active session once sessions load; keep user override
+  const activeSession = sessions.find(s => s.isActive) ?? sessions[0] ?? null;
+  const currentSession: AcademicSession | null =
+    sessions.find(s => s.id === selectedSessionId) ?? activeSession;
+
+  // Auto-init selectedSessionId to the active session when sessions first load
+  useEffect(() => {
+    if (sessions.length > 0 && selectedSessionId === null) {
+      setSelectedSessionId((sessions.find(s => s.isActive) ?? sessions[0]).id);
+    }
+  }, [sessions, selectedSessionId]);
+
+  const sessionStartDate = currentSession?.startDate ?? "";
+  const sessionEndDate   = currentSession?.endDate   ?? "";
+  const sessionName      = currentSession?.sessionName ?? "—";
+
   const { data: statsData, isLoading: statsLoading } = useQuery<StatsResponse>({
-    queryKey: ["/api/student/attendance/stats", academicYear],
+    queryKey: ["/api/student/attendance/stats", sessionStartDate, sessionEndDate],
     queryFn: async (): Promise<StatsResponse> => {
-      const res = await fetch(`/api/student/attendance/stats?academicYear=${encodeURIComponent(academicYear)}`, { credentials: "include" });
+      const params = new URLSearchParams({ startDate: sessionStartDate, endDate: sessionEndDate });
+      const res = await fetch(`/api/student/attendance/stats?${params}`, { credentials: "include" });
       if (!res.ok) throw new Error(`Failed to load attendance stats (${res.status})`);
       return res.json();
     },
-    enabled: !!student,
+    enabled: !!student && !!sessionStartDate,
   });
 
   const { data: monthlyData, isLoading: monthlyLoading } = useQuery<MonthlyResponse>({
@@ -180,13 +197,14 @@ export default function StudentAttendance() {
   });
 
   const { data: yearlyData, isLoading: yearlyLoading } = useQuery<YearlyResponse>({
-    queryKey: ["/api/student/attendance/yearly", academicYear],
+    queryKey: ["/api/student/attendance/yearly", sessionStartDate, sessionEndDate],
     queryFn: async (): Promise<YearlyResponse> => {
-      const res = await fetch(`/api/student/attendance/yearly?academicYear=${academicYear}`, { credentials: "include" });
+      const params = new URLSearchParams({ startDate: sessionStartDate, endDate: sessionEndDate, sessionName });
+      const res = await fetch(`/api/student/attendance/yearly?${params}`, { credentials: "include" });
       if (!res.ok) throw new Error(`Failed to load yearly attendance (${res.status})`);
       return res.json();
     },
-    enabled: !!student && activeTab === "yearly",
+    enabled: !!student && activeTab === "yearly" && !!sessionStartDate,
   });
 
   useEffect(() => {
@@ -625,26 +643,32 @@ export default function StudentAttendance() {
             ══════════════════════════════════ */}
         {activeTab === "yearly" && (
           <>
-            {/* Academic Year Dropdown */}
+            {/* Session Dropdown */}
             <div className="flex items-center gap-3 print:hidden">
               <label className="text-sm font-semibold text-slate-600">Academic Year</label>
-              <select
-                value={academicYear}
-                onChange={e => setAcademicYear(e.target.value)}
-                className="border border-emerald-100 rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400 min-h-[44px]"
-                data-testid="select-academic-year"
-              >
-                {getAcademicYearOptions().map(y => (
-                  <option key={y} value={y}>{y}</option>
-                ))}
-              </select>
+              {sessions.length === 0 ? (
+                <span className="text-sm text-slate-400">Loading…</span>
+              ) : (
+                <select
+                  value={selectedSessionId ?? ""}
+                  onChange={e => setSelectedSessionId(Number(e.target.value))}
+                  className="border border-emerald-100 rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400 min-h-[44px]"
+                  data-testid="select-academic-year"
+                >
+                  {sessions.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.sessionName}{s.isActive ? " (Active)" : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             {/* Bar Chart */}
             <div className="rounded-2xl overflow-hidden bg-white/80 border border-white/70 shadow-sm print:border-slate-200">
               <div className="px-4 py-3 border-b border-slate-50 flex items-center gap-2">
                 <BarChart2 className="w-4 h-4 text-[#10b981]" />
-                <span className="text-sm font-bold text-slate-700">Monthly Attendance — {academicYear}</span>
+                <span className="text-sm font-bold text-slate-700">Monthly Attendance — {sessionName}</span>
               </div>
 
               {yearlyLoading ? (
