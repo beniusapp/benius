@@ -11,6 +11,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { useSessionView } from "@/contexts/session-view-context";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
@@ -844,6 +845,17 @@ export default function PerformanceAnalytics({
       setTab(initialTab);
   }, [initialTab]);
 
+  // ── Session context — ensures queries re-fetch when admin switches session ──
+  const { selectedSession } = useSessionView();
+  const sessionId = selectedSession?.id ?? null;
+
+  // Reset all class/section/subject selections when the session switcher changes
+  // so stale results from the previous year never linger on screen.
+  useEffect(() => {
+    setViewClass(""); setViewSection(""); setViewSubject(""); setViewExamType("");
+    setResClass(""); setResSection(""); setResTerm("");
+  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── View Marks state ─────────────────────────────────────────────
   const [viewClass, setViewClass] = useState("");
   const [viewSection, setViewSection] = useState("");
@@ -879,7 +891,7 @@ export default function PerformanceAnalytics({
   }
 
   const { data: viewScores = [], isLoading: viewLoading } = useQuery<ExamScoreEntry[]>({
-    queryKey: ["/api/admin/analytics/view-marks", viewClass, viewSection, viewSubject, viewExamType],
+    queryKey: ["/api/admin/analytics/view-marks", viewClass, viewSection, viewSubject, viewExamType, sessionId],
     queryFn: async () => {
       const res = await sessionFetch(
         `/api/admin/analytics/view-marks/${encodeURIComponent(viewClass)}/${encodeURIComponent(viewSection)}/${encodeURIComponent(viewSubject)}/${encodeURIComponent(viewExamType)}`
@@ -964,7 +976,7 @@ export default function PerformanceAnalytics({
   function handleResClassChange(cls: string) { setResClass(cls); setResSection(""); setResTerm(""); }
 
   const { data: classScores = [], isLoading: scoresLoading } = useQuery<RawStudentScore[]>({
-    queryKey: ["/api/admin/analytics/class-scores", resClass, resSection],
+    queryKey: ["/api/admin/analytics/class-scores", resClass, resSection, sessionId],
     queryFn: async () => {
       const res = await sessionFetch(`/api/admin/analytics/class-scores/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`);
       if (!res.ok) throw new Error("Failed to fetch scores");
@@ -975,7 +987,7 @@ export default function PerformanceAnalytics({
   });
 
   const { data: attendanceSummary = [] } = useQuery<AttendanceSummary[]>({
-    queryKey: ["/api/admin/analytics/attendance-summary", resClass, resSection],
+    queryKey: ["/api/admin/analytics/attendance-summary", resClass, resSection, sessionId],
     queryFn: async () => {
       const res = await sessionFetch(`/api/admin/analytics/attendance-summary/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`);
       return res.ok ? res.json() : [];
@@ -1032,7 +1044,7 @@ export default function PerformanceAnalytics({
   const [promoLocked, setPromoLocked] = useState(false);
 
   const { data: savedDecisions = [] } = useQuery<Array<{ studentId: number; decision: string; targetClass: string; targetSection: string; editCount: number; locked: boolean }>>({
-    queryKey: ["/api/admin/analytics/promotion-decisions", resClass, resSection, resTerm],
+    queryKey: ["/api/admin/analytics/promotion-decisions", resClass, resSection, resTerm, sessionId],
     queryFn: async () => {
       const r = await sessionFetch(`/api/admin/analytics/promotion-decisions/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}/${encodeURIComponent(resTerm)}`);
       return r.ok ? r.json() : [];

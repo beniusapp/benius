@@ -2254,14 +2254,26 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
     if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
     const { q, cls, section, page, pendingReissue } = req.query;
-    // Student Registry is a GLOBAL MODULE — the student list is NOT filtered
-    // by viewSessionId.  Students exist independently of academic sessions and
-    // their current class / section (on the students table) reflects their live
-    // state.  The academic session name is printed on the card via the client.
-    const result = await storage.getStudentsPaginated(parseInt(req.params.schoolId), {
+    const schoolId = parseInt(req.params.schoolId);
+    // Session-scoped lookup:
+    //   Active session  → direct students table (current class/section, sessionId = null)
+    //   Archived session → enrollments table   (historical class/section, sessionId = viewedId)
+    // This mirrors the same pattern used in Performance Analytics class-scores.
+    const viewedId: number | null = (req as any).viewSessionId ?? null;
+    let sessionId: number | null = null;
+    if (viewedId !== null) {
+      const activeSession = await storage.getActiveSession(schoolId);
+      if (activeSession && activeSession.id !== viewedId) {
+        // Admin is viewing an archived session — look up students via enrollment rows
+        // so Class 8-A in 2059-2060 shows students who were actually in 8-A that year.
+        sessionId = viewedId;
+      }
+    }
+    const result = await storage.getStudentsPaginated(schoolId, {
       q: q as string, cls: cls as string, section: section as string,
       page: page ? parseInt(page as string) : 1,
       pendingReissue: pendingReissue === "true",
+      sessionId,
     });
     res.json(result);
   });
