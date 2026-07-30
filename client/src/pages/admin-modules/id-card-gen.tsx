@@ -1015,10 +1015,10 @@ function StudentPanel({
   isArchiveMode: boolean;
 }) {
   const { toast } = useToast();
-  const { sessions } = useSessionView();
-  // Always use the school's currently active session for printed cards,
-  // regardless of which session the admin has selected in the session switcher.
-  const academicSession = sessions.find(s => s.isActive)?.sessionName ?? null;
+  const { selectedSession } = useSessionView();
+  // Use whichever session the admin has selected in the switcher — the printed
+  // card reflects the year being viewed (active or archive).
+  const academicSession = selectedSession?.sessionName ?? null;
   const [innerTab, setInnerTab] = useState<"search" | "reissue">("search");
   const [cls, setCls] = useState("");
   const [section, setSection] = useState("");
@@ -1043,6 +1043,13 @@ function StudentPanel({
   // Clear selection whenever the result set changes (new search / tab switch)
   useEffect(() => { setSelectedIds(new Set()); }, [data]);
 
+  // Reset to "not yet searched" when the admin switches sessions so stale
+  // results from the previous year don't linger on screen.
+  useEffect(() => {
+    setSearched(false);
+    setSelectedIds(new Set());
+  }, [selectedSession?.id]);
+
   const handleApplyTemplate = useCallback((tpl: CardTemplate, save: boolean) => {
     setTemplate(tpl);
     if (save) saveTemplate(tpl);
@@ -1062,7 +1069,9 @@ function StudentPanel({
   if (innerTab === "reissue") params.set("pendingReissue", "true");
 
   const { data, isLoading } = useQuery<{ data: any[]; total: number }>({
-    queryKey: ["/api/schools", schoolId, "students", "paginated", q, cls, section, 1, innerTab],
+    // Include selectedSession?.id so the query re-fires whenever the admin
+    // switches the session switcher — different session = different cohort.
+    queryKey: ["/api/schools", schoolId, "students", "paginated", q, cls, section, 1, innerTab, selectedSession?.id ?? null],
     queryFn: async () => {
       const r = await sessionFetch(`/api/schools/${schoolId}/students/paginated?${params}`);
       return r.ok ? r.json() : { data: [], total: 0 };

@@ -2890,26 +2890,57 @@ export class DatabaseStorage {
     const limit = 50;
     const offset = (page - 1) * limit;
 
-    // When a sessionId is provided, scope results to students who have at least
-    // one record (attendance or exam score) tagged to that session, so the
-    // ID-Card generator in archive mode shows the correct cohort.
+    // When a sessionId is provided, scope results to students enrolled in that
+    // session via the enrollments table.  The student's class / section on the
+    // returned objects is overridden with the enrollment's className / sectionName
+    // so that ID cards printed for a past session show the correct cohort year.
     if (sessionId != null) {
-      const inSession = await this.getStudentsByClassSectionInSession(schoolId, cls || "", section || "", sessionId);
-      let filtered = inSession.filter(s => s.isActive);
-      if (cls) filtered = filtered.filter(s => s.class === cls);
-      if (section) filtered = filtered.filter(s => s.section === section);
-      if (pendingReissue) filtered = filtered.filter(s => s.idCardPendingReissue);
-      if (q) {
-        const ql = q.toLowerCase();
-        filtered = filtered.filter(s =>
-          s.name?.toLowerCase().includes(ql) ||
-          s.digitalStudentId?.toLowerCase().includes(ql) ||
-          s.phone?.toLowerCase().includes(ql)
-        );
-      }
-      const total = filtered.length;
-      const data = filtered.slice(offset, offset + limit);
-      return { data, total };
+      const joinConds = [
+        eq(enrollments.studentId, students.id),
+        eq(enrollments.schoolId,  schoolId),
+        eq(enrollments.sessionId, sessionId),
+        ...(cls     ? [eq(enrollments.className,   cls)]     : []),
+        ...(section ? [eq(enrollments.sectionName, section)] : []),
+      ] as any[];
+
+      const whereConds = [
+        eq(students.schoolId, schoolId),
+        eq(students.isActive, true),
+        ...(pendingReissue ? [eq(students.idCardPendingReissue, true)] : []),
+        ...(q ? [or(
+          ilike(students.name, `%${q}%`),
+          ilike(students.digitalStudentId, `%${q}%`),
+          ilike(students.phone, `%${q}%`),
+        )!] : []),
+      ] as any[];
+
+      const [{ total }] = await db
+        .select({ total: count() })
+        .from(students)
+        .innerJoin(enrollments, and(...joinConds))
+        .where(and(...whereConds));
+
+      const rows = await db
+        .select({
+          student:         students,
+          enrolledClass:   enrollments.className,
+          enrolledSection: enrollments.sectionName,
+        })
+        .from(students)
+        .innerJoin(enrollments, and(...joinConds))
+        .where(and(...whereConds))
+        .orderBy(students.digitalStudentId)
+        .limit(limit)
+        .offset(offset);
+
+      // Override class / section with session-specific enrollment values.
+      const data = rows.map(r => ({
+        ...r.student,
+        class:   r.enrolledClass,
+        section: r.enrolledSection,
+      })) as Student[];
+
+      return { data, total: Number(total) };
     }
 
     const conditions = [eq(students.schoolId, schoolId), eq(students.isActive, true)] as any[];
