@@ -2254,16 +2254,14 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
     if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
     const { q, cls, section, page, pendingReissue } = req.query;
-    // Pass viewSessionId so the ID Card Generator returns students scoped to
-    // their enrollment in the selected session, with class/section overridden
-    // to reflect that year (archive or active).  Falls back to null (global
-    // student list) when no session header is present.
-    const sessionId = (req as any).viewSessionId ?? null;
+    // Student Registry is a GLOBAL MODULE — the student list is NOT filtered
+    // by viewSessionId.  Students exist independently of academic sessions and
+    // their current class / section (on the students table) reflects their live
+    // state.  The academic session name is printed on the card via the client.
     const result = await storage.getStudentsPaginated(parseInt(req.params.schoolId), {
       q: q as string, cls: cls as string, section: section as string,
       page: page ? parseInt(page as string) : 1,
       pendingReissue: pendingReissue === "true",
-      sessionId,
     });
     res.json(result);
   });

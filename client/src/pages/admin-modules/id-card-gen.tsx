@@ -892,14 +892,18 @@ function executePrint(
 @media print {
   @page { size: ${pw} ${ph}; margin: 0; }
 
-  /* Hide everything except the print area */
-  body { visibility: hidden; }
-  #print-area,
-  #print-area * { visibility: visible !important; }
+  /* Hide every element on the page — then reveal only the print container */
+  body * { visibility: hidden !important; }
+  #printable-id-card-area,
+  #printable-id-card-area * { visibility: visible !important; }
 
-  #print-area {
-    position: fixed !important;
-    inset: 0 !important;
+  #printable-id-card-area {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
     display: block !important;
   }
 
@@ -943,17 +947,21 @@ function executePrint(
 @media print {
   @page { size: A4 portrait; margin: ${margin}mm; }
 
-  body { visibility: hidden; }
-  #print-area,
-  #print-area * { visibility: visible !important; }
+  /* Hide every element on the page — then reveal only the print container */
+  body * { visibility: hidden !important; }
+  #printable-id-card-area,
+  #printable-id-card-area * { visibility: visible !important; }
 
-  #print-area {
-    position: fixed !important;
-    inset: 0 !important;
+  #printable-id-card-area {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
     display: grid !important;
     grid-template-columns: repeat(${cols}, 1fr) !important;
     gap: ${gap}mm !important;
     width: ${usable}mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
     align-items: start !important;
   }
 
@@ -1040,16 +1048,6 @@ function StudentPanel({
     });
   }, []);
 
-  // Clear selection whenever the result set changes (new search / tab switch)
-  useEffect(() => { setSelectedIds(new Set()); }, [data]);
-
-  // Reset to "not yet searched" when the admin switches sessions so stale
-  // results from the previous year don't linger on screen.
-  useEffect(() => {
-    setSearched(false);
-    setSelectedIds(new Set());
-  }, [selectedSession?.id]);
-
   const handleApplyTemplate = useCallback((tpl: CardTemplate, save: boolean) => {
     setTemplate(tpl);
     if (save) saveTemplate(tpl);
@@ -1079,6 +1077,16 @@ function StudentPanel({
     enabled: !!schoolId && (innerTab === "reissue" || searched),
     staleTime: 0,
   });
+
+  // Clear selection whenever the result set changes (new search / tab switch)
+  useEffect(() => { setSelectedIds(new Set()); }, [data]);
+
+  // Reset to "not yet searched" when the admin switches sessions so stale
+  // results from the previous year don't linger on screen.
+  useEffect(() => {
+    setSearched(false);
+    setSelectedIds(new Set());
+  }, [selectedSession?.id]);
 
   const clearFlagMut = useMutation({
     mutationFn: async (studentIds: number[]) =>
@@ -1305,6 +1313,7 @@ function StudentPanel({
               : <p className="text-white/40">No students found. Try different filters.</p>}
           </div>
         ) : (
+          <>
           {/* Selection summary bar */}
           {(() => {
             const all = data.data.slice(0, 20);
@@ -1350,7 +1359,7 @@ function StudentPanel({
           })()}
 
           {/* Card grid */}
-          <div className="flex flex-wrap gap-4 pt-1" id="print-area">
+          <div className="flex flex-wrap gap-4 pt-1" id="printable-id-card-area">
             {data.data.slice(0, 20).map(s => {
               const isSelected = selectedIds.has(s.id);
               return (
@@ -1391,6 +1400,7 @@ function StudentPanel({
               );
             })}
           </div>
+          </>
         )
       )}
 
@@ -1471,7 +1481,7 @@ function TeacherPanel({
             <Button
               variant="outline"
               className="border-white/20 text-white hover:bg-white/10"
-              onClick={() => { window.print(); toast({ title: "Print dialog opened" }); }}
+              onClick={() => { executePrint("pvc-cr80", "portrait"); toast({ title: "Print dialog opened" }); }}
               data-testid="button-print-teacher-cards"
             >
               <Printer className="w-4 h-4 mr-1" /> Print All
@@ -1492,9 +1502,11 @@ function TeacherPanel({
             <p className="text-white/40">No teachers found matching "{q}".</p>
           </div>
         ) : (
-          <div className="flex flex-wrap gap-4 pt-2" id="print-area">
+          <div className="flex flex-wrap gap-4 pt-2" id="printable-id-card-area">
             {displayed.slice(0, 20).map(t => (
-              <TeacherIDCard key={t.id} teacher={t} schoolName={schoolName} />
+              <div key={t.id} data-print-card>
+                <TeacherIDCard teacher={t} schoolName={schoolName} />
+              </div>
             ))}
           </div>
         )
@@ -1572,7 +1584,7 @@ function SupportStaffPanel({
             <Button
               variant="outline"
               className="border-white/20 text-white hover:bg-white/10"
-              onClick={() => { window.print(); toast({ title: "Print dialog opened" }); }}
+              onClick={() => { executePrint("pvc-cr80", "portrait"); toast({ title: "Print dialog opened" }); }}
               data-testid="button-print-staff-cards"
             >
               <Printer className="w-4 h-4 mr-1" /> Print All
@@ -1593,9 +1605,11 @@ function SupportStaffPanel({
             <p className="text-white/40">No staff members found matching "{q}".</p>
           </div>
         ) : (
-          <div className="flex flex-wrap gap-4 pt-2" id="print-area">
+          <div className="flex flex-wrap gap-4 pt-2" id="printable-id-card-area">
             {displayed.slice(0, 20).map(s => (
-              <SupportStaffIDCard key={s.id} staff={s} schoolName={schoolName} />
+              <div key={s.id} data-print-card>
+                <SupportStaffIDCard staff={s} schoolName={schoolName} />
+              </div>
             ))}
           </div>
         )
