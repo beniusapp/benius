@@ -697,6 +697,11 @@ export async function registerRoutes(
     });
   });
 
+  // ── GLOBAL MODULE — Student Registry is permanent school-wide data ──────────
+  // The full student list is NOT filtered by viewSessionId.  Students exist
+  // independently of any academic session.  This route intentionally ignores
+  // x-view-session-id and MUST NOT be changed to do session filtering.
+  // Tables: students (listed in GLOBAL DATA PROTECTION CONTRACT)
   app.get("/api/schools/:schoolId/students", async (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });
@@ -2319,6 +2324,13 @@ export async function registerRoutes(
   });
 
   // ===== ADMIN SCHOOL CONFIG (strict session-scoped) =====
+  // ── GLOBAL MODULE — School Setup configuration is permanent school-wide data ─
+  // School metadata (classes, sections, subjects, exam types, policies, grading)
+  // is NOT filtered by viewSessionId.  Configuration spans all academic sessions.
+  // This route intentionally ignores x-view-session-id and MUST NOT be changed
+  // to do session filtering.
+  // Tables: school_metadata, attendance_policies, leave_policies, exam_policy_tiers,
+  //         grading_tiers, grading_rules (listed in GLOBAL DATA PROTECTION CONTRACT)
   app.get("/api/admin/school-config", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId;

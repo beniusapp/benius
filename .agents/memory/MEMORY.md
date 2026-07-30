@@ -10,3 +10,4 @@
 - [Session Real-time Sync (SSE)](session-realtime-sync.md) — two bugs fixed: delete never broadcast + students always got 401 from SSE endpoint; now both activate and delete push instantly to all portals.
 - [Student Session Activation Modal](session-activation-modal.md) — blocking confirm modal shown to students when admin activates a new session; session-based vs global module classification documented.
 - [Student Dashboard Session Filtering](student-session-filtering.md) — all 8 student modules now session-scoped; critical client fix: setViewSessionId() must be called in student-dashboard on session change.
+- [Global vs Session-Scoped Module Contract](global-module-contract.md) — definitive list of global admin modules, their guard pattern, and the client-side rule; also covers the cache-invalidation approach for session-scoped modules.

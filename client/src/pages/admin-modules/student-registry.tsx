@@ -153,20 +153,20 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
     } finally { setIsExporting(false); }
   }
 
+  // ── GLOBAL MODULE — Student Registry is permanent school-wide data ──────────
+  // Students exist independently of any academic session; their list must never
+  // be filtered by viewSessionId.  Do NOT add selectedSession?.id to these keys
+  // and do NOT inject x-view-session-id headers into these fetch calls.
   const params = new URLSearchParams();
   if (debouncedQ) params.set("q", debouncedQ);
   if (cls) params.set("cls", cls);
   if (section) params.set("section", section);
   params.set("page", String(page));
 
-  const sessionHeaders: HeadersInit = viewSessionId
-    ? { "x-view-session-id": String(viewSessionId) }
-    : {};
-
   const { data, isLoading } = useQuery<{ data: Student[]; total: number }>({
-    queryKey: ["/api/schools", schoolId, "students", "paginated", debouncedQ, cls, section, page, viewSessionId],
+    queryKey: ["/api/schools", schoolId, "students", "paginated", debouncedQ, cls, section, page],
     queryFn: async () => {
-      const r = await fetch(`/api/schools/${schoolId}/students/paginated?${params}`, { credentials: "include", headers: sessionHeaders });
+      const r = await fetch(`/api/schools/${schoolId}/students/paginated?${params}`, { credentials: "include" });
       if (!r.ok) throw new Error("Failed");
       return r.json();
     },
@@ -178,9 +178,9 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
   if (section) statsParams.set("section", section);
 
   const { data: stats } = useQuery<{ total: number; boys: number; girls: number }>({
-    queryKey: ["/api/schools", schoolId, "students", "stats", cls, section, viewSessionId],
+    queryKey: ["/api/schools", schoolId, "students", "stats", cls, section],
     queryFn: async () => {
-      const r = await fetch(`/api/schools/${schoolId}/students/stats?${statsParams}`, { credentials: "include", headers: sessionHeaders });
+      const r = await fetch(`/api/schools/${schoolId}/students/stats?${statsParams}`, { credentials: "include" });
       if (!r.ok) throw new Error("Failed");
       return r.json();
     },

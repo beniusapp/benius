@@ -2244,17 +2244,21 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   // ===== PAGINATED STUDENTS (Big Data) =====
+  // ── GLOBAL MODULE — Student Registry is permanent school-wide data ──────────
+  // The student list is NOT filtered by viewSessionId.  Students exist across
+  // all academic sessions; filtering by session would hide valid enrollments
+  // when an admin views an archived year.  This route intentionally ignores
+  // x-view-session-id and MUST NOT be changed to do session filtering.
+  // Tables: students (listed in GLOBAL DATA PROTECTION CONTRACT)
   app.get("/api/schools/:schoolId/students/paginated", async (req, res) => {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
     if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
     const { q, cls, section, page, pendingReissue } = req.query;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(req.session.schoolId!))?.id ?? null;
     const result = await storage.getStudentsPaginated(parseInt(req.params.schoolId), {
       q: q as string, cls: cls as string, section: section as string,
       page: page ? parseInt(page as string) : 1,
       pendingReissue: pendingReissue === "true",
-      sessionId: sessionFilter,
+      // sessionId intentionally omitted — Student Registry is a GLOBAL MODULE
     });
     res.json(result);
   });
@@ -3347,6 +3351,11 @@ Thank you for your prompt attention to this matter.
     warrantyExpiry: z.string().optional().nullable(),
   });
 
+  // ── GLOBAL MODULE — Assets & Inventory is permanent school-wide data ────────
+  // Asset records are NOT filtered by viewSessionId.  Physical assets persist
+  // across academic sessions.  This route intentionally ignores
+  // x-view-session-id and MUST NOT be changed to do session filtering.
+  // Tables: school_assets (listed in GLOBAL DATA PROTECTION CONTRACT)
   app.get("/api/admin/assets", async (req, res) => {
     try {
       if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
@@ -3668,6 +3677,12 @@ Thank you for your prompt attention to this matter.
   });
 
   // ===== TEACHER REGISTRY — /api/admin/teachers CRUD (session-scoped) =====
+  // ── GLOBAL MODULE — Teacher Registry is permanent school-wide data ──────────
+  // Teacher records are NOT filtered by viewSessionId.  The teacher list spans
+  // all academic sessions; filtering by session would hide current faculty when
+  // an admin views an archived year.  This route intentionally ignores
+  // x-view-session-id and MUST NOT be changed to do session filtering.
+  // Tables: teachers, users (listed in GLOBAL DATA PROTECTION CONTRACT)
   app.get("/api/admin/teachers", async (req, res) => {
     const isAdmin = !!(req.session.userId && req.session.userRole === "admin");
     const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
@@ -3930,6 +3945,11 @@ Thank you for your prompt attention to this matter.
     allowedModules: z.array(z.string()).optional(),
   });
 
+  // ── GLOBAL MODULE — Support Staff registry is permanent school-wide data ────
+  // Non-teaching staff records are NOT filtered by viewSessionId.  Staff exist
+  // independently of any academic session.  This route intentionally ignores
+  // x-view-session-id and MUST NOT be changed to do session filtering.
+  // Tables: non_teaching_staff (listed in GLOBAL DATA PROTECTION CONTRACT)
   app.get("/api/admin/non-teaching-staff", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
