@@ -522,7 +522,7 @@ export class DatabaseStorage {
     return result[0]?.count || 0;
   }
 
-  async getStudentHomework(schoolId: number, cls: string, section: string, studentId: number, date?: string): Promise<{
+  async getStudentHomework(schoolId: number, cls: string, section: string, studentId: number, date?: string, sessionId?: number | null): Promise<{
     id: number; schoolId: number; teacherId: number; class: string; section: string;
     subject: string; content: string; fileUrl: string | null; dueDate: string | null;
     createdAt: Date; teacherName: string; submission: HomeworkSubmission | null;
@@ -532,6 +532,7 @@ export class DatabaseStorage {
       eq(homework.class, cls),
       eq(homework.section, section),
     ];
+    if (sessionId) conditions.push(eq(homework.sessionId, sessionId));
     if (date) {
       conditions.push(or(
         sql`${homework.createdAt}::date = ${date}::date`,
@@ -564,7 +565,7 @@ export class DatabaseStorage {
     return rows.map(r => ({ ...r, submission: subMap.get(r.id) ?? null }));
   }
 
-  async getStudentHomeworkPendingDates(schoolId: number, cls: string, section: string, studentId: number, month: string): Promise<string[]> {
+  async getStudentHomeworkPendingDates(schoolId: number, cls: string, section: string, studentId: number, month: string, sessionId?: number | null): Promise<string[]> {
     // month = "YYYY-MM"
     const [yearStr, monStr] = month.split("-");
     const year = parseInt(yearStr);
@@ -572,6 +573,17 @@ export class DatabaseStorage {
     const startDate = `${month}-01`;
     const lastDay   = new Date(year, mon, 0).getDate();
     const endDate   = `${month}-${String(lastDay).padStart(2, "0")}`;
+
+    const dateConditions: SQL<unknown>[] = [
+      eq(homework.schoolId, schoolId),
+      eq(homework.class, cls),
+      eq(homework.section, section),
+      or(
+        sql`${homework.createdAt}::date BETWEEN ${startDate}::date AND ${endDate}::date`,
+        sql`${homework.dueDate} BETWEEN ${startDate} AND ${endDate}`,
+      )!,
+    ];
+    if (sessionId) dateConditions.push(eq(homework.sessionId, sessionId));
 
     const rows = await db.select({
       createdAt: homework.createdAt,
@@ -582,15 +594,7 @@ export class DatabaseStorage {
         eq(homeworkSubmissions.homeworkId, homework.id),
         eq(homeworkSubmissions.studentId, studentId),
       ))
-      .where(and(
-        eq(homework.schoolId, schoolId),
-        eq(homework.class, cls),
-        eq(homework.section, section),
-        or(
-          sql`${homework.createdAt}::date BETWEEN ${startDate}::date AND ${endDate}::date`,
-          sql`${homework.dueDate} BETWEEN ${startDate} AND ${endDate}`,
-        )!,
-      ));
+      .where(and(...dateConditions));
 
     const pendingDates = new Set<string>();
     for (const row of rows) {
@@ -603,7 +607,7 @@ export class DatabaseStorage {
     return Array.from(pendingDates);
   }
 
-  async getStudentClasswork(schoolId: number, cls: string, section: string, date?: string): Promise<{
+  async getStudentClasswork(schoolId: number, cls: string, section: string, date?: string, sessionId?: number | null): Promise<{
     id: number; schoolId: number; teacherId: number; class: string; section: string;
     subject: string; content: string; fileUrl: string | null; createdAt: Date; teacherName: string;
   }[]> {
@@ -612,6 +616,7 @@ export class DatabaseStorage {
       eq(classwork.class, cls),
       eq(classwork.section, section),
     ];
+    if (sessionId) conditions.push(eq(classwork.sessionId, sessionId));
     if (date) {
       conditions.push(sql`${classwork.createdAt}::date = ${date}::date`);
     }
@@ -716,6 +721,7 @@ export class DatabaseStorage {
       .select({
         id: notices.id,
         schoolId: notices.schoolId,
+        sessionId: notices.sessionId,
         createdById: notices.createdById,
         creatorRole: notices.creatorRole,
         targetType: notices.targetType,
@@ -889,17 +895,28 @@ export class DatabaseStorage {
     });
   }
 
-  async getStudentNotices(studentId: number, schoolId: number, cls: string, section: string): Promise<(Notice & { isRead: boolean; creatorName: string | null })[]> {
+  async getStudentNotices(studentId: number, schoolId: number, cls: string, section: string, sessionId?: number | null): Promise<(Notice & { isRead: boolean; creatorName: string | null })[]> {
     const classMatch = or(
       isNull(notices.targetClass),
       eq(notices.targetClass, cls),
       sql`${cls} = ANY(string_to_array(${notices.targetClass}, ','))`
     )!;
 
+    const noticeConditions: SQL<unknown>[] = [
+      eq(notices.schoolId, schoolId),
+      or(
+        eq(notices.targetType, "whole_school"),
+        and(eq(notices.targetType, "student"), classMatch)!,
+        and(eq(notices.targetType, "class"), classMatch)!
+      )! as SQL<unknown>,
+    ];
+    if (sessionId) noticeConditions.push(eq(notices.sessionId, sessionId) as SQL<unknown>);
+
     const rows = await db
       .select({
         id: notices.id,
         schoolId: notices.schoolId,
+        sessionId: notices.sessionId,
         createdById: notices.createdById,
         creatorRole: notices.creatorRole,
         targetType: notices.targetType,
@@ -914,14 +931,7 @@ export class DatabaseStorage {
       })
       .from(notices)
       .leftJoin(teachers, and(eq(notices.createdById, teachers.id), eq(notices.creatorRole, "teacher")))
-      .where(and(
-        eq(notices.schoolId, schoolId),
-        or(
-          eq(notices.targetType, "whole_school"),
-          and(eq(notices.targetType, "student"), classMatch)!,
-          and(eq(notices.targetType, "class"), classMatch)!
-        )!
-      ))
+      .where(and(...noticeConditions))
       .orderBy(desc(notices.createdAt));
 
     if (rows.length === 0) return [];
@@ -957,8 +967,8 @@ export class DatabaseStorage {
     );
   }
 
-  async getUnreadNoticeCount(studentId: number, schoolId: number, cls: string, section: string): Promise<number> {
-    const all = await this.getStudentNotices(studentId, schoolId, cls, section);
+  async getUnreadNoticeCount(studentId: number, schoolId: number, cls: string, section: string, sessionId?: number | null): Promise<number> {
+    const all = await this.getStudentNotices(studentId, schoolId, cls, section, sessionId);
     return all.filter(n => !n.isRead).length;
   }
 
@@ -1229,7 +1239,7 @@ export class DatabaseStorage {
     });
   }
 
-  async getStudentInboxComplaints(studentId: number, schoolId: number): Promise<(Complaint & { teacherName: string; students: { id: number; name: string; class: string | null; section: string | null }[]; batchPeers: { name: string; class: string | null; section: string | null }[] })[]> {
+  async getStudentInboxComplaints(studentId: number, schoolId: number, sessionId?: number | null): Promise<(Complaint & { teacherName: string; students: { id: number; name: string; class: string | null; section: string | null }[]; batchPeers: { name: string; class: string | null; section: string | null }[] })[]> {
     // Find complaint IDs via junction table (new-style multi-student complaints)
     const junctionRows = await db.select({ complaintId: complaintStudents.complaintId })
       .from(complaintStudents)
@@ -1237,11 +1247,12 @@ export class DatabaseStorage {
     const junctionIds = junctionRows.map(r => r.complaintId);
 
     // Build WHERE: match either legacy complaints.studentId OR junction table
-    const baseConditions = [
+    const baseConditions: SQL<unknown>[] = [
       eq(complaints.schoolId, schoolId),
       eq(complaints.complaintType, "teacher-to-student"),
       eq(complaints.isDeleted, false),
-    ] as const;
+    ];
+    if (sessionId) baseConditions.push(eq(complaints.sessionId, sessionId));
 
     const studentMatch = junctionIds.length > 0
       ? or(eq(complaints.studentId, studentId), inArray(complaints.id, junctionIds))!
@@ -1313,15 +1324,17 @@ export class DatabaseStorage {
     });
   }
 
-  async getStudentFiledComplaints(complainantStudentId: number, schoolId: number): Promise<(Complaint & { teacherName: string | null })[]> {
+  async getStudentFiledComplaints(complainantStudentId: number, schoolId: number, sessionId?: number | null): Promise<(Complaint & { teacherName: string | null })[]> {
+    const conditions: SQL<unknown>[] = [
+      eq(complaints.complainantStudentId, complainantStudentId),
+      eq(complaints.schoolId, schoolId),
+      eq(complaints.isDeleted, false),
+      sql`${complaints.complaintType} IN ('student-to-staff', 'student-peer-report')`,
+    ];
+    if (sessionId) conditions.push(eq(complaints.sessionId, sessionId));
     const result = await db.select().from(complaints)
       .leftJoin(teachers, eq(complaints.teacherId, teachers.id))
-      .where(and(
-        eq(complaints.complainantStudentId, complainantStudentId),
-        eq(complaints.schoolId, schoolId),
-        eq(complaints.isDeleted, false),
-        sql`${complaints.complaintType} IN ('student-to-staff', 'student-peer-report')`
-      ))
+      .where(and(...conditions))
       .orderBy(desc(complaints.createdAt));
     return result.map(r => ({ ...r.complaints, teacherName: r.teachers?.fullName || null }));
   }
@@ -1515,29 +1528,30 @@ export class DatabaseStorage {
     return await db.select().from(examScores).where(and(...conditions)).orderBy(examScores.examType);
   }
 
-  async getStudentDistinctClasses(schoolId: number, studentId: number): Promise<string[]> {
+  async getStudentDistinctClasses(schoolId: number, studentId: number, sessionId?: number | null): Promise<string[]> {
+    const conditions: SQL<unknown>[] = [eq(examScores.schoolId, schoolId), eq(examScores.studentId, studentId)];
+    if (sessionId) conditions.push(eq(examScores.sessionId, sessionId));
     const rows = await db.selectDistinct({ class: examScores.class })
       .from(examScores)
-      .where(and(
-        eq(examScores.schoolId, schoolId),
-        eq(examScores.studentId, studentId),
-      ))
+      .where(and(...conditions))
       .orderBy(sql`${examScores.class} ASC NULLS LAST`);
     return rows.map(r => r.class).filter((c): c is string => c !== null);
   }
 
   // Student exam types for a specific student+class — no published gate (real-time visibility)
-  async getStudentExamTypesForStudent(schoolId: number, studentId: number, cls: string): Promise<string[]> {
+  async getStudentExamTypesForStudent(schoolId: number, studentId: number, cls: string, sessionId?: number | null): Promise<string[]> {
+    const conditions: SQL<unknown>[] = [
+      eq(examScores.schoolId, schoolId),
+      eq(examScores.studentId, studentId),
+      eq(examScores.class, cls),
+    ];
+    if (sessionId) conditions.push(eq(examScores.sessionId, sessionId));
     const rows = await db.select({
       examType: examScores.examType,
       minId: sql<number>`MIN(${examScores.id})`,
     })
       .from(examScores)
-      .where(and(
-        eq(examScores.schoolId, schoolId),
-        eq(examScores.studentId, studentId),
-        eq(examScores.class, cls),
-      ))
+      .where(and(...conditions))
       .groupBy(examScores.examType)
       .orderBy(sql`MIN(${examScores.id}) ASC`);
     return rows.map(r => r.examType);
@@ -1562,26 +1576,22 @@ export class DatabaseStorage {
   }
 
   // Student score fetch — no published gate (real-time visibility)
-  async getStudentExamScores(schoolId: number, studentId: number, cls: string, examType: string): Promise<ExamScore[]> {
-    return await db.select().from(examScores)
-      .where(and(
-        eq(examScores.schoolId, schoolId),
-        eq(examScores.studentId, studentId),
-        eq(examScores.class, cls),
-        eq(examScores.examType, examType),
-      ))
-      .orderBy(examScores.subject);
+  async getStudentExamScores(schoolId: number, studentId: number, cls: string, examType: string, sessionId?: number | null): Promise<ExamScore[]> {
+    const conditions: SQL<unknown>[] = [
+      eq(examScores.schoolId, schoolId), eq(examScores.studentId, studentId),
+      eq(examScores.class, cls), eq(examScores.examType, examType),
+    ];
+    if (sessionId) conditions.push(eq(examScores.sessionId, sessionId));
+    return await db.select().from(examScores).where(and(...conditions)).orderBy(examScores.subject);
   }
 
   // All scores for a student in a class — no published gate (real-time visibility)
-  async getStudentAllExamScores(schoolId: number, studentId: number, cls: string): Promise<ExamScore[]> {
-    return await db.select().from(examScores)
-      .where(and(
-        eq(examScores.schoolId, schoolId),
-        eq(examScores.studentId, studentId),
-        eq(examScores.class, cls),
-      ))
-      .orderBy(examScores.subject, examScores.examType);
+  async getStudentAllExamScores(schoolId: number, studentId: number, cls: string, sessionId?: number | null): Promise<ExamScore[]> {
+    const conditions: SQL<unknown>[] = [
+      eq(examScores.schoolId, schoolId), eq(examScores.studentId, studentId), eq(examScores.class, cls),
+    ];
+    if (sessionId) conditions.push(eq(examScores.sessionId, sessionId));
+    return await db.select().from(examScores).where(and(...conditions)).orderBy(examScores.subject, examScores.examType);
   }
 
   async getClassRank(schoolId: number, cls: string, section: string, examType: string, studentId: number): Promise<{ rank: number; total: number }> {
@@ -2609,9 +2619,11 @@ export class DatabaseStorage {
     return req;
   }
 
-  async getStudentLeavesByStudent(studentId: number): Promise<StudentLeaveRequest[]> {
+  async getStudentLeavesByStudent(studentId: number, sessionId?: number | null): Promise<StudentLeaveRequest[]> {
+    const conditions: SQL<unknown>[] = [eq(studentLeaveRequests.studentId, studentId)];
+    if (sessionId) conditions.push(eq(studentLeaveRequests.sessionId, sessionId));
     return await db.select().from(studentLeaveRequests)
-      .where(eq(studentLeaveRequests.studentId, studentId))
+      .where(and(...conditions))
       .orderBy(desc(studentLeaveRequests.createdAt));
   }
 
@@ -4569,9 +4581,11 @@ export class DatabaseStorage {
     return rec;
   }
 
-  async getFeeRecordsByStudent(studentId: number, schoolId: number): Promise<FeeRecord[]> {
+  async getFeeRecordsByStudent(studentId: number, schoolId: number, sessionId?: number | null): Promise<FeeRecord[]> {
+    const conditions: SQL<unknown>[] = [eq(feeRecords.studentId, studentId), eq(feeRecords.schoolId, schoolId)];
+    if (sessionId) conditions.push(eq(feeRecords.sessionId, sessionId));
     return await db.select().from(feeRecords)
-      .where(and(eq(feeRecords.studentId, studentId), eq(feeRecords.schoolId, schoolId)))
+      .where(and(...conditions))
       .orderBy(desc(feeRecords.dueDate));
   }
 

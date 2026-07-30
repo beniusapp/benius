@@ -1342,10 +1342,15 @@ export async function registerRoutes(
     },
   });
 
+  // GLOBAL MODULE — Student Profile is permanent identity data.
+  // NEVER add session filtering here. Profile, photo, and verification records
+  // must survive session changes and resets intact.
+  // Protected by the GLOBAL DATA PROTECTION CONTRACT (students, student_profiles tables).
   app.get("/api/student/profile", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
+    // GLOBAL MODULE: no viewSessionId filter — student profile is session-agnostic
     const profile = await storage.getStudentProfile(req.session.studentId);
     const approvedSnapshot = profile?.approvedSnapshot
       ? (() => { try { return JSON.parse(profile.approvedSnapshot); } catch { return null; } })()
@@ -1600,7 +1605,8 @@ export async function registerRoutes(
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
     const date = (req.query.date as string) || undefined;
-    const items = await storage.getStudentHomework(student.schoolId, student.class, student.section, student.id, date);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const items = await storage.getStudentHomework(student.schoolId, student.class, student.section, student.id, date, viewSessionId);
     res.json(items);
   });
 
@@ -1610,7 +1616,8 @@ export async function registerRoutes(
     if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ message: "month must be YYYY-MM" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    const dates = await storage.getStudentHomeworkPendingDates(student.schoolId, student.class, student.section, student.id, month);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const dates = await storage.getStudentHomeworkPendingDates(student.schoolId, student.class, student.section, student.id, month, viewSessionId);
     res.json(dates);
   });
 
@@ -1706,7 +1713,8 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    const classes = await storage.getStudentDistinctClasses(student.schoolId, student.id);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const classes = await storage.getStudentDistinctClasses(student.schoolId, student.id, viewSessionId);
     res.json({ classes });
   });
 
@@ -1714,9 +1722,10 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     // Security: studentId scopes data — no need for published-gate class restriction
     const cls = (req.query.class as string) || student.class;
-    const examTypes = await storage.getStudentExamTypesForStudent(student.schoolId, student.id, cls);
+    const examTypes = await storage.getStudentExamTypesForStudent(student.schoolId, student.id, cls, viewSessionId);
     res.json({ examTypes });
   });
 
@@ -1727,8 +1736,9 @@ export async function registerRoutes(
     const cls = (req.query.class as string) || student.class;
     const examType = req.query.examType as string;
     if (!examType) return res.status(400).json({ message: "examType is required" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     // Real-time: no published filter — studentId isolation guarantees tenant security
-    const scores = await storage.getStudentExamScores(student.schoolId, student.id, cls, examType);
+    const scores = await storage.getStudentExamScores(student.schoolId, student.id, cls, examType, viewSessionId);
     let rank: { rank: number; total: number } | null = null;
     if (scores.length > 0) {
       rank = await storage.getClassRank(student.schoolId, cls, student.section, examType, student.id);
@@ -1745,14 +1755,15 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    const classes = await storage.getStudentDistinctClasses(student.schoolId, student.id);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const classes = await storage.getStudentDistinctClasses(student.schoolId, student.id, viewSessionId);
     const allClasses = classes.length > 0 ? classes : [student.class];
     const journey: { cls: string; examType: string; percentage: number }[] = [];
     for (const cls of allClasses) {
-      const examTypes = await storage.getStudentExamTypesForStudent(student.schoolId, student.id, cls);
+      const examTypes = await storage.getStudentExamTypesForStudent(student.schoolId, student.id, cls, viewSessionId);
       if (examTypes.length === 0) continue;
       const finalExamType = examTypes.includes("Annual") ? "Annual" : examTypes[examTypes.length - 1];
-      const scores = await storage.getStudentExamScores(student.schoolId, student.id, cls, finalExamType);
+      const scores = await storage.getStudentExamScores(student.schoolId, student.id, cls, finalExamType, viewSessionId);
       if (scores.length === 0) continue;
       const obtained = scores.filter(s => !s.isAbsent).reduce((sum, s) => sum + s.marks, 0);
       const total = scores.reduce((sum, s) => sum + s.totalMarks, 0);
@@ -1814,7 +1825,8 @@ export async function registerRoutes(
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
     const cls = (req.query.class as string) || student.class;
-    const scores = await storage.getStudentAllExamScores(student.schoolId, student.id, cls);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const scores = await storage.getStudentAllExamScores(student.schoolId, student.id, cls, viewSessionId);
     res.json({ scores, cls });
   });
 
@@ -1824,16 +1836,21 @@ export async function registerRoutes(
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
     const date = (req.query.date as string) || undefined;
-    const items = await storage.getStudentClasswork(student.schoolId, student.class, student.section, date);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const items = await storage.getStudentClasswork(student.schoolId, student.class, student.section, date, viewSessionId);
     res.json(items);
   });
 
   // ===== STUDENT GALLERY ROUTES =====
+  // GLOBAL MODULE — Gallery is permanent school-wide data.
+  // NEVER add session filtering here. Data must persist across all academic sessions.
+  // Protected by the GLOBAL DATA PROTECTION CONTRACT (gallery_items table).
 
   app.get("/api/student/gallery/tags", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
+    // GLOBAL MODULE: no viewSessionId filter — gallery is session-agnostic
     const tags = await storage.getGalleryTagsBySchool(student.schoolId);
     res.json(tags);
   });
@@ -1843,26 +1860,35 @@ export async function registerRoutes(
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
     const tag = (req.query.tag as string) || undefined;
+    // GLOBAL MODULE: no viewSessionId filter — gallery is session-agnostic
     const items = await storage.getApprovedGalleryItems(student.schoolId, tag);
     res.json(items);
   });
 
   // ===== STUDENT LIBRARY =====
+  // GLOBAL MODULE — E-Library is permanent school-wide data.
+  // NEVER add session filtering here. Books and lending records persist across sessions.
+  // Protected by the GLOBAL DATA PROTECTION CONTRACT (library_books, book_borrows tables).
 
   app.get("/api/student/library", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
+    // GLOBAL MODULE: no viewSessionId filter — library catalog is session-agnostic
     const books = await storage.getLibraryBooksWithUploaderNames(student.schoolId);
     res.json(books.filter(b => b.verificationStatus === "approved"));
   });
 
   // ===== STUDENT FACULTY ROUTES =====
+  // GLOBAL MODULE — Faculty Info reflects the current teacher registry.
+  // NEVER add session filtering here. Faculty assignments are school-wide configuration.
+  // Protected by the GLOBAL DATA PROTECTION CONTRACT (teachers, faculty_mappings tables).
 
   app.get("/api/student/faculty", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
+    // GLOBAL MODULE: no viewSessionId filter — faculty info is session-agnostic
     const faculty = await storage.getFacultyBySchoolWithMappings(student.schoolId);
     res.json(faculty);
   });
@@ -1985,6 +2011,9 @@ export async function registerRoutes(
   // seed-holidays endpoint removed — all calendar entries must be created manually by the admin.
 
   // ===== STUDENT CALENDAR ROUTES =====
+  // GLOBAL MODULE — School Calendar is permanent school-wide data.
+  // NEVER add session filtering here. Calendar events span academic years by design.
+  // Protected by the GLOBAL DATA PROTECTION CONTRACT (calendar_events table).
 
   app.get("/api/student/calendar", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
@@ -2016,7 +2045,8 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    const all = await storage.getTimetableBySchool(student.schoolId);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const all = await storage.getTimetableBySchool(student.schoolId, viewSessionId);
     // Show all configured entries (draft + published) — students should see
     // their schedule as soon as it is set up, regardless of publish status.
     const entries = all.filter(e =>
@@ -2092,7 +2122,8 @@ export async function registerRoutes(
 
   app.get("/api/student/leave", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const leaves = await storage.getStudentLeavesByStudent(req.session.studentId);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const leaves = await storage.getStudentLeavesByStudent(req.session.studentId, viewSessionId);
     res.json(leaves);
   });
 
@@ -2115,11 +2146,9 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const noticesWithRead = await storage.getStudentNotices(
-      student.id,
-      student.schoolId,
-      student.class || "",
-      student.section || ""
+      student.id, student.schoolId, student.class || "", student.section || "", viewSessionId
     );
     res.json(noticesWithRead);
   });
@@ -2132,12 +2161,10 @@ export async function registerRoutes(
     if (!Array.isArray(noticeIds)) return res.status(400).json({ message: "noticeIds must be an array" });
     const requestedIds = noticeIds.map(Number).filter(n => !isNaN(n));
     if (requestedIds.length === 0) return res.json({ marked: 0 });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     // Only allow marking notices that are actually visible to this student
     const eligibleNotices = await storage.getStudentNotices(
-      student.id,
-      student.schoolId,
-      student.class || "",
-      student.section || ""
+      student.id, student.schoolId, student.class || "", student.section || "", viewSessionId
     );
     const eligibleIds = new Set(eligibleNotices.map(n => n.id));
     const ids = requestedIds.filter(id => eligibleIds.has(id));
@@ -2149,11 +2176,9 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const count = await storage.getUnreadNoticeCount(
-      student.id,
-      student.schoolId,
-      student.class || "",
-      student.section || ""
+      student.id, student.schoolId, student.class || "", student.section || "", viewSessionId
     );
     res.json({ count });
   });
@@ -2164,7 +2189,8 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    const list = await storage.getStudentInboxComplaints(student.id, student.schoolId);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getStudentInboxComplaints(student.id, student.schoolId, viewSessionId);
     res.json(list);
   });
 
@@ -2172,7 +2198,8 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    const list = await storage.getStudentFiledComplaints(student.id, student.schoolId);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getStudentFiledComplaints(student.id, student.schoolId, viewSessionId);
     res.json(list);
   });
 
@@ -2762,26 +2789,39 @@ export async function registerRoutes(
 
         // ══════════════════════════════════════════════════════════════════
         // GLOBAL DATA PROTECTION CONTRACT
-        // The following tables represent permanent school-wide frameworks.
+        // The following tables represent permanent school-wide data.
         // They MUST NEVER be deleted from, truncated, or bulk-updated inside
         // any session creation, activation, or deletion transaction.
         // Any future developer who needs to modify this list must get explicit
         // sign-off from the product owner and document the reason here.
         //
+        // ── Core identity & configuration ───────────────────────────────
         //   schools               — school identity record
-        //   teachers              — teacher registry
+        //   teachers              — teacher registry (Teacher Profile module)
         //   non_teaching_staff    — support staff registry
         //   students              — student identity records
-        //   faculty_mappings      — teacher↔class↔subject assignments
+        //   faculty_mappings      — teacher↔class↔subject assignments (Faculty Info module)
         //   teacher_allocations   — weekly quota allocations
         //   school_assets         — assets & inventory catalog
         //   school_metadata       — classes / sections / subjects / exam types
         //   leave_policies        — school leave policy definitions
         //   attendance_policies   — attendance policy definitions
         //   timetable_structure   — bell structure (period time slots)
-        //   calendar_events       — school calendar (additive copies only — no deletes)
         //   grading_tiers         — grade boundary definitions
         //   exam_policy_tiers     — exam scoring rules
+        //
+        // ── Permanent teacher-dashboard modules (explicitly protected) ───
+        //   calendar_events       — School Calendar (additive copies only — no deletes)
+        //   gallery_items         — Gallery (photos, events, memories — never wiped on rollover)
+        //   library_books         — Library books catalog (global e-book/resource registry)
+        //   book_borrows          — Library borrowing records (persistent lending history)
+        //
+        // ── Permanent student-portal modules (explicitly protected) ────
+        //   student_profiles      — Student Profile (identity, photo, verification — never wiped)
+        //   (gallery_items)       — Gallery student view — same table as teacher gallery above
+        //   (library_books)       — E-Library student view — same table as teacher library above
+        //   (faculty_mappings)    — Faculty Info student view — same table as above
+        //   (calendar_events)     — School Calendar student view — same table as above
         //
         // PERMITTED destructive operations in this transaction (Full Reset):
         //   ✓ leave_requests           — teacher leave queue (session-scoped)
@@ -3902,7 +3942,8 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(403).json({ message: "Student access required" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(403).json({ message: "Student not found" });
-    const records = await storage.getFeeRecordsByStudent(req.session.studentId, student.schoolId);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const records = await storage.getFeeRecordsByStudent(req.session.studentId, student.schoolId, viewSessionId);
     res.json(records);
   });
 
@@ -3913,7 +3954,8 @@ export async function registerRoutes(
     if (!student) return res.status(403).json({ message: "Student not found" });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid fee record ID" });
-    const records = await storage.getFeeRecordsByStudent(req.session.studentId, student.schoolId);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const records = await storage.getFeeRecordsByStudent(req.session.studentId, student.schoolId, viewSessionId);
     const rec = records.find(r => r.id === id);
     if (!rec) return res.status(404).json({ message: "Fee record not found" });
     if (rec.status !== "Paid") return res.status(400).json({ message: "Receipt only available for paid records" });

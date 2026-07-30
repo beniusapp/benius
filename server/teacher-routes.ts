@@ -262,6 +262,11 @@ export function registerTeacherRoutes(app: Express) {
     res.json({ message: "Password changed successfully" });
   });
 
+  // ── TEACHER PROFILE — GLOBAL MODULE ──────────────────────────────────────────
+  // Teacher profile data lives in the teachers table (no session_id).
+  // It is intentionally NOT filtered by viewSessionId and MUST NOT be deleted
+  // or wiped during any session creation, activation, or rollover operation.
+  // Table: teachers (listed in GLOBAL DATA PROTECTION CONTRACT)
   app.post("/api/teacher/profile-picture",
     (req: any, res: any, next: any) => {
       teacherProfilePhotoUpload.single("file")(req, res, (err: any) => {
@@ -591,7 +596,9 @@ export function registerTeacherRoutes(app: Express) {
     res.json({ message: "Classwork deleted" });
   });
 
-  // ===== NOTICES =====
+  // ===== NOTICES (Noticeboard) — SESSION-SCOPED MODULE =====
+  // Notices carry a session_id and are filtered by viewSessionId when fetched.
+  // Note: notices differ from the global modules below — they ARE session-scoped.
   app.post("/api/notices", diskUpload.single("file"), async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const { content, targetType, targetClass, targetSection, schoolId, noticeType } = req.body;
@@ -1202,7 +1209,11 @@ export function registerTeacherRoutes(app: Express) {
     res.json(results);
   });
 
-  // ===== GALLERY =====
+  // ===== GALLERY — GLOBAL MODULE =====
+  // Gallery data is permanent school-wide content (photos, events, memories).
+  // It is intentionally NOT filtered by viewSessionId and MUST NOT be deleted
+  // or wiped during any session creation, activation, or rollover operation.
+  // Table: gallery_items (no session_id column — listed in GLOBAL DATA PROTECTION CONTRACT)
   app.post("/api/gallery", diskUpload.single("image"), async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     if (!req.file) return res.status(400).json({ message: "Image file required" });
@@ -1378,7 +1389,11 @@ export function registerTeacherRoutes(app: Express) {
     res.json({ message: "Event deleted" });
   });
 
-  // ===== LIBRARY =====
+  // ===== LIBRARY — GLOBAL MODULE =====
+  // Library catalog and borrowing records are permanent school-wide data.
+  // They are intentionally NOT filtered by viewSessionId and MUST NOT be deleted
+  // or wiped during any session creation, activation, or rollover operation.
+  // Tables: library_books, book_borrows (no session_id columns — listed in GLOBAL DATA PROTECTION CONTRACT)
   app.post("/api/library/books", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
     const { title, author, isbn, totalCopies } = req.body;
@@ -2217,7 +2232,11 @@ export function registerTeacherRoutes(app: Express) {
     res.json({ deleted: true });
   });
 
-  // ===== FACULTY INFO =====
+  // ===== FACULTY INFO — GLOBAL MODULE =====
+  // Faculty directory data comes from teachers + faculty_mappings (school-wide tables).
+  // It is intentionally NOT filtered by viewSessionId and MUST NOT be touched
+  // during any session creation, activation, or rollover operation.
+  // Tables: teachers, faculty_mappings (listed in GLOBAL DATA PROTECTION CONTRACT)
   app.get("/api/faculty/:schoolId", async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const list = await storage.getFacultyBySchoolWithMappings(parseInt(req.params.schoolId));

@@ -9,3 +9,4 @@
 - [Cross-School Isolation Audit](cross-school-isolation.md) — 3 confirmed vulnerabilities fixed (calendar delete, classwork update/delete); correct storage mutation pattern; which read functions are intentionally ID-only.
 - [Session Real-time Sync (SSE)](session-realtime-sync.md) — two bugs fixed: delete never broadcast + students always got 401 from SSE endpoint; now both activate and delete push instantly to all portals.
 - [Student Session Activation Modal](session-activation-modal.md) — blocking confirm modal shown to students when admin activates a new session; session-based vs global module classification documented.
+- [Student Dashboard Session Filtering](student-session-filtering.md) — all 8 student modules now session-scoped; critical client fix: setViewSessionId() must be called in student-dashboard on session change.

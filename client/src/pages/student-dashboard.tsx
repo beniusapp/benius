@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { GraduationCap, Loader2, LogOut, Lock, ChevronDown, History, PartyPopper, RefreshCw, Shield } from "lucide-react";
-import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
+import { apiRequest, queryClient, getQueryFn, setViewSessionId } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
 
@@ -157,19 +157,24 @@ export default function StudentDashboard() {
     refetchOnMount: "always",
   });
 
-  const academicYear = getCurrentAcademicYear();
+  // Sync the global header injector with the student's selected session
+  useEffect(() => {
+    if (selectedSession) {
+      setViewSessionId(selectedSession.id);
+    }
+  }, [selectedSession?.id]);
 
   const { data: attendanceStats } = useQuery<AttendanceStatsResponse>({
-    queryKey: ["/api/student/attendance/stats", academicYear],
+    queryKey: ["/api/student/attendance/stats", selectedSession?.id ?? "default"],
     queryFn: async () => {
-      const r = await fetch(
-        `/api/student/attendance/stats?academicYear=${encodeURIComponent(academicYear)}`,
-        { credentials: "include" }
-      );
+      const params = selectedSession
+        ? `startDate=${encodeURIComponent(selectedSession.startDate)}&endDate=${encodeURIComponent(selectedSession.endDate)}`
+        : `academicYear=${encodeURIComponent(getCurrentAcademicYear())}`;
+      const r = await fetch(`/api/student/attendance/stats?${params}`, { credentials: "include" });
       if (!r.ok) throw new Error(`Attendance fetch failed: ${r.status}`);
       return r.json() as Promise<AttendanceStatsResponse>;
     },
-    enabled: !!student,
+    enabled: !!student && !isSessionsLoading,
     staleTime: 0,
     refetchOnMount: true,
     refetchOnWindowFocus: true,
