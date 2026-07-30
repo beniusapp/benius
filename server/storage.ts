@@ -2885,11 +2885,34 @@ export class DatabaseStorage {
   }
 
   // ===== PAGINATED STUDENTS (Big Data) =====
-  async getStudentsPaginated(schoolId: number, opts: { q?: string; cls?: string; section?: string; page?: number; pendingReissue?: boolean }): Promise<{ data: Student[]; total: number }> {
-    const { q, cls, section, page = 1, pendingReissue } = opts;
+  async getStudentsPaginated(schoolId: number, opts: { q?: string; cls?: string; section?: string; page?: number; pendingReissue?: boolean; sessionId?: number | null }): Promise<{ data: Student[]; total: number }> {
+    const { q, cls, section, page = 1, pendingReissue, sessionId } = opts;
     const limit = 50;
     const offset = (page - 1) * limit;
-    const conditions = [eq(students.schoolId, schoolId), eq(students.isActive, true)];
+
+    // When a sessionId is provided, scope results to students who have at least
+    // one record (attendance or exam score) tagged to that session, so the
+    // ID-Card generator in archive mode shows the correct cohort.
+    if (sessionId != null) {
+      const inSession = await this.getStudentsByClassSectionInSession(schoolId, cls || "", section || "", sessionId);
+      let filtered = inSession.filter(s => s.isActive);
+      if (cls) filtered = filtered.filter(s => s.class === cls);
+      if (section) filtered = filtered.filter(s => s.section === section);
+      if (pendingReissue) filtered = filtered.filter(s => s.idCardPendingReissue);
+      if (q) {
+        const ql = q.toLowerCase();
+        filtered = filtered.filter(s =>
+          s.name?.toLowerCase().includes(ql) ||
+          s.digitalStudentId?.toLowerCase().includes(ql) ||
+          s.phone?.toLowerCase().includes(ql)
+        );
+      }
+      const total = filtered.length;
+      const data = filtered.slice(offset, offset + limit);
+      return { data, total };
+    }
+
+    const conditions = [eq(students.schoolId, schoolId), eq(students.isActive, true)] as any[];
     if (cls) conditions.push(eq(students.class, cls));
     if (section) conditions.push(eq(students.section, section));
     if (pendingReissue) conditions.push(eq(students.idCardPendingReissue, true));
@@ -3207,23 +3230,27 @@ export class DatabaseStorage {
   }
 
   // ===== APPROVAL HISTORY =====
-  async getApprovalHistory(schoolId: number) {
-    // 1. Teacher Leave history
+  async getApprovalHistory(schoolId: number, sessionId?: number | null) {
+    // 1. Teacher Leave history — scoped to the viewed session when provided
+    const tLeaveConditions = [eq(leaveRequests.schoolId, schoolId), inArray(leaveRequests.status, ["approved", "rejected"])] as any[];
+    if (sessionId != null) tLeaveConditions.push(eq(leaveRequests.sessionId, sessionId));
     const tLeaves = await db.select().from(leaveRequests)
-      .where(and(eq(leaveRequests.schoolId, schoolId), inArray(leaveRequests.status, ["approved", "rejected"])))
+      .where(and(...tLeaveConditions))
       .orderBy(desc(leaveRequests.createdAt)).limit(100);
     const teacherLeaveHistory = await Promise.all(tLeaves.map(async l => {
       const t = await this.getTeacherById(l.teacherId);
       return { ...l, teacherName: t?.fullName ?? "Unknown" };
     }));
 
-    // 2. Student Leave history (admin-actioned only)
+    // 2. Student Leave history (admin-actioned only) — scoped to session when provided
+    const sLeaveConditions = [
+      eq(studentLeaveRequests.schoolId, schoolId),
+      eq(studentLeaveRequests.reviewerRole, "admin"),
+      inArray(studentLeaveRequests.status, ["approved", "rejected"]),
+    ] as any[];
+    if (sessionId != null) sLeaveConditions.push(eq(studentLeaveRequests.sessionId, sessionId));
     const sLeaves = await db.select().from(studentLeaveRequests)
-      .where(and(
-        eq(studentLeaveRequests.schoolId, schoolId),
-        eq(studentLeaveRequests.reviewerRole, "admin"),
-        inArray(studentLeaveRequests.status, ["approved", "rejected"])
-      ))
+      .where(and(...sLeaveConditions))
       .orderBy(desc(studentLeaveRequests.createdAt)).limit(100);
     const studentLeaveHistory = await Promise.all(sLeaves.map(async l => {
       const s = await this.getStudentById(l.studentId);
@@ -4991,6 +5018,12 @@ export class DatabaseStorage {
 
   // ── ACADEMIC SESSIONS ───────────────────────────────────────────────────────
   // All methods are tenant-scoped by schoolId to enforce multi-tenant isolation.
+
+  /** Return a single session by its primary key. */
+  async getAcademicSessionById(id: number): Promise<AcademicSession | undefined> {
+    const [sess] = await db.select().from(academicSessions).where(eq(academicSessions.id, id));
+    return sess;
+  }
 
   /** Return all sessions for a school, newest first. */
   async getAcademicSessions(schoolId: number): Promise<AcademicSession[]> {

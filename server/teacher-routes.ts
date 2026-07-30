@@ -2248,10 +2248,13 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
     if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
     const { q, cls, section, page, pendingReissue } = req.query;
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(req.session.schoolId!))?.id ?? null;
     const result = await storage.getStudentsPaginated(parseInt(req.params.schoolId), {
       q: q as string, cls: cls as string, section: section as string,
       page: page ? parseInt(page as string) : 1,
       pendingReissue: pendingReissue === "true",
+      sessionId: sessionFilter,
     });
     res.json(result);
   });
@@ -2988,7 +2991,9 @@ Thank you for your prompt attention to this matter.
   app.get("/api/approval-history/:schoolId", async (req, res) => {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
     if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
-    const history = await storage.getApprovalHistory(parseInt(req.params.schoolId));
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(req.session.schoolId!))?.id ?? null;
+    const history = await storage.getApprovalHistory(parseInt(req.params.schoolId), sessionFilter);
     res.json(history);
   });
 
@@ -3500,10 +3505,14 @@ Thank you for your prompt attention to this matter.
     const schoolId = req.session.schoolId!;
     const cls = decodeURIComponent(req.params.class);
     const section = decodeURIComponent(req.params.section);
+    // Scope student list and scores to the viewed session when in archive mode.
+    const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
     try {
-      const studentList = await storage.getStudentsByClassSection(schoolId, cls, section);
+      const studentList = viewSessionId
+        ? await storage.getStudentsByClassSectionInSession(schoolId, cls, section, viewSessionId)
+        : await storage.getStudentsByClassSection(schoolId, cls, section);
       const results = await Promise.all(studentList.map(async (s) => {
-        const scores = await storage.getExamScoresByStudent(s.id, schoolId);
+        const scores = await storage.getExamScoresByStudent(s.id, schoolId, viewSessionId ?? null);
         return {
           studentId: s.id,
           name: s.name,
@@ -3555,11 +3564,13 @@ Thank you for your prompt attention to this matter.
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId!;
+    // Pass viewSessionId so archived sessions' decisions are isolated.
+    const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
     try {
       const cls = decodeURIComponent(req.params.class);
       const section = decodeURIComponent(req.params.section);
       const term = decodeURIComponent(req.params.term);
-      const decisions = await storage.getPromotionDecisions(schoolId, cls, section, term);
+      const decisions = await storage.getPromotionDecisions(schoolId, cls, section, term, viewSessionId);
       res.json(decisions);
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to fetch promotion decisions" });
@@ -3574,8 +3585,9 @@ Thank you for your prompt attention to this matter.
     const section = decodeURIComponent(req.params.section);
     const subject = decodeURIComponent(req.params.subject);
     const examType = decodeURIComponent(req.params.examType);
+    const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
     try {
-      const list = await storage.getExamScores(schoolId, subject, examType, cls, section);
+      const list = await storage.getExamScores(schoolId, subject, examType, cls, section, viewSessionId);
       res.json(list);
     } catch { res.status(500).json({ message: "Failed to fetch exam scores" }); }
   });
@@ -3585,8 +3597,9 @@ Thank you for your prompt attention to this matter.
       return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId!;
     const studentId = parseInt(req.params.studentId);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     try {
-      const list = await storage.getExamScoresByStudent(studentId, schoolId);
+      const list = await storage.getExamScoresByStudent(studentId, schoolId, viewSessionId);
       res.json(list);
     } catch { res.status(500).json({ message: "Failed to fetch student scores" }); }
   });
@@ -3598,8 +3611,9 @@ Thank you for your prompt attention to this matter.
     const cls = decodeURIComponent(req.params.class);
     const section = decodeURIComponent(req.params.section);
     const subject = decodeURIComponent(req.params.subject);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     try {
-      const averages = await storage.getClassAverages(schoolId, cls, section, subject);
+      const averages = await storage.getClassAverages(schoolId, cls, section, subject, viewSessionId);
       res.json(averages);
     } catch { res.status(500).json({ message: "Failed to fetch class averages" }); }
   });
@@ -3610,13 +3624,32 @@ Thank you for your prompt attention to this matter.
     const schoolId = req.session.schoolId!;
     const cls = decodeURIComponent(req.params.class);
     const section = decodeURIComponent(req.params.section);
+    // When in archive mode, use the session's own date range instead of a
+    // calendar-year guess — otherwise archived years return wrong (or zero) data.
+    const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
     try {
-      const today = new Date().toISOString().split("T")[0];
-      const year = new Date().getFullYear();
-      const aprThisYear = `${year}-04-01`;
-      const aprLastYear = `${year - 1}-04-01`;
-      const yearStart = today >= aprThisYear ? aprThisYear : aprLastYear;
-      const records = await storage.getAttendanceHistory(schoolId, cls, section, yearStart, today);
+      let yearStart: string, yearEnd: string;
+      if (viewSessionId) {
+        const sess = await storage.getAcademicSessionById(viewSessionId);
+        if (sess?.startDate && sess?.endDate) {
+          yearStart = sess.startDate;
+          yearEnd = sess.endDate;
+        } else {
+          // Session exists but has no dates — fall back to calendar heuristic
+          const today = new Date().toISOString().split("T")[0];
+          const year = new Date().getFullYear();
+          const aprThisYear = `${year}-04-01`;
+          yearStart = today >= aprThisYear ? aprThisYear : `${year - 1}-04-01`;
+          yearEnd = today;
+        }
+      } else {
+        const today = new Date().toISOString().split("T")[0];
+        const year = new Date().getFullYear();
+        const aprThisYear = `${year}-04-01`;
+        yearStart = today >= aprThisYear ? aprThisYear : `${year - 1}-04-01`;
+        yearEnd = today;
+      }
+      const records = await storage.getAttendanceHistory(schoolId, cls, section, yearStart, yearEnd, viewSessionId ?? null);
       const byStudent: Record<number, { present: number; total: number }> = {};
       for (const r of records) {
         const sid = (r as any).studentId as number;
