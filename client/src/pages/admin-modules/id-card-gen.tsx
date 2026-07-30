@@ -857,154 +857,154 @@ function SupportStaffIDCard({ staff, schoolName }: { staff: any; schoolName: str
 // ─── Print execution utility ─────────────────────────────────────────────────
 
 /**
- * Injects a dynamic @media print stylesheet, fires window.print(),
- * then self-cleans on the `afterprint` event.
+ * Prints ID cards by temporarily appending a print-only container to <body>
+ * (outside the React #root) and toggling @media print CSS that hides #root
+ * entirely via `display:none`.
  *
- * PVC CR80  — 1 card per page, exact 85.6×54mm (or 54×85.6mm portrait).
- * A4 Grid   — 2-col grid on A4, dashed cut-mark outlines per card.
+ * Why this approach instead of a new window:
+ *   - New-window approach fails on mobile Chrome: Vite injects Tailwind CSS via
+ *     JavaScript at runtime; a blank popup window never runs that JS so the
+ *     cards render unstyled/blank.
+ *   - Since we stay in the same document, every CSS rule already in the page
+ *     (Tailwind, custom styles) applies automatically to the cloned card nodes.
+ *   - Appending to <body> root means `display:none !important` on #root removes
+ *     ALL app chrome with zero layout residue — no phantom blank page 1.
+ *
+ * PVC CR80  — 1 card per page, exact 85.6×54mm (landscape) or 54×85.6mm (portrait).
+ * A4 Grid   — 2-col (portrait) / 3-col (landscape) grid on A4 with cut guides.
+ */
+/**
+ * Prints ID cards using the SIBLING-WALK isolation technique — the same
+ * pattern proven to work on Android Chrome in student-examination.tsx.
+ *
+ * Why sibling-walk instead of @media print / new-window:
+ *   • @media print injection races with Chrome's print snapshot (loses on Android).
+ *   • New-window fails because Vite injects Tailwind via JS; a blank popup
+ *     doesn't run that JS, so cards render with no styles.
+ *   • Sibling-walk: synchronously sets display:none on every DOM sibling at
+ *     every ancestor level from the print area up to <body>. Because this is
+ *     done BEFORE window.print() is called (same JS tick), the print engine
+ *     always sees the correct hidden state.
  */
 function executePrint(
   format: CardTemplate["printFormat"],
   orientation: CardTemplate["orientation"],
-  filterIds?: Set<number>,   // when provided, only cards with data-selected are printed
+  filterIds?: Set<number>,
 ) {
-  const STYLE_ID = "benius-print-style";
-  document.getElementById(STYLE_ID)?.remove();
+  const printArea = document.getElementById("printable-id-card-area");
+  if (!printArea) return;
 
-  // CSS pixel equivalents at 96 dpi (1mm = 3.7795px):
-  //   Portrait card  w-72      = 288 px  →  landscape CR80 85.6mm≈323px  scale≈0.89
-  //   Portrait card  w-72      = 288 px  →  portrait  CR80 54mm  ≈204px  scale≈0.71
-  //   Landscape card w-[420px] = 420 px  →  landscape CR80 85.6mm≈323px  scale≈0.77
-  //   Landscape card w-[420px] = 420 px  →  portrait  CR80 54mm  ≈204px  — never used
   const isLandscape = orientation === "landscape";
   const cardPx = isLandscape ? 420 : 288;
 
-  let css: string;
+  // ── 1. Hide unselected cards within the print area ────────────────────────
+  const allWrappers = Array.from(
+    printArea.querySelectorAll<HTMLElement>("[data-print-card]")
+  );
+  const hiddenCards: HTMLElement[] = [];
+  if (filterIds && filterIds.size > 0) {
+    allWrappers.forEach(w => {
+      if (!w.hasAttribute("data-selected")) {
+        hiddenCards.push(w);
+        w.style.display = "none";
+      }
+    });
+  }
+  const visibleCount = allWrappers.length - hiddenCards.length;
+  if (visibleCount === 0) { hiddenCards.forEach(w => { w.style.display = ""; }); return; }
+
+  // ── 2. Inject @page + card-sizing CSS (layout only, not isolation) ────────
+  let layoutCss: string;
 
   if (format === "pvc-cr80") {
-    // Physical page matches card size exactly
     const [pw, ph] = isLandscape ? ["85.6mm", "54mm"] : ["54mm", "85.6mm"];
-    // page long-side in px: 85.6mm≈323px (landscape) or 85.6mm≈323px (portrait height)
-    const pageLongPx = isLandscape ? 323 : 323;
-    const scale = (pageLongPx / cardPx).toFixed(4);
+    const scale = (323 / cardPx).toFixed(4);
 
-    css = `
-@media print {
-  @page { size: ${pw} ${ph}; margin: 0; }
-
-  /* Hide every element on the page — then reveal only the print container */
-  body * { visibility: hidden !important; }
-  #printable-id-card-area,
-  #printable-id-card-area * { visibility: visible !important; }
-
-  #printable-id-card-area {
-    position: absolute !important;
-    left: 0 !important;
-    top: 0 !important;
-    width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    display: block !important;
-  }
-
-  /* One card occupies the full physical page */
-  [data-print-card] {
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    width: ${pw} !important;
-    height: ${ph} !important;
-    overflow: hidden !important;
-    /* Force page break after every card except the last */
-    break-after: page;
-    page-break-after: always;
-  }
-  [data-print-card]:last-child {
-    break-after: avoid;
-    page-break-after: avoid;
-  }
-
-  /* Scale the card to fit the physical card dimension */
-  [data-print-card] > * {
-    transform: scale(${scale}) !important;
-    transform-origin: center !important;
-    box-shadow: none !important;
-    flex-shrink: 0 !important;
-  }
-}`;
+    layoutCss = `
+      @page { size: ${pw} ${ph}; margin: 0; }
+      @media print {
+        #printable-id-card-area { display: block !important; }
+        #printable-id-card-area [data-print-card] {
+          display: flex; align-items: center; justify-content: center;
+          width: ${pw}; height: ${ph}; overflow: hidden;
+          break-after: page; page-break-after: always;
+          margin: 0; padding: 0;
+        }
+        #printable-id-card-area [data-print-card]:last-child {
+          break-after: avoid; page-break-after: avoid;
+        }
+        #printable-id-card-area [data-print-card] > *:last-child {
+          transform: scale(${scale}); transform-origin: center;
+          box-shadow: none !important; flex-shrink: 0;
+        }
+        /* Hide selection overlays — keep only the card component (last child) */
+        #printable-id-card-area [data-print-card] > *:not(:last-child) {
+          display: none !important;
+        }
+        print-color-adjust: exact;
+        -webkit-print-color-adjust: exact;
+      }`;
   } else {
-    // A4 grid — 2 columns for portrait cards, 3 columns for landscape cards
     const cols   = isLandscape ? 3 : 2;
-    // usable width at 10mm margin: 190mm portrait A4
-    const gap    = 6;   // mm
-    const margin = 10;  // mm per side
-    const usable = 210 - margin * 2;                          // 190mm
-    const cellW  = (usable - gap * (cols - 1)) / cols;        // mm per cell
-    const cellPx = cellW * 3.7795;                            // px equivalent
-    const scale  = (cellPx / cardPx * 0.94).toFixed(4);      // 6% breathing room
+    const gap    = 6;
+    const margin = 10;
+    const usable = 210 - margin * 2;
+    const scale  = ((usable - gap * (cols - 1)) / cols * 3.7795 / cardPx * 0.94).toFixed(4);
 
-    css = `
-@media print {
-  @page { size: A4 portrait; margin: ${margin}mm; }
-
-  /* Hide every element on the page — then reveal only the print container */
-  body * { visibility: hidden !important; }
-  #printable-id-card-area,
-  #printable-id-card-area * { visibility: visible !important; }
-
-  #printable-id-card-area {
-    position: absolute !important;
-    left: 0 !important;
-    top: 0 !important;
-    display: grid !important;
-    grid-template-columns: repeat(${cols}, 1fr) !important;
-    gap: ${gap}mm !important;
-    width: ${usable}mm !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    align-items: start !important;
+    layoutCss = `
+      @page { size: A4 portrait; margin: ${margin}mm; }
+      @media print {
+        #printable-id-card-area {
+          display: flex !important; flex-wrap: wrap;
+          gap: ${gap}mm; width: ${usable}mm; align-items: start;
+        }
+        #printable-id-card-area [data-print-card] {
+          break-inside: avoid; page-break-inside: avoid;
+          display: flex; align-items: center; justify-content: center;
+          overflow: visible;
+          outline: 0.35mm dashed #aaa; outline-offset: 2mm; padding: 2mm;
+          width: calc((${usable}mm - ${gap}mm) / ${cols});
+        }
+        #printable-id-card-area [data-print-card] > *:last-child {
+          transform: scale(${scale}); transform-origin: top center;
+          box-shadow: none !important; flex-shrink: 0;
+        }
+        #printable-id-card-area [data-print-card] > *:not(:last-child) {
+          display: none !important;
+        }
+      }`;
   }
 
-  /* Each card cell: no page-break inside, dashed cut-mark border */
-  [data-print-card] {
-    break-inside: avoid !important;
-    page-break-inside: avoid !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    overflow: visible !important;
-    /* Dashed cut-guide outline */
-    outline: 0.35mm dashed #aaa !important;
-    outline-offset: 2mm !important;
-    padding: 2mm !important;
+  document.getElementById("benius-layout-css")?.remove();
+  const layoutStyle = document.createElement("style");
+  layoutStyle.id = "benius-layout-css";
+  layoutStyle.textContent = layoutCss;
+  document.head.appendChild(layoutStyle);
+
+  // ── 3. Sibling-walk: hide every DOM sibling at every ancestor level ───────
+  // Walks from the print area up to <body>, hiding all siblings at each level.
+  // This is a proven synchronous approach (same pattern as exam-results print).
+  const hiddenSiblings: { el: HTMLElement; prev: string }[] = [];
+  let node: HTMLElement | null = printArea;
+  while (node && node !== document.body) {
+    const parent = node.parentElement;
+    if (parent) {
+      Array.from(parent.children).forEach(child => {
+        if (child !== node && child instanceof HTMLElement) {
+          hiddenSiblings.push({ el: child, prev: child.style.display });
+          child.style.display = "none";
+        }
+      });
+    }
+    node = parent;
   }
 
-  [data-print-card] > * {
-    transform: scale(${scale}) !important;
-    transform-origin: top center !important;
-    box-shadow: none !important;
-    flex-shrink: 0 !important;
-  }
-}`;
-  }
-
-  // If filtering to selected cards only, hide the rest at print time
-  if (filterIds && filterIds.size > 0) {
-    css += `\n@media print { [data-print-card]:not([data-selected]) { display: none !important; } }`;
-  }
-
-  const styleEl = document.createElement("style");
-  styleEl.id = STYLE_ID;
-  styleEl.textContent = css;
-  document.head.appendChild(styleEl);
-
-  const cleanup = () => {
-    styleEl.remove();
-    window.removeEventListener("afterprint", cleanup);
-  };
-  window.addEventListener("afterprint", cleanup);
-
+  // ── 4. Print then restore ─────────────────────────────────────────────────
   window.print();
+
+  hiddenSiblings.forEach(({ el, prev }) => { el.style.display = prev; });
+  hiddenCards.forEach(w => { w.style.display = ""; });
+  layoutStyle.remove();
 }
 
 // ─── Sub-module panels ───────────────────────────────────────────────────────
@@ -1027,7 +1027,6 @@ function StudentPanel({
   // Use whichever session the admin has selected in the switcher — the printed
   // card reflects the year being viewed (active or archive).
   const academicSession = selectedSession?.sessionName ?? null;
-  const [innerTab, setInnerTab] = useState<"search" | "reissue">("search");
   const [cls, setCls] = useState("");
   const [section, setSection] = useState("");
   const [q, setQ] = useState("");
@@ -1064,17 +1063,16 @@ function StudentPanel({
   if (section && section !== "all") params.set("section", section);
   if (q) params.set("q", q);
   params.set("page", "1");
-  if (innerTab === "reissue") params.set("pendingReissue", "true");
 
   const { data, isLoading } = useQuery<{ data: any[]; total: number }>({
     // Include selectedSession?.id so the query re-fires whenever the admin
     // switches the session switcher — different session = different cohort.
-    queryKey: ["/api/schools", schoolId, "students", "paginated", q, cls, section, 1, innerTab, selectedSession?.id ?? null],
+    queryKey: ["/api/schools", schoolId, "students", "paginated", q, cls, section, 1, selectedSession?.id ?? null],
     queryFn: async () => {
       const r = await sessionFetch(`/api/schools/${schoolId}/students/paginated?${params}`);
       return r.ok ? r.json() : { data: [], total: 0 };
     },
-    enabled: !!schoolId && (innerTab === "reissue" || searched),
+    enabled: !!schoolId && searched,
     staleTime: 0,
   });
 
@@ -1088,44 +1086,10 @@ function StudentPanel({
     setSelectedIds(new Set());
   }, [selectedSession?.id]);
 
-  const clearFlagMut = useMutation({
-    mutationFn: async (studentIds: number[]) =>
-      apiRequest("POST", "/api/admin/students/clear-reissue-flag", { studentIds }),
-    onSuccess: (_data, studentIds) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/schools", schoolId, "students"] });
-      toast({ title: "✅ Flags cleared", description: `${studentIds.length} student(s) marked as re-issued.`, duration: 3000 });
-    },
-    onError: () => toast({ title: "Failed to clear flags", variant: "destructive" }),
-  });
-
-  const reissueStudents = (data?.data ?? []).filter(s => s.idCardPendingReissue);
-
   return (
     <div className="space-y-4">
-      {/* Inner tabs */}
-      <div className="flex gap-2">
-        <button
-          onClick={() => { setInnerTab("search"); setSearched(false); }}
-          className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${innerTab === "search" ? "bg-[#D4AF37] text-[#0A1628]" : "bg-[#1A2942] text-white/60 hover:text-white border border-white/10"}`}
-          data-testid="tab-student-search"
-        >
-          <Search className="w-3.5 h-3.5 inline mr-1.5" />Search
-        </button>
-        <button
-          onClick={() => setInnerTab("reissue")}
-          className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors relative ${innerTab === "reissue" ? "bg-orange-500 text-white" : "bg-[#1A2942] text-orange-400 hover:text-orange-300 border border-orange-400/30"}`}
-          data-testid="tab-student-reissue"
-        >
-          <RefreshCw className="w-3.5 h-3.5 inline mr-1.5" />Pending Re-issuance
-          {(data?.total ?? 0) > 0 && innerTab === "reissue" && (
-            <span className="ml-1.5 bg-white/20 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{data.total}</span>
-          )}
-        </button>
-      </div>
-
       {/* Search controls */}
-      {innerTab === "search" && (
-        <div className="rounded-xl border border-[#D4AF37]/30 bg-[#1A2942] p-5 space-y-3">
+      <div className="rounded-xl border border-[#D4AF37]/30 bg-[#1A2942] p-5 space-y-3">
           <div className="flex flex-wrap gap-3 items-end">
             <div className="flex-1 min-w-[180px]">
               <label className="block text-xs text-white/60 mb-1">Search Student</label>
@@ -1170,48 +1134,28 @@ function StudentPanel({
               <Search className="w-4 h-4 mr-1" /> Search
             </Button>
             {data && data.data.length > 0 && (
-              <>
-                {/* Print Selected — only visible when ≥1 card is checked */}
-                {selectedIds.size > 0 && (
-                  <Button
-                    className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold gap-1.5"
-                    onClick={() => {
-                      executePrint(template.printFormat, template.orientation, selectedIds);
-                      toast({
-                        title: `🖨️ Printing ${selectedIds.size} selected card${selectedIds.size !== 1 ? "s" : ""}`,
-                        description: template.printFormat === "pvc-cr80"
-                          ? "One card per page · CR80 85.6 × 54 mm"
-                          : "A4 sheet · dashed cut guides included",
-                        duration: 4000,
-                      });
-                    }}
-                    data-testid="button-print-selected"
-                  >
-                    <Printer className="w-4 h-4" />
-                    Print Selected ({selectedIds.size})
-                  </Button>
-                )}
-                {/* Print All */}
-                <Button
-                  variant="outline"
-                  className="border-white/20 text-white hover:bg-white/10"
-                  onClick={() => {
-                    executePrint(template.printFormat, template.orientation);
-                    toast({
-                      title: template.printFormat === "pvc-cr80"
-                        ? "🖨️ PVC Card print started"
-                        : "🖨️ A4 Grid print started",
-                      description: template.printFormat === "pvc-cr80"
-                        ? "One card per page · CR80 85.6 × 54 mm"
-                        : "Multi-card A4 sheet · dashed cut guides included",
-                      duration: 4000,
-                    });
-                  }}
-                  data-testid="button-print-student-cards"
-                >
-                  <Printer className="w-4 h-4 mr-1" /> Print All
-                </Button>
-              </>
+              /* Single unified print button — label reflects selection state */
+              <Button
+                className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold gap-1.5"
+                onClick={() => {
+                  const ids = selectedIds.size > 0 ? selectedIds : undefined;
+                  executePrint(template.printFormat, template.orientation, ids);
+                  const count = ids ? ids.size : (data?.data.length ?? 0);
+                  toast({
+                    title: `🖨️ Printing ${count} card${count !== 1 ? "s" : ""}`,
+                    description: template.printFormat === "pvc-cr80"
+                      ? "One card per page · CR80 85.6 × 54 mm"
+                      : "A4 sheet · dashed cut guides included",
+                    duration: 4000,
+                  });
+                }}
+                data-testid="button-print-student-cards"
+              >
+                <Printer className="w-4 h-4" />
+                {selectedIds.size > 0
+                  ? `Print Selected (${selectedIds.size})`
+                  : "Print All Cards"}
+              </Button>
             )}
           </div>
 
@@ -1240,7 +1184,6 @@ function StudentPanel({
             </Button>
           </div>
         </div>
-      )}
 
       {/* Configure Template Modal */}
       {showConfig && (
@@ -1253,54 +1196,8 @@ function StudentPanel({
         />
       )}
 
-      {/* Re-issuance banner */}
-      {innerTab === "reissue" && (
-        <div className="rounded-xl border border-orange-400/30 bg-[#1A2942] p-4">
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div>
-              <p className="text-orange-300 font-semibold text-sm flex items-center gap-1.5">
-                <AlertTriangle className="w-4 h-4" /> Promoted Students — ID Cards Need Re-printing
-              </p>
-              <p className="text-white/40 text-xs mt-0.5">
-                These students were promoted to a new class. Their old ID cards show the wrong class and must be reprinted.
-              </p>
-            </div>
-            {reissueStudents.length > 0 && (
-              <Button
-                onClick={() => {
-                  executePrint(template.printFormat, template.orientation);
-                  toast({
-                    title: template.printFormat === "pvc-cr80"
-                      ? "🖨️ PVC Card print started"
-                      : "🖨️ A4 Grid print started",
-                    description: "After printing, click 'Mark All Printed' to clear the flags.",
-                    duration: 4000,
-                  });
-                }}
-                className="bg-orange-500 hover:bg-orange-400 text-white font-semibold shrink-0"
-                data-testid="button-print-reissue"
-              >
-                <Printer className="w-4 h-4 mr-1.5" /> Print {reissueStudents.length} Card{reissueStudents.length !== 1 ? "s" : ""}
-              </Button>
-            )}
-            {reissueStudents.length > 0 && (
-              <Button
-                variant="outline"
-                onClick={() => clearFlagMut.mutate(reissueStudents.map(s => s.id))}
-                disabled={clearFlagMut.isPending || isArchiveMode}
-                className="border-orange-400/40 text-orange-400 hover:bg-orange-400/10 shrink-0"
-                data-testid="button-mark-printed"
-              >
-                {clearFlagMut.isPending ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1.5" />}
-                Mark All Printed
-              </Button>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Card grid */}
-      {(innerTab === "reissue" || searched) && (
+      {searched && (
         isLoading ? (
           <div className="flex items-center justify-center py-16 gap-3 text-white/40">
             <Loader2 className="w-5 h-5 animate-spin" /> Loading students…
@@ -1308,9 +1205,7 @@ function StudentPanel({
         ) : !data || data.data.length === 0 ? (
           <div className="rounded-xl border border-white/10 bg-[#1A2942] py-16 text-center">
             <CreditCard className="w-10 h-10 mx-auto mb-3 text-white/20" />
-            {innerTab === "reissue"
-              ? <p className="text-white/40">No pending re-issuances — all ID cards are up to date.</p>
-              : <p className="text-white/40">No students found. Try different filters.</p>}
+            <p className="text-white/40">No students found. Try different filters.</p>
           </div>
         ) : (
           <>
@@ -1390,7 +1285,7 @@ function StudentPanel({
                   <StudentIDCard
                     student={s}
                     schoolName={schoolName}
-                    showReissueBanner={innerTab === "reissue"}
+                    showReissueBanner={false}
                     activeFields={template.activeFields}
                     orientation={template.orientation}
                     theme={template.theme}
@@ -1404,7 +1299,7 @@ function StudentPanel({
         )
       )}
 
-      {innerTab === "search" && !searched && (
+      {!searched && (
         <div className="rounded-xl border border-white/10 bg-[#1A2942] py-16 text-center">
           <GraduationCap className="w-10 h-10 mx-auto mb-3 text-white/20" />
           <p className="text-white/40">Search for students to preview and print ID cards</p>
