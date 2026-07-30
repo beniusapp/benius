@@ -433,6 +433,204 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
     ? Math.round((subjectsWithScores.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / subjectsWithScores.length) * 10) / 10 : null;
   const overallGrade = overallAvg !== null ? computeGrade(overallAvg, gradingRules) : null;
 
+  function printReportCard() {
+    const esc = (s: string | number | null | undefined) =>
+      String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    // Subject rows
+    const subjectRows = termSubjects.map(subj => {
+      const g = subj.status === "scored" && subj.percentage !== null
+        ? computeGrade(subj.percentage, gradingRules) : null;
+      const statusBadge = subj.status === "incomplete"
+        ? `<span class="badge incomplete">INCOMPLETE</span>`
+        : subj.status === "absent"
+          ? `<span class="badge absent">ABSENT</span>`
+          : subj.passed === true
+            ? `<span class="badge pass">PASS</span>`
+            : subj.passed === false
+              ? `<span class="badge fail">FAIL</span>` : "";
+      const gradeBadge = g ? `<span class="grade">${esc(g.label)}</span>` : "";
+      const pctCell = subj.percentage !== null ? `${esc(subj.percentage)}%` : "—";
+
+      const compRows = subj.breakdown.map(comp => `
+        <tr>
+          <td style="padding-left:24px;color:#475569">${esc(comp.sourceExam)}</td>
+          <td class="center">${esc(comp.weight)}%</td>
+          <td class="center">${
+            comp.status === "missing" ? '<span style="color:#94a3b8;font-style:italic">No data</span>' :
+            comp.status === "absent" ? '<span style="color:#f97316;font-weight:600">Absent</span>' :
+            `${esc(comp.marks)}/${esc(comp.totalMarks)}`
+          }</td>
+          <td class="center">${comp.pct !== null ? `${comp.pct.toFixed(1)}%` : "—"}</td>
+          <td class="center">${comp.contribution !== null ? `+${comp.contribution.toFixed(2)}` : "—"}</td>
+        </tr>`).join("");
+
+      return `
+        <div class="subj-block">
+          <div class="subj-header">
+            <span class="subj-name">${esc(subj.subject)}</span>
+            <span class="subj-meta">
+              ${pctCell !== "—" ? `<strong>${esc(pctCell)}</strong>` : ""}
+              ${gradeBadge} ${statusBadge}
+            </span>
+          </div>
+          <table>
+            <thead><tr>
+              <th>Component</th><th class="center w16">Weight</th>
+              <th class="center w20">Raw Score</th><th class="center w16">Score %</th>
+              <th class="center w20">Contribution</th>
+            </tr></thead>
+            <tbody>${compRows}</tbody>
+            ${subj.status === "scored" && subj.percentage !== null ? `
+            <tfoot><tr class="agg-row">
+              <td colspan="4" style="text-align:right;color:#64748b;font-weight:600">Weighted Aggregate</td>
+              <td class="center" style="font-weight:700;color:#b45309">${esc(subj.percentage)}%</td>
+            </tr></tfoot>` : ""}
+          </table>
+        </div>`;
+    }).join("");
+
+    // Failure counts per term
+    const failCounts = Object.entries(student.allTermFailCounts);
+    const failSection = failCounts.length > 0 ? `
+      <div class="section-title">Failure Count per Term</div>
+      <div class="fail-row">
+        ${failCounts.map(([t, n]) => `
+          <span class="fail-chip ${n > 0 ? "fail-chip-red" : "fail-chip-green"}">
+            ${esc(t)}&nbsp;·&nbsp;<strong>${n} fail${n !== 1 ? "s" : ""}</strong>
+          </span>`).join("")}
+      </div>` : "";
+
+    // Promotion verdict
+    let verdictSection = "";
+    if (showPromoVerdict && promoEntry) {
+      const isP = promoEntry.decision === "promoted";
+      const verdictLabel = isP
+        ? `Promoted to Class ${esc(promoEntry.targetClass)} — Section ${esc(promoEntry.targetSection)}`
+        : `Retained in Class ${esc(promoEntry.targetClass)} — Section ${esc(promoEntry.targetSection)}`;
+      const reasons = isDetained && detentionReasons.length > 0
+        ? `<div class="detention-reasons"><p class="detention-title">Reason${detentionReasons.length > 1 ? "s" : ""} for Detention</p><ol>${
+            detentionReasons.map(r => `<li>${esc(r)}</li>`).join("")}</ol></div>` : "";
+      const attLine = student.attendancePct !== null
+        ? `<span class="meta-att ${student.attendancePct < 75 ? "att-warn" : "att-ok"}">Attendance: ${esc(student.attendancePct)}%</span>` : "";
+      verdictSection = `
+        <div class="verdict-box ${isP ? "verdict-promoted" : "verdict-retained"}">
+          <div class="verdict-header">
+            <span class="verdict-icon">${isP ? "✓" : "✗"}</span>
+            <div class="verdict-text">
+              <strong>${verdictLabel}</strong>
+              <span class="verdict-sub">Final Academic Verdict · ${esc(term)}</span>
+            </div>
+            <span class="verdict-badge ${isP ? "badge-promoted" : "badge-retained"}">${isP ? "PROMOTED" : "DETAINED"}</span>
+          </div>
+          ${reasons}
+          <div class="verdict-footer">${attLine}${isP ? `<span class="verdict-reason">${esc(student.promotionReason)}</span>` : ""}</div>
+        </div>`;
+    } else if (!showPromoVerdict) {
+      verdictSection = `
+        <div class="policy-box">
+          <p class="policy-title">Policy Criteria Assessment</p>
+          <p class="policy-reason">${esc(student.promotionReason)}</p>
+          ${student.attendancePct !== null ? `<p class="policy-att ${student.attendancePct < 75 ? "att-warn" : "att-ok"}">Attendance: ${esc(student.attendancePct)}%</p>` : ""}
+        </div>`;
+    }
+
+    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/>
+<title>Performance Report Card — ${esc(student.name)} · ${esc(term)}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1e293b;background:#fff;padding:24px 28px;}
+@media print{body{padding:0;}button{display:none!important;}}
+.page-header{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #1e3a5f;padding-bottom:12px;margin-bottom:16px;}
+.app-name{font-size:20px;font-weight:800;color:#1e3a5f;}
+.report-title h1{font-size:15px;font-weight:700;color:#1e3a5f;text-align:right;}
+.report-title p{font-size:10px;color:#64748b;text-align:right;}
+.meta-bar{display:flex;flex-wrap:wrap;gap:20px;background:#f0f4f8;border-radius:8px;padding:12px 16px;margin-bottom:16px;align-items:center;}
+.meta-item label{font-size:9px;text-transform:uppercase;color:#64748b;display:block;}
+.meta-item span{font-size:13px;font-weight:700;color:#1e3a5f;}
+.meta-avg{margin-left:auto;text-align:right;}
+.meta-avg .avg-val{font-size:22px;font-weight:800;color:#b45309;}
+.meta-avg label{font-size:9px;text-transform:uppercase;color:#64748b;}
+.section-title{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin:14px 0 8px;}
+.subj-block{border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;margin-bottom:10px;}
+.subj-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;}
+.subj-name{font-weight:700;color:#1e3a5f;font-size:12px;}
+.subj-meta{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:#b45309;}
+table{width:100%;border-collapse:collapse;}
+th{padding:7px 10px;text-align:left;font-size:10px;font-weight:600;background:#1e3a5f;color:#fff;}
+td{padding:6px 10px;border-bottom:1px solid #f1f5f9;font-size:11px;color:#334155;}
+tr:last-child td{border-bottom:none;}
+.center{text-align:center;}
+.w16{width:60px;}.w20{width:80px;}
+.agg-row td{background:#fefce8;}
+.badge{display:inline-block;padding:2px 7px;border-radius:10px;font-size:9px;font-weight:700;}
+.badge.pass{background:#dcfce7;color:#166534;}
+.badge.fail{background:#fee2e2;color:#991b1b;}
+.badge.absent{background:#ffedd5;color:#9a3412;}
+.badge.incomplete{background:#f1f5f9;color:#475569;}
+.grade{display:inline-block;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:800;background:#e0f2fe;color:#0c4a6e;}
+.fail-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
+.fail-chip{padding:4px 10px;border-radius:8px;font-size:10px;border:1px solid;}
+.fail-chip-green{background:#f0fdf4;border-color:#bbf7d0;color:#166534;}
+.fail-chip-red{background:#fff5f5;border-color:#fecaca;color:#991b1b;}
+.verdict-box{border-radius:10px;overflow:hidden;margin-bottom:14px;border:1px solid;}
+.verdict-promoted{border-color:#6ee7b7;background:#ecfdf5;}
+.verdict-retained{border-color:#fca5a5;background:#fff5f5;}
+.verdict-header{display:flex;align-items:center;gap:12px;padding:12px 16px;}
+.verdict-icon{font-size:20px;font-weight:900;line-height:1;}
+.verdict-promoted .verdict-icon{color:#059669;}
+.verdict-retained .verdict-icon{color:#dc2626;}
+.verdict-text{flex:1;}
+.verdict-text strong{display:block;font-size:13px;color:#1e293b;}
+.verdict-sub{font-size:10px;color:#64748b;}
+.verdict-badge{padding:3px 10px;border-radius:12px;font-size:10px;font-weight:700;border:1px solid;}
+.badge-promoted{background:#d1fae5;border-color:#6ee7b7;color:#065f46;}
+.badge-retained{background:#fee2e2;border-color:#fca5a5;color:#991b1b;}
+.detention-reasons{margin:0 14px 0;padding:10px 14px;border-radius:8px;border:1px solid #fca5a5;background:#fff1f1;}
+.detention-title{font-size:10px;font-weight:700;color:#dc2626;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;}
+.detention-reasons ol{padding-left:16px;}
+.detention-reasons li{font-size:11px;color:#7f1d1d;margin-bottom:4px;line-height:1.5;}
+.verdict-footer{display:flex;justify-content:space-between;padding:8px 16px;border-top:1px solid #e2e8f0;background:rgba(255,255,255,.6);font-size:10px;}
+.att-ok{color:#059669;font-weight:700;}
+.att-warn{color:#dc2626;font-weight:700;}
+.verdict-reason{color:#94a3b8;font-style:italic;}
+.policy-box{border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin-bottom:14px;background:#f8fafc;}
+.policy-title{font-size:10px;font-weight:700;color:#334155;margin-bottom:4px;}
+.policy-reason{font-size:11px;color:#475569;}
+.policy-att{font-size:11px;margin-top:4px;}
+.sigs{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:20px;padding-top:16px;border-top:1px solid #e2e8f0;}
+.sig-slot{display:flex;flex-direction:column;align-items:center;gap:6px;}
+.sig-line{width:100%;border-bottom:1px dashed #94a3b8;height:28px;}
+.sig-label{font-size:8px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;text-align:center;}
+.print-btn{position:fixed;bottom:20px;right:20px;background:#1e3a5f;color:#fff;border:none;padding:10px 20px;border-radius:8px;font-size:13px;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.2);}
+</style></head><body>
+<div class="page-header">
+  <div class="app-name">BENIUS</div>
+  <div class="report-title"><h1>Performance Report Card</h1><p>Term: <strong>${esc(term)}</strong></p></div>
+</div>
+<div class="meta-bar">
+  <div class="meta-item"><label>Student Name</label><span>${esc(student.name)}</span></div>
+  <div class="meta-item"><label>DSID</label><span style="font-family:monospace;font-size:11px">${esc(student.digitalStudentId)}</span></div>
+  ${student.rollNumber !== null ? `<div class="meta-item"><label>Roll No.</label><span>${esc(student.rollNumber)}</span></div>` : ""}
+  ${overallAvg !== null ? `<div class="meta-avg"><label>Term Average</label><div class="avg-val">${esc(overallAvg)}%${overallGrade ? `&nbsp;<span style="font-size:16px;background:#fef3c7;color:#b45309;padding:2px 8px;border-radius:6px;border:1px solid #fde68a">${esc(overallGrade.label)}</span>` : ""}</div></div>` : ""}
+</div>
+<div class="section-title">Subject-wise Aggregation Breakdown</div>
+${subjectRows || "<p style='color:#94a3b8;text-align:center;padding:12px;font-style:italic'>No subject data available for this term.</p>"}
+${failSection}
+${verdictSection}
+<div class="sigs">
+  ${["Class Teacher","Principal / H.O.D","Parent / Guardian"].map(l => `<div class="sig-slot"><div class="sig-line"></div><div class="sig-label">${l}</div></div>`).join("")}
+</div>
+<button class="print-btn" onclick="window.print()">🖨 Print / Save as PDF</button>
+<script>setTimeout(()=>window.print(),400);</script>
+</body></html>`;
+
+    const win = window.open("", "_blank", "width=860,height=700");
+    if (!win) { alert("Popup blocked — please allow popups for this site."); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-3 sm:p-6 bg-black/70 backdrop-blur-sm overflow-y-auto" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="w-full max-w-3xl bg-[#0f172a] border border-[#1e293b] rounded-2xl shadow-2xl my-4" data-testid="modal-report-card">
@@ -445,7 +643,7 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" onClick={() => window.print()}
+            <Button size="sm" variant="ghost" onClick={printReportCard}
               className="text-slate-400 hover:text-white hover:bg-white/10 h-8 hidden sm:flex gap-1.5" data-testid="btn-print-report">
               <Printer className="w-3.5 h-3.5" /> Print
             </Button>
