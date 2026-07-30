@@ -1,8 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   CreditCard, Search, Printer, RefreshCw, AlertTriangle,
   GraduationCap, Users, UserCog, Loader2,
+  SlidersHorizontal, Lock, X, Check, Save,
+  Smartphone, Monitor, LayoutTemplate,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +16,183 @@ import { useSessionView } from "@/contexts/session-view-context";
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type SubModule = "student" | "teacher" | "support-staff";
+
+// Optional field keys that map directly to the Student Registry schema
+export type OptionalFieldKey =
+  | "dob"
+  | "bloodGroup"
+  | "phone"
+  | "rollNumber"
+  | "gender"
+  | "guardianName"
+  | "fatherName"
+  | "motherName"
+  | "address"
+  | "aadharNumber"
+  | "dateOfAdmission";
+
+// ─── Theme system ─────────────────────────────────────────────────────────────
+
+export type ThemeKey = "modern-dark" | "classic-light" | "minimal-accent";
+
+export const CARD_THEMES: Record<ThemeKey, {
+  name: string;
+  swatches: [string, string];
+  cardBg: string;
+  cardBorder: string;
+  accentColor: string;
+  accentClass: string;
+  labelClass: string;
+  nameClass: string;
+  valueClass: string;
+  badgeBg: string;
+  badgeText: string;
+  footerBorder: string;
+  headerBorder: string;
+  schoolNameClass: string;
+  footerTextClass: string;
+  barcodeBg: string;
+  dark: boolean;
+}> = {
+  "modern-dark": {
+    name: "Modern Dark / Navy",
+    swatches: ["#0A1628", "#D4AF37"],
+    cardBg: "from-[#0A1628] to-[#1A2942]",
+    cardBorder: "border-[#D4AF37]",
+    accentColor: "#D4AF37",
+    accentClass: "text-[#D4AF37]",
+    labelClass: "text-white/40",
+    nameClass: "text-white",
+    valueClass: "text-white",
+    badgeBg: "bg-[#D4AF37]/10",
+    badgeText: "text-[#D4AF37]/60",
+    footerBorder: "border-[#D4AF37]/30",
+    headerBorder: "border-[#D4AF37]/30",
+    schoolNameClass: "text-white/60",
+    footerTextClass: "text-white/30",
+    barcodeBg: "bg-white",
+    dark: true,
+  },
+  "classic-light": {
+    name: "Classic Clean (Light)",
+    swatches: ["#f8fafc", "#1d4ed8"],
+    cardBg: "from-white to-slate-100",
+    cardBorder: "border-blue-600",
+    accentColor: "#1d4ed8",
+    accentClass: "text-blue-700",
+    labelClass: "text-slate-400",
+    nameClass: "text-slate-800",
+    valueClass: "text-slate-700",
+    badgeBg: "bg-blue-100",
+    badgeText: "text-blue-700",
+    footerBorder: "border-blue-200",
+    headerBorder: "border-blue-200",
+    schoolNameClass: "text-slate-500",
+    footerTextClass: "text-slate-400",
+    barcodeBg: "bg-slate-200",
+    dark: false,
+  },
+  "minimal-accent": {
+    name: "Minimal Accent",
+    swatches: ["#111827", "#34d399"],
+    cardBg: "from-[#111827] to-[#1f2937]",
+    cardBorder: "border-emerald-400",
+    accentColor: "#34d399",
+    accentClass: "text-emerald-400",
+    labelClass: "text-white/40",
+    nameClass: "text-white",
+    valueClass: "text-white",
+    badgeBg: "bg-emerald-400/10",
+    badgeText: "text-emerald-400/70",
+    footerBorder: "border-emerald-400/30",
+    headerBorder: "border-emerald-400/30",
+    schoolNameClass: "text-white/60",
+    footerTextClass: "text-white/30",
+    barcodeBg: "bg-white",
+    dark: true,
+  },
+};
+
+export interface CardTemplate {
+  version: 1;
+  activeFields: OptionalFieldKey[];
+  orientation: "portrait" | "landscape";
+  theme: ThemeKey;
+  printFormat: "pvc-cr80" | "a4-grid";
+  savedAt?: string;
+}
+
+// ─── Template constants ──────────────────────────────────────────────────────
+
+const TEMPLATE_STORAGE_KEY = "benius_student_id_card_template_v1";
+
+export const OPTIONAL_FIELDS: {
+  key: OptionalFieldKey;
+  label: string;
+  hint: string;
+  studentProp: string;
+}[] = [
+  { key: "dob",             label: "Date of Birth",     hint: "e.g. 15/03/2009",        studentProp: "dob"            },
+  { key: "bloodGroup",      label: "Blood Group",       hint: "e.g. B+",                studentProp: "bloodGroup"     },
+  { key: "phone",           label: "Phone Number",      hint: "e.g. 9876543210",         studentProp: "phone"          },
+  { key: "rollNumber",      label: "Roll Number",       hint: "e.g. 24",                 studentProp: "rollNumber"     },
+  { key: "gender",          label: "Gender",            hint: "e.g. Male",               studentProp: "gender"         },
+  { key: "guardianName",    label: "Guardian Name",     hint: "e.g. Rajesh Sharma",      studentProp: "guardianName"   },
+  { key: "fatherName",      label: "Father's Name",     hint: "e.g. Rajesh Sharma",      studentProp: "fatherName"     },
+  { key: "motherName",      label: "Mother's Name",     hint: "e.g. Priya Sharma",       studentProp: "motherName"     },
+  { key: "address",         label: "Address",           hint: "e.g. 12, Park Street",    studentProp: "address"        },
+  { key: "aadharNumber",    label: "Aadhaar Number",    hint: "e.g. 1234 5678 9012",     studentProp: "aadharNumber"   },
+  { key: "dateOfAdmission", label: "Date of Admission", hint: "e.g. 01/04/2021",         studentProp: "dateOfAdmission"},
+];
+
+const DEFAULT_TEMPLATE: CardTemplate = {
+  version: 1,
+  activeFields: ["dob", "phone"],
+  orientation: "portrait",
+  theme: "modern-dark",
+  printFormat: "pvc-cr80",
+};
+
+// Sample student used in the configure-template live preview
+const PREVIEW_STUDENT = {
+  id: 0,
+  name: "Aarav Sharma",
+  digitalStudentId: "MIS-S001",
+  class: "10",
+  section: "A",
+  photoUrl: null,
+  dob: "2009-03-15",
+  bloodGroup: "B+",
+  phone: "9876543210",
+  rollNumber: "24",
+  gender: "Male",
+  guardianName: "Rajesh Sharma",
+  fatherName: "Rajesh Sharma",
+  motherName: "Priya Sharma",
+  address: "12, Park Street, Kolkata",
+  aadharNumber: "123456789012",
+  dateOfAdmission: "2021-04-01",
+  idCardPendingReissue: false,
+};
+
+function loadTemplate(): CardTemplate {
+  try {
+    const raw = localStorage.getItem(TEMPLATE_STORAGE_KEY);
+    if (!raw) return DEFAULT_TEMPLATE;
+    const parsed = JSON.parse(raw) as Partial<CardTemplate>;
+    if (parsed.version !== 1) return DEFAULT_TEMPLATE;
+    // Spread defaults so older saved templates get new fields gracefully
+    return { ...DEFAULT_TEMPLATE, ...parsed } as CardTemplate;
+  } catch {
+    return DEFAULT_TEMPLATE;
+  }
+}
+
+function saveTemplate(tpl: CardTemplate) {
+  try {
+    localStorage.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify({ ...tpl, savedAt: new Date().toISOString() }));
+  } catch { /* ignore quota errors */ }
+}
 
 interface Props {
   schoolId: number;
@@ -27,99 +206,533 @@ interface Props {
 
 // ─── Sub-module definitions ──────────────────────────────────────────────────
 
-const SUB_MODULES: { id: SubModule; label: string; icon: React.ElementType; accent: string; textAccent: string; borderClass: string; bgClass: string }[] = [
+const SUB_MODULES: {
+  id: SubModule;
+  label: string;
+  desc: string;
+  icon: React.ElementType;
+  accent: string;
+  accentHex: string;
+  textAccent: string;
+  borderClass: string;
+  bgClass: string;
+  glowClass: string;
+}[] = [
   {
     id: "student",
     label: "Student ID Cards",
+    desc: "Generate & print ID cards for enrolled students",
     icon: GraduationCap,
-    accent: "#D4AF37",
+    accent: "text-[#D4AF37]",
+    accentHex: "#D4AF37",
     textAccent: "text-[#D4AF37]",
     borderClass: "border-[#D4AF37]",
     bgClass: "from-[#0A1628] to-[#1A2942]",
+    glowClass: "shadow-[0_0_24px_rgba(212,175,55,0.18)]",
   },
   {
     id: "teacher",
     label: "Teacher ID Cards",
+    desc: "Generate & print ID cards for teaching faculty",
     icon: Users,
-    accent: "#0EA5E9",
+    accent: "text-sky-400",
+    accentHex: "#0EA5E9",
     textAccent: "text-sky-400",
     borderClass: "border-sky-500",
     bgClass: "from-[#0A1628] to-[#0c2233]",
+    glowClass: "shadow-[0_0_24px_rgba(14,165,233,0.18)]",
   },
   {
     id: "support-staff",
     label: "Support Staff ID Cards",
+    desc: "Generate & print ID cards for non-teaching staff",
     icon: UserCog,
-    accent: "#A855F7",
+    accent: "text-purple-400",
+    accentHex: "#A855F7",
     textAccent: "text-purple-400",
     borderClass: "border-purple-500",
     bgClass: "from-[#0A1628] to-[#1a0d2e]",
+    glowClass: "shadow-[0_0_24px_rgba(168,85,247,0.18)]",
   },
 ];
 
 // ─── ID Card Components ──────────────────────────────────────────────────────
 
+function renderOptionalField(student: any, key: OptionalFieldKey): string {
+  switch (key) {
+    case "dob":
+      return student.dob ? new Date(student.dob).toLocaleDateString("en-GB") : "—";
+    case "bloodGroup":
+      return student.bloodGroup || "—";
+    case "phone":
+      return student.phone || "—";
+    case "fatherName":
+      return student.fatherName || "—";
+    case "motherName":
+      return student.motherName || "—";
+    case "address":
+      return student.address || "—";
+    case "rollNumber":
+      return student.rollNumber ? String(student.rollNumber) : "—";
+    case "gender":
+      return student.gender || "—";
+    case "guardianName":
+      return student.guardianName || "—";
+    case "aadharNumber":
+      return student.aadharNumber
+        ? String(student.aadharNumber).replace(/(.{4})(.{4})(.{4})/, "$1 $2 $3")
+        : "—";
+    case "dateOfAdmission":
+      return student.dateOfAdmission
+        ? new Date(student.dateOfAdmission).toLocaleDateString("en-GB")
+        : "—";
+    default:
+      return "—";
+  }
+}
+
 function StudentIDCard({
   student,
   schoolName,
   showReissueBanner,
+  activeFields,
+  orientation = "portrait",
+  theme = "modern-dark",
+  academicSession,
 }: {
   student: any;
   schoolName: string;
   showReissueBanner?: boolean;
+  activeFields: OptionalFieldKey[];
+  orientation?: "portrait" | "landscape";
+  theme?: ThemeKey;
+  academicSession?: string | null;
 }) {
+  const t = CARD_THEMES[theme] ?? CARD_THEMES["modern-dark"];
+
+  const pairs: [OptionalFieldKey, OptionalFieldKey | null][] = [];
+  for (let i = 0; i < activeFields.length; i += 2) {
+    pairs.push([activeFields[i], activeFields[i + 1] ?? null]);
+  }
+
+  const fieldMeta: Record<OptionalFieldKey, string> = {
+    dob: "Date of Birth", bloodGroup: "Blood Group", phone: "Phone",
+    rollNumber: "Roll No.", gender: "Gender", guardianName: "Guardian",
+    fatherName: "Father", motherName: "Mother",
+    address: "Address", aadharNumber: "Aadhaar", dateOfAdmission: "Admission",
+  };
+
+  const avatarEl = student.photoUrl
+    ? <img src={student.photoUrl} alt={student.name} className="w-full h-full object-cover rounded-full" />
+    : <span>{student.name?.charAt(0).toUpperCase()}</span>;
+
+  const reissueBanner = showReissueBanner && student.idCardPendingReissue && (
+    <div className="absolute -top-3 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-orange-500 text-white text-[10px] font-bold shadow-lg whitespace-nowrap">
+      <AlertTriangle className="w-2.5 h-2.5" /> PENDING RE-ISSUANCE
+    </div>
+  );
+
+  const optionalGrid = (
+    <>
+      {pairs.map(([a, b], i) => (
+        <div key={i} className="contents">
+          <div>
+            <p className={t.labelClass}>{fieldMeta[a]}</p>
+            <p className={`${t.valueClass} truncate`}>{renderOptionalField(student, a)}</p>
+          </div>
+          {b ? (
+            <div>
+              <p className={t.labelClass}>{fieldMeta[b]}</p>
+              <p className={`${t.valueClass} truncate`}>{renderOptionalField(student, b)}</p>
+            </div>
+          ) : <div />}
+        </div>
+      ))}
+    </>
+  );
+
+  /* ── Landscape layout ─────────────────────────────────────── */
+  if (orientation === "landscape") {
+    const borderClass = showReissueBanner && student.idCardPendingReissue ? "border-orange-400/80" : t.cardBorder;
+    return (
+      <div
+        className={`w-[420px] rounded-xl border-2 bg-gradient-to-br ${t.cardBg} ${borderClass} p-4 shadow-xl relative flex gap-0`}
+        data-testid={`card-student-${student.id}`}
+      >
+        {reissueBanner}
+
+        {/* Left strip — avatar + school meta + barcode */}
+        <div className={`w-28 shrink-0 flex flex-col items-center gap-2 border-r ${t.headerBorder} pr-4 mr-4`}>
+          <p className={`${t.accentClass} text-[9px] font-bold tracking-widest`}>BENIUS</p>
+          <div
+            className="w-16 h-16 rounded-full flex items-center justify-center font-bold text-2xl overflow-hidden"
+            style={{ backgroundColor: t.accentColor, color: t.dark ? "#0A1628" : "white" }}
+          >
+            {avatarEl}
+          </div>
+          <p className={`${t.schoolNameClass} text-[8px] text-center leading-tight`}>{schoolName}</p>
+          <span className={`text-[8px] font-bold ${t.badgeText} ${t.badgeBg} px-1.5 py-0.5 rounded`}>STUDENT</span>
+          <div className={`w-full h-6 ${t.barcodeBg} rounded flex items-center justify-center mt-auto`}>
+            <p className="text-[#0A1628] text-[7px] font-bold font-mono truncate px-1">{student.digitalStudentId}</p>
+          </div>
+        </div>
+
+        {/* Right — name + field grid */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          <p className={`${t.nameClass} font-bold text-base leading-tight truncate mb-2`}>{student.name}</p>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs flex-1">
+            <div>
+              <p className={t.labelClass}>DSID</p>
+              <p className={`${t.accentClass} font-mono text-[11px]`}>{student.digitalStudentId}</p>
+            </div>
+            <div>
+              <p className={t.labelClass}>Class</p>
+              <p className={`${t.valueClass} text-[11px]`}>{student.class}-{student.section}</p>
+            </div>
+            {optionalGrid}
+          </div>
+          <p className={`${t.footerTextClass} text-[8px] mt-2`}>
+            {academicSession ? `Session: ${academicSession}` : "Academic ID"}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── Portrait layout (default) ────────────────────────────── */
+  const borderClass = showReissueBanner && student.idCardPendingReissue ? "border-orange-400/80" : t.cardBorder;
   return (
     <div
-      className={`w-72 rounded-xl border-2 bg-gradient-to-br from-[#0A1628] to-[#1A2942] p-5 shadow-xl relative
-        ${showReissueBanner && student.idCardPendingReissue ? "border-orange-400/80" : "border-[#D4AF37]"}`}
+      className={`w-72 rounded-xl border-2 bg-gradient-to-br ${t.cardBg} ${borderClass} p-5 shadow-xl relative`}
       data-testid={`card-student-${student.id}`}
     >
-      {showReissueBanner && student.idCardPendingReissue && (
-        <div className="absolute -top-3 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-orange-500 text-white text-[10px] font-bold shadow-lg whitespace-nowrap">
-          <AlertTriangle className="w-2.5 h-2.5" /> PENDING RE-ISSUANCE
-        </div>
-      )}
+      {reissueBanner}
+
       {/* Header */}
-      <div className="flex items-center gap-3 mb-3 border-b border-[#D4AF37]/30 pb-3">
-        <div className="w-10 h-10 rounded-full bg-[#D4AF37] flex items-center justify-center text-[#0A1628] font-bold text-lg overflow-hidden shrink-0">
-          {student.photoUrl
-            ? <img src={student.photoUrl} alt={student.name} className="w-full h-full object-cover rounded-full" />
-            : student.name?.charAt(0).toUpperCase()}
+      <div className={`flex items-center gap-3 mb-3 border-b ${t.headerBorder} pb-3`}>
+        <div
+          className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg overflow-hidden shrink-0"
+          style={{ backgroundColor: t.accentColor, color: t.dark ? "#0A1628" : "white" }}
+        >
+          {avatarEl}
         </div>
         <div className="min-w-0">
-          <p className="text-[#D4AF37] text-xs font-semibold tracking-wider">BENIUS</p>
-          <p className="text-white/60 text-xs truncate">{schoolName}</p>
+          <p className={`${t.accentClass} text-xs font-semibold tracking-wider`}>BENIUS</p>
+          <p className={`${t.schoolNameClass} text-xs truncate`}>{schoolName}</p>
         </div>
-        <span className="ml-auto text-[9px] font-bold text-[#D4AF37]/60 bg-[#D4AF37]/10 px-1.5 py-0.5 rounded shrink-0">STUDENT</span>
+        <span className={`ml-auto text-[9px] font-bold ${t.badgeText} ${t.badgeBg} px-1.5 py-0.5 rounded shrink-0`}>STUDENT</span>
       </div>
+
       {/* Body */}
       <div className="space-y-1.5">
-        <p className="text-white font-bold text-lg leading-tight truncate">{student.name}</p>
+        <p className={`${t.nameClass} font-bold text-lg leading-tight truncate`}>{student.name}</p>
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
-            <p className="text-white/40">DSID</p>
-            <p className="text-[#D4AF37] font-mono">{student.digitalStudentId}</p>
+            <p className={t.labelClass}>DSID</p>
+            <p className={`${t.accentClass} font-mono`}>{student.digitalStudentId}</p>
           </div>
           <div>
-            <p className="text-white/40">Class</p>
-            <p className="text-white">{student.class}-{student.section}</p>
+            <p className={t.labelClass}>Class</p>
+            <p className={t.valueClass}>{student.class}-{student.section}</p>
           </div>
-          <div>
-            <p className="text-white/40">DOB</p>
-            <p className="text-white">{student.dob ? new Date(student.dob).toLocaleDateString("en-GB") : "—"}</p>
-          </div>
-          <div>
-            <p className="text-white/40">Phone</p>
-            <p className="text-white">{student.phone}</p>
-          </div>
+          {optionalGrid}
         </div>
       </div>
-      {/* Footer / barcode strip */}
-      <div className="mt-4 pt-3 border-t border-[#D4AF37]/30 flex items-center justify-between">
-        <div className="w-16 h-8 bg-white rounded flex items-center justify-center">
+
+      {/* Footer */}
+      <div className={`mt-4 pt-3 border-t ${t.footerBorder} flex items-center justify-between`}>
+        <div className={`w-16 h-8 ${t.barcodeBg} rounded flex items-center justify-center`}>
           <p className="text-[#0A1628] text-[8px] font-bold font-mono">{student.digitalStudentId}</p>
         </div>
-        <p className="text-white/30 text-[9px]">Academic ID</p>
+        <p className={`${t.footerTextClass} text-[9px]`}>
+          {academicSession ? `Session: ${academicSession}` : "Academic ID"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Configure Template Modal ─────────────────────────────────────────────────
+
+function ConfigureTemplateModal({
+  initial,
+  schoolName,
+  academicSession,
+  onApply,
+  onClose,
+}: {
+  initial: CardTemplate;
+  schoolName: string;
+  academicSession?: string | null;
+  onApply: (tpl: CardTemplate, save: boolean) => void;
+  onClose: () => void;
+}) {
+  const [active, setActive] = useState<Set<OptionalFieldKey>>(new Set(initial.activeFields));
+  const [orientation, setOrientation] = useState<"portrait" | "landscape">(initial.orientation ?? "portrait");
+  const [theme, setTheme] = useState<ThemeKey>(initial.theme ?? "modern-dark");
+  const [printFormat, setPrintFormat] = useState<"pvc-cr80" | "a4-grid">(initial.printFormat ?? "pvc-cr80");
+  const [saveDefault, setSaveDefault] = useState(false);
+
+  const toggle = useCallback((key: OptionalFieldKey) => {
+    setActive(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const orderedActive = OPTIONAL_FIELDS.filter(f => active.has(f.key)).map(f => f.key);
+
+  const handleApply = () => {
+    onApply({ version: 1, activeFields: orderedActive, orientation, theme, printFormat }, saveDefault);
+  };
+
+  const handleBackdrop = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) onClose();
+  };
+
+  const mandatoryFields = ["Student Photo", "Full Name", "DSID", "Class", "Section", "Academic Session"];
+
+  const themeOptions: { key: ThemeKey; swatches: [string, string] }[] = [
+    { key: "modern-dark",    swatches: ["#0A1628", "#D4AF37"] },
+    { key: "classic-light",  swatches: ["#f8fafc", "#1d4ed8"] },
+    { key: "minimal-accent", swatches: ["#111827", "#34d399"] },
+  ];
+
+  const printOptions = [
+    { id: "pvc-cr80" as const, label: "Standard PVC Card (CR80)", sub: "85.6 × 54 mm — credit card size" },
+    { id: "a4-grid"  as const, label: "Paper Sheet Grid (A4 Print)", sub: "Multiple cards per A4 sheet" },
+  ];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+      onClick={handleBackdrop}
+    >
+      <div className="w-full max-w-4xl rounded-2xl bg-[#0d1b2e] border border-[#D4AF37]/30 shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+
+        {/* ── Header ─────────────────────────────────────────── */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <SlidersHorizontal className="w-5 h-5 text-[#D4AF37]" />
+            <div>
+              <h3 className="text-white font-bold text-base">Configure Card Template</h3>
+              <p className="text-white/45 text-xs">Customize layout, design, and visible fields for printed ID cards</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* ── Body ───────────────────────────────────────────── */}
+        <div className="flex flex-1 overflow-hidden min-h-0">
+
+          {/* Left panel — controls */}
+          <div className="w-72 shrink-0 border-r border-white/10 overflow-y-auto">
+
+            {/* Section 1: Card Template & Design */}
+            <div className="px-4 pt-4 pb-3">
+              <p className="text-[#D4AF37] text-[10px] font-bold uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                <LayoutTemplate className="w-3 h-3" /> Card Template &amp; Design
+              </p>
+
+              {/* Orientation */}
+              <div className="mb-3">
+                <p className="text-white/40 text-[10px] font-semibold uppercase tracking-wider mb-1.5">Orientation</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {([
+                    { id: "portrait"  as const, label: "Vertical",   sub: "Portrait",  Icon: Smartphone },
+                    { id: "landscape" as const, label: "Horizontal",  sub: "Landscape", Icon: Monitor    },
+                  ]).map(o => (
+                    <button
+                      key={o.id}
+                      onClick={() => setOrientation(o.id)}
+                      className={`flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-lg border transition-all ${
+                        orientation === o.id
+                          ? "border-[#D4AF37] bg-[#D4AF37]/10 text-[#D4AF37]"
+                          : "border-white/15 text-white/40 hover:border-white/30 hover:text-white/60"
+                      }`}
+                    >
+                      <o.Icon className="w-4 h-4" />
+                      <span className="text-[10px] font-semibold">{o.label}</span>
+                      <span className="text-[9px] opacity-60">{o.sub}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Visual Theme */}
+              <div className="mb-3">
+                <p className="text-white/40 text-[10px] font-semibold uppercase tracking-wider mb-1.5">Visual Theme</p>
+                <div className="space-y-1.5">
+                  {themeOptions.map(opt => {
+                    const on = theme === opt.key;
+                    return (
+                      <button
+                        key={opt.key}
+                        onClick={() => setTheme(opt.key)}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg border transition-all ${
+                          on ? "border-[#D4AF37] bg-[#D4AF37]/8" : "border-white/10 hover:border-white/20"
+                        }`}
+                      >
+                        <div className="flex gap-0.5 shrink-0">
+                          {opt.swatches.map((c, i) => (
+                            <div key={i} className="w-4 h-4 rounded" style={{ backgroundColor: c, outline: "1px solid rgba(255,255,255,0.12)" }} />
+                          ))}
+                        </div>
+                        <span className={`text-xs font-medium flex-1 text-left transition-colors ${on ? "text-[#D4AF37]" : "text-white/55"}`}>
+                          {CARD_THEMES[opt.key].name}
+                        </span>
+                        {on && <Check className="w-3 h-3 text-[#D4AF37] shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Target Print Format */}
+              <div>
+                <p className="text-white/40 text-[10px] font-semibold uppercase tracking-wider mb-1.5">Target Print Format</p>
+                <div className="space-y-1.5">
+                  {printOptions.map(p => {
+                    const on = printFormat === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => setPrintFormat(p.id)}
+                        className={`w-full flex items-start gap-2.5 px-3 py-2 rounded-lg border transition-all text-left ${
+                          on ? "border-[#D4AF37] bg-[#D4AF37]/8" : "border-white/10 hover:border-white/20"
+                        }`}
+                      >
+                        <div className={`w-3.5 h-3.5 rounded-full border-2 shrink-0 mt-0.5 flex items-center justify-center transition-colors ${
+                          on ? "border-[#D4AF37]" : "border-white/25"
+                        }`}>
+                          {on && <div className="w-1.5 h-1.5 rounded-full bg-[#D4AF37]" />}
+                        </div>
+                        <div>
+                          <p className={`text-xs font-medium transition-colors ${on ? "text-[#D4AF37]" : "text-white/55"}`}>{p.label}</p>
+                          <p className="text-white/25 text-[9px]">{p.sub}</p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="mx-4 h-px bg-white/10" />
+
+            {/* Section 2: Mandatory Fields */}
+            <div className="px-4 py-3">
+              <p className="text-white/35 text-[10px] font-semibold uppercase tracking-widest mb-2">Mandatory</p>
+              <div className="space-y-1">
+                {mandatoryFields.map(label => (
+                  <div key={label} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg bg-white/[0.03]">
+                    <div className="w-4 h-4 rounded flex items-center justify-center bg-[#D4AF37]/20 shrink-0">
+                      <Lock className="w-2.5 h-2.5 text-[#D4AF37]" />
+                    </div>
+                    <span className="text-white/60 text-xs">{label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mx-4 h-px bg-white/10" />
+
+            {/* Section 3: Optional Fields */}
+            <div className="px-4 py-3">
+              <p className="text-white/35 text-[10px] font-semibold uppercase tracking-widest mb-2">Optional Fields</p>
+              <div className="space-y-1">
+                {OPTIONAL_FIELDS.map(f => {
+                  const on = active.has(f.key);
+                  return (
+                    <button
+                      key={f.key}
+                      onClick={() => toggle(f.key)}
+                      className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-left transition-all ${
+                        on ? "bg-[#D4AF37]/12 border border-[#D4AF37]/40" : "hover:bg-white/[0.04] border border-transparent"
+                      }`}
+                    >
+                      <div className={`w-4 h-4 rounded shrink-0 flex items-center justify-center border transition-colors ${
+                        on ? "bg-[#D4AF37] border-[#D4AF37]" : "border-white/25 bg-transparent"
+                      }`}>
+                        {on && <Check className="w-2.5 h-2.5 text-[#0A1628]" />}
+                      </div>
+                      <div className="min-w-0">
+                        <p className={`text-xs font-medium truncate transition-colors ${on ? "text-white" : "text-white/55"}`}>{f.label}</p>
+                        <p className="text-white/25 text-[10px] truncate">{f.hint}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Right panel — live preview */}
+          <div className="flex-1 flex flex-col items-center bg-[#080f1c] overflow-y-auto p-6 gap-4">
+            <p className="text-white/30 text-xs font-semibold uppercase tracking-widest">Live Preview</p>
+
+            {/* Active settings chips */}
+            <div className="flex gap-1.5 flex-wrap justify-center">
+              {[
+                orientation === "portrait" ? "↕ Portrait" : "↔ Landscape",
+                CARD_THEMES[theme].name,
+                printFormat === "pvc-cr80" ? "PVC CR80" : "A4 Grid",
+              ].map(label => (
+                <span key={label} className="text-[9px] text-white/30 px-2 py-0.5 rounded-full border border-white/10">
+                  {label}
+                </span>
+              ))}
+            </div>
+
+            {/* Card preview — scaled to fit */}
+            <div className={`${orientation === "landscape" ? "scale-[0.72]" : "scale-90"} origin-top shrink-0`}>
+              <StudentIDCard
+                student={PREVIEW_STUDENT}
+                schoolName={schoolName}
+                activeFields={orderedActive}
+                orientation={orientation}
+                theme={theme}
+                academicSession={academicSession ?? "2026–2027"}
+              />
+            </div>
+
+            {/* Field count badge */}
+            <p className="text-white/20 text-[10px] text-center">
+              {orderedActive.length === 0
+                ? "No optional fields selected — only mandatory fields will print."
+                : `${orderedActive.length} optional field${orderedActive.length !== 1 ? "s" : ""} enabled`}
+            </p>
+          </div>
+        </div>
+
+        {/* ── Footer ─────────────────────────────────────────── */}
+        <div className="px-6 py-4 border-t border-white/10 flex items-center justify-between gap-4 flex-wrap bg-[#0d1b2e] shrink-0">
+          {/* Save as Default toggle */}
+          <button onClick={() => setSaveDefault(p => !p)} className="flex items-center gap-2.5 group">
+            <div className={`w-9 h-5 rounded-full relative transition-colors ${saveDefault ? "bg-[#D4AF37]" : "bg-white/15"}`}>
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${saveDefault ? "left-4" : "left-0.5"}`} />
+            </div>
+            <div>
+              <p className={`text-xs font-semibold transition-colors ${saveDefault ? "text-[#D4AF37]" : "text-white/50 group-hover:text-white/70"}`}>
+                Save as Default Template
+              </p>
+              <p className="text-white/25 text-[10px]">Remember this layout on next visit</p>
+            </div>
+          </button>
+
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose} className="border-white/20 text-white/70 hover:bg-white/10">
+              Cancel
+            </Button>
+            <Button onClick={handleApply} className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold gap-1.5">
+              {saveDefault ? <Save className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />}
+              {saveDefault ? "Save & Apply" : "Apply"}
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -241,6 +854,151 @@ function SupportStaffIDCard({ staff, schoolName }: { staff: any; schoolName: str
   );
 }
 
+// ─── Print execution utility ─────────────────────────────────────────────────
+
+/**
+ * Injects a dynamic @media print stylesheet, fires window.print(),
+ * then self-cleans on the `afterprint` event.
+ *
+ * PVC CR80  — 1 card per page, exact 85.6×54mm (or 54×85.6mm portrait).
+ * A4 Grid   — 2-col grid on A4, dashed cut-mark outlines per card.
+ */
+function executePrint(
+  format: CardTemplate["printFormat"],
+  orientation: CardTemplate["orientation"],
+  filterIds?: Set<number>,   // when provided, only cards with data-selected are printed
+) {
+  const STYLE_ID = "benius-print-style";
+  document.getElementById(STYLE_ID)?.remove();
+
+  // CSS pixel equivalents at 96 dpi (1mm = 3.7795px):
+  //   Portrait card  w-72      = 288 px  →  landscape CR80 85.6mm≈323px  scale≈0.89
+  //   Portrait card  w-72      = 288 px  →  portrait  CR80 54mm  ≈204px  scale≈0.71
+  //   Landscape card w-[420px] = 420 px  →  landscape CR80 85.6mm≈323px  scale≈0.77
+  //   Landscape card w-[420px] = 420 px  →  portrait  CR80 54mm  ≈204px  — never used
+  const isLandscape = orientation === "landscape";
+  const cardPx = isLandscape ? 420 : 288;
+
+  let css: string;
+
+  if (format === "pvc-cr80") {
+    // Physical page matches card size exactly
+    const [pw, ph] = isLandscape ? ["85.6mm", "54mm"] : ["54mm", "85.6mm"];
+    // page long-side in px: 85.6mm≈323px (landscape) or 85.6mm≈323px (portrait height)
+    const pageLongPx = isLandscape ? 323 : 323;
+    const scale = (pageLongPx / cardPx).toFixed(4);
+
+    css = `
+@media print {
+  @page { size: ${pw} ${ph}; margin: 0; }
+
+  /* Hide everything except the print area */
+  body { visibility: hidden; }
+  #print-area,
+  #print-area * { visibility: visible !important; }
+
+  #print-area {
+    position: fixed !important;
+    inset: 0 !important;
+    display: block !important;
+  }
+
+  /* One card occupies the full physical page */
+  [data-print-card] {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: ${pw} !important;
+    height: ${ph} !important;
+    overflow: hidden !important;
+    /* Force page break after every card except the last */
+    break-after: page;
+    page-break-after: always;
+  }
+  [data-print-card]:last-child {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  /* Scale the card to fit the physical card dimension */
+  [data-print-card] > * {
+    transform: scale(${scale}) !important;
+    transform-origin: center !important;
+    box-shadow: none !important;
+    flex-shrink: 0 !important;
+  }
+}`;
+  } else {
+    // A4 grid — 2 columns for portrait cards, 3 columns for landscape cards
+    const cols   = isLandscape ? 3 : 2;
+    // usable width at 10mm margin: 190mm portrait A4
+    const gap    = 6;   // mm
+    const margin = 10;  // mm per side
+    const usable = 210 - margin * 2;                          // 190mm
+    const cellW  = (usable - gap * (cols - 1)) / cols;        // mm per cell
+    const cellPx = cellW * 3.7795;                            // px equivalent
+    const scale  = (cellPx / cardPx * 0.94).toFixed(4);      // 6% breathing room
+
+    css = `
+@media print {
+  @page { size: A4 portrait; margin: ${margin}mm; }
+
+  body { visibility: hidden; }
+  #print-area,
+  #print-area * { visibility: visible !important; }
+
+  #print-area {
+    position: fixed !important;
+    inset: 0 !important;
+    display: grid !important;
+    grid-template-columns: repeat(${cols}, 1fr) !important;
+    gap: ${gap}mm !important;
+    width: ${usable}mm !important;
+    align-items: start !important;
+  }
+
+  /* Each card cell: no page-break inside, dashed cut-mark border */
+  [data-print-card] {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    overflow: visible !important;
+    /* Dashed cut-guide outline */
+    outline: 0.35mm dashed #aaa !important;
+    outline-offset: 2mm !important;
+    padding: 2mm !important;
+  }
+
+  [data-print-card] > * {
+    transform: scale(${scale}) !important;
+    transform-origin: top center !important;
+    box-shadow: none !important;
+    flex-shrink: 0 !important;
+  }
+}`;
+  }
+
+  // If filtering to selected cards only, hide the rest at print time
+  if (filterIds && filterIds.size > 0) {
+    css += `\n@media print { [data-print-card]:not([data-selected]) { display: none !important; } }`;
+  }
+
+  const styleEl = document.createElement("style");
+  styleEl.id = STYLE_ID;
+  styleEl.textContent = css;
+  document.head.appendChild(styleEl);
+
+  const cleanup = () => {
+    styleEl.remove();
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+
+  window.print();
+}
+
 // ─── Sub-module panels ───────────────────────────────────────────────────────
 
 function StudentPanel({
@@ -257,11 +1015,44 @@ function StudentPanel({
   isArchiveMode: boolean;
 }) {
   const { toast } = useToast();
+  const { sessions } = useSessionView();
+  // Always use the school's currently active session for printed cards,
+  // regardless of which session the admin has selected in the session switcher.
+  const academicSession = sessions.find(s => s.isActive)?.sessionName ?? null;
   const [innerTab, setInnerTab] = useState<"search" | "reissue">("search");
   const [cls, setCls] = useState("");
   const [section, setSection] = useState("");
   const [q, setQ] = useState("");
   const [searched, setSearched] = useState(false);
+
+  // ── Template state ────────────────────────────────────────────────────────
+  const [template, setTemplate] = useState<CardTemplate>(() => loadTemplate());
+  const [showConfig, setShowConfig] = useState(false);
+
+  // ── Card selection ────────────────────────────────────────────────────────
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+  const toggleSelect = useCallback((id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Clear selection whenever the result set changes (new search / tab switch)
+  useEffect(() => { setSelectedIds(new Set()); }, [data]);
+
+  const handleApplyTemplate = useCallback((tpl: CardTemplate, save: boolean) => {
+    setTemplate(tpl);
+    if (save) saveTemplate(tpl);
+    setShowConfig(false);
+    toast({
+      title: save ? "✅ Template saved" : "✅ Template applied",
+      description: `${tpl.activeFields.length} optional field${tpl.activeFields.length !== 1 ? "s" : ""} active on ID cards.`,
+      duration: 3000,
+    });
+  }, [toast]);
 
   const params = new URLSearchParams();
   if (cls && cls !== "all") params.set("cls", cls);
@@ -362,17 +1153,87 @@ function StudentPanel({
               <Search className="w-4 h-4 mr-1" /> Search
             </Button>
             {data && data.data.length > 0 && (
-              <Button
-                variant="outline"
-                className="border-white/20 text-white hover:bg-white/10"
-                onClick={() => { window.print(); toast({ title: "Print dialog opened" }); }}
-                data-testid="button-print-student-cards"
-              >
-                <Printer className="w-4 h-4 mr-1" /> Print All
-              </Button>
+              <>
+                {/* Print Selected — only visible when ≥1 card is checked */}
+                {selectedIds.size > 0 && (
+                  <Button
+                    className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold gap-1.5"
+                    onClick={() => {
+                      executePrint(template.printFormat, template.orientation, selectedIds);
+                      toast({
+                        title: `🖨️ Printing ${selectedIds.size} selected card${selectedIds.size !== 1 ? "s" : ""}`,
+                        description: template.printFormat === "pvc-cr80"
+                          ? "One card per page · CR80 85.6 × 54 mm"
+                          : "A4 sheet · dashed cut guides included",
+                        duration: 4000,
+                      });
+                    }}
+                    data-testid="button-print-selected"
+                  >
+                    <Printer className="w-4 h-4" />
+                    Print Selected ({selectedIds.size})
+                  </Button>
+                )}
+                {/* Print All */}
+                <Button
+                  variant="outline"
+                  className="border-white/20 text-white hover:bg-white/10"
+                  onClick={() => {
+                    executePrint(template.printFormat, template.orientation);
+                    toast({
+                      title: template.printFormat === "pvc-cr80"
+                        ? "🖨️ PVC Card print started"
+                        : "🖨️ A4 Grid print started",
+                      description: template.printFormat === "pvc-cr80"
+                        ? "One card per page · CR80 85.6 × 54 mm"
+                        : "Multi-card A4 sheet · dashed cut guides included",
+                      duration: 4000,
+                    });
+                  }}
+                  data-testid="button-print-student-cards"
+                >
+                  <Printer className="w-4 h-4 mr-1" /> Print All
+                </Button>
+              </>
             )}
           </div>
+
+          {/* Configure Template row */}
+          <div className="flex items-center justify-between pt-1 border-t border-white/8">
+            <div className="flex items-center gap-2">
+              <p className="text-white/35 text-xs">
+                Active optional fields:&nbsp;
+                {template.activeFields.length === 0
+                  ? <span className="text-white/25 italic">none</span>
+                  : template.activeFields
+                      .map(k => OPTIONAL_FIELDS.find(f => f.key === k)?.label)
+                      .filter(Boolean)
+                      .join(", ")
+                }
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => setShowConfig(true)}
+              className="border-[#D4AF37]/40 text-[#D4AF37] hover:bg-[#D4AF37]/10 hover:border-[#D4AF37]/70 h-8 px-3 text-xs gap-1.5"
+              data-testid="button-configure-template"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              Configure Template
+            </Button>
+          </div>
         </div>
+      )}
+
+      {/* Configure Template Modal */}
+      {showConfig && (
+        <ConfigureTemplateModal
+          initial={template}
+          schoolName={schoolName}
+          academicSession={academicSession}
+          onApply={handleApplyTemplate}
+          onClose={() => setShowConfig(false)}
+        />
       )}
 
       {/* Re-issuance banner */}
@@ -389,7 +1250,16 @@ function StudentPanel({
             </div>
             {reissueStudents.length > 0 && (
               <Button
-                onClick={() => { window.print(); toast({ title: "Print dialog opened", description: "After printing, click 'Mark All Printed' to clear the flags." }); }}
+                onClick={() => {
+                  executePrint(template.printFormat, template.orientation);
+                  toast({
+                    title: template.printFormat === "pvc-cr80"
+                      ? "🖨️ PVC Card print started"
+                      : "🖨️ A4 Grid print started",
+                    description: "After printing, click 'Mark All Printed' to clear the flags.",
+                    duration: 4000,
+                  });
+                }}
                 className="bg-orange-500 hover:bg-orange-400 text-white font-semibold shrink-0"
                 data-testid="button-print-reissue"
               >
@@ -426,10 +1296,91 @@ function StudentPanel({
               : <p className="text-white/40">No students found. Try different filters.</p>}
           </div>
         ) : (
-          <div className="flex flex-wrap gap-4 pt-2" id="print-area">
-            {data.data.slice(0, 20).map(s => (
-              <StudentIDCard key={s.id} student={s} schoolName={schoolName} showReissueBanner={innerTab === "reissue"} />
-            ))}
+          {/* Selection summary bar */}
+          {(() => {
+            const all = data.data.slice(0, 20);
+            const allSelected = all.length > 0 && all.every(s => selectedIds.has(s.id));
+            const someSelected = selectedIds.size > 0 && !allSelected;
+            return (
+              <div className="flex items-center gap-3 py-1 px-1">
+                {/* Select All checkbox */}
+                <button
+                  onClick={() => {
+                    if (allSelected) setSelectedIds(new Set());
+                    else setSelectedIds(new Set(all.map(s => s.id)));
+                  }}
+                  className="flex items-center gap-2 text-xs text-white/50 hover:text-white/80 transition-colors"
+                >
+                  <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-all ${
+                    allSelected ? "bg-[#D4AF37] border-[#D4AF37]"
+                    : someSelected ? "border-[#D4AF37]/60 bg-[#D4AF37]/15"
+                    : "border-white/30 bg-transparent"
+                  }`}>
+                    {allSelected && <Check className="w-2.5 h-2.5 text-[#0A1628]" />}
+                    {someSelected && <div className="w-2 h-0.5 rounded bg-[#D4AF37]" />}
+                  </div>
+                  {allSelected ? "Deselect All" : "Select All"}
+                </button>
+
+                {selectedIds.size > 0 && (
+                  <>
+                    <span className="text-white/20 text-xs">·</span>
+                    <span className="text-[#D4AF37] text-xs font-semibold">
+                      {selectedIds.size} of {all.length} selected
+                    </span>
+                    <button
+                      onClick={() => setSelectedIds(new Set())}
+                      className="text-white/30 hover:text-white/60 text-xs transition-colors"
+                    >
+                      Clear
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Card grid */}
+          <div className="flex flex-wrap gap-4 pt-1" id="print-area">
+            {data.data.slice(0, 20).map(s => {
+              const isSelected = selectedIds.has(s.id);
+              return (
+                <div
+                  key={s.id}
+                  data-print-card
+                  {...(isSelected ? { "data-selected": "" } : {})}
+                  className="relative group cursor-pointer"
+                  onClick={() => toggleSelect(s.id)}
+                >
+                  {/* Checkbox overlay — top-left of card */}
+                  <div
+                    className={`absolute top-2 left-2 z-10 w-5 h-5 rounded border-2 flex items-center justify-center
+                      transition-all pointer-events-none shadow-sm
+                      ${isSelected
+                        ? "bg-[#D4AF37] border-[#D4AF37] opacity-100"
+                        : "bg-black/55 border-white/45 opacity-0 group-hover:opacity-100"
+                      }`}
+                  >
+                    {isSelected && <Check className="w-3 h-3 text-[#0A1628]" />}
+                  </div>
+
+                  {/* Gold ring when selected */}
+                  {isSelected && (
+                    <div className="absolute inset-0 rounded-xl ring-2 ring-[#D4AF37] ring-offset-2 ring-offset-[#0d1b2e] pointer-events-none z-20" />
+                  )}
+
+                  <StudentIDCard
+                    student={s}
+                    schoolName={schoolName}
+                    showReissueBanner={innerTab === "reissue"}
+                    activeFields={template.activeFields}
+                    orientation={template.orientation}
+                    theme={template.theme}
+                    academicSession={academicSession}
+                  />
+                </div>
+              );
+            })}
           </div>
         )
       )}
@@ -456,11 +1407,15 @@ function TeacherPanel({
   const [q, setQ] = useState("");
   const [searched, setSearched] = useState(false);
 
+  // Use the flat-array teachers endpoint (paginated /api/admin/teachers returns { data, total })
   const { data: teachers, isLoading } = useQuery<any[]>({
-    queryKey: ["/api/admin/teachers"],
+    queryKey: ["/api/schools", schoolId, "teachers"],
     queryFn: async () => {
-      const r = await fetch("/api/admin/teachers", { credentials: "include" });
-      return r.ok ? r.json() : [];
+      const r = await fetch(`/api/schools/${schoolId}/teachers`, { credentials: "include" });
+      if (!r.ok) return [];
+      const result = await r.json();
+      // Guard: some endpoints return { data: [] } — unwrap if needed
+      return Array.isArray(result) ? result : (result?.data ?? []);
     },
     enabled: !!schoolId,
     staleTime: 60_000,
@@ -696,15 +1651,15 @@ export default function IdCardGen({
   const activeMod = SUB_MODULES.find(m => m.id === active)!;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* Page header */}
       <div>
         <h2 className="text-xl font-bold text-white">ID Card Generator</h2>
         <p className="text-white/50 text-sm">Generate and print ID cards for students, teachers, and support staff</p>
       </div>
 
-      {/* Sub-module tabs */}
-      <div className="flex gap-2 flex-wrap">
+      {/* ── Three card boxes ─────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {visibleMods.map(mod => {
           const Icon = mod.icon;
           const isActive = active === mod.id;
@@ -713,26 +1668,56 @@ export default function IdCardGen({
               key={mod.id}
               onClick={() => switchTab(mod.id)}
               data-testid={`tab-idcard-${mod.id}`}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all border ${
+              className={[
+                "group relative flex flex-col items-start gap-3 rounded-2xl border-2 p-5 text-left transition-all duration-200 focus:outline-none",
                 isActive
-                  ? "text-[#0A1628] shadow-lg"
-                  : "bg-[#1A2942] text-white/60 hover:text-white border-white/10 hover:border-white/20"
-              }`}
-              style={isActive ? { backgroundColor: mod.accent, borderColor: mod.accent } : undefined}
+                  ? `${mod.borderClass} bg-gradient-to-br ${mod.bgClass} ${mod.glowClass}`
+                  : "border-white/10 bg-[#111c2e] hover:border-white/25 hover:bg-[#152035]",
+              ].join(" ")}
             >
-              <Icon className="w-4 h-4" />
-              {mod.label}
+              {/* Icon circle */}
+              <div
+                className="flex h-12 w-12 items-center justify-center rounded-xl transition-colors"
+                style={{
+                  backgroundColor: isActive ? `${mod.accentHex}22` : "rgba(255,255,255,0.06)",
+                  border: `1.5px solid ${isActive ? mod.accentHex + "55" : "rgba(255,255,255,0.08)"}`,
+                }}
+              >
+                <Icon
+                  className="w-6 h-6 transition-colors"
+                  style={{ color: isActive ? mod.accentHex : "rgba(255,255,255,0.45)" }}
+                />
+              </div>
+
+              {/* Text */}
+              <div className="space-y-1 min-w-0">
+                <p
+                  className="text-sm font-bold leading-tight transition-colors"
+                  style={{ color: isActive ? mod.accentHex : "rgba(255,255,255,0.85)" }}
+                >
+                  {mod.label}
+                </p>
+                <p className={`text-xs leading-snug ${isActive ? "text-white/60" : "text-white/35 group-hover:text-white/50"}`}>
+                  {mod.desc}
+                </p>
+              </div>
+
+              {/* Active indicator bar at bottom */}
+              {isActive && (
+                <span
+                  className="absolute bottom-0 left-4 right-4 h-0.5 rounded-full"
+                  style={{ backgroundColor: mod.accentHex }}
+                />
+              )}
             </button>
           );
         })}
       </div>
 
-      {/* Divider with active sub-module label */}
+      {/* Active module divider */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2">
-          <activeMod.icon className={`w-4 h-4 ${activeMod.textAccent}`} />
-          <span className={`text-sm font-semibold ${activeMod.textAccent}`}>{activeMod.label}</span>
-        </div>
+        <activeMod.icon className={`w-4 h-4 ${activeMod.textAccent}`} />
+        <span className={`text-sm font-semibold ${activeMod.textAccent}`}>{activeMod.label}</span>
         <div className="flex-1 h-px bg-white/10" />
       </div>
 
