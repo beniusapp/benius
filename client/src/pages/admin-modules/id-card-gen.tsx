@@ -854,6 +854,74 @@ function SupportStaffIDCard({ staff, schoolName }: { staff: any; schoolName: str
   );
 }
 
+// ─── PDF export dimension helpers (pure — exported for unit tests) ───────────
+
+/**
+ * Computes the jsPDF page dimensions for a single PVC CR80 card page.
+ *
+ * The page width is fixed to the CR80 reference width (85.6 mm landscape /
+ * 54 mm portrait). The page height is derived from the canvas aspect ratio so
+ * the card fills the page exactly — no blank space, no distortion.
+ */
+export function computePvcPageDimensions(
+  canvasWidth:  number,
+  canvasHeight: number,
+  orientation:  "portrait" | "landscape",
+): { pw: number; ph: number; pageOri: "portrait" | "landscape" } {
+  const refW = orientation === "landscape" ? 85.6 : 54;
+  const ar = canvasHeight / canvasWidth;
+  const pw = refW;
+  const ph = parseFloat((pw * ar).toFixed(4));
+  const pageOri: "portrait" | "landscape" = ph > pw ? "portrait" : "landscape";
+  return { pw, ph, pageOri };
+}
+
+/**
+ * Computes all layout values for an A4-grid PDF export.
+ *
+ * Returns page dimensions, column/row counts, cells-per-page, cell widths,
+ * the representative cell height (used for row spacing), and a flat list of
+ * (x, y, cellH) placements — one entry per canvas, in page order.
+ */
+export function computeA4GridLayout(
+  canvasAspectRatios: number[],   // height/width for each canvas, in order
+  orientation: "portrait" | "landscape",
+): {
+  pgW: number;
+  pgH: number;
+  cols: number;
+  rows: number;
+  perPage: number;
+  cellW: number;
+  cellH0: number;
+  placements: { x: number; y: number; cellH: number; pageIndex: number }[];
+} {
+  const pgW = orientation === "landscape" ? 297 : 210;
+  const pgH = orientation === "landscape" ? 210 : 297;
+  const cols = orientation === "landscape" ? 3 : 2;
+  const margin = 10;
+  const gap = 6;
+  const cellW = (pgW - margin * 2 - gap * (cols - 1)) / cols;
+
+  const ar0 = canvasAspectRatios[0] ?? 1.585;
+  const cellH0 = cellW * ar0;
+  const rows = Math.max(1, Math.floor((pgH - margin * 2 + gap) / (cellH0 + gap)));
+  const perPage = cols * rows;
+
+  const placements = canvasAspectRatios.map((ar, i) => {
+    const posInPage = i % perPage;
+    const col = posInPage % cols;
+    const row = Math.floor(posInPage / cols);
+    const x = margin + col * (cellW + gap);
+    const cellH = cellW * ar;
+    const y = margin + row * (cellH0 + gap);
+    const pageIndex = Math.floor(i / perPage);
+    return { x, y, cellH, pageIndex };
+  });
+
+  return { pgW, pgH, cols, rows, perPage, cellW, cellH0, placements };
+}
+
 // ─── Print execution utility ─────────────────────────────────────────────────
 
 /**
