@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   CreditCard, Search, Download, RefreshCw, AlertTriangle,
@@ -1012,6 +1012,11 @@ async function executeExport(
     //     html2canvas finds it at (0,0) every time — no scroll arithmetic.
     //   - z-index:−1 hides it behind the page; pointer-events:none prevents
     //     any accidental interaction.
+
+    // Wait for all web fonts to finish loading before any capture so that
+    // font metrics are stable and text is not measured with fallback glyphs.
+    await document.fonts.ready;
+
     const canvases: HTMLCanvasElement[] = [];
     for (let i = 0; i < cardEls.length; i++) {
       setProgress(Math.round((i / cardEls.length) * 85));
@@ -1035,9 +1040,40 @@ async function executeExport(
         allowTaint: true,
         backgroundColor: null,
         logging: false,
-        // Clone is at fixed (0,0) — no scroll offset needed
+        // scrollY: compensate for any page scroll so html2canvas maps the
+        // fixed-position clone to the correct document coordinate.
         scrollX: 0,
-        scrollY: 0,
+        scrollY: -window.scrollY,
+        // windowWidth/windowHeight scoped to the card so html2canvas doesn't
+        // use the full viewport width when computing line wrapping.
+        windowWidth:  clone.scrollWidth,
+        windowHeight: clone.scrollHeight,
+        // onclone: html2canvas makes its own internal copy of the DOM before
+        // rasterising.  We patch every text node in that copy to:
+        //   • set an explicit line-height so browser-default "normal" is never
+        //     resolved differently by the canvas renderer than by the browser,
+        //   • add a small vertical padding so ascenders / descenders aren't
+        //     shaved off by a tightly-measured container,
+        //   • clear overflow:hidden on <p> and <span> nodes — Tailwind's
+        //     `truncate` class sets overflow:hidden which html2canvas treats
+        //     as a clip rect and cuts off the top of the next row of glyphs.
+        onclone: (_clonedDoc: Document, clonedEl: HTMLElement) => {
+          // Fix every element inside the card
+          clonedEl.querySelectorAll<HTMLElement>("*").forEach(el => {
+            const cs = window.getComputedStyle(el);
+            // Force explicit line-height on text-bearing nodes
+            if (["P", "SPAN", "DIV"].includes(el.tagName)) {
+              el.style.lineHeight = "1.2";
+              el.style.paddingTop    = el.style.paddingTop    || "1px";
+              el.style.paddingBottom = el.style.paddingBottom || "1px";
+            }
+            // Remove overflow:hidden except on circular avatar containers
+            // (those need it to clip the photo to a circle shape).
+            if (cs.overflow === "hidden" && !el.classList.contains("rounded-full")) {
+              el.style.overflow = "visible";
+            }
+          });
+        },
       });
       canvases.push(canvas);
       host.remove();
@@ -1444,110 +1480,274 @@ function TeacherPanel({
 }) {
   const { toast } = useToast();
   const [q, setQ] = useState("");
-  const [searched, setSearched] = useState(false);
+  const [designation, setDesignation] = useState("");
+  const [subject, setSubject] = useState("");
+  const [joiningYear, setJoiningYear] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
 
-  // Use the flat-array teachers endpoint (paginated /api/admin/teachers returns { data, total })
+  const toggleSelect = useCallback((id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Fetch all teachers immediately from the teacher registry — no search gate.
   const { data: teachers, isLoading } = useQuery<any[]>({
     queryKey: ["/api/schools", schoolId, "teachers"],
     queryFn: async () => {
       const r = await fetch(`/api/schools/${schoolId}/teachers`, { credentials: "include" });
       if (!r.ok) return [];
       const result = await r.json();
-      // Guard: some endpoints return { data: [] } — unwrap if needed
       return Array.isArray(result) ? result : (result?.data ?? []);
     },
     enabled: !!schoolId,
     staleTime: 60_000,
   });
 
-  const filtered = (teachers ?? []).filter(t => {
-    if (!q) return true;
-    const lower = q.toLowerCase();
-    return (
-      t.fullName?.toLowerCase().includes(lower) ||
-      t.digitalTeacherId?.toLowerCase().includes(lower) ||
-      t.department?.toLowerCase().includes(lower) ||
-      t.subject?.toLowerCase().includes(lower) ||
-      t.designation?.toLowerCase().includes(lower)
-    );
-  });
+  // Derive dropdown options from the loaded teacher list
+  const designations = useMemo(() => {
+    const s = new Set<string>();
+    (teachers ?? []).forEach(t => { if (t.designation) s.add(t.designation); });
+    return Array.from(s).sort();
+  }, [teachers]);
 
-  const displayed = q ? filtered : (searched ? filtered : []);
+  const subjects = useMemo(() => {
+    const s = new Set<string>();
+    (teachers ?? []).forEach(t => {
+      if (t.subject) s.add(t.subject);
+      if (t.department) s.add(t.department);
+    });
+    return Array.from(s).sort();
+  }, [teachers]);
+
+  const joiningYears = useMemo(() => {
+    const s = new Set<string>();
+    (teachers ?? []).forEach(t => {
+      if (t.joiningDate) s.add(String(new Date(t.joiningDate).getFullYear()));
+    });
+    return Array.from(s).sort((a, b) => Number(b) - Number(a));
+  }, [teachers]);
+
+  // Apply all active filters client-side
+  const filtered = useMemo(() => (teachers ?? []).filter(t => {
+    if (q) {
+      const lower = q.toLowerCase();
+      const match =
+        t.fullName?.toLowerCase().includes(lower) ||
+        t.digitalTeacherId?.toLowerCase().includes(lower) ||
+        t.department?.toLowerCase().includes(lower) ||
+        t.subject?.toLowerCase().includes(lower) ||
+        t.designation?.toLowerCase().includes(lower);
+      if (!match) return false;
+    }
+    if (designation && designation !== "all" && t.designation !== designation) return false;
+    if (subject && subject !== "all") {
+      if (t.subject !== subject && t.department !== subject) return false;
+    }
+    if (joiningYear && joiningYear !== "all") {
+      if (!t.joiningDate) return false;
+      if (String(new Date(t.joiningDate).getFullYear()) !== joiningYear) return false;
+    }
+    return true;
+  }), [teachers, q, designation, subject, joiningYear]);
+
+  const displayed = filtered.slice(0, 20);
+
+  // Clear selection whenever the visible set changes
+  useEffect(() => { setSelectedIds(new Set()); }, [teachers, q, designation, subject, joiningYear]);
 
   return (
     <div className="space-y-4">
-      {/* Search bar */}
-      <div className="rounded-xl border border-sky-500/30 bg-[#1A2942] p-5">
+      {/* Filters */}
+      <div className="rounded-xl border border-sky-500/30 bg-[#1A2942] p-5 space-y-3">
         <div className="flex flex-wrap gap-3 items-end">
-          <div className="flex-1 min-w-[220px]">
+          {/* Text search */}
+          <div className="flex-1 min-w-[180px]">
             <label className="block text-xs text-white/60 mb-1">Search Teacher</label>
             <Input
               value={q}
               onChange={e => setQ(e.target.value)}
-              placeholder="Name, Teacher ID, Department…"
+              placeholder="Name or Teacher ID..."
               className="bg-[#0A1628] border-white/20 text-white"
               data-testid="input-teacher-search"
-              onKeyDown={e => e.key === "Enter" && setSearched(true)}
             />
           </div>
-          <Button
-            onClick={() => setSearched(true)}
-            className="bg-sky-500 hover:bg-sky-400 text-white font-semibold"
-            data-testid="button-search-teachers"
-          >
-            <Search className="w-4 h-4 mr-1" /> Search
-          </Button>
-          {(searched || q) && filtered.length > 0 && (
+
+          {/* Designation filter */}
+          <div>
+            <label className="block text-xs text-white/60 mb-1">Designation</label>
+            <Select value={designation} onValueChange={setDesignation}>
+              <SelectTrigger className="w-36 bg-[#0A1628] border-white/20 text-white" data-testid="select-teacher-designation">
+                <SelectValue placeholder="All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                {designations.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Subject / Department filter */}
+          <div>
+            <label className="block text-xs text-white/60 mb-1">Subject / Dept</label>
+            <Select value={subject} onValueChange={setSubject}>
+              <SelectTrigger className="w-36 bg-[#0A1628] border-white/20 text-white" data-testid="select-teacher-subject">
+                <SelectValue placeholder="All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                {subjects.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Joining Year filter */}
+          <div>
+            <label className="block text-xs text-white/60 mb-1">Joining Year</label>
+            <Select value={joiningYear} onValueChange={setJoiningYear}>
+              <SelectTrigger className="w-32 bg-[#0A1628] border-white/20 text-white" data-testid="select-teacher-joining-year">
+                <SelectValue placeholder="All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                {joiningYears.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Export button — shown once cards are visible */}
+          {displayed.length > 0 && (
             <Button
-              variant="outline"
-              className="border-white/20 text-white hover:bg-white/10 gap-1.5"
+              className="bg-sky-500 hover:bg-sky-400 text-white font-semibold gap-1.5"
               disabled={isExporting}
               onClick={() => {
-                toast({ title: "⬇️ Preparing cards…", description: "PDF will download automatically.", duration: 3000 });
-                executeExport("pvc-cr80", "portrait", undefined, setIsExporting, setExportProgress)
-                  .catch(() => toast({ title: "Export failed", variant: "destructive" }));
+                const ids = selectedIds.size > 0 ? selectedIds : undefined;
+                const count = ids ? ids.size : displayed.length;
+                toast({
+                  title: `⬇️ Preparing ${count} card${count !== 1 ? "s" : ""}…`,
+                  description: "PDF will download automatically.",
+                  duration: 3000,
+                });
+                executeExport("pvc-cr80", "portrait", ids, setIsExporting, setExportProgress)
+                  .catch(() => toast({ title: "Export failed", description: "Please try again.", variant: "destructive" }));
               }}
               data-testid="button-export-teacher-cards"
             >
               {isExporting
-                ? <><Loader2 className="w-4 h-4 animate-spin" />{exportProgress < 100 ? `${exportProgress}%` : "Saving…"}</>
-                : <><Download className="w-4 h-4" /> Export PDF</>
+                ? <><Loader2 className="w-4 h-4 animate-spin" />{exportProgress < 100 ? `Exporting ${exportProgress}%` : "Saving…"}</>
+                : <><Download className="w-4 h-4" />{selectedIds.size > 0 ? `Export Selected (${selectedIds.size})` : "Export PDF"}</>
               }
             </Button>
           )}
         </div>
       </div>
 
-      {/* Card grid */}
-      {(searched || q) && (
-        isLoading ? (
-          <div className="flex items-center justify-center py-16 gap-3 text-white/40">
-            <Loader2 className="w-5 h-5 animate-spin" /> Loading teachers…
-          </div>
-        ) : displayed.length === 0 ? (
-          <div className="rounded-xl border border-white/10 bg-[#1A2942] py-16 text-center">
-            <CreditCard className="w-10 h-10 mx-auto mb-3 text-white/20" />
-            <p className="text-white/40">No teachers found matching "{q}".</p>
-          </div>
-        ) : (
-          <div className="flex flex-wrap gap-4 pt-2" id="printable-id-card-area">
-            {displayed.slice(0, 20).map(t => (
-              <div key={t.id} data-print-card>
-                <TeacherIDCard teacher={t} schoolName={schoolName} />
-              </div>
-            ))}
-          </div>
-        )
-      )}
-
-      {!searched && !q && !isLoading && (
+      {/* States: loading / empty registry / no filter match / card grid */}
+      {isLoading ? (
+        <div className="flex items-center justify-center py-16 gap-3 text-white/40">
+          <Loader2 className="w-5 h-5 animate-spin" /> Loading teachers…
+        </div>
+      ) : !teachers || teachers.length === 0 ? (
         <div className="rounded-xl border border-white/10 bg-[#1A2942] py-16 text-center">
           <Users className="w-10 h-10 mx-auto mb-3 text-white/20" />
-          <p className="text-white/40">Search for teachers to preview and print ID cards</p>
-          <p className="text-white/25 text-sm mt-1">Filter by name, Teacher ID, or department</p>
+          <p className="text-white/40">No teachers found in the registry.</p>
         </div>
+      ) : displayed.length === 0 ? (
+        <div className="rounded-xl border border-white/10 bg-[#1A2942] py-16 text-center">
+          <CreditCard className="w-10 h-10 mx-auto mb-3 text-white/20" />
+          <p className="text-white/40">No teachers match the selected filters.</p>
+        </div>
+      ) : (
+        <>
+          {/* Selection summary bar */}
+          {(() => {
+            const allSelected = displayed.length > 0 && displayed.every(t => selectedIds.has(t.id));
+            const someSelected = selectedIds.size > 0 && !allSelected;
+            return (
+              <div className="flex items-center gap-3 py-1 px-1">
+                <button
+                  onClick={() => {
+                    if (allSelected) setSelectedIds(new Set());
+                    else setSelectedIds(new Set(displayed.map(t => t.id)));
+                  }}
+                  className="flex items-center gap-2 text-xs text-white/50 hover:text-white/80 transition-colors"
+                >
+                  <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-all ${
+                    allSelected ? "bg-sky-500 border-sky-500"
+                    : someSelected ? "border-sky-400/60 bg-sky-400/15"
+                    : "border-white/30 bg-transparent"
+                  }`}>
+                    {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                    {someSelected && <div className="w-2 h-0.5 rounded bg-sky-400" />}
+                  </div>
+                  {allSelected ? "Deselect All" : "Select All"}
+                </button>
+
+                {selectedIds.size > 0 && (
+                  <>
+                    <span className="text-white/20 text-xs">·</span>
+                    <span className="text-sky-400 text-xs font-semibold">
+                      {selectedIds.size} of {displayed.length} selected
+                    </span>
+                    <button
+                      onClick={() => setSelectedIds(new Set())}
+                      className="text-white/30 hover:text-white/60 text-xs transition-colors"
+                    >
+                      Clear
+                    </button>
+                  </>
+                )}
+
+                <span className="ml-auto text-white/25 text-xs">
+                  {filtered.length} teacher{filtered.length !== 1 ? "s" : ""}
+                  {filtered.length > 20 ? " · showing first 20" : ""}
+                </span>
+              </div>
+            );
+          })()}
+
+          {/* Card grid */}
+          <div className="flex flex-wrap gap-4 pt-1" id="printable-id-card-area">
+            {displayed.map(t => {
+              const isSelected = selectedIds.has(t.id);
+              return (
+                <div
+                  key={t.id}
+                  data-print-card
+                  {...(isSelected ? { "data-selected": "" } : {})}
+                  className="relative group cursor-pointer"
+                  onClick={() => toggleSelect(t.id)}
+                >
+                  {/* Checkbox overlay */}
+                  <div className={`absolute top-2 left-2 z-10 w-5 h-5 rounded border-2 flex items-center justify-center
+                    transition-all pointer-events-none shadow-sm
+                    ${isSelected
+                      ? "bg-sky-500 border-sky-500 opacity-100"
+                      : "bg-black/55 border-white/45 opacity-0 group-hover:opacity-100"
+                    }`}
+                  >
+                    {isSelected && <Check className="w-3 h-3 text-white" />}
+                  </div>
+
+                  {/* Sky-blue selection ring */}
+                  {isSelected && (
+                    <div className="absolute inset-0 rounded-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-[#0d1b2e] pointer-events-none z-20" />
+                  )}
+
+                  <TeacherIDCard teacher={t} schoolName={schoolName} />
+                </div>
+              );
+            })}
+          </div>
+
+          <p className="text-white/25 text-sm mt-1 text-center">
+            Up to 20 cards shown at a time · Use filters for batch export
+          </p>
+        </>
       )}
     </div>
   );
