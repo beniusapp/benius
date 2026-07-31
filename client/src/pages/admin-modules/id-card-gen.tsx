@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
-  CreditCard, Search, Printer, RefreshCw, AlertTriangle,
+  CreditCard, Search, Download, RefreshCw, AlertTriangle,
   GraduationCap, Users, UserCog, Loader2,
   SlidersHorizontal, Lock, X, Check, Save,
   Smartphone, Monitor, LayoutTemplate,
@@ -886,125 +886,184 @@ function SupportStaffIDCard({ staff, schoolName }: { staff: any; schoolName: str
  *     done BEFORE window.print() is called (same JS tick), the print engine
  *     always sees the correct hidden state.
  */
-function executePrint(
+/**
+ * Exports ID cards directly as a downloaded PDF — no print dialog.
+ *
+ * Strategy:
+ *   • html2canvas renders each card element (already visible in the DOM,
+ *     so all Tailwind CSS and cached images apply automatically) to a canvas.
+ *   • jsPDF assembles the canvases into a PDF and triggers a direct download.
+ *   • PVC CR80: one card per page, page sized exactly to the card dimensions.
+ *   • A4 grid : cards arranged in a 2-col (portrait) or 3-col (landscape) grid.
+ *
+ * @param setExporting  state setter — true while async work is running
+ * @param setProgress   0-100 progress setter shown on the button
+ */
+async function executeExport(
   format: CardTemplate["printFormat"],
   orientation: CardTemplate["orientation"],
-  filterIds?: Set<number>,
+  filterIds: Set<number> | undefined,
+  setExporting: (v: boolean) => void,
+  setProgress: (v: number) => void,
 ) {
   const printArea = document.getElementById("printable-id-card-area");
   if (!printArea) return;
 
-  const isLandscape = orientation === "landscape";
-  const cardPx = isLandscape ? 420 : 288;
-
-  // ── 1. Hide unselected cards within the print area ────────────────────────
+  // ── 1. Collect the card elements to export ────────────────────────────────
+  // Each [data-print-card] wrapper has:  [checkbox overlay, ...] + card (last child)
   const allWrappers = Array.from(
     printArea.querySelectorAll<HTMLElement>("[data-print-card]")
   );
-  const hiddenCards: HTMLElement[] = [];
-  if (filterIds && filterIds.size > 0) {
-    allWrappers.forEach(w => {
-      if (!w.hasAttribute("data-selected")) {
-        hiddenCards.push(w);
-        w.style.display = "none";
-      }
-    });
-  }
-  const visibleCount = allWrappers.length - hiddenCards.length;
-  if (visibleCount === 0) { hiddenCards.forEach(w => { w.style.display = ""; }); return; }
+  const visibleWrappers = (filterIds && filterIds.size > 0)
+    ? allWrappers.filter(w => w.hasAttribute("data-selected"))
+    : allWrappers;
+  if (visibleWrappers.length === 0) return;
 
-  // ── 2. Inject @page + card-sizing CSS (layout only, not isolation) ────────
-  let layoutCss: string;
+  // The actual card component is always the last child of the wrapper div
+  const cardEls = visibleWrappers
+    .map(w => w.lastElementChild as HTMLElement)
+    .filter(Boolean);
 
-  if (format === "pvc-cr80") {
-    const [pw, ph] = isLandscape ? ["85.6mm", "54mm"] : ["54mm", "85.6mm"];
-    const scale = (323 / cardPx).toFixed(4);
+  setExporting(true);
+  setProgress(0);
 
-    layoutCss = `
-      @page { size: ${pw} ${ph}; margin: 0; }
-      @media print {
-        #printable-id-card-area { display: block !important; }
-        #printable-id-card-area [data-print-card] {
-          display: flex; align-items: center; justify-content: center;
-          width: ${pw}; height: ${ph}; overflow: hidden;
-          break-after: page; page-break-after: always;
-          margin: 0; padding: 0;
-        }
-        #printable-id-card-area [data-print-card]:last-child {
-          break-after: avoid; page-break-after: avoid;
-        }
-        #printable-id-card-area [data-print-card] > *:last-child {
-          transform: scale(${scale}); transform-origin: center;
-          box-shadow: none !important; flex-shrink: 0;
-        }
-        /* Hide selection overlays — keep only the card component (last child) */
-        #printable-id-card-area [data-print-card] > *:not(:last-child) {
-          display: none !important;
-        }
-        print-color-adjust: exact;
-        -webkit-print-color-adjust: exact;
-      }`;
-  } else {
-    const cols   = isLandscape ? 3 : 2;
-    const gap    = 6;
-    const margin = 10;
-    const usable = 210 - margin * 2;
-    const scale  = ((usable - gap * (cols - 1)) / cols * 3.7795 / cardPx * 0.94).toFixed(4);
+  try {
+    // ── 2. Dynamic import (keeps bundle lean) ─────────────────────────────
+    const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+      import("html2canvas"),
+      import("jspdf"),
+    ]);
 
-    layoutCss = `
-      @page { size: A4 portrait; margin: ${margin}mm; }
-      @media print {
-        #printable-id-card-area {
-          display: flex !important; flex-wrap: wrap;
-          gap: ${gap}mm; width: ${usable}mm; align-items: start;
-        }
-        #printable-id-card-area [data-print-card] {
-          break-inside: avoid; page-break-inside: avoid;
-          display: flex; align-items: center; justify-content: center;
-          overflow: visible;
-          outline: 0.35mm dashed #aaa; outline-offset: 2mm; padding: 2mm;
-          width: calc((${usable}mm - ${gap}mm) / ${cols});
-        }
-        #printable-id-card-area [data-print-card] > *:last-child {
-          transform: scale(${scale}); transform-origin: top center;
-          box-shadow: none !important; flex-shrink: 0;
-        }
-        #printable-id-card-area [data-print-card] > *:not(:last-child) {
-          display: none !important;
-        }
-      }`;
-  }
+    const isLandscape = orientation === "landscape";
 
-  document.getElementById("benius-layout-css")?.remove();
-  const layoutStyle = document.createElement("style");
-  layoutStyle.id = "benius-layout-css";
-  layoutStyle.textContent = layoutCss;
-  document.head.appendChild(layoutStyle);
+    // ── 3. Off-screen render container ────────────────────────────────────
+    // html2canvas clips the captured region when an element is inside a
+    // scrollable container (the AdminDashboard main pane). It calculates the
+    // element's position relative to the viewport but ignores the parent's
+    // scroll offset, so the right/bottom edges get cut off.
+    //
+    // Fix: clone each card into a position:absolute container appended
+    // directly to <body> (no scrollable ancestor, no viewport offset).
+    // html2canvas then captures the full card cleanly. The clone is removed
+    // immediately after each capture.
+    const offscreen = document.createElement("div");
+    offscreen.style.cssText =
+      "position:absolute;left:-9999px;top:0;pointer-events:none;z-index:-1;";
+    document.body.appendChild(offscreen);
 
-  // ── 3. Sibling-walk: hide every DOM sibling at every ancestor level ───────
-  // Walks from the print area up to <body>, hiding all siblings at each level.
-  // This is a proven synchronous approach (same pattern as exam-results print).
-  const hiddenSiblings: { el: HTMLElement; prev: string }[] = [];
-  let node: HTMLElement | null = printArea;
-  while (node && node !== document.body) {
-    const parent = node.parentElement;
-    if (parent) {
-      Array.from(parent.children).forEach(child => {
-        if (child !== node && child instanceof HTMLElement) {
-          hiddenSiblings.push({ el: child, prev: child.style.display });
-          child.style.display = "none";
+    // ── 4. Render each card to a canvas ──────────────────────────────────
+    const canvases: HTMLCanvasElement[] = [];
+    for (let i = 0; i < cardEls.length; i++) {
+      setProgress(Math.round((i / cardEls.length) * 85));
+
+      // Clone into the off-screen container so html2canvas has a clean
+      // element with no scroll-offset parent to confuse it.
+      const clone = cardEls[i].cloneNode(true) as HTMLElement;
+      // Ensure the clone renders at its natural size (no overflow clipping)
+      clone.style.overflow = "visible";
+      clone.style.height = "auto";
+      offscreen.appendChild(clone);
+
+      const canvas = await html2canvas(clone, {
+        scale: 3,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: null,
+        logging: false,
+        // Explicitly set the capture region to the clone's own dimensions
+        width:  clone.offsetWidth,
+        height: clone.offsetHeight,
+        windowWidth:  clone.offsetWidth,
+        windowHeight: clone.offsetHeight,
+        x: 0,
+        y: 0,
+        scrollX: 0,
+        scrollY: 0,
+      });
+      canvases.push(canvas);
+      offscreen.removeChild(clone);
+    }
+    offscreen.remove();
+
+    setProgress(90);
+
+    // ── 5. Build PDF ──────────────────────────────────────────────────────
+    //
+    // KEY FIX: do NOT use hardcoded CR80 page dimensions (54×85.6mm).
+    // The canvas aspect ratio rarely matches exactly, so a hardcoded page
+    // leaves blank space and stretches/squashes text.
+    //
+    // Instead, keep the standard CR80 width as the reference and derive
+    // the page height from the actual canvas aspect ratio — page then
+    // fits the card exactly with no distortion and no blank space.
+
+    if (format === "pvc-cr80") {
+      // Reference width: 85.6mm landscape / 54mm portrait (CR80 standard)
+      const refW = isLandscape ? 85.6 : 54;
+
+      canvases.forEach((canvas, i) => {
+        const ar = canvas.height / canvas.width;   // height:width ratio
+        const pw = refW;
+        const ph = parseFloat((pw * ar).toFixed(4));
+        const pageOri = ph > pw ? "portrait" : "landscape";
+
+        if (i === 0) {
+          // First page — create the PDF with the first card's dimensions
+          const pdf = new jsPDF({ orientation: pageOri, unit: "mm", format: [pw, ph] });
+          pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, pw, ph);
+
+          // Remaining cards
+          canvases.slice(1).forEach((c) => {
+            const ar2 = c.height / c.width;
+            const ph2 = parseFloat((pw * ar2).toFixed(4));
+            pdf.addPage([pw, ph2], ph2 > pw ? "portrait" : "landscape");
+            pdf.addImage(c.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, pw, ph2);
+          });
+
+          pdf.save(`id-cards-${Date.now()}.pdf`);
         }
       });
+
+    } else {
+      // A4 grid — 2 cols portrait / 3 cols landscape
+      const pgW = isLandscape ? 297 : 210;
+      const pgH = isLandscape ? 210 : 297;
+      const cols = isLandscape ? 3 : 2;
+      const margin = 10;
+      const gap = 6;
+      const cellW = (pgW - margin * 2 - gap * (cols - 1)) / cols;
+
+      const pdf = new jsPDF({
+        orientation: isLandscape ? "landscape" : "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      // Compute rows using the first canvas aspect ratio as representative
+      const ar0 = canvases[0] ? canvases[0].height / canvases[0].width : 1.585;
+      const cellH0 = cellW * ar0;
+      const rows = Math.max(1, Math.floor((pgH - margin * 2 + gap) / (cellH0 + gap)));
+      const perPage = cols * rows;
+
+      canvases.forEach((canvas, i) => {
+        const posInPage = i % perPage;
+        if (i > 0 && posInPage === 0) pdf.addPage();
+        const col = posInPage % cols;
+        const row = Math.floor(posInPage / cols);
+        const x = margin + col * (cellW + gap);
+        // Use each card's own aspect ratio for cell height
+        const cellH = cellW * (canvas.height / canvas.width);
+        const y = margin + row * (cellH0 + gap);
+        pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", x, y, cellW, cellH);
+      });
+
+      pdf.save(`id-cards-${Date.now()}.pdf`);
     }
-    node = parent;
+
+    setProgress(100);
+  } finally {
+    setExporting(false);
   }
-
-  // ── 4. Print then restore ─────────────────────────────────────────────────
-  window.print();
-
-  hiddenSiblings.forEach(({ el, prev }) => { el.style.display = prev; });
-  hiddenCards.forEach(w => { w.style.display = ""; });
-  layoutStyle.remove();
 }
 
 // ─── Sub-module panels ───────────────────────────────────────────────────────
@@ -1038,6 +1097,10 @@ function StudentPanel({
 
   // ── Card selection ────────────────────────────────────────────────────────
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+  // ── Export state ──────────────────────────────────────────────────────────
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
 
   const toggleSelect = useCallback((id: number) => {
     setSelectedIds(prev => {
@@ -1134,27 +1197,31 @@ function StudentPanel({
               <Search className="w-4 h-4 mr-1" /> Search
             </Button>
             {data && data.data.length > 0 && (
-              /* Single unified print button — label reflects selection state */
               <Button
                 className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold gap-1.5"
+                disabled={isExporting}
                 onClick={() => {
                   const ids = selectedIds.size > 0 ? selectedIds : undefined;
-                  executePrint(template.printFormat, template.orientation, ids);
                   const count = ids ? ids.size : (data?.data.length ?? 0);
                   toast({
-                    title: `🖨️ Printing ${count} card${count !== 1 ? "s" : ""}`,
-                    description: template.printFormat === "pvc-cr80"
-                      ? "One card per page · CR80 85.6 × 54 mm"
-                      : "A4 sheet · dashed cut guides included",
-                    duration: 4000,
+                    title: `⬇️ Preparing ${count} card${count !== 1 ? "s" : ""}…`,
+                    description: "PDF will download automatically.",
+                    duration: 3000,
                   });
+                  executeExport(
+                    template.printFormat,
+                    template.orientation,
+                    ids,
+                    setIsExporting,
+                    setExportProgress,
+                  ).catch(() => toast({ title: "Export failed", description: "Please try again.", variant: "destructive" }));
                 }}
-                data-testid="button-print-student-cards"
+                data-testid="button-export-student-cards"
               >
-                <Printer className="w-4 h-4" />
-                {selectedIds.size > 0
-                  ? `Print Selected (${selectedIds.size})`
-                  : "Print All Cards"}
+                {isExporting
+                  ? <><Loader2 className="w-4 h-4 animate-spin" />{exportProgress < 100 ? `Exporting ${exportProgress}%` : "Saving…"}</>
+                  : <><Download className="w-4 h-4" />{selectedIds.size > 0 ? `Export Selected (${selectedIds.size})` : "Export PDF"}</>
+                }
               </Button>
             )}
           </div>
@@ -1320,6 +1387,8 @@ function TeacherPanel({
   const { toast } = useToast();
   const [q, setQ] = useState("");
   const [searched, setSearched] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
 
   // Use the flat-array teachers endpoint (paginated /api/admin/teachers returns { data, total })
   const { data: teachers, isLoading } = useQuery<any[]>({
@@ -1375,11 +1444,19 @@ function TeacherPanel({
           {(searched || q) && filtered.length > 0 && (
             <Button
               variant="outline"
-              className="border-white/20 text-white hover:bg-white/10"
-              onClick={() => { executePrint("pvc-cr80", "portrait"); toast({ title: "Print dialog opened" }); }}
-              data-testid="button-print-teacher-cards"
+              className="border-white/20 text-white hover:bg-white/10 gap-1.5"
+              disabled={isExporting}
+              onClick={() => {
+                toast({ title: "⬇️ Preparing cards…", description: "PDF will download automatically.", duration: 3000 });
+                executeExport("pvc-cr80", "portrait", undefined, setIsExporting, setExportProgress)
+                  .catch(() => toast({ title: "Export failed", variant: "destructive" }));
+              }}
+              data-testid="button-export-teacher-cards"
             >
-              <Printer className="w-4 h-4 mr-1" /> Print All
+              {isExporting
+                ? <><Loader2 className="w-4 h-4 animate-spin" />{exportProgress < 100 ? `${exportProgress}%` : "Saving…"}</>
+                : <><Download className="w-4 h-4" /> Export PDF</>
+              }
             </Button>
           )}
         </div>
@@ -1428,6 +1505,8 @@ function SupportStaffPanel({
   const { toast } = useToast();
   const [q, setQ] = useState("");
   const [searched, setSearched] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
 
   const { data: staff, isLoading } = useQuery<any[]>({
     queryKey: ["/api/admin/non-teaching-staff"],
@@ -1478,11 +1557,19 @@ function SupportStaffPanel({
           {(searched || q) && filtered.length > 0 && (
             <Button
               variant="outline"
-              className="border-white/20 text-white hover:bg-white/10"
-              onClick={() => { executePrint("pvc-cr80", "portrait"); toast({ title: "Print dialog opened" }); }}
-              data-testid="button-print-staff-cards"
+              className="border-white/20 text-white hover:bg-white/10 gap-1.5"
+              disabled={isExporting}
+              onClick={() => {
+                toast({ title: "⬇️ Preparing cards…", description: "PDF will download automatically.", duration: 3000 });
+                executeExport("pvc-cr80", "portrait", undefined, setIsExporting, setExportProgress)
+                  .catch(() => toast({ title: "Export failed", variant: "destructive" }));
+              }}
+              data-testid="button-export-staff-cards"
             >
-              <Printer className="w-4 h-4 mr-1" /> Print All
+              {isExporting
+                ? <><Loader2 className="w-4 h-4 animate-spin" />{exportProgress < 100 ? `${exportProgress}%` : "Saving…"}</>
+                : <><Download className="w-4 h-4" /> Export PDF</>
+              }
             </Button>
           )}
         </div>
