@@ -857,36 +857,6 @@ function SupportStaffIDCard({ staff, schoolName }: { staff: any; schoolName: str
 // ─── Print execution utility ─────────────────────────────────────────────────
 
 /**
- * Prints ID cards by temporarily appending a print-only container to <body>
- * (outside the React #root) and toggling @media print CSS that hides #root
- * entirely via `display:none`.
- *
- * Why this approach instead of a new window:
- *   - New-window approach fails on mobile Chrome: Vite injects Tailwind CSS via
- *     JavaScript at runtime; a blank popup window never runs that JS so the
- *     cards render unstyled/blank.
- *   - Since we stay in the same document, every CSS rule already in the page
- *     (Tailwind, custom styles) applies automatically to the cloned card nodes.
- *   - Appending to <body> root means `display:none !important` on #root removes
- *     ALL app chrome with zero layout residue — no phantom blank page 1.
- *
- * PVC CR80  — 1 card per page, exact 85.6×54mm (landscape) or 54×85.6mm (portrait).
- * A4 Grid   — 2-col (portrait) / 3-col (landscape) grid on A4 with cut guides.
- */
-/**
- * Prints ID cards using the SIBLING-WALK isolation technique — the same
- * pattern proven to work on Android Chrome in student-examination.tsx.
- *
- * Why sibling-walk instead of @media print / new-window:
- *   • @media print injection races with Chrome's print snapshot (loses on Android).
- *   • New-window fails because Vite injects Tailwind via JS; a blank popup
- *     doesn't run that JS, so cards render with no styles.
- *   • Sibling-walk: synchronously sets display:none on every DOM sibling at
- *     every ancestor level from the print area up to <body>. Because this is
- *     done BEFORE window.print() is called (same JS tick), the print engine
- *     always sees the correct hidden state.
- */
-/**
  * Exports ID cards directly as a downloaded PDF — no print dialog.
  *
  * Strategy:
