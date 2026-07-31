@@ -759,6 +759,7 @@ export async function registerRoutes(
         dob: string;
         passwordHash: string;
         isActivated: boolean;
+        email?: string;
       }[] = [];
 
       for (let i = 0; i < rows.length; i++) {
@@ -770,6 +771,7 @@ export async function registerRoutes(
         const section = row["section"] || "";
         const phone = row["phone"] || row["phonenumber"] || row["mobile"] || row["contact"] || "";
         const dobRaw = row["dob"] || row["dateofbirth"] || row["birthdate"] || "";
+        const emailRaw = (row["email"] || row["studentemail"] || row["emailaddress"] || "").trim();
 
         if (!name) {
           warnings.push(`Row ${rowNum}: Skipped — missing Name`);
@@ -806,6 +808,7 @@ export async function registerRoutes(
           dob,
           passwordHash,
           isActivated: false,
+          ...(emailRaw && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw) ? { email: emailRaw } : {}),
         });
       }
 
@@ -830,6 +833,7 @@ export async function registerRoutes(
     motherName: z.string().optional(),
     address: z.string().optional(),
     aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits").optional(),
+    email: z.string().email("Invalid email format").optional().or(z.literal("")),
     // existing fields below — do not move
     name: z.string().min(1),
     class: z.string().min(1),
@@ -864,7 +868,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
       }
 
-      const { name, class: cls, section, phone, dob: dobRaw, enrollmentDate, gender, rollNumber, guardianName, bloodGroup, fatherName, motherName, address, aadharNumber } = parsed.data;
+      const { name, class: cls, section, phone, dob: dobRaw, enrollmentDate, gender, rollNumber, guardianName, bloodGroup, fatherName, motherName, address, aadharNumber, email } = parsed.data;
 
       if (!isValidPhone(phone)) {
         return res.status(400).json({ message: "Invalid phone number" });
@@ -907,6 +911,7 @@ export async function registerRoutes(
         ...(motherName     ? { motherName }     : {}),
         ...(address        ? { address }        : {}),
         ...(aadharNumber   ? { aadharNumber }   : {}),
+        ...(email          ? { email }          : {}),
       });
 
       // Auto-enrollment: silently attach the student to the currently active
@@ -1065,6 +1070,7 @@ export async function registerRoutes(
       motherName: data.student.motherName,
       address: data.student.address,
       aadharNumber: data.student.aadharNumber,
+      email: data.student.email ?? null,
       verifiedProfile: data.student.verifiedProfile
         ? (() => { try { return JSON.parse(data.student.verifiedProfile); } catch { return null; } })()
         : null,
@@ -1392,6 +1398,7 @@ export async function registerRoutes(
     enrollmentDate: z.string().optional(),
     guardianName: z.string().optional(),
     bloodGroup: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional(),
+    email: z.string().email("Invalid email format").optional().or(z.literal("")),
   });
 
   app.post("/api/student/profile", async (req, res) => {
@@ -3667,6 +3674,7 @@ export async function registerRoutes(
     motherName: z.string().optional().nullable(),
     address: z.string().optional().nullable(),
     aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits").optional().nullable(),
+    email: z.string().email("Invalid email format").optional().nullable().or(z.literal("")),
   });
 
   app.patch("/api/admin/students/:id", async (req, res) => {
@@ -3692,9 +3700,85 @@ export async function registerRoutes(
       motherName:   rest.motherName   ?? null,
       address:      rest.address      ?? null,
       aadharNumber: rest.aadharNumber ?? null,
+      email:        rest.email        || null,
     });
     if (!updated) return res.status(404).json({ message: "Student not found" });
     res.json(updated);
+  });
+
+  // ===== ADMIN: ACTIVE STUDENT EXPORT (Excel) =====
+  app.get("/api/schools/:schoolId/students/export", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    try {
+      const { q, cls, section } = req.query as { q?: string; cls?: string; section?: string };
+      const conditions = [eq(students.schoolId, schoolId), eq(students.isActive, true)];
+      if (cls) conditions.push(eq(students.class, cls));
+      if (section) conditions.push(eq(students.section, section));
+      let rows = await db.select().from(students).where(and(...conditions)).orderBy(students.class, students.section, students.rollNumber);
+      if (q) {
+        const lq = q.toLowerCase();
+        rows = rows.filter(r =>
+          r.name.toLowerCase().includes(lq) ||
+          r.digitalStudentId.toLowerCase().includes(lq) ||
+          r.phone.includes(lq)
+        );
+      }
+      const ExcelJS = (await import("exceljs")).default;
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet("Student Registry");
+      sheet.columns = [
+        { header: "Student ID",        key: "digitalStudentId", width: 20 },
+        { header: "Full Name",         key: "name",             width: 28 },
+        { header: "Class",             key: "class",            width: 10 },
+        { header: "Section",           key: "section",          width: 10 },
+        { header: "Roll Number",       key: "rollNumber",       width: 14 },
+        { header: "Gender",            key: "gender",           width: 12 },
+        { header: "Phone",             key: "phone",            width: 18 },
+        { header: "Email",             key: "email",            width: 30 },
+        { header: "Guardian Name",     key: "guardianName",     width: 26 },
+        { header: "Father's Name",     key: "fatherName",       width: 26 },
+        { header: "Mother's Name",     key: "motherName",       width: 26 },
+        { header: "Date of Birth",     key: "dob",              width: 16 },
+        { header: "Date of Admission", key: "enrollmentDate",   width: 20 },
+        { header: "Blood Group",       key: "bloodGroup",       width: 14 },
+        { header: "Aadhaar Number",    key: "aadharNumber",     width: 18 },
+        { header: "Address",           key: "address",          width: 36 },
+      ];
+      const headerRow = sheet.getRow(1);
+      headerRow.font = { bold: true, color: { argb: "FF0A1628" } };
+      headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD4AF37" } };
+      rows.forEach(r => {
+        sheet.addRow({
+          digitalStudentId: r.digitalStudentId,
+          name:             r.name,
+          class:            r.class,
+          section:          r.section,
+          rollNumber:       r.rollNumber ?? "",
+          gender:           r.gender ?? "",
+          phone:            r.phone,
+          email:            r.email ?? "",
+          guardianName:     r.guardianName ?? "",
+          fatherName:       r.fatherName ?? "",
+          motherName:       r.motherName ?? "",
+          dob:              r.dob ?? "",
+          enrollmentDate:   r.enrollmentDate ?? "",
+          bloodGroup:       r.bloodGroup ?? "",
+          aadharNumber:     r.aadharNumber ?? "",
+          address:          r.address ?? "",
+        });
+      });
+      const filterLabel = [cls && `_Class${cls}`, section && `_Sec${section}`].filter(Boolean).join("");
+      const filename = `Student_Registry${filterLabel}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      await workbook.xlsx.write(res);
+      res.end();
+    } catch (err) {
+      console.error("Student export error:", err);
+      res.status(500).json({ message: "Export failed" });
+    }
   });
 
   // ===== ADMIN: STUDENT GENDER STATS =====
@@ -3758,6 +3842,7 @@ export async function registerRoutes(
         { header: "Gender",            key: "gender",           width: 12 },
         { header: "Guardian Name",     key: "guardianName",     width: 26 },
         { header: "Phone",             key: "phone",            width: 18 },
+        { header: "Email",             key: "email",            width: 30 },
         { header: "Date of Birth",     key: "dob",              width: 16 },
         { header: "Date of Admission", key: "enrollmentDate",   width: 20 },
         { header: "Blood Group",       key: "bloodGroup",       width: 14 },
@@ -3787,6 +3872,7 @@ export async function registerRoutes(
           gender:           r.gender ?? "",
           guardianName:     r.guardianName ?? "",
           phone:            r.phone,
+          email:            r.email ?? "",
           dob:              r.dob ?? "",
           enrollmentDate:   r.enrollmentDate ?? "",
           bloodGroup:       r.bloodGroup ?? "",
@@ -4005,6 +4091,7 @@ export async function registerRoutes(
     <tr><td>Receipt No.</td><td>${esc(rec.receiptNumber) || "—"}</td></tr>
     <tr><td>Student Name</td><td>${esc(student?.name) || "—"}</td></tr>
     <tr><td>Student ID</td><td>${esc(student?.digitalStudentId) || "—"}</td></tr>
+    ${(student as any)?.email ? `<tr><td>Student Email</td><td>${esc((student as any).email)}</td></tr>` : ""}
     <tr><td>Class / Section</td><td>${esc(student?.class) || "—"} / ${esc(student?.section) || "—"}</td></tr>
     <tr><td>Fee Type</td><td>${esc(rec.feeType)}</td></tr>
     ${rec.academicYear ? `<tr><td>Academic Year</td><td>${esc(rec.academicYear)}</td></tr>` : ""}

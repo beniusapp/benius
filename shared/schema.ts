@@ -50,6 +50,7 @@ export const students = pgTable("students", {
   motherName: text("mother_name"),
   address: text("address"),
   aadharNumber: varchar("aadhar_number", { length: 12 }),
+  email: varchar("email", { length: 255 }),
 });
 
 export const teachers = pgTable("teachers", {

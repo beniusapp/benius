@@ -45,6 +45,7 @@ const addSchema = z.object({
   motherName: z.string().optional(),
   address: z.string().optional(),
   aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits").optional(),
+  email: z.string().email("Invalid email format").optional().or(z.literal("")),
 });
 type AddForm = z.infer<typeof addSchema>;
 
@@ -63,6 +64,7 @@ const editSchema = z.object({
   motherName: z.string().optional(),
   address: z.string().optional(),
   aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits").optional(),
+  email: z.string().email("Invalid email format").optional().or(z.literal("")),
 });
 type EditForm = z.infer<typeof editSchema>;
 
@@ -193,7 +195,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
 
   const form = useForm<AddForm>({
     resolver: zodResolver(addSchema),
-    defaultValues: { name: "", class: "", section: "", phone: "", dob: "", dateOfAdmission: "", gender: undefined, rollNumber: "", guardianName: "", bloodGroup: undefined, fatherName: "", motherName: "", address: "", aadharNumber: "" },
+    defaultValues: { name: "", class: "", section: "", phone: "", dob: "", dateOfAdmission: "", gender: undefined, rollNumber: "", guardianName: "", bloodGroup: undefined, fatherName: "", motherName: "", address: "", aadharNumber: "", email: "" },
   });
 
   const addMutation = useMutation({
@@ -206,6 +208,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
         motherName:   d.motherName   || undefined,
         address:      d.address      || undefined,
         aadharNumber: d.aadharNumber || undefined,
+        email:        d.email        || undefined,
       };
       const r = await apiRequest("POST", `/api/schools/${schoolId}/students`, payload);
       return r.json();
@@ -234,7 +237,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
 
   const editForm = useForm<EditForm>({
     resolver: zodResolver(editSchema),
-    defaultValues: { name: "", class: "", section: "", phone: "", dob: "", dateOfAdmission: "", gender: undefined, rollNumber: "", guardianName: "", bloodGroup: undefined, fatherName: "", motherName: "", address: "", aadharNumber: "" },
+    defaultValues: { name: "", class: "", section: "", phone: "", dob: "", dateOfAdmission: "", gender: undefined, rollNumber: "", guardianName: "", bloodGroup: undefined, fatherName: "", motherName: "", address: "", aadharNumber: "", email: "" },
   });
 
   useEffect(() => {
@@ -254,6 +257,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
         motherName:   (editTarget as any).motherName   ?? "",
         address:      (editTarget as any).address      ?? "",
         aadharNumber: (editTarget as any).aadharNumber ?? "",
+        email:        (editTarget as any).email        ?? "",
       });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -273,6 +277,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
         motherName:   d.motherName   || null,
         address:      d.address      || null,
         aadharNumber: d.aadharNumber || null,
+        email:        d.email        || null,
       };
       const r = await apiRequest("PATCH", `/api/admin/students/${editTarget!.id}`, payload);
       if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
@@ -367,7 +372,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
     setSelected(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
   }
 
-  const colCount = compact ? 9 : 17;
+  const colCount = compact ? 9 : 18;
 
   return (
     <div className="space-y-4">
@@ -560,6 +565,16 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                   /></FormControl>
                   <FormMessage /></FormItem>
               )} />
+              <FormField control={form.control} name="email" render={({ field }) => (
+                <FormItem><FormLabel className="text-white/70">Student Email</FormLabel>
+                  <FormControl><Input
+                    {...field}
+                    type="email"
+                    className="bg-[#0A1628] border-white/20 text-white"
+                    data-testid="input-student-email"
+                  /></FormControl>
+                  <FormMessage /></FormItem>
+              )} />
               <FormField control={form.control} name="address" render={({ field }) => (
                 <FormItem className="col-span-2 md:col-span-3"><FormLabel className="text-white/70">Address</FormLabel>
                   <FormControl><Textarea {...field} placeholder="" rows={2} className="bg-[#0A1628] border-white/20 text-white resize-none" data-testid="input-student-address" /></FormControl>
@@ -634,7 +649,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
       {/* Table */}
       <div className="rounded-xl border border-white/10 bg-[#1A2942]">
         <div className="overflow-x-auto" style={{ maxHeight: "70vh", overflowY: "auto" }}>
-          <table className="text-sm" style={{ minWidth: compact ? "800px" : "1900px", width: "100%", tableLayout: "fixed" }}>
+          <table className="text-sm w-full" style={{ tableLayout: "auto" }}>
             <colgroup>
               <col style={{ width: "40px" }} />
               <col style={{ width: "130px" }} />
@@ -651,6 +666,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
               {!compact && <col style={{ width: "180px" }} />}
               {!compact && <col style={{ width: "110px" }} />}
               {!compact && <col style={{ width: "120px" }} />}
+              {!compact && <col />}
               {!compact && <col style={{ width: "90px" }} />}
               <col style={{ width: "108px" }} />
             </colgroup>
@@ -683,6 +699,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                 {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">DOB</th>}
                 {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Admission</th>}
                 {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Blood Grp</th>}
+                {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Email</th>}
                 <th className="text-left py-3 px-2 text-white/60 font-medium text-xs uppercase tracking-wide"></th>
               </tr>
             </thead>
@@ -762,6 +779,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                       {!compact && <td className={`${cell} text-white/60 font-mono`}>{(s as any).dob ?? "—"}</td>}
                       {!compact && <td className={`${cell} text-white/60 font-mono`}>{(s as any).enrollmentDate ?? "—"}</td>}
                       {!compact && <td className={`${cell} text-white/70`}>{(s as any).bloodGroup ?? "—"}</td>}
+                      {!compact && <td className={`${cell} text-white/50`} title={(s as any).email ?? ""}>{(s as any).email ?? "—"}</td>}
                       <td className={`${compact ? "py-1.5 px-2" : "py-2 px-2"} whitespace-nowrap`}>
                         <div className="flex items-center gap-0.5">
                           <Button variant="ghost" size="icon"
@@ -858,6 +876,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                 { label: "Roll Number", value: viewTarget.rollNumber != null ? String(viewTarget.rollNumber) : "Not assigned" },
                 { label: "Gender", value: viewTarget.gender ?? "Not set" },
                 { label: "Phone", value: viewTarget.phone },
+                { label: "Email", value: (viewTarget as any).email ?? "Not recorded" },
                 { label: "Guardian", value: viewTarget.guardianName ?? "Not recorded" },
                 { label: "Father's Name", value: (viewTarget as any).fatherName ?? "Not recorded" },
                 { label: "Mother's Name", value: (viewTarget as any).motherName ?? "Not recorded" },
@@ -1069,6 +1088,16 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                         onChange={e => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 12))}
                         data-testid="input-edit-aadhar"
                         className="bg-[#0A1628] border-white/20 text-white font-mono tracking-widest"
+                      /></FormControl>
+                      <FormMessage /></FormItem>
+                  )} />
+                  <FormField control={editForm.control} name="email" render={({ field }) => (
+                    <FormItem><FormLabel className="text-white/70">Student Email</FormLabel>
+                      <FormControl><Input
+                        {...field}
+                        type="email"
+                        data-testid="input-edit-email"
+                        className="bg-[#0A1628] border-white/20 text-white"
                       /></FormControl>
                       <FormMessage /></FormItem>
                   )} />

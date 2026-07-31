@@ -23,6 +23,7 @@ type DeactivatedStudent = {
   class: string;
   section: string;
   phone: string;
+  email: string | null;
   gender: string | null;
   guardianName: string | null;
   dob: string | null;
@@ -171,6 +172,7 @@ export default function DeactivatedStudentsPage() {
         (s.motherName ?? "").toLowerCase().includes(lq) ||
         (s.address ?? "").toLowerCase().includes(lq) ||
         (s.aadharNumber ?? "").includes(debouncedQ) ||
+        (s.email ?? "").toLowerCase().includes(lq) ||
         cleanReason(s.deactivationReason).toLowerCase().includes(lq)
       );
     });
@@ -229,9 +231,9 @@ export default function DeactivatedStudentsPage() {
   }
 
   const cell = compact ? "py-1.5 px-3 text-xs" : "py-3 px-3 text-sm";
-  // Normal: DSID Name Gender Phone BatchYear Guardian Father Mother AadharNo Address DOB Admission Blood DeactivatedOn Reason Comments View Status = 18
+  // Normal: DSID Name Gender Phone Email BatchYear Guardian Father Mother AadharNo Address DOB Admission Blood DeactivatedOn Reason Comments View Status = 19
   // Compact: DSID Name Gender Phone BatchYear View Status = 7
-  const colCount = compact ? 7 : 18;
+  const colCount = compact ? 7 : 19;
 
   return (
     <div className="min-h-screen" style={{ background: "#080c14" }}>
@@ -387,6 +389,7 @@ export default function DeactivatedStudentsPage() {
                 <col style={{ width: "160px" }} />
                 <col style={{ width: "70px" }} />
                 <col style={{ width: "112px" }} />
+                {!compact && <col style={{ width: "190px" }} />}
                 <col style={{ width: "96px" }} />
                 {!compact && <col style={{ width: "130px" }} />}
                 {!compact && <col style={{ width: "130px" }} />}
@@ -408,6 +411,7 @@ export default function DeactivatedStudentsPage() {
                   <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Name</th>
                   <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Gender</th>
                   <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Phone</th>
+                  {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Email</th>}
                   <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Batch Year</th>
                   {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Guardian</th>}
                   {!compact && <th className="text-left py-3 px-3 text-white/60 font-medium text-xs uppercase tracking-wide">Father</th>}
@@ -447,6 +451,7 @@ export default function DeactivatedStudentsPage() {
                     <td className={`${cell} text-white/80 font-medium overflow-hidden text-ellipsis`}>{s.name}</td>
                     <td className={cell}><GenderBadge gender={s.gender} /></td>
                     <td className={`${cell} text-white/60 overflow-hidden text-ellipsis font-mono`}>{s.phone}</td>
+                    {!compact && <td className={`${cell} text-white/50 overflow-hidden text-ellipsis`} title={s.email ?? ""}>{s.email ?? "—"}</td>}
                     <td className={`${cell} text-white/70 font-mono`}>{s.batchYear ?? <span className="text-white/20">—</span>}</td>
                     {!compact && <td className={`${cell} text-white/60 overflow-hidden text-ellipsis`}>{s.guardianName ?? "—"}</td>}
                     {!compact && <td className={`${cell} text-white/60 overflow-hidden text-ellipsis`}>{s.fatherName ?? "—"}</td>}
@@ -566,6 +571,7 @@ export default function DeactivatedStudentsPage() {
                 { label: "Batch Year",       value: viewTarget.batchYear ?? "Not recorded" },
                 { label: "Gender",           value: viewTarget.gender ?? "Not set" },
                 { label: "Phone",            value: viewTarget.phone },
+                { label: "Email",            value: viewTarget.email ?? "Not recorded" },
                 { label: "Guardian",         value: viewTarget.guardianName ?? "Not recorded" },
                 { label: "Father's Name",    value: viewTarget.fatherName ?? "Not recorded" },
                 { label: "Mother's Name",    value: viewTarget.motherName ?? "Not recorded" },

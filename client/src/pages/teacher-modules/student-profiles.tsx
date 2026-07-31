@@ -27,6 +27,7 @@ interface PendingProfile {
   enrollmentDate: string | null;
   guardianName: string | null;
   bloodGroup: string | null;
+  email: string | null;
   photoUrl: string | null;
   photoStatus: string;
   rejectionNote: string | null;
@@ -55,6 +56,7 @@ interface HistoryRecord {
   enrollmentDate: string | null;
   guardianName: string | null;
   bloodGroup: string | null;
+  email: string | null;
   rollNo: string | null;
   photoUrl: string | null;
   verifiedAt: string | null;
@@ -90,6 +92,7 @@ const FIELD_LABELS: { key: string; label: string; editable: boolean }[] = [
   { key: "rollNo",         label: "Roll Number",        editable: true  },
   { key: "guardianName",   label: "Guardian Name",      editable: true  },
   { key: "phone",          label: "Phone",              editable: true  },
+  { key: "email",          label: "Email",              editable: true  },
   { key: "dob",            label: "Date of Birth",      editable: true  },
   { key: "enrollmentDate", label: "Date of Admission",  editable: true  },
   { key: "bloodGroup",     label: "Blood Group",        editable: true  },
@@ -108,6 +111,7 @@ type EditableFields = {
   aadharNumber: string;
   gender: string;
   phone: string;
+  email: string;
   dob: string;
   enrollmentDate: string;
   guardianName: string;
@@ -124,6 +128,7 @@ function initEdits(p: PendingProfile): EditableFields {
     aadharNumber:   p.aadharNumber   ?? "",
     gender:         p.gender         ?? "",
     phone:          p.phone          ?? "",
+    email:          p.email          ?? "",
     dob:            p.dob            ?? "",
     enrollmentDate: p.enrollmentDate ?? "",
     guardianName:   p.guardianName   ?? "",
@@ -140,7 +145,7 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
   const [rejectNote,       setRejectNote]       = useState("");
   const [showRejectInput,  setShowRejectInput]  = useState(false);
   const [editMode,         setEditMode]         = useState(false);
-  const [editedFields,     setEditedFields]     = useState<EditableFields>({ fullName:"", rollNo:"", fatherName:"", motherName:"", presentAddress:"", aadharNumber:"", gender:"", phone:"", dob:"", enrollmentDate:"", guardianName:"", bloodGroup:"" });
+  const [editedFields,     setEditedFields]     = useState<EditableFields>({ fullName:"", rollNo:"", fatherName:"", motherName:"", presentAddress:"", aadharNumber:"", gender:"", phone:"", email:"", dob:"", enrollmentDate:"", guardianName:"", bloodGroup:"" });
   const [livePhotoUrl,     setLivePhotoUrl]     = useState<string | null>(null);
   const [showHistory,      setShowHistory]      = useState(false);
   const [historyDetail,    setHistoryDetail]    = useState<HistoryRecord | null>(null);

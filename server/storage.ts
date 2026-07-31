@@ -2972,6 +2972,7 @@ export class DatabaseStorage {
         class: students.class,
         section: students.section,
         phone: students.phone,
+        email: students.email,
         gender: students.gender,
         rollNumber: students.rollNumber,
         guardianName: students.guardianName,
@@ -2995,6 +2996,7 @@ export class DatabaseStorage {
     dob?: string; enrollmentDate?: string; bloodGroup?: string | null;
     fatherName?: string | null; motherName?: string | null;
     address?: string | null; aadharNumber?: string | null;
+    email?: string | null;
   }): Promise<Student | undefined> {
     const setData: Record<string, unknown> = {
       name: data.name, class: data.class, section: data.section, phone: data.phone,
@@ -3009,6 +3011,7 @@ export class DatabaseStorage {
     if (data.motherName !== undefined) setData.motherName = data.motherName;
     if (data.address !== undefined) setData.address = data.address;
     if (data.aadharNumber !== undefined) setData.aadharNumber = data.aadharNumber;
+    if (data.email !== undefined) setData.email = data.email;
     const [updated] = await db.update(students)
       .set(setData as Partial<typeof students.$inferInsert>)
       .where(and(eq(students.id, id), eq(students.schoolId, schoolId)))
@@ -3110,7 +3113,7 @@ export class DatabaseStorage {
   // ===== DEACTIVATED STUDENT HISTORY =====
   async getDeactivatedStudents(schoolId: number): Promise<Array<{
     id: number; digitalStudentId: string; name: string; class: string; section: string;
-    phone: string; gender: string | null; guardianName: string | null;
+    phone: string; email: string | null; gender: string | null; guardianName: string | null;
     dob: string | null; enrollmentDate: string | null; bloodGroup: string | null;
     rollNumber: number | null;
     deactivatedAt: Date | null; deactivationReason: string | null;
@@ -3120,7 +3123,7 @@ export class DatabaseStorage {
   }>> {
     const result = await pool.query<{
       id: number; digital_student_id: string; name: string; class: string; section: string;
-      phone: string; gender: string | null; guardian_name: string | null;
+      phone: string; email: string | null; gender: string | null; guardian_name: string | null;
       dob: string | null; enrollment_date: string | null; blood_group: string | null;
       roll_number: number | null; deactivated_at: Date | null; deactivation_reason: string | null;
       father_name: string | null; mother_name: string | null;
@@ -3151,7 +3154,7 @@ export class DatabaseStorage {
                   (a.action_type = 'deactivate') DESC,
                   a.created_at DESC NULLS LAST
        )
-       SELECT s.id, s.digital_student_id, s.name, s.class, s.section, s.phone,
+       SELECT s.id, s.digital_student_id, s.name, s.class, s.section, s.phone, s.email,
               s.gender, s.guardian_name, s.dob, s.enrollment_date, s.blood_group, s.roll_number,
               s.father_name, s.mother_name, s.address, s.aadhar_number,
               bl.created_at AS deactivated_at, bl.details AS deactivation_reason
@@ -3174,6 +3177,7 @@ export class DatabaseStorage {
         class: r.class,
         section: r.section,
         phone: r.phone,
+        email: r.email ?? null,
         gender: r.gender,
         guardianName: r.guardian_name,
         dob: r.dob,

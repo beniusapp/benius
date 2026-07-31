@@ -16,6 +16,7 @@ interface StudentMeResponse {
   phone: string;
   dob: string;
   photoUrl?: string | null;
+  email?: string | null;
   schoolName: string;
   schoolCode: string;
   schoolId?: number;

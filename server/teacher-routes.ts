@@ -2300,18 +2300,19 @@ export function registerTeacherRoutes(app: Express) {
       });
 
       sheet.columns = [
-        { header: "Student ID",       key: "digitalStudentId", width: 20 },
-        { header: "Full Name",        key: "name",             width: 28 },
-        { header: "Class",            key: "class",            width: 10 },
-        { header: "Section",          key: "section",          width: 10 },
-        { header: "Roll Number",      key: "rollNumber",       width: 14 },
-        { header: "Gender",           key: "gender",           width: 12 },
-        { header: "Guardian Name",    key: "guardianName",     width: 26 },
-        { header: "Phone",            key: "phone",            width: 18 },
-        { header: "Date of Birth",    key: "dob",              width: 16 },
-        { header: "Date of Admission",key: "enrollmentDate",   width: 20 },
-        { header: "Blood Group",      key: "bloodGroup",       width: 14 },
-        { header: "Status",           key: "status",           width: 14 },
+        { header: "Student ID",        key: "digitalStudentId", width: 20 },
+        { header: "Full Name",         key: "name",             width: 28 },
+        { header: "Class",             key: "class",            width: 10 },
+        { header: "Section",           key: "section",          width: 10 },
+        { header: "Roll Number",       key: "rollNumber",       width: 14 },
+        { header: "Gender",            key: "gender",           width: 12 },
+        { header: "Guardian Name",     key: "guardianName",     width: 26 },
+        { header: "Phone",             key: "phone",            width: 18 },
+        { header: "Email",             key: "email",            width: 30 },
+        { header: "Date of Birth",     key: "dob",              width: 16 },
+        { header: "Date of Admission", key: "enrollmentDate",   width: 20 },
+        { header: "Blood Group",       key: "bloodGroup",       width: 14 },
+        { header: "Status",            key: "status",           width: 14 },
       ];
 
       const headerRow = sheet.getRow(1);
@@ -2335,6 +2336,7 @@ export function registerTeacherRoutes(app: Express) {
           gender:           r.gender ?? "",
           guardianName:     r.guardianName ?? "",
           phone:            r.phone,
+          email:            (r as any).email ?? "",
           dob:              r.dob ?? "",
           enrollmentDate:   r.enrollmentDate ?? "",
           bloodGroup:       r.bloodGroup ?? "",
@@ -2365,7 +2367,18 @@ export function registerTeacherRoutes(app: Express) {
     name: z.string().min(2, "Name must be at least 2 characters"),
     class: z.string().min(1, "Class is required"),
     section: z.string().min(1, "Section is required"),
-    phone: z.string().regex(/^[0-9+\-\s()]{7,15}$/, "Invalid phone number"),
+    phone: z.string().regex(/^\d{10}$/, "Phone must be exactly 10 digits"),
+    dob: z.string().optional(),
+    enrollmentDate: z.string().optional(),
+    gender: z.enum(["Boy", "Girl"]).optional().nullable(),
+    rollNumber: z.number().int().positive().optional().nullable(),
+    guardianName: z.string().optional().nullable(),
+    bloodGroup: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional().nullable(),
+    fatherName: z.string().optional().nullable(),
+    motherName: z.string().optional().nullable(),
+    address: z.string().optional().nullable(),
+    aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits").optional().nullable(),
+    email: z.string().email("Invalid email format").optional().nullable().or(z.literal("")),
   });
 
   app.patch("/api/admin/students/:id", async (req, res) => {
@@ -2375,14 +2388,27 @@ export function registerTeacherRoutes(app: Express) {
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid student ID" });
 
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+
     const parsed = updateStudentSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
 
+    const { rollNumber, ...rest } = parsed.data;
+
     const student = await storage.getStudentById(id);
-    if (!student || student.schoolId !== req.session.schoolId)
+    if (!student || student.schoolId !== schoolId)
       return res.status(404).json({ message: "Student not found" });
 
-    const updated = await storage.updateStudent(id, req.session.schoolId!, parsed.data);
+    const updated = await storage.updateStudent(id, schoolId, {
+      ...rest,
+      rollNumber:   rollNumber   ?? null,
+      fatherName:   rest.fatherName   ?? null,
+      motherName:   rest.motherName   ?? null,
+      address:      rest.address      ?? null,
+      aadharNumber: rest.aadharNumber ?? null,
+      email:        rest.email        || null,
+    });
     if (!updated) return res.status(404).json({ message: "Update failed" });
 
     res.json(updated);
@@ -3206,7 +3232,7 @@ Thank you for your prompt attention to this matter.
     // Optional teacher corrections applied before finalising approval
     const { corrections } = req.body as { corrections?: Record<string, string> };
     if (corrections && Object.keys(corrections).length > 0) {
-      const allowed = ["fullName", "rollNo", "fatherName", "motherName", "presentAddress", "aadharNumber", "gender", "phone", "dob", "enrollmentDate", "guardianName", "bloodGroup", "class", "section"];
+      const allowed = ["fullName", "rollNo", "fatherName", "motherName", "presentAddress", "aadharNumber", "gender", "phone", "email", "dob", "enrollmentDate", "guardianName", "bloodGroup", "class", "section"];
       const safe = Object.fromEntries(Object.entries(corrections).filter(([k]) => allowed.includes(k)));
       if (Object.keys(safe).length > 0) {
         await db.update(studentProfiles).set(safe).where(eq(studentProfiles.studentId, studentId));
@@ -3233,6 +3259,7 @@ Thank you for your prompt attention to this matter.
       aadharNumber:   profile.aadharNumber,
       gender:         profile.gender,
       phone:          profile.phone,
+      email:          profile.email,
       dob:            profile.dob,
       enrollmentDate: profile.enrollmentDate,
       guardianName:   profile.guardianName,
@@ -3258,6 +3285,7 @@ Thank you for your prompt attention to this matter.
     if (profile.fatherName)   liveUpdates.fatherName    = profile.fatherName;
     if (profile.motherName)   liveUpdates.motherName    = profile.motherName;
     if (profile.presentAddress) liveUpdates.address     = profile.presentAddress;
+    if (profile.email)        liveUpdates.email         = profile.email;
     if (Object.keys(liveUpdates).length > 0) {
       await db.update(students).set(liveUpdates).where(eq(students.id, studentId));
     }

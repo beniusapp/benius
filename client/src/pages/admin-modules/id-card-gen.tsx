@@ -22,6 +22,7 @@ export type OptionalFieldKey =
   | "dob"
   | "bloodGroup"
   | "phone"
+  | "email"
   | "rollNumber"
   | "gender"
   | "guardianName"
@@ -132,9 +133,10 @@ export const OPTIONAL_FIELDS: {
   hint: string;
   studentProp: string;
 }[] = [
-  { key: "dob",             label: "Date of Birth",     hint: "e.g. 15/03/2009",        studentProp: "dob"            },
-  { key: "bloodGroup",      label: "Blood Group",       hint: "e.g. B+",                studentProp: "bloodGroup"     },
-  { key: "phone",           label: "Phone Number",      hint: "e.g. 9876543210",         studentProp: "phone"          },
+  { key: "dob",             label: "Date of Birth",     hint: "e.g. 15/03/2009",          studentProp: "dob"            },
+  { key: "bloodGroup",      label: "Blood Group",       hint: "e.g. B+",                  studentProp: "bloodGroup"     },
+  { key: "phone",           label: "Phone Number",      hint: "e.g. 9876543210",           studentProp: "phone"          },
+  { key: "email",           label: "Email Address",     hint: "e.g. student@school.com",   studentProp: "email"          },
   { key: "rollNumber",      label: "Roll Number",       hint: "e.g. 24",                 studentProp: "rollNumber"     },
   { key: "gender",          label: "Gender",            hint: "e.g. Male",               studentProp: "gender"         },
   { key: "guardianName",    label: "Guardian Name",     hint: "e.g. Rajesh Sharma",      studentProp: "guardianName"   },
@@ -172,6 +174,7 @@ const PREVIEW_STUDENT = {
   address: "12, Park Street, Kolkata",
   aadharNumber: "123456789012",
   dateOfAdmission: "2021-04-01",
+  email: "aarav.sharma@school.com",
   idCardPendingReissue: false,
 };
 
@@ -192,6 +195,113 @@ function saveTemplate(tpl: CardTemplate) {
   try {
     localStorage.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify({ ...tpl, savedAt: new Date().toISOString() }));
   } catch { /* ignore quota errors */ }
+}
+
+// ─── Teacher Card Template (separate from student — different storage key) ───
+
+export type TeacherOptionalFieldKey =
+  | "phone"
+  | "email"
+  | "gender"
+  | "dob"
+  | "joiningDate"
+  | "qualifications"
+  | "govtId"
+  | "address";
+
+export interface TeacherCardTemplate {
+  version: 1;
+  activeFields: TeacherOptionalFieldKey[];
+  orientation: "portrait" | "landscape";
+  theme: ThemeKey;
+  printFormat: "pvc-cr80" | "a4-grid";
+  savedAt?: string;
+}
+
+const TEACHER_TEMPLATE_STORAGE_KEY = "benius_teacher_id_card_template_v1";
+
+export const TEACHER_OPTIONAL_FIELDS: {
+  key: TeacherOptionalFieldKey;
+  label: string;
+  hint: string;
+}[] = [
+  { key: "phone",             label: "Phone Number",           hint: "e.g. 9876543210"     },
+  { key: "email",             label: "Email",                  hint: "e.g. teacher@school.com" },
+  { key: "gender",            label: "Gender",                 hint: "e.g. Male"           },
+  { key: "dob",               label: "Date of Birth",          hint: "e.g. 15/03/1985"     },
+  { key: "joiningDate",       label: "Joining Date",           hint: "e.g. 01/07/2018"     },
+  { key: "qualifications",    label: "Qualification",          hint: "e.g. B.Ed, M.Sc"     },
+  { key: "govtId",            label: "Government ID",          hint: "e.g. Aadhaar / PAN"  },
+  { key: "address",           label: "Address",                hint: "e.g. 12, Park Street"},
+];
+
+const DEFAULT_TEACHER_TEMPLATE: TeacherCardTemplate = {
+  version: 1,
+  activeFields: ["phone"],
+  orientation: "portrait",
+  theme: "modern-dark",
+  printFormat: "pvc-cr80",
+};
+
+// Sample teacher used in the configure-template live preview
+const PREVIEW_TEACHER = {
+  id: 0,
+  fullName: "Teacher 1 MIS",
+  digitalTeacherId: "MIS-T001",
+  designation: "Senior Faculty",
+  department: "Science",
+  subject: "Physics",
+  phone: "9876543210",
+  email: "teacher1@school.com",
+  gender: "Male",
+  dateOfBirth: "1985-03-15",
+  joiningDate: "2018-07-01",
+  qualifications: "M.Ed, M.Sc",
+  govtIdType: "Aadhaar",
+  govtIdNumber: "1234 5678 9012",
+  address: "12, Park Street, Kolkata",
+  profileImageUrl: null,
+};
+
+function loadTeacherTemplate(): TeacherCardTemplate {
+  try {
+    const raw = localStorage.getItem(TEACHER_TEMPLATE_STORAGE_KEY);
+    if (!raw) return DEFAULT_TEACHER_TEMPLATE;
+    const parsed = JSON.parse(raw) as Partial<TeacherCardTemplate>;
+    if (parsed.version !== 1) return DEFAULT_TEACHER_TEMPLATE;
+    return { ...DEFAULT_TEACHER_TEMPLATE, ...parsed } as TeacherCardTemplate;
+  } catch {
+    return DEFAULT_TEACHER_TEMPLATE;
+  }
+}
+
+function saveTeacherTemplate(tpl: TeacherCardTemplate) {
+  try {
+    localStorage.setItem(TEACHER_TEMPLATE_STORAGE_KEY, JSON.stringify({ ...tpl, savedAt: new Date().toISOString() }));
+  } catch { /* ignore quota errors */ }
+}
+
+function renderTeacherOptionalField(teacher: any, key: TeacherOptionalFieldKey): string {
+  switch (key) {
+    case "phone":             return teacher.phone || "—";
+    case "email":             return teacher.email || "—";
+    case "gender":            return teacher.gender || "—";
+    case "dob":
+      return teacher.dateOfBirth
+        ? new Date(teacher.dateOfBirth).toLocaleDateString("en-GB")
+        : (teacher.dob ? new Date(teacher.dob).toLocaleDateString("en-GB") : "—");
+    case "joiningDate":
+      return teacher.joiningDate
+        ? new Date(teacher.joiningDate).toLocaleDateString("en-GB")
+        : "—";
+    case "qualifications":    return teacher.qualifications || "—";
+    case "govtId":
+      return teacher.govtIdType
+        ? `${teacher.govtIdType}${teacher.govtIdNumber ? ": " + teacher.govtIdNumber : ""}`
+        : "—";
+    case "address":           return teacher.address || "—";
+    default:                  return "—";
+  }
 }
 
 interface Props {
@@ -282,6 +392,8 @@ function renderOptionalField(student: any, key: OptionalFieldKey): string {
       return student.aadharNumber
         ? String(student.aadharNumber).replace(/(.{4})(.{4})(.{4})/, "$1 $2 $3")
         : "—";
+    case "email":
+      return student.email || "—";
     case "dateOfAdmission":
       return student.dateOfAdmission
         ? new Date(student.dateOfAdmission).toLocaleDateString("en-GB")
@@ -317,8 +429,8 @@ function StudentIDCard({
 
   const fieldMeta: Record<OptionalFieldKey, string> = {
     dob: "Date of Birth", bloodGroup: "Blood Group", phone: "Phone",
-    rollNumber: "Roll No.", gender: "Gender", guardianName: "Guardian",
-    fatherName: "Father", motherName: "Mother",
+    email: "Email", rollNumber: "Roll No.", gender: "Gender",
+    guardianName: "Guardian", fatherName: "Father", motherName: "Mother",
     address: "Address", aadharNumber: "Aadhaar", dateOfAdmission: "Admission",
   };
 
@@ -738,60 +850,152 @@ function ConfigureTemplateModal({
   );
 }
 
-function TeacherIDCard({ teacher, schoolName }: { teacher: any; schoolName: string }) {
+function TeacherIDCard({
+  teacher,
+  schoolName,
+  activeFields = [],
+  orientation = "portrait",
+  theme = "modern-dark",
+  academicSession,
+}: {
+  teacher: any;
+  schoolName: string;
+  activeFields?: TeacherOptionalFieldKey[];
+  orientation?: "portrait" | "landscape";
+  theme?: ThemeKey;
+  academicSession?: string | null;
+}) {
+  const t = CARD_THEMES[theme] ?? CARD_THEMES["modern-dark"];
   const initials = (teacher.fullName ?? "T")
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w: string) => w[0].toUpperCase())
-    .join("");
+    .trim().split(/\s+/).slice(0, 2)
+    .map((w: string) => w[0].toUpperCase()).join("");
 
+  const avatarEl = teacher.profileImageUrl
+    ? <img src={teacher.profileImageUrl} alt={teacher.fullName} className="w-full h-full object-cover rounded-full" />
+    : <span>{initials}</span>;
+
+  const fieldMeta: Record<TeacherOptionalFieldKey, string> = {
+    phone:             "Phone",
+    email:             "Email",
+    gender:            "Gender",
+    dob:               "Date of Birth",
+    joiningDate:       "Joining Date",
+    qualifications:    "Qualification",
+    govtId:            "Govt ID",
+    address:           "Address",
+  };
+
+  // Pair optional fields into 2-column rows
+  const pairs: [TeacherOptionalFieldKey, TeacherOptionalFieldKey | null][] = [];
+  for (let i = 0; i < activeFields.length; i += 2) {
+    pairs.push([activeFields[i], activeFields[i + 1] ?? null]);
+  }
+
+  const optionalGrid = (
+    <>
+      {pairs.map(([a, b], i) => (
+        <div key={i} className="contents">
+          <div>
+            <p className={t.labelClass}>{fieldMeta[a]}</p>
+            <p className={`${t.valueClass} truncate`}>{renderTeacherOptionalField(teacher, a)}</p>
+          </div>
+          {b ? (
+            <div>
+              <p className={t.labelClass}>{fieldMeta[b]}</p>
+              <p className={`${t.valueClass} truncate`}>{renderTeacherOptionalField(teacher, b)}</p>
+            </div>
+          ) : <div />}
+        </div>
+      ))}
+    </>
+  );
+
+  /* ── Landscape layout ─────────────────────────────────────── */
+  if (orientation === "landscape") {
+    return (
+      <div
+        className={`w-[420px] rounded-xl border-2 bg-gradient-to-br ${t.cardBg} ${t.cardBorder} p-4 shadow-xl relative flex gap-0`}
+        data-testid={`card-teacher-${teacher.id}`}
+      >
+        {/* Left strip — avatar + school meta */}
+        <div className={`w-28 shrink-0 flex flex-col items-center gap-2 border-r ${t.headerBorder} pr-4 mr-4`}>
+          <p className={`${t.accentClass} text-[9px] font-bold tracking-widest`}>BENIUS</p>
+          <div className="w-16 h-16 rounded-full flex items-center justify-center font-bold text-2xl overflow-hidden"
+            style={{ backgroundColor: t.accentColor, color: t.dark ? "#0A1628" : "white" }}>
+            {avatarEl}
+          </div>
+          <p className={`${t.schoolNameClass} text-[8px] text-center leading-tight`}>{schoolName}</p>
+          <span className={`text-[8px] font-bold ${t.badgeText} ${t.badgeBg} px-1.5 py-0.5 rounded`}>FACULTY</span>
+          <div className={`w-full h-6 ${t.barcodeBg} rounded flex items-center justify-center mt-auto`}>
+            <p className="text-[#0A1628] text-[7px] font-bold font-mono truncate px-1">{teacher.digitalTeacherId ?? "—"}</p>
+          </div>
+        </div>
+
+        {/* Right — name + fields */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          <p className={`${t.nameClass} font-bold text-base leading-tight truncate mb-2`}>{teacher.fullName}</p>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs flex-1">
+            <div>
+              <p className={t.labelClass}>Teacher ID</p>
+              <p className={`${t.accentClass} font-mono text-[11px]`}>{teacher.digitalTeacherId ?? "—"}</p>
+            </div>
+            <div>
+              <p className={t.labelClass}>Designation</p>
+              <p className={`${t.valueClass} text-[11px] truncate`}>{teacher.designation || "Faculty"}</p>
+            </div>
+            {optionalGrid}
+          </div>
+          <p className={`${t.footerTextClass} text-[8px] mt-2`}>
+            {academicSession ? `Session: ${academicSession}` : "Faculty ID"}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── Portrait layout (default) ────────────────────────────── */
   return (
     <div
-      className="w-72 rounded-xl border-2 border-sky-500 bg-gradient-to-br from-[#0A1628] to-[#0c2233] p-5 shadow-xl"
+      className={`w-72 rounded-xl border-2 bg-gradient-to-br ${t.cardBg} ${t.cardBorder} p-5 shadow-xl relative`}
       data-testid={`card-teacher-${teacher.id}`}
     >
       {/* Header */}
-      <div className="flex items-center gap-3 mb-3 border-b border-sky-500/30 pb-3">
-        <div className="w-10 h-10 rounded-full bg-sky-500 flex items-center justify-center text-white font-bold text-sm overflow-hidden shrink-0">
-          {teacher.profileImageUrl
-            ? <img src={teacher.profileImageUrl} alt={teacher.fullName} className="w-full h-full object-cover rounded-full" />
-            : initials}
+      <div className={`flex items-center gap-3 mb-3 border-b ${t.headerBorder} pb-3`}>
+        <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg overflow-hidden shrink-0"
+          style={{ backgroundColor: t.accentColor, color: t.dark ? "#0A1628" : "white" }}>
+          {avatarEl}
         </div>
         <div className="min-w-0">
-          <p className="text-sky-400 text-xs font-semibold tracking-wider">BENIUS</p>
-          <p className="text-white/60 text-xs truncate">{schoolName}</p>
+          <p className={`${t.accentClass} text-xs font-semibold tracking-wider`}>BENIUS</p>
+          <p className={`${t.schoolNameClass} text-xs truncate`}>{schoolName}</p>
         </div>
-        <span className="ml-auto text-[9px] font-bold text-sky-400/70 bg-sky-400/10 px-1.5 py-0.5 rounded shrink-0">FACULTY</span>
+        <span className={`ml-auto text-[9px] font-bold ${t.badgeText} ${t.badgeBg} px-1.5 py-0.5 rounded shrink-0`}>FACULTY</span>
       </div>
+
       {/* Body */}
       <div className="space-y-1.5">
-        <p className="text-white font-bold text-lg leading-tight truncate">{teacher.fullName}</p>
+        <p className={`${t.nameClass} font-bold text-lg leading-tight truncate`}>{teacher.fullName}</p>
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
-            <p className="text-white/40">Teacher ID</p>
-            <p className="text-sky-400 font-mono">{teacher.digitalTeacherId ?? "—"}</p>
+            <p className={t.labelClass}>Teacher ID</p>
+            <p className={`${t.accentClass} font-mono`}>{teacher.digitalTeacherId ?? "—"}</p>
           </div>
           <div>
-            <p className="text-white/40">Department</p>
-            <p className="text-white truncate">{teacher.department || teacher.subject || "—"}</p>
+            <p className={t.labelClass}>Designation</p>
+            <p className={`${t.valueClass} truncate`}>{teacher.designation || "Faculty"}</p>
           </div>
-          <div>
-            <p className="text-white/40">Designation</p>
-            <p className="text-white truncate">{teacher.designation || "Teacher"}</p>
-          </div>
-          <div>
-            <p className="text-white/40">Phone</p>
-            <p className="text-white">{teacher.phone || "—"}</p>
-          </div>
+          {optionalGrid}
         </div>
       </div>
+
       {/* Footer */}
-      <div className="mt-4 pt-3 border-t border-sky-500/30 flex items-center justify-between">
-        <div className="w-16 h-8 bg-white rounded flex items-center justify-center">
+      <div className={`mt-4 pt-3 border-t ${t.footerBorder} flex items-center justify-between`}>
+        <div className={`w-16 h-8 ${t.barcodeBg} rounded flex items-center justify-center`}>
           <p className="text-[#0A1628] text-[8px] font-bold font-mono">{teacher.digitalTeacherId ?? teacher.id}</p>
         </div>
-        <p className="text-white/30 text-[9px]">Faculty ID</p>
+        <p className={`${t.footerTextClass} text-[9px]`}>
+          {academicSession ? `Session: ${academicSession}` : "Faculty ID"}
+        </p>
       </div>
     </div>
   );
@@ -849,6 +1053,291 @@ function SupportStaffIDCard({ staff, schoolName }: { staff: any; schoolName: str
           <p className="text-[#0A1628] text-[8px] font-bold font-mono">{staff.staffId ?? `SS-${String(staff.id).padStart(3, "0")}`}</p>
         </div>
         <p className="text-white/30 text-[9px]">Support Staff ID</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Configure Teacher Template Modal ────────────────────────────────────────
+
+function ConfigureTeacherTemplateModal({
+  initial,
+  schoolName,
+  academicSession,
+  onApply,
+  onClose,
+}: {
+  initial: TeacherCardTemplate;
+  schoolName: string;
+  academicSession?: string | null;
+  onApply: (tpl: TeacherCardTemplate, save: boolean) => void;
+  onClose: () => void;
+}) {
+  const [active, setActive] = useState<Set<TeacherOptionalFieldKey>>(new Set(initial.activeFields));
+  const [orientation, setOrientation] = useState<"portrait" | "landscape">(initial.orientation ?? "portrait");
+  const [theme, setTheme] = useState<ThemeKey>(initial.theme ?? "modern-dark");
+  const [printFormat, setPrintFormat] = useState<"pvc-cr80" | "a4-grid">(initial.printFormat ?? "pvc-cr80");
+  const [saveDefault, setSaveDefault] = useState(false);
+
+  const toggleField = useCallback((key: TeacherOptionalFieldKey) => {
+    setActive(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const orderedActive = TEACHER_OPTIONAL_FIELDS.filter(f => active.has(f.key)).map(f => f.key);
+
+  const handleApply = () => {
+    onApply({ version: 1, activeFields: orderedActive, orientation, theme, printFormat }, saveDefault);
+  };
+
+  const handleBackdrop = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) onClose();
+  };
+
+  const mandatoryFields = ["Teacher Photo", "Full Name", "Teacher ID / Employee ID", "Designation", "Academic Session"];
+
+  const themeOptions: { key: ThemeKey; swatches: [string, string] }[] = [
+    { key: "modern-dark",    swatches: ["#0A1628", "#D4AF37"] },
+    { key: "classic-light",  swatches: ["#f8fafc", "#1d4ed8"] },
+    { key: "minimal-accent", swatches: ["#111827", "#34d399"] },
+  ];
+
+  const printOptions = [
+    { id: "pvc-cr80" as const, label: "Standard PVC Card (CR80)", sub: "85.6 × 54 mm — credit card size" },
+    { id: "a4-grid"  as const, label: "Paper Sheet Grid (A4 Print)", sub: "Multiple cards per A4 sheet" },
+  ];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+      onClick={handleBackdrop}
+    >
+      <div className="w-full max-w-4xl rounded-2xl bg-[#0d1b2e] border border-sky-500/30 shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+
+        {/* ── Header ─────────────────────────────────────────── */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <SlidersHorizontal className="w-5 h-5 text-sky-400" />
+            <div>
+              <h3 className="text-white font-bold text-base">Configure Teacher Card Template</h3>
+              <p className="text-white/45 text-xs">Customize layout, design, and visible fields for printed Teacher ID cards</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* ── Body ───────────────────────────────────────────── */}
+        <div className="flex flex-1 overflow-hidden min-h-0">
+
+          {/* Left panel — controls */}
+          <div className="w-72 shrink-0 border-r border-white/10 overflow-y-auto">
+
+            {/* Section 1: Card Template & Design */}
+            <div className="px-4 pt-4 pb-3">
+              <p className="text-sky-400 text-[10px] font-bold uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                <LayoutTemplate className="w-3 h-3" /> Card Template &amp; Design
+              </p>
+
+              {/* Orientation */}
+              <div className="mb-3">
+                <p className="text-white/40 text-[10px] font-semibold uppercase tracking-wider mb-1.5">Orientation</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {([
+                    { id: "portrait"  as const, label: "Vertical",  sub: "Portrait",  Icon: Smartphone },
+                    { id: "landscape" as const, label: "Horizontal", sub: "Landscape", Icon: Monitor    },
+                  ]).map(o => (
+                    <button
+                      key={o.id}
+                      onClick={() => setOrientation(o.id)}
+                      className={`flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-lg border transition-all ${
+                        orientation === o.id
+                          ? "border-sky-400 bg-sky-400/10 text-sky-400"
+                          : "border-white/15 text-white/40 hover:border-white/30 hover:text-white/60"
+                      }`}
+                    >
+                      <o.Icon className="w-4 h-4" />
+                      <span className="text-[10px] font-semibold">{o.label}</span>
+                      <span className="text-[9px] opacity-60">{o.sub}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Visual Theme */}
+              <div className="mb-3">
+                <p className="text-white/40 text-[10px] font-semibold uppercase tracking-wider mb-1.5">Visual Theme</p>
+                <div className="space-y-1.5">
+                  {themeOptions.map(opt => {
+                    const on = theme === opt.key;
+                    return (
+                      <button
+                        key={opt.key}
+                        onClick={() => setTheme(opt.key)}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg border transition-all ${
+                          on ? "border-sky-400 bg-sky-400/8" : "border-white/10 hover:border-white/20"
+                        }`}
+                      >
+                        <div className="flex gap-0.5 shrink-0">
+                          {opt.swatches.map((c, i) => (
+                            <div key={i} className="w-4 h-4 rounded" style={{ backgroundColor: c, outline: "1px solid rgba(255,255,255,0.12)" }} />
+                          ))}
+                        </div>
+                        <span className={`text-xs font-medium flex-1 text-left transition-colors ${on ? "text-sky-400" : "text-white/55"}`}>
+                          {CARD_THEMES[opt.key].name}
+                        </span>
+                        {on && <Check className="w-3 h-3 text-sky-400 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Target Print Format */}
+              <div>
+                <p className="text-white/40 text-[10px] font-semibold uppercase tracking-wider mb-1.5">Target Print Format</p>
+                <div className="space-y-1.5">
+                  {printOptions.map(p => {
+                    const on = printFormat === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => setPrintFormat(p.id)}
+                        className={`w-full flex items-start gap-2.5 px-3 py-2 rounded-lg border transition-all text-left ${
+                          on ? "border-sky-400 bg-sky-400/8" : "border-white/10 hover:border-white/20"
+                        }`}
+                      >
+                        <div className={`w-3.5 h-3.5 rounded-full border-2 shrink-0 mt-0.5 flex items-center justify-center transition-colors ${
+                          on ? "border-sky-400" : "border-white/25"
+                        }`}>
+                          {on && <div className="w-1.5 h-1.5 rounded-full bg-sky-400" />}
+                        </div>
+                        <div>
+                          <p className={`text-xs font-medium transition-colors ${on ? "text-sky-400" : "text-white/55"}`}>{p.label}</p>
+                          <p className="text-white/25 text-[9px]">{p.sub}</p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="mx-4 h-px bg-white/10" />
+
+            {/* Section 2: Mandatory Fields */}
+            <div className="px-4 py-3">
+              <p className="text-white/35 text-[10px] font-semibold uppercase tracking-widest mb-2">Mandatory</p>
+              <div className="space-y-1">
+                {mandatoryFields.map(label => (
+                  <div key={label} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg bg-white/[0.03]">
+                    <div className="w-4 h-4 rounded flex items-center justify-center bg-sky-400/20 shrink-0">
+                      <Lock className="w-2.5 h-2.5 text-sky-400" />
+                    </div>
+                    <span className="text-white/60 text-xs">{label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mx-4 h-px bg-white/10" />
+
+            {/* Section 3: Optional Fields */}
+            <div className="px-4 py-3">
+              <p className="text-white/35 text-[10px] font-semibold uppercase tracking-widest mb-2">Optional Fields</p>
+              <div className="space-y-1">
+                {TEACHER_OPTIONAL_FIELDS.map(f => {
+                  const on = active.has(f.key);
+                  return (
+                    <button
+                      key={f.key}
+                      onClick={() => toggleField(f.key)}
+                      className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-left transition-all ${
+                        on ? "bg-sky-500/12 border border-sky-400/40" : "hover:bg-white/[0.04] border border-transparent"
+                      }`}
+                    >
+                      <div className={`w-4 h-4 rounded shrink-0 flex items-center justify-center border transition-colors ${
+                        on ? "bg-sky-500 border-sky-500" : "border-white/25 bg-transparent"
+                      }`}>
+                        {on && <Check className="w-2.5 h-2.5 text-white" />}
+                      </div>
+                      <div className="min-w-0">
+                        <p className={`text-xs font-medium truncate transition-colors ${on ? "text-white" : "text-white/55"}`}>{f.label}</p>
+                        <p className="text-white/25 text-[10px] truncate">{f.hint}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Right panel — live preview */}
+          <div className="flex-1 flex flex-col items-center bg-[#080f1c] overflow-y-auto p-6 gap-4">
+            <p className="text-white/30 text-xs font-semibold uppercase tracking-widest">Live Preview</p>
+
+            {/* Active settings chips */}
+            <div className="flex gap-1.5 flex-wrap justify-center">
+              {[
+                orientation === "portrait" ? "↕ Portrait" : "↔ Landscape",
+                CARD_THEMES[theme].name,
+                printFormat === "pvc-cr80" ? "PVC CR80" : "A4 Grid",
+              ].map(label => (
+                <span key={label} className="text-[9px] text-white/30 px-2 py-0.5 rounded-full border border-white/10">
+                  {label}
+                </span>
+              ))}
+            </div>
+
+            {/* Card preview — scaled to fit */}
+            <div className={`${orientation === "landscape" ? "scale-[0.72]" : "scale-90"} origin-top shrink-0`}>
+              <TeacherIDCard
+                teacher={PREVIEW_TEACHER}
+                schoolName={schoolName}
+                activeFields={orderedActive}
+                orientation={orientation}
+                theme={theme}
+                academicSession={academicSession ?? "2026–2027"}
+              />
+            </div>
+
+            {/* Field count badge */}
+            <p className="text-white/20 text-[10px] text-center">
+              {orderedActive.length === 0
+                ? "No optional fields selected — only mandatory fields will print."
+                : `${orderedActive.length} optional field${orderedActive.length !== 1 ? "s" : ""} enabled`}
+            </p>
+          </div>
+        </div>
+
+        {/* ── Footer ─────────────────────────────────────────── */}
+        <div className="px-6 py-4 border-t border-white/10 flex items-center justify-between gap-4 flex-wrap bg-[#0d1b2e] shrink-0">
+          <button onClick={() => setSaveDefault(p => !p)} className="flex items-center gap-2.5 group">
+            <div className={`w-9 h-5 rounded-full relative transition-colors ${saveDefault ? "bg-sky-500" : "bg-white/15"}`}>
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${saveDefault ? "left-4" : "left-0.5"}`} />
+            </div>
+            <div>
+              <p className={`text-xs font-semibold transition-colors ${saveDefault ? "text-sky-400" : "text-white/50 group-hover:text-white/70"}`}>
+                Save as Default Template
+              </p>
+              <p className="text-white/25 text-[10px]">Remember this layout on next visit</p>
+            </div>
+          </button>
+
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose} className="border-white/20 text-white/70 hover:bg-white/10">
+              Cancel
+            </Button>
+            <Button onClick={handleApply} className="bg-sky-500 hover:bg-sky-400 text-white font-semibold gap-1.5">
+              {saveDefault ? <Save className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />}
+              {saveDefault ? "Save & Apply" : "Apply"}
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1479,13 +1968,32 @@ function TeacherPanel({
   schoolName: string;
 }) {
   const { toast } = useToast();
+  const { selectedSession } = useSessionView();
+  const academicSession = selectedSession?.sessionName ?? null;
+
   const [q, setQ] = useState("");
   const [designation, setDesignation] = useState("");
   const [subject, setSubject] = useState("");
   const [joiningYear, setJoiningYear] = useState("");
+  const [hasSearched, setHasSearched] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+
+  // ── Teacher Card Template ────────────────────────────────────────────────
+  const [template, setTemplate] = useState<TeacherCardTemplate>(() => loadTeacherTemplate());
+  const [showConfig, setShowConfig] = useState(false);
+
+  const handleApplyTemplate = useCallback((tpl: TeacherCardTemplate, save: boolean) => {
+    setTemplate(tpl);
+    if (save) saveTeacherTemplate(tpl);
+    setShowConfig(false);
+    toast({
+      title: save ? "✅ Template saved" : "✅ Template applied",
+      description: `${tpl.activeFields.length} optional field${tpl.activeFields.length !== 1 ? "s" : ""} active on Teacher ID cards.`,
+      duration: 3000,
+    });
+  }, [toast]);
 
   const toggleSelect = useCallback((id: number) => {
     setSelectedIds(prev => {
@@ -1495,7 +2003,10 @@ function TeacherPanel({
     });
   }, []);
 
-  // Fetch all teachers immediately from the teacher registry — no search gate.
+  const handleSearch = useCallback(() => setHasSearched(true), []);
+
+  // Fetch all teachers eagerly so dropdowns are populated immediately,
+  // but cards are only rendered once the user clicks Search.
   const { data: teachers, isLoading } = useQuery<any[]>({
     queryKey: ["/api/schools", schoolId, "teachers"],
     queryFn: async () => {
@@ -1557,12 +2068,12 @@ function TeacherPanel({
 
   const displayed = filtered.slice(0, 20);
 
-  // Clear selection whenever the visible set changes
+  // Clear selection whenever the search is re-run or filters change
   useEffect(() => { setSelectedIds(new Set()); }, [teachers, q, designation, subject, joiningYear]);
 
   return (
     <div className="space-y-4">
-      {/* Filters */}
+      {/* Filters + Search button */}
       <div className="rounded-xl border border-sky-500/30 bg-[#1A2942] p-5 space-y-3">
         <div className="flex flex-wrap gap-3 items-end">
           {/* Text search */}
@@ -1574,6 +2085,7 @@ function TeacherPanel({
               placeholder="Name or Teacher ID..."
               className="bg-[#0A1628] border-white/20 text-white"
               data-testid="input-teacher-search"
+              onKeyDown={e => e.key === "Enter" && handleSearch()}
             />
           </div>
 
@@ -1619,10 +2131,19 @@ function TeacherPanel({
             </Select>
           </div>
 
-          {/* Export button — shown once cards are visible */}
-          {displayed.length > 0 && (
+          {/* Search button — always visible */}
+          <Button
+            onClick={handleSearch}
+            className="bg-sky-500 hover:bg-sky-400 text-white font-semibold"
+            data-testid="button-search-teachers"
+          >
+            <Search className="w-4 h-4 mr-1" /> Search
+          </Button>
+
+          {/* Export button — shown only after search returns cards */}
+          {hasSearched && displayed.length > 0 && (
             <Button
-              className="bg-sky-500 hover:bg-sky-400 text-white font-semibold gap-1.5"
+              className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold gap-1.5"
               disabled={isExporting}
               onClick={() => {
                 const ids = selectedIds.size > 0 ? selectedIds : undefined;
@@ -1632,7 +2153,7 @@ function TeacherPanel({
                   description: "PDF will download automatically.",
                   duration: 3000,
                 });
-                executeExport("pvc-cr80", "portrait", ids, setIsExporting, setExportProgress)
+                executeExport(template.printFormat, template.orientation, ids, setIsExporting, setExportProgress)
                   .catch(() => toast({ title: "Export failed", description: "Please try again.", variant: "destructive" }));
               }}
               data-testid="button-export-teacher-cards"
@@ -1644,10 +2165,52 @@ function TeacherPanel({
             </Button>
           )}
         </div>
+
+        {/* Configure Template row */}
+        <div className="flex items-center justify-between pt-1 border-t border-white/8">
+          <div className="flex items-center gap-2">
+            <p className="text-white/35 text-xs">
+              Active optional fields:&nbsp;
+              {template.activeFields.length === 0
+                ? <span className="text-white/25 italic">none</span>
+                : template.activeFields
+                    .map(k => TEACHER_OPTIONAL_FIELDS.find(f => f.key === k)?.label)
+                    .filter(Boolean)
+                    .join(", ")
+              }
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            onClick={() => setShowConfig(true)}
+            className="border-sky-400/40 text-sky-400 hover:bg-sky-400/10 hover:border-sky-400/70 h-8 px-3 text-xs gap-1.5"
+            data-testid="button-configure-teacher-template"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            Configure Template
+          </Button>
+        </div>
       </div>
 
-      {/* States: loading / empty registry / no filter match / card grid */}
-      {isLoading ? (
+      {/* Configure Teacher Template Modal */}
+      {showConfig && (
+        <ConfigureTeacherTemplateModal
+          initial={template}
+          schoolName={schoolName}
+          academicSession={academicSession}
+          onApply={handleApplyTemplate}
+          onClose={() => setShowConfig(false)}
+        />
+      )}
+
+      {/* Pre-search placeholder */}
+      {!hasSearched ? (
+        <div className="rounded-xl border border-white/10 bg-[#1A2942] py-16 text-center">
+          <Users className="w-10 h-10 mx-auto mb-3 text-white/20" />
+          <p className="text-white/40">Use the search filters above to generate teacher ID cards</p>
+          <p className="text-white/25 text-sm mt-1">All filters are optional — leave them blank to load all teachers</p>
+        </div>
+      ) : isLoading ? (
         <div className="flex items-center justify-center py-16 gap-3 text-white/40">
           <Loader2 className="w-5 h-5 animate-spin" /> Loading teachers…
         </div>
@@ -1738,7 +2301,14 @@ function TeacherPanel({
                     <div className="absolute inset-0 rounded-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-[#0d1b2e] pointer-events-none z-20" />
                   )}
 
-                  <TeacherIDCard teacher={t} schoolName={schoolName} />
+                  <TeacherIDCard
+                    teacher={t}
+                    schoolName={schoolName}
+                    activeFields={template.activeFields}
+                    orientation={template.orientation}
+                    theme={template.theme}
+                    academicSession={academicSession}
+                  />
                 </div>
               );
             })}

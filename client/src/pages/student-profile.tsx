@@ -31,6 +31,7 @@ interface StudentMeResponse {
   motherName: string | null;
   address: string | null;
   aadharNumber: string | null;
+  email: string | null;
   schoolName: string;
   schoolCode: string;
   schoolId?: number;
@@ -55,6 +56,7 @@ interface StudentProfileRecord {
   enrollmentDate: string | null;
   guardianName: string | null;
   bloodGroup: string | null;
+  email: string | null;
   photoUrl: string | null;
   photoStatus: "none" | "pending" | "approved";
   rejectionNote: string | null;
@@ -220,6 +222,7 @@ export default function StudentProfile() {
     aadharNumber: "",
     gender: "" as "" | "Boy" | "Girl",
     phone: "",
+    email: "",
     dob: "",
     enrollmentDate: "",
     guardianName: "",
@@ -273,6 +276,7 @@ export default function StudentProfile() {
       enrollmentDate: profile?.enrollmentDate || student.enrollmentDate  || "",
       guardianName:   profile?.guardianName   || student.guardianName    || "",
       bloodGroup:    (profile?.bloodGroup     || student.bloodGroup      || "") as "" | "A+" | "A-" | "B+" | "B-" | "AB+" | "AB-" | "O+" | "O-",
+      email:          profile?.email          || student.email           || "",
     };
     setForm(vals);
     originalFormRef.current = vals;
@@ -779,6 +783,7 @@ export default function StudentProfile() {
                     <InfoField label="Roll Number" value={student.rollNumber != null ? String(student.rollNumber) : "—"} />
                     <InfoField label="Guardian Name" value={student.guardianName || "—"} />
                     <InfoField label="Phone" value={student.phone} mono />
+                    <InfoField label="Email" value={student.email || "—"} />
                     <InfoField label="Date of Birth" value={dob} />
                     <InfoField label="Date of Admission" value={enrollmentDateDisplay} />
                     <InfoField label="Blood Group" value={student.bloodGroup || "—"} />
@@ -997,6 +1002,14 @@ export default function StudentProfile() {
                         onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 10); setForm((f) => ({ ...f, phone: v })); }}
                         placeholder="10-digit mobile number"
                         className={`${inputBase} ${editingBorder} font-mono`} style={inputStyle} data-testid="input-phone" />
+                    </div>
+
+                    {/* Email */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Email</label>
+                      <input type="email" inputMode="email" value={form.email}
+                        onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-email" />
                     </div>
 
                     {/* Date of Birth */}
