@@ -906,33 +906,60 @@ async function executeExport(
 
     const isLandscape = orientation === "landscape";
 
-    // ── 3. Off-screen render container ────────────────────────────────────
-    // html2canvas clips the captured region when an element is inside a
-    // scrollable container (the AdminDashboard main pane). It calculates the
-    // element's position relative to the viewport but ignores the parent's
-    // scroll offset, so the right/bottom edges get cut off.
+    // ── 3. Render each card into a clean off-screen host ─────────────────
     //
-    // Fix: clone each card into a position:absolute container appended
-    // directly to <body> (no scrollable ancestor, no viewport offset).
-    // html2canvas then captures the full card cleanly. The clone is removed
-    // immediately after each capture.
-    const offscreen = document.createElement("div");
-    offscreen.style.cssText =
-      "position:absolute;left:-9999px;top:0;pointer-events:none;z-index:-1;";
-    document.body.appendChild(offscreen);
+    // WHY cloning is needed:
+    //   html2canvas computes element position from the document root, then
+    //   subtracts the viewport scroll. When the card lives inside the
+    //   AdminDashboard's overflow-y-auto pane, that inner scroll is invisible
+    //   to html2canvas — so the captured rect is shifted and the right/bottom
+    //   edges are clipped.
+    //
+    // WHY host at (0,0):
+    //   Placing the host at position:absolute top:0 left:0 with width:0
+    //   height:0 overflow:visible puts the clone at document coordinates
+    //   (0,0). With scrollX:0 scrollY:0 we tell html2canvas "start rendering
+    //   from the document origin" — the element is right there, no offset
+    //   arithmetic needed.
+    //   A negative left (e.g. -9999px) would require a matching scrollX
+    //   correction; keeping it at 0 eliminates all that complexity.
+    //
+    // WHY NOT setting windowWidth/windowHeight:
+    //   Setting windowWidth to the card's pixel width (288px) makes
+    //   html2canvas think the browser viewport is 288px wide — this breaks
+    //   font metrics and line-wrap calculations, causing text to be clipped.
+    //   Omitting those options lets html2canvas use the real window size.
 
     // ── 4. Render each card to a canvas ──────────────────────────────────
+    //
+    // Why position:fixed at (0,0):
+    //   - An element's getBoundingClientRect() depends on both its document
+    //     position AND the current scroll offset.  When the clone is at
+    //     position:absolute top:0 but the page is scrolled 500px, its
+    //     getBoundingClientRect().top is −500.  With scrollY:0 that causes
+    //     html2canvas to try rendering at canvas-y = −500 → blank or shifted.
+    //   - position:fixed elements are always at their declared viewport
+    //     coordinates regardless of scroll.  A clone at fixed top:0 left:0
+    //     always has getBoundingClientRect() = {top:0, left:0}, so
+    //     html2canvas finds it at (0,0) every time — no scroll arithmetic.
+    //   - z-index:−1 hides it behind the page; pointer-events:none prevents
+    //     any accidental interaction.
     const canvases: HTMLCanvasElement[] = [];
     for (let i = 0; i < cardEls.length; i++) {
       setProgress(Math.round((i / cardEls.length) * 85));
 
-      // Clone into the off-screen container so html2canvas has a clean
-      // element with no scroll-offset parent to confuse it.
+      const host = document.createElement("div");
+      host.style.cssText =
+        "position:fixed;top:0;left:0;z-index:-1;pointer-events:none;";
+      document.body.appendChild(host);
+
       const clone = cardEls[i].cloneNode(true) as HTMLElement;
-      // Ensure the clone renders at its natural size (no overflow clipping)
       clone.style.overflow = "visible";
-      clone.style.height = "auto";
-      offscreen.appendChild(clone);
+      clone.style.height   = "auto";
+      host.appendChild(clone);
+
+      // One animation frame so the browser computes layout (offsetWidth/Height)
+      await new Promise<void>(r => requestAnimationFrame(() => r()));
 
       const canvas = await html2canvas(clone, {
         scale: 3,
@@ -940,20 +967,13 @@ async function executeExport(
         allowTaint: true,
         backgroundColor: null,
         logging: false,
-        // Explicitly set the capture region to the clone's own dimensions
-        width:  clone.offsetWidth,
-        height: clone.offsetHeight,
-        windowWidth:  clone.offsetWidth,
-        windowHeight: clone.offsetHeight,
-        x: 0,
-        y: 0,
+        // Clone is at fixed (0,0) — no scroll offset needed
         scrollX: 0,
         scrollY: 0,
       });
       canvases.push(canvas);
-      offscreen.removeChild(clone);
+      host.remove();
     }
-    offscreen.remove();
 
     setProgress(90);
 
