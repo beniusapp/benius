@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { UserPlus, Pencil, Trash2, Loader2, X, Save, Search, Eye, EyeOff, ShieldCheck, ChevronDown } from "lucide-react";
+import { UserPlus, Pencil, Trash2, Loader2, X, Save, Search, Eye, EyeOff, ShieldCheck, ChevronDown, Camera, ZoomIn, ZoomOut, Crop, Check } from "lucide-react";
+import Cropper from "react-easy-crop";
+import type { Area } from "react-easy-crop";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -13,6 +15,36 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ADMIN_TILE_DEFS, MODULE_SUB_MODULES, expandModulesWithSubs } from "@/lib/admin-tiles";
 import type { NonTeachingStaff } from "@shared/schema";
+
+// ── Crop utilities ────────────────────────────────────────────────────────────
+
+function createImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.setAttribute("crossOrigin", "anonymous");
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+async function getCroppedImg(imageSrc: string, pixelCrop: Area): Promise<Blob> {
+  const image = await createImage(imageSrc);
+  const canvas = document.createElement("canvas");
+  canvas.width = pixelCrop.width;
+  canvas.height = pixelCrop.height;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(
+    image,
+    pixelCrop.x, pixelCrop.y, pixelCrop.width, pixelCrop.height,
+    0, 0, pixelCrop.width, pixelCrop.height,
+  );
+  return new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob(b => b ? resolve(b) : reject(new Error("Canvas is empty")), "image/jpeg", 0.92)
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface Props { schoolId: number; allowedSubs?: string[] }
 
@@ -251,6 +283,24 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
   const [showPassword, setShowPassword] = useState(false);
   const [permsSelected, setPermsSelected] = useState<string[]>([]);
   const [addModules, setAddModules] = useState<string[]>([]);
+  const [addPhotoFile, setAddPhotoFile] = useState<File | null>(null);
+  const [addPhotoPreview, setAddPhotoPreview] = useState<string | null>(null);
+  const [editPhotoFile, setEditPhotoFile] = useState<File | null>(null);
+  const [editPhotoPreview, setEditPhotoPreview] = useState<string | null>(null);
+  const addPhotoInputRef = useRef<HTMLInputElement>(null);
+  const editPhotoInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Crop modal state ─────────────────────────────────────────────────────
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
+  const [cropTarget, setCropTarget] = useState<"add" | "edit" | null>(null);
+  const [cropState, setCropState] = useState({ x: 0, y: 0 });
+  const [cropZoom, setCropZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
+  const [isCropping, setIsCropping] = useState(false);
+
+  const onCropComplete = useCallback((_: Area, pixels: Area) => {
+    setCroppedAreaPixels(pixels);
+  }, []);
 
   const { data: staff = [], isLoading } = useQuery<NonTeachingStaff[]>({
     queryKey: ["/api/admin/non-teaching-staff"],
@@ -284,11 +334,18 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
         designation, password: d.password, allowedModules: addModules,
       });
       if (!r.ok) { const e = await r.json(); throw new Error(e.message || "Failed"); }
-      return r.json();
+      const created = await r.json();
+      if (addPhotoFile) {
+        const fd = new FormData();
+        fd.append("photo", addPhotoFile);
+        await fetch(`/api/admin/non-teaching-staff/${created.id}/photo`, { method: "POST", body: fd, credentials: "include" });
+      }
+      return created;
     },
     onSuccess: () => {
       toast({ title: "Staff Registered", description: "Portal access credentials created." });
       addForm.reset(); setShowForm(false); setAddModules([]);
+      setAddPhotoFile(null); setAddPhotoPreview(null);
       queryClient.invalidateQueries({ queryKey: ["/api/admin/non-teaching-staff"] });
     },
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
@@ -301,11 +358,17 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
         fullName: d.fullName, email: d.email, phone: d.phone || "", designation,
       });
       if (!r.ok) { const e = await r.json(); throw new Error(e.message || "Failed"); }
-      return r.json();
+      const updated = await r.json();
+      if (editPhotoFile) {
+        const fd = new FormData();
+        fd.append("photo", editPhotoFile);
+        await fetch(`/api/admin/non-teaching-staff/${editTarget!.id}/photo`, { method: "POST", body: fd, credentials: "include" });
+      }
+      return updated;
     },
     onSuccess: () => {
       toast({ title: "Staff Updated" });
-      setEditTarget(null);
+      setEditTarget(null); setEditPhotoFile(null); setEditPhotoPreview(null);
       queryClient.invalidateQueries({ queryKey: ["/api/admin/non-teaching-staff"] });
     },
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
@@ -354,7 +417,68 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
       customDesignation: isCustom ? s.designation : "",
     });
     setEditTarget(s);
+    setEditPhotoFile(null);
+    setEditPhotoPreview(null);
   };
+
+  function openCropper(file: File, target: "add" | "edit") {
+    // No size check before crop — the cropped output will be checked instead
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Invalid file", description: "Please select an image file.", variant: "destructive" });
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setCropSrc(url);
+    setCropTarget(target);
+    setCropState({ x: 0, y: 0 });
+    setCropZoom(1);
+    setCroppedAreaPixels(null);
+  }
+
+  function handleAddPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (file) openCropper(file, "add");
+  }
+
+  function handleEditPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (file) openCropper(file, "edit");
+  }
+
+  async function handleCropConfirm() {
+    if (!cropSrc || !croppedAreaPixels) return;
+    setIsCropping(true);
+    try {
+      const blob = await getCroppedImg(cropSrc, croppedAreaPixels);
+      if (blob.size > 1 * 1024 * 1024) {
+        toast({ title: "Cropped image too large", description: "Try a smaller region or lower-resolution photo.", variant: "destructive" });
+        return;
+      }
+      const file = new File([blob], "staff-photo.jpg", { type: "image/jpeg" });
+      const preview = URL.createObjectURL(blob);
+      if (cropTarget === "add") {
+        setAddPhotoFile(file);
+        setAddPhotoPreview(preview);
+      } else {
+        setEditPhotoFile(file);
+        setEditPhotoPreview(preview);
+      }
+      setCropSrc(null);
+      setCropTarget(null);
+    } catch {
+      toast({ title: "Crop failed", description: "Please try again.", variant: "destructive" });
+    } finally {
+      setIsCropping(false);
+    }
+  }
+
+  function handleCropCancel() {
+    if (cropSrc) URL.revokeObjectURL(cropSrc);
+    setCropSrc(null);
+    setCropTarget(null);
+  }
 
   const isOtherAdd = addForm.watch("designation") === "Other";
   const isOtherEdit = editForm.watch("designation") === "Other";
@@ -396,6 +520,24 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
           </div>
           <Form {...addForm}>
             <form onSubmit={addForm.handleSubmit(d => addMutation.mutate(d))} className="space-y-4">
+              {/* Photo Upload */}
+              <div className="flex items-center gap-4">
+                <div className="w-16 h-16 rounded-full bg-[#0A1628] border-2 border-white/20 overflow-hidden flex items-center justify-center shrink-0">
+                  {addPhotoPreview
+                    ? <img src={addPhotoPreview} alt="preview" className="w-full h-full object-cover" />
+                    : <Camera className="w-6 h-6 text-white/30" />}
+                </div>
+                <div>
+                  <button type="button" onClick={() => addPhotoInputRef.current?.click()}
+                    className="px-3 py-1.5 rounded-lg border border-[#D4AF37]/50 text-[#D4AF37] text-xs font-semibold hover:bg-[#D4AF37]/10 transition-colors flex items-center gap-1.5">
+                    <Crop className="w-3 h-3" />
+                    {addPhotoPreview ? "Change & Crop" : "Upload & Crop"}
+                  </button>
+                  <p className="text-white/30 text-[10px] mt-1">Max 1 MB · You can crop after selecting</p>
+                </div>
+                <input ref={addPhotoInputRef} type="file" accept="image/*" className="hidden" onChange={handleAddPhoto} />
+              </div>
+
               {/* Full Name */}
               <FormField control={addForm.control} name="fullName" render={({ field }) => (
                 <FormItem>
@@ -621,6 +763,24 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
             <div className="p-5">
               <Form {...editForm}>
                 <form onSubmit={editForm.handleSubmit(d => editMutation.mutate(d))} className="space-y-3">
+                  {/* Photo Upload */}
+                  <div className="flex items-center gap-4 pb-1">
+                    <div className="w-16 h-16 rounded-full bg-[#0A1628] border-2 border-white/20 overflow-hidden flex items-center justify-center shrink-0">
+                      {(editPhotoPreview || editTarget?.photoUrl)
+                        ? <img src={editPhotoPreview || editTarget!.photoUrl!} alt="photo" className="w-full h-full object-cover" />
+                        : <Camera className="w-6 h-6 text-white/30" />}
+                    </div>
+                    <div>
+                      <button type="button" onClick={() => editPhotoInputRef.current?.click()}
+                        className="px-3 py-1.5 rounded-lg border border-[#D4AF37]/50 text-[#D4AF37] text-xs font-semibold hover:bg-[#D4AF37]/10 transition-colors flex items-center gap-1.5">
+                        <Crop className="w-3 h-3" />
+                        {(editPhotoPreview || editTarget?.photoUrl) ? "Change & Crop" : "Upload & Crop"}
+                      </button>
+                      <p className="text-white/30 text-[10px] mt-1">Max 1 MB · You can crop after selecting</p>
+                    </div>
+                    <input ref={editPhotoInputRef} type="file" accept="image/*" className="hidden" onChange={handleEditPhoto} />
+                  </div>
+
                   <FormField control={editForm.control} name="fullName" render={({ field }) => (
                     <FormItem>
                       <FormLabel className="text-white/70 text-xs">Full Name *</FormLabel>
@@ -757,6 +917,85 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
               </Button>
               <Button variant="outline" className="border-white/20 text-white hover:bg-white/10"
                 onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Photo Crop Modal ── */}
+      {cropSrc && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          onClick={e => { if (e.target === e.currentTarget) handleCropCancel(); }}
+        >
+          <div className="w-full max-w-md rounded-2xl bg-[#0d1b2e] border border-[#D4AF37]/30 shadow-2xl overflow-hidden flex flex-col">
+
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <Crop className="w-4 h-4 text-[#D4AF37]" />
+                <div>
+                  <h3 className="text-white font-semibold text-sm">Crop Photo</h3>
+                  <p className="text-white/40 text-[10px]">Drag to reposition · Pinch or use slider to zoom</p>
+                </div>
+              </div>
+              <button
+                onClick={handleCropCancel}
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Crop area */}
+            <div className="relative w-full bg-[#080f1c]" style={{ height: 340 }}>
+              <Cropper
+                image={cropSrc}
+                crop={cropState}
+                zoom={cropZoom}
+                aspect={1}
+                cropShape="round"
+                showGrid={false}
+                onCropChange={setCropState}
+                onZoomChange={setCropZoom}
+                onCropComplete={onCropComplete}
+              />
+            </div>
+
+            {/* Zoom slider */}
+            <div className="px-5 py-3 border-t border-white/10 flex items-center gap-3">
+              <ZoomOut className="w-4 h-4 text-white/40 shrink-0" />
+              <input
+                type="range"
+                min={1}
+                max={3}
+                step={0.05}
+                value={cropZoom}
+                onChange={e => setCropZoom(Number(e.target.value))}
+                className="flex-1 accent-[#D4AF37] cursor-pointer"
+              />
+              <ZoomIn className="w-4 h-4 text-white/40 shrink-0" />
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-4 border-t border-white/10 flex gap-2 justify-end bg-[#0d1b2e]">
+              <Button
+                variant="outline"
+                onClick={handleCropCancel}
+                className="border-white/20 text-white/70 hover:bg-white/10"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleCropConfirm}
+                disabled={isCropping}
+                className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold gap-1.5"
+              >
+                {isCropping
+                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Cropping…</>
+                  : <><Check className="w-3.5 h-3.5" /> Crop &amp; Use</>
+                }
+              </Button>
             </div>
           </div>
         </div>

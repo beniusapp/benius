@@ -4063,6 +4063,44 @@ Thank you for your prompt attention to this matter.
     }
   });
 
+  // ── Support Staff Photo Upload ────────────────────────────────────────────
+  const staffPhotoDiskUpload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => {
+        const dir = path.join(process.cwd(), "uploads", "staff-photos");
+        fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+      },
+      filename: (_req, file, cb) => {
+        cb(null, `${Date.now()}-${Math.round(Math.random() * 1e6)}${path.extname(file.originalname)}`);
+      },
+    }),
+    limits: { fileSize: 1 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      if (file.mimetype.startsWith("image/")) cb(null, true);
+      else cb(new Error("Only image files are allowed"));
+    },
+  });
+
+  app.post(
+    "/api/admin/non-teaching-staff/:id/photo",
+    async (req, res, next) => {
+      if (!req.session.userId || req.session.userRole !== "admin")
+        return res.status(403).json({ message: "Admin access required" });
+      next();
+    },
+    staffPhotoDiskUpload.single("photo"),
+    async (req: any, res) => {
+      if (!req.file) return res.status(400).json({ message: "No image uploaded" });
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const photoUrl = `/uploads/staff-photos/${req.file.filename}`;
+      const updated = await storage.updateNonTeachingStaff(id, req.session.schoolId!, { photoUrl } as any);
+      if (!updated) return res.status(404).json({ message: "Staff not found" });
+      res.json({ photoUrl });
+    },
+  );
+
   app.delete("/api/admin/non-teaching-staff/:id", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });

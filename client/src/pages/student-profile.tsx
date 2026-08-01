@@ -276,7 +276,7 @@ export default function StudentProfile() {
       enrollmentDate: profile?.enrollmentDate || student.enrollmentDate  || "",
       guardianName:   profile?.guardianName   || student.guardianName    || "",
       bloodGroup:    (profile?.bloodGroup     || student.bloodGroup      || "") as "" | "A+" | "A-" | "B+" | "B-" | "AB+" | "AB-" | "O+" | "O-",
-      email:          profile?.email          || student.email           || "",
+      email:          student.email           || "",
     };
     setForm(vals);
     originalFormRef.current = vals;

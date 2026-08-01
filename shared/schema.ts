@@ -440,6 +440,7 @@ export const studentProfiles = pgTable("student_profiles", {
   enrollmentDate: date("enrollment_date"),
   guardianName: text("guardian_name"),
   bloodGroup: varchar("blood_group", { length: 5 }),
+  email: text("email"),
   photoUrl: text("photo_url"),
   photoStatus: varchar("photo_status", { length: 20 }).notNull().default("none"),
   rejectionNote: text("rejection_note"),
@@ -759,6 +760,7 @@ export const nonTeachingStaff = pgTable("non_teaching_staff", {
   passwordHash: text("password_hash"),
   allowedModules: text("allowed_modules").array().notNull().default([]),
   isActive: boolean("is_active").notNull().default(true),
+  photoUrl: text("photo_url"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

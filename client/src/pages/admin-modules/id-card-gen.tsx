@@ -281,6 +281,70 @@ function saveTeacherTemplate(tpl: TeacherCardTemplate) {
   } catch { /* ignore quota errors */ }
 }
 
+// ─── Support Staff Card Template ─────────────────────────────────────────────
+
+export type StaffOptionalFieldKey = "phone" | "email";
+
+export interface StaffCardTemplate {
+  version: 1;
+  activeFields: StaffOptionalFieldKey[];
+  orientation: "portrait" | "landscape";
+  theme: ThemeKey;
+  printFormat: "pvc-cr80" | "a4-grid";
+  savedAt?: string;
+}
+
+const STAFF_TEMPLATE_STORAGE_KEY = "benius_support_staff_id_card_template_v1";
+
+export const STAFF_OPTIONAL_FIELDS: { key: StaffOptionalFieldKey; label: string; hint: string }[] = [
+  { key: "phone", label: "Phone Number",   hint: "e.g. 9876543210"         },
+  { key: "email", label: "Email Address",  hint: "e.g. staff@school.com"   },
+];
+
+const DEFAULT_STAFF_TEMPLATE: StaffCardTemplate = {
+  version: 1,
+  activeFields: ["phone", "email"],
+  orientation: "portrait",
+  theme: "modern-dark",
+  printFormat: "pvc-cr80",
+};
+
+// Sample staff used in the configure-template live preview
+const PREVIEW_STAFF = {
+  id: 0,
+  fullName: "Ravi Kumar",
+  designation: "Lab Assistant",
+  phone: "9876543210",
+  email: "ravi.kumar@school.com",
+  photoUrl: null,
+};
+
+function loadStaffTemplate(): StaffCardTemplate {
+  try {
+    const raw = localStorage.getItem(STAFF_TEMPLATE_STORAGE_KEY);
+    if (!raw) return DEFAULT_STAFF_TEMPLATE;
+    const parsed = JSON.parse(raw) as Partial<StaffCardTemplate>;
+    if (parsed.version !== 1) return DEFAULT_STAFF_TEMPLATE;
+    return { ...DEFAULT_STAFF_TEMPLATE, ...parsed } as StaffCardTemplate;
+  } catch {
+    return DEFAULT_STAFF_TEMPLATE;
+  }
+}
+
+function saveStaffTemplate(tpl: StaffCardTemplate) {
+  try {
+    localStorage.setItem(STAFF_TEMPLATE_STORAGE_KEY, JSON.stringify({ ...tpl, savedAt: new Date().toISOString() }));
+  } catch { /* ignore quota errors */ }
+}
+
+function renderStaffOptionalField(staff: any, key: StaffOptionalFieldKey): string {
+  switch (key) {
+    case "phone": return staff.phone || "—";
+    case "email": return staff.email || "—";
+    default:      return "—";
+  }
+}
+
 function renderTeacherOptionalField(teacher: any, key: TeacherOptionalFieldKey): string {
   switch (key) {
     case "phone":             return teacher.phone || "—";
@@ -1001,58 +1065,119 @@ function TeacherIDCard({
   );
 }
 
-function SupportStaffIDCard({ staff, schoolName }: { staff: any; schoolName: string }) {
+function SupportStaffIDCard({
+  staff,
+  schoolName,
+  activeFields = ["phone", "email"],
+  orientation = "portrait",
+  theme = "modern-dark",
+}: {
+  staff: any;
+  schoolName: string;
+  activeFields?: StaffOptionalFieldKey[];
+  orientation?: "portrait" | "landscape";
+  theme?: ThemeKey;
+}) {
+  const t = CARD_THEMES[theme] ?? CARD_THEMES["modern-dark"];
   const initials = (staff.fullName ?? "S")
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w: string) => w[0].toUpperCase())
-    .join("");
+    .trim().split(/\s+/).slice(0, 2)
+    .map((w: string) => w[0].toUpperCase()).join("");
 
+  const avatarEl = staff.photoUrl
+    ? <img src={staff.photoUrl} alt={staff.fullName} className="w-full h-full object-cover" />
+    : <span>{initials}</span>;
+
+  const fieldMeta: Record<StaffOptionalFieldKey, string> = {
+    phone: "Phone",
+    email: "Email",
+  };
+
+  const pairs: [StaffOptionalFieldKey, StaffOptionalFieldKey | null][] = [];
+  for (let i = 0; i < activeFields.length; i += 2) {
+    pairs.push([activeFields[i], activeFields[i + 1] ?? null]);
+  }
+
+  const optionalGrid = (
+    <>
+      {pairs.map(([a, b], i) => (
+        <div key={i} className="contents">
+          <div>
+            <p className={t.labelClass}>{fieldMeta[a]}</p>
+            <p className={`${t.valueClass} truncate`}>{renderStaffOptionalField(staff, a)}</p>
+          </div>
+          {b ? (
+            <div>
+              <p className={t.labelClass}>{fieldMeta[b]}</p>
+              <p className={`${t.valueClass} truncate`}>{renderStaffOptionalField(staff, b)}</p>
+            </div>
+          ) : <div />}
+        </div>
+      ))}
+    </>
+  );
+
+  /* ── Landscape layout ─────────────────────────────────────── */
+  if (orientation === "landscape") {
+    return (
+      <div
+        className={`w-[420px] rounded-xl border-2 bg-gradient-to-br ${t.cardBg} ${t.cardBorder} p-4 shadow-xl relative flex gap-0`}
+        data-testid={`card-staff-${staff.id}`}
+      >
+        {/* Left strip */}
+        <div className={`w-28 shrink-0 flex flex-col items-center gap-2 border-r ${t.headerBorder} pr-4 mr-4`}>
+          <p className={`${t.accentClass} text-[9px] font-bold tracking-widest`}>BENIUS</p>
+          <div className="w-16 h-16 rounded-full flex items-center justify-center font-bold text-2xl overflow-hidden"
+            style={{ backgroundColor: t.accentColor, color: t.dark ? "#0A1628" : "white" }}>
+            {avatarEl}
+          </div>
+          <p className={`${t.schoolNameClass} text-[8px] text-center leading-tight`}>{schoolName}</p>
+          <span className={`text-[8px] font-bold ${t.badgeText} ${t.badgeBg} px-1.5 py-0.5 rounded`}>STAFF</span>
+        </div>
+        {/* Right — name + fields */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          <p className={`${t.nameClass} font-bold text-base leading-tight truncate mb-2`}>{staff.fullName}</p>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs flex-1">
+            <div>
+              <p className={t.labelClass}>Designation</p>
+              <p className={`${t.valueClass} text-[11px] truncate`}>{staff.designation || "—"}</p>
+            </div>
+            <div />
+            {optionalGrid}
+          </div>
+          <p className={`${t.footerTextClass} text-[8px] mt-2`}>Support Staff ID</p>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── Portrait layout (default) ────────────────────────────── */
   return (
     <div
-      className="w-72 rounded-xl border-2 border-purple-500 bg-gradient-to-br from-[#0A1628] to-[#1a0d2e] p-5 shadow-xl"
+      className={`w-72 rounded-xl border-2 bg-gradient-to-br ${t.cardBg} ${t.cardBorder} p-5 shadow-xl relative`}
       data-testid={`card-staff-${staff.id}`}
     >
       {/* Header */}
-      <div className="flex items-center gap-3 mb-3 border-b border-purple-500/30 pb-3">
-        <div className="w-10 h-10 rounded-full bg-purple-500 flex items-center justify-center text-white font-bold text-sm overflow-hidden shrink-0">
-          {initials}
+      <div className={`flex items-center gap-3 mb-3 border-b ${t.headerBorder} pb-3`}>
+        <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg overflow-hidden shrink-0"
+          style={{ backgroundColor: t.accentColor, color: t.dark ? "#0A1628" : "white" }}>
+          {avatarEl}
         </div>
         <div className="min-w-0">
-          <p className="text-purple-400 text-xs font-semibold tracking-wider">BENIUS</p>
-          <p className="text-white/60 text-xs truncate">{schoolName}</p>
+          <p className={`${t.accentClass} text-xs font-semibold tracking-wider`}>BENIUS</p>
+          <p className={`${t.schoolNameClass} text-xs truncate`}>{schoolName}</p>
         </div>
-        <span className="ml-auto text-[9px] font-bold text-purple-400/70 bg-purple-400/10 px-1.5 py-0.5 rounded shrink-0">STAFF</span>
+        <span className={`ml-auto text-[9px] font-bold ${t.badgeText} ${t.badgeBg} px-1.5 py-0.5 rounded shrink-0`}>STAFF</span>
       </div>
       {/* Body */}
       <div className="space-y-1.5">
-        <p className="text-white font-bold text-lg leading-tight truncate">{staff.fullName}</p>
+        <p className={`${t.nameClass} font-bold text-lg leading-tight truncate`}>{staff.fullName}</p>
         <div className="grid grid-cols-2 gap-2 text-xs">
-          <div>
-            <p className="text-white/40">Staff ID</p>
-            <p className="text-purple-400 font-mono">{staff.staffId ?? `SS-${String(staff.id).padStart(3, "0")}`}</p>
+          <div className="col-span-2">
+            <p className={t.labelClass}>Designation</p>
+            <p className={`${t.valueClass} truncate`}>{staff.designation || "—"}</p>
           </div>
-          <div>
-            <p className="text-white/40">Designation</p>
-            <p className="text-white truncate">{staff.designation || "—"}</p>
-          </div>
-          <div>
-            <p className="text-white/40">Phone</p>
-            <p className="text-white">{staff.phone || "—"}</p>
-          </div>
-          <div>
-            <p className="text-white/40">Email</p>
-            <p className="text-white text-[10px] truncate">{staff.email || "—"}</p>
-          </div>
+          {optionalGrid}
         </div>
-      </div>
-      {/* Footer */}
-      <div className="mt-4 pt-3 border-t border-purple-500/30 flex items-center justify-between">
-        <div className="w-16 h-8 bg-white rounded flex items-center justify-center">
-          <p className="text-[#0A1628] text-[8px] font-bold font-mono">{staff.staffId ?? `SS-${String(staff.id).padStart(3, "0")}`}</p>
-        </div>
-        <p className="text-white/30 text-[9px]">Support Staff ID</p>
       </div>
     </div>
   );
@@ -1333,6 +1458,288 @@ function ConfigureTeacherTemplateModal({
               Cancel
             </Button>
             <Button onClick={handleApply} className="bg-sky-500 hover:bg-sky-400 text-white font-semibold gap-1.5">
+              {saveDefault ? <Save className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />}
+              {saveDefault ? "Save & Apply" : "Apply"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Configure Support Staff Template Modal ──────────────────────────────────
+
+function ConfigureSupportStaffTemplateModal({
+  initial,
+  schoolName,
+  onApply,
+  onClose,
+}: {
+  initial: StaffCardTemplate;
+  schoolName: string;
+  onApply: (tpl: StaffCardTemplate, save: boolean) => void;
+  onClose: () => void;
+}) {
+  const [active, setActive] = useState<Set<StaffOptionalFieldKey>>(new Set(initial.activeFields));
+  const [orientation, setOrientation] = useState<"portrait" | "landscape">(initial.orientation ?? "portrait");
+  const [theme, setTheme] = useState<ThemeKey>(initial.theme ?? "modern-dark");
+  const [printFormat, setPrintFormat] = useState<"pvc-cr80" | "a4-grid">(initial.printFormat ?? "pvc-cr80");
+  const [saveDefault, setSaveDefault] = useState(false);
+
+  const toggleField = useCallback((key: StaffOptionalFieldKey) => {
+    setActive(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const orderedActive = STAFF_OPTIONAL_FIELDS.filter(f => active.has(f.key)).map(f => f.key);
+
+  const handleApply = () => {
+    onApply({ version: 1, activeFields: orderedActive, orientation, theme, printFormat }, saveDefault);
+  };
+
+  const handleBackdrop = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) onClose();
+  };
+
+  const mandatoryFields = ["Staff Photo", "Full Name", "Designation"];
+
+  const themeOptions: { key: ThemeKey; swatches: [string, string] }[] = [
+    { key: "modern-dark",    swatches: ["#0A1628", "#D4AF37"] },
+    { key: "classic-light",  swatches: ["#f8fafc", "#1d4ed8"] },
+    { key: "minimal-accent", swatches: ["#111827", "#34d399"] },
+  ];
+
+  const printOptions = [
+    { id: "pvc-cr80" as const, label: "Standard PVC Card (CR80)", sub: "85.6 × 54 mm — credit card size" },
+    { id: "a4-grid"  as const, label: "Paper Sheet Grid (A4 Print)", sub: "Multiple cards per A4 sheet" },
+  ];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+      onClick={handleBackdrop}
+    >
+      <div className="w-full max-w-4xl rounded-2xl bg-[#0d1b2e] border border-purple-500/30 shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+
+        {/* ── Header ─────────────────────────────────────────── */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <SlidersHorizontal className="w-5 h-5 text-purple-400" />
+            <div>
+              <h3 className="text-white font-bold text-base">Support Staff Configure Template</h3>
+              <p className="text-white/45 text-xs">Customize layout, design, and visible fields for printed Support Staff ID cards</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* ── Body ───────────────────────────────────────────── */}
+        <div className="flex flex-1 overflow-hidden min-h-0">
+
+          {/* Left panel — controls */}
+          <div className="w-72 shrink-0 border-r border-white/10 overflow-y-auto">
+
+            {/* Section 1: Card Template & Design */}
+            <div className="px-4 pt-4 pb-3">
+              <p className="text-purple-400 text-[10px] font-bold uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                <LayoutTemplate className="w-3 h-3" /> Card Template &amp; Design
+              </p>
+
+              {/* Orientation */}
+              <div className="mb-3">
+                <p className="text-white/40 text-[10px] font-semibold uppercase tracking-wider mb-1.5">Orientation</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {([
+                    { id: "portrait"  as const, label: "Vertical",   sub: "Portrait",  Icon: Smartphone },
+                    { id: "landscape" as const, label: "Horizontal",  sub: "Landscape", Icon: Monitor    },
+                  ]).map(o => (
+                    <button
+                      key={o.id}
+                      onClick={() => setOrientation(o.id)}
+                      className={`flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-lg border transition-all ${
+                        orientation === o.id
+                          ? "border-purple-400 bg-purple-400/10 text-purple-400"
+                          : "border-white/15 text-white/40 hover:border-white/30 hover:text-white/60"
+                      }`}
+                    >
+                      <o.Icon className="w-4 h-4" />
+                      <span className="text-[10px] font-semibold">{o.label}</span>
+                      <span className="text-[9px] opacity-60">{o.sub}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Visual Theme */}
+              <div className="mb-3">
+                <p className="text-white/40 text-[10px] font-semibold uppercase tracking-wider mb-1.5">Visual Theme</p>
+                <div className="space-y-1.5">
+                  {themeOptions.map(opt => {
+                    const on = theme === opt.key;
+                    return (
+                      <button
+                        key={opt.key}
+                        onClick={() => setTheme(opt.key)}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg border transition-all ${
+                          on ? "border-purple-400 bg-purple-400/8" : "border-white/10 hover:border-white/20"
+                        }`}
+                      >
+                        <div className="flex gap-0.5 shrink-0">
+                          {opt.swatches.map((c, i) => (
+                            <div key={i} className="w-4 h-4 rounded" style={{ backgroundColor: c, outline: "1px solid rgba(255,255,255,0.12)" }} />
+                          ))}
+                        </div>
+                        <span className={`text-xs font-medium flex-1 text-left transition-colors ${on ? "text-purple-400" : "text-white/55"}`}>
+                          {CARD_THEMES[opt.key].name}
+                        </span>
+                        {on && <Check className="w-3 h-3 text-purple-400 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Target Print Format */}
+              <div>
+                <p className="text-white/40 text-[10px] font-semibold uppercase tracking-wider mb-1.5">Target Print Format</p>
+                <div className="space-y-1.5">
+                  {printOptions.map(p => {
+                    const on = printFormat === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => setPrintFormat(p.id)}
+                        className={`w-full flex items-start gap-2.5 px-3 py-2 rounded-lg border transition-all text-left ${
+                          on ? "border-purple-400 bg-purple-400/8" : "border-white/10 hover:border-white/20"
+                        }`}
+                      >
+                        <div className={`w-3.5 h-3.5 rounded-full border-2 shrink-0 mt-0.5 flex items-center justify-center transition-colors ${
+                          on ? "border-purple-400" : "border-white/25"
+                        }`}>
+                          {on && <div className="w-1.5 h-1.5 rounded-full bg-purple-400" />}
+                        </div>
+                        <div>
+                          <p className={`text-xs font-medium transition-colors ${on ? "text-purple-400" : "text-white/55"}`}>{p.label}</p>
+                          <p className="text-white/25 text-[9px]">{p.sub}</p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="mx-4 h-px bg-white/10" />
+
+            {/* Section 2: Mandatory Fields */}
+            <div className="px-4 py-3">
+              <p className="text-white/35 text-[10px] font-semibold uppercase tracking-widest mb-2">Mandatory</p>
+              <div className="space-y-1">
+                {mandatoryFields.map(label => (
+                  <div key={label} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg bg-white/[0.03]">
+                    <div className="w-4 h-4 rounded flex items-center justify-center bg-purple-400/20 shrink-0">
+                      <Lock className="w-2.5 h-2.5 text-purple-400" />
+                    </div>
+                    <span className="text-white/60 text-xs">{label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mx-4 h-px bg-white/10" />
+
+            {/* Section 3: Optional Fields */}
+            <div className="px-4 py-3">
+              <p className="text-white/35 text-[10px] font-semibold uppercase tracking-widest mb-2">Optional Fields</p>
+              <div className="space-y-1">
+                {STAFF_OPTIONAL_FIELDS.map(f => {
+                  const on = active.has(f.key);
+                  return (
+                    <button
+                      key={f.key}
+                      onClick={() => toggleField(f.key)}
+                      className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-left transition-all ${
+                        on ? "bg-purple-500/12 border border-purple-400/40" : "hover:bg-white/[0.04] border border-transparent"
+                      }`}
+                    >
+                      <div className={`w-4 h-4 rounded shrink-0 flex items-center justify-center border transition-colors ${
+                        on ? "bg-purple-500 border-purple-500" : "border-white/25 bg-transparent"
+                      }`}>
+                        {on && <Check className="w-2.5 h-2.5 text-white" />}
+                      </div>
+                      <div className="min-w-0">
+                        <p className={`text-xs font-medium truncate transition-colors ${on ? "text-white" : "text-white/55"}`}>{f.label}</p>
+                        <p className="text-white/25 text-[10px] truncate">{f.hint}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Right panel — live preview */}
+          <div className="flex-1 flex flex-col items-center bg-[#080f1c] overflow-y-auto p-6 gap-4">
+            <p className="text-white/30 text-xs font-semibold uppercase tracking-widest">Live Preview</p>
+
+            {/* Active settings chips */}
+            <div className="flex gap-1.5 flex-wrap justify-center">
+              {[
+                orientation === "portrait" ? "↕ Portrait" : "↔ Landscape",
+                CARD_THEMES[theme].name,
+                printFormat === "pvc-cr80" ? "PVC CR80" : "A4 Grid",
+              ].map(label => (
+                <span key={label} className="text-[9px] text-white/30 px-2 py-0.5 rounded-full border border-white/10">
+                  {label}
+                </span>
+              ))}
+            </div>
+
+            {/* Card preview */}
+            <div className={`${orientation === "landscape" ? "scale-[0.72]" : "scale-90"} origin-top shrink-0`}>
+              <SupportStaffIDCard
+                staff={PREVIEW_STAFF}
+                schoolName={schoolName}
+                activeFields={orderedActive}
+                orientation={orientation}
+                theme={theme}
+              />
+            </div>
+
+            {/* Field count badge */}
+            <p className="text-white/20 text-[10px] text-center">
+              {orderedActive.length === 0
+                ? "No optional fields selected — only mandatory fields will print."
+                : `${orderedActive.length} optional field${orderedActive.length !== 1 ? "s" : ""} enabled`}
+            </p>
+          </div>
+        </div>
+
+        {/* ── Footer ─────────────────────────────────────────── */}
+        <div className="px-6 py-4 border-t border-white/10 flex items-center justify-between gap-4 flex-wrap bg-[#0d1b2e] shrink-0">
+          <button onClick={() => setSaveDefault(p => !p)} className="flex items-center gap-2.5 group">
+            <div className={`w-9 h-5 rounded-full relative transition-colors ${saveDefault ? "bg-purple-500" : "bg-white/15"}`}>
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${saveDefault ? "left-4" : "left-0.5"}`} />
+            </div>
+            <div>
+              <p className={`text-xs font-semibold transition-colors ${saveDefault ? "text-purple-400" : "text-white/50 group-hover:text-white/70"}`}>
+                Save as Default Template
+              </p>
+              <p className="text-white/25 text-[10px]">Remember this layout on next visit</p>
+            </div>
+          </button>
+
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose} className="border-white/20 text-white/70 hover:bg-white/10">
+              Cancel
+            </Button>
+            <Button onClick={handleApply} className="bg-purple-500 hover:bg-purple-400 text-white font-semibold gap-1.5">
               {saveDefault ? <Save className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />}
               {saveDefault ? "Save & Apply" : "Apply"}
             </Button>
@@ -2333,8 +2740,32 @@ function SupportStaffPanel({
   const { toast } = useToast();
   const [q, setQ] = useState("");
   const [searched, setSearched] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+
+  // ── Staff Card Template ──────────────────────────────────────────────────
+  const [template, setTemplate] = useState<StaffCardTemplate>(() => loadStaffTemplate());
+  const [showConfig, setShowConfig] = useState(false);
+
+  const handleApplyTemplate = useCallback((tpl: StaffCardTemplate, save: boolean) => {
+    setTemplate(tpl);
+    if (save) saveStaffTemplate(tpl);
+    setShowConfig(false);
+    toast({
+      title: save ? "✅ Template saved" : "✅ Template applied",
+      description: `${tpl.activeFields.length} optional field${tpl.activeFields.length !== 1 ? "s" : ""} active on Support Staff ID cards.`,
+      duration: 3000,
+    });
+  }, [toast]);
+
+  const toggleSelect = useCallback((id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
 
   const { data: staff, isLoading } = useQuery<any[]>({
     queryKey: ["/api/admin/non-teaching-staff"],
@@ -2357,12 +2788,15 @@ function SupportStaffPanel({
     );
   });
 
-  const displayed = q ? filtered : (searched ? filtered : []);
+  const displayed = (q || searched) ? filtered.slice(0, 20) : [];
+
+  // Clear selection when search changes
+  useEffect(() => { setSelectedIds(new Set()); }, [staff, q, searched]);
 
   return (
     <div className="space-y-4">
       {/* Search bar */}
-      <div className="rounded-xl border border-purple-500/30 bg-[#1A2942] p-5">
+      <div className="rounded-xl border border-purple-500/30 bg-[#1A2942] p-5 space-y-3">
         <div className="flex flex-wrap gap-3 items-end">
           <div className="flex-1 min-w-[220px]">
             <label className="block text-xs text-white/60 mb-1">Search Support Staff</label>
@@ -2382,28 +2816,72 @@ function SupportStaffPanel({
           >
             <Search className="w-4 h-4 mr-1" /> Search
           </Button>
-          {(searched || q) && filtered.length > 0 && (
+
+          {/* Export button */}
+          {(searched || q) && displayed.length > 0 && (
             <Button
-              variant="outline"
-              className="border-white/20 text-white hover:bg-white/10 gap-1.5"
+              className="bg-purple-600 hover:bg-purple-500 text-white font-semibold gap-1.5"
               disabled={isExporting}
               onClick={() => {
-                toast({ title: "⬇️ Preparing cards…", description: "PDF will download automatically.", duration: 3000 });
-                executeExport("pvc-cr80", "portrait", undefined, setIsExporting, setExportProgress)
+                const ids = selectedIds.size > 0 ? selectedIds : undefined;
+                const count = ids ? ids.size : displayed.length;
+                toast({ title: `⬇️ Preparing ${count} card${count !== 1 ? "s" : ""}…`, description: "PDF will download automatically.", duration: 3000 });
+                executeExport(template.printFormat, template.orientation, ids, setIsExporting, setExportProgress)
                   .catch(() => toast({ title: "Export failed", variant: "destructive" }));
               }}
               data-testid="button-export-staff-cards"
             >
               {isExporting
-                ? <><Loader2 className="w-4 h-4 animate-spin" />{exportProgress < 100 ? `${exportProgress}%` : "Saving…"}</>
-                : <><Download className="w-4 h-4" /> Export PDF</>
+                ? <><Loader2 className="w-4 h-4 animate-spin" />{exportProgress < 100 ? `Exporting ${exportProgress}%` : "Saving…"}</>
+                : <><Download className="w-4 h-4" />{selectedIds.size > 0 ? `Export Selected (${selectedIds.size})` : "Export PDF"}</>
               }
             </Button>
           )}
         </div>
+
+        {/* Configure Template row */}
+        <div className="flex items-center justify-between pt-1 border-t border-white/8">
+          <p className="text-white/35 text-xs">
+            Active optional fields:&nbsp;
+            {template.activeFields.length === 0
+              ? <span className="text-white/25 italic">none</span>
+              : template.activeFields
+                  .map(k => STAFF_OPTIONAL_FIELDS.find(f => f.key === k)?.label)
+                  .filter(Boolean)
+                  .join(", ")
+            }
+          </p>
+          <Button
+            variant="outline"
+            onClick={() => setShowConfig(true)}
+            className="border-purple-400/40 text-purple-400 hover:bg-purple-400/10 hover:border-purple-400/70 h-8 px-3 text-xs gap-1.5"
+            data-testid="button-configure-staff-template"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            Configure Template
+          </Button>
+        </div>
       </div>
 
-      {/* Card grid */}
+      {/* Configure Staff Template Modal */}
+      {showConfig && (
+        <ConfigureSupportStaffTemplateModal
+          initial={template}
+          schoolName={schoolName}
+          onApply={handleApplyTemplate}
+          onClose={() => setShowConfig(false)}
+        />
+      )}
+
+      {/* Pre-search placeholder */}
+      {!searched && !q && !isLoading && (
+        <div className="rounded-xl border border-white/10 bg-[#1A2942] py-16 text-center">
+          <UserCog className="w-10 h-10 mx-auto mb-3 text-white/20" />
+          <p className="text-white/40">Search for support staff to preview and print ID cards</p>
+          <p className="text-white/25 text-sm mt-1">Filter by name, designation, or email</p>
+        </div>
+      )}
+
       {(searched || q) && (
         isLoading ? (
           <div className="flex items-center justify-center py-16 gap-3 text-white/40">
@@ -2412,25 +2890,102 @@ function SupportStaffPanel({
         ) : displayed.length === 0 ? (
           <div className="rounded-xl border border-white/10 bg-[#1A2942] py-16 text-center">
             <CreditCard className="w-10 h-10 mx-auto mb-3 text-white/20" />
-            <p className="text-white/40">No staff members found matching "{q}".</p>
+            <p className="text-white/40">No staff members found{q ? ` matching "${q}"` : ""}.</p>
           </div>
         ) : (
-          <div className="flex flex-wrap gap-4 pt-2" id="printable-id-card-area">
-            {displayed.slice(0, 20).map(s => (
-              <div key={s.id} data-print-card>
-                <SupportStaffIDCard staff={s} schoolName={schoolName} />
-              </div>
-            ))}
-          </div>
-        )
-      )}
+          <>
+            {/* Selection summary bar */}
+            {(() => {
+              const allSelected = displayed.length > 0 && displayed.every(s => selectedIds.has(s.id));
+              const someSelected = selectedIds.size > 0 && !allSelected;
+              return (
+                <div className="flex items-center gap-3 py-1 px-1">
+                  <button
+                    onClick={() => {
+                      if (allSelected) setSelectedIds(new Set());
+                      else setSelectedIds(new Set(displayed.map(s => s.id)));
+                    }}
+                    className="flex items-center gap-2 text-xs text-white/50 hover:text-white/80 transition-colors"
+                  >
+                    <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-all ${
+                      allSelected ? "bg-purple-500 border-purple-500"
+                      : someSelected ? "border-purple-400/60 bg-purple-400/15"
+                      : "border-white/30 bg-transparent"
+                    }`}>
+                      {allSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                      {someSelected && <div className="w-2 h-0.5 rounded bg-purple-400" />}
+                    </div>
+                    {allSelected ? "Deselect All" : "Select All"}
+                  </button>
 
-      {!searched && !q && !isLoading && (
-        <div className="rounded-xl border border-white/10 bg-[#1A2942] py-16 text-center">
-          <UserCog className="w-10 h-10 mx-auto mb-3 text-white/20" />
-          <p className="text-white/40">Search for support staff to preview and print ID cards</p>
-          <p className="text-white/25 text-sm mt-1">Filter by name, designation, or email</p>
-        </div>
+                  {selectedIds.size > 0 && (
+                    <>
+                      <span className="text-white/20 text-xs">·</span>
+                      <span className="text-purple-400 text-xs font-semibold">
+                        {selectedIds.size} of {displayed.length} selected
+                      </span>
+                      <button
+                        onClick={() => setSelectedIds(new Set())}
+                        className="text-white/30 hover:text-white/60 text-xs transition-colors"
+                      >
+                        Clear
+                      </button>
+                    </>
+                  )}
+
+                  <span className="ml-auto text-white/25 text-xs">
+                    {filtered.length} staff member{filtered.length !== 1 ? "s" : ""}
+                    {filtered.length > 20 ? " · showing first 20" : ""}
+                  </span>
+                </div>
+              );
+            })()}
+
+            {/* Card grid */}
+            <div className="flex flex-wrap gap-4 pt-1" id="printable-id-card-area">
+              {displayed.map(s => {
+                const isSelected = selectedIds.has(s.id);
+                return (
+                  <div
+                    key={s.id}
+                    data-print-card
+                    {...(isSelected ? { "data-selected": "" } : {})}
+                    className="relative group cursor-pointer"
+                    onClick={() => toggleSelect(s.id)}
+                  >
+                    {/* Checkbox overlay */}
+                    <div className={`absolute top-2 left-2 z-10 w-5 h-5 rounded border-2 flex items-center justify-center
+                      transition-all pointer-events-none shadow-sm
+                      ${isSelected
+                        ? "bg-purple-500 border-purple-500 opacity-100"
+                        : "bg-black/55 border-white/45 opacity-0 group-hover:opacity-100"
+                      }`}
+                    >
+                      {isSelected && <Check className="w-3 h-3 text-white" />}
+                    </div>
+
+                    {/* Purple selection ring */}
+                    {isSelected && (
+                      <div className="absolute inset-0 rounded-xl ring-2 ring-purple-400 ring-offset-2 ring-offset-[#0d1b2e] pointer-events-none z-20" />
+                    )}
+
+                    <SupportStaffIDCard
+                      staff={s}
+                      schoolName={schoolName}
+                      activeFields={template.activeFields}
+                      orientation={template.orientation}
+                      theme={template.theme}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+
+            <p className="text-white/25 text-sm mt-1 text-center">
+              Up to 20 cards shown at a time
+            </p>
+          </>
+        )
       )}
     </div>
   );
