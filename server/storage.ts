@@ -4698,7 +4698,26 @@ export class DatabaseStorage {
   // ===== PAYMENT RECORDS =====
 
   async createPaymentRecord(data: InsertPaymentRecord): Promise<PaymentRecord> {
-    const [rec] = await db.insert(paymentRecords).values(data).returning();
+    // Session resolution priority:
+    //   1. Caller explicitly supplied sessionId  →  use it as-is
+    //   2. Linked fee record is present          →  inherit session from that fee record
+    //      (handles arrears: payment collected in session B for a session A invoice)
+    //   3. Truly unlinked (freeform) payment     →  stamp with the currently active session
+    let resolvedSessionId = data.sessionId ?? null;
+    if (resolvedSessionId == null) {
+      if (data.feeRecordId) {
+        const [linked] = await db
+          .select({ sessionId: feeRecords.sessionId })
+          .from(feeRecords)
+          .where(and(eq(feeRecords.id, data.feeRecordId), eq(feeRecords.schoolId, data.schoolId)));
+        resolvedSessionId = linked?.sessionId ?? null;
+      }
+      if (resolvedSessionId == null) {
+        const active = await this.getActiveSession(data.schoolId);
+        resolvedSessionId = active?.id ?? null;
+      }
+    }
+    const [rec] = await db.insert(paymentRecords).values({ ...data, sessionId: resolvedSessionId }).returning();
     return rec;
   }
 
@@ -4776,12 +4795,22 @@ export class DatabaseStorage {
     const collectionRate = total > 0 ? Math.round((totalRevenue / total) * 100) : 0;
     let offlineCount: number;
     if (sessionId != null) {
-      // Join payment_records → fee_records to filter by session
+      // Count payments that belong to this session via either path:
+      //   a) payment_records.session_id = sessionId  (new rows + backfilled rows)
+      //   b) session_id IS NULL but linked fee_record.session_id = sessionId  (legacy fallback)
       const [{ cnt }] = await db
-        .select({ cnt: count() })
+        .select({ cnt: sql<string>`COUNT(DISTINCT ${paymentRecords.id})` })
         .from(paymentRecords)
-        .innerJoin(feeRecords, eq(paymentRecords.feeRecordId, feeRecords.id))
-        .where(and(eq(paymentRecords.schoolId, schoolId), eq(feeRecords.sessionId, sessionId)));
+        .leftJoin(feeRecords, eq(paymentRecords.feeRecordId, feeRecords.id))
+        .where(
+          and(
+            eq(paymentRecords.schoolId, schoolId),
+            or(
+              eq(paymentRecords.sessionId, sessionId),
+              and(isNull(paymentRecords.sessionId), eq(feeRecords.sessionId, sessionId)),
+            ),
+          ),
+        );
       offlineCount = Number(cnt);
     } else {
       const [{ cnt }] = await db.select({ cnt: count() }).from(paymentRecords)

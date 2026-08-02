@@ -382,6 +382,19 @@ app.use((req, res, next) => {
     );
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS payment_method VARCHAR(30);
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS reference_number VARCHAR(100);
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES academic_sessions(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS idx_payment_records_school_session ON payment_records(school_id, session_id);
+  `);
+
+  // Back-fill session_id on existing payment_records that are linked to a fee_record
+  // (safe to run on every startup — only touches rows where session_id IS NULL)
+  await pool.query(`
+    UPDATE payment_records pr
+    SET session_id = fr.session_id
+    FROM fee_records fr
+    WHERE pr.fee_record_id = fr.id
+      AND pr.session_id IS NULL
+      AND fr.session_id IS NOT NULL
   `);
 
   await registerRoutes(httpServer, app);

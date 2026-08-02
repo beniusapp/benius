@@ -972,6 +972,7 @@ export type FeeStructure = typeof feeStructures.$inferSelect;
 export const paymentRecords = pgTable("payment_records", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
   feeRecordId: integer("fee_record_id").references(() => feeRecords.id, { onDelete: "set null" }),
   studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
   paymentMethod: varchar("payment_method", { length: 30 }).notNull(),
