@@ -516,14 +516,14 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs text-white/30 mb-1 block">Due Date <span className="font-normal">(not required)</span></label>
-                    <input type="date" disabled value=""
-                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white opacity-40 cursor-not-allowed [color-scheme:dark]" />
-                  </div>
-                  <div>
                     <label className="text-xs text-white/60 mb-1 block">Status</label>
                     <input value="Paid" readOnly
                       className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-emerald-400 font-medium cursor-default" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/30 mb-1 block">Due Date <span className="font-normal">(not required)</span></label>
+                    <input type="date" disabled value=""
+                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white opacity-40 cursor-not-allowed [color-scheme:dark]" />
                   </div>
                 </div>
 
@@ -1377,18 +1377,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                 )} />
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <FormField control={form.control} name="dueDate" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className={dueDateNotNeeded ? "text-white/30" : "text-white/70"}>
-                      Due Date {dueDateNotNeeded && <span className="font-normal text-xs">(not required)</span>}
-                    </FormLabel>
-                    <FormControl>
-                      <Input {...field} type="date" disabled={dueDateNotNeeded}
-                        className={`bg-[#0A1628] border-white/20 text-white [color-scheme:dark] ${dueDateNotNeeded ? "opacity-40 cursor-not-allowed" : ""}`} />
-                    </FormControl>
-                    <FormMessage className="text-red-400" />
-                  </FormItem>
-                )} />
                 <FormField control={form.control} name="status" render={({ field }) => (
                   <FormItem>
                     <FormLabel className="text-white/70">Status</FormLabel>
@@ -1402,6 +1390,18 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                         ))}
                       </SelectContent>
                     </Select>
+                    <FormMessage className="text-red-400" />
+                  </FormItem>
+                )} />
+                <FormField control={form.control} name="dueDate" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className={dueDateNotNeeded ? "text-white/30" : "text-white/70"}>
+                      Due Date {dueDateNotNeeded && <span className="font-normal text-xs">(not required)</span>}
+                    </FormLabel>
+                    <FormControl>
+                      <Input {...field} type="date" disabled={dueDateNotNeeded}
+                        className={`bg-[#0A1628] border-white/20 text-white [color-scheme:dark] ${dueDateNotNeeded ? "opacity-40 cursor-not-allowed" : ""}`} />
+                    </FormControl>
                     <FormMessage className="text-red-400" />
                   </FormItem>
                 )} />
