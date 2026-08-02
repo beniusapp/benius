@@ -761,8 +761,6 @@ function PaymentHistoryModal({ open, onClose, feeRecord, payments }: PaymentHist
     }
   }, [open]);
 
-  if (!feeRecord) return null;
-
   const methodLabel: Record<string, string> = {
     Cash: "Cash", Cheque: "Cheque", BankTransfer: "Bank Transfer",
     DemandDraft: "Demand Draft", Online: "Online",
@@ -784,6 +782,8 @@ function PaymentHistoryModal({ open, onClose, feeRecord, payments }: PaymentHist
 
   const filteredTotal = filteredPayments.reduce((sum, p) => sum + p.amount, 0);
   const isFiltered = filterMethod !== "All" || filterFrom !== "" || filterTo !== "";
+
+  if (!feeRecord) return null;
 
   function clearFilters() {
     setFilterFrom("");
@@ -936,7 +936,7 @@ function PaymentHistoryModal({ open, onClose, feeRecord, payments }: PaymentHist
 const feeFormSchema = z.object({
   studentId: z.string().min(1, "Select a student"),
   feeType: z.string().min(1, "Fee type is required"),
-  amount: z.string().min(1).refine(v => !isNaN(Number(v)) && Number(v) > 0, "Must be positive"),
+  amount: z.string().min(1, "Amount is required").refine(v => !isNaN(Number(v)) && Number(v) > 0, "Must be a positive number"),
   dueDate: z.string().optional(),
   status: z.enum(["Due", "Paid", "Overdue", "Partial", "Waived"]),
   paidDate: z.string().optional(),
@@ -1387,7 +1387,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   <FormItem>
                     <FormLabel className="text-white/70">Amount (₹)</FormLabel>
                     <FormControl>
-                      <Input {...field} type="number" min={1} placeholder="0" className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30" />
+                      <Input {...field} type="text" inputMode="numeric" placeholder="0" className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30" />
                     </FormControl>
                     <FormMessage className="text-red-400" />
                   </FormItem>
