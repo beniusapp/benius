@@ -6,7 +6,7 @@ import { z } from "zod";
 import {
   CreditCard, Plus, Search, Loader2, Trash2, Pencil, CheckCircle2, AlertTriangle, Clock,
   Receipt, DollarSign, TrendingUp, TrendingDown, Banknote, BookOpen, Bell, ExternalLink,
-  Shield, ChevronLeft, ChevronRight, Lock, X, Printer,
+  Shield, ChevronLeft, ChevronRight, Lock, X, Printer, History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -102,6 +102,7 @@ interface PaymentRecord {
   amount: number;
   receivedDate: string;
   referenceNumber: string | null;
+  cashierNotes: string | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -695,6 +696,114 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
   );
 }
 
+// ─── Payment History Modal ────────────────────────────────────────────────────
+
+interface PaymentHistoryModalProps {
+  open: boolean;
+  onClose: () => void;
+  feeRecord: FeeRecordWithStudent | null;
+  payments: PaymentRecord[];
+}
+
+function PaymentHistoryModal({ open, onClose, feeRecord, payments }: PaymentHistoryModalProps) {
+  if (!feeRecord) return null;
+
+  const methodLabel: Record<string, string> = {
+    Cash: "Cash", Cheque: "Cheque", BankTransfer: "Bank Transfer",
+    DemandDraft: "Demand Draft", Online: "Online",
+  };
+
+  const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+  const outstanding = Math.max(0, feeRecord.amount - totalPaid);
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-lg max-h-[80vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-cyan-400">
+            <History className="w-5 h-5" />
+            Payment History
+          </DialogTitle>
+        </DialogHeader>
+
+        {/* Fee record summary */}
+        <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-sm shrink-0">
+          <p className="text-white font-semibold">{feeRecord.student?.name ?? "—"}</p>
+          <p className="text-white/50 text-xs">{feeRecord.feeType} · {feeRecord.student?.class}-{feeRecord.student?.section}</p>
+          <div className="mt-2 flex items-center gap-4 flex-wrap">
+            <span className="text-white/40 text-xs">Invoice: <span className="text-white font-medium">{fmt(feeRecord.amount)}</span></span>
+            <span className="text-white/40 text-xs">Paid: <span className="text-emerald-400 font-medium">{fmt(totalPaid)}</span></span>
+            {outstanding > 0 && (
+              <span className="text-white/40 text-xs">Outstanding: <span className="text-amber-400 font-medium">{fmt(outstanding)}</span></span>
+            )}
+            <StatusChip status={feeRecord.status} />
+          </div>
+        </div>
+
+        {/* Payment list */}
+        <div className="flex-1 overflow-y-auto min-h-0">
+          {payments.length === 0 ? (
+            <div className="py-10 text-center text-white/30 text-sm">
+              <Receipt className="w-8 h-8 mx-auto mb-2 opacity-20" />
+              No payment transactions recorded yet.
+            </div>
+          ) : (
+            <div className="space-y-2 pr-1">
+              {payments.map((p, idx) => (
+                <div key={p.id} className="rounded-lg border border-white/10 bg-white/5 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-white/30 text-xs font-mono shrink-0">#{idx + 1}</span>
+                      <div className="min-w-0">
+                        <p className="text-white font-semibold text-sm">{fmt(p.amount)}</p>
+                        <p className="text-white/50 text-xs mt-0.5">{fmtDate(p.receivedDate)}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs font-medium px-2 py-0.5 rounded bg-cyan-900/40 border border-cyan-700/40 text-cyan-300">
+                        {methodLabel[p.paymentMethod] ?? p.paymentMethod}
+                      </span>
+                      <Button size="icon" variant="ghost"
+                        onClick={() => window.open(`/api/admin/fees/payments/${p.id}/receipt`, "_blank")}
+                        className="h-6 w-6 text-white/30 hover:text-cyan-400"
+                        title="Print receipt">
+                        <Printer className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  </div>
+                  {(p.referenceNumber || p.cashierNotes) && (
+                    <div className="mt-2 pt-2 border-t border-white/5 space-y-0.5">
+                      {p.referenceNumber && (
+                        <p className="text-white/40 text-xs">Ref: <span className="text-white/60 font-mono">{p.referenceNumber}</span></p>
+                      )}
+                      {p.cashierNotes && (
+                        <p className="text-white/40 text-xs">Note: <span className="text-white/60">{p.cashierNotes}</span></p>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-white/20 text-[10px] mt-1.5 font-mono">PAY-{p.id}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {payments.length > 0 && (
+          <div className="shrink-0 pt-2 border-t border-white/10 flex justify-between items-center">
+            <span className="text-white/40 text-xs">{payments.length} transaction{payments.length !== 1 ? "s" : ""}</span>
+            <Button variant="ghost" onClick={onClose} className="text-white/60 h-8 text-sm">Close</Button>
+          </div>
+        )}
+        {payments.length === 0 && (
+          <div className="shrink-0 pt-2 border-t border-white/10 flex justify-end">
+            <Button variant="ghost" onClick={onClose} className="text-white/60 h-8 text-sm">Close</Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Fee Form Schema ──────────────────────────────────────────────────────────
 
 const feeFormSchema = z.object({
@@ -725,6 +834,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [payTarget, setPayTarget] = useState<FeeRecordWithStudent | null>(null);
   const [showPay, setShowPay] = useState(false);
   const [showStandalonePay, setShowStandalonePay] = useState(false);
+  const [showPaymentsModal, setShowPaymentsModal] = useState(false);
+  const [viewPaymentsRecord, setViewPaymentsRecord] = useState<FeeRecordWithStudent | null>(null);
   const [studentSearchCls, setStudentSearchCls] = useState("");
   const [studentSearchQ, setStudentSearchQ] = useState("");
   const [studentResults, setStudentResults] = useState<StudentItem[] | null>(null);
@@ -776,6 +887,19 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     () => new Set(paymentRecordsList.filter(p => p.feeRecordId != null).map(p => p.feeRecordId as number)),
     [paymentRecordsList]
   );
+  // Map feeRecordId → all payment records (sorted newest-first) for the history modal
+  const paymentsByFeeRecordId = useMemo(() => {
+    const map = new Map<number, PaymentRecord[]>();
+    [...paymentRecordsList]
+      .sort((a, b) => b.id - a.id)
+      .forEach(p => {
+        if (p.feeRecordId == null) return;
+        const existing = map.get(p.feeRecordId) ?? [];
+        existing.push(p);
+        map.set(p.feeRecordId, existing);
+      });
+    return map;
+  }, [paymentRecordsList]);
 
   const form = useForm<FeeFormValues>({
     resolver: zodResolver(feeFormSchema),
@@ -980,6 +1104,15 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                             <Receipt className="w-3 h-3" /> Pay
                           </Button>
                         )}
+                        {offlinePaidIds.has(rec.id) && (
+                          <Button size="sm" variant="ghost"
+                            onClick={() => { setViewPaymentsRecord(rec); setShowPaymentsModal(true); }}
+                            className="h-7 px-2 text-xs text-purple-400 hover:bg-purple-900/30 gap-1"
+                            title="View payment transactions">
+                            <History className="w-3 h-3" />
+                            <span>{paymentsByFeeRecordId.get(rec.id)?.length ?? 0}</span>
+                          </Button>
+                        )}
                         {rec.receiptNumber && (() => {
                           const m = rec.receiptNumber.match(/^REC-(\d+)$/);
                           return m ? (
@@ -1016,6 +1149,12 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       {/* Payment modals */}
       <RecordPaymentModal open={showPay} onClose={() => { setShowPay(false); setPayTarget(null); }} feeRecord={payTarget} students={students} existingFeeRecords={feeRecords} />
       <RecordPaymentModal open={showStandalonePay} onClose={() => setShowStandalonePay(false)} feeRecord={null} students={students} existingFeeRecords={feeRecords} />
+      <PaymentHistoryModal
+        open={showPaymentsModal}
+        onClose={() => { setShowPaymentsModal(false); setViewPaymentsRecord(null); }}
+        feeRecord={viewPaymentsRecord}
+        payments={viewPaymentsRecord ? (paymentsByFeeRecordId.get(viewPaymentsRecord.id) ?? []) : []}
+      />
 
       {/* Add / Edit Dialog */}
       <Dialog open={showForm} onOpenChange={v => { if (!v) { setShowForm(false); setEditing(null); } }}>
