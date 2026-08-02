@@ -143,9 +143,9 @@ function ActionBadge({ action }: { action: string }) {
 
 // ─── MetricBar ────────────────────────────────────────────────────────────────
 
-function MetricBar() {
+function MetricBar({ viewSessionId }: { viewSessionId: number | null }) {
   const { data, isLoading } = useQuery<FeeSummary>({
-    queryKey: ["/api/admin/fees/summary"],
+    queryKey: ["/api/admin/fees/summary", viewSessionId],
     staleTime: 30_000,
   });
 
@@ -424,8 +424,8 @@ type FeeFormValues = z.infer<typeof feeFormSchema>;
 
 // ─── Ledger Tab ───────────────────────────────────────────────────────────────
 
-function LedgerTab({ canRecord, isArchiveMode, students }: {
-  canRecord: boolean; isArchiveMode: boolean; students: StudentItem[];
+function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
+  canRecord: boolean; isArchiveMode: boolean; students: StudentItem[]; viewSessionId: number | null;
 }) {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
@@ -438,7 +438,7 @@ function LedgerTab({ canRecord, isArchiveMode, students }: {
   const [showStandalonePay, setShowStandalonePay] = useState(false);
 
   const { data: feeRecords = [], isLoading } = useQuery<FeeRecordWithStudent[]>({
-    queryKey: ["/api/admin/fees"],
+    queryKey: ["/api/admin/fees", viewSessionId],
   });
 
   const form = useForm<FeeFormValues>({
@@ -1311,7 +1311,8 @@ const TABS: { id: Tab; label: string; Icon: React.ComponentType<{ className?: st
 export default function FeesManager({ schoolId, allowedSubs }: { schoolId: number; allowedSubs?: string[] }) {
   const canRecord = allowedSubs === undefined || allowedSubs.includes("record");
   const canExport  = allowedSubs === undefined || allowedSubs.includes("export");
-  const { isArchiveMode } = useSessionView();
+  const { isArchiveMode, selectedSession } = useSessionView();
+  const viewSessionId = selectedSession?.id ?? null;
   const [activeTab, setActiveTab] = useState<Tab>("ledger");
 
   const { data: students = [] } = useQuery<StudentItem[]>({
@@ -1335,15 +1336,19 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
           <h2 className="text-white text-xl font-bold">Fees & Payments</h2>
           <p className="text-white/40 text-xs">Financial hub — ledger, structures, audit trail</p>
         </div>
-        {isArchiveMode && (
+        {isArchiveMode ? (
           <span className="ml-auto px-3 py-1 rounded-full text-xs bg-amber-900/30 text-amber-400 border border-amber-700/30 flex-shrink-0">
             Archive — read-only
           </span>
-        )}
+        ) : selectedSession ? (
+          <span className="ml-auto px-3 py-1 rounded-full text-xs bg-cyan-900/30 text-cyan-400 border border-cyan-700/30 flex-shrink-0">
+            {selectedSession.sessionName}
+          </span>
+        ) : null}
       </div>
 
       {/* Metric bar */}
-      <MetricBar />
+      <MetricBar viewSessionId={viewSessionId} />
 
       {/* Tab nav */}
       <div className="flex gap-1 p-1 bg-[#1A2942] rounded-xl border border-white/10 overflow-x-auto">
@@ -1360,7 +1365,7 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
       </div>
 
       {/* Content */}
-      {activeTab === "ledger"     && <LedgerTab canRecord={canRecord} isArchiveMode={isArchiveMode} students={students} />}
+      {activeTab === "ledger"     && <LedgerTab canRecord={canRecord} isArchiveMode={isArchiveMode} students={students} viewSessionId={viewSessionId} />}
       {activeTab === "structures" && <StructuresTab isArchiveMode={isArchiveMode} />}
       {activeTab === "reminders"  && <RemindersTab />}
       {activeTab === "external"   && <ExternalPortalTab isArchiveMode={isArchiveMode} />}

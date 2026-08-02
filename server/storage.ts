@@ -4664,6 +4664,20 @@ export class DatabaseStorage {
     return rec || null;
   }
 
+  /**
+   * Bulk-mark all "Due" fee records whose due_date is strictly before today
+   * as "Overdue". Runs across all schools in one query.
+   * Returns the number of records updated.
+   */
+  async markOverdueFeeRecords(): Promise<number> {
+    const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+    const result = await db.update(feeRecords)
+      .set({ status: "Overdue" })
+      .where(and(eq(feeRecords.status, "Due"), lt(feeRecords.dueDate, today)))
+      .returning({ id: feeRecords.id });
+    return result.length;
+  }
+
   // ===== PAYMENT RECORDS =====
 
   async createPaymentRecord(data: InsertPaymentRecord): Promise<PaymentRecord> {

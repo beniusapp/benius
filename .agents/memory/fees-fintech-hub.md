@@ -49,11 +49,20 @@ description: Architecture, constraints, and patterns for the refactored Fees & P
 
 ## 5-Tab UI (fees-manager.tsx)
 Tabs: Ledger & Transactions | Fee Structures | Reminders | External Portal | Audit Log
-- MetricBar fetches `/api/admin/fees/summary` (staleTime 30s).
-- LedgerTab reuses existing `/api/admin/fees` CRUD; adds Pay button per row → RecordPaymentModal.
+- MetricBar fetches `/api/admin/fees/summary` (staleTime 30s). **queryKey includes viewSessionId.**
+- LedgerTab reuses existing `/api/admin/fees` CRUD; adds Pay button per row → RecordPaymentModal. **queryKey includes viewSessionId.**
 - RemindersTab is static (D+0 / D+7 / D+14 / D+30 dunning schedule display).
 - ExternalPortalTab: Toggle + URL + Banner + live student-facing preview.
 - AuditTab: paginated, read-only, page size 20.
+
+## Session-Scoping (Ledger & MetricBar only)
+- `FeesManager` reads `selectedSession` from `useSessionView()`, derives `viewSessionId = selectedSession?.id ?? null`.
+- Passes `viewSessionId` down to `MetricBar` and `LedgerTab` as a prop.
+- Both include it in their React Query `queryKey` → per-session cache entries, correct refetch on session switch.
+- Header shows a cyan badge with `selectedSession.sessionName` (amber "Archive — read-only" in archive mode).
+- **Fee Structures, External Portal, and Audit Log are intentionally school-wide (no sessionId in their queryKeys).**
+- Backend routes for `/api/admin/fees` and `/api/admin/fees/summary` already read `(req as any).viewSessionId` — no backend changes needed.
+- `invalidateQueries({ queryKey: ["/api/admin/fees"] })` uses prefix matching and invalidates all session variants.
 
 ## Bulk Invoice Generation (Task #16)
 - `GET /api/admin/fees/sessions` — convenience endpoint (wraps getAcademicSessions) for UI dropdown.
@@ -71,6 +80,13 @@ Tabs: Ledger & Transactions | Fee Structures | Reminders | External Portal | Aud
 - `GET /api/student/fees/portal-info` — reads externalPaymentSettings for the student's school; returns `{ isEnabled, gatewayUrl, bannerMessage }`.
 - Only returns isEnabled=true if the settings row exists AND isEnabled=true.
 - student-fees.tsx: shows a cyan-bordered banner card above summary cards when isEnabled=true; "Pay Now" link opens gatewayUrl in a new tab.
+
+## Overdue Auto-Sweep (Task #20)
+- `storage.markOverdueFeeRecords()` — single bulk UPDATE: `status='Due' AND due_date < today` → `status='Overdue'`. Runs across all schools in one query. Returns count.
+- Scheduler in `server/index.ts`: `runOverdueFeeCheck()` called once on startup (catches missed records during downtime) + `setInterval(..., 24h)`.
+- Log line `[fees] overdue sweep: N record(s) marked Overdue` only emitted when count > 0 (silent when nothing to update).
+- `lt` from drizzle-orm is used for date comparison (already imported in storage.ts).
+- `storage` imported in index.ts as a new import (was not there before).
 
 ## Why
 - Idempotency prevents duplicate offline payment records when admins retry on network timeout.

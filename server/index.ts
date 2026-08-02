@@ -6,6 +6,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { pool } from "./db";
 import path from "path";
+import { storage } from "./storage";
 
 const app = express();
 const httpServer = createServer(app);
@@ -421,4 +422,18 @@ app.use((req, res, next) => {
       log(`serving on port ${port}`);
     },
   );
+
+  // ── Daily overdue fee sweep ────────────────────────────────────────────────
+  // Marks any "Due" fee record whose due_date is in the past as "Overdue".
+  // Runs once on startup (catches records missed during downtime) then every 24 h.
+  async function runOverdueFeeCheck() {
+    try {
+      const flagged = await storage.markOverdueFeeRecords();
+      if (flagged > 0) log(`[fees] overdue sweep: ${flagged} record(s) marked Overdue`);
+    } catch (e) {
+      console.error("[fees] overdue sweep failed:", e);
+    }
+  }
+  runOverdueFeeCheck();
+  setInterval(runOverdueFeeCheck, 24 * 60 * 60 * 1000);
 })();
