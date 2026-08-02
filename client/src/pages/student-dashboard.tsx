@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { GraduationCap, Loader2, LogOut, Lock, ChevronDown, History, PartyPopper, RefreshCw, Shield } from "lucide-react";
-import { apiRequest, queryClient, getQueryFn, setViewSessionId } from "@/lib/queryClient";
+import { GraduationCap, Loader2, LogOut, Lock, ChevronDown, History, PartyPopper, RefreshCw, Shield, CreditCard, AlertTriangle, ExternalLink } from "lucide-react";
+import { apiRequest, queryClient, getQueryFn, setViewSessionId, sessionFetch } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
 
@@ -33,6 +33,18 @@ function getCurrentAcademicYear(): string {
   const y = now.getFullYear();
   const startYear = now.getMonth() >= 3 ? y : y - 1;
   return `${startYear}-${String(startYear + 1).slice(-2)}`;
+}
+
+interface FeeRecord {
+  id: number;
+  status: string;
+  amount: number;
+}
+
+interface PortalInfo {
+  isEnabled: boolean;
+  gatewayUrl: string | null;
+  bannerMessage: string | null;
 }
 
 interface HomeworkSubmission {
@@ -189,6 +201,24 @@ export default function StudentDashboard() {
     refetchOnWindowFocus: true,
   });
 
+  const { data: feeRecords = [] } = useQuery<FeeRecord[]>({
+    queryKey: ["/api/student/fees", selectedSession?.id ?? "default"],
+    queryFn: async () => {
+      const r = await sessionFetch("/api/student/fees", { credentials: "include" });
+      if (!r.ok) throw new Error(`Fee fetch failed: ${r.status}`);
+      return r.json() as Promise<FeeRecord[]>;
+    },
+    enabled: !!student && !isSessionsLoading,
+    staleTime: 0,
+    refetchOnMount: true,
+  });
+
+  const { data: portalInfo } = useQuery<PortalInfo>({
+    queryKey: ["/api/student/fees/portal-info"],
+    enabled: !!student,
+    staleTime: 60_000,
+  });
+
   useEffect(() => {
     if (!isLoading && (isError || !student || !student.schoolId)) {
       setLocation("/student-login");
@@ -221,6 +251,10 @@ export default function StudentDashboard() {
   }, [homeworkItems]);
 
   const unreadCount = unreadData?.count ?? 0;
+
+  const feesTotalDue = feeRecords.filter(r => r.status !== "Paid").reduce((s, r) => s + r.amount, 0);
+  const feesOverdueCount = feeRecords.filter(r => r.status === "Overdue").length;
+  const feesHasOutstanding = feeRecords.some(r => r.status !== "Paid");
 
   if (isLoading || !student) {
     return (
@@ -488,6 +522,84 @@ export default function StudentDashboard() {
                 Browsing <span className="font-semibold">{selectedSession.sessionName}</span>. All submission and payment actions are locked.
               </p>
             </div>
+          </motion.div>
+        )}
+
+        {/* ── Fee Summary Card ── */}
+        {(feesHasOutstanding || (portalInfo?.isEnabled && portalInfo.gatewayUrl)) && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
+            className="rounded-[20px] p-4 sm:p-5"
+            style={{
+              background: "rgba(255,255,255,0.82)",
+              backdropFilter: "blur(12px)",
+              WebkitBackdropFilter: "blur(12px)",
+              border: "1px solid rgba(255,255,255,0.75)",
+              boxShadow: "0 4px 18px rgba(0,0,0,0.06)",
+              borderTop: feesOverdueCount > 0 ? "4px solid #ef4444" : "4px solid #06b6d4",
+            }}
+            data-testid="card-fee-summary"
+          >
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              {/* Left: icon + title + stats */}
+              <div className="flex items-center gap-3 min-w-0">
+                <div
+                  className="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-xl"
+                  style={{ background: feesOverdueCount > 0 ? "linear-gradient(135deg,#ef4444,#dc2626)" : "linear-gradient(135deg,#06b6d4,#0891b2)" }}
+                >
+                  {feesOverdueCount > 0
+                    ? <AlertTriangle className="w-5 h-5 text-white" />
+                    : <CreditCard className="w-5 h-5 text-white" />}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-slate-800 leading-tight">Fee Summary</p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Outstanding:{" "}
+                    <span className={feesOverdueCount > 0 ? "font-bold text-red-500" : "font-bold text-cyan-600"}>
+                      {new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(feesTotalDue)}
+                    </span>
+                    {feesOverdueCount > 0 && (
+                      <span className="ml-2 font-semibold text-red-400">· {feesOverdueCount} overdue</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              {/* Right: actions */}
+              <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+                {portalInfo?.isEnabled && portalInfo.gatewayUrl && !isArchiveMode && (
+                  <a
+                    href={portalInfo.gatewayUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white"
+                    style={{ background: "linear-gradient(135deg,#06b6d4,#0891b2)" }}
+                    data-testid="link-pay-online"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Pay Online
+                  </a>
+                )}
+                <button
+                  onClick={() => setLocation("/student/fees")}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:opacity-80"
+                  style={{ background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0" }}
+                  data-testid="link-view-fees"
+                >
+                  View Details →
+                </button>
+              </div>
+            </div>
+
+            {/* Banner message from admin (if portal enabled) */}
+            {portalInfo?.isEnabled && portalInfo.bannerMessage && (
+              <p className="text-xs text-slate-500 mt-3 pt-3 border-t border-slate-100" data-testid="text-portal-banner">
+                {portalInfo.bannerMessage}
+              </p>
+            )}
           </motion.div>
         )}
 
