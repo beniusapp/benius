@@ -15,8 +15,9 @@ description: Architecture, constraints, and patterns for the refactored Fees & P
 - Audit logging via `storage.appendFeeAuditLog(...)` in a try/catch (non-critical).
 
 ## Idempotency (payment_records)
-- Client generates a random `idempotencyKey` before POST.
-- Server checks `getPaymentRecordByIdempotencyKey(key)` — if found, returns existing record with `idempotent: true` (HTTP 200).
+- Client generates a random `idempotencyKey` once per modal open (stored in state), not on each submit click.
+- Server checks `getPaymentRecordByIdempotencyKey(key, schoolId)` — scoped by schoolId to prevent cross-tenant collisions.
+- If found, returns existing record with `idempotent: true` (HTTP 200).
 - Prevents duplicate submissions on retry.
 
 ## High-Value Payment Re-Auth
@@ -25,6 +26,21 @@ description: Architecture, constraints, and patterns for the refactored Fees & P
 - If `adminPassword` missing → HTTP 402 `{ requiresConfirm: true }`.
 - Frontend catches the 402, stores pending payload, shows password dialog (step="confirm"), re-submits with `adminPassword`.
 - After successful recording: RecordPaymentModal transitions to step="done" (not auto-close) showing Print Receipt button.
+- **Why**: Admin may need receipts immediately after recording; auto-close would lose the payment ID needed to fetch the receipt.
+
+## Tenant Security (payment write path)
+- `POST /api/admin/fees/payments` validates studentId belongs to `req.session.schoolId` before insert.
+- Also validates feeRecordId (if provided) belongs to same school AND same student.
+- Idempotency key lookup is school-scoped.
+
+## Payment Settlement Logic
+- When a linked feeRecordId is provided, the backend sums ALL payment_records for that feeRecordId (including the new one) via `COALESCE(SUM(...), 0)`.
+- Sets status to `Paid` if cumulative >= invoice amount, `Partial` otherwise.
+- Supports installment scenarios correctly across multiple payment submissions.
+
+## Archive Write Guard
+- Payment modal uses `sessionFetch` (not raw `fetch`) so `x-view-session-id` header is always injected.
+- Server-side `checkSessionContext` middleware rejects mutations against archived sessions with 403.
 
 ## Storage Summary Function
 - `getFeeSummary(schoolId, sessionId?)` aggregates existing `fee_records` table (status=Paid → revenue, else → outstanding). Does NOT use new tables for the main summary.
@@ -50,7 +66,6 @@ Tabs: Ledger & Transactions | Fee Structures | Reminders | External Portal | Aud
 - `GET /api/admin/fees/payments/:id/receipt` — returns inline HTML (auto-print via window.print()).
 - Shows: Receipt No (PAY-{id}), student name/ID/class, fee type, payment method, reference number, received date, amount. Cyan border, school name in header.
 - RecordPaymentModal step="done": after success, stays open and shows Print Receipt button that opens the receipt in a new tab.
-- **Why**: Admin may need receipts immediately after recording; auto-close would lose the payment ID needed to fetch the receipt.
 
 ## Student Portal Info (Task #18)
 - `GET /api/student/fees/portal-info` — reads externalPaymentSettings for the student's school; returns `{ isEnabled, gatewayUrl, bannerMessage }`.

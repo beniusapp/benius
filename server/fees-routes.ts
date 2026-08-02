@@ -1,10 +1,11 @@
 import type { Express } from "express";
 import { storage } from "./storage";
 import { db } from "./db";
-import { users, schools } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { users, schools, students, feeRecords, paymentRecords } from "@shared/schema";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import { users, students, feeRecords, paymentRecords } from "@shared/schema";
 
 export function registerFeesRoutes(app: Express) {
 
@@ -160,9 +161,26 @@ export function registerFeesRoutes(app: Express) {
       }
     }
 
-    // Idempotency guard
+    // Tenant ownership: verify studentId belongs to this school
+    const [studentCheck] = await db.select({ id: students.id })
+      .from(students)
+      .where(and(eq(students.id, paymentData.studentId), eq(students.schoolId, schoolId)));
+    if (!studentCheck) return res.status(400).json({ message: "Student does not belong to this school" });
+
+    // Tenant ownership: verify feeRecordId belongs to this school (and matches the student)
+    if (paymentData.feeRecordId) {
+      const [recCheck] = await db.select({ id: feeRecords.id, studentId: feeRecords.studentId })
+        .from(feeRecords)
+        .where(and(eq(feeRecords.id, paymentData.feeRecordId), eq(feeRecords.schoolId, schoolId)));
+      if (!recCheck) return res.status(400).json({ message: "Fee record does not belong to this school" });
+      if (recCheck.studentId !== paymentData.studentId) {
+        return res.status(400).json({ message: "Fee record does not belong to the specified student" });
+      }
+    }
+
+    // Idempotency guard — scoped by school to prevent cross-tenant key collisions
     if (idempotencyKey) {
-      const existing = await storage.getPaymentRecordByIdempotencyKey(idempotencyKey);
+      const existing = await storage.getPaymentRecordByIdempotencyKey(idempotencyKey, schoolId);
       if (existing) return res.status(200).json({ ...existing, idempotent: true });
     }
 
@@ -173,13 +191,25 @@ export function registerFeesRoutes(app: Express) {
       recordedBy: req.session.userId,
     });
 
-    // Auto-mark linked fee record as Paid
+    // Auto-update linked fee record status based on cumulative payments
     if (paymentData.feeRecordId) {
-      await storage.updateFeeRecord(paymentData.feeRecordId, schoolId, {
-        status: "Paid",
-        paidDate: paymentData.receivedDate,
-        receiptNumber: rec.id ? `REC-${rec.id}` : undefined,
-      });
+      const [linked] = await db.select({ amount: feeRecords.amount })
+        .from(feeRecords)
+        .where(and(eq(feeRecords.id, paymentData.feeRecordId), eq(feeRecords.schoolId, schoolId)));
+      if (linked) {
+        // Sum all payment records for this fee record (including the one just inserted)
+        const [{ paid }] = await db.select({
+          paid: sql<string>`COALESCE(SUM(${paymentRecords.amount}), 0)`,
+        }).from(paymentRecords)
+          .where(eq(paymentRecords.feeRecordId, paymentData.feeRecordId));
+        const totalPaid = parseInt(String(paid)) || 0;
+        const isFullyPaid = totalPaid >= linked.amount;
+        await storage.updateFeeRecord(paymentData.feeRecordId, schoolId, {
+          status: isFullyPaid ? "Paid" : "Partial",
+          paidDate: paymentData.receivedDate,
+          receiptNumber: rec.id ? `REC-${rec.id}` : undefined,
+        });
+      }
     }
 
     await appendAudit(req, schoolId, "payment", "payment_record", rec.id,

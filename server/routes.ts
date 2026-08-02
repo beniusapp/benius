@@ -3957,7 +3957,7 @@ export async function registerRoutes(
     amount: z.number().int().positive(),
     dueDate: z.string().min(1),
     paidDate: z.string().optional().nullable(),
-    status: z.enum(["Due", "Paid", "Overdue"]),
+    status: z.enum(["Due", "Paid", "Overdue", "Partial", "Waived"]),
     receiptNumber: z.string().max(50).optional().nullable(),
     notes: z.string().optional().nullable(),
     academicYear: z.string().max(20).optional().nullable(),

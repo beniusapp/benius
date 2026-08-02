@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, sessionFetch, queryClient } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -195,8 +195,10 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: R
   const [amount, setAmount] = useState("");
   const [notes, setNotes] = useState("");
   const [sid, setSid] = useState("");
+  // Idempotency key is generated once per modal open and reused across retries
+  const [idempotencyKey, setIdempotencyKey] = useState("");
 
-  // Sync amount + student when feeRecord changes
+  // Sync amount + student when feeRecord changes; generate a fresh idempotency key
   useEffect(() => {
     if (feeRecord) {
       setAmount(String(feeRecord.amount));
@@ -214,13 +216,15 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: R
     setRef("");
     setDate(new Date().toISOString().split("T")[0]);
     setNotes("");
+    // Fresh key per modal open — stable across retries within the same open session
+    setIdempotencyKey(`idem-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   }, [feeRecord?.id, open]);
 
   const mut = useMutation({
     mutationFn: async (payload: any) => {
-      const r = await fetch("/api/admin/fees/payments", {
+      // Use sessionFetch so x-view-session-id is always injected (archive write guard)
+      const r = await sessionFetch("/api/admin/fees/payments", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
@@ -253,7 +257,6 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: R
   });
 
   function submit() {
-    const key = `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     mut.mutate({
       feeRecordId: feeRecord?.id ?? null,
       studentId: feeRecord?.studentId ?? parseInt(sid),
@@ -262,7 +265,7 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: R
       receivedDate: date,
       amount: parseInt(amount),
       cashierNotes: notes || null,
-      idempotencyKey: key,
+      idempotencyKey: idempotencyKey || null,
     });
   }
 

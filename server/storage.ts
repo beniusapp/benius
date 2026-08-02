@@ -793,57 +793,12 @@ export class DatabaseStorage {
     return await db.select().from(notices).where(and(...conditions)).orderBy(desc(notices.createdAt));
   }
 
-  /**
-   * Look up the teacher assigned to a specific class-section within a school.
-   * Checks faculty_mappings first (explicit admin assignment), then falls back
-   * to the teacher's primary assignedClass/Section fields.
-   * Returns null when no teacher is mapped to that class-section.
-   */
-  async getTeacherByClassSection(schoolId: number, className: string, section: string): Promise<Teacher | null> {
-    // 1. Check faculty_mappings (admin-configured explicit mapping)
-    const [mapping] = await db
-      .select({ teacherId: facultyMappings.teacherId })
-      .from(facultyMappings)
-      .where(
-        and(
-          eq(facultyMappings.schoolId, schoolId),
-          eq(facultyMappings.className, className),
-          eq(facultyMappings.section, section),
-        )
-      )
-      .limit(1);
-
-    if (mapping) {
-      return this.getTeacherById(mapping.teacherId);
-    }
-
-    // 2. Fall back to primary assignment on teachers row
-    const [teacher] = await db
-      .select()
-      .from(teachers)
-      .where(
-        and(
-          eq(teachers.schoolId, schoolId),
-          eq(teachers.assignedClass, className),
-          eq(teachers.assignedSection, section),
-          eq(teachers.isActive, true),
-        )
-      )
-      .limit(1);
-
-    return teacher ?? null;
+  async getTeacherByClassSection(schoolId: number, cls: string, section: string): Promise<Teacher | null> {
+    const [teacher] = await db.select().from(teachers)
+      .where(and(eq(teachers.schoolId, schoolId), eq(teachers.assignedClass, cls), eq(teachers.assignedSection, section)));
+    return teacher || null;
   }
 
-  /**
-   * Returns teacher-targeted notices scoped strictly to this teacher.
-   *
-   * Priority rule:
-   *  • If a notice carries targetTeacherId, ONLY that specific teacher sees it —
-   *    this is the strict-pin path used by admin ledger reminders.
-   *  • If targetTeacherId is null (legacy / broadcast notices), fall back to
-   *    class-section matching against both teachers.assignedClass/Section and
-   *    faculty_mappings rows.
-   *
    * Students can NEVER see these notices — the targetType:"teacher" filter in
    * getStudentNotices only fetches targetType "whole_school" / "student" / "class".
    */
@@ -2676,12 +2631,6 @@ export class DatabaseStorage {
       // If teacherId is null (admin path) and no existing record, skip INSERT to avoid FK violation.
       // The leave request itself is the source of truth for the leave.
     }
-  }
-
-  async getTeacherByClassSection(schoolId: number, cls: string, section: string): Promise<Teacher | null> {
-    const [teacher] = await db.select().from(teachers)
-      .where(and(eq(teachers.schoolId, schoolId), eq(teachers.assignedClass, cls), eq(teachers.assignedSection, section)));
-    return teacher || null;
   }
 
   // ===== AUDIT LOGS =====
@@ -4731,9 +4680,10 @@ export class DatabaseStorage {
       .orderBy(desc(paymentRecords.createdAt));
   }
 
-  async getPaymentRecordByIdempotencyKey(key: string): Promise<PaymentRecord | null> {
-    const [rec] = await db.select().from(paymentRecords)
-      .where(eq(paymentRecords.idempotencyKey, key));
+  async getPaymentRecordByIdempotencyKey(key: string, schoolId?: number): Promise<PaymentRecord | null> {
+    const conditions: any[] = [eq(paymentRecords.idempotencyKey, key)];
+    if (schoolId !== undefined) conditions.push(eq(paymentRecords.schoolId, schoolId));
+    const [rec] = await db.select().from(paymentRecords).where(and(...conditions));
     return rec || null;
   }
 
