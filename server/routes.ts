@@ -3955,12 +3955,17 @@ export async function registerRoutes(
     studentId: z.number().int().positive(),
     feeType: z.string().min(1).max(100),
     amount: z.number().int().positive(),
-    dueDate: z.string().min(1),
+    dueDate: z.string().optional().nullable(),
     paidDate: z.string().optional().nullable(),
     status: z.enum(["Due", "Paid", "Overdue", "Partial", "Waived"]),
     receiptNumber: z.string().max(50).optional().nullable(),
     notes: z.string().optional().nullable(),
     academicYear: z.string().max(20).optional().nullable(),
+  }).superRefine((val, ctx) => {
+    const noDeadlineNeeded = val.status === "Paid" || val.status === "Waived";
+    if (!noDeadlineNeeded && !val.dueDate) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Due date is required", path: ["dueDate"] });
+    }
   });
 
   app.get("/api/admin/fees", async (req, res) => {

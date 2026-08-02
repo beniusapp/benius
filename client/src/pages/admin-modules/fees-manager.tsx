@@ -761,15 +761,7 @@ function PaymentHistoryModal({ open, onClose, feeRecord, payments }: PaymentHist
     }
   }, [open]);
 
-  const methodLabel: Record<string, string> = {
-    Cash: "Cash", Cheque: "Cheque", BankTransfer: "Bank Transfer",
-    DemandDraft: "Demand Draft", Online: "Online",
-  };
-
-  const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
-  const outstanding = Math.max(0, feeRecord.amount - totalPaid);
-
-  // Apply filters
+  // Apply filters (hook — must stay before any early return)
   const filteredPayments = useMemo(() => {
     return payments.filter(p => {
       if (filterMethod !== "All" && p.paymentMethod !== filterMethod) return false;
@@ -780,10 +772,18 @@ function PaymentHistoryModal({ open, onClose, feeRecord, payments }: PaymentHist
     });
   }, [payments, filterFrom, filterTo, filterMethod]);
 
+  // All hooks are above this line — safe to bail out now
+  if (!feeRecord) return null;
+
+  const methodLabel: Record<string, string> = {
+    Cash: "Cash", Cheque: "Cheque", BankTransfer: "Bank Transfer",
+    DemandDraft: "Demand Draft", Online: "Online",
+  };
+
+  const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+  const outstanding = Math.max(0, feeRecord.amount - totalPaid);
   const filteredTotal = filteredPayments.reduce((sum, p) => sum + p.amount, 0);
   const isFiltered = filterMethod !== "All" || filterFrom !== "" || filterTo !== "";
-
-  if (!feeRecord) return null;
 
   function clearFilters() {
     setFilterFrom("");
