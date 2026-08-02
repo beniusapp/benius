@@ -211,35 +211,122 @@ export function registerFeesRoutes(app: Express) {
     // Destructure out fee-record-only fields before passing to createPaymentRecord
     const { feeType: _ft, dueDate: _dd, feeStatus: _fs, academicYear: _ay, feeNotes: _fn, ...paymentOnly } = paymentData;
 
-    const rec = await storage.createPaymentRecord({
-      ...paymentOnly,
-      schoolId,
-      idempotencyKey: idempotencyKey ?? null,
-      recordedBy: req.session.userId,
-    });
+    // ── Atomic overpayment guard + payment insert (150% soft cap) ─────────────
+    // The entire check-then-insert runs inside one DB transaction with a
+    // SELECT … FOR UPDATE row lock on the fee record.  A concurrent request for
+    // the same fee record will block at the lock until this transaction commits,
+    // guaranteeing the sum it reads is fully up-to-date and the cap cannot be
+    // breached by two near-simultaneous submissions.
+    const OVERPAYMENT_FACTOR = 1.5;
+    let rec: any = null;
+    let overpaymentBlock: {
+      message: string; invoiceAmount: number; totalAlreadyPaid: number; newAmount: number;
+    } | null = null;
 
-    // Auto-update linked fee record status based on cumulative payments
-    if (paymentOnly.feeRecordId) {
-      const [linked] = await db.select({ amount: feeRecords.amount })
-        .from(feeRecords)
-        .where(and(eq(feeRecords.id, paymentOnly.feeRecordId), eq(feeRecords.schoolId, schoolId)));
-      if (linked) {
-        // Sum all payment records for this fee record (including the one just inserted)
-        const [{ paid }] = await db.select({
-          paid: sql<string>`COALESCE(SUM(${paymentRecords.amount}), 0)`,
-        }).from(paymentRecords)
-          .where(eq(paymentRecords.feeRecordId, paymentOnly.feeRecordId));
-        const totalPaid = parseInt(String(paid)) || 0;
-        const isFullyPaid = totalPaid >= linked.amount;
-        await storage.updateFeeRecord(paymentOnly.feeRecordId, schoolId, {
-          status: isFullyPaid ? "Paid" : "Partial",
-          paidDate: paymentOnly.receivedDate,
-          receiptNumber: rec.id ? `REC-${rec.id}` : undefined,
-        });
+    await db.transaction(async (tx) => {
+      if (paymentOnly.feeRecordId) {
+        // Acquire a row-level write lock — concurrent requests will queue here.
+        const lockResult = await tx.execute(
+          sql`SELECT amount FROM fee_records
+              WHERE id = ${paymentOnly.feeRecordId} AND school_id = ${schoolId}
+              FOR UPDATE`,
+        );
+        const lockedFee = lockResult.rows[0] as { amount: number } | undefined;
+
+        if (lockedFee) {
+          const sumResult = await tx.execute(
+            sql`SELECT COALESCE(SUM(amount), 0)::int AS existing_paid
+                FROM payment_records
+                WHERE fee_record_id = ${paymentOnly.feeRecordId}`,
+          );
+          const totalAlreadyPaid = Number((sumResult.rows[0] as any)?.existing_paid) || 0;
+          const cap = Math.round(lockedFee.amount * OVERPAYMENT_FACTOR);
+
+          if (totalAlreadyPaid + paymentOnly.amount > cap) {
+            overpaymentBlock = {
+              message: `This payment (₹${paymentOnly.amount.toLocaleString("en-IN")}) would bring the total collected to ₹${(totalAlreadyPaid + paymentOnly.amount).toLocaleString("en-IN")}, which exceeds 150% of the invoice amount (₹${lockedFee.amount.toLocaleString("en-IN")}). Please verify the amount and try again.`,
+              invoiceAmount: lockedFee.amount,
+              totalAlreadyPaid,
+              newAmount: paymentOnly.amount,
+            };
+            return; // exit callback — transaction commits with no writes
+          }
+        }
       }
+
+      // Resolve session ID (mirrors logic in storage.createPaymentRecord)
+      let resolvedSessionId: number | null = null;
+      if (paymentOnly.feeRecordId) {
+        const sesRow = await tx.execute(
+          sql`SELECT session_id FROM fee_records
+              WHERE id = ${paymentOnly.feeRecordId} AND school_id = ${schoolId}`,
+        );
+        resolvedSessionId = (sesRow.rows[0] as any)?.session_id ?? null;
+      }
+      if (resolvedSessionId == null) {
+        const activeRow = await tx.execute(
+          sql`SELECT id FROM academic_sessions
+              WHERE school_id = ${schoolId} AND is_active = true LIMIT 1`,
+        );
+        resolvedSessionId = (activeRow.rows[0] as any)?.id ?? null;
+      }
+
+      // Insert payment record inside the same transaction
+      const insertResult = await tx.execute(
+        sql`INSERT INTO payment_records
+              (school_id, session_id, fee_record_id, student_id, payment_method,
+               reference_number, received_date, amount, cashier_notes,
+               idempotency_key, recorded_by)
+            VALUES (
+              ${schoolId},
+              ${resolvedSessionId},
+              ${paymentOnly.feeRecordId ?? null},
+              ${paymentOnly.studentId},
+              ${paymentOnly.paymentMethod},
+              ${paymentOnly.referenceNumber ?? null},
+              ${paymentOnly.receivedDate},
+              ${paymentOnly.amount},
+              ${paymentOnly.cashierNotes ?? null},
+              ${idempotencyKey ?? null},
+              ${req.session.userId ?? null}
+            )
+            RETURNING *`,
+      );
+      rec = insertResult.rows[0];
+
+      // Auto-update linked fee record status (sum includes the row just inserted)
+      if (paymentOnly.feeRecordId && rec) {
+        const feeRow = await tx.execute(
+          sql`SELECT amount FROM fee_records
+              WHERE id = ${paymentOnly.feeRecordId} AND school_id = ${schoolId}`,
+        );
+        const linkedFee = feeRow.rows[0] as { amount: number } | undefined;
+        if (linkedFee) {
+          const paidRow = await tx.execute(
+            sql`SELECT COALESCE(SUM(amount), 0)::int AS total_paid
+                FROM payment_records
+                WHERE fee_record_id = ${paymentOnly.feeRecordId}`,
+          );
+          const totalPaid = Number((paidRow.rows[0] as any)?.total_paid) || 0;
+          const newStatus = totalPaid >= linkedFee.amount ? "Paid" : "Partial";
+          const receiptNum = rec.id ? `REC-${rec.id}` : null;
+          await tx.execute(
+            sql`UPDATE fee_records
+                SET status = ${newStatus},
+                    paid_date = ${paymentOnly.receivedDate},
+                    receipt_number = ${receiptNum}
+                WHERE id = ${paymentOnly.feeRecordId} AND school_id = ${schoolId}`,
+          );
+        }
+      }
+    });
+    // ─────────────────────────────────────────────────────────────────────────
+
+    if (overpaymentBlock) {
+      return res.status(400).json({ ...overpaymentBlock, overpaymentGuard: true });
     }
 
-    await appendAudit(req, schoolId, "payment", "payment_record", rec.id,
+    await appendAudit(req, schoolId, "payment", "payment_record", rec?.id ?? null,
       `Recorded ${paymentOnly.paymentMethod} ₹${paymentOnly.amount} for student #${paymentOnly.studentId}`);
     res.status(201).json(rec);
   });

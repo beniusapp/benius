@@ -206,6 +206,7 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
   const [adminPwd, setAdminPwd] = useState("");
   const [pwdError, setPwdError] = useState("");
   const [duplicateRecord, setDuplicateRecord] = useState<FeeRecordWithStudent | null>(null);
+  const [overpaymentError, setOverpaymentError] = useState<string | null>(null);
 
   const { selectedSession } = useSessionView();
 
@@ -290,6 +291,8 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
     setPaySelectedStudent(null);
     // Reset duplicate warn state
     setDuplicateRecord(null);
+    // Reset overpayment error
+    setOverpaymentError(null);
     // Fresh key per modal open — stable across retries within the same open session
     setIdempotencyKey(`idem-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   }, [feeRecord?.id, open]);
@@ -306,6 +309,7 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
       if (!r.ok) {
         const err: any = new Error(body.message ?? "Failed");
         err.requiresConfirm = body.requiresConfirm;
+        err.overpaymentGuard = body.overpaymentGuard;
         err.payload = payload;
         throw err;
       }
@@ -324,6 +328,12 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
       if (e.requiresConfirm) {
         setPendingPayload(e.payload);
         setStep("confirm");
+      } else if (e.overpaymentGuard) {
+        // Surface the overpayment error inline in the form instead of a fleeting toast.
+        // Also return to the form step in case this was triggered from the high-value
+        // confirm step — the inline banner only renders when step === "form".
+        setOverpaymentError(e.message);
+        setStep("form");
       } else {
         toast({ title: "Error", description: e.message, variant: "destructive" });
       }
@@ -509,7 +519,7 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
                   </div>
                   <div>
                     <label className="text-xs text-white/60 mb-1 block">Amount (₹)</label>
-                    <input type="number" value={amount} onChange={e => setAmount(e.target.value)} min={1}
+                    <input type="number" value={amount} onChange={e => { setAmount(e.target.value); setOverpaymentError(null); }} min={1}
                       className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
                   </div>
                 </div>
@@ -560,7 +570,7 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
                 {feeRecord ? (
                   <>
                     <label className="text-xs text-white/60 mb-1 block">Amount (₹)</label>
-                    <input type="number" value={amount} onChange={e => setAmount(e.target.value)} min={1}
+                    <input type="number" value={amount} onChange={e => { setAmount(e.target.value); setOverpaymentError(null); }} min={1}
                       className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
                   </>
                 ) : (
@@ -595,12 +605,19 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
               </div>
             )}
 
-            {feeRecord && remainingBalance !== null && amtNum > remainingBalance && (
+            {feeRecord && remainingBalance !== null && amtNum > remainingBalance && !overpaymentError && (
               <div className="p-3 rounded-lg bg-yellow-900/20 border border-yellow-600/40 text-xs text-yellow-400 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                 <span>
                   This payment of {fmt(amtNum)} exceeds the outstanding balance of {fmt(remainingBalance)} — the record will be marked <span className="font-semibold">Paid</span>.
                 </span>
+              </div>
+            )}
+
+            {overpaymentError && (
+              <div className="p-3 rounded-lg bg-red-900/30 border border-red-600/50 text-xs text-red-400 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{overpaymentError}</span>
               </div>
             )}
 
