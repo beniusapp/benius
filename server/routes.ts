@@ -3951,22 +3951,27 @@ export async function registerRoutes(
   });
 
   // ===== ADMIN: FEE RECORDS =====
-  const feeRecordBodySchema = z.object({
+  const feeRecordBaseSchema = z.object({
     studentId: z.number().int().positive(),
     feeType: z.string().min(1).max(100),
     amount: z.number().int().positive(),
-    dueDate: z.string().optional().nullable(),
-    paidDate: z.string().optional().nullable(),
+    // Accept empty string from client and coerce to null so the DB never sees ""
+    dueDate: z.string().optional().nullable().transform(v => (v === "" ? null : v ?? null)),
+    paidDate: z.string().optional().nullable().transform(v => (v === "" ? null : v ?? null)),
     status: z.enum(["Due", "Paid", "Overdue", "Partial", "Waived"]),
     receiptNumber: z.string().max(50).optional().nullable(),
     notes: z.string().optional().nullable(),
     academicYear: z.string().max(20).optional().nullable(),
-  }).superRefine((val, ctx) => {
+  });
+  // Full schema with conditional dueDate validation (for POST)
+  const feeRecordBodySchema = feeRecordBaseSchema.superRefine((val, ctx) => {
     const noDeadlineNeeded = val.status === "Paid" || val.status === "Waived";
     if (!noDeadlineNeeded && !val.dueDate) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Due date is required", path: ["dueDate"] });
     }
   });
+  // Partial schema for PATCH — .partial() must be called on the base ZodObject, not ZodEffects
+  const feeRecordPatchSchema = feeRecordBaseSchema.partial();
 
   app.get("/api/admin/fees", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
@@ -4010,7 +4015,7 @@ export async function registerRoutes(
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid fee record ID" });
-    const parsed = feeRecordBodySchema.partial().safeParse(req.body);
+    const parsed = feeRecordPatchSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     if (parsed.data.studentId !== undefined) {
       const [studentCheck] = await db.select({ id: students.id }).from(students)
