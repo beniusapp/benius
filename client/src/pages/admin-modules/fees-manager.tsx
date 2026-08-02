@@ -788,7 +788,15 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     setEditing(s);
     setName(s.name); setFeeType(s.feeType); setAmount(String(s.amount)); setFrequency(s.frequency);
     setSelectedClasses([...s.applicableClasses]); setConcType(s.concessionType);
-    setConcPct(String(s.concessionPercent)); setDueDay(s.dueDayOfMonth ? String(s.dueDayOfMonth) : ""); setIsActive(s.isActive);
+    setConcPct(String(s.concessionPercent));
+    if (s.dueDayOfMonth) {
+      const now = new Date();
+      const y = now.getFullYear();
+      const mo = String(now.getMonth() + 1).padStart(2, "0");
+      const d = String(Math.min(s.dueDayOfMonth, 28)).padStart(2, "0");
+      setDueDay(`${y}-${mo}-${d}`);
+    } else { setDueDay(""); }
+    setIsActive(s.isActive);
     setShowModal(true);
   }
 
@@ -798,7 +806,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         name, feeType, amount: parseInt(amount), frequency,
         applicableClasses: selectedClasses,
         concessionType: concType, concessionPercent: parseInt(concPct) || 0,
-        dueDayOfMonth: dueDay ? parseInt(dueDay) : null, isActive,
+        dueDayOfMonth: dueDay ? new Date(dueDay + "T00:00:00").getDate() : null, isActive,
       };
       return editing
         ? apiRequest("PATCH", `/api/admin/fees/structures/${editing.id}`, payload)
@@ -1012,9 +1020,12 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                 </div>
               )}
               <div>
-                <label className="text-xs text-white/60 mb-1 block">Due Day</label>
-                <input type="number" value={dueDay} onChange={e => setDueDay(e.target.value)} min={1} max={31} placeholder="—"
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                <label className="text-xs text-white/60 mb-1 block">Due Date</label>
+                <input type="date" value={dueDay} onChange={e => setDueDay(e.target.value)}
+                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
+                {dueDay && (
+                  <p className="text-white/40 text-xs mt-1">Day {new Date(dueDay + "T00:00:00").getDate()} of each month</p>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/10">
