@@ -6,7 +6,7 @@ import { z } from "zod";
 import {
   CreditCard, Plus, Search, Loader2, Trash2, Pencil, CheckCircle2, AlertTriangle, Clock,
   Receipt, DollarSign, TrendingUp, TrendingDown, Banknote, BookOpen, Bell, ExternalLink,
-  Shield, ChevronLeft, ChevronRight, Lock, X, Printer, History,
+  Shield, ChevronLeft, ChevronRight, Lock, X, Printer, History, Download, FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -791,6 +791,109 @@ function PaymentHistoryModal({ open, onClose, feeRecord, payments }: PaymentHist
     setFilterMethod("All");
   }
 
+  function exportToCSV() {
+    const studentName = feeRecord!.student?.name ?? "student";
+    const headers = ["#", "Date", "Amount (INR)", "Method", "Reference No.", "Notes", "Receipt No."];
+    const dataRows = filteredPayments.map((p, idx) => [
+      idx + 1,
+      fmtDate(p.receivedDate),
+      p.amount,
+      methodLabel[p.paymentMethod] ?? p.paymentMethod,
+      p.referenceNumber ?? "",
+      p.cashierNotes ?? "",
+      `PAY-${p.id}`,
+    ]);
+    // Summary footer rows
+    dataRows.push(["", "", "", "", "", "", ""]);
+    dataRows.push(["", "Filtered Total", filteredTotal, "", "", "", ""]);
+    if (isFiltered) {
+      dataRows.push(["", "Overall Total", feeRecord!.amount, "", "", "", ""]);
+    }
+
+    const csvContent = [headers, ...dataRows]
+      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const safeName = studentName.replace(/[^a-zA-Z0-9\s-]/g, "").trim().replace(/\s+/g, "-");
+    a.download = `payment-history-${safeName}-${new Date().toISOString().split("T")[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function exportToPDF() {
+    const studentName = feeRecord!.student?.name ?? "—";
+    const studentInfo = feeRecord!.student ? `${feeRecord!.student.class}-${feeRecord!.student.section}` : "";
+    const feeTypeLabel = feeRecord!.feeType;
+    const esc = (s: string | null | undefined) =>
+      (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const filterDesc = [
+      filterFrom ? `From: ${fmtDate(filterFrom)}` : "",
+      filterTo ? `To: ${fmtDate(filterTo)}` : "",
+      filterMethod !== "All" ? `Method: ${methodLabel[filterMethod] ?? filterMethod}` : "",
+    ].filter(Boolean).join(" · ");
+
+    const rows = filteredPayments.map((p, idx) => `
+      <tr>
+        <td>${idx + 1}</td>
+        <td>${esc(fmtDate(p.receivedDate))}</td>
+        <td class="amount">₹${p.amount.toLocaleString("en-IN")}</td>
+        <td>${esc(methodLabel[p.paymentMethod] ?? p.paymentMethod)}</td>
+        <td>${esc(p.referenceNumber ?? "—")}</td>
+        <td>${esc(p.cashierNotes ?? "—")}</td>
+        <td class="mono">PAY-${p.id}</td>
+      </tr>`).join("");
+
+    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<title>Payment History – ${esc(studentName)}</title>
+<style>
+  body{font-family:Arial,sans-serif;margin:0;padding:24px;color:#1e293b;font-size:13px;}
+  h1{font-size:18px;margin:0 0 4px;color:#0891b2;}
+  .meta{color:#64748b;font-size:12px;margin-bottom:16px;}
+  .filter-badge{display:inline-block;background:#f0f9ff;border:1px solid #bae6fd;border-radius:4px;padding:2px 8px;font-size:11px;color:#0369a1;margin-bottom:12px;}
+  table{width:100%;border-collapse:collapse;margin-top:4px;}
+  th{background:#0891b2;color:#fff;text-align:left;padding:8px 6px;font-size:12px;}
+  td{padding:7px 6px;border-bottom:1px solid #f1f5f9;}
+  tr:nth-child(even) td{background:#f8fafc;}
+  .amount{font-weight:700;}
+  .mono{font-family:monospace;font-size:11px;color:#94a3b8;}
+  .total-row td{border-top:2px solid #0891b2;font-weight:700;background:#f0f9ff;}
+  .footer{margin-top:20px;font-size:11px;color:#94a3b8;text-align:center;}
+  @media print{body{padding:0;}}
+</style></head><body>
+<h1>Payment History</h1>
+<div class="meta">
+  <strong>${esc(studentName)}</strong> · ${esc(studentInfo)} · ${esc(feeTypeLabel)}<br>
+  Invoice: ₹${feeRecord!.amount.toLocaleString("en-IN")} · Status: ${esc(feeRecord!.status)}
+</div>
+${filterDesc ? `<div class="filter-badge">Filtered: ${esc(filterDesc)}</div>` : ""}
+<table>
+  <thead><tr>
+    <th>#</th><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Notes</th><th>Receipt</th>
+  </tr></thead>
+  <tbody>${rows}</tbody>
+  <tfoot><tr class="total-row">
+    <td colspan="2">${isFiltered ? `Filtered Total (${filteredPayments.length} of ${payments.length})` : "Total"}</td>
+    <td class="amount">₹${filteredTotal.toLocaleString("en-IN")}</td>
+    <td colspan="4"></td>
+  </tr></tfoot>
+</table>
+<div class="footer">Generated ${new Date().toLocaleString("en-IN")} · BENIUS</div>
+<script>window.print();</script>
+</body></html>`;
+
+    const win = window.open("", "_blank");
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
       <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-lg max-h-[80vh] flex flex-col">
@@ -919,12 +1022,36 @@ function PaymentHistoryModal({ open, onClose, feeRecord, payments }: PaymentHist
           )}
         </div>
 
-        <div className="shrink-0 pt-2 border-t border-white/10 flex justify-between items-center">
+        <div className="shrink-0 pt-2 border-t border-white/10 flex justify-between items-center gap-2 flex-wrap">
           {!isFiltered && (
             <span className="text-white/40 text-xs">{payments.length} transaction{payments.length !== 1 ? "s" : ""}</span>
           )}
           {isFiltered && <span />}
-          <Button variant="ghost" onClick={onClose} className="text-white/60 h-8 text-sm">Close</Button>
+          <div className="flex items-center gap-2 ml-auto">
+            {filteredPayments.length > 0 && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={exportToCSV}
+                  className="text-emerald-400 hover:text-emerald-300 hover:bg-emerald-900/20 h-8 gap-1.5 text-xs"
+                  title="Download filtered payments as CSV"
+                >
+                  <Download className="w-3.5 h-3.5" /> CSV
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={exportToPDF}
+                  className="text-cyan-400 hover:text-cyan-300 hover:bg-cyan-900/20 h-8 gap-1.5 text-xs"
+                  title="Print / save as PDF"
+                >
+                  <FileText className="w-3.5 h-3.5" /> PDF
+                </Button>
+              </>
+            )}
+            <Button variant="ghost" onClick={onClose} className="text-white/60 h-8 text-sm">Close</Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
