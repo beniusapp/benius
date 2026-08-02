@@ -744,13 +744,30 @@ interface PaymentHistoryModalProps {
   open: boolean;
   onClose: () => void;
   feeRecord: FeeRecordWithStudent | null;
-  payments: PaymentRecord[];
 }
 
-function PaymentHistoryModal({ open, onClose, feeRecord, payments }: PaymentHistoryModalProps) {
+function PaymentHistoryModal({ open, onClose, feeRecord }: PaymentHistoryModalProps) {
   const [filterFrom, setFilterFrom] = useState("");
   const [filterTo, setFilterTo] = useState("");
   const [filterMethod, setFilterMethod] = useState("All");
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+
+  // Fetch payments directly inside the modal with polling so the list stays
+  // live while the modal is open — no manual refresh needed.
+  const { data: payments = [], isFetching } = useQuery<PaymentRecord[]>({
+    queryKey: ["/api/admin/fees/payments", feeRecord?.id],
+    queryFn: async () => {
+      if (!feeRecord) return [];
+      const r = await sessionFetch(`/api/admin/fees/payments?feeRecordId=${feeRecord.id}`);
+      if (!r.ok) return [];
+      const data = await r.json();
+      setLastRefreshed(new Date());
+      return data;
+    },
+    enabled: open && !!feeRecord,
+    staleTime: 0,
+    refetchInterval: open ? 30_000 : false,
+  });
 
   // Reset filters whenever the modal is opened/closed
   useEffect(() => {
@@ -758,10 +775,19 @@ function PaymentHistoryModal({ open, onClose, feeRecord, payments }: PaymentHist
       setFilterFrom("");
       setFilterTo("");
       setFilterMethod("All");
+      setLastRefreshed(null);
     }
   }, [open]);
 
-  // Apply filters (hook — must stay before any early return)
+  const methodLabel: Record<string, string> = {
+    Cash: "Cash", Cheque: "Cheque", BankTransfer: "Bank Transfer",
+    DemandDraft: "Demand Draft", Online: "Online",
+  };
+
+  const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+  const outstanding = Math.max(0, (feeRecord?.amount ?? 0) - totalPaid);
+
+  // Apply filters
   const filteredPayments = useMemo(() => {
     return payments.filter(p => {
       if (filterMethod !== "All" && p.paymentMethod !== filterMethod) return false;
@@ -772,18 +798,10 @@ function PaymentHistoryModal({ open, onClose, feeRecord, payments }: PaymentHist
     });
   }, [payments, filterFrom, filterTo, filterMethod]);
 
-  // All hooks are above this line — safe to bail out now
-  if (!feeRecord) return null;
-
-  const methodLabel: Record<string, string> = {
-    Cash: "Cash", Cheque: "Cheque", BankTransfer: "Bank Transfer",
-    DemandDraft: "Demand Draft", Online: "Online",
-  };
-
-  const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
-  const outstanding = Math.max(0, feeRecord.amount - totalPaid);
   const filteredTotal = filteredPayments.reduce((sum, p) => sum + p.amount, 0);
   const isFiltered = filterMethod !== "All" || filterFrom !== "" || filterTo !== "";
+
+  if (!feeRecord) return null;
 
   function clearFilters() {
     setFilterFrom("");
@@ -901,7 +919,13 @@ ${filterDesc ? `<div class="filter-badge">Filtered: ${esc(filterDesc)}</div>` : 
           <DialogTitle className="flex items-center gap-2 text-cyan-400">
             <History className="w-5 h-5" />
             Payment History
+            {isFetching && <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-500/60 ml-1" />}
           </DialogTitle>
+          {lastRefreshed && !isFetching && (
+            <p className="text-white/30 text-[10px] mt-0.5">
+              Updated {lastRefreshed.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · auto-refreshes every 30 s
+            </p>
+          )}
         </DialogHeader>
 
         {/* Fee record summary */}
@@ -1418,7 +1442,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         open={showPaymentsModal}
         onClose={() => { setShowPaymentsModal(false); setViewPaymentsRecord(null); }}
         feeRecord={viewPaymentsRecord}
-        payments={viewPaymentsRecord ? (paymentsByFeeRecordId.get(viewPaymentsRecord.id) ?? []) : []}
       />
 
       {/* Add / Edit Dialog */}
