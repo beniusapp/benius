@@ -799,7 +799,7 @@ export class DatabaseStorage {
     return teacher || null;
   }
 
-   * Students can NEVER see these notices — the targetType:"teacher" filter in
+  /** Students can NEVER see these notices — the targetType:"teacher" filter in
    * getStudentNotices only fetches targetType "whole_school" / "student" / "class".
    */
   async getTeacherScopedNotices(schoolId: number, teacherId: number, sessionId?: number | null): Promise<Notice[]> {

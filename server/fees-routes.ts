@@ -5,7 +5,6 @@ import { users, schools, students, feeRecords, paymentRecords } from "@shared/sc
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
-import { users, students, feeRecords, paymentRecords } from "@shared/schema";
 
 export function registerFeesRoutes(app: Express) {
 
