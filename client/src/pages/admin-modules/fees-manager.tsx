@@ -436,6 +436,10 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [payTarget, setPayTarget] = useState<FeeRecordWithStudent | null>(null);
   const [showPay, setShowPay] = useState(false);
   const [showStandalonePay, setShowStandalonePay] = useState(false);
+  const [studentSearchCls, setStudentSearchCls] = useState("");
+  const [studentSearchQ, setStudentSearchQ] = useState("");
+  const [studentResults, setStudentResults] = useState<StudentItem[] | null>(null);
+  const [selectedStudent, setSelectedStudent] = useState<StudentItem | null>(null);
 
   const { data: feeRecords = [], isLoading } = useQuery<FeeRecordWithStudent[]>({
     queryKey: ["/api/admin/fees", viewSessionId],
@@ -491,6 +495,32 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     [...new Set(feeRecords.map(r => r.student?.class).filter(Boolean))].sort() as string[],
     [feeRecords]);
 
+  const studentClasses = useMemo(() =>
+    [...new Set(students.filter(s => s.isActive).map(s => s.class))].sort(),
+    [students]);
+
+  function runStudentSearch() {
+    const q = studentSearchQ.toLowerCase().trim();
+    setStudentResults(students.filter(s => {
+      if (!s.isActive) return false;
+      if (studentSearchCls && s.class !== studentSearchCls) return false;
+      if (q && !s.name.toLowerCase().includes(q) && !s.digitalStudentId.toLowerCase().includes(q)) return false;
+      return true;
+    }));
+  }
+
+  function pickStudent(s: StudentItem) {
+    setSelectedStudent(s);
+    form.setValue("studentId", String(s.id), { shouldValidate: true });
+    setStudentResults(null);
+  }
+
+  function clearStudentPick() {
+    setSelectedStudent(null);
+    setStudentSearchCls(""); setStudentSearchQ(""); setStudentResults(null);
+    form.setValue("studentId", "", { shouldValidate: false });
+  }
+
   const filtered = useMemo(() => feeRecords.filter(r => {
     const q = search.toLowerCase();
     const ms = !q || (r.student?.name ?? "").toLowerCase().includes(q) || r.feeType.toLowerCase().includes(q) || (r.student?.digitalStudentId ?? "").toLowerCase().includes(q);
@@ -500,12 +530,15 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   function openCreate() {
     setEditing(null);
     form.reset({ studentId: "", feeType: "", amount: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: "" });
+    setSelectedStudent(null); setStudentSearchCls(""); setStudentSearchQ(""); setStudentResults(null);
     setShowForm(true);
   }
 
   function openEdit(rec: FeeRecordWithStudent) {
     setEditing(rec);
     form.reset({ studentId: String(rec.studentId), feeType: rec.feeType, amount: String(rec.amount), dueDate: rec.dueDate, status: rec.status as any, paidDate: rec.paidDate ?? "", receiptNumber: rec.receiptNumber ?? "", notes: rec.notes ?? "", academicYear: rec.academicYear ?? "" });
+    setSelectedStudent(students.find(s => s.id === rec.studentId) ?? null);
+    setStudentSearchCls(""); setStudentSearchQ(""); setStudentResults(null);
     setShowForm(true);
   }
 
@@ -632,23 +665,54 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
           </DialogHeader>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(d => editing ? updateMut.mutate({ id: editing.id, data: d }) : createMut.mutate(d))} className="space-y-4">
-              <FormField control={form.control} name="studentId" render={({ field }) => (
+              {/* ── Student search & select ── */}
+              <FormField control={form.control} name="studentId" render={() => (
                 <FormItem>
                   <FormLabel className="text-white/70">Student</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
-                    <FormControl>
-                      <SelectTrigger className="bg-[#0A1628] border-white/20 text-white">
-                        <SelectValue placeholder="Select student" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent className="bg-[#1A2942] border-white/10 max-h-56">
-                      {students.filter(s => s.isActive).map(s => (
-                        <SelectItem key={s.id} value={String(s.id)} className="text-white focus:bg-white/10">
-                          {s.name} ({s.class}-{s.section})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {selectedStudent ? (
+                    <div className="flex items-center justify-between px-3 py-2.5 rounded-lg border border-cyan-500/50 bg-cyan-900/20">
+                      <div>
+                        <p className="text-white text-sm font-medium">{selectedStudent.name}</p>
+                        <p className="text-white/40 text-xs">{selectedStudent.digitalStudentId} · Class {selectedStudent.class}-{selectedStudent.section}</p>
+                      </div>
+                      {!editing && (
+                        <button type="button" onClick={clearStudentPick} className="text-white/30 hover:text-white/70 ml-3 text-lg leading-none">✕</button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <select value={studentSearchCls} onChange={e => setStudentSearchCls(e.target.value)}
+                          className="bg-[#0A1628] border border-white/20 rounded-lg px-2 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 w-28 flex-shrink-0">
+                          <option value="">All Classes</option>
+                          {studentClasses.map(c => <option key={c} value={c}>Class {c}</option>)}
+                        </select>
+                        <input value={studentSearchQ} onChange={e => setStudentSearchQ(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); runStudentSearch(); } }}
+                          placeholder="Name or Student ID…"
+                          className="flex-1 bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20 min-w-0" />
+                        <button type="button" onClick={runStudentSearch}
+                          className="px-3 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium flex-shrink-0">
+                          Search
+                        </button>
+                      </div>
+                      {studentResults !== null && (
+                        studentResults.length === 0 ? (
+                          <p className="text-white/30 text-xs text-center py-3">No students found.</p>
+                        ) : (
+                          <div className="rounded-lg border border-white/10 overflow-hidden max-h-44 overflow-y-auto">
+                            {studentResults.map(s => (
+                              <button key={s.id} type="button" onClick={() => pickStudent(s)}
+                                className="w-full text-left px-3 py-2.5 hover:bg-cyan-900/30 border-b border-white/5 last:border-0 transition-colors">
+                                <p className="text-white text-sm">{s.name}</p>
+                                <p className="text-white/40 text-xs">{s.digitalStudentId} · Class {s.class}-{s.section}</p>
+                              </button>
+                            ))}
+                          </div>
+                        )
+                      )}
+                    </div>
+                  )}
                   <FormMessage className="text-red-400" />
                 </FormItem>
               )} />
