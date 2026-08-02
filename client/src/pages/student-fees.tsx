@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, GraduationCap, Loader2, CreditCard, CheckCircle2, Clock, AlertTriangle, Receipt, Download, Lock } from "lucide-react";
+import { ArrowLeft, GraduationCap, Loader2, CreditCard, CheckCircle2, Clock, AlertTriangle, Receipt, Download, Lock, ExternalLink } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 
@@ -89,6 +89,12 @@ export default function StudentFees() {
     enabled: !!student,
   });
 
+  const { data: portalInfo } = useQuery<{ isEnabled: boolean; gatewayUrl: string | null; bannerMessage: string | null }>({
+    queryKey: ["/api/student/fees/portal-info"],
+    enabled: !!student,
+    staleTime: 60_000,
+  });
+
   useEffect(() => {
     if (!studentLoading && (isError || !student || !student.schoolId)) {
       setLocation("/student-login");
@@ -170,6 +176,47 @@ export default function StudentFees() {
               <p className="text-sm font-bold text-amber-800">Archive Mode — Read Only</p>
               <p className="text-xs text-amber-600 mt-0.5">Viewing fee records for <span className="font-semibold">{selectedSession.sessionName}</span>. No payments can be processed.</p>
             </div>
+          </motion.div>
+        )}
+
+        {/* External payment portal banner */}
+        {portalInfo?.isEnabled && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+            className="rounded-2xl p-4"
+            style={{
+              background: "rgba(255,255,255,0.82)",
+              border: "1px solid rgba(255,255,255,0.75)",
+              boxShadow: "0 4px 18px rgba(0,0,0,0.06)",
+              borderTop: "4px solid #06b6d4",
+            }}
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <div
+                className="flex items-center justify-center w-8 h-8 rounded-lg flex-shrink-0"
+                style={{ background: "linear-gradient(135deg, #06b6d4, #0891b2)" }}
+              >
+                <CreditCard className="w-4 h-4 text-white" />
+              </div>
+              <p className="font-bold text-slate-800 text-sm">Pay Fees Online</p>
+            </div>
+            {portalInfo.bannerMessage && (
+              <p className="text-sm text-slate-600 mb-3">{portalInfo.bannerMessage}</p>
+            )}
+            {portalInfo.gatewayUrl && (
+              <a
+                href={portalInfo.gatewayUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white"
+                style={{ background: "linear-gradient(135deg, #06b6d4, #0891b2)" }}
+              >
+                <ExternalLink className="w-4 h-4" />
+                Pay Now
+              </a>
+            )}
           </motion.div>
         )}
 

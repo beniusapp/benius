@@ -326,6 +326,61 @@ app.use((req, res, next) => {
     ALTER TABLE exam_policy_tiers ADD COLUMN IF NOT EXISTS results_config TEXT NOT NULL DEFAULT '{}';
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS fee_structures (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      name VARCHAR(100) NOT NULL,
+      fee_type VARCHAR(100) NOT NULL,
+      amount INTEGER NOT NULL,
+      frequency VARCHAR(20) NOT NULL DEFAULT 'annual',
+      applicable_classes TEXT[] NOT NULL DEFAULT '{}',
+      concession_type VARCHAR(20) NOT NULL DEFAULT 'none',
+      concession_percent INTEGER NOT NULL DEFAULT 0,
+      due_day_of_month INTEGER,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE TABLE IF NOT EXISTS payment_records (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      fee_record_id INTEGER REFERENCES fee_records(id) ON DELETE SET NULL,
+      student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      payment_method VARCHAR(30) NOT NULL,
+      reference_number VARCHAR(100),
+      received_date DATE NOT NULL,
+      amount INTEGER NOT NULL,
+      cashier_notes TEXT,
+      idempotency_key VARCHAR(64) UNIQUE,
+      recorded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS fee_audit_log (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      actor_name TEXT,
+      ip_address TEXT,
+      action VARCHAR(50) NOT NULL,
+      entity_type VARCHAR(50),
+      entity_id INTEGER,
+      description TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS external_payment_settings (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL UNIQUE REFERENCES schools(id) ON DELETE CASCADE,
+      is_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      gateway_url TEXT,
+      banner_message TEXT,
+      last_updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS payment_method VARCHAR(30);
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS reference_number VARCHAR(100);
+  `);
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

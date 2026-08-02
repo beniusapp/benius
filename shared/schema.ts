@@ -947,3 +947,67 @@ export const removedTeachersLog = pgTable("removed_teachers_log", {
 });
 
 export type RemovedTeacherLog = typeof removedTeachersLog.$inferSelect;
+
+// ── Financial Hub tables ──────────────────────────────────────────────────────
+
+export const feeStructures = pgTable("fee_structures", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 100 }).notNull(),
+  feeType: varchar("fee_type", { length: 100 }).notNull(),
+  amount: integer("amount").notNull(),
+  frequency: varchar("frequency", { length: 20 }).notNull().default("annual"),
+  applicableClasses: text("applicable_classes").array().notNull().default([]),
+  concessionType: varchar("concession_type", { length: 20 }).notNull().default("none"),
+  concessionPercent: integer("concession_percent").notNull().default(0),
+  dueDayOfMonth: integer("due_day_of_month"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
+});
+export const insertFeeStructureSchema = createInsertSchema(feeStructures).omit({ id: true, createdAt: true });
+export type InsertFeeStructure = z.infer<typeof insertFeeStructureSchema>;
+export type FeeStructure = typeof feeStructures.$inferSelect;
+
+export const paymentRecords = pgTable("payment_records", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  feeRecordId: integer("fee_record_id").references(() => feeRecords.id, { onDelete: "set null" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  paymentMethod: varchar("payment_method", { length: 30 }).notNull(),
+  referenceNumber: varchar("reference_number", { length: 100 }),
+  receivedDate: date("received_date").notNull(),
+  amount: integer("amount").notNull(),
+  cashierNotes: text("cashier_notes"),
+  idempotencyKey: varchar("idempotency_key", { length: 64 }).unique(),
+  recordedBy: integer("recorded_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+export const insertPaymentRecordSchema = createInsertSchema(paymentRecords).omit({ id: true, createdAt: true });
+export type InsertPaymentRecord = z.infer<typeof insertPaymentRecordSchema>;
+export type PaymentRecord = typeof paymentRecords.$inferSelect;
+
+export const feeAuditLog = pgTable("fee_audit_log", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  actorId: integer("actor_id").references(() => users.id, { onDelete: "set null" }),
+  actorName: text("actor_name"),
+  ipAddress: text("ip_address"),
+  action: varchar("action", { length: 50 }).notNull(),
+  entityType: varchar("entity_type", { length: 50 }),
+  entityId: integer("entity_id"),
+  description: text("description"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+export type FeeAuditLog = typeof feeAuditLog.$inferSelect;
+
+export const externalPaymentSettings = pgTable("external_payment_settings", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().unique().references(() => schools.id, { onDelete: "cascade" }),
+  isEnabled: boolean("is_enabled").notNull().default(false),
+  gatewayUrl: text("gateway_url"),
+  bannerMessage: text("banner_message"),
+  lastUpdatedBy: integer("last_updated_by").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+export type ExternalPaymentSettings = typeof externalPaymentSettings.$inferSelect;

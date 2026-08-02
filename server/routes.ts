@@ -19,6 +19,7 @@ import multer from "multer";
 import { parse } from "csv-parse/sync";
 import * as XLSX from "xlsx";
 import { registerTeacherRoutes } from "./teacher-routes";
+import { registerFeesRoutes } from "./fees-routes";
 import { addSSEClient, broadcastSessionActivated, broadcastSessionDeleted } from "./sse";
 import { db } from "./db";
 import { eq, and, sql, inArray, not } from "drizzle-orm";
@@ -4112,6 +4113,7 @@ export async function registerRoutes(
     res.send(html);
   });
 
+  registerFeesRoutes(app);
   registerTeacherRoutes(app);
 
   return httpServer;

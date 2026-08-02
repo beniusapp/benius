@@ -8,6 +8,11 @@ import {
   schoolAssets, assetLogs, verificationLogs, timetableStructure, securityAudit, leavePolicies,
   nonTeachingStaff, facultyMappings, feeRecords, examPolicyTiers, promotionDecisions,
   academicSessions, enrollments, removedTeachersLog,
+  feeStructures, paymentRecords, feeAuditLog, externalPaymentSettings,
+  type FeeStructure, type InsertFeeStructure,
+  type PaymentRecord, type InsertPaymentRecord,
+  type FeeAuditLog,
+  type ExternalPaymentSettings,
   type RemovedTeacherLog,
   type PromotionDecision,
   type School, type InsertSchool, type Student, type InsertStudent,
@@ -4674,6 +4679,123 @@ export class DatabaseStorage {
       .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)))
       .returning();
     return result.length > 0;
+  }
+
+  // ===== FEE STRUCTURES =====
+
+  async createFeeStructure(data: InsertFeeStructure): Promise<FeeStructure> {
+    const [rec] = await db.insert(feeStructures).values(data).returning();
+    return rec;
+  }
+
+  async getFeeStructuresBySchool(schoolId: number): Promise<FeeStructure[]> {
+    return db.select().from(feeStructures)
+      .where(eq(feeStructures.schoolId, schoolId))
+      .orderBy(feeStructures.name);
+  }
+
+  async updateFeeStructure(id: number, schoolId: number, data: Partial<InsertFeeStructure>): Promise<FeeStructure | undefined> {
+    const [rec] = await db.update(feeStructures)
+      .set(data)
+      .where(and(eq(feeStructures.id, id), eq(feeStructures.schoolId, schoolId)))
+      .returning();
+    return rec || undefined;
+  }
+
+  async deleteFeeStructure(id: number, schoolId: number): Promise<boolean> {
+    const result = await db.delete(feeStructures)
+      .where(and(eq(feeStructures.id, id), eq(feeStructures.schoolId, schoolId)))
+      .returning();
+    return result.length > 0;
+  }
+
+  async getFeeStructureById(id: number, schoolId: number): Promise<FeeStructure | null> {
+    const [rec] = await db.select().from(feeStructures)
+      .where(and(eq(feeStructures.id, id), eq(feeStructures.schoolId, schoolId)));
+    return rec || null;
+  }
+
+  // ===== PAYMENT RECORDS =====
+
+  async createPaymentRecord(data: InsertPaymentRecord): Promise<PaymentRecord> {
+    const [rec] = await db.insert(paymentRecords).values(data).returning();
+    return rec;
+  }
+
+  async getPaymentRecordsBySchool(schoolId: number, opts?: { studentId?: number; feeRecordId?: number }): Promise<PaymentRecord[]> {
+    const conditions: any[] = [eq(paymentRecords.schoolId, schoolId)];
+    if (opts?.studentId) conditions.push(eq(paymentRecords.studentId, opts.studentId));
+    if (opts?.feeRecordId !== undefined) conditions.push(eq(paymentRecords.feeRecordId, opts.feeRecordId));
+    return db.select().from(paymentRecords)
+      .where(and(...conditions))
+      .orderBy(desc(paymentRecords.createdAt));
+  }
+
+  async getPaymentRecordByIdempotencyKey(key: string): Promise<PaymentRecord | null> {
+    const [rec] = await db.select().from(paymentRecords)
+      .where(eq(paymentRecords.idempotencyKey, key));
+    return rec || null;
+  }
+
+  // ===== FEE AUDIT LOG =====
+
+  async appendFeeAuditLog(entry: {
+    schoolId: number; actorId?: number | null; actorName?: string | null;
+    ipAddress?: string | null; action: string; entityType?: string | null;
+    entityId?: number | null; description?: string | null;
+  }): Promise<FeeAuditLog> {
+    const [rec] = await db.insert(feeAuditLog).values(entry as any).returning();
+    return rec;
+  }
+
+  async getFeeAuditLog(schoolId: number, limit = 50, offset = 0): Promise<{ entries: FeeAuditLog[]; total: number }> {
+    const [{ cnt }] = await db.select({ cnt: count() }).from(feeAuditLog)
+      .where(eq(feeAuditLog.schoolId, schoolId));
+    const entries = await db.select().from(feeAuditLog)
+      .where(eq(feeAuditLog.schoolId, schoolId))
+      .orderBy(desc(feeAuditLog.createdAt))
+      .limit(limit)
+      .offset(offset);
+    return { entries, total: Number(cnt) };
+  }
+
+  // ===== EXTERNAL PAYMENT SETTINGS =====
+
+  async getExternalPaymentSettings(schoolId: number): Promise<ExternalPaymentSettings | null> {
+    const [rec] = await db.select().from(externalPaymentSettings)
+      .where(eq(externalPaymentSettings.schoolId, schoolId));
+    return rec || null;
+  }
+
+  async upsertExternalPaymentSettings(schoolId: number, data: {
+    isEnabled: boolean; gatewayUrl?: string | null; bannerMessage?: string | null; lastUpdatedBy?: number | null;
+  }): Promise<ExternalPaymentSettings> {
+    const [rec] = await db.insert(externalPaymentSettings)
+      .values({ schoolId, ...data, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: externalPaymentSettings.schoolId,
+        set: { ...data, updatedAt: new Date() },
+      })
+      .returning();
+    return rec;
+  }
+
+  // ===== FEE SUMMARY =====
+
+  async getFeeSummary(schoolId: number, sessionId?: number | null): Promise<{
+    totalRevenue: number; outstanding: number; collectionRate: number; offlinePaymentsCount: number;
+  }> {
+    const conditions: any[] = [eq(feeRecords.schoolId, schoolId)];
+    if (sessionId != null) conditions.push(eq(feeRecords.sessionId, sessionId));
+    const records = await db.select({ status: feeRecords.status, amount: feeRecords.amount })
+      .from(feeRecords).where(and(...conditions));
+    const totalRevenue = records.filter(r => r.status === "Paid").reduce((s, r) => s + r.amount, 0);
+    const outstanding = records.filter(r => r.status !== "Paid").reduce((s, r) => s + r.amount, 0);
+    const total = totalRevenue + outstanding;
+    const collectionRate = total > 0 ? Math.round((totalRevenue / total) * 100) : 0;
+    const [{ cnt }] = await db.select({ cnt: count() }).from(paymentRecords)
+      .where(eq(paymentRecords.schoolId, schoolId));
+    return { totalRevenue, outstanding, collectionRate, offlinePaymentsCount: Number(cnt) };
   }
 
   // ===== EXAM POLICY TIERS =====
