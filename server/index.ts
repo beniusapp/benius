@@ -5,6 +5,8 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { pool } from "./db";
+import { storage } from "./storage";
+import cron from "node-cron";
 import path from "path";
 import { storage } from "./storage";
 
@@ -383,6 +385,37 @@ app.use((req, res, next) => {
   `);
 
   await registerRoutes(httpServer, app);
+
+  // ===== NIGHTLY OVERDUE-FEE SWEEP =====
+  // Runs at 01:00 every night. Marks all "Due" fee records whose due_date has
+  // passed as "Overdue" and writes an audit log entry for each change.
+  cron.schedule("0 1 * * *", async () => {
+    log("Nightly overdue-fee sweep starting…", "cron");
+    try {
+      const allSchools = await storage.getSchools();
+      let totalUpdated = 0;
+      for (const school of allSchools) {
+        const updated = await storage.bulkUpdateOverdueFeeRecords(school.id);
+        if (updated.length === 0) continue;
+        totalUpdated += updated.length;
+        for (const rec of updated) {
+          await storage.appendFeeAuditLog({
+            schoolId: school.id,
+            actorId: null,
+            actorName: "System (auto)",
+            ipAddress: null,
+            action: "auto_overdue",
+            entityType: "fee_record",
+            entityId: rec.id,
+            description: `Fee record #${rec.id} (${rec.feeType}, ₹${rec.amount}) automatically marked Overdue — due date was ${rec.dueDate}`,
+          });
+        }
+      }
+      log(`Overdue sweep complete: ${totalUpdated} record(s) updated across ${allSchools.length} school(s)`, "cron");
+    } catch (err) {
+      log(`Overdue sweep error: ${String(err)}`, "cron");
+    }
+  });
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

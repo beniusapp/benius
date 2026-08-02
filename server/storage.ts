@@ -4630,6 +4630,23 @@ export class DatabaseStorage {
     return result.length > 0;
   }
 
+  /**
+   * Finds all "Due" fee records for a school whose due_date has already passed
+   * and marks them "Overdue". Returns the updated records so callers can audit-log them.
+   */
+  async bulkUpdateOverdueFeeRecords(schoolId: number): Promise<FeeRecord[]> {
+    return await db.update(feeRecords)
+      .set({ status: "Overdue" })
+      .where(
+        and(
+          eq(feeRecords.schoolId, schoolId),
+          eq(feeRecords.status, "Due"),
+          lt(feeRecords.dueDate, sql`CURRENT_DATE`),
+        )
+      )
+      .returning();
+  }
+
   // ===== FEE STRUCTURES =====
 
   async createFeeStructure(data: InsertFeeStructure): Promise<FeeStructure> {
