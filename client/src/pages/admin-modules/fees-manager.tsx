@@ -756,7 +756,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [feeType, setFeeType] = useState("");
   const [amount, setAmount] = useState("");
   const [frequency, setFrequency] = useState("annual");
-  const [classes, setClasses] = useState("");
+  const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
   const [concType, setConcType] = useState("none");
   const [concPct, setConcPct] = useState("0");
   const [dueDay, setDueDay] = useState("");
@@ -766,17 +766,28 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     queryKey: ["/api/admin/fees/structures"],
   });
 
+  const { data: schoolConfig } = useQuery<{ classes: string[] }>({
+    queryKey: ["/api/admin/school-config"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/school-config", { credentials: "include" });
+      if (!r.ok) return { classes: [] };
+      return r.json();
+    },
+    staleTime: 300_000,
+  });
+  const schoolClasses: string[] = schoolConfig?.classes ?? [];
+
   function openCreate() {
     setEditing(null);
     setName(""); setFeeType(""); setAmount(""); setFrequency("annual");
-    setClasses(""); setConcType("none"); setConcPct("0"); setDueDay(""); setIsActive(true);
+    setSelectedClasses([]); setConcType("none"); setConcPct("0"); setDueDay(""); setIsActive(true);
     setShowModal(true);
   }
 
   function openEdit(s: FeeStructure) {
     setEditing(s);
     setName(s.name); setFeeType(s.feeType); setAmount(String(s.amount)); setFrequency(s.frequency);
-    setClasses(s.applicableClasses.join(", ")); setConcType(s.concessionType);
+    setSelectedClasses([...s.applicableClasses]); setConcType(s.concessionType);
     setConcPct(String(s.concessionPercent)); setDueDay(s.dueDayOfMonth ? String(s.dueDayOfMonth) : ""); setIsActive(s.isActive);
     setShowModal(true);
   }
@@ -785,7 +796,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     mutationFn: async () => {
       const payload = {
         name, feeType, amount: parseInt(amount), frequency,
-        applicableClasses: classes.split(",").map(c => c.trim()).filter(Boolean),
+        applicableClasses: selectedClasses,
         concessionType: concType, concessionPercent: parseInt(concPct) || 0,
         dueDayOfMonth: dueDay ? parseInt(dueDay) : null, isActive,
       };
@@ -959,9 +970,31 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
               </div>
             </div>
             <div>
-              <label className="text-xs text-white/60 mb-1 block">Applicable Classes (comma-separated)</label>
-              <input value={classes} onChange={e => setClasses(e.target.value)} placeholder="Class 1, Class 2…"
-                className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+              <label className="text-xs text-white/60 mb-1.5 block">
+                Applicable Classes
+                {selectedClasses.length > 0 && (
+                  <span className="ml-1.5 text-cyan-400">({selectedClasses.length} selected)</span>
+                )}
+              </label>
+              {schoolClasses.length === 0 ? (
+                <p className="text-white/30 text-xs py-2 px-1">No classes configured in School Setup yet.</p>
+              ) : (
+                <div className="grid grid-cols-3 gap-1.5 max-h-36 overflow-y-auto pr-1">
+                  {schoolClasses.map(cls => {
+                    const checked = selectedClasses.includes(cls);
+                    return (
+                      <label key={cls} className={`flex items-center gap-2 cursor-pointer px-2 py-1.5 rounded-lg border transition-all ${checked ? "border-cyan-500/50 bg-cyan-900/20" : "border-white/10 bg-[#0A1628] hover:border-white/20"}`}>
+                        <input type="checkbox" checked={checked}
+                          onChange={e => setSelectedClasses(prev =>
+                            e.target.checked ? [...prev, cls] : prev.filter(c => c !== cls)
+                          )}
+                          className="accent-cyan-500 flex-shrink-0" />
+                        <span className="text-xs text-white/80 truncate">{cls}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div>
