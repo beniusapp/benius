@@ -731,6 +731,19 @@ interface PaymentHistoryModalProps {
 }
 
 function PaymentHistoryModal({ open, onClose, feeRecord, payments }: PaymentHistoryModalProps) {
+  const [filterFrom, setFilterFrom] = useState("");
+  const [filterTo, setFilterTo] = useState("");
+  const [filterMethod, setFilterMethod] = useState("All");
+
+  // Reset filters whenever the modal is opened/closed
+  useEffect(() => {
+    if (!open) {
+      setFilterFrom("");
+      setFilterTo("");
+      setFilterMethod("All");
+    }
+  }, [open]);
+
   if (!feeRecord) return null;
 
   const methodLabel: Record<string, string> = {
@@ -740,6 +753,26 @@ function PaymentHistoryModal({ open, onClose, feeRecord, payments }: PaymentHist
 
   const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
   const outstanding = Math.max(0, feeRecord.amount - totalPaid);
+
+  // Apply filters
+  const filteredPayments = useMemo(() => {
+    return payments.filter(p => {
+      if (filterMethod !== "All" && p.paymentMethod !== filterMethod) return false;
+      const date = p.receivedDate.split("T")[0];
+      if (filterFrom && date < filterFrom) return false;
+      if (filterTo && date > filterTo) return false;
+      return true;
+    });
+  }, [payments, filterFrom, filterTo, filterMethod]);
+
+  const filteredTotal = filteredPayments.reduce((sum, p) => sum + p.amount, 0);
+  const isFiltered = filterMethod !== "All" || filterFrom !== "" || filterTo !== "";
+
+  function clearFilters() {
+    setFilterFrom("");
+    setFilterTo("");
+    setFilterMethod("All");
+  }
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
@@ -765,16 +798,72 @@ function PaymentHistoryModal({ open, onClose, feeRecord, payments }: PaymentHist
           </div>
         </div>
 
+        {/* Filters */}
+        <div className="shrink-0 space-y-2">
+          <div className="flex gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 flex-1 min-w-[130px]">
+              <label className="text-white/40 text-xs shrink-0">From</label>
+              <input
+                type="date"
+                value={filterFrom}
+                onChange={e => setFilterFrom(e.target.value)}
+                className="flex-1 bg-[#0A1628] border border-white/20 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]"
+              />
+            </div>
+            <div className="flex items-center gap-1.5 flex-1 min-w-[130px]">
+              <label className="text-white/40 text-xs shrink-0">To</label>
+              <input
+                type="date"
+                value={filterTo}
+                onChange={e => setFilterTo(e.target.value)}
+                className="flex-1 bg-[#0A1628] border border-white/20 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]"
+              />
+            </div>
+            <select
+              value={filterMethod}
+              onChange={e => setFilterMethod(e.target.value)}
+              className="bg-[#0A1628] border border-white/20 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-500"
+            >
+              <option value="All">All Methods</option>
+              <option value="Cash">Cash</option>
+              <option value="Cheque">Cheque</option>
+              <option value="BankTransfer">Bank Transfer</option>
+              <option value="DemandDraft">Demand Draft</option>
+              <option value="Online">Online</option>
+            </select>
+            {isFiltered && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="text-white/40 hover:text-red-400 text-xs flex items-center gap-1 transition-colors"
+              >
+                <X className="w-3 h-3" /> Reset
+              </button>
+            )}
+          </div>
+          {isFiltered && (
+            <div className="flex items-center gap-3 px-1">
+              <span className="text-white/40 text-xs">
+                {filteredPayments.length} of {payments.length} transaction{payments.length !== 1 ? "s" : ""}
+              </span>
+              <span className="text-white/40 text-xs">
+                Filtered total: <span className="text-cyan-400 font-medium">{fmt(filteredTotal)}</span>
+                {" "}/ <span className="text-emerald-400 font-medium">{fmt(totalPaid)}</span>
+              </span>
+            </div>
+          )}
+        </div>
+
         {/* Payment list */}
         <div className="flex-1 overflow-y-auto min-h-0">
-          {payments.length === 0 ? (
+          {filteredPayments.length === 0 ? (
             <div className="py-10 text-center text-white/30 text-sm">
               <Receipt className="w-8 h-8 mx-auto mb-2 opacity-20" />
-              No payment transactions recorded yet.
+              {payments.length === 0 ? "No payment transactions recorded yet." : "No transactions match the current filters."}
             </div>
           ) : (
             <div className="space-y-2 pr-1">
-              {payments.map((p, idx) => (
+              {filteredPayments.map((p, idx) => (
                 <div key={p.id} className="rounded-lg border border-white/10 bg-white/5 p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-2 min-w-0">
@@ -813,17 +902,13 @@ function PaymentHistoryModal({ open, onClose, feeRecord, payments }: PaymentHist
           )}
         </div>
 
-        {payments.length > 0 && (
-          <div className="shrink-0 pt-2 border-t border-white/10 flex justify-between items-center">
+        <div className="shrink-0 pt-2 border-t border-white/10 flex justify-between items-center">
+          {!isFiltered && (
             <span className="text-white/40 text-xs">{payments.length} transaction{payments.length !== 1 ? "s" : ""}</span>
-            <Button variant="ghost" onClick={onClose} className="text-white/60 h-8 text-sm">Close</Button>
-          </div>
-        )}
-        {payments.length === 0 && (
-          <div className="shrink-0 pt-2 border-t border-white/10 flex justify-end">
-            <Button variant="ghost" onClick={onClose} className="text-white/60 h-8 text-sm">Close</Button>
-          </div>
-        )}
+          )}
+          {isFiltered && <span />}
+          <Button variant="ghost" onClick={onClose} className="text-white/60 h-8 text-sm">Close</Button>
+        </div>
       </DialogContent>
     </Dialog>
   );
