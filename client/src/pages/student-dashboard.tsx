@@ -81,6 +81,7 @@ interface Tile {
   route: string | null;
   pulse: boolean;
   noticeKey?: boolean;
+  feesKey?: boolean;
 }
 
 const TILES: Tile[] = [
@@ -89,7 +90,7 @@ const TILES: Tile[] = [
   { id: "homework",         label: "Homework",         emoji: "📝", accent: "#f59e0b", bg: "#fffbeb", route: "/student/homework",      pulse: false },
   { id: "classwork",        label: "Classwork",        emoji: "📚", accent: "#8b5cf6", bg: "#f5f3ff", route: "/student/classwork",     pulse: false },
   { id: "noticeboard",      label: "Noticeboard",      emoji: "🔔", accent: "#ef4444", bg: "#fef2f2", route: "/student/noticeboard",  pulse: true, noticeKey: true },
-  { id: "fees",             label: "Fees",             emoji: "💳", accent: "#06b6d4", bg: "#ecfeff", route: "/student/fees",          pulse: false },
+  { id: "fees",             label: "Fees",             emoji: "💳", accent: "#06b6d4", bg: "#ecfeff", route: "/student/fees",          pulse: true, feesKey: true },
   { id: "examination",      label: "Examination",      emoji: "🏆", accent: "#f97316", bg: "#fff7ed", route: "/student/examination",  pulse: false },
   { id: "complaints",       label: "Complaints",       emoji: "🎭", accent: "#ec4899", bg: "#fdf2f8", route: "/student/complaints",   pulse: false },
   { id: "gallery",          label: "Gallery",          emoji: "🎨", accent: "#6366f1", bg: "#eef2ff", route: "/student/gallery",      pulse: false },
@@ -622,7 +623,8 @@ export default function StudentDashboard() {
           {TILES.map((tile) => {
             const showPulse =
               (tile.noticeKey && unreadCount > 0) ||
-              (tile.pulse && !tile.noticeKey && (pendingHwCount ?? 0) > 0);
+              (tile.feesKey && feesTotalDue > 0) ||
+              (tile.pulse && !tile.noticeKey && !tile.feesKey && (pendingHwCount ?? 0) > 0);
 
             return (
               <motion.button
@@ -660,7 +662,13 @@ export default function StudentDashboard() {
                   <span
                     className="absolute top-3 right-3"
                     data-testid={`badge-${tile.id}-pulse`}
-                    aria-label={tile.noticeKey ? `${unreadCount} unread notices` : `${pendingHwCount ?? 0} pending`}
+                    aria-label={
+                      tile.noticeKey
+                        ? `${unreadCount} unread notices`
+                        : tile.feesKey
+                          ? `${feeRecords.filter(r => r.status !== "Paid").length} fees outstanding`
+                          : `${pendingHwCount ?? 0} pending`
+                    }
                   >
                     <span
                       className="relative flex h-3 w-3"
