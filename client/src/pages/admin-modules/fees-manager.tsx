@@ -500,9 +500,9 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs text-white/60 mb-1 block">Due Date</label>
-                    <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
-                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
+                    <label className="text-xs text-white/30 mb-1 block">Due Date <span className="font-normal">(not required)</span></label>
+                    <input type="date" disabled value=""
+                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white opacity-40 cursor-not-allowed [color-scheme:dark]" />
                   </div>
                   <div>
                     <label className="text-xs text-white/60 mb-1 block">Status</label>
@@ -810,12 +810,17 @@ const feeFormSchema = z.object({
   studentId: z.string().min(1, "Select a student"),
   feeType: z.string().min(1, "Fee type is required"),
   amount: z.string().min(1).refine(v => !isNaN(Number(v)) && Number(v) > 0, "Must be positive"),
-  dueDate: z.string().min(1, "Due date is required"),
+  dueDate: z.string().optional(),
   status: z.enum(["Due", "Paid", "Overdue", "Partial", "Waived"]),
   paidDate: z.string().optional(),
   receiptNumber: z.string().optional(),
   notes: z.string().optional(),
   academicYear: z.string().optional(),
+}).superRefine((val, ctx) => {
+  const noDeadlineNeeded = val.status === "Paid" || val.status === "Waived";
+  if (!noDeadlineNeeded && !val.dueDate) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Due date is required", path: ["dueDate"] });
+  }
 });
 type FeeFormValues = z.infer<typeof feeFormSchema>;
 
@@ -906,6 +911,12 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     defaultValues: { studentId: "", feeType: "", amount: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: "" },
   });
   const watchStatus = form.watch("status");
+  const dueDateNotNeeded = watchStatus === "Paid" || watchStatus === "Waived";
+
+  // Auto-clear due date when status makes it irrelevant
+  useEffect(() => {
+    if (dueDateNotNeeded) form.setValue("dueDate", "");
+  }, [dueDateNotNeeded]);
 
   const createMut = useMutation({
     mutationFn: (data: FeeFormValues) => apiRequest("POST", "/api/admin/fees", {
@@ -1258,9 +1269,12 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
               <div className="grid grid-cols-2 gap-3">
                 <FormField control={form.control} name="dueDate" render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="text-white/70">Due Date</FormLabel>
+                    <FormLabel className={dueDateNotNeeded ? "text-white/30" : "text-white/70"}>
+                      Due Date {dueDateNotNeeded && <span className="font-normal text-xs">(not required)</span>}
+                    </FormLabel>
                     <FormControl>
-                      <Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white" />
+                      <Input {...field} type="date" disabled={dueDateNotNeeded}
+                        className={`bg-[#0A1628] border-white/20 text-white [color-scheme:dark] ${dueDateNotNeeded ? "opacity-40 cursor-not-allowed" : ""}`} />
                     </FormControl>
                     <FormMessage className="text-red-400" />
                   </FormItem>
