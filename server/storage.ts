@@ -4774,9 +4774,21 @@ export class DatabaseStorage {
     const outstanding = records.filter(r => r.status !== "Paid").reduce((s, r) => s + r.amount, 0);
     const total = totalRevenue + outstanding;
     const collectionRate = total > 0 ? Math.round((totalRevenue / total) * 100) : 0;
-    const [{ cnt }] = await db.select({ cnt: count() }).from(paymentRecords)
-      .where(eq(paymentRecords.schoolId, schoolId));
-    return { totalRevenue, outstanding, collectionRate, offlinePaymentsCount: Number(cnt) };
+    let offlineCount: number;
+    if (sessionId != null) {
+      // Join payment_records → fee_records to filter by session
+      const [{ cnt }] = await db
+        .select({ cnt: count() })
+        .from(paymentRecords)
+        .innerJoin(feeRecords, eq(paymentRecords.feeRecordId, feeRecords.id))
+        .where(and(eq(paymentRecords.schoolId, schoolId), eq(feeRecords.sessionId, sessionId)));
+      offlineCount = Number(cnt);
+    } else {
+      const [{ cnt }] = await db.select({ cnt: count() }).from(paymentRecords)
+        .where(eq(paymentRecords.schoolId, schoolId));
+      offlineCount = Number(cnt);
+    }
+    return { totalRevenue, outstanding, collectionRate, offlinePaymentsCount: offlineCount };
   }
 
   // ===== EXAM POLICY TIERS =====
