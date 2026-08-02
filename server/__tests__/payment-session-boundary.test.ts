@@ -7,6 +7,9 @@
  *  2. No active session — payment inserted while no session is active gets a NULL
  *     sessionId, appears in the school-wide count, but is excluded from every
  *     session-filtered count.
+ *  3. Arrears — payment linked to a fee record whose sessionId is session 1, recorded
+ *     while session 2 is active, inherits session 1 from the fee record rather than
+ *     stamping session 2 from the active session.
  *
  * These tests hit the real database; each test creates isolated rows under a
  * randomly-suffixed school code and deletes them in afterEach so they leave no trace.
@@ -20,6 +23,7 @@ import {
   students,
   academicSessions,
   paymentRecords,
+  feeRecords,
 } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 
@@ -260,5 +264,152 @@ describe("payment session boundary: no active session", () => {
     // Session-filtered summary must NOT include a NULL-session payment
     const sessionSummary = await storage.getFeeSummary(schoolId, session.id);
     expect(sessionSummary.offlinePaymentsCount).toBe(0);
+  });
+});
+
+describe("payment session boundary: arrears (fee record in session 1, payment in session 2)", () => {
+  let fixture: Fixture;
+
+  afterEach(async () => {
+    if (fixture) await teardown(fixture.schoolId);
+  });
+
+  it("payment linked to a session-1 fee record inherits session 1, not the active session 2", async () => {
+    fixture = await createFixture();
+    const { schoolId, studentId } = fixture;
+
+    // Create and activate session 1
+    const session1 = await storage.createAcademicSession({
+      schoolId,
+      sessionName: "2024-2025",
+      startDate: "2024-04-01",
+      endDate: "2025-03-31",
+      isActive: false,
+      status: "active",
+      newAdmissionsEnabled: false,
+      promotionStrategy: "defer",
+    });
+    await storage.activateAcademicSession(session1.id, schoolId);
+
+    // Insert a fee record while session 1 is active — it belongs to session 1
+    const [feeRecord] = await db
+      .insert(feeRecords)
+      .values({
+        schoolId,
+        studentId,
+        sessionId: session1.id,
+        feeType: "Tuition",
+        amount: 8000,
+        dueDate: "2024-09-30",
+        status: "Due",
+      })
+      .returning();
+
+    expect(feeRecord.sessionId).toBe(session1.id);
+
+    // Switch to session 2 — session 2 is now the active session
+    const session2 = await storage.createAcademicSession({
+      schoolId,
+      sessionName: "2025-2026",
+      startDate: "2025-04-01",
+      endDate: "2026-03-31",
+      isActive: false,
+      status: "active",
+      newAdmissionsEnabled: false,
+      promotionStrategy: "defer",
+    });
+    await storage.activateAcademicSession(session2.id, schoolId);
+    const activeSession = await storage.getActiveSession(schoolId);
+    expect(activeSession?.id).toBe(session2.id);
+
+    // Record a payment linked to the session-1 fee record (arrears scenario).
+    // No explicit sessionId is passed — storage must resolve it from the fee record.
+    const payment = await storage.createPaymentRecord({
+      schoolId,
+      studentId,
+      paymentMethod: "Cash",
+      receivedDate: "2025-05-15",
+      amount: 8000,
+      feeRecordId: feeRecord.id,
+    });
+
+    // The payment must inherit session 1 from the linked fee record, not session 2
+    expect(payment.sessionId).toBe(session1.id);
+    expect(payment.sessionId).not.toBe(session2.id);
+  });
+
+  it("getFeeSummary counts the arrears payment under session 1 via feeRecords.sessionId join", async () => {
+    fixture = await createFixture();
+    const { schoolId, studentId } = fixture;
+
+    // Create sessions
+    const session1 = await storage.createAcademicSession({
+      schoolId,
+      sessionName: "2024-2025",
+      startDate: "2024-04-01",
+      endDate: "2025-03-31",
+      isActive: false,
+      status: "active",
+      newAdmissionsEnabled: false,
+      promotionStrategy: "defer",
+    });
+    const session2 = await storage.createAcademicSession({
+      schoolId,
+      sessionName: "2025-2026",
+      startDate: "2025-04-01",
+      endDate: "2026-03-31",
+      isActive: false,
+      status: "active",
+      newAdmissionsEnabled: false,
+      promotionStrategy: "defer",
+    });
+
+    // Activate session 1 and create a fee record under it
+    await storage.activateAcademicSession(session1.id, schoolId);
+    const [feeRecord] = await db
+      .insert(feeRecords)
+      .values({
+        schoolId,
+        studentId,
+        sessionId: session1.id,
+        feeType: "Tuition",
+        amount: 6000,
+        dueDate: "2024-09-30",
+        status: "Due",
+      })
+      .returning();
+
+    // Switch to session 2, then record the arrears payment for the session-1 fee record
+    await storage.activateAcademicSession(session2.id, schoolId);
+    await storage.createPaymentRecord({
+      schoolId,
+      studentId,
+      paymentMethod: "Cash",
+      receivedDate: "2025-06-01",
+      amount: 6000,
+      feeRecordId: feeRecord.id,
+    });
+
+    // Also record an unlinked payment for session 2 (regular, non-arrears)
+    await storage.createPaymentRecord({
+      schoolId,
+      studentId,
+      paymentMethod: "Cash",
+      receivedDate: "2025-06-15",
+      amount: 3000,
+      feeRecordId: null,
+    });
+
+    // Session 1 filter must count the arrears payment (payment_records.session_id = session1.id)
+    const s1Summary = await storage.getFeeSummary(schoolId, session1.id);
+    expect(s1Summary.offlinePaymentsCount).toBe(1);
+
+    // Session 2 filter must count only the regular session-2 payment
+    const s2Summary = await storage.getFeeSummary(schoolId, session2.id);
+    expect(s2Summary.offlinePaymentsCount).toBe(1);
+
+    // School-wide count must see both payments
+    const allSummary = await storage.getFeeSummary(schoolId);
+    expect(allSummary.offlinePaymentsCount).toBe(2);
   });
 });
