@@ -209,6 +209,22 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
 
   const { selectedSession } = useSessionView();
 
+  // Fetch prior payments on this fee record so we can compute the remaining balance
+  const { data: priorPayments = [] } = useQuery<PaymentRecord[]>({
+    queryKey: ["/api/admin/fees/payments", feeRecord?.id],
+    queryFn: async () => {
+      if (!feeRecord) return [];
+      const r = await sessionFetch(`/api/admin/fees/payments?feeRecordId=${feeRecord.id}`);
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: open && !!feeRecord,
+    staleTime: 0,
+  });
+
+  const totalAlreadyPaid = priorPayments.reduce((sum, p) => sum + p.amount, 0);
+  const remainingBalance = feeRecord ? feeRecord.amount - totalAlreadyPaid : null;
+
   const [method, setMethod] = useState("Cash");
   const [ref, setRef] = useState("");
   const [date, setDate] = useState(() => new Date().toISOString().split("T")[0]);
@@ -576,6 +592,15 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
             {amtNum >= 10000 && (
               <div className="p-3 rounded-lg bg-amber-900/20 border border-amber-700/40 text-xs text-amber-400">
                 ⚠️ Payments ≥ ₹10,000 require admin password confirmation in the next step.
+              </div>
+            )}
+
+            {feeRecord && remainingBalance !== null && amtNum > remainingBalance && (
+              <div className="p-3 rounded-lg bg-yellow-900/20 border border-yellow-600/40 text-xs text-yellow-400 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  This payment of {fmt(amtNum)} exceeds the outstanding balance of {fmt(remainingBalance)} — the record will be marked <span className="font-semibold">Paid</span>.
+                </span>
               </div>
             )}
 
