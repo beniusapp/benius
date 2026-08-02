@@ -587,6 +587,17 @@ function LedgerTab({ canRecord, isArchiveMode, students }: {
                             <Receipt className="w-3 h-3" /> Pay
                           </Button>
                         )}
+                        {rec.receiptNumber && (() => {
+                          const m = rec.receiptNumber.match(/^REC-(\d+)$/);
+                          return m ? (
+                            <Button size="icon" variant="ghost"
+                              onClick={() => window.open(`/api/admin/fees/payments/${m[1]}/receipt`, "_blank")}
+                              className="h-7 w-7 text-white/40 hover:text-cyan-400"
+                              title="Print receipt">
+                              <Printer className="w-3.5 h-3.5" />
+                            </Button>
+                          ) : null;
+                        })()}
                         {canRecord && !isArchiveMode && (
                           <>
                             <Button size="icon" variant="ghost" onClick={() => openEdit(rec)} className="h-7 w-7 text-white/40 hover:text-white">
