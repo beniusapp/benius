@@ -235,6 +235,13 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
   });
   const payClasses: string[] = paySchoolConfig?.classes ?? [];
 
+  // Fee structures — for "Fee Name" picker
+  const { data: payFeeStructures = [] } = useQuery<FeeStructure[]>({
+    queryKey: ["/api/admin/fees/structures"],
+    staleTime: 300_000,
+  });
+  const payActiveStructures = payFeeStructures.filter(s => s.isActive);
+
   // Sync amount + student when feeRecord changes; generate a fresh idempotency key
   useEffect(() => {
     if (feeRecord) {
@@ -459,6 +466,23 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
                   <p className="text-xs font-semibold text-white/40 uppercase tracking-widest">Fee Details</p>
                 </div>
 
+                {/* Fee Name picker — auto-fills Fee Type & Amount */}
+                {payActiveStructures.length > 0 && (
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">Fee Name</label>
+                    <select
+                      onChange={e => {
+                        const s = payActiveStructures.find(s => String(s.id) === e.target.value);
+                        if (s) { setFeeType(s.feeType); setAmount(String(s.amount)); }
+                      }}
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
+                      <option value="">— Select fee name —</option>
+                      {payActiveStructures.map(s => (
+                        <option key={s.id} value={s.id}>{s.name} · ₹{s.amount.toLocaleString("en-IN")}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs text-white/60 mb-1 block">Fee Type</label>
@@ -715,6 +739,19 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     },
   });
 
+  // Fee structures — used for "Fee Name" picker in Add Fee form
+  const { data: feeStructures = [] } = useQuery<FeeStructure[]>({
+    queryKey: ["/api/admin/fees/structures"],
+    staleTime: 300_000,
+  });
+  const activeStructures = useMemo(() => feeStructures.filter(s => s.isActive), [feeStructures]);
+  // Map feeType → structure name for the Fee Name column
+  const feeTypeToName = useMemo(() => {
+    const m = new Map<string, string>();
+    activeStructures.forEach(s => { if (!m.has(s.feeType)) m.set(s.feeType, s.name); });
+    return m;
+  }, [activeStructures]);
+
   // Payment records — used for "Offline Payment" filter + method badge
   const { data: paymentRecordsList = [] } = useQuery<PaymentRecord[]>({
     queryKey: ["/api/admin/fees/payments"],
@@ -906,8 +943,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-white/5">
-                  {["Student","Fee Type","Amount","Due Date","Status","Paid On","Acad. Year","Notes","Actions"].map((h, i) => (
-                    <th key={h} className={`px-4 py-3 text-white/50 font-medium ${i === 2 ? "text-right" : i >= 8 ? "text-right" : i >= 3 ? "text-center" : "text-left"}`}>{h}</th>
+                  {["Student","Fee Name","Fee Type","Amount","Due Date","Status","Paid On","Acad. Year","Notes","Actions"].map((h, i) => (
+                    <th key={h} className={`px-4 py-3 text-white/50 font-medium ${i === 3 ? "text-right" : i >= 9 ? "text-right" : i >= 4 ? "text-center" : "text-left"}`}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -918,6 +955,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                       <p className="text-white font-medium leading-tight">{rec.student?.name ?? "—"}</p>
                       <p className="text-white/40 text-xs">{rec.student?.digitalStudentId} · {rec.student?.class}-{rec.student?.section}</p>
                     </td>
+                    <td className="px-4 py-3 text-white/80 text-sm">{feeTypeToName.get(rec.feeType) ?? "—"}</td>
                     <td className="px-4 py-3 text-white/70">{rec.feeType}</td>
                     <td className="px-4 py-3 text-right font-semibold text-white">{fmt(rec.amount)}</td>
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{fmtDate(rec.dueDate)}</td>
@@ -1038,6 +1076,26 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   <FormMessage className="text-red-400" />
                 </FormItem>
               )} />
+              {/* Fee Name picker — auto-fills Fee Type & Amount from a fee structure */}
+              {activeStructures.length > 0 && (
+                <div>
+                  <label className="text-sm font-medium text-white/70 block mb-1.5">Fee Name</label>
+                  <select
+                    onChange={e => {
+                      const s = activeStructures.find(s => String(s.id) === e.target.value);
+                      if (s) {
+                        form.setValue("feeType", s.feeType, { shouldValidate: true });
+                        form.setValue("amount", String(s.amount), { shouldValidate: true });
+                      }
+                    }}
+                    className="w-full bg-[#0A1628] border border-white/20 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
+                    <option value="">— Select fee name —</option>
+                    {activeStructures.map(s => (
+                      <option key={s.id} value={s.id}>{s.name} · ₹{s.amount.toLocaleString("en-IN")}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <FormField control={form.control} name="feeType" render={({ field }) => (
                   <FormItem>
@@ -1731,8 +1789,8 @@ function AuditTab() {
 type Tab = "ledger" | "structures" | "reminders" | "external" | "audit";
 
 const TABS: { id: Tab; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
-  { id: "ledger",     label: "Ledger & Transactions", Icon: Receipt       },
   { id: "structures", label: "Fee Structures",        Icon: BookOpen      },
+  { id: "ledger",     label: "Ledger & Transactions", Icon: Receipt       },
   { id: "reminders",  label: "Reminders",             Icon: Bell          },
   { id: "external",   label: "External Portal",       Icon: ExternalLink  },
   { id: "audit",      label: "Audit Log",             Icon: Shield        },
