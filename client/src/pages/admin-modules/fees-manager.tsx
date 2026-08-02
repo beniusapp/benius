@@ -193,16 +193,18 @@ interface RecordPaymentModalProps {
   onClose: () => void;
   feeRecord: FeeRecordWithStudent | null;
   students: StudentItem[];
+  existingFeeRecords?: FeeRecordWithStudent[];
   onSuccess?: () => void;
 }
 
-function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: RecordPaymentModalProps) {
+function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRecords = [], onSuccess }: RecordPaymentModalProps) {
   const { toast } = useToast();
-  const [step, setStep] = useState<"form" | "confirm" | "done">("form");
+  const [step, setStep] = useState<"form" | "duplicate_warn" | "confirm" | "done">("form");
   const [lastPaymentId, setLastPaymentId] = useState<number | null>(null);
   const [pendingPayload, setPendingPayload] = useState<any>(null);
   const [adminPwd, setAdminPwd] = useState("");
   const [pwdError, setPwdError] = useState("");
+  const [duplicateRecord, setDuplicateRecord] = useState<FeeRecordWithStudent | null>(null);
 
   const { selectedSession } = useSessionView();
 
@@ -262,6 +264,8 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: R
     setPaySearchQ("");
     setPaySearchResults(null);
     setPaySelectedStudent(null);
+    // Reset duplicate warn state
+    setDuplicateRecord(null);
     // Fresh key per modal open — stable across retries within the same open session
     setIdempotencyKey(`idem-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   }, [feeRecord?.id, open]);
@@ -302,11 +306,10 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: R
     },
   });
 
-  function submit() {
-    mut.mutate({
+  function buildPayload(overrides: Record<string, any> = {}) {
+    return {
       feeRecordId: feeRecord?.id ?? null,
       studentId: feeRecord?.studentId ?? parseInt(sid),
-      // Fee record fields (only relevant for standalone opens with no pre-linked feeRecord)
       feeType: feeRecord ? null : (feeType || null),
       dueDate: feeRecord ? null : (dueDate || null),
       feeStatus: feeRecord ? null : (feeStatus || null),
@@ -318,7 +321,45 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: R
       amount: parseInt(amount),
       cashierNotes: notes || null,
       idempotencyKey: idempotencyKey || null,
-    });
+      ...overrides,
+    };
+  }
+
+  function submit() {
+    // In standalone mode, check for an existing Due/Overdue/Partial fee record with the same student + fee type
+    if (!feeRecord && sid && feeType.trim()) {
+      const studentIdNum = parseInt(sid);
+      const normalizedType = feeType.trim().toLowerCase();
+      const dupe = existingFeeRecords.find(
+        r => r.studentId === studentIdNum &&
+          r.feeType.trim().toLowerCase() === normalizedType &&
+          r.status !== "Paid" && r.status !== "Waived",
+      );
+      if (dupe) {
+        setDuplicateRecord(dupe);
+        setStep("duplicate_warn");
+        return;
+      }
+    }
+    mut.mutate(buildPayload());
+  }
+
+  function submitLinkExisting() {
+    // Link the payment to the existing fee record instead of creating a new one
+    mut.mutate(buildPayload({
+      feeRecordId: duplicateRecord!.id,
+      studentId: duplicateRecord!.studentId,
+      feeType: null,
+      dueDate: null,
+      feeStatus: null,
+      academicYear: null,
+      feeNotes: null,
+    }));
+  }
+
+  function submitCreateAnyway() {
+    // Skip the duplicate check and create a fresh fee record
+    mut.mutate(buildPayload());
   }
 
   function submitConfirm() {
@@ -334,7 +375,9 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: R
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-cyan-400">
             <Receipt className="w-5 h-5" />
-            {step === "confirm" ? "Confirm High-Value Payment" : "Record Offline Payment"}
+            {step === "confirm" ? "Confirm High-Value Payment"
+              : step === "duplicate_warn" ? "Existing Fee Record Found"
+              : "Record Offline Payment"}
           </DialogTitle>
         </DialogHeader>
 
@@ -518,6 +561,63 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: R
                 className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1">
                 {mut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Receipt className="w-4 h-4" />}
                 Record Payment
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {step === "duplicate_warn" && duplicateRecord && (
+          <div className="space-y-4">
+            <div className="p-3 rounded-lg bg-amber-900/20 border border-amber-700/40">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-amber-400 text-sm font-semibold">Duplicate Fee Type Detected</p>
+                  <p className="text-white/60 text-xs mt-1">
+                    This student already has an open <span className="text-white font-medium">{duplicateRecord.feeType}</span> fee record.
+                    Creating another will double-bill them in the ledger.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Existing record details */}
+            <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-sm space-y-1">
+              <p className="text-white/40 text-xs font-semibold uppercase tracking-widest mb-1.5">Existing Record</p>
+              <div className="flex justify-between">
+                <span className="text-white/50">Fee Type</span>
+                <span className="text-white font-medium">{duplicateRecord.feeType}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-white/50">Amount</span>
+                <span className="text-white font-medium">{fmt(duplicateRecord.amount)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-white/50">Status</span>
+                <StatusChip status={duplicateRecord.status} />
+              </div>
+              <div className="flex justify-between">
+                <span className="text-white/50">Due Date</span>
+                <span className="text-white/70">{fmtDate(duplicateRecord.dueDate)}</span>
+              </div>
+            </div>
+
+            <p className="text-white/50 text-xs">What would you like to do?</p>
+
+            <div className="flex flex-col gap-2">
+              <Button onClick={submitLinkExisting} disabled={mut.isPending}
+                className="bg-cyan-600 hover:bg-cyan-500 text-white gap-2 justify-start">
+                {mut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Receipt className="w-4 h-4" />}
+                Link payment to existing record
+              </Button>
+              <Button onClick={submitCreateAnyway} disabled={mut.isPending}
+                variant="outline"
+                className="border-white/20 text-white/70 hover:bg-white/10 gap-2 justify-start">
+                <Plus className="w-4 h-4" />
+                Create new record anyway
+              </Button>
+              <Button variant="ghost" onClick={() => setStep("form")} className="text-white/40 text-xs">
+                ← Back to form
               </Button>
             </div>
           </div>
@@ -876,8 +976,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       <p className="text-white/30 text-xs">{filtered.length} of {feeRecords.length} records</p>
 
       {/* Payment modals */}
-      <RecordPaymentModal open={showPay} onClose={() => { setShowPay(false); setPayTarget(null); }} feeRecord={payTarget} students={students} />
-      <RecordPaymentModal open={showStandalonePay} onClose={() => setShowStandalonePay(false)} feeRecord={null} students={students} />
+      <RecordPaymentModal open={showPay} onClose={() => { setShowPay(false); setPayTarget(null); }} feeRecord={payTarget} students={students} existingFeeRecords={feeRecords} />
+      <RecordPaymentModal open={showStandalonePay} onClose={() => setShowStandalonePay(false)} feeRecord={null} students={students} existingFeeRecords={feeRecords} />
 
       {/* Add / Edit Dialog */}
       <Dialog open={showForm} onOpenChange={v => { if (!v) { setShowForm(false); setEditing(null); } }}>
