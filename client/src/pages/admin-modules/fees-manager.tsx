@@ -94,6 +94,16 @@ interface FeeSummary {
   offlinePaymentsCount: number;
 }
 
+interface PaymentRecord {
+  id: number;
+  feeRecordId: number | null;
+  studentId: number;
+  paymentMethod: string;
+  amount: number;
+  receivedDate: string;
+  referenceNumber: string | null;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmt(amount: number) {
@@ -146,6 +156,11 @@ function ActionBadge({ action }: { action: string }) {
 function MetricBar({ viewSessionId }: { viewSessionId: number | null }) {
   const { data, isLoading } = useQuery<FeeSummary>({
     queryKey: ["/api/admin/fees/summary", viewSessionId],
+    queryFn: async () => {
+      const r = await sessionFetch("/api/admin/fees/summary");
+      if (!r.ok) throw new Error("Failed to fetch fee summary");
+      return r.json();
+    },
     staleTime: 30_000,
   });
 
@@ -189,14 +204,34 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: R
   const [adminPwd, setAdminPwd] = useState("");
   const [pwdError, setPwdError] = useState("");
 
+  const { selectedSession } = useSessionView();
+
   const [method, setMethod] = useState("Cash");
   const [ref, setRef] = useState("");
   const [date, setDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [amount, setAmount] = useState("");
   const [notes, setNotes] = useState("");
   const [sid, setSid] = useState("");
+  // Fee record fields (used when creating a standalone payment with no pre-linked fee record)
+  const [feeType, setFeeType] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [feeStatus, setFeeStatus] = useState("Due");
+  const [academicYear, setAcademicYear] = useState("");
+  const [feeNotes, setFeeNotes] = useState("");
+  // Student search state (used when no feeRecord is pre-linked)
+  const [paySearchCls, setPaySearchCls] = useState("");
+  const [paySearchQ, setPaySearchQ] = useState("");
+  const [paySearchResults, setPaySearchResults] = useState<StudentItem[] | null>(null);
+  const [paySelectedStudent, setPaySelectedStudent] = useState<StudentItem | null>(null);
   // Idempotency key is generated once per modal open and reused across retries
   const [idempotencyKey, setIdempotencyKey] = useState("");
+
+  // School config — classes list for the student search filter
+  const { data: paySchoolConfig } = useQuery<{ classes: string[] }>({
+    queryKey: ["/api/admin/school-config"],
+    staleTime: 300_000,
+  });
+  const payClasses: string[] = paySchoolConfig?.classes ?? [];
 
   // Sync amount + student when feeRecord changes; generate a fresh idempotency key
   useEffect(() => {
@@ -216,6 +251,17 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: R
     setRef("");
     setDate(new Date().toISOString().split("T")[0]);
     setNotes("");
+    // Reset fee record fields
+    setFeeType("");
+    setDueDate("");
+    setFeeStatus("Due");
+    setAcademicYear(selectedSession?.sessionName ?? "");
+    setFeeNotes("");
+    // Reset student search
+    setPaySearchCls("");
+    setPaySearchQ("");
+    setPaySearchResults(null);
+    setPaySelectedStudent(null);
     // Fresh key per modal open — stable across retries within the same open session
     setIdempotencyKey(`idem-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   }, [feeRecord?.id, open]);
@@ -260,6 +306,12 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: R
     mut.mutate({
       feeRecordId: feeRecord?.id ?? null,
       studentId: feeRecord?.studentId ?? parseInt(sid),
+      // Fee record fields (only relevant for standalone opens with no pre-linked feeRecord)
+      feeType: feeRecord ? null : (feeType || null),
+      dueDate: feeRecord ? null : (dueDate || null),
+      feeStatus: feeRecord ? null : (feeStatus || null),
+      academicYear: feeRecord ? null : (academicYear || null),
+      feeNotes: feeRecord ? null : (feeNotes || null),
       paymentMethod: method,
       referenceNumber: ref || null,
       receivedDate: date,
@@ -297,12 +349,120 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: R
             ) : (
               <div>
                 <label className="text-xs text-white/60 mb-1 block">Student</label>
-                <select value={sid} onChange={e => setSid(e.target.value)}
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
-                  <option value="">Select student…</option>
-                  {students.map(s => <option key={s.id} value={s.id}>{s.name} ({s.class}-{s.section})</option>)}
-                </select>
+                {paySelectedStudent ? (
+                  <div className="flex items-center gap-2 p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/40">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white text-sm font-medium truncate">{paySelectedStudent.name}</p>
+                      <p className="text-white/40 text-xs">{paySelectedStudent.digitalStudentId} · Class {paySelectedStudent.class}-{paySelectedStudent.section}</p>
+                    </div>
+                    <button type="button" onClick={() => { setPaySelectedStudent(null); setSid(""); setPaySearchResults(null); }}
+                      className="text-white/40 hover:text-red-400 transition-colors shrink-0 text-lg leading-none">✕</button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <select value={paySearchCls} onChange={e => setPaySearchCls(e.target.value)}
+                        className="bg-[#0A1628] border border-white/20 rounded-lg px-2 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 shrink-0">
+                        <option value="">All Classes</option>
+                        {payClasses.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                      <input value={paySearchQ} onChange={e => setPaySearchQ(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") {
+                            const q = paySearchQ.toLowerCase().trim();
+                            setPaySearchResults(students.filter(s => {
+                              if (paySearchCls && s.class !== paySearchCls) return false;
+                              return !q || s.name.toLowerCase().includes(q) || (s.digitalStudentId ?? "").toLowerCase().includes(q);
+                            }));
+                          }
+                        }}
+                        placeholder="Name or Student ID…"
+                        className="flex-1 bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                      <button type="button"
+                        onClick={() => {
+                          const q = paySearchQ.toLowerCase().trim();
+                          setPaySearchResults(students.filter(s => {
+                            if (paySearchCls && s.class !== paySearchCls) return false;
+                            return !q || s.name.toLowerCase().includes(q) || (s.digitalStudentId ?? "").toLowerCase().includes(q);
+                          }));
+                        }}
+                        className="bg-cyan-600 hover:bg-cyan-500 text-white text-sm px-3 py-2 rounded-lg shrink-0 transition-colors">
+                        Search
+                      </button>
+                    </div>
+                    {paySearchResults !== null && (
+                      paySearchResults.length === 0
+                        ? <p className="text-white/40 text-xs px-1">No students found.</p>
+                        : <div className="max-h-36 overflow-y-auto rounded-lg border border-white/10 divide-y divide-white/5">
+                            {paySearchResults.map(s => (
+                              <button key={s.id} type="button"
+                                onClick={() => { setPaySelectedStudent(s); setSid(String(s.id)); setPaySearchResults(null); }}
+                                className="w-full text-left px-3 py-2 hover:bg-white/5 transition-colors">
+                                <p className="text-white text-sm">{s.name}</p>
+                                <p className="text-white/40 text-xs">{s.digitalStudentId} · Class {s.class}-{s.section}</p>
+                              </button>
+                            ))}
+                          </div>
+                    )}
+                  </div>
+                )}
               </div>
+            )}
+
+            {/* ── Fee Details (only for standalone opens with no pre-linked fee record) ── */}
+            {!feeRecord && (
+              <>
+                <div className="pt-1 pb-0">
+                  <p className="text-xs font-semibold text-white/40 uppercase tracking-widest">Fee Details</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">Fee Type</label>
+                    <input value={feeType} onChange={e => setFeeType(e.target.value)}
+                      placeholder="Tuition, Transport…"
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">Amount (₹)</label>
+                    <input type="number" value={amount} onChange={e => setAmount(e.target.value)} min={1}
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">Due Date</label>
+                    <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">Status</label>
+                    <select value={feeStatus} onChange={e => setFeeStatus(e.target.value)}
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
+                      {["Due","Paid","Partial","Overdue","Waived"].map(s =>
+                        <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">Academic Year</label>
+                    <input value={academicYear} readOnly
+                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/40 cursor-default" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">Notes</label>
+                    <input value={feeNotes} onChange={e => setFeeNotes(e.target.value)} placeholder=""
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                  </div>
+                </div>
+
+                <div className="pt-1 pb-0">
+                  <p className="text-xs font-semibold text-white/40 uppercase tracking-widest">Payment Details</p>
+                </div>
+              </>
             )}
 
             <div className="grid grid-cols-2 gap-3">
@@ -315,11 +475,30 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: R
                 </select>
               </div>
               <div>
-                <label className="text-xs text-white/60 mb-1 block">Amount (₹)</label>
-                <input type="number" value={amount} onChange={e => setAmount(e.target.value)} min={1}
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
+                {/* Amount only shown here when pre-linked (feeRecord exists); standalone uses the fee-details block above */}
+                {feeRecord ? (
+                  <>
+                    <label className="text-xs text-white/60 mb-1 block">Amount (₹)</label>
+                    <input type="number" value={amount} onChange={e => setAmount(e.target.value)} min={1}
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
+                  </>
+                ) : (
+                  <>
+                    <label className="text-xs text-white/60 mb-1 block">Received Date</label>
+                    <input type="date" value={date} onChange={e => setDate(e.target.value)}
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
+                  </>
+                )}
               </div>
             </div>
+
+            {feeRecord && (
+              <div>
+                <label className="text-xs text-white/60 mb-1 block">Received Date</label>
+                <input type="date" value={date} onChange={e => setDate(e.target.value)}
+                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
+              </div>
+            )}
 
             {method !== "Cash" && (
               <div>
@@ -328,18 +507,6 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: R
                   className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
               </div>
             )}
-
-            <div>
-              <label className="text-xs text-white/60 mb-1 block">Received Date</label>
-              <input type="date" value={date} onChange={e => setDate(e.target.value)}
-                className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
-            </div>
-
-            <div>
-              <label className="text-xs text-white/60 mb-1 block">Cashier Notes (optional)</label>
-              <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}
-                className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 resize-none placeholder:text-white/20" />
-            </div>
 
             {amtNum >= 10000 && (
               <div className="p-3 rounded-lg bg-amber-900/20 border border-amber-700/40 text-xs text-amber-400">
@@ -428,6 +595,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   canRecord: boolean; isArchiveMode: boolean; students: StudentItem[]; viewSessionId: number | null;
 }) {
   const { toast } = useToast();
+  const { selectedSession } = useSessionView();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [classFilter, setClassFilter] = useState("all");
@@ -443,7 +611,37 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
   const { data: feeRecords = [], isLoading } = useQuery<FeeRecordWithStudent[]>({
     queryKey: ["/api/admin/fees", viewSessionId],
+    queryFn: async () => {
+      const r = await sessionFetch("/api/admin/fees");
+      if (!r.ok) throw new Error("Failed to fetch fee records");
+      return r.json();
+    },
   });
+
+  // Payment records — used for "Offline Payment" filter + method badge
+  const { data: paymentRecordsList = [] } = useQuery<PaymentRecord[]>({
+    queryKey: ["/api/admin/fees/payments"],
+    queryFn: async () => {
+      const r = await sessionFetch("/api/admin/fees/payments");
+      if (!r.ok) return [];
+      return r.json();
+    },
+    staleTime: 30_000,
+  });
+  // Map feeRecordId → most recent payment method (for badge display)
+  const paymentMethodMap = useMemo(() => {
+    const map = new Map<number, string>();
+    // Sort oldest-first so the last write wins (most recent payment method)
+    [...paymentRecordsList]
+      .sort((a, b) => a.id - b.id)
+      .forEach(p => { if (p.feeRecordId != null) map.set(p.feeRecordId, p.paymentMethod); });
+    return map;
+  }, [paymentRecordsList]);
+  // Set of feeRecordIds that have at least one offline payment
+  const offlinePaidIds = useMemo(
+    () => new Set(paymentRecordsList.filter(p => p.feeRecordId != null).map(p => p.feeRecordId as number)),
+    [paymentRecordsList]
+  );
 
   const form = useForm<FeeFormValues>({
     resolver: zodResolver(feeFormSchema),
@@ -495,9 +693,19 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     [...new Set(feeRecords.map(r => r.student?.class).filter(Boolean))].sort() as string[],
     [feeRecords]);
 
-  const studentClasses = useMemo(() =>
-    [...new Set(students.filter(s => s.isActive).map(s => s.class))].sort(),
-    [students]);
+  const { data: ledgerSchoolConfig } = useQuery<{ classes: string[] }>({
+    queryKey: ["/api/admin/school-config"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/school-config", { credentials: "include" });
+      if (!r.ok) return { classes: [] };
+      return r.json();
+    },
+    staleTime: 300_000,
+  });
+  // Prefer school-setup classes; fall back to distinct classes of enrolled students
+  const studentClasses: string[] = (ledgerSchoolConfig?.classes ?? []).length > 0
+    ? ledgerSchoolConfig!.classes
+    : [...new Set(students.filter(s => s.isActive).map(s => s.class))].sort();
 
   function runStudentSearch() {
     const q = studentSearchQ.toLowerCase().trim();
@@ -524,12 +732,17 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const filtered = useMemo(() => feeRecords.filter(r => {
     const q = search.toLowerCase();
     const ms = !q || (r.student?.name ?? "").toLowerCase().includes(q) || r.feeType.toLowerCase().includes(q) || (r.student?.digitalStudentId ?? "").toLowerCase().includes(q);
-    return ms && (statusFilter === "all" || r.status === statusFilter) && (classFilter === "all" || r.student?.class === classFilter);
-  }), [feeRecords, search, statusFilter, classFilter]);
+    const statusMatch = statusFilter === "all"
+      ? true
+      : statusFilter === "offline"
+        ? offlinePaidIds.has(r.id)
+        : r.status === statusFilter;
+    return ms && statusMatch && (classFilter === "all" || r.student?.class === classFilter);
+  }), [feeRecords, search, statusFilter, classFilter, offlinePaidIds]);
 
   function openCreate() {
     setEditing(null);
-    form.reset({ studentId: "", feeType: "", amount: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: "" });
+    form.reset({ studentId: "", feeType: "", amount: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: selectedSession?.sessionName ?? "" });
     setSelectedStudent(null); setStudentSearchCls(""); setStudentSearchQ(""); setStudentResults(null);
     setShowForm(true);
   }
@@ -560,6 +773,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
           className="bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-28">
           <option value="all">All Status</option>
           {["Due","Paid","Overdue","Partial","Waived"].map(s => <option key={s} value={s}>{s}</option>)}
+          <option value="offline">Offline Payment</option>
         </select>
         <select value={classFilter} onChange={e => setClassFilter(e.target.value)}
           className="bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-28">
@@ -570,7 +784,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
           <div className="flex gap-2 ml-auto">
             <Button size="sm" variant="outline" onClick={() => setShowStandalonePay(true)}
               className="border-cyan-700 text-cyan-400 hover:bg-cyan-900/30 gap-1">
-              <Banknote className="w-4 h-4" /> Record Payment
+              <Banknote className="w-4 h-4" /> Record Offline Payment
             </Button>
             <Button size="sm" onClick={openCreate} className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1">
               <Plus className="w-4 h-4" /> Add Fee
@@ -595,8 +809,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-white/5">
-                  {["Student","Fee Type","Amount","Due Date","Status","Paid On","Actions"].map((h, i) => (
-                    <th key={h} className={`px-4 py-3 text-white/50 font-medium ${i === 2 ? "text-right" : i >= 6 ? "text-right" : i >= 3 ? "text-center" : "text-left"}`}>{h}</th>
+                  {["Student","Fee Type","Amount","Due Date","Status","Paid On","Acad. Year","Notes","Actions"].map((h, i) => (
+                    <th key={h} className={`px-4 py-3 text-white/50 font-medium ${i === 2 ? "text-right" : i >= 8 ? "text-right" : i >= 3 ? "text-center" : "text-left"}`}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -610,8 +824,19 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     <td className="px-4 py-3 text-white/70">{rec.feeType}</td>
                     <td className="px-4 py-3 text-right font-semibold text-white">{fmt(rec.amount)}</td>
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{fmtDate(rec.dueDate)}</td>
-                    <td className="px-4 py-3 text-center"><StatusChip status={rec.status} /></td>
+                    <td className="px-4 py-3 text-center">
+                      <StatusChip status={rec.status} />
+                      {paymentMethodMap.has(rec.id) && (
+                        <span className="mt-1 inline-block text-[10px] font-medium px-1.5 py-0.5 rounded bg-cyan-900/40 border border-cyan-700/40 text-cyan-300">
+                          {paymentMethodMap.get(rec.id) === "BankTransfer" ? "Bank" :
+                           paymentMethodMap.get(rec.id) === "DemandDraft" ? "DD" :
+                           paymentMethodMap.get(rec.id)}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{fmtDate(rec.paidDate)}</td>
+                    <td className="px-4 py-3 text-center text-white/50 text-xs">{rec.academicYear ?? "—"}</td>
+                    <td className="px-4 py-3 text-left text-white/50 text-xs max-w-[120px] truncate" title={rec.notes ?? ""}>{rec.notes || "—"}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
                         {canRecord && !isArchiveMode && rec.status !== "Paid" && rec.status !== "Waived" && (
@@ -783,13 +1008,13 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                 <FormField control={form.control} name="academicYear" render={({ field }) => (
                   <FormItem>
                     <FormLabel className="text-white/70">Academic Year</FormLabel>
-                    <FormControl><Input {...field} placeholder="2024-25" className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30" /></FormControl>
+                    <FormControl><Input {...field} readOnly className="bg-[#0A1628] border-white/10 text-white/60 cursor-default select-none" /></FormControl>
                   </FormItem>
                 )} />
                 <FormField control={form.control} name="notes" render={({ field }) => (
                   <FormItem>
                     <FormLabel className="text-white/70">Notes</FormLabel>
-                    <FormControl><Input {...field} placeholder="Optional" className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30" /></FormControl>
+                    <FormControl><Input {...field} placeholder="" className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30" /></FormControl>
                   </FormItem>
                 )} />
               </div>

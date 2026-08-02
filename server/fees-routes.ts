@@ -120,6 +120,13 @@ export function registerFeesRoutes(app: Express) {
   const paymentBodySchema = z.object({
     feeRecordId: z.number().int().positive().optional().nullable(),
     studentId: z.number().int().positive(),
+    // Fee record fields — used to auto-create a fee record when feeRecordId is null
+    feeType: z.string().min(1).max(100).optional().nullable(),
+    dueDate: z.string().optional().nullable(),
+    feeStatus: z.enum(["Due","Paid","Partial","Overdue","Waived"]).optional().nullable(),
+    academicYear: z.string().max(20).optional().nullable(),
+    feeNotes: z.string().max(500).optional().nullable(),
+    // Payment fields
     paymentMethod: z.enum(["Cash", "Cheque", "BankTransfer", "DemandDraft", "Online"]),
     referenceNumber: z.string().max(100).optional().nullable(),
     receivedDate: z.string().min(1),
@@ -183,36 +190,57 @@ export function registerFeesRoutes(app: Express) {
       if (existing) return res.status(200).json({ ...existing, idempotent: true });
     }
 
+    // Auto-create a fee record when none is pre-linked but fee details were supplied
+    if (!paymentData.feeRecordId && paymentData.feeType) {
+      const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+      const autoFeeRecord = await storage.createFeeRecord({
+        studentId: paymentData.studentId,
+        schoolId,
+        sessionId: viewSessionId,
+        feeType: paymentData.feeType,
+        amount: paymentData.amount,
+        dueDate: paymentData.dueDate ?? paymentData.receivedDate,
+        status: paymentData.feeStatus ?? "Due",
+        academicYear: paymentData.academicYear ?? null,
+        notes: paymentData.feeNotes ?? null,
+        createdBy: req.session.userId,
+      });
+      paymentData.feeRecordId = autoFeeRecord.id;
+    }
+
+    // Destructure out fee-record-only fields before passing to createPaymentRecord
+    const { feeType: _ft, dueDate: _dd, feeStatus: _fs, academicYear: _ay, feeNotes: _fn, ...paymentOnly } = paymentData;
+
     const rec = await storage.createPaymentRecord({
-      ...paymentData,
+      ...paymentOnly,
       schoolId,
       idempotencyKey: idempotencyKey ?? null,
       recordedBy: req.session.userId,
     });
 
     // Auto-update linked fee record status based on cumulative payments
-    if (paymentData.feeRecordId) {
+    if (paymentOnly.feeRecordId) {
       const [linked] = await db.select({ amount: feeRecords.amount })
         .from(feeRecords)
-        .where(and(eq(feeRecords.id, paymentData.feeRecordId), eq(feeRecords.schoolId, schoolId)));
+        .where(and(eq(feeRecords.id, paymentOnly.feeRecordId), eq(feeRecords.schoolId, schoolId)));
       if (linked) {
         // Sum all payment records for this fee record (including the one just inserted)
         const [{ paid }] = await db.select({
           paid: sql<string>`COALESCE(SUM(${paymentRecords.amount}), 0)`,
         }).from(paymentRecords)
-          .where(eq(paymentRecords.feeRecordId, paymentData.feeRecordId));
+          .where(eq(paymentRecords.feeRecordId, paymentOnly.feeRecordId));
         const totalPaid = parseInt(String(paid)) || 0;
         const isFullyPaid = totalPaid >= linked.amount;
-        await storage.updateFeeRecord(paymentData.feeRecordId, schoolId, {
+        await storage.updateFeeRecord(paymentOnly.feeRecordId, schoolId, {
           status: isFullyPaid ? "Paid" : "Partial",
-          paidDate: paymentData.receivedDate,
+          paidDate: paymentOnly.receivedDate,
           receiptNumber: rec.id ? `REC-${rec.id}` : undefined,
         });
       }
     }
 
     await appendAudit(req, schoolId, "payment", "payment_record", rec.id,
-      `Recorded ${paymentData.paymentMethod} ₹${paymentData.amount} for student #${paymentData.studentId}`);
+      `Recorded ${paymentOnly.paymentMethod} ₹${paymentOnly.amount} for student #${paymentOnly.studentId}`);
     res.status(201).json(rec);
   });
 
