@@ -438,11 +438,8 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, onSuccess }: R
                   </div>
                   <div>
                     <label className="text-xs text-white/60 mb-1 block">Status</label>
-                    <select value={feeStatus} onChange={e => setFeeStatus(e.target.value)}
-                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
-                      {["Due","Paid","Partial","Overdue","Waived"].map(s =>
-                        <option key={s} value={s}>{s}</option>)}
-                    </select>
+                    <input value="Paid" readOnly
+                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-emerald-400 font-medium cursor-default" />
                   </div>
                 </div>
 
