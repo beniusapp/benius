@@ -354,9 +354,15 @@ export default function StudentFees() {
                           <p className="font-bold text-slate-800 text-sm mt-1">{rec.feeType}</p>
                           <p className="text-xs text-slate-400 mt-0.5">Paid on: {formatDate(rec.paidDate)}</p>
                           {rec.receiptNumber && (
-                            <p className="text-xs text-emerald-600 font-semibold mt-0.5" data-testid={`text-receipt-${rec.id}`}>
-                              Receipt: {rec.receiptNumber}
-                            </p>
+                            <div className="flex items-center gap-1.5 mt-1.5" data-testid={`text-receipt-${rec.id}`}>
+                              <Receipt className="w-3 h-3 text-emerald-500 flex-shrink-0" />
+                              <span
+                                className="font-mono text-xs font-bold tracking-wider px-2 py-0.5 rounded"
+                                style={{ background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", letterSpacing: "0.08em" }}
+                              >
+                                {rec.receiptNumber}
+                              </span>
+                            </div>
                           )}
                           {rec.notes && <p className="text-xs text-slate-400 mt-0.5 italic">{rec.notes}</p>}
                         </div>

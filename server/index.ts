@@ -386,6 +386,11 @@ app.use((req, res, next) => {
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS reference_number VARCHAR(100);
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES academic_sessions(id) ON DELETE SET NULL;
     CREATE INDEX IF NOT EXISTS idx_payment_records_school_session ON payment_records(school_id, session_id);
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS receipt_number VARCHAR(20);
+    CREATE TABLE IF NOT EXISTS receipt_sequences (
+      prefix VARCHAR(10) PRIMARY KEY,
+      current_number INTEGER NOT NULL DEFAULT 0
+    );
   `);
 
   // Back-fill session_id on existing payment_records that are linked to a fee_record

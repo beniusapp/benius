@@ -4749,6 +4749,7 @@ export class DatabaseStorage {
     return `${prefix}${String(current + 1).padStart(2, "0")}`;
   }
 
+  // ===== RECEIPT SEQUENCES =====
   // Atomically increments the counter for `prefix` (e.g. "OP", "AF") and
   // returns the formatted receipt number (e.g. "OP01", "AF12").
   // Uses INSERT … ON CONFLICT DO UPDATE so it self-seeds on first use.
