@@ -524,4 +524,5 @@ export function registerFeesRoutes(app: Express) {
     }
     res.json({ isEnabled: true, gatewayUrl: settings.gatewayUrl, bannerMessage: settings.bannerMessage });
   });
+
 }
