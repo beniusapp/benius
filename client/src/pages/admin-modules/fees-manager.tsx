@@ -1111,6 +1111,141 @@ type FeeFormValues = z.infer<typeof feeFormSchema>;
 
 // ─── Ledger Tab ───────────────────────────────────────────────────────────────
 
+// ─── Export Ledger Dialog ─────────────────────────────────────────────────────
+
+interface ExportLedgerDialogProps {
+  open: boolean;
+  onClose: () => void;
+  availableClasses: string[];
+  availableFeeTypes: string[];
+}
+
+function ExportLedgerDialog({ open, onClose, availableClasses, availableFeeTypes }: ExportLedgerDialogProps) {
+  const { toast } = useToast();
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [cls, setCls] = useState("");
+  const [feeType, setFeeType] = useState("");
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setDateFrom(""); setDateTo(""); setCls(""); setFeeType(""); setIsDownloading(false);
+    }
+  }, [open]);
+
+  async function handleExport() {
+    setIsDownloading(true);
+    try {
+      const params = new URLSearchParams();
+      if (dateFrom) params.set("dateFrom", dateFrom);
+      if (dateTo)   params.set("dateTo",   dateTo);
+      if (cls)      params.set("class",    cls);
+      if (feeType)  params.set("feeType",  feeType);
+
+      const url = `/api/admin/fees/export-ledger${params.size ? "?" + params.toString() : ""}`;
+      const r = await fetch(url, { credentials: "include" });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error((body as any).message ?? "Export failed");
+      }
+      const blob = await r.blob();
+      const dateTag = new Date().toISOString().split("T")[0];
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `payment-ledger-${dateTag}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+      toast({ title: "Ledger exported", description: "CSV downloaded successfully." });
+      onClose();
+    } catch (e: any) {
+      toast({ title: "Export failed", description: e.message, variant: "destructive" });
+    } finally {
+      setIsDownloading(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-emerald-400">
+            <Download className="w-5 h-5" />
+            Export School-wide Ledger
+          </DialogTitle>
+        </DialogHeader>
+
+        <p className="text-white/50 text-sm">
+          Downloads a CSV with every fee record and its aggregated payment totals. Use filters to narrow the slice.
+        </p>
+
+        <div className="space-y-4">
+          {/* Date range */}
+          <div>
+            <p className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-2">Due Date Range</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-white/60 mb-1 block">From</label>
+                <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 [color-scheme:dark]" />
+              </div>
+              <div>
+                <label className="text-xs text-white/60 mb-1 block">To</label>
+                <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 [color-scheme:dark]" />
+              </div>
+            </div>
+          </div>
+
+          {/* Class filter */}
+          <div>
+            <label className="text-xs text-white/60 mb-1 block">Class</label>
+            <select value={cls} onChange={e => setCls(e.target.value)}
+              className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+              <option value="">All Classes</option>
+              {availableClasses.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+
+          {/* Fee Type filter */}
+          <div>
+            <label className="text-xs text-white/60 mb-1 block">Fee Type</label>
+            <select value={feeType} onChange={e => setFeeType(e.target.value)}
+              className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+              <option value="">All Fee Types</option>
+              {availableFeeTypes.map(ft => <option key={ft} value={ft}>{ft}</option>)}
+            </select>
+          </div>
+
+          {/* Active filters summary */}
+          {(dateFrom || dateTo || cls || feeType) && (
+            <div className="px-3 py-2 rounded-lg bg-emerald-900/20 border border-emerald-700/30 text-xs text-emerald-400 space-y-0.5">
+              <p className="font-semibold mb-1">Active filters:</p>
+              {dateFrom && <p>Due from: {new Date(dateFrom).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>}
+              {dateTo   && <p>Due to: {new Date(dateTo).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>}
+              {cls      && <p>Class: {cls}</p>}
+              {feeType  && <p>Fee Type: {feeType}</p>}
+            </div>
+          )}
+
+          <div className="flex gap-2 justify-end pt-1">
+            <Button variant="ghost" onClick={onClose} className="text-white/60">Cancel</Button>
+            <Button onClick={handleExport} disabled={isDownloading}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white gap-2">
+              {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+              Download CSV
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Ledger Tab ───────────────────────────────────────────────────────────────
+
 function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   canRecord: boolean; isArchiveMode: boolean; students: StudentItem[]; viewSessionId: number | null;
 }) {
@@ -1120,6 +1255,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [statusFilter, setStatusFilter] = useState("all");
   const [classFilter, setClassFilter] = useState("all");
   const [showForm, setShowForm] = useState(false);
+  const [showExportLedger, setShowExportLedger] = useState(false);
   const [editing, setEditing] = useState<FeeRecordWithStudent | null>(null);
   const [payTarget, setPayTarget] = useState<FeeRecordWithStudent | null>(null);
   const [showPay, setShowPay] = useState(false);
@@ -1301,6 +1437,11 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     return ms && statusMatch && (classFilter === "all" || r.student?.class === classFilter);
   }), [feeRecords, search, statusFilter, classFilter, offlinePaidIds]);
 
+  // Distinct fee types from all loaded records (for the export dialog filter)
+  const allFeeTypes = useMemo(() =>
+    [...new Set(feeRecords.map(r => r.feeType))].sort(),
+    [feeRecords]);
+
   function openCreate() {
     setEditing(null);
     form.reset({ studentId: "", feeType: "", amount: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: selectedSession?.sessionName ?? "" });
@@ -1341,17 +1482,23 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
           <option value="all">All Classes</option>
           {classes.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
-        {canRecord && !isArchiveMode && (
-          <div className="flex gap-2 ml-auto">
-            <Button size="sm" variant="outline" onClick={() => setShowStandalonePay(true)}
-              className="border-cyan-700 text-cyan-400 hover:bg-cyan-900/30 gap-1">
-              <Banknote className="w-4 h-4" /> Record Offline Payment
-            </Button>
-            <Button size="sm" onClick={openCreate} className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1">
-              <Plus className="w-4 h-4" /> Add Fee
-            </Button>
-          </div>
-        )}
+        <div className="flex gap-2 ml-auto">
+          <Button size="sm" variant="outline" onClick={() => setShowExportLedger(true)}
+            className="border-emerald-700 text-emerald-400 hover:bg-emerald-900/30 gap-1">
+            <Download className="w-4 h-4" /> Export Ledger
+          </Button>
+          {canRecord && !isArchiveMode && (
+            <>
+              <Button size="sm" variant="outline" onClick={() => setShowStandalonePay(true)}
+                className="border-cyan-700 text-cyan-400 hover:bg-cyan-900/30 gap-1">
+                <Banknote className="w-4 h-4" /> Record Offline Payment
+              </Button>
+              <Button size="sm" onClick={openCreate} className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1">
+                <Plus className="w-4 h-4" /> Add Fee
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Table */}
@@ -1460,6 +1607,12 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         open={showPaymentsModal}
         onClose={() => { setShowPaymentsModal(false); setViewPaymentsRecord(null); }}
         feeRecord={viewPaymentsRecord}
+      />
+      <ExportLedgerDialog
+        open={showExportLedger}
+        onClose={() => setShowExportLedger(false)}
+        availableClasses={classes}
+        availableFeeTypes={allFeeTypes}
       />
 
       {/* Add / Edit Dialog */}

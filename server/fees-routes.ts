@@ -513,6 +513,105 @@ export function registerFeesRoutes(app: Express) {
     res.send(html);
   });
 
+  // ── School-wide Ledger Export (CSV) ──────────────────────────────────────
+  app.get("/api/admin/fees/export-ledger", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+
+    // Parse optional query filters
+    const { dateFrom, dateTo, class: classFilter, feeType: feeTypeFilter } = req.query as {
+      dateFrom?: string; dateTo?: string; class?: string; feeType?: string;
+    };
+
+    // Build a joined query: fee_records LEFT JOIN students LEFT JOIN (aggregated payment_records)
+    // One row per fee record; amounts in rupees.
+    const rows = await db.execute(sql`
+      SELECT
+        s.name              AS student_name,
+        s.digital_student_id AS student_id,
+        s.class             AS class,
+        s.section           AS section,
+        fr.fee_type         AS fee_type,
+        fr.amount           AS invoice_amount,
+        COALESCE(p.total_paid, 0)::int  AS amount_paid,
+        GREATEST(fr.amount - COALESCE(p.total_paid, 0), 0)::int AS outstanding,
+        fr.status           AS status,
+        fr.due_date         AS due_date,
+        fr.paid_date        AS paid_date,
+        fr.academic_year    AS academic_year,
+        p.last_method       AS payment_method,
+        p.last_reference    AS reference_number,
+        fr.receipt_number   AS receipt_number,
+        fr.notes            AS notes,
+        fr.id               AS fee_record_id
+      FROM fee_records fr
+      LEFT JOIN students s ON s.id = fr.student_id
+      LEFT JOIN (
+        SELECT
+          fee_record_id,
+          SUM(amount)::int                               AS total_paid,
+          (array_agg(payment_method ORDER BY created_at DESC))[1] AS last_method,
+          (array_agg(reference_number ORDER BY created_at DESC))[1] AS last_reference
+        FROM payment_records
+        WHERE school_id = ${schoolId}
+          AND fee_record_id IS NOT NULL
+        GROUP BY fee_record_id
+      ) p ON p.fee_record_id = fr.id
+      WHERE fr.school_id = ${schoolId}
+        ${dateFrom ? sql`AND fr.due_date >= ${dateFrom}` : sql``}
+        ${dateTo   ? sql`AND fr.due_date <= ${dateTo}`   : sql``}
+        ${classFilter  ? sql`AND s.class = ${classFilter}`   : sql``}
+        ${feeTypeFilter ? sql`AND fr.fee_type = ${feeTypeFilter}` : sql``}
+      ORDER BY s.class, s.name, fr.due_date
+    `);
+
+    const esc = (v: string | null | undefined) => {
+      const s = v == null ? "" : String(v);
+      // Wrap in quotes; double internal quotes
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+
+    const fmtDateLocal = (d: string | null | undefined) => {
+      if (!d) return "";
+      try { return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
+      catch { return String(d); }
+    };
+
+    const headers = [
+      "Student Name", "Student ID", "Class", "Section",
+      "Fee Type", "Invoice Amount (₹)", "Amount Paid (₹)", "Outstanding (₹)",
+      "Status", "Due Date", "Paid Date", "Academic Year",
+      "Payment Method", "Reference No.", "Receipt No.", "Notes",
+    ];
+
+    const dataRows = (rows.rows as any[]).map(r => [
+      esc(r.student_name),
+      esc(r.student_id),
+      esc(r.class),
+      esc(r.section),
+      esc(r.fee_type),
+      esc(r.invoice_amount),
+      esc(r.amount_paid),
+      esc(r.outstanding),
+      esc(r.status),
+      esc(fmtDateLocal(r.due_date)),
+      esc(fmtDateLocal(r.paid_date)),
+      esc(r.academic_year),
+      esc(r.payment_method),
+      esc(r.last_reference ?? r.reference_number),
+      esc(r.receipt_number),
+      esc(r.notes),
+    ].join(","));
+
+    const csv = [headers.map(h => `"${h}"`).join(","), ...dataRows].join("\r\n");
+    const dateTag = new Date().toISOString().split("T")[0];
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="payment-ledger-${dateTag}.csv"`);
+    // BOM for Excel UTF-8 detection
+    res.send("\uFEFF" + csv);
+  });
+
   // ── Student: External Portal Info ─────────────────────────────────────────
   app.get("/api/student/fees/portal-info", async (req, res) => {
     if (!req.session?.studentId) return res.status(403).json({ message: "Student access required" });
@@ -524,5 +623,4 @@ export function registerFeesRoutes(app: Express) {
     }
     res.json({ isEnabled: true, gatewayUrl: settings.gatewayUrl, bannerMessage: settings.bannerMessage });
   });
-
 }
