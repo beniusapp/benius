@@ -77,6 +77,7 @@ interface ExternalSettings {
   isEnabled: boolean;
   gatewayUrl: string | null;
   bannerMessage: string | null;
+  maxOvercollectionPercent: number | null;
 }
 
 interface AcademicSession {
@@ -2085,6 +2086,7 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [isEnabled, setIsEnabled] = useState(false);
   const [url, setUrl] = useState("");
   const [banner, setBanner] = useState("");
+  const [maxOvercollectionPercent, setMaxOvercollectionPercent] = useState(150);
   const [synced, setSynced] = useState(false);
 
   const { data: settings, isLoading } = useQuery<ExternalSettings>({
@@ -2097,13 +2099,14 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       setIsEnabled(settings.isEnabled);
       setUrl(settings.gatewayUrl ?? "");
       setBanner(settings.bannerMessage ?? "");
+      setMaxOvercollectionPercent(settings.maxOvercollectionPercent ?? 150);
       setSynced(true);
     }
   }, [settings, synced]);
 
   const saveMut = useMutation({
     mutationFn: () => apiRequest("PUT", "/api/admin/fees/external-settings", {
-      isEnabled, gatewayUrl: url || null, bannerMessage: banner || null,
+      isEnabled, gatewayUrl: url || null, bannerMessage: banner || null, maxOvercollectionPercent,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/external-settings"] });
@@ -2137,6 +2140,38 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
           placeholder="Pay your fees online at the link below. For queries, contact the accounts office."
           className="w-full bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20 resize-none disabled:opacity-40" />
         <p className="text-white/25 text-xs text-right">{banner.length}/500</p>
+      </div>
+
+      <div className="p-4 rounded-xl border border-white/10 bg-[#1A2942] space-y-3">
+        <div>
+          <p className="text-white font-semibold flex items-center gap-2"><Shield className="w-4 h-4 text-amber-400" /> Max Over-collection Cap</p>
+          <p className="text-white/40 text-xs mt-0.5">Payments that would bring the total collected above this percentage of the invoice amount are blocked. Default is 150%.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <input
+            type="number"
+            min={100}
+            max={500}
+            step={1}
+            value={maxOvercollectionPercent}
+            onChange={e => {
+              const v = parseInt(e.target.value, 10);
+              if (!isNaN(v)) setMaxOvercollectionPercent(Math.min(500, Math.max(100, v)));
+            }}
+            disabled={isArchiveMode}
+            className="w-24 bg-[#0F1E35] border border-white/10 rounded-lg px-3 py-2 text-sm text-white text-center focus:outline-none focus:border-amber-500 disabled:opacity-40"
+          />
+          <span className="text-white/60 text-sm">%</span>
+          <span className="text-white/30 text-xs">Range: 100% – 500%</span>
+        </div>
+        {maxOvercollectionPercent !== 150 && (
+          <p className="text-amber-400/70 text-xs flex items-center gap-1">
+            <Shield className="w-3 h-3" />
+            {maxOvercollectionPercent < 150
+              ? `Tighter than default — payments exceeding ${maxOvercollectionPercent}% of the invoice will be blocked.`
+              : `Looser than default — payments up to ${maxOvercollectionPercent}% of the invoice are allowed.`}
+          </p>
+        )}
       </div>
 
       {(isEnabled || banner) && (

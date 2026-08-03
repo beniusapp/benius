@@ -4768,7 +4768,7 @@ export class DatabaseStorage {
   }
 
   async upsertExternalPaymentSettings(schoolId: number, data: {
-    isEnabled: boolean; gatewayUrl?: string | null; bannerMessage?: string | null; lastUpdatedBy?: number | null;
+    isEnabled: boolean; gatewayUrl?: string | null; bannerMessage?: string | null; maxOvercollectionPercent?: number; lastUpdatedBy?: number | null;
   }): Promise<ExternalPaymentSettings> {
     const [rec] = await db.insert(externalPaymentSettings)
       .values({ schoolId, ...data, updatedAt: new Date() })

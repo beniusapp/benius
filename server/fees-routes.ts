@@ -211,13 +211,15 @@ export function registerFeesRoutes(app: Express) {
     // Destructure out fee-record-only fields before passing to createPaymentRecord
     const { feeType: _ft, dueDate: _dd, feeStatus: _fs, academicYear: _ay, feeNotes: _fn, ...paymentOnly } = paymentData;
 
-    // ── Atomic overpayment guard + payment insert (150% soft cap) ─────────────
+    // ── Atomic overpayment guard + payment insert (configurable soft cap) ─────
     // The entire check-then-insert runs inside one DB transaction with a
     // SELECT … FOR UPDATE row lock on the fee record.  A concurrent request for
     // the same fee record will block at the lock until this transaction commits,
     // guaranteeing the sum it reads is fully up-to-date and the cap cannot be
     // breached by two near-simultaneous submissions.
-    const OVERPAYMENT_FACTOR = 1.5;
+    const feesSettings = await storage.getExternalPaymentSettings(schoolId);
+    const configuredPercent = feesSettings?.maxOvercollectionPercent ?? 150;
+    const OVERPAYMENT_FACTOR = configuredPercent / 100;
     let rec: any = null;
     let overpaymentBlock: {
       message: string; invoiceAmount: number; totalAlreadyPaid: number; newAmount: number;
@@ -244,7 +246,7 @@ export function registerFeesRoutes(app: Express) {
 
           if (totalAlreadyPaid + paymentOnly.amount > cap) {
             overpaymentBlock = {
-              message: `This payment (₹${paymentOnly.amount.toLocaleString("en-IN")}) would bring the total collected to ₹${(totalAlreadyPaid + paymentOnly.amount).toLocaleString("en-IN")}, which exceeds 150% of the invoice amount (₹${lockedFee.amount.toLocaleString("en-IN")}). Please verify the amount and try again.`,
+              message: `This payment (₹${paymentOnly.amount.toLocaleString("en-IN")}) would bring the total collected to ₹${(totalAlreadyPaid + paymentOnly.amount).toLocaleString("en-IN")}, which exceeds ${configuredPercent}% of the invoice amount (₹${lockedFee.amount.toLocaleString("en-IN")}). Please verify the amount and try again.`,
               invoiceAmount: lockedFee.amount,
               totalAlreadyPaid,
               newAmount: paymentOnly.amount,
@@ -341,12 +343,13 @@ export function registerFeesRoutes(app: Express) {
     isEnabled: z.boolean(),
     gatewayUrl: z.string().max(500).optional().nullable(),
     bannerMessage: z.string().max(500).optional().nullable(),
+    maxOvercollectionPercent: z.number().int().min(100).max(500).default(150),
   });
 
   app.get("/api/admin/fees/external-settings", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const settings = await storage.getExternalPaymentSettings(req.session.schoolId!);
-    res.json(settings ?? { isEnabled: false, gatewayUrl: null, bannerMessage: null });
+    res.json(settings ?? { isEnabled: false, gatewayUrl: null, bannerMessage: null, maxOvercollectionPercent: 150 });
   });
 
   app.put("/api/admin/fees/external-settings", async (req, res) => {
@@ -354,14 +357,21 @@ export function registerFeesRoutes(app: Express) {
     const parsed = externalSettingsSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
+    const previous = await storage.getExternalPaymentSettings(schoolId);
     const updated = await storage.upsertExternalPaymentSettings(schoolId, {
       ...parsed.data,
       gatewayUrl: parsed.data.gatewayUrl || null,
       bannerMessage: parsed.data.bannerMessage || null,
       lastUpdatedBy: req.session.userId,
     });
-    await appendAudit(req, schoolId, "settings_change", "external_settings", null,
-      `External payment portal ${parsed.data.isEnabled ? "enabled" : "disabled"}${parsed.data.gatewayUrl ? ` → ${parsed.data.gatewayUrl}` : ""}`);
+    const capChanged = previous?.maxOvercollectionPercent !== parsed.data.maxOvercollectionPercent;
+    const auditParts: string[] = [];
+    auditParts.push(`External payment portal ${parsed.data.isEnabled ? "enabled" : "disabled"}`);
+    if (parsed.data.gatewayUrl) auditParts.push(`URL: ${parsed.data.gatewayUrl}`);
+    if (capChanged) {
+      auditParts.push(`Max over-collection cap changed: ${previous?.maxOvercollectionPercent ?? 150}% → ${parsed.data.maxOvercollectionPercent}%`);
+    }
+    await appendAudit(req, schoolId, "settings_change", "external_settings", null, auditParts.join("; "));
     res.json(updated);
   });
 
