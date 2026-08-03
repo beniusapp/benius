@@ -138,12 +138,13 @@ function StatusChip({ status }: { status: string }) {
 
 function ActionBadge({ action }: { action: string }) {
   const map: Record<string, string> = {
-    create:          "bg-emerald-900/40 text-emerald-400 border-emerald-700/40",
-    update:          "bg-blue-900/40 text-blue-400 border-blue-700/40",
-    delete:          "bg-red-900/40 text-red-400 border-red-700/40",
-    payment:         "bg-cyan-900/40 text-cyan-400 border-cyan-700/40",
-    settings_change: "bg-purple-900/40 text-purple-400 border-purple-700/40",
-    waiver:          "bg-amber-900/40 text-amber-400 border-amber-700/40",
+    create:           "bg-emerald-900/40 text-emerald-400 border-emerald-700/40",
+    update:           "bg-blue-900/40 text-blue-400 border-blue-700/40",
+    delete:           "bg-red-900/40 text-red-400 border-red-700/40",
+    payment:          "bg-cyan-900/40 text-cyan-400 border-cyan-700/40",
+    settings_change:  "bg-purple-900/40 text-purple-400 border-purple-700/40",
+    waiver:           "bg-amber-900/40 text-amber-400 border-amber-700/40",
+    blocked_payment:  "bg-orange-900/40 text-orange-400 border-orange-700/40",
   };
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-bold border ${map[action] ?? "bg-white/10 text-white/60 border-white/10"}`}>

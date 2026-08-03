@@ -323,6 +323,10 @@ export function registerFeesRoutes(app: Express) {
     // ─────────────────────────────────────────────────────────────────────────
 
     if (overpaymentBlock) {
+      await appendAudit(
+        req, schoolId, "blocked_payment", "payment_record", paymentOnly.feeRecordId ?? null,
+        `Blocked overpayment attempt: ₹${overpaymentBlock.newAmount.toLocaleString("en-IN")} attempted for student #${paymentOnly.studentId} — invoice ₹${overpaymentBlock.invoiceAmount.toLocaleString("en-IN")}, already paid ₹${overpaymentBlock.totalAlreadyPaid.toLocaleString("en-IN")}, cumulative total would have been ₹${(overpaymentBlock.totalAlreadyPaid + overpaymentBlock.newAmount).toLocaleString("en-IN")}`,
+      );
       return res.status(400).json({ ...overpaymentBlock, overpaymentGuard: true });
     }
 
