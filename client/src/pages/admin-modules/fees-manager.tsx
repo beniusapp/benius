@@ -1479,7 +1479,11 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
   const filtered = useMemo(() => feeRecords.filter(r => {
     const q = search.toLowerCase();
-    const ms = !q || (r.student?.name ?? "").toLowerCase().includes(q) || r.feeType.toLowerCase().includes(q) || (r.student?.digitalStudentId ?? "").toLowerCase().includes(q);
+    const ms = !q ||
+      (r.student?.name ?? "").toLowerCase().includes(q) ||
+      r.feeType.toLowerCase().includes(q) ||
+      (r.student?.digitalStudentId ?? "").toLowerCase().includes(q) ||
+      (r.receiptNumber ?? "").toLowerCase().includes(q);
     const statusMatch = statusFilter === "all"
       ? true
       : statusFilter === "offline"
@@ -1568,20 +1572,31 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-white/5">
-                  {["Student","Fee Name","Fee Type","Amount","Due Date","Status","Paid On","Acad. Year","Notes","Receipt","Actions"].map((h, i) => (
-                    <th key={h} className={`px-4 py-3 text-white/50 font-medium ${i === 3 ? "text-right" : i >= 10 ? "text-right" : i >= 4 ? "text-center" : "text-left"}`}>{h}</th>
+                  {["Receipt","Student","Class","Section","Fee Name","Fee Type","Amount","Due Date","Status","Paid On","Acad. Year","Notes","Actions"].map((h, i) => (
+                    <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 6 ? "text-right" : i >= 12 ? "text-right" : i >= 7 ? "text-center" : "text-left"}`}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {filtered.map(rec => (
                   <tr key={rec.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                    <td className="px-4 py-3">
-                      <p className="text-white font-medium leading-tight">{rec.student?.name ?? "—"}</p>
-                      <p className="text-white/40 text-xs">{rec.student?.digitalStudentId} · {rec.student?.class}-{rec.student?.section}</p>
+                    {/* Receipt */}
+                    <td className="px-4 py-3 text-left">
+                      {rec.receiptNumber
+                        ? <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 border border-cyan-700/30 text-cyan-300">{rec.receiptNumber}</span>
+                        : <span className="text-white/20 text-xs">—</span>}
                     </td>
+                    {/* Student */}
+                    <td className="px-4 py-3">
+                      <p className="text-white font-medium leading-tight text-sm">{rec.student?.name ?? "—"}</p>
+                      <p className="text-white/40 text-xs">{rec.student?.digitalStudentId ?? "—"}</p>
+                    </td>
+                    {/* Class */}
+                    <td className="px-4 py-3 text-white/70 text-xs text-center">{rec.student?.class ?? "—"}</td>
+                    {/* Section */}
+                    <td className="px-4 py-3 text-white/70 text-xs text-center">{rec.student?.section ?? "—"}</td>
                     <td className="px-4 py-3 text-white/80 text-sm">{feeTypeToName.get(rec.feeType) ?? "—"}</td>
-                    <td className="px-4 py-3 text-white/70">{rec.feeType}</td>
+                    <td className="px-4 py-3 text-white/70 text-xs">{rec.feeType}</td>
                     <td className="px-4 py-3 text-right font-semibold text-white">{fmt(rec.amount)}</td>
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{fmtDate(rec.dueDate)}</td>
                     <td className="px-4 py-3 text-center">
@@ -1596,12 +1611,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     </td>
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{fmtDate(rec.paidDate)}</td>
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{rec.academicYear ?? "—"}</td>
-                    <td className="px-4 py-3 text-left text-white/50 text-xs max-w-[120px] truncate" title={rec.notes ?? ""}>{rec.notes || "—"}</td>
-                    <td className="px-4 py-3 text-center">
-                      {rec.receiptNumber
-                        ? <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 border border-white/10 text-white/60">{rec.receiptNumber}</span>
-                        : <span className="text-white/20 text-xs">—</span>}
-                    </td>
+                    <td className="px-4 py-3 text-left text-white/50 text-xs max-w-[100px] truncate" title={rec.notes ?? ""}>{rec.notes || "—"}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
                         {canRecord && !isArchiveMode && rec.status !== "Paid" && rec.status !== "Waived" && (
