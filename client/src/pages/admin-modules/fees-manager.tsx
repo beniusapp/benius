@@ -754,6 +754,7 @@ interface PaymentHistoryModalProps {
 }
 
 function PaymentHistoryModal({ open, onClose, feeRecord }: PaymentHistoryModalProps) {
+  const { toast } = useToast();
   const [filterFrom, setFilterFrom] = useState("");
   const [filterTo, setFilterTo] = useState("");
   const [filterMethod, setFilterMethod] = useState("All");
@@ -817,6 +818,10 @@ function PaymentHistoryModal({ open, onClose, feeRecord }: PaymentHistoryModalPr
   }
 
   function exportToCSV() {
+    if (filteredPayments.length === 0) {
+      toast({ title: "Nothing to export", description: "No transactions match the current filters.", variant: "destructive" });
+      return;
+    }
     const studentName = feeRecord!.student?.name ?? "student";
     const headers = ["#", "Date", "Amount (INR)", "Method", "Reference No.", "Notes", "Receipt No."];
     const dataRows = filteredPayments.map((p, idx) => [
@@ -852,6 +857,10 @@ function PaymentHistoryModal({ open, onClose, feeRecord }: PaymentHistoryModalPr
   }
 
   function exportToPDF() {
+    if (filteredPayments.length === 0) {
+      toast({ title: "Nothing to export", description: "No transactions match the current filters.", variant: "destructive" });
+      return;
+    }
     const studentName = feeRecord!.student?.name ?? "—";
     const studentInfo = feeRecord!.student ? `${feeRecord!.student.class}-${feeRecord!.student.section}` : "";
     const feeTypeLabel = feeRecord!.feeType;
