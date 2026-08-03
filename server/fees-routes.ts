@@ -630,6 +630,67 @@ export function registerFeesRoutes(app: Express) {
     res.send("\uFEFF" + csv);
   });
 
+  // ── Receipt Backfill (one-time, idempotent) ───────────────────────────────
+  // Assigns AF receipt numbers to fee_records with receipt_number IS NULL and
+  // OP receipt numbers to payment_records with receipt_number IS NULL.
+  // Safe to call multiple times — re-running skips already-numbered rows.
+  app.post("/api/admin/fees/backfill-receipts", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+
+    // ── 1. Backfill fee_records (AF prefix) ───────────────────────────────
+    const nullFeeRows = await db.execute(
+      sql`SELECT id FROM fee_records
+          WHERE school_id = ${schoolId}
+            AND receipt_number IS NULL
+          ORDER BY id ASC`,
+    );
+    const feeIds = (nullFeeRows.rows as { id: number }[]).map(r => r.id);
+
+    let afCount = 0;
+    for (const id of feeIds) {
+      const receiptNumber = await storage.nextReceiptNumber("AF");
+      await db.execute(
+        sql`UPDATE fee_records
+            SET receipt_number = ${receiptNumber}
+            WHERE id = ${id} AND school_id = ${schoolId}`,
+      );
+      afCount++;
+    }
+
+    // ── 2. Backfill payment_records (OP prefix) ───────────────────────────
+    const nullPayRows = await db.execute(
+      sql`SELECT id FROM payment_records
+          WHERE school_id = ${schoolId}
+            AND receipt_number IS NULL
+          ORDER BY id ASC`,
+    );
+    const payIds = (nullPayRows.rows as { id: number }[]).map(r => r.id);
+
+    let opCount = 0;
+    for (const id of payIds) {
+      const receiptNumber = await storage.nextReceiptNumber("OP");
+      await db.execute(
+        sql`UPDATE payment_records
+            SET receipt_number = ${receiptNumber}
+            WHERE id = ${id} AND school_id = ${schoolId}`,
+      );
+      opCount++;
+    }
+
+    await appendAudit(
+      req, schoolId, "backfill_receipts", "fee_record", null,
+      `Receipt backfill complete: ${afCount} fee record(s) assigned AF numbers, ${opCount} payment record(s) assigned OP numbers`,
+    );
+
+    res.json({
+      success: true,
+      feeRecordsUpdated: afCount,
+      paymentRecordsUpdated: opCount,
+      message: `Backfill complete: ${afCount} fee record(s) and ${opCount} payment record(s) assigned receipt numbers.`,
+    });
+  });
+
   // ── Student: External Portal Info ─────────────────────────────────────────
   app.get("/api/student/fees/portal-info", async (req, res) => {
     if (!req.session?.studentId) return res.status(403).json({ message: "Student access required" });

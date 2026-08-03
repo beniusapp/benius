@@ -2444,6 +2444,71 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
           {saveMut.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />} Save Settings
         </Button>
       )}
+
+      {/* ── Data Maintenance ─────────────────────────────────────────────── */}
+      <BackfillReceiptsSection />
+    </div>
+  );
+}
+
+// ─── Backfill Receipts Section ────────────────────────────────────────────────
+// Assigns AF/OP receipt numbers to any fee/payment records that pre-date the
+// receipt system.  Safe to run multiple times — already-numbered rows are skipped.
+
+function BackfillReceiptsSection() {
+  const { toast } = useToast();
+  const [result, setResult] = useState<{ feeRecordsUpdated: number; paymentRecordsUpdated: number } | null>(null);
+
+  const backfillMut = useMutation({
+    mutationFn: async () => {
+      const r = await sessionFetch("/api/admin/fees/backfill-receipts", { method: "POST" });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.message ?? "Backfill failed");
+      }
+      return r.json() as Promise<{ feeRecordsUpdated: number; paymentRecordsUpdated: number; message: string }>;
+    },
+    onSuccess: (data) => {
+      setResult({ feeRecordsUpdated: data.feeRecordsUpdated, paymentRecordsUpdated: data.paymentRecordsUpdated });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
+      toast({ title: "Receipt backfill complete", description: data.message });
+    },
+    onError: (e: Error) => toast({ title: "Backfill failed", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <div className="p-4 rounded-xl border border-amber-700/30 bg-amber-900/10 space-y-3">
+      <div>
+        <p className="text-white font-semibold flex items-center gap-2">
+          <Receipt className="w-4 h-4 text-amber-400" /> Assign Missing Receipt Numbers
+        </p>
+        <p className="text-white/40 text-xs mt-0.5 leading-relaxed">
+          Fee and payment records created before the receipt system was added show "—" in the Receipt column.
+          Run this once to assign sequential AF/OP numbers to all such records. Safe to run multiple times.
+        </p>
+      </div>
+
+      {result && (
+        <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-900/20 border border-emerald-700/30 rounded-lg px-3 py-2">
+          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+          <span>
+            Done — {result.feeRecordsUpdated} fee record{result.feeRecordsUpdated !== 1 ? "s" : ""} and{" "}
+            {result.paymentRecordsUpdated} payment record{result.paymentRecordsUpdated !== 1 ? "s" : ""} updated.
+            {result.feeRecordsUpdated === 0 && result.paymentRecordsUpdated === 0 && " All records already have receipt numbers."}
+          </span>
+        </div>
+      )}
+
+      <Button
+        onClick={() => backfillMut.mutate()}
+        disabled={backfillMut.isPending}
+        variant="outline"
+        className="border-amber-600/50 text-amber-300 hover:bg-amber-900/30 hover:text-amber-200 bg-transparent text-xs h-8"
+      >
+        {backfillMut.isPending
+          ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> Running backfill…</>
+          : <><Receipt className="w-3.5 h-3.5 mr-1.5" /> Run Receipt Backfill</>}
+      </Button>
     </div>
   );
 }
