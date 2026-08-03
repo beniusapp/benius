@@ -4005,7 +4005,29 @@ export async function registerRoutes(
       .where(and(eq(students.id, parsed.data.studentId), eq(students.schoolId, schoolId)));
     if (!studentCheck) return res.status(400).json({ message: "Student does not belong to this school" });
     const activeSession = await storage.getActiveSession(schoolId);
-    const rec = await storage.createFeeRecord({ ...parsed.data, schoolId, sessionId: activeSession?.id ?? null, createdBy: req.session.userId });
+    // due_date is NOT NULL in the DB — when status is Paid/Waived the client omits it,
+    // so fall back to paidDate or today to satisfy the constraint.
+    const today = new Date().toISOString().split("T")[0];
+    const dueDateForDb = parsed.data.dueDate || parsed.data.paidDate || today;
+    const rec = await storage.createFeeRecord({ ...parsed.data, dueDate: dueDateForDb, schoolId, sessionId: activeSession?.id ?? null, createdBy: req.session.userId });
+
+    // Auto-create a payment record so payment history is always populated for Paid records.
+    if (parsed.data.status === "Paid") {
+      await storage.createPaymentRecord({
+        schoolId,
+        sessionId: activeSession?.id ?? null,
+        feeRecordId: rec.id,
+        studentId: rec.studentId,
+        paymentMethod: "Cash",
+        receivedDate: parsed.data.paidDate || today,
+        amount: rec.amount,
+        referenceNumber: parsed.data.receiptNumber ?? null,
+        cashierNotes: "Auto-recorded from Add Fee Record",
+        idempotencyKey: `auto-${rec.id}-${Date.now()}`,
+        recordedBy: req.session.userId ?? null,
+      });
+    }
+
     res.status(201).json(rec);
   });
 
@@ -4022,7 +4044,14 @@ export async function registerRoutes(
         .where(and(eq(students.id, parsed.data.studentId), eq(students.schoolId, schoolId)));
       if (!studentCheck) return res.status(400).json({ message: "Student does not belong to this school" });
     }
-    const updated = await storage.updateFeeRecord(id, schoolId, parsed.data);
+    // If dueDate was cleared (Paid/Waived), fall back to paidDate or today
+    // rather than passing null into a NOT NULL column.
+    const patchData = { ...parsed.data };
+    if (patchData.dueDate == null) {
+      const today = new Date().toISOString().split("T")[0];
+      patchData.dueDate = patchData.paidDate || today;
+    }
+    const updated = await storage.updateFeeRecord(id, schoolId, patchData);
     if (!updated) return res.status(404).json({ message: "Fee record not found" });
     res.json(updated);
   });

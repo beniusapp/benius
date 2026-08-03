@@ -1393,15 +1393,19 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                             <Receipt className="w-3 h-3" /> Pay
                           </Button>
                         )}
-                        {offlinePaidIds.has(rec.id) && (
-                          <Button size="sm" variant="ghost"
-                            onClick={() => { setViewPaymentsRecord(rec); setShowPaymentsModal(true); }}
-                            className="h-7 px-2 text-xs text-purple-400 hover:bg-purple-900/30 gap-1"
-                            title="View payment transactions">
-                            <History className="w-3 h-3" />
-                            <span>{paymentsByFeeRecordId.get(rec.id)?.length ?? 0}</span>
-                          </Button>
-                        )}
+                        {(() => {
+                          const count = paymentsByFeeRecordId.get(rec.id)?.length ?? 0;
+                          const hasPayments = count > 0;
+                          return (
+                            <Button size="sm" variant="ghost"
+                              onClick={() => { setViewPaymentsRecord(rec); setShowPaymentsModal(true); }}
+                              className={`h-7 px-2 text-xs gap-1 ${hasPayments ? "text-purple-400 hover:bg-purple-900/30" : "text-white/20 hover:bg-white/5 hover:text-white/40"}`}
+                              title={hasPayments ? "View payment transactions" : "No transactions recorded"}>
+                              <History className="w-3 h-3" />
+                              <span>{count}</span>
+                            </Button>
+                          );
+                        })()}
                         {rec.receiptNumber && (() => {
                           const m = rec.receiptNumber.match(/^REC-(\d+)$/);
                           return m ? (
