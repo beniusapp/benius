@@ -259,7 +259,12 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
     queryKey: ["/api/admin/fees/structures"],
     staleTime: 300_000,
   });
-  const payActiveStructures = payFeeStructures.filter(s => s.isActive);
+  const payActiveStructures = useMemo(() => {
+    const cls = paySelectedStudent?.class ?? null;
+    return payFeeStructures.filter(s =>
+      s.isActive && (s.applicableClasses.length === 0 || (cls && s.applicableClasses.includes(cls)))
+    );
+  }, [payFeeStructures, paySelectedStudent]);
 
   // Sync amount + student when feeRecord changes; generate a fresh idempotency key
   useEffect(() => {
@@ -1140,6 +1145,13 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     staleTime: 300_000,
   });
   const activeStructures = useMemo(() => feeStructures.filter(s => s.isActive), [feeStructures]);
+  // Structures filtered to the currently selected student's class (or all if no student / no class restriction)
+  const structuresForStudent = useMemo(() => {
+    const cls = selectedStudent?.class ?? null;
+    return activeStructures.filter(s =>
+      s.applicableClasses.length === 0 || (cls && s.applicableClasses.includes(cls))
+    );
+  }, [activeStructures, selectedStudent]);
   // Map feeType → structure name for the Fee Name column
   const feeTypeToName = useMemo(() => {
     const m = new Map<string, string>();
@@ -1508,13 +1520,13 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   <FormMessage className="text-red-400" />
                 </FormItem>
               )} />
-              {/* Fee Name picker — auto-fills Fee Type & Amount from a fee structure */}
-              {activeStructures.length > 0 && (
+              {/* Fee Name picker — filtered to selected student's class */}
+              {structuresForStudent.length > 0 && (
                 <div>
                   <label className="text-sm font-medium text-white/70 block mb-1.5">Fee Name</label>
                   <select
                     onChange={e => {
-                      const s = activeStructures.find(s => String(s.id) === e.target.value);
+                      const s = structuresForStudent.find(s => String(s.id) === e.target.value);
                       if (s) {
                         form.setValue("feeType", s.feeType, { shouldValidate: true });
                         form.setValue("amount", String(s.amount), { shouldValidate: true });
@@ -1522,7 +1534,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     }}
                     className="w-full bg-[#0A1628] border border-white/20 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
                     <option value="">— Select fee name —</option>
-                    {activeStructures.map(s => (
+                    {structuresForStudent.map(s => (
                       <option key={s.id} value={s.id}>{s.name} · ₹{s.amount.toLocaleString("en-IN")}</option>
                     ))}
                   </select>
