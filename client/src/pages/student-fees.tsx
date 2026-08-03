@@ -1,8 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, GraduationCap, Loader2, CreditCard, CheckCircle2, Clock, AlertTriangle, Receipt, Download, Lock, ExternalLink } from "lucide-react";
+import { ArrowLeft, GraduationCap, Loader2, CreditCard, CheckCircle2, Clock, AlertTriangle, Receipt, Download, Lock, ExternalLink, Copy, Check } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 
@@ -78,6 +78,14 @@ function StatusChip({ status }: { status: string }) {
 export default function StudentFees() {
   const [, setLocation] = useLocation();
   const { isArchiveMode, selectedSession } = useSessionView();
+  const [copiedReceiptId, setCopiedReceiptId] = useState<number | null>(null);
+
+  const copyReceiptNumber = useCallback((recId: number, receiptNumber: string) => {
+    navigator.clipboard.writeText(receiptNumber).then(() => {
+      setCopiedReceiptId(recId);
+      setTimeout(() => setCopiedReceiptId(null), 1500);
+    });
+  }, []);
 
   const { data: student, isLoading: studentLoading, isError } = useQuery<StudentMeResponse | null>({
     queryKey: ["/api/student-me"],
@@ -362,6 +370,18 @@ export default function StudentFees() {
                               >
                                 {rec.receiptNumber}
                               </span>
+                              <button
+                                onClick={() => copyReceiptNumber(rec.id, rec.receiptNumber!)}
+                                className="flex items-center justify-center w-6 h-6 rounded-md transition-all hover:bg-emerald-50 active:scale-90"
+                                style={{ color: copiedReceiptId === rec.id ? "#16a34a" : "#94a3b8" }}
+                                title="Copy receipt number"
+                                data-testid={`button-copy-receipt-${rec.id}`}
+                              >
+                                {copiedReceiptId === rec.id
+                                  ? <Check className="w-3.5 h-3.5" />
+                                  : <Copy className="w-3.5 h-3.5" />
+                                }
+                              </button>
                             </div>
                           )}
                           {rec.notes && <p className="text-xs text-slate-400 mt-0.5 italic">{rec.notes}</p>}
