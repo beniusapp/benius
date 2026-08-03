@@ -1283,6 +1283,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       if (!r.ok) throw new Error("Failed to fetch fee records");
       return r.json();
     },
+    refetchInterval: 30_000,
   });
 
   // Fee structures — used for "Fee Name" picker in Add Fee form
