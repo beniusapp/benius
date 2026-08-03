@@ -982,6 +982,7 @@ export const paymentRecords = pgTable("payment_records", {
   cashierNotes: text("cashier_notes"),
   idempotencyKey: varchar("idempotency_key", { length: 64 }).unique(),
   recordedBy: integer("recorded_by").references(() => users.id, { onDelete: "set null" }),
+  receiptNumber: varchar("receipt_number", { length: 20 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 export const insertPaymentRecordSchema = createInsertSchema(paymentRecords).omit({ id: true, createdAt: true });
@@ -1013,3 +1014,11 @@ export const externalPaymentSettings = pgTable("external_payment_settings", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 export type ExternalPaymentSettings = typeof externalPaymentSettings.$inferSelect;
+
+// Monotonically-increasing receipt sequence counters — one row per prefix (OP, AF).
+// Deletion of any ledger row NEVER decrements these counters.
+export const receiptSequences = pgTable("receipt_sequences", {
+  id: serial("id").primaryKey(),
+  prefix: varchar("prefix", { length: 10 }).notNull().unique(),
+  currentNumber: integer("current_number").notNull().default(0),
+});

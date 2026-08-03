@@ -73,8 +73,18 @@ Tabs: Ledger & Transactions | Fee Structures | Reminders | External Portal | Aud
 
 ## Payment Receipt PDF (Task #17)
 - `GET /api/admin/fees/payments/:id/receipt` — returns inline HTML (auto-print via window.print()).
-- Shows: Receipt No (PAY-{id}), student name/ID/class, fee type, payment method, reference number, received date, amount. Cyan border, school name in header.
+- Shows: Receipt No (`payment.receiptNumber ?? PAY-{id}`), student name/ID/class, fee type, payment method, reference number, received date, amount. Cyan border, school name in header.
 - RecordPaymentModal step="done": after success, stays open and shows Print Receipt button that opens the receipt in a new tab.
+
+## Receipt Sequence System
+- `receipt_sequences` table: `{ id, prefix VARCHAR(10) UNIQUE, current_number INTEGER DEFAULT 0 }` — seeded with OP=0, AF=0.
+- `storage.nextReceiptNumber(prefix)` — atomic `INSERT … ON CONFLICT DO UPDATE SET current_number = current_number + 1 RETURNING current_number`. Self-seeds on first call. Returns e.g. `OP01`, `AF12`.
+- **AF receipts**: generated in `POST /api/admin/fees` (routes.ts) and saved to `fee_records.receipt_number` (overrides any client-supplied value).
+- **OP receipts**: generated in `POST /api/admin/fees/payments` (fees-routes.ts) BEFORE the transaction → stored in new `payment_records.receipt_number` column AND written to the linked `fee_records.receipt_number`.
+- Deleting fee/payment records never touches `receipt_sequences` — numbers are permanent.
+- **Why**: accounting requirement for non-reusable sequential receipt numbers.
+- **Print button in ledger**: uses `paymentsByFeeRecordId.get(rec.id).find(p => p.cashierNotes !== "Auto-recorded…")` to get the most recent real payment ID (not REC-regex anymore).
+- **Payment history modal**: shows `p.receiptNumber ?? PAY-{p.id}` as the receipt reference.
 
 ## Student Portal Info (Task #18)
 - `GET /api/student/fees/portal-info` — reads externalPaymentSettings for the student's school; returns `{ isEnabled, gatewayUrl, bannerMessage }`.

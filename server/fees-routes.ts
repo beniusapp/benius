@@ -190,6 +190,11 @@ export function registerFeesRoutes(app: Express) {
       if (existing) return res.status(200).json({ ...existing, idempotent: true });
     }
 
+    // Generate a non-reusable OP receipt number BEFORE the transaction so
+    // the sequence counter is always consumed (even on rollback), ensuring
+    // no two payments ever share a receipt number.
+    const opReceipt = await storage.nextReceiptNumber("OP");
+
     // Auto-create a fee record when none is pre-linked but fee details were supplied
     if (!paymentData.feeRecordId && paymentData.feeType) {
       const viewSessionId: number | null = (req as any).viewSessionId ?? null;
@@ -278,7 +283,7 @@ export function registerFeesRoutes(app: Express) {
         sql`INSERT INTO payment_records
               (school_id, session_id, fee_record_id, student_id, payment_method,
                reference_number, received_date, amount, cashier_notes,
-               idempotency_key, recorded_by)
+               idempotency_key, recorded_by, receipt_number)
             VALUES (
               ${schoolId},
               ${resolvedSessionId},
@@ -290,7 +295,8 @@ export function registerFeesRoutes(app: Express) {
               ${paymentOnly.amount},
               ${paymentOnly.cashierNotes ?? null},
               ${idempotencyKey ?? null},
-              ${req.session.userId ?? null}
+              ${req.session.userId ?? null},
+              ${opReceipt}
             )
             RETURNING *`,
       );
@@ -311,12 +317,11 @@ export function registerFeesRoutes(app: Express) {
           );
           const totalPaid = Number((paidRow.rows[0] as any)?.total_paid) || 0;
           const newStatus = totalPaid >= linkedFee.amount ? "Paid" : "Partial";
-          const receiptNum = rec.id ? `REC-${rec.id}` : null;
           await tx.execute(
             sql`UPDATE fee_records
                 SET status = ${newStatus},
                     paid_date = ${paymentOnly.receivedDate},
-                    receipt_number = ${receiptNum}
+                    receipt_number = ${opReceipt}
                 WHERE id = ${paymentOnly.feeRecordId} AND school_id = ${schoolId}`,
           );
         }
@@ -435,6 +440,19 @@ export function registerFeesRoutes(app: Express) {
     res.json({ created, skipped, total: filtered.length });
   });
 
+  // ── Receipt Number Preview (no-commit peek) ───────────────────────────────
+  // Returns the NEXT receipt number without incrementing the sequence counter.
+  // Used by the Add Fee and Record Offline Payment modals to show a preview.
+  app.get("/api/admin/fees/next-receipt", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const prefix = String(req.query.prefix ?? "").toUpperCase();
+    if (!["AF", "OP"].includes(prefix)) {
+      return res.status(400).json({ message: "prefix must be AF or OP" });
+    }
+    const preview = await storage.peekReceiptNumber(prefix);
+    res.json({ preview });
+  });
+
   // ── Admin Payment Receipt HTML ─────────────────────────────────────────────
   app.get("/api/admin/fees/payments/:id/receipt", async (req, res) => {
     if (!adminGuard(req, res)) return;
@@ -489,7 +507,7 @@ export function registerFeesRoutes(app: Express) {
   <div class="header"><h1>${schoolName}</h1><p>Offline Payment Receipt</p></div>
   <div style="text-align:center;margin-bottom:16px;"><span class="badge">&#10003; PAYMENT RECEIVED</span></div>
   <table>
-    <tr><td>Receipt No.</td><td>PAY-${payment.id}</td></tr>
+    <tr><td>Receipt No.</td><td>${(payment as any).receiptNumber ?? `PAY-${payment.id}`}</td></tr>
     <tr><td>Student Name</td><td>${esc(student.name)}</td></tr>
     <tr><td>Student ID</td><td>${esc(student.digitalStudentId)}</td></tr>
     <tr><td>Class / Section</td><td>${esc(student.class)} / ${esc(student.section)}</td></tr>

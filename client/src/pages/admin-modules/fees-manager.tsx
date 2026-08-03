@@ -104,6 +104,7 @@ interface PaymentRecord {
   receivedDate: string;
   referenceNumber: string | null;
   cashierNotes: string | null;
+  receiptNumber: string | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -267,6 +268,19 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
     );
   }, [payFeeStructures, paySelectedStudent]);
 
+  // Preview next OP receipt number — peek only, no DB write
+  const { data: opPreviewData } = useQuery<{ preview: string }>({
+    queryKey: ["/api/admin/fees/next-receipt", "OP", open],
+    queryFn: async () => {
+      const r = await sessionFetch("/api/admin/fees/next-receipt?prefix=OP");
+      if (!r.ok) return { preview: "OP—" };
+      return r.json();
+    },
+    enabled: open && step === "form",
+    staleTime: 0,
+  });
+  const opPreview = opPreviewData?.preview ?? "…";
+
   // Sync amount + student when feeRecord changes; generate a fresh idempotency key
   useEffect(() => {
     if (feeRecord) {
@@ -424,6 +438,12 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
 
         {step === "form" && (
           <div className="space-y-4">
+            {/* Read-only OP receipt preview */}
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800/60 border border-white/10">
+              <span className="text-white/40 text-xs">Receipt No.</span>
+              <span className="font-mono text-sm text-cyan-300 font-semibold tracking-wider">{opPreview}</span>
+              <span className="text-white/20 text-[10px] ml-auto">auto-assigned on save</span>
+            </div>
             {feeRecord ? (
               <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-sm">
                 <p className="text-white font-semibold">{feeRecord.student?.name}</p>
@@ -831,7 +851,7 @@ function PaymentHistoryModal({ open, onClose, feeRecord }: PaymentHistoryModalPr
       methodLabel[p.paymentMethod] ?? p.paymentMethod,
       p.referenceNumber ?? "",
       p.cashierNotes ?? "",
-      `PAY-${p.id}`,
+      p.receiptNumber ?? `PAY-${p.id}`,
     ]);
     // Summary footer rows
     dataRows.push(["", "", "", "", "", "", ""]);
@@ -880,7 +900,7 @@ function PaymentHistoryModal({ open, onClose, feeRecord }: PaymentHistoryModalPr
         <td>${esc(methodLabel[p.paymentMethod] ?? p.paymentMethod)}</td>
         <td>${esc(p.referenceNumber ?? "—")}</td>
         <td>${esc(p.cashierNotes ?? "—")}</td>
-        <td class="mono">PAY-${p.id}</td>
+        <td class="mono">${p.receiptNumber ?? `PAY-${p.id}`}</td>
       </tr>`).join("");
 
     const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
@@ -1055,7 +1075,7 @@ ${filterDesc ? `<div class="filter-badge">Filtered: ${esc(filterDesc)}</div>` : 
                       )}
                     </div>
                   )}
-                  <p className="text-white/20 text-[10px] mt-1.5 font-mono">PAY-{p.id}</p>
+                  <p className="text-white/20 text-[10px] mt-1.5 font-mono">{p.receiptNumber ?? `PAY-${p.id}`}</p>
                 </div>
               ))}
             </div>
@@ -1271,6 +1291,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [showStandalonePay, setShowStandalonePay] = useState(false);
   const [showPaymentsModal, setShowPaymentsModal] = useState(false);
   const [viewPaymentsRecord, setViewPaymentsRecord] = useState<FeeRecordWithStudent | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [studentSearchCls, setStudentSearchCls] = useState("");
   const [studentSearchQ, setStudentSearchQ] = useState("");
   const [studentResults, setStudentResults] = useState<StudentItem[] | null>(null);
@@ -1349,6 +1370,19 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       });
     return map;
   }, [paymentRecordsList]);
+
+  // Preview next AF receipt number — peek only, no DB write
+  const { data: afPreviewData } = useQuery<{ preview: string }>({
+    queryKey: ["/api/admin/fees/next-receipt", "AF", showForm],
+    queryFn: async () => {
+      const r = await sessionFetch("/api/admin/fees/next-receipt?prefix=AF");
+      if (!r.ok) return { preview: "AF—" };
+      return r.json();
+    },
+    enabled: showForm && !editing,
+    staleTime: 0,
+  });
+  const afPreview = afPreviewData?.preview ?? "…";
 
   const form = useForm<FeeFormValues>({
     resolver: zodResolver(feeFormSchema),
@@ -1534,8 +1568,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-white/5">
-                  {["Student","Fee Name","Fee Type","Amount","Due Date","Status","Paid On","Acad. Year","Notes","Actions"].map((h, i) => (
-                    <th key={h} className={`px-4 py-3 text-white/50 font-medium ${i === 3 ? "text-right" : i >= 9 ? "text-right" : i >= 4 ? "text-center" : "text-left"}`}>{h}</th>
+                  {["Student","Fee Name","Fee Type","Amount","Due Date","Status","Paid On","Acad. Year","Notes","Receipt","Actions"].map((h, i) => (
+                    <th key={h} className={`px-4 py-3 text-white/50 font-medium ${i === 3 ? "text-right" : i >= 10 ? "text-right" : i >= 4 ? "text-center" : "text-left"}`}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -1563,6 +1597,11 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{fmtDate(rec.paidDate)}</td>
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{rec.academicYear ?? "—"}</td>
                     <td className="px-4 py-3 text-left text-white/50 text-xs max-w-[120px] truncate" title={rec.notes ?? ""}>{rec.notes || "—"}</td>
+                    <td className="px-4 py-3 text-center">
+                      {rec.receiptNumber
+                        ? <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 border border-white/10 text-white/60">{rec.receiptNumber}</span>
+                        : <span className="text-white/20 text-xs">—</span>}
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
                         {canRecord && !isArchiveMode && rec.status !== "Paid" && rec.status !== "Waived" && (
@@ -1584,13 +1623,15 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                             </Button>
                           );
                         })()}
-                        {rec.receiptNumber && (() => {
-                          const m = rec.receiptNumber.match(/^REC-(\d+)$/);
-                          return m ? (
+                        {(() => {
+                          // Show print button for the most recent non-auto payment on this record
+                          const recentPayment = (paymentsByFeeRecordId.get(rec.id) ?? [])
+                            .find(p => p.cashierNotes !== "Auto-recorded from Add Fee Record");
+                          return recentPayment ? (
                             <Button size="icon" variant="ghost"
-                              onClick={() => window.open(`/api/admin/fees/payments/${m[1]}/receipt`, "_blank")}
+                              onClick={() => window.open(`/api/admin/fees/payments/${recentPayment.id}/receipt`, "_blank")}
                               className="h-7 w-7 text-white/40 hover:text-cyan-400"
-                              title="Print receipt">
+                              title={`Print receipt ${recentPayment.receiptNumber ?? ""}`}>
                               <Printer className="w-3.5 h-3.5" />
                             </Button>
                           ) : null;
@@ -1600,7 +1641,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                             <Button size="icon" variant="ghost" onClick={() => openEdit(rec)} className="h-7 w-7 text-white/40 hover:text-white">
                               <Pencil className="w-3.5 h-3.5" />
                             </Button>
-                            <Button size="icon" variant="ghost" onClick={() => deleteMut.mutate(rec.id)} className="h-7 w-7 text-white/40 hover:text-red-400">
+                            <Button size="icon" variant="ghost" onClick={() => setConfirmDeleteId(rec.id)} className="h-7 w-7 text-white/40 hover:text-red-400">
                               <Trash2 className="w-3.5 h-3.5" />
                             </Button>
                           </>
@@ -1632,12 +1673,51 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         availableFeeTypes={allFeeTypes}
       />
 
+      {/* Delete confirmation */}
+      <Dialog open={confirmDeleteId !== null} onOpenChange={v => { if (!v) setConfirmDeleteId(null); }}>
+        <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-red-400 flex items-center gap-2">
+              <Trash2 className="w-4 h-4" /> Delete Fee Record
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-white/70 text-sm">Are you sure you want to delete this fee record? This action cannot be undone.</p>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" className="text-white/60" onClick={() => setConfirmDeleteId(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleteMut.isPending}
+              onClick={() => {
+                if (confirmDeleteId !== null) {
+                  deleteMut.mutate(confirmDeleteId, {
+                    onSuccess: () => setConfirmDeleteId(null),
+                    onError: () => setConfirmDeleteId(null),
+                  });
+                }
+              }}
+            >
+              {deleteMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Trash2 className="w-4 h-4 mr-1" />}
+              Delete
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Add / Edit Dialog */}
       <Dialog open={showForm} onOpenChange={v => { if (!v) { setShowForm(false); setEditing(null); } }}>
         <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-cyan-400">{editing ? "Edit Fee Record" : "Add Fee Record"}</DialogTitle>
           </DialogHeader>
+          {!editing && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800/60 border border-white/10">
+              <span className="text-white/40 text-xs">Receipt No.</span>
+              <span className="font-mono text-sm text-cyan-300 font-semibold tracking-wider">{afPreview}</span>
+              <span className="text-white/20 text-[10px] ml-auto">auto-assigned on save</span>
+            </div>
+          )}
           <Form {...form}>
             <form onSubmit={form.handleSubmit(d => editing ? updateMut.mutate({ id: editing.id, data: d }) : createMut.mutate(d))} className="space-y-4">
               {/* ── Student search & select ── */}
@@ -1762,20 +1842,12 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                 )} />
               </div>
               {(watchStatus === "Paid" || watchStatus === "Partial") && (
-                <div className="grid grid-cols-2 gap-3">
-                  <FormField control={form.control} name="paidDate" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-white/70">Paid Date</FormLabel>
-                      <FormControl><Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white" /></FormControl>
-                    </FormItem>
-                  )} />
-                  <FormField control={form.control} name="receiptNumber" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-white/70">Receipt No.</FormLabel>
-                      <FormControl><Input {...field} placeholder="REC-001" className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30" /></FormControl>
-                    </FormItem>
-                  )} />
-                </div>
+                <FormField control={form.control} name="paidDate" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-white/70">Paid Date</FormLabel>
+                    <FormControl><Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white" /></FormControl>
+                  </FormItem>
+                )} />
               )}
               <div className="grid grid-cols-2 gap-3">
                 <FormField control={form.control} name="academicYear" render={({ field }) => (

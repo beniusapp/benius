@@ -4737,6 +4737,34 @@ export class DatabaseStorage {
     return rec || null;
   }
 
+  // ===== RECEIPT SEQUENCES =====
+
+  // Read-only peek — returns what the NEXT number would be without incrementing.
+  // Safe to call as many times as needed (modal open previews, no DB writes).
+  async peekReceiptNumber(prefix: string): Promise<string> {
+    const result = await db.execute(
+      sql`SELECT current_number FROM receipt_sequences WHERE prefix = ${prefix}`,
+    );
+    const current = Number((result.rows[0] as any)?.current_number ?? 0);
+    return `${prefix}${String(current + 1).padStart(2, "0")}`;
+  }
+
+  // Atomically increments the counter for `prefix` (e.g. "OP", "AF") and
+  // returns the formatted receipt number (e.g. "OP01", "AF12").
+  // Uses INSERT … ON CONFLICT DO UPDATE so it self-seeds on first use.
+  // Deleting ledger rows NEVER touches this table — numbers are permanent.
+  async nextReceiptNumber(prefix: string): Promise<string> {
+    const result = await db.execute(
+      sql`INSERT INTO receipt_sequences (prefix, current_number)
+          VALUES (${prefix}, 1)
+          ON CONFLICT (prefix) DO UPDATE
+            SET current_number = receipt_sequences.current_number + 1
+          RETURNING current_number`,
+    );
+    const n = Number((result.rows[0] as any).current_number);
+    return `${prefix}${String(n).padStart(2, "0")}`;
+  }
+
   // ===== FEE AUDIT LOG =====
 
   async appendFeeAuditLog(entry: {
