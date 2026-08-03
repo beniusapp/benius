@@ -1355,6 +1355,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/payments"] });
       toast({ title: "Fee record created" });
       setShowForm(false); form.reset();
     },
