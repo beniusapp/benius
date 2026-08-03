@@ -1315,18 +1315,24 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     },
     staleTime: 30_000,
   });
-  // Map feeRecordId → most recent payment method (for badge display)
+  // Map feeRecordId → most recent payment method (for badge display).
+  // Exclude auto-created records so "Add Fee" rows never show a Cash/method badge.
   const paymentMethodMap = useMemo(() => {
     const map = new Map<number, string>();
     // Sort oldest-first so the last write wins (most recent payment method)
     [...paymentRecordsList]
+      .filter(p => p.cashierNotes !== "Auto-recorded from Add Fee Record")
       .sort((a, b) => a.id - b.id)
       .forEach(p => { if (p.feeRecordId != null) map.set(p.feeRecordId, p.paymentMethod); });
     return map;
   }, [paymentRecordsList]);
-  // Set of feeRecordIds that have at least one offline payment
+  // Set of feeRecordIds that have at least one explicitly recorded offline payment
   const offlinePaidIds = useMemo(
-    () => new Set(paymentRecordsList.filter(p => p.feeRecordId != null).map(p => p.feeRecordId as number)),
+    () => new Set(
+      paymentRecordsList
+        .filter(p => p.feeRecordId != null && p.cashierNotes !== "Auto-recorded from Add Fee Record")
+        .map(p => p.feeRecordId as number)
+    ),
     [paymentRecordsList]
   );
   // Map feeRecordId → all payment records (sorted newest-first) for the history modal
