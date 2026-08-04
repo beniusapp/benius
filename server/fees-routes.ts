@@ -753,16 +753,32 @@ export function registerFeesRoutes(app: Express) {
       );
       const feeIds = (nullFeeRows.rows as { id: number }[]).map(r => r.id);
 
-      for (const id of feeIds) {
-        const receiptNumber = await storage.nextReceiptNumber("AF");
-        await tx.execute(
-          sql`UPDATE fee_records
-              SET receipt_number = ${receiptNumber}
-              WHERE id = ${id} AND school_id = ${schoolId}`,
+      if (feeIds.length > 0) {
+        // Claim the entire AF range in one atomic step — inside the transaction —
+        // so the sequence advance rolls back with the row updates if the server
+        // crashes mid-run.  This prevents gaps from partial backfill runs.
+        const afSeqResult = await tx.execute(
+          sql`INSERT INTO receipt_sequences (prefix, current_number)
+                VALUES ('AF', ${feeIds.length})
+              ON CONFLICT (prefix) DO UPDATE
+                SET current_number = receipt_sequences.current_number + ${feeIds.length}
+              RETURNING current_number`,
         );
-        if (afFirst === null) afFirst = receiptNumber;
-        afLast = receiptNumber;
-        afCount++;
+        const afEnd = Number((afSeqResult.rows[0] as any).current_number);
+        const afStart = afEnd - feeIds.length + 1;
+
+        for (let i = 0; i < feeIds.length; i++) {
+          const n = afStart + i;
+          const receiptNumber = `AF${String(n).padStart(2, "0")}`;
+          await tx.execute(
+            sql`UPDATE fee_records
+                SET receipt_number = ${receiptNumber}
+                WHERE id = ${feeIds[i]} AND school_id = ${schoolId}`,
+          );
+          if (i === 0) afFirst = receiptNumber;
+          afLast = receiptNumber;
+          afCount++;
+        }
       }
 
       // ── 2. Backfill payment_records (OP prefix) ───────────────────────────
@@ -774,18 +790,35 @@ export function registerFeesRoutes(app: Express) {
       );
       const payIds = (nullPayRows.rows as { id: number }[]).map(r => r.id);
 
-      for (const id of payIds) {
-        const receiptNumber = await storage.nextReceiptNumber("OP");
-        await tx.execute(
-          sql`UPDATE payment_records
-              SET receipt_number = ${receiptNumber}
-              WHERE id = ${id} AND school_id = ${schoolId}`,
+      if (payIds.length > 0) {
+        // Same atomic batch pattern: advance the OP sequence once inside the
+        // transaction so a mid-run crash rolls back both the counter and the rows.
+        const opSeqResult = await tx.execute(
+          sql`INSERT INTO receipt_sequences (prefix, current_number)
+                VALUES ('OP', ${payIds.length})
+              ON CONFLICT (prefix) DO UPDATE
+                SET current_number = receipt_sequences.current_number + ${payIds.length}
+              RETURNING current_number`,
         );
-        if (opFirst === null) opFirst = receiptNumber;
-        opLast = receiptNumber;
-        opCount++;
+        const opEnd = Number((opSeqResult.rows[0] as any).current_number);
+        const opStart = opEnd - payIds.length + 1;
+
+        for (let i = 0; i < payIds.length; i++) {
+          const n = opStart + i;
+          const receiptNumber = `OP${String(n).padStart(2, "0")}`;
+          await tx.execute(
+            sql`UPDATE payment_records
+                SET receipt_number = ${receiptNumber}
+                WHERE id = ${payIds[i]} AND school_id = ${schoolId}`,
+          );
+          if (i === 0) opFirst = receiptNumber;
+          opLast = receiptNumber;
+          opCount++;
+        }
       }
       // Transaction commits here → xact lock auto-released by PostgreSQL.
+      // Because the sequence advances were also inside this transaction, a crash
+      // before commit rolls back both the counter and the row updates — no gaps.
     });
 
     if (lockBlocked) {
