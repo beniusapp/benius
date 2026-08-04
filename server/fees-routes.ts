@@ -634,48 +634,79 @@ export function registerFeesRoutes(app: Express) {
   // Assigns AF receipt numbers to fee_records with receipt_number IS NULL and
   // OP receipt numbers to payment_records with receipt_number IS NULL.
   // Safe to call multiple times — re-running skips already-numbered rows.
+  //
+  // Concurrency guard: pg_try_advisory_xact_lock runs inside db.transaction()
+  // so acquire + all work + auto-release are pinned to the same DB connection.
+  // Transaction-scoped locks release automatically when the transaction ends
+  // (commit or rollback), so there is no risk of a stuck lock from pool churn.
+  // A concurrent call sees the lock held and receives 409 immediately.
+  const BACKFILL_LOCK_NS = 987654321; // arbitrary namespace for this operation
   app.post("/api/admin/fees/backfill-receipts", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
 
-    // ── 1. Backfill fee_records (AF prefix) ───────────────────────────────
-    const nullFeeRows = await db.execute(
-      sql`SELECT id FROM fee_records
-          WHERE school_id = ${schoolId}
-            AND receipt_number IS NULL
-          ORDER BY id ASC`,
-    );
-    const feeIds = (nullFeeRows.rows as { id: number }[]).map(r => r.id);
-
     let afCount = 0;
-    for (const id of feeIds) {
-      const receiptNumber = await storage.nextReceiptNumber("AF");
-      await db.execute(
-        sql`UPDATE fee_records
-            SET receipt_number = ${receiptNumber}
-            WHERE id = ${id} AND school_id = ${schoolId}`,
-      );
-      afCount++;
-    }
-
-    // ── 2. Backfill payment_records (OP prefix) ───────────────────────────
-    const nullPayRows = await db.execute(
-      sql`SELECT id FROM payment_records
-          WHERE school_id = ${schoolId}
-            AND receipt_number IS NULL
-          ORDER BY id ASC`,
-    );
-    const payIds = (nullPayRows.rows as { id: number }[]).map(r => r.id);
-
     let opCount = 0;
-    for (const id of payIds) {
-      const receiptNumber = await storage.nextReceiptNumber("OP");
-      await db.execute(
-        sql`UPDATE payment_records
-            SET receipt_number = ${receiptNumber}
-            WHERE id = ${id} AND school_id = ${schoolId}`,
+    let lockBlocked = false;
+
+    await db.transaction(async (tx) => {
+      // pg_try_advisory_xact_lock is transaction-scoped: it is guaranteed to
+      // run on the same connection as the rest of the transaction and releases
+      // automatically at commit/rollback — safe with connection pools.
+      const lockResult = await tx.execute(
+        sql`SELECT pg_try_advisory_xact_lock(${BACKFILL_LOCK_NS}, ${schoolId}) AS acquired`,
       );
-      opCount++;
+      const lockAcquired = (lockResult.rows[0] as { acquired: boolean }).acquired;
+      if (!lockAcquired) {
+        lockBlocked = true;
+        return; // exit transaction callback; no writes; lock not held by us
+      }
+
+      // ── 1. Backfill fee_records (AF prefix) ───────────────────────────────
+      const nullFeeRows = await tx.execute(
+        sql`SELECT id FROM fee_records
+            WHERE school_id = ${schoolId}
+              AND receipt_number IS NULL
+            ORDER BY id ASC`,
+      );
+      const feeIds = (nullFeeRows.rows as { id: number }[]).map(r => r.id);
+
+      for (const id of feeIds) {
+        const receiptNumber = await storage.nextReceiptNumber("AF");
+        await tx.execute(
+          sql`UPDATE fee_records
+              SET receipt_number = ${receiptNumber}
+              WHERE id = ${id} AND school_id = ${schoolId}`,
+        );
+        afCount++;
+      }
+
+      // ── 2. Backfill payment_records (OP prefix) ───────────────────────────
+      const nullPayRows = await tx.execute(
+        sql`SELECT id FROM payment_records
+            WHERE school_id = ${schoolId}
+              AND receipt_number IS NULL
+            ORDER BY id ASC`,
+      );
+      const payIds = (nullPayRows.rows as { id: number }[]).map(r => r.id);
+
+      for (const id of payIds) {
+        const receiptNumber = await storage.nextReceiptNumber("OP");
+        await tx.execute(
+          sql`UPDATE payment_records
+              SET receipt_number = ${receiptNumber}
+              WHERE id = ${id} AND school_id = ${schoolId}`,
+        );
+        opCount++;
+      }
+      // Transaction commits here → xact lock auto-released by PostgreSQL.
+    });
+
+    if (lockBlocked) {
+      return res.status(409).json({
+        message: "Receipt backfill is already running. Please wait for it to finish and try again.",
+        alreadyRunning: true,
+      });
     }
 
     await appendAudit(

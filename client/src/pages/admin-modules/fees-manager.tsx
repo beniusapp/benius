@@ -2458,22 +2458,35 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 function BackfillReceiptsSection() {
   const { toast } = useToast();
   const [result, setResult] = useState<{ feeRecordsUpdated: number; paymentRecordsUpdated: number } | null>(null);
+  const [alreadyRunning, setAlreadyRunning] = useState(false);
 
   const backfillMut = useMutation({
     mutationFn: async () => {
+      setAlreadyRunning(false);
       const r = await sessionFetch("/api/admin/fees/backfill-receipts", { method: "POST" });
+      const body = await r.json().catch(() => ({}));
+      if (r.status === 409) {
+        const err: any = new Error(body.message ?? "Backfill already running");
+        err.alreadyRunning = true;
+        throw err;
+      }
       if (!r.ok) {
-        const body = await r.json().catch(() => ({}));
         throw new Error(body.message ?? "Backfill failed");
       }
-      return r.json() as Promise<{ feeRecordsUpdated: number; paymentRecordsUpdated: number; message: string }>;
+      return body as { feeRecordsUpdated: number; paymentRecordsUpdated: number; message: string };
     },
     onSuccess: (data) => {
       setResult({ feeRecordsUpdated: data.feeRecordsUpdated, paymentRecordsUpdated: data.paymentRecordsUpdated });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
       toast({ title: "Receipt backfill complete", description: data.message });
     },
-    onError: (e: Error) => toast({ title: "Backfill failed", description: e.message, variant: "destructive" }),
+    onError: (e: any) => {
+      if (e.alreadyRunning) {
+        setAlreadyRunning(true);
+      } else {
+        toast({ title: "Backfill failed", description: e.message, variant: "destructive" });
+      }
+    },
   });
 
   return (
@@ -2488,7 +2501,7 @@ function BackfillReceiptsSection() {
         </p>
       </div>
 
-      {result && (
+      {result && !alreadyRunning && (
         <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-900/20 border border-emerald-700/30 rounded-lg px-3 py-2">
           <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
           <span>
@@ -2496,6 +2509,13 @@ function BackfillReceiptsSection() {
             {result.paymentRecordsUpdated} payment record{result.paymentRecordsUpdated !== 1 ? "s" : ""} updated.
             {result.feeRecordsUpdated === 0 && result.paymentRecordsUpdated === 0 && " All records already have receipt numbers."}
           </span>
+        </div>
+      )}
+
+      {alreadyRunning && (
+        <div className="flex items-center gap-2 text-xs text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded-lg px-3 py-2">
+          <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" />
+          <span>Another admin is running the backfill. Please wait a moment and try again.</span>
         </div>
       )}
 
