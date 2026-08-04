@@ -1634,17 +1634,32 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                           );
                         })()}
                         {(() => {
-                          // Show print button for the most recent non-auto payment on this record
-                          const recentPayment = (paymentsByFeeRecordId.get(rec.id) ?? [])
+                          // Prefer the most recent offline (OP) payment receipt;
+                          // fall back to the fee-record (AF) receipt for Add Fee entries.
+                          const offlinePayment = (paymentsByFeeRecordId.get(rec.id) ?? [])
                             .find(p => p.cashierNotes !== "Auto-recorded from Add Fee Record");
-                          return recentPayment ? (
-                            <Button size="icon" variant="ghost"
-                              onClick={() => window.open(`/api/admin/fees/payments/${recentPayment.id}/receipt`, "_blank")}
-                              className="h-7 w-7 text-white/40 hover:text-cyan-400"
-                              title={`Print receipt ${recentPayment.receiptNumber ?? ""}`}>
-                              <Printer className="w-3.5 h-3.5" />
-                            </Button>
-                          ) : null;
+                          if (offlinePayment) {
+                            return (
+                              <Button size="icon" variant="ghost"
+                                onClick={() => window.open(`/api/admin/fees/payments/${offlinePayment.id}/receipt`, "_blank")}
+                                className="h-7 w-7 text-white/40 hover:text-cyan-400"
+                                title={`Print offline receipt ${offlinePayment.receiptNumber ?? ""}`}>
+                                <Printer className="w-3.5 h-3.5" />
+                              </Button>
+                            );
+                          }
+                          // Show AF fee-record receipt for any Paid / Partial / Waived record
+                          if (rec.status === "Paid" || rec.status === "Partial" || rec.status === "Waived") {
+                            return (
+                              <Button size="icon" variant="ghost"
+                                onClick={() => window.open(`/api/admin/fees/${rec.id}/receipt`, "_blank")}
+                                className="h-7 w-7 text-white/40 hover:text-cyan-400"
+                                title={`Print receipt ${rec.receiptNumber ?? ""}`}>
+                                <Printer className="w-3.5 h-3.5" />
+                              </Button>
+                            );
+                          }
+                          return null;
                         })()}
                         {canRecord && !isArchiveMode && (
                           <>

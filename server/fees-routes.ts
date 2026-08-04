@@ -531,6 +531,84 @@ export function registerFeesRoutes(app: Express) {
     res.send(html);
   });
 
+  // ── Fee Record Receipt HTML (Add Fee — AF receipts) ──────────────────────
+  // Generates a printable receipt directly from the fee record, so Add Fee
+  // entries that have no offline payment record still get a receipt.
+  app.get("/api/admin/fees/:id/receipt", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+
+    const recs = await db.execute(sql`
+      SELECT fr.*, s.name AS student_name, s.digital_student_id, s.class, s.section
+      FROM fee_records fr
+      JOIN students s ON s.id = fr.student_id
+      WHERE fr.id = ${id} AND fr.school_id = ${schoolId}
+      LIMIT 1
+    `);
+    const row = recs.rows[0] as any;
+    if (!row) return res.status(404).json({ message: "Fee record not found" });
+
+    const [school] = await db.select({ name: schools.name }).from(schools).where(eq(schools.id, schoolId));
+    const esc = (s: string | null | undefined) =>
+      (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+    const paidDateStr = row.paid_date
+      ? new Date(row.paid_date).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })
+      : "—";
+    const dueDateStr = row.due_date
+      ? new Date(row.due_date).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })
+      : "—";
+    const amountStr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(row.amount);
+    const schoolName = esc(school?.name ?? "School");
+    const receiptNo = esc(row.receipt_number ?? `FEE-${row.id}`);
+
+    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Fee Receipt</title>
+<style>
+  body{font-family:Arial,sans-serif;margin:0;padding:32px;color:#1e293b;background:#fff;}
+  .receipt{max-width:580px;margin:auto;border:2px solid #06b6d4;border-radius:12px;padding:32px;}
+  .header{text-align:center;border-bottom:2px solid #e2e8f0;padding-bottom:20px;margin-bottom:20px;}
+  .header h1{margin:0 0 4px;font-size:22px;color:#0891b2;}
+  .header p{margin:0;font-size:13px;color:#64748b;}
+  .badge{display:inline-block;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:20px;padding:4px 14px;font-weight:700;font-size:13px;margin-bottom:16px;}
+  table{width:100%;border-collapse:collapse;margin-top:8px;}
+  td{padding:9px 6px;font-size:14px;border-bottom:1px solid #f1f5f9;}
+  td:first-child{color:#64748b;width:45%;}
+  td:last-child{font-weight:600;}
+  .amount-row td:last-child{font-size:18px;font-weight:800;color:#0891b2;}
+  .footer{margin-top:24px;text-align:center;font-size:11px;color:#94a3b8;}
+  @media print{body{padding:0;}button{display:none;}}
+</style></head><body>
+<div class="receipt">
+  <div class="header"><h1>${schoolName}</h1><p>Fee Payment Receipt</p></div>
+  <div style="text-align:center;margin-bottom:16px;"><span class="badge">&#10003; FEE RECORDED</span></div>
+  <table>
+    <tr><td>Receipt No.</td><td>${receiptNo}</td></tr>
+    <tr><td>Student Name</td><td>${esc(row.student_name)}</td></tr>
+    <tr><td>Student ID</td><td>${esc(row.digital_student_id)}</td></tr>
+    <tr><td>Class / Section</td><td>${esc(row.class)} / ${esc(row.section)}</td></tr>
+    <tr><td>Fee Type</td><td>${esc(row.fee_type)}</td></tr>
+    <tr><td>Academic Year</td><td>${esc(row.academic_year ?? "—")}</td></tr>
+    <tr><td>Status</td><td>${esc(row.status)}</td></tr>
+    ${row.due_date ? `<tr><td>Due Date</td><td>${dueDateStr}</td></tr>` : ""}
+    ${row.paid_date ? `<tr><td>Paid On</td><td>${paidDateStr}</td></tr>` : ""}
+    ${row.notes ? `<tr><td>Notes</td><td>${esc(row.notes)}</td></tr>` : ""}
+    <tr class="amount-row"><td>Amount</td><td>${amountStr}</td></tr>
+  </table>
+  <div class="footer">
+    <p>This is a computer-generated receipt. No signature required.</p>
+    <p>&#169; ${new Date().getFullYear()} BENIUS &middot; ${schoolName}</p>
+  </div>
+</div>
+<script>window.print();</script>
+</body></html>`;
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Content-Disposition", `inline; filename="fee-receipt-${id}.html"`);
+    res.send(html);
+  });
+
   // ── School-wide Ledger Export (CSV) ──────────────────────────────────────
   app.get("/api/admin/fees/export-ledger", async (req, res) => {
     if (!adminGuard(req, res)) return;
