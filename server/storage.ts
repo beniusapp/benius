@@ -4754,6 +4754,17 @@ export class DatabaseStorage {
   // returns the formatted receipt number (e.g. "OP01", "AF12").
   // Uses INSERT … ON CONFLICT DO UPDATE so it self-seeds on first use.
   // Deleting ledger rows NEVER touches this table — numbers are permanent.
+  //
+  // IMPORTANT — INTENTIONAL GAP BEHAVIOUR:
+  //   This function is called BEFORE the surrounding DB transaction in the
+  //   regular payment flow (POST /api/admin/fees/payments).  If the
+  //   transaction rolls back after this call (server crash, overpayment
+  //   guard, network failure, etc.) the incremented counter is NOT rolled
+  //   back — the number is permanently consumed but never stored.  The
+  //   resulting gap in the OP sequence is deliberate: it guarantees that
+  //   no two payments ever share a receipt number, even under concurrent
+  //   requests or partial failures.  Gaps do NOT represent missing or
+  //   duplicated payments.
   async nextReceiptNumber(prefix: string): Promise<string> {
     const result = await db.execute(
       sql`INSERT INTO receipt_sequences (prefix, current_number)

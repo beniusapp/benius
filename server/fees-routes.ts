@@ -191,8 +191,28 @@ export function registerFeesRoutes(app: Express) {
     }
 
     // Generate a non-reusable OP receipt number BEFORE the transaction so
-    // the sequence counter is always consumed (even on rollback), ensuring
-    // no two payments ever share a receipt number.
+    // the sequence counter is always consumed even if the transaction rolls
+    // back (e.g. due to a server crash or DB error mid-payment).
+    //
+    // WHY intentional pre-transaction consumption:
+    //   • Uniqueness guarantee — the counter is incremented atomically at the
+    //     DB level (INSERT … ON CONFLICT DO UPDATE).  Doing this inside the
+    //     payment transaction would mean a rolled-back attempt could leave a
+    //     "phantom" counter increment that causes the NEXT request (which
+    //     reuses the same idempotency key) to get a new number instead of
+    //     the idempotency-cached one.  Pre-incrementing avoids that race.
+    //   • Idempotency — retried requests are caught by the idempotency-key
+    //     guard above and return the already-committed record; they never
+    //     reach this line a second time.
+    //
+    // CONSEQUENCE — GAPS IN OP NUMBERS ARE EXPECTED:
+    //   If the DB transaction below rolls back after this point (network
+    //   drop, server restart, overpayment guard exit, etc.) the OP number
+    //   is permanently consumed but never stored anywhere.  The next
+    //   successful payment will carry the following number.  These gaps do
+    //   NOT represent missing or duplicate payments — they are a deliberate
+    //   side-effect of the uniqueness guarantee.  Accountants auditing the
+    //   OP sequence should treat non-consecutive numbers as normal.
     const opReceipt = await storage.nextReceiptNumber("OP");
 
     // Auto-create a fee record when none is pre-linked but fee details were supplied
@@ -338,7 +358,7 @@ export function registerFeesRoutes(app: Express) {
     }
 
     await appendAudit(req, schoolId, "payment", "payment_record", rec?.id ?? null,
-      `Recorded ${paymentOnly.paymentMethod} ₹${paymentOnly.amount} for student #${paymentOnly.studentId}`);
+      `Recorded ${paymentOnly.paymentMethod} ₹${paymentOnly.amount} for student #${paymentOnly.studentId} — receipt ${opReceipt}. Note: gaps in the OP receipt sequence are expected and do not indicate missing payments (pre-transaction counter consumption guarantees uniqueness).`);
     res.status(201).json(rec);
   });
 
