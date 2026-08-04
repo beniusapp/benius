@@ -1,8 +1,8 @@
 import type { Express } from "express";
 import { storage } from "./storage";
 import { db } from "./db";
-import { users, schools, students, feeRecords, paymentRecords } from "@shared/schema";
-import { and, eq, sql } from "drizzle-orm";
+import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog } from "@shared/schema";
+import { and, eq, sql, desc } from "drizzle-orm";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 
@@ -869,6 +869,205 @@ export function registerFeesRoutes(app: Express) {
       opRange,
       message: `Backfill complete: ${afCount} fee record(s) and ${opCount} payment record(s) assigned receipt numbers.`,
     });
+  });
+
+  // ── Admin: Notification Config GET ────────────────────────────────────────
+  app.get("/api/admin/fees/notification-config", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const cfg = await storage.getNotificationConfig(schoolId);
+    // Mask API keys — return a sentinel so frontend knows key is set
+    const mask = (v: string | null | undefined) => v ? "••••••••" : null;
+    res.json(cfg ? {
+      smsEnabled: cfg.smsEnabled,
+      msg91AuthKey: mask(cfg.msg91AuthKey),
+      msg91SenderId: cfg.msg91SenderId,
+      waEnabled: cfg.waEnabled,
+      msg91WaNumber: cfg.msg91WaNumber,
+      msg91WaTemplate: cfg.msg91WaTemplate,
+      emailEnabled: cfg.emailEnabled,
+      emailProvider: cfg.emailProvider ?? "sendgrid",
+      sendgridApiKey: mask(cfg.sendgridApiKey),
+      sendgridFromEmail: cfg.sendgridFromEmail,
+      sendgridFromName: cfg.sendgridFromName,
+      mailtrapApiKey: mask(cfg.mailtrapApiKey),
+      mailtrapInboxId: cfg.mailtrapInboxId,
+    } : null);
+  });
+
+  // ── Admin: Notification Config PUT ────────────────────────────────────────
+  const notifSchema = z.object({
+    smsEnabled:        z.boolean().default(false),
+    msg91AuthKey:      z.string().optional().nullable(),
+    msg91SenderId:     z.string().optional().nullable(),
+    waEnabled:         z.boolean().default(false),
+    msg91WaNumber:     z.string().optional().nullable(),
+    msg91WaTemplate:   z.string().optional().nullable(),
+    emailEnabled:      z.boolean().default(false),
+    emailProvider:     z.enum(["sendgrid", "mailtrap"]).default("sendgrid"),
+    sendgridApiKey:    z.string().optional().nullable(),
+    sendgridFromEmail: z.string().email().optional().nullable(),
+    sendgridFromName:  z.string().optional().nullable(),
+    mailtrapApiKey:    z.string().optional().nullable(),
+    mailtrapInboxId:   z.string().optional().nullable(),
+  });
+
+  app.put("/api/admin/fees/notification-config", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const parsed = notifSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+    const d = parsed.data;
+    // Only update a key field if the client sent a real value (not the masked sentinel)
+    const existing = await storage.getNotificationConfig(schoolId);
+    const resolveKey = (incoming: string | null | undefined, stored: string | null | undefined) => {
+      if (!incoming || incoming === "••••••••") return stored ?? null;
+      return incoming;
+    };
+
+    const update = {
+      smsEnabled:        d.smsEnabled,
+      msg91AuthKey:      resolveKey(d.msg91AuthKey, existing?.msg91AuthKey),
+      msg91SenderId:     d.msg91SenderId ?? existing?.msg91SenderId ?? null,
+      waEnabled:         d.waEnabled,
+      msg91WaNumber:     d.msg91WaNumber ?? existing?.msg91WaNumber ?? null,
+      msg91WaTemplate:   d.msg91WaTemplate ?? existing?.msg91WaTemplate ?? null,
+      emailEnabled:      d.emailEnabled,
+      emailProvider:     d.emailProvider ?? existing?.emailProvider ?? "sendgrid",
+      sendgridApiKey:    resolveKey(d.sendgridApiKey, existing?.sendgridApiKey),
+      sendgridFromEmail: d.sendgridFromEmail ?? existing?.sendgridFromEmail ?? null,
+      sendgridFromName:  d.sendgridFromName ?? existing?.sendgridFromName ?? null,
+      mailtrapApiKey:    resolveKey(d.mailtrapApiKey, existing?.mailtrapApiKey),
+      mailtrapInboxId:   d.mailtrapInboxId ?? existing?.mailtrapInboxId ?? null,
+    };
+
+    await storage.upsertNotificationConfig(schoolId, update);
+    await appendAudit(req, "update_notification_config", "notification_config", schoolId, `Notification config updated`);
+    res.json({ ok: true });
+  });
+
+  // ── Admin: Dunning Log GET ─────────────────────────────────────────────────
+  app.get("/api/admin/fees/dunning-log", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const rows = await storage.getDunningLog(schoolId, 50);
+    res.json(rows);
+  });
+
+  // ── Admin: Dunning Simulation ─────────────────────────────────────────────
+  app.post("/api/admin/fees/dunning-simulate", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    try {
+      const { runDunningSimulation } = await import("./dunning");
+      const result = await runDunningSimulation(schoolId);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── Admin: Test Notification ───────────────────────────────────────────────
+  app.post("/api/admin/fees/notification-config/test", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const { channel, recipient } = req.body as { channel: string; recipient: string };
+    if (!channel || !recipient) return res.status(400).json({ message: "channel and recipient required" });
+
+    const testText = "This is a test notification from your school fee management system.";
+
+    try {
+      // ── Webhook Capture (no saved config needed) ─────────────────────────
+      if (channel === "webhook") {
+        if (!recipient.startsWith("http")) return res.status(400).json({ message: "recipient must be a valid URL" });
+        const payload = {
+          _source: "benius_fee_dunning_test",
+          channel: "webhook",
+          timestamp: new Date().toISOString(),
+          sample_notification: {
+            studentName: "Test Student",
+            guardianName: "Test Parent",
+            feeName: "Tuition Fee",
+            amount: 5000,
+            dueDate: new Date().toISOString().split("T")[0],
+            stage: "D7",
+            message: testText,
+          },
+        };
+        const r = await fetch(recipient, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!r.ok) {
+          const body = await r.text();
+          return res.status(400).json({ message: `Webhook error ${r.status}: ${body.substring(0, 200)}` });
+        }
+        return res.json({ ok: true, message: `Payload posted to ${recipient}` });
+      }
+
+      const cfg = await storage.getNotificationConfig(schoolId);
+      if (!cfg) return res.status(400).json({ message: "No notification config saved yet" });
+
+      if (channel === "sms") {
+        if (!cfg.msg91AuthKey || !cfg.msg91SenderId) return res.status(400).json({ message: "SMS not configured" });
+        const mobile = recipient.replace(/\D/g, "").replace(/^0/, "91").replace(/^(?!91)/, "91");
+        const r = await fetch("https://api.msg91.com/api/v2/sendsms", {
+          method: "POST",
+          headers: { authkey: cfg.msg91AuthKey, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sender: cfg.msg91SenderId.substring(0, 6).toUpperCase(),
+            route: "4", country: "91",
+            sms: [{ message: testText, to: [mobile] }],
+          }),
+        });
+        const body = await r.text();
+        if (!r.ok) return res.status(400).json({ message: `MSG91 error: ${body.substring(0, 200)}` });
+
+      } else if (channel === "email") {
+        const provider = cfg.emailProvider ?? "sendgrid";
+        if (provider === "mailtrap") {
+          if (!cfg.mailtrapApiKey) return res.status(400).json({ message: "Mailtrap not configured" });
+          const inboxId = cfg.mailtrapInboxId || "default";
+          const r = await fetch(`https://sandbox.api.mailtrap.io/api/send/${inboxId}`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${cfg.mailtrapApiKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              from: { email: "fees@school.local", name: "School Admin" },
+              to: [{ email: recipient }],
+              subject: "Test Notification — Mailtrap",
+              text: testText,
+            }),
+          });
+          if (!r.ok) {
+            const body = await r.text();
+            return res.status(400).json({ message: `Mailtrap error: ${body.substring(0, 200)}` });
+          }
+        } else {
+          if (!cfg.sendgridApiKey || !cfg.sendgridFromEmail) return res.status(400).json({ message: "SendGrid not configured" });
+          const r = await fetch("https://api.sendgrid.com/v3/mail/send", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${cfg.sendgridApiKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              personalizations: [{ to: [{ email: recipient }] }],
+              from: { email: cfg.sendgridFromEmail, name: cfg.sendgridFromName || "School Admin" },
+              subject: "Test Notification",
+              content: [{ type: "text/plain", value: testText }],
+            }),
+          });
+          if (!r.ok) {
+            const body = await r.text();
+            return res.status(400).json({ message: `SendGrid error: ${body.substring(0, 200)}` });
+          }
+        }
+      } else {
+        return res.status(400).json({ message: "channel must be sms, email, or webhook" });
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
   });
 
   // ── Student: External Portal Info ─────────────────────────────────────────

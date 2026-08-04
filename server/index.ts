@@ -406,6 +406,17 @@ app.use((req, res, next) => {
 
   await registerRoutes(httpServer, app);
 
+  // ===== HOURLY DUNNING JOB (SMS / WhatsApp / Email) =====
+  // Runs at :05 past every hour. Idempotent — skips already-sent (fee, channel, stage) triplets.
+  const { runDunningJob } = await import("./dunning");
+  cron.schedule("5 * * * *", async () => {
+    log("Dunning job starting…", "cron");
+    try { await runDunningJob(); }
+    catch (err) { log(`Dunning job error: ${String(err)}`, "cron"); }
+  });
+  // Also run once on startup to catch any fees that fell due during downtime
+  runDunningJob().catch(err => log(`Dunning startup run error: ${String(err)}`, "cron"));
+
   // ===== NIGHTLY OVERDUE-FEE SWEEP =====
   // Runs at 01:00 every night. Marks all "Due" fee records whose due_date has
   // passed as "Overdue" and writes an audit log entry for each change.

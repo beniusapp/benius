@@ -9,10 +9,12 @@ import {
   nonTeachingStaff, facultyMappings, feeRecords, examPolicyTiers, promotionDecisions,
   academicSessions, enrollments, removedTeachersLog,
   feeStructures, paymentRecords, feeAuditLog, externalPaymentSettings,
+  notificationConfig, dunningLog,
   type FeeStructure, type InsertFeeStructure,
   type PaymentRecord, type InsertPaymentRecord,
   type FeeAuditLog,
   type ExternalPaymentSettings,
+  type NotificationConfig, type DunningLog,
   type RemovedTeacherLog,
   type PromotionDecision,
   type School, type InsertSchool, type Student, type InsertStudent,
@@ -4818,6 +4820,31 @@ export class DatabaseStorage {
       })
       .returning();
     return rec;
+  }
+
+  // ===== NOTIFICATION CONFIG =====
+
+  async getNotificationConfig(schoolId: number): Promise<NotificationConfig | null> {
+    const [rec] = await db.select().from(notificationConfig).where(eq(notificationConfig.schoolId, schoolId));
+    return rec || null;
+  }
+
+  async upsertNotificationConfig(schoolId: number, data: Partial<Omit<NotificationConfig, "id" | "schoolId" | "updatedAt">>): Promise<NotificationConfig> {
+    const [rec] = await db.insert(notificationConfig)
+      .values({ schoolId, ...data, updatedAt: new Date() } as any)
+      .onConflictDoUpdate({
+        target: notificationConfig.schoolId,
+        set: { ...data, updatedAt: new Date() },
+      })
+      .returning();
+    return rec;
+  }
+
+  async getDunningLog(schoolId: number, limit = 50): Promise<DunningLog[]> {
+    return db.select().from(dunningLog)
+      .where(eq(dunningLog.schoolId, schoolId))
+      .orderBy(desc(dunningLog.sentAt))
+      .limit(limit);
   }
 
   // ===== FEE SUMMARY =====

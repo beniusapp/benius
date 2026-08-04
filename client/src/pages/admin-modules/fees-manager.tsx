@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -7,6 +7,7 @@ import {
   CreditCard, Plus, Search, Loader2, Trash2, Pencil, CheckCircle2, AlertTriangle, Clock,
   Receipt, DollarSign, TrendingUp, TrendingDown, Banknote, BookOpen, Bell, ExternalLink,
   Shield, ChevronLeft, ChevronRight, Lock, X, Printer, History, Download, FileText,
+  MessageSquare, Mail, Send, Eye, EyeOff, Zap, Phone,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -78,6 +79,50 @@ interface ExternalSettings {
   gatewayUrl: string | null;
   bannerMessage: string | null;
   maxOvercollectionPercent: number | null;
+}
+
+interface NotifConfig {
+  smsEnabled: boolean;
+  msg91AuthKey: string | null;
+  msg91SenderId: string | null;
+  waEnabled: boolean;
+  msg91WaNumber: string | null;
+  msg91WaTemplate: string | null;
+  emailEnabled: boolean;
+  emailProvider: "sendgrid" | "mailtrap";
+  sendgridApiKey: string | null;
+  sendgridFromEmail: string | null;
+  sendgridFromName: string | null;
+  mailtrapApiKey: string | null;
+  mailtrapInboxId: string | null;
+}
+
+interface DunningLogEntry {
+  id: number;
+  feeRecordId: number;
+  channel: string;
+  stage: string;
+  sentAt: string;
+  status: string;
+  errorMessage: string | null;
+  recipient: string | null;
+  studentName: string | null;
+}
+
+interface SimResult {
+  totalFees: number;
+  entriesLogged: number;
+  byChannel: Record<string, { would_send: number; missing_contact: number }>;
+  entries: Array<{
+    studentName: string;
+    feeType: string;
+    amount: number;
+    dueDate: string;
+    stage: string;
+    channel: string;
+    recipient: string | null;
+    issue: string | null;
+  }>;
 }
 
 interface AcademicSession {
@@ -1284,6 +1329,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [statusFilter, setStatusFilter] = useState("all");
   const [classFilter, setClassFilter] = useState("all");
   const [showForm, setShowForm] = useState(false);
+  const [addFeeSuccessId, setAddFeeSuccessId] = useState<number | null>(null);
   const [showExportLedger, setShowExportLedger] = useState(false);
   const [editing, setEditing] = useState<FeeRecordWithStudent | null>(null);
   const [payTarget, setPayTarget] = useState<FeeRecordWithStudent | null>(null);
@@ -1402,12 +1448,12 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       dueDate: data.dueDate, status: data.status, paidDate: data.paidDate || null,
       receiptNumber: data.receiptNumber || null, notes: data.notes || null, academicYear: data.academicYear || null,
     }),
-    onSuccess: () => {
+    onSuccess: (rec: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/payments"] });
-      toast({ title: "Fee record created" });
-      setShowForm(false); form.reset();
+      form.reset();
+      setAddFeeSuccessId(rec?.id ?? null);
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1572,7 +1618,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-white/5">
-                  {["Receipt","Student","Class","Section","Fee Name","Fee Type","Amount","Due Date","Status","Paid On","Acad. Year","Notes","Actions"].map((h, i) => (
+                  {["Receipt No.","Student","Class","Section","Fee Name","Fee Type","Amount","Due Date","Status","Paid On","Acad. Year","Notes","Actions"].map((h, i) => (
                     <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 6 ? "text-right" : i >= 12 ? "text-right" : i >= 7 ? "text-center" : "text-left"}`}>{h}</th>
                   ))}
                 </tr>
@@ -1731,11 +1777,30 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       </Dialog>
 
       {/* Add / Edit Dialog */}
-      <Dialog open={showForm} onOpenChange={v => { if (!v) { setShowForm(false); setEditing(null); } }}>
+      <Dialog open={showForm} onOpenChange={v => { if (!v) { setShowForm(false); setEditing(null); setAddFeeSuccessId(null); } }}>
         <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-cyan-400">{editing ? "Edit Fee Record" : "Add Fee Record"}</DialogTitle>
           </DialogHeader>
+          {addFeeSuccessId !== null ? (
+            <div className="space-y-4 py-2">
+              <div className="p-4 rounded-xl bg-emerald-900/20 border border-emerald-700/40 text-center">
+                <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2" />
+                <p className="text-emerald-400 font-semibold text-lg">Fee Added</p>
+                <p className="text-white/60 text-sm mt-1">The fee record has been saved successfully.</p>
+              </div>
+              <Button
+                className="w-full bg-white/10 hover:bg-white/20 text-white gap-2"
+                onClick={() => window.open(`/api/admin/fees/${addFeeSuccessId}/receipt`, "_blank")}
+              >
+                <Printer className="w-4 h-4" /> Print Receipt
+              </Button>
+              <Button className="w-full bg-cyan-600 hover:bg-cyan-500 text-white" onClick={() => { setShowForm(false); setAddFeeSuccessId(null); }}>
+                Done
+              </Button>
+            </div>
+          ) : (
+          <>
           {!editing && (
             <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800/60 border border-white/10">
               <span className="text-white/40 text-xs">Receipt No.</span>
@@ -1897,6 +1962,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
               </div>
             </form>
           </Form>
+          </>
+          )}
         </DialogContent>
       </Dialog>
     </div>
@@ -2309,39 +2376,538 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   );
 }
 
-// ─── Reminders Tab ────────────────────────────────────────────────────────────
+// ─── Reminders / Notifications Tab ────────────────────────────────────────────
 
-function RemindersTab() {
-  const ROWS = [
-    { day: "D+0",  label: "On Due Date",       note: "Notify parent/guardian of the fee amount now due.", icon: "📅" },
-    { day: "D+7",  label: "7 Days Overdue",    note: "First reminder — polite nudge via SMS or email.",   icon: "📩" },
-    { day: "D+14", label: "14 Days Overdue",   note: "Second escalation — copy to class guardian.",       icon: "⚠️"  },
-    { day: "D+30", label: "30 Days Overdue",   note: "Final notice — flag account, apply late fee if applicable.", icon: "🚨" },
-  ];
+function KeyInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  const [show, setShow] = useState(false);
   return (
-    <div className="space-y-4 max-w-2xl">
-      <div className="p-4 rounded-xl border border-amber-700/30 bg-amber-900/10">
-        <p className="text-amber-400 text-sm font-semibold">Automated Dunning Schedule</p>
-        <p className="text-white/50 text-xs mt-1">Connect an SMS / email provider via the External Portal tab to enable automated dispatch at each stage below.</p>
+    <div className="relative">
+      <input
+        type={show ? "text" : "password"}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full bg-[#0f1923] border border-white/10 text-white text-sm rounded-lg px-3 py-2 pr-10 focus:outline-none focus:border-cyan-500/60 placeholder:text-white/20"
+      />
+      <button type="button" onClick={() => setShow(s => !s)}
+        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60">
+        {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+      </button>
+    </div>
+  );
+}
+
+function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  // ── Provider form state ──────────────────────────────────────────────────
+  const [smsEnabled,        setSmsEnabled]        = useState(false);
+  const [msg91AuthKey,      setMsg91AuthKey]       = useState("");
+  const [msg91SenderId,     setMsg91SenderId]      = useState("");
+  const [waEnabled,         setWaEnabled]          = useState(false);
+  const [msg91WaNumber,     setMsg91WaNumber]      = useState("");
+  const [msg91WaTemplate,   setMsg91WaTemplate]    = useState("");
+  const [emailEnabled,      setEmailEnabled]       = useState(false);
+  const [sgApiKey,          setSgApiKey]           = useState("");
+  const [sgFromEmail,       setSgFromEmail]        = useState("");
+  const [sgFromName,        setSgFromName]         = useState("");
+  const [emailProvider,     setEmailProvider]      = useState<"sendgrid" | "mailtrap">("sendgrid");
+  const [mailtrapApiKey,    setMailtrapApiKey]     = useState("");
+  const [mailtrapInboxId,   setMailtrapInboxId]    = useState("");
+  const [synced,            setSynced]             = useState(false);
+
+  // Test notification state
+  const [testChannel,  setTestChannel]  = useState<"sms" | "email" | "webhook">("webhook");
+  const [testRecipient,setTestRecipient]= useState("");
+  const [testOpen,     setTestOpen]     = useState(false);
+
+  // Simulation state
+  const [simResult, setSimResult] = useState<SimResult | null>(null);
+  const [simOpen,   setSimOpen]   = useState(false);
+
+  const { data: cfg, isLoading } = useQuery<NotifConfig | null>({
+    queryKey: ["/api/admin/fees/notification-config"],
+    staleTime: 60_000,
+  });
+
+  const { data: logEntries = [] } = useQuery<DunningLogEntry[]>({
+    queryKey: ["/api/admin/fees/dunning-log"],
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (cfg !== undefined && !synced) {
+      if (cfg) {
+        setSmsEnabled(cfg.smsEnabled);
+        setMsg91AuthKey(cfg.msg91AuthKey ?? "");
+        setMsg91SenderId(cfg.msg91SenderId ?? "");
+        setWaEnabled(cfg.waEnabled);
+        setMsg91WaNumber(cfg.msg91WaNumber ?? "");
+        setMsg91WaTemplate(cfg.msg91WaTemplate ?? "");
+        setEmailEnabled(cfg.emailEnabled);
+        setEmailProvider(cfg.emailProvider ?? "sendgrid");
+        setSgApiKey(cfg.sendgridApiKey ?? "");
+        setSgFromEmail(cfg.sendgridFromEmail ?? "");
+        setSgFromName(cfg.sendgridFromName ?? "");
+        setMailtrapApiKey(cfg.mailtrapApiKey ?? "");
+        setMailtrapInboxId(cfg.mailtrapInboxId ?? "");
+      }
+      setSynced(true);
+    }
+  }, [cfg, synced]);
+
+  const saveMut = useMutation({
+    mutationFn: () => apiRequest("PUT", "/api/admin/fees/notification-config", {
+      smsEnabled, msg91AuthKey: msg91AuthKey || null, msg91SenderId: msg91SenderId || null,
+      waEnabled, msg91WaNumber: msg91WaNumber || null, msg91WaTemplate: msg91WaTemplate || null,
+      emailEnabled, emailProvider,
+      sendgridApiKey: sgApiKey || null, sendgridFromEmail: sgFromEmail || null, sendgridFromName: sgFromName || null,
+      mailtrapApiKey: mailtrapApiKey || null, mailtrapInboxId: mailtrapInboxId || null,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/notification-config"] });
+      toast({ title: "Notification settings saved" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const testMut = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/admin/fees/notification-config/test", { channel: testChannel, recipient: testRecipient }),
+    onSuccess: () => toast({ title: "Test sent!", description: `Test ${testChannel} sent to ${testRecipient}` }),
+    onError: (e: Error) => toast({ title: "Test failed", description: e.message, variant: "destructive" }),
+  });
+
+  const simulateMut = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/admin/fees/dunning-simulate", {}),
+    onSuccess: (data: SimResult) => {
+      setSimResult(data);
+      setSimOpen(true);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/dunning-log"] });
+    },
+    onError: (e: Error) => toast({ title: "Simulation failed", description: e.message, variant: "destructive" }),
+  });
+
+  const DUNNING_ROWS = [
+    { day: "D+0",  label: "On Due Date",       note: "Notify parent/guardian of the fee amount now due.", icon: "📅" },
+    { day: "D+7",  label: "7 Days Overdue",    note: "First reminder — polite nudge via SMS / WhatsApp / email.", icon: "📩" },
+    { day: "D+14", label: "14 Days Overdue",   note: "Second escalation — copy to class guardian.", icon: "⚠️" },
+    { day: "D+30", label: "30 Days Overdue",   note: "Final notice — account may be flagged.", icon: "🚨" },
+  ];
+
+  const CHANNEL_ICONS: Record<string, React.ReactNode> = {
+    sms:       <MessageSquare className="w-3.5 h-3.5" />,
+    whatsapp:  <Phone className="w-3.5 h-3.5" />,
+    email:     <Mail className="w-3.5 h-3.5" />,
+  };
+  const CHANNEL_COLORS: Record<string, string> = {
+    sms:       "bg-blue-900/40 text-blue-300 border-blue-700/40",
+    whatsapp:  "bg-green-900/40 text-green-300 border-green-700/40",
+    email:     "bg-purple-900/40 text-purple-300 border-purple-700/40",
+  };
+  const STAGE_COLORS: Record<string, string> = {
+    D0: "text-cyan-400", D7: "text-amber-400", D14: "text-orange-400", D30: "text-red-400",
+  };
+
+  if (isLoading) return <div className="flex items-center justify-center py-16 text-white/40"><Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading…</div>;
+
+  const anyEnabled = smsEnabled || waEnabled || emailEnabled;
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+
+      {/* ── Section header ── */}
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-white font-semibold">Notification Providers</p>
+          <p className="text-white/40 text-xs mt-0.5">Enable SMS, WhatsApp, and email to automatically remind parents at each overdue stage.</p>
+        </div>
+        {anyEnabled && (
+          <span className="flex items-center gap-1 text-xs text-emerald-400 bg-emerald-900/20 border border-emerald-700/30 px-2.5 py-1 rounded-full">
+            <Zap className="w-3 h-3" /> Active
+          </span>
+        )}
       </div>
-      <div className="space-y-3">
-        {ROWS.map(r => (
-          <div key={r.day} className="flex items-center gap-4 p-4 rounded-xl border border-white/10 bg-white/5">
-            <span className="text-2xl w-8 text-center flex-shrink-0">{r.icon}</span>
-            <div className="w-14 flex-shrink-0 text-center">
-              <p className="text-cyan-400 text-xs font-bold">{r.day}</p>
-            </div>
-            <div className="h-6 w-px bg-white/10 flex-shrink-0" />
+
+      {/* ── SMS Card ── */}
+      <div className={`rounded-xl border p-4 space-y-3 transition-colors ${smsEnabled ? "border-blue-700/40 bg-blue-900/10" : "border-white/10 bg-white/5"}`}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <MessageSquare className="w-4 h-4 text-blue-400" />
+            <span className="text-white font-medium text-sm">SMS via MSG91</span>
+          </div>
+          <Switch checked={smsEnabled} onCheckedChange={setSmsEnabled} disabled={isArchiveMode} />
+        </div>
+        {smsEnabled && (
+          <div className="space-y-2 pt-1">
             <div>
-              <p className="text-white font-medium text-sm">{r.label}</p>
-              <p className="text-white/50 text-xs mt-0.5">{r.note}</p>
+              <p className="text-white/50 text-xs mb-1">MSG91 Auth Key</p>
+              <KeyInput value={msg91AuthKey} onChange={setMsg91AuthKey} placeholder="Enter your MSG91 auth key" />
+            </div>
+            <div>
+              <p className="text-white/50 text-xs mb-1">Sender ID <span className="text-white/30">(6 chars, e.g. SCHOOL)</span></p>
+              <input value={msg91SenderId} onChange={e => setMsg91SenderId(e.target.value)} maxLength={6}
+                placeholder="SCHOOL"
+                className="w-full bg-[#0f1923] border border-white/10 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500/60 placeholder:text-white/20 uppercase" />
             </div>
           </div>
-        ))}
+        )}
       </div>
-      <p className="text-white/30 text-xs p-3 rounded-lg border border-white/5 bg-white/5">
-        <span className="text-white/50 font-medium">Note:</span> Automated delivery requires a third-party SMS gateway (e.g. Twilio, MSG91) or email provider (e.g. SendGrid). Configure your webhook URL in the <span className="text-cyan-400">External Portal</span> tab.
-      </p>
+
+      {/* ── WhatsApp Card ── */}
+      <div className={`rounded-xl border p-4 space-y-3 transition-colors ${waEnabled ? "border-green-700/40 bg-green-900/10" : "border-white/10 bg-white/5"}`}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Phone className="w-4 h-4 text-green-400" />
+            <span className="text-white font-medium text-sm">WhatsApp via MSG91</span>
+          </div>
+          <Switch checked={waEnabled} onCheckedChange={setWaEnabled} disabled={isArchiveMode} />
+        </div>
+        {waEnabled && (
+          <div className="space-y-2 pt-1">
+            <div className="p-2.5 rounded-lg bg-amber-900/20 border border-amber-700/30">
+              <p className="text-amber-300 text-xs">WhatsApp requires a <strong>pre-approved message template</strong> in your MSG91 dashboard. Your template must have 5 body parameters: <code>{"{{1}}"}</code> parent name, <code>{"{{2}}"}</code> student name, <code>{"{{3}}"}</code> fee name, <code>{"{{4}}"}</code> amount, <code>{"{{5}}"}</code> overdue status.</p>
+            </div>
+            <div>
+              <p className="text-white/50 text-xs mb-1">MSG91 Auth Key <span className="text-white/30">(same as SMS if using same account)</span></p>
+              <KeyInput value={msg91AuthKey} onChange={setMsg91AuthKey} placeholder="Enter your MSG91 auth key" />
+            </div>
+            <div>
+              <p className="text-white/50 text-xs mb-1">Integrated WhatsApp Number <span className="text-white/30">(91XXXXXXXXXX)</span></p>
+              <input value={msg91WaNumber} onChange={e => setMsg91WaNumber(e.target.value)}
+                placeholder="91XXXXXXXXXX"
+                className="w-full bg-[#0f1923] border border-white/10 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500/60 placeholder:text-white/20" />
+            </div>
+            <div>
+              <p className="text-white/50 text-xs mb-1">Approved Template Name</p>
+              <input value={msg91WaTemplate} onChange={e => setMsg91WaTemplate(e.target.value)}
+                placeholder="fee_reminder"
+                className="w-full bg-[#0f1923] border border-white/10 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500/60 placeholder:text-white/20" />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Email Card ── */}
+      <div className={`rounded-xl border p-4 space-y-3 transition-colors ${emailEnabled ? "border-purple-700/40 bg-purple-900/10" : "border-white/10 bg-white/5"}`}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Mail className="w-4 h-4 text-purple-400" />
+            <span className="text-white font-medium text-sm">Email</span>
+          </div>
+          <Switch checked={emailEnabled} onCheckedChange={setEmailEnabled} disabled={isArchiveMode} />
+        </div>
+        {emailEnabled && (
+          <div className="space-y-3 pt-1">
+            {/* Provider toggle */}
+            <div>
+              <p className="text-white/50 text-xs mb-2">Email Provider</p>
+              <div className="flex gap-2">
+                {(["sendgrid", "mailtrap"] as const).map(p => (
+                  <button key={p} onClick={() => setEmailProvider(p)} disabled={isArchiveMode}
+                    className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-colors ${emailProvider === p ? "bg-purple-700/40 border-purple-500/60 text-white" : "border-white/10 text-white/40 hover:text-white/70"}`}>
+                    {p === "sendgrid" ? "SendGrid" : "Mailtrap (free test)"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {emailProvider === "sendgrid" ? (
+              <>
+                <div>
+                  <p className="text-white/50 text-xs mb-1">SendGrid API Key</p>
+                  <KeyInput value={sgApiKey} onChange={setSgApiKey} placeholder="SG.xxxxxxxxxxxx" />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <p className="text-white/50 text-xs mb-1">From Email</p>
+                    <input value={sgFromEmail} onChange={e => setSgFromEmail(e.target.value)}
+                      placeholder="fees@school.edu"
+                      className="w-full bg-[#0f1923] border border-white/10 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500/60 placeholder:text-white/20" />
+                  </div>
+                  <div>
+                    <p className="text-white/50 text-xs mb-1">From Name</p>
+                    <input value={sgFromName} onChange={e => setSgFromName(e.target.value)}
+                      placeholder="School Admin"
+                      className="w-full bg-[#0f1923] border border-white/10 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500/60 placeholder:text-white/20" />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="p-2.5 rounded-lg bg-purple-900/20 border border-purple-700/30">
+                  <p className="text-purple-300 text-xs">
+                    <strong>Mailtrap</strong> catches emails in a test inbox — nothing goes to real parents.
+                    Free plan: 1,000 emails/month. Sign up at <span className="text-cyan-400">mailtrap.io</span> → Inboxes → Show Credentials → copy <strong>API Token</strong> and <strong>Inbox ID</strong>.
+                  </p>
+                </div>
+                <div>
+                  <p className="text-white/50 text-xs mb-1">Mailtrap API Token</p>
+                  <KeyInput value={mailtrapApiKey} onChange={setMailtrapApiKey} placeholder="your-mailtrap-token" />
+                </div>
+                <div>
+                  <p className="text-white/50 text-xs mb-1">Inbox ID <span className="text-white/30">(found in Mailtrap inbox settings)</span></p>
+                  <input value={mailtrapInboxId} onChange={e => setMailtrapInboxId(e.target.value)}
+                    placeholder="1234567"
+                    className="w-full bg-[#0f1923] border border-white/10 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500/60 placeholder:text-white/20" />
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Save + Test + Simulate ── */}
+      {!isArchiveMode && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending}
+            className="bg-cyan-600 hover:bg-cyan-500 text-white">
+            {saveMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <CheckCircle2 className="w-4 h-4 mr-1" />}
+            Save Settings
+          </Button>
+          {anyEnabled && (
+            <Button variant="outline" onClick={() => setTestOpen(true)}
+              className="border-white/20 text-white/70 hover:text-white hover:bg-white/5">
+              <Send className="w-4 h-4 mr-1" /> Test Send
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => simulateMut.mutate()} disabled={simulateMut.isPending}
+            className="border-amber-700/40 text-amber-400 hover:bg-amber-900/20">
+            {simulateMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Zap className="w-4 h-4 mr-1" />}
+            Run Simulation
+          </Button>
+        </div>
+      )}
+
+      {/* ── Simulation Results Dialog ── */}
+      <Dialog open={simOpen} onOpenChange={setSimOpen}>
+        <DialogContent className="bg-[#0f1923] border border-white/10 text-white max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Zap className="w-5 h-5 text-amber-400" /> Simulation Results
+            </DialogTitle>
+          </DialogHeader>
+          {simResult && (
+            <div className="space-y-4 pt-2">
+              {/* Summary banner */}
+              <div className="p-3 rounded-lg bg-amber-900/20 border border-amber-700/30">
+                <p className="text-amber-300 text-xs">
+                  <span className="font-semibold">Dry-run complete.</span> No real messages were sent.
+                  The system scanned <span className="font-semibold">{simResult.totalFees}</span> fee record(s) across all statuses
+                  and logged <span className="font-semibold">{simResult.entriesLogged}</span> simulated entries to the delivery log.
+                </p>
+              </div>
+
+              {/* Per-channel stats */}
+              <div className="grid grid-cols-3 gap-3">
+                {(["sms", "whatsapp", "email"] as const).map(ch => {
+                  const stats = simResult.byChannel[ch] ?? { would_send: 0, missing_contact: 0 };
+                  const colors: Record<string, string> = {
+                    sms: "border-blue-700/30 bg-blue-900/10", whatsapp: "border-green-700/30 bg-green-900/10", email: "border-purple-700/30 bg-purple-900/10",
+                  };
+                  const icons: Record<string, React.ReactNode> = {
+                    sms: <MessageSquare className="w-4 h-4 text-blue-400" />, whatsapp: <Phone className="w-4 h-4 text-green-400" />, email: <Mail className="w-4 h-4 text-purple-400" />,
+                  };
+                  return (
+                    <div key={ch} className={`p-3 rounded-xl border ${colors[ch]}`}>
+                      <div className="flex items-center gap-1.5 mb-2">{icons[ch]}<span className="text-white/60 text-xs capitalize">{ch}</span></div>
+                      <p className="text-white font-bold text-lg">{stats.would_send}</p>
+                      <p className="text-white/40 text-xs">would send</p>
+                      {stats.missing_contact > 0 && (
+                        <p className="text-amber-400 text-xs mt-1 flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3" /> {stats.missing_contact} missing
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Entry table */}
+              {simResult.entries.length > 0 && (
+                <div>
+                  <p className="text-white/50 text-xs mb-2 font-medium">What would be sent:</p>
+                  <div className="rounded-xl border border-white/10 overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead><tr className="border-b border-white/10 bg-white/5">
+                        <th className="px-3 py-2 text-left text-white/50 font-medium">Student</th>
+                        <th className="px-3 py-2 text-left text-white/50 font-medium">Fee</th>
+                        <th className="px-3 py-2 text-left text-white/50 font-medium">Stage</th>
+                        <th className="px-3 py-2 text-left text-white/50 font-medium">Channel</th>
+                        <th className="px-3 py-2 text-left text-white/50 font-medium">To</th>
+                      </tr></thead>
+                      <tbody>
+                        {simResult.entries.map((e, i) => (
+                          <tr key={i} className={`border-b border-white/5 ${i % 2 === 0 ? "" : "bg-white/[0.02]"}`}>
+                            <td className="px-3 py-2 text-white/80">{e.studentName}</td>
+                            <td className="px-3 py-2 text-white/60">{e.feeType} · ₹{e.amount}</td>
+                            <td className={`px-3 py-2 font-bold ${{D0:"text-cyan-400",D7:"text-amber-400",D14:"text-orange-400",D30:"text-red-400"}[e.stage] ?? "text-white/60"}`}>{e.stage}</td>
+                            <td className="px-3 py-2 capitalize text-white/60">{e.channel}</td>
+                            <td className="px-3 py-2">
+                              {e.issue
+                                ? <span className="text-amber-400 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{e.issue}</span>
+                                : <span className="text-emerald-400 truncate block max-w-[120px]">{e.recipient}</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              <Button className="w-full bg-white/10 hover:bg-white/20 text-white" onClick={() => setSimOpen(false)}>
+                Close
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Test Dialog ── */}
+      <Dialog open={testOpen} onOpenChange={setTestOpen}>
+        <DialogContent className="bg-[#0f1923] border border-white/10 text-white max-w-md">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><Send className="w-4 h-4 text-cyan-400" /> Test Send</DialogTitle></DialogHeader>
+          <div className="space-y-4 pt-2">
+
+            {/* Channel picker */}
+            <div>
+              <p className="text-white/50 text-xs mb-2">Choose channel</p>
+              <div className="grid grid-cols-3 gap-2">
+                {(["webhook", "sms", "email"] as const).map(ch => {
+                  const labels: Record<string, string> = { webhook: "Webhook", sms: "SMS", email: "Email" };
+                  const icons: Record<string, React.ReactNode> = {
+                    webhook: <Zap className="w-3.5 h-3.5" />,
+                    sms: <MessageSquare className="w-3.5 h-3.5" />,
+                    email: <Mail className="w-3.5 h-3.5" />,
+                  };
+                  return (
+                    <button key={ch} onClick={() => setTestChannel(ch)}
+                      className={`flex flex-col items-center gap-1 py-2.5 rounded-lg border text-xs font-medium transition-colors ${testChannel === ch ? "bg-cyan-700/40 border-cyan-500/60 text-white" : "border-white/10 text-white/40 hover:text-white/70"}`}>
+                      {icons[ch]}{labels[ch]}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Webhook instructions */}
+            {testChannel === "webhook" && (
+              <div className="p-3 rounded-lg bg-cyan-900/20 border border-cyan-700/30 space-y-1.5">
+                <p className="text-cyan-300 text-xs font-semibold">No API keys needed!</p>
+                <p className="text-white/50 text-xs">
+                  1. Open <span className="text-cyan-400 font-medium">webhook.site</span> in a new tab — you get a free unique URL instantly.<br />
+                  2. Copy that URL and paste it below.<br />
+                  3. Click Send — the server will POST the notification payload to your URL.<br />
+                  4. Watch it arrive live at webhook.site.
+                </p>
+              </div>
+            )}
+
+            {/* Mailtrap instructions */}
+            {testChannel === "email" && emailProvider === "mailtrap" && (
+              <div className="p-3 rounded-lg bg-purple-900/20 border border-purple-700/30">
+                <p className="text-purple-300 text-xs">Using <strong>Mailtrap</strong> — enter any email address below. The email will appear in your Mailtrap inbox, not the real address.</p>
+              </div>
+            )}
+
+            {/* Recipient input */}
+            <div>
+              <p className="text-white/50 text-xs mb-1">
+                {testChannel === "webhook" ? "Webhook URL (from webhook.site)" :
+                 testChannel === "email"   ? "Email address" :
+                                             "Phone number (91XXXXXXXXXX)"}
+              </p>
+              <input value={testRecipient} onChange={e => setTestRecipient(e.target.value)}
+                placeholder={
+                  testChannel === "webhook" ? "https://webhook.site/your-unique-id" :
+                  testChannel === "email"   ? "test@example.com" :
+                                              "91XXXXXXXXXX"
+                }
+                className="w-full bg-[#0f1923] border border-white/10 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500/60 placeholder:text-white/20" />
+            </div>
+
+            <Button className="w-full bg-cyan-600 hover:bg-cyan-500" onClick={() => testMut.mutate()} disabled={testMut.isPending || !testRecipient}>
+              {testMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Send className="w-4 h-4 mr-1" />}
+              Send Test
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dunning schedule ── */}
+      <div>
+        <p className="text-white font-semibold mb-3">Automated Dunning Schedule</p>
+        <div className="space-y-2">
+          {DUNNING_ROWS.map(r => {
+            const stage = r.day.replace("+", "");
+            return (
+              <div key={r.day} className="flex items-center gap-4 p-3.5 rounded-xl border border-white/10 bg-white/5">
+                <span className="text-xl w-7 text-center flex-shrink-0">{r.icon}</span>
+                <div className="w-12 flex-shrink-0 text-center">
+                  <p className={`text-xs font-bold ${STAGE_COLORS[stage] ?? "text-cyan-400"}`}>{r.day}</p>
+                </div>
+                <div className="h-5 w-px bg-white/10 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-white text-sm font-medium">{r.label}</p>
+                  <p className="text-white/40 text-xs mt-0.5">{r.note}</p>
+                </div>
+                <div className="flex gap-1 flex-shrink-0">
+                  {smsEnabled    && <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded border bg-blue-900/30 text-blue-300 border-blue-700/30"><MessageSquare className="w-3 h-3" /></span>}
+                  {waEnabled     && <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded border bg-green-900/30 text-green-300 border-green-700/30"><Phone className="w-3 h-3" /></span>}
+                  {emailEnabled  && <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded border bg-purple-900/30 text-purple-300 border-purple-700/30"><Mail className="w-3 h-3" /></span>}
+                  {!anyEnabled   && <span className="text-white/20 text-xs">—</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Delivery log ── */}
+      <div>
+        <p className="text-white font-semibold mb-3">Recent Deliveries <span className="text-white/30 text-xs font-normal">(last 50)</span></p>
+        {logEntries.length === 0 ? (
+          <div className="text-center py-10 text-white/30 text-sm border border-white/5 rounded-xl bg-white/5">
+            No notifications sent yet. They will appear here once the dunning job fires.
+          </div>
+        ) : (
+          <div className="rounded-xl border border-white/10 overflow-hidden">
+            <table className="w-full text-xs">
+              <thead><tr className="border-b border-white/10 bg-white/5">
+                <th className="px-3 py-2.5 text-left text-white/50 font-medium">Student</th>
+                <th className="px-3 py-2.5 text-left text-white/50 font-medium">Channel</th>
+                <th className="px-3 py-2.5 text-left text-white/50 font-medium">Stage</th>
+                <th className="px-3 py-2.5 text-left text-white/50 font-medium">Recipient</th>
+                <th className="px-3 py-2.5 text-left text-white/50 font-medium">Sent</th>
+                <th className="px-3 py-2.5 text-left text-white/50 font-medium">Status</th>
+              </tr></thead>
+              <tbody>
+                {logEntries.map((l, i) => (
+                  <tr key={l.id} className={`border-b border-white/5 ${i % 2 === 0 ? "" : "bg-white/[0.02]"}`}>
+                    <td className="px-3 py-2 text-white/80">{l.studentName ?? `Fee #${l.feeRecordId}`}</td>
+                    <td className="px-3 py-2">
+                      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-xs ${CHANNEL_COLORS[l.channel] ?? "text-white/50 border-white/10"}`}>
+                        {CHANNEL_ICONS[l.channel]} {l.channel}
+                      </span>
+                    </td>
+                    <td className={`px-3 py-2 font-bold ${STAGE_COLORS[l.stage] ?? "text-white/60"}`}>{l.stage}</td>
+                    <td className="px-3 py-2 text-white/50 truncate max-w-[120px]">{l.recipient ?? "—"}</td>
+                    <td className="px-3 py-2 text-white/40">{fmtDateTime(l.sentAt)}</td>
+                    <td className="px-3 py-2">
+                      {l.status === "sent" ? (
+                        <span className="text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> sent</span>
+                      ) : (
+                        <span className="text-red-400 flex items-center gap-1" title={l.errorMessage ?? ""}><AlertTriangle className="w-3 h-3" /> failed</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2350,6 +2916,7 @@ function RemindersTab() {
 
 function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [isEnabled, setIsEnabled] = useState(false);
   const [url, setUrl] = useState("");
   const [banner, setBanner] = useState("");
@@ -2701,7 +3268,7 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
       {/* Content */}
       {activeTab === "ledger"     && <LedgerTab canRecord={canRecord} isArchiveMode={isArchiveMode} students={students} viewSessionId={viewSessionId} />}
       {activeTab === "structures" && <StructuresTab isArchiveMode={isArchiveMode} />}
-      {activeTab === "reminders"  && <RemindersTab />}
+      {activeTab === "reminders"  && <RemindersTab isArchiveMode={isArchiveMode} />}
       {activeTab === "external"   && <ExternalPortalTab isArchiveMode={isArchiveMode} />}
       {activeTab === "audit"      && <AuditTab />}
     </div>

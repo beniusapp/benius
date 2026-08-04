@@ -1022,3 +1022,42 @@ export const receiptSequences = pgTable("receipt_sequences", {
   prefix: varchar("prefix", { length: 10 }).notNull().unique(),
   currentNumber: integer("current_number").notNull().default(0),
 });
+
+// ── Notification provider config (per school) ─────────────────────────────────
+export const notificationConfig = pgTable("notification_config", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().unique().references(() => schools.id, { onDelete: "cascade" }),
+  // SMS via MSG91
+  smsEnabled: boolean("sms_enabled").notNull().default(false),
+  msg91AuthKey: text("msg91_auth_key"),
+  msg91SenderId: text("msg91_sender_id"),
+  // WhatsApp via MSG91
+  waEnabled: boolean("wa_enabled").notNull().default(false),
+  msg91WaNumber: text("msg91_wa_number"),      // integrated number (91XXXXXXXXXX)
+  msg91WaTemplate: text("msg91_wa_template"),  // pre-approved template name
+  // Email — provider is 'sendgrid' | 'mailtrap'
+  emailEnabled: boolean("email_enabled").notNull().default(false),
+  emailProvider: text("email_provider").notNull().default("sendgrid"),
+  sendgridApiKey: text("sendgrid_api_key"),
+  sendgridFromEmail: text("sendgrid_from_email"),
+  sendgridFromName: text("sendgrid_from_name"),
+  mailtrapApiKey: text("mailtrap_api_key"),
+  mailtrapInboxId: text("mailtrap_inbox_id"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+export type NotificationConfig = typeof notificationConfig.$inferSelect;
+
+// ── Dunning log (one row per fee record × channel × stage) ────────────────────
+export const dunningLog = pgTable("dunning_log", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull(),
+  feeRecordId: integer("fee_record_id").notNull().references(() => feeRecords.id, { onDelete: "cascade" }),
+  channel: text("channel").notNull(),    // 'sms' | 'whatsapp' | 'email'
+  stage: text("stage").notNull(),        // 'D0' | 'D7' | 'D14' | 'D30'
+  sentAt: timestamp("sent_at").notNull().defaultNow(),
+  status: text("status").notNull(),      // 'sent' | 'failed'
+  errorMessage: text("error_message"),
+  recipient: text("recipient"),          // phone or email address
+  studentName: text("student_name"),
+});
+export type DunningLog = typeof dunningLog.$inferSelect;
