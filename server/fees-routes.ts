@@ -648,6 +648,10 @@ export function registerFeesRoutes(app: Express) {
     let afCount = 0;
     let opCount = 0;
     let lockBlocked = false;
+    let afFirst: string | null = null;
+    let afLast: string | null = null;
+    let opFirst: string | null = null;
+    let opLast: string | null = null;
 
     await db.transaction(async (tx) => {
       // pg_try_advisory_xact_lock is transaction-scoped: it is guaranteed to
@@ -678,6 +682,8 @@ export function registerFeesRoutes(app: Express) {
               SET receipt_number = ${receiptNumber}
               WHERE id = ${id} AND school_id = ${schoolId}`,
         );
+        if (afFirst === null) afFirst = receiptNumber;
+        afLast = receiptNumber;
         afCount++;
       }
 
@@ -697,6 +703,8 @@ export function registerFeesRoutes(app: Express) {
               SET receipt_number = ${receiptNumber}
               WHERE id = ${id} AND school_id = ${schoolId}`,
         );
+        if (opFirst === null) opFirst = receiptNumber;
+        opLast = receiptNumber;
         opCount++;
       }
       // Transaction commits here → xact lock auto-released by PostgreSQL.
@@ -709,15 +717,25 @@ export function registerFeesRoutes(app: Express) {
       });
     }
 
+    // Build human-readable range strings (e.g. "AF01–AF05" or null when nothing assigned)
+    const afRange = afFirst && afLast
+      ? (afFirst === afLast ? afFirst : `${afFirst}–${afLast}`)
+      : null;
+    const opRange = opFirst && opLast
+      ? (opFirst === opLast ? opFirst : `${opFirst}–${opLast}`)
+      : null;
+
     await appendAudit(
       req, schoolId, "backfill_receipts", "fee_record", null,
-      `Receipt backfill complete: ${afCount} fee record(s) assigned AF numbers, ${opCount} payment record(s) assigned OP numbers`,
+      `Receipt backfill complete: ${afCount} fee record(s) assigned AF numbers${afRange ? ` (${afRange})` : ""}, ${opCount} payment record(s) assigned OP numbers${opRange ? ` (${opRange})` : ""}`,
     );
 
     res.json({
       success: true,
       feeRecordsUpdated: afCount,
       paymentRecordsUpdated: opCount,
+      afRange,
+      opRange,
       message: `Backfill complete: ${afCount} fee record(s) and ${opCount} payment record(s) assigned receipt numbers.`,
     });
   });

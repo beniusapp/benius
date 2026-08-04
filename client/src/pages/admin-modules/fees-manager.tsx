@@ -2457,7 +2457,7 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
 function BackfillReceiptsSection() {
   const { toast } = useToast();
-  const [result, setResult] = useState<{ feeRecordsUpdated: number; paymentRecordsUpdated: number } | null>(null);
+  const [result, setResult] = useState<{ feeRecordsUpdated: number; paymentRecordsUpdated: number; afRange: string | null; opRange: string | null } | null>(null);
   const [alreadyRunning, setAlreadyRunning] = useState(false);
 
   const backfillMut = useMutation({
@@ -2473,10 +2473,10 @@ function BackfillReceiptsSection() {
       if (!r.ok) {
         throw new Error(body.message ?? "Backfill failed");
       }
-      return body as { feeRecordsUpdated: number; paymentRecordsUpdated: number; message: string };
+      return body as { feeRecordsUpdated: number; paymentRecordsUpdated: number; afRange: string | null; opRange: string | null; message: string };
     },
     onSuccess: (data) => {
-      setResult({ feeRecordsUpdated: data.feeRecordsUpdated, paymentRecordsUpdated: data.paymentRecordsUpdated });
+      setResult({ feeRecordsUpdated: data.feeRecordsUpdated, paymentRecordsUpdated: data.paymentRecordsUpdated, afRange: data.afRange ?? null, opRange: data.opRange ?? null });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
       toast({ title: "Receipt backfill complete", description: data.message });
     },
@@ -2502,13 +2502,25 @@ function BackfillReceiptsSection() {
       </div>
 
       {result && !alreadyRunning && (
-        <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-900/20 border border-emerald-700/30 rounded-lg px-3 py-2">
-          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-          <span>
-            Done — {result.feeRecordsUpdated} fee record{result.feeRecordsUpdated !== 1 ? "s" : ""} and{" "}
-            {result.paymentRecordsUpdated} payment record{result.paymentRecordsUpdated !== 1 ? "s" : ""} updated.
-            {result.feeRecordsUpdated === 0 && result.paymentRecordsUpdated === 0 && " All records already have receipt numbers."}
-          </span>
+        <div className="text-xs text-emerald-400 bg-emerald-900/20 border border-emerald-700/30 rounded-lg px-3 py-2 space-y-1">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+            <span>
+              Done — {result.feeRecordsUpdated} fee record{result.feeRecordsUpdated !== 1 ? "s" : ""} and{" "}
+              {result.paymentRecordsUpdated} payment record{result.paymentRecordsUpdated !== 1 ? "s" : ""} updated.
+              {result.feeRecordsUpdated === 0 && result.paymentRecordsUpdated === 0 && " All records already have receipt numbers."}
+            </span>
+          </div>
+          {(result.afRange || result.opRange) && (
+            <div className="flex flex-wrap gap-x-4 gap-y-0.5 pl-5 text-emerald-300/80 font-mono">
+              {result.afRange && (
+                <span>Fee receipts: <span className="font-semibold text-emerald-300">{result.afRange}</span></span>
+              )}
+              {result.opRange && (
+                <span>Payment receipts: <span className="font-semibold text-emerald-300">{result.opRange}</span></span>
+              )}
+            </div>
+          )}
         </div>
       )}
 
