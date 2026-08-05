@@ -79,6 +79,11 @@ interface ExternalSettings {
   gatewayUrl: string | null;
   bannerMessage: string | null;
   maxOvercollectionPercent: number | null;
+  razorpayEnabled: boolean;
+  razorpayKeyId: string | null;
+  razorpayKeySecret: string | null;
+  razorpayWebhookSecret: string | null;
+  razorpayMode: string;
 }
 
 interface NotifConfig {
@@ -3068,6 +3073,12 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [url, setUrl] = useState("");
   const [banner, setBanner] = useState("");
   const [maxOvercollectionPercent, setMaxOvercollectionPercent] = useState(150);
+  // Razorpay
+  const [rzpEnabled, setRzpEnabled] = useState(false);
+  const [rzpKeyId, setRzpKeyId] = useState("");
+  const [rzpKeySecret, setRzpKeySecret] = useState("");
+  const [rzpWebhookSecret, setRzpWebhookSecret] = useState("");
+  const [rzpMode, setRzpMode] = useState<"test" | "live">("test");
   const [synced, setSynced] = useState(false);
 
   const { data: settings, isLoading } = useQuery<ExternalSettings>({
@@ -3081,6 +3092,11 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       setUrl(settings.gatewayUrl ?? "");
       setBanner(settings.bannerMessage ?? "");
       setMaxOvercollectionPercent(settings.maxOvercollectionPercent ?? 150);
+      setRzpEnabled(settings.razorpayEnabled ?? false);
+      setRzpKeyId(settings.razorpayKeyId ?? "");
+      setRzpKeySecret(settings.razorpayKeySecret ?? "");
+      setRzpWebhookSecret(settings.razorpayWebhookSecret ?? "");
+      setRzpMode((settings.razorpayMode as "test" | "live") ?? "test");
       setSynced(true);
     }
   }, [settings, synced]);
@@ -3088,23 +3104,123 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const saveMut = useMutation({
     mutationFn: () => apiRequest("PUT", "/api/admin/fees/external-settings", {
       isEnabled, gatewayUrl: url || null, bannerMessage: banner || null, maxOvercollectionPercent,
+      razorpayEnabled: rzpEnabled,
+      razorpayKeyId: rzpKeyId || null,
+      razorpayKeySecret: rzpKeySecret || null,
+      razorpayWebhookSecret: rzpWebhookSecret || null,
+      razorpayMode: rzpMode,
     }),
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/external-settings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
-      toast({ title: "Portal settings saved" });
+      // Refresh masked values from server response
+      if (data) {
+        setRzpKeySecret(data.razorpayKeySecret ?? "");
+        setRzpWebhookSecret(data.razorpayWebhookSecret ?? "");
+      }
+      toast({ title: "Payment settings saved" });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   if (isLoading) return <div className="flex items-center justify-center py-16 text-white/40"><Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading…</div>;
 
+  const rzpConfigured = !!(settings?.razorpayKeyId && settings?.razorpayKeySecret);
+
   return (
     <div className="space-y-5 max-w-xl">
+
+      {/* ── Razorpay Gateway ──────────────────────────────────────────────── */}
+      <div className="p-4 rounded-xl border border-blue-700/30 bg-blue-900/10 space-y-4">
+        {/* Header row */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "linear-gradient(135deg,#528FF0,#2D6EE8)" }}>
+              <CreditCard className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <p className="text-white font-semibold flex items-center gap-2">
+                Razorpay Gateway
+                {rzpConfigured && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">CONFIGURED</span>}
+              </p>
+              <p className="text-white/40 text-xs mt-0.5">Accept UPI, cards, net banking & wallets directly in the student portal.</p>
+            </div>
+          </div>
+          <Switch checked={rzpEnabled} onCheckedChange={setRzpEnabled} disabled={isArchiveMode} />
+        </div>
+
+        {/* Mode */}
+        <div className="flex items-center gap-3">
+          {(["test", "live"] as const).map(m => (
+            <button
+              key={m}
+              onClick={() => !isArchiveMode && setRzpMode(m)}
+              disabled={isArchiveMode}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all ${rzpMode === m
+                ? m === "live" ? "bg-emerald-600/30 border-emerald-500/60 text-emerald-300" : "bg-amber-600/20 border-amber-500/40 text-amber-300"
+                : "bg-[#1A2942] border-white/10 text-white/30 hover:text-white/50"
+              } disabled:opacity-40`}
+            >
+              {m === "test" ? "🧪 Test / Sandbox" : "🚀 Live"}
+            </button>
+          ))}
+        </div>
+
+        {/* Key ID */}
+        <div className="space-y-1.5">
+          <label className="text-xs text-white/60">Key ID</label>
+          <input
+            value={rzpKeyId}
+            onChange={e => setRzpKeyId(e.target.value)}
+            placeholder={rzpMode === "test" ? "rzp_test_…" : "rzp_live_…"}
+            disabled={isArchiveMode}
+            className="w-full bg-[#0F1E35] border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40"
+          />
+        </div>
+
+        {/* Key Secret */}
+        <div className="space-y-1.5">
+          <label className="text-xs text-white/60">Key Secret</label>
+          <input
+            type="password"
+            value={rzpKeySecret}
+            onChange={e => setRzpKeySecret(e.target.value)}
+            placeholder={rzpKeySecret === "••••••••" ? "Leave blank to keep existing" : "Enter secret…"}
+            disabled={isArchiveMode}
+            className="w-full bg-[#0F1E35] border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40"
+          />
+          <p className="text-white/25 text-[11px]">Stored server-side only — never sent to the browser after saving.</p>
+        </div>
+
+        {/* Webhook Secret */}
+        <div className="space-y-1.5">
+          <label className="text-xs text-white/60">Webhook Secret</label>
+          <input
+            type="password"
+            value={rzpWebhookSecret}
+            onChange={e => setRzpWebhookSecret(e.target.value)}
+            placeholder={rzpWebhookSecret === "••••••••" ? "Leave blank to keep existing" : "Enter webhook secret…"}
+            disabled={isArchiveMode}
+            className="w-full bg-[#0F1E35] border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40"
+          />
+          <p className="text-white/25 text-[11px]">
+            Set this in your Razorpay dashboard under Webhooks. Endpoint: <span className="font-mono text-blue-400/60">/api/webhooks/razorpay</span>
+          </p>
+        </div>
+
+        {rzpEnabled && !rzpConfigured && (
+          <p className="text-amber-400/80 text-xs flex items-center gap-1.5">
+            <Shield className="w-3.5 h-3.5 flex-shrink-0" />
+            Save Key ID and Key Secret before enabling — students cannot pay until both are configured.
+          </p>
+        )}
+      </div>
+
+      {/* ── External Portal URL (legacy / other gateways) ─────────────────── */}
       <div className="p-4 rounded-xl border border-white/10 bg-[#1A2942] flex items-center justify-between">
         <div>
-          <p className="text-white font-semibold">Payment Portal</p>
-          <p className="text-white/40 text-xs mt-0.5">Allow students/parents to initiate payments via an external link.</p>
+          <p className="text-white font-semibold">External Portal Link</p>
+          <p className="text-white/40 text-xs mt-0.5">Show an external payment link to students (e.g. a third-party portal).</p>
         </div>
         <Switch checked={isEnabled} onCheckedChange={setIsEnabled} disabled={isArchiveMode} />
       </div>
@@ -3123,6 +3239,7 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         <p className="text-white/25 text-xs text-right">{banner.length}/500</p>
       </div>
 
+      {/* ── Over-collection cap ───────────────────────────────────────────── */}
       <div className="p-4 rounded-xl border border-white/10 bg-[#1A2942] space-y-3">
         <div>
           <p className="text-white font-semibold flex items-center gap-2"><Shield className="w-4 h-4 text-amber-400" /> Max Over-collection Cap</p>

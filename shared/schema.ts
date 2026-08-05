@@ -1012,6 +1012,12 @@ export const externalPaymentSettings = pgTable("external_payment_settings", {
   maxOvercollectionPercent: integer("max_overcollection_percent").notNull().default(150),
   lastUpdatedBy: integer("last_updated_by").references(() => users.id, { onDelete: "set null" }),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  // ── Razorpay gateway ──────────────────────────────────────────────────────
+  razorpayEnabled: boolean("razorpay_enabled").notNull().default(false),
+  razorpayKeyId: text("razorpay_key_id"),
+  razorpayKeySecret: text("razorpay_key_secret"),
+  razorpayWebhookSecret: text("razorpay_webhook_secret"),
+  razorpayMode: text("razorpay_mode").notNull().default("test"), // "test" | "live"
 });
 export type ExternalPaymentSettings = typeof externalPaymentSettings.$inferSelect;
 

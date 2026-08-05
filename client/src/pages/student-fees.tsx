@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, GraduationCap, Loader2, CreditCard, CheckCircle2, Clock, AlertTriangle, Receipt, Download, Lock, ExternalLink, Copy, Check } from "lucide-react";
+import { ArrowLeft, GraduationCap, Loader2, CreditCard, CheckCircle2, Clock, AlertTriangle, Receipt, Download, Lock, ExternalLink, Copy, Check, Zap } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 
@@ -30,6 +30,14 @@ interface FeeRecord {
   notes: string | null;
   academicYear: string | null;
   createdAt: string;
+}
+
+interface PortalInfo {
+  isEnabled: boolean;
+  gatewayUrl: string | null;
+  bannerMessage: string | null;
+  razorpayEnabled: boolean;
+  razorpayKeyId: string | null;
 }
 
 function formatAmount(amount: number) {
@@ -75,10 +83,26 @@ function StatusChip({ status }: { status: string }) {
   );
 }
 
+// ── Load Razorpay checkout script dynamically ─────────────────────────────────
+function loadRazorpayScript(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if ((window as any).Razorpay) { resolve(); return; }
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load Razorpay checkout"));
+    document.head.appendChild(script);
+  });
+}
+
 export default function StudentFees() {
   const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
   const { isArchiveMode, selectedSession } = useSessionView();
   const [copiedReceiptId, setCopiedReceiptId] = useState<number | null>(null);
+  const [payingFeeId, setPayingFeeId] = useState<number | null>(null);
+  const [payError, setPayError] = useState<string | null>(null);
 
   const copyReceiptNumber = useCallback((recId: number, receiptNumber: string) => {
     navigator.clipboard.writeText(receiptNumber).then(() => {
@@ -92,12 +116,12 @@ export default function StudentFees() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
-  const { data: feeRecords = [], isLoading: feesLoading } = useQuery<FeeRecord[]>({
+  const { data: feeRecords = [], isLoading: feesLoading, refetch: refetchFees } = useQuery<FeeRecord[]>({
     queryKey: ["/api/student/fees"],
     enabled: !!student,
   });
 
-  const { data: portalInfo } = useQuery<{ isEnabled: boolean; gatewayUrl: string | null; bannerMessage: string | null }>({
+  const { data: portalInfo } = useQuery<PortalInfo>({
     queryKey: ["/api/student/fees/portal-info"],
     enabled: !!student,
     staleTime: 60_000,
@@ -108,6 +132,67 @@ export default function StudentFees() {
       setLocation("/student-login");
     }
   }, [studentLoading, isError, student, setLocation]);
+
+  // ── Razorpay Pay Now handler ────────────────────────────────────────────────
+  const handlePayNow = useCallback(async (rec: FeeRecord, studentData: StudentMeResponse) => {
+    if (!portalInfo?.razorpayEnabled || !portalInfo.razorpayKeyId) return;
+    setPayingFeeId(rec.id);
+    setPayError(null);
+    try {
+      // 1. Load SDK
+      await loadRazorpayScript();
+
+      // 2. Create Razorpay order via backend
+      const resp = await fetch("/api/payments/create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ feeRecordId: rec.id }),
+        credentials: "include",
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.message ?? "Failed to create order");
+      }
+      const { orderId, amount, currency, keyId } = await resp.json();
+
+      // 3. Open Razorpay checkout
+      await new Promise<void>((resolve, reject) => {
+        const options = {
+          key: keyId,
+          amount,
+          currency,
+          name: studentData.schoolName,
+          description: rec.feeType,
+          order_id: orderId,
+          prefill: {
+            name: studentData.name,
+            contact: "",
+            email: "",
+          },
+          theme: { color: "#06b6d4" },
+          handler: () => {
+            // Payment succeeded — webhook will update DB; refetch after a moment
+            setTimeout(() => {
+              refetchFees();
+              queryClient.invalidateQueries({ queryKey: ["/api/student/fees"] });
+            }, 2000);
+            resolve();
+          },
+          modal: {
+            ondismiss: () => reject(new Error("dismissed")),
+          },
+        };
+        const rzp = new (window as any).Razorpay(options);
+        rzp.open();
+      });
+    } catch (err: any) {
+      if (err?.message !== "dismissed") {
+        setPayError(err?.message ?? "Payment failed");
+      }
+    } finally {
+      setPayingFeeId(null);
+    }
+  }, [portalInfo, refetchFees, queryClient]);
 
   if (studentLoading || !student) {
     return (
@@ -123,6 +208,8 @@ export default function StudentFees() {
 
   const paidRecords = feeRecords.filter(r => r.status === "Paid");
   const pendingRecords = feeRecords.filter(r => r.status !== "Paid");
+
+  const razorpayActive = !isArchiveMode && (portalInfo?.razorpayEnabled ?? false) && !!portalInfo?.razorpayKeyId;
 
   return (
     <div className="min-h-screen" style={{ background: "#f8fafc" }}>
@@ -187,8 +274,22 @@ export default function StudentFees() {
           </motion.div>
         )}
 
-        {/* External payment portal banner */}
-        {portalInfo?.isEnabled && (
+        {/* Pay error banner */}
+        {payError && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center gap-3 rounded-2xl px-4 py-3"
+            style={{ background: "#fef2f2", border: "1.5px solid #fecaca" }}
+          >
+            <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
+            <p className="text-sm text-red-700 flex-1">{payError}</p>
+            <button onClick={() => setPayError(null)} className="text-red-400 hover:text-red-600 text-xs font-semibold">Dismiss</button>
+          </motion.div>
+        )}
+
+        {/* External payment portal banner (legacy external link) */}
+        {portalInfo?.isEnabled && !portalInfo.razorpayEnabled && (
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -317,8 +418,22 @@ export default function StudentFees() {
                           <p className="text-xs text-slate-400 mt-0.5">Due: {formatDate(rec.dueDate)}</p>
                           {rec.notes && <p className="text-xs text-slate-400 mt-0.5 italic">{rec.notes}</p>}
                         </div>
-                        <div className="text-right flex-shrink-0">
+                        <div className="flex flex-col items-end gap-2 flex-shrink-0">
                           <p className="text-lg font-extrabold text-slate-800" data-testid={`text-fee-amount-${rec.id}`}>{formatAmount(rec.amount)}</p>
+                          {/* Razorpay Pay Now button */}
+                          {razorpayActive && (
+                            <button
+                              onClick={() => handlePayNow(rec, student)}
+                              disabled={payingFeeId === rec.id}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-white transition-all active:scale-95 disabled:opacity-60"
+                              style={{ background: payingFeeId === rec.id ? "#94a3b8" : "linear-gradient(135deg,#528FF0,#2D6EE8)" }}
+                              data-testid={`button-pay-now-${rec.id}`}
+                            >
+                              {payingFeeId === rec.id
+                                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Processing…</>
+                                : <><Zap className="w-3.5 h-3.5" /> Pay Now</>}
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -357,6 +472,12 @@ export default function StudentFees() {
                             <StatusChip status={rec.status} />
                             {rec.academicYear && (
                               <span className="text-[10px] font-medium text-slate-400 bg-slate-100 rounded px-1.5 py-0.5">{rec.academicYear}</span>
+                            )}
+                            {/* Online payment badge */}
+                            {rec.receiptNumber?.startsWith("ON") && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe" }}>
+                                Online
+                              </span>
                             )}
                           </div>
                           <p className="font-bold text-slate-800 text-sm mt-1">{rec.feeType}</p>

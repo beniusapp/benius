@@ -1,10 +1,12 @@
 import type { Express } from "express";
 import { storage } from "./storage";
 import { db } from "./db";
-import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates } from "@shared/schema";
+import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings } from "@shared/schema";
 import { and, eq, sql, desc } from "drizzle-orm";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
+import Razorpay from "razorpay";
 
 export function registerFeesRoutes(app: Express) {
 
@@ -373,12 +375,27 @@ export function registerFeesRoutes(app: Express) {
     gatewayUrl: z.string().max(500).optional().nullable(),
     bannerMessage: z.string().max(500).optional().nullable(),
     maxOvercollectionPercent: z.number().int().min(100).max(500).default(150),
+    razorpayEnabled: z.boolean().default(false),
+    razorpayKeyId: z.string().max(200).optional().nullable(),
+    // Secret is optional — null means "leave unchanged" when masked placeholder is sent
+    razorpayKeySecret: z.string().max(500).optional().nullable(),
+    razorpayWebhookSecret: z.string().max(500).optional().nullable(),
+    razorpayMode: z.enum(["test", "live"]).default("test"),
   });
 
   app.get("/api/admin/fees/external-settings", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const settings = await storage.getExternalPaymentSettings(req.session.schoolId!);
-    res.json(settings ?? { isEnabled: false, gatewayUrl: null, bannerMessage: null, maxOvercollectionPercent: 150 });
+    if (!settings) {
+      return res.json({ isEnabled: false, gatewayUrl: null, bannerMessage: null, maxOvercollectionPercent: 150,
+        razorpayEnabled: false, razorpayKeyId: null, razorpayKeySecret: null, razorpayWebhookSecret: null, razorpayMode: "test" });
+    }
+    // Never return secrets in plaintext — mask them so the UI knows they're set
+    res.json({
+      ...settings,
+      razorpayKeySecret: settings.razorpayKeySecret ? "••••••••" : null,
+      razorpayWebhookSecret: settings.razorpayWebhookSecret ? "••••••••" : null,
+    });
   });
 
   app.put("/api/admin/fees/external-settings", async (req, res) => {
@@ -387,21 +404,182 @@ export function registerFeesRoutes(app: Express) {
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
     const previous = await storage.getExternalPaymentSettings(schoolId);
+
+    // Don't overwrite secrets if the frontend sent the masked placeholder back
+    const keySecret = parsed.data.razorpayKeySecret === "••••••••" ? undefined : (parsed.data.razorpayKeySecret || null);
+    const webhookSecret = parsed.data.razorpayWebhookSecret === "••••••••" ? undefined : (parsed.data.razorpayWebhookSecret || null);
+
     const updated = await storage.upsertExternalPaymentSettings(schoolId, {
-      ...parsed.data,
+      isEnabled: parsed.data.isEnabled,
       gatewayUrl: parsed.data.gatewayUrl || null,
       bannerMessage: parsed.data.bannerMessage || null,
+      maxOvercollectionPercent: parsed.data.maxOvercollectionPercent,
       lastUpdatedBy: req.session.userId,
+      razorpayEnabled: parsed.data.razorpayEnabled,
+      razorpayKeyId: parsed.data.razorpayKeyId || null,
+      ...(keySecret !== undefined ? { razorpayKeySecret: keySecret } : {}),
+      ...(webhookSecret !== undefined ? { razorpayWebhookSecret: webhookSecret } : {}),
+      razorpayMode: parsed.data.razorpayMode,
     });
-    const capChanged = previous?.maxOvercollectionPercent !== parsed.data.maxOvercollectionPercent;
+
     const auditParts: string[] = [];
     auditParts.push(`External payment portal ${parsed.data.isEnabled ? "enabled" : "disabled"}`);
-    if (parsed.data.gatewayUrl) auditParts.push(`URL: ${parsed.data.gatewayUrl}`);
-    if (capChanged) {
-      auditParts.push(`Max over-collection cap changed: ${previous?.maxOvercollectionPercent ?? 150}% → ${parsed.data.maxOvercollectionPercent}%`);
-    }
+    if (parsed.data.razorpayEnabled !== (previous?.razorpayEnabled ?? false))
+      auditParts.push(`Razorpay ${parsed.data.razorpayEnabled ? "enabled" : "disabled"}`);
+    if (parsed.data.razorpayKeyId && parsed.data.razorpayKeyId !== previous?.razorpayKeyId)
+      auditParts.push(`Razorpay Key ID updated`);
+    if (keySecret !== undefined) auditParts.push("Razorpay Key Secret updated");
+    if (webhookSecret !== undefined) auditParts.push("Razorpay Webhook Secret updated");
+    if (previous?.maxOvercollectionPercent !== parsed.data.maxOvercollectionPercent)
+      auditParts.push(`Max over-collection cap: ${previous?.maxOvercollectionPercent ?? 150}% → ${parsed.data.maxOvercollectionPercent}%`);
+
     await appendAudit(req, schoolId, "settings_change", "external_settings", null, auditParts.join("; "));
-    res.json(updated);
+    // Return with masked secrets
+    res.json({
+      ...updated,
+      razorpayKeySecret: updated.razorpayKeySecret ? "••••••••" : null,
+      razorpayWebhookSecret: updated.razorpayWebhookSecret ? "••••••••" : null,
+    });
+  });
+
+  // ── Razorpay: Create Order ────────────────────────────────────────────────
+  app.post("/api/payments/create-order", async (req, res) => {
+    // Both students and admins can create orders
+    const studentId = req.session?.studentId;
+    const adminSchoolId = req.session?.schoolId;
+    if (!studentId && !adminSchoolId) return res.status(403).json({ message: "Authentication required" });
+
+    const { feeRecordId } = req.body;
+    if (!feeRecordId || typeof feeRecordId !== "number") return res.status(400).json({ message: "feeRecordId required" });
+
+    try {
+      // Look up fee record
+      const feeResult = await db.execute(sql`
+        SELECT fr.*, s.school_id FROM fee_records fr
+        JOIN students s ON s.id = fr.student_id
+        WHERE fr.id = ${feeRecordId}
+        LIMIT 1
+      `);
+      const fee = feeResult.rows[0] as any;
+      if (!fee) return res.status(404).json({ message: "Fee record not found" });
+
+      // Scope check: student can only pay their own fees
+      if (studentId && Number(fee.student_id) !== studentId)
+        return res.status(403).json({ message: "Access denied" });
+
+      const schoolId: number = studentId
+        ? (await storage.getStudentById(studentId))!.schoolId
+        : adminSchoolId!;
+
+      const settings = await storage.getExternalPaymentSettings(schoolId);
+      if (!settings?.razorpayEnabled || !settings.razorpayKeyId || !settings.razorpayKeySecret)
+        return res.status(400).json({ message: "Razorpay is not configured for this school" });
+
+      if (!["Due", "Overdue", "Partial"].includes(fee.status))
+        return res.status(400).json({ message: "Fee is not payable (status: " + fee.status + ")" });
+
+      const razorpay = new Razorpay({
+        key_id: settings.razorpayKeyId,
+        key_secret: settings.razorpayKeySecret,
+      });
+
+      const amountPaise = Math.round(Number(fee.amount) * 100);
+      const order = await razorpay.orders.create({
+        amount: amountPaise,
+        currency: "INR",
+        receipt: `fee_${feeRecordId}`,
+        notes: { feeRecordId: String(feeRecordId), schoolId: String(schoolId) },
+      });
+
+      res.json({ orderId: order.id, amount: amountPaise, currency: "INR", keyId: settings.razorpayKeyId });
+    } catch (err: any) {
+      console.error("[razorpay create-order]", err);
+      res.status(500).json({ message: err?.error?.description ?? String(err) });
+    }
+  });
+
+  // ── Razorpay: Webhook ─────────────────────────────────────────────────────
+  // Raw body is captured by the global express.json() verify function into req.rawBody
+  app.post("/api/webhooks/razorpay", async (req: any, res) => {
+    try {
+      const sig = req.headers["x-razorpay-signature"] as string | undefined;
+      const rawBody: Buffer | undefined = req.rawBody;
+
+      if (!sig || !rawBody) return res.status(400).json({ message: "Missing signature or body" });
+
+      // We don't know which school this belongs to yet — find it from the notes in the body
+      const bodyStr = rawBody.toString("utf-8");
+      let event: any;
+      try { event = JSON.parse(bodyStr); } catch { return res.status(400).json({ message: "Invalid JSON" }); }
+
+      const notes = event?.payload?.payment?.entity?.notes ?? {};
+      const schoolId = notes.schoolId ? parseInt(notes.schoolId) : null;
+      if (!schoolId) return res.status(400).json({ message: "schoolId missing from payment notes" });
+
+      const settings = await storage.getExternalPaymentSettings(schoolId);
+      if (!settings?.razorpayWebhookSecret)
+        return res.status(400).json({ message: "Webhook secret not configured" });
+
+      // Verify HMAC
+      const expected = crypto.createHmac("sha256", settings.razorpayWebhookSecret).update(bodyStr).digest("hex");
+      if (!crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex")))
+        return res.status(400).json({ message: "Signature mismatch" });
+
+      if (event.event === "payment.captured") {
+        const payment = event.payload.payment.entity;
+        const feeRecordId = notes.feeRecordId ? parseInt(notes.feeRecordId) : null;
+        if (!feeRecordId) return res.status(400).json({ message: "feeRecordId missing from notes" });
+
+        // Load the fee record
+        const feeRec = (await db.execute(sql`SELECT * FROM fee_records WHERE id = ${feeRecordId} AND school_id = ${schoolId} LIMIT 1`)).rows[0] as any;
+        if (!feeRec) return res.status(404).json({ message: "Fee record not found" });
+
+        // Already paid? idempotent — 200 OK
+        if (feeRec.status === "Paid") return res.json({ ok: true, idempotent: true });
+
+        // Atomically assign next ON receipt
+        const receiptNumber = await storage.nextReceiptNumber(schoolId, "ON");
+
+        // Update fee record to Paid
+        const now = new Date();
+        await db.execute(sql`
+          UPDATE fee_records
+          SET status = 'Paid', paid_date = ${now.toISOString()}, receipt_number = ${receiptNumber}
+          WHERE id = ${feeRecordId} AND school_id = ${schoolId}
+        `);
+
+        // Insert payment record
+        const activeSession = await storage.getActiveSession(schoolId);
+        await db.insert(paymentRecords).values({
+          schoolId,
+          sessionId: activeSession?.id ?? null,
+          feeRecordId,
+          studentId: Number(feeRec.student_id),
+          paymentMethod: "Online",
+          referenceNumber: payment.id,        // pay_XXXX
+          receivedDate: now.toISOString().slice(0, 10),
+          amount: Number(feeRec.amount),
+          cashierNotes: `Razorpay payment ID: ${payment.id}`,
+          recordedBy: null,
+          receiptNumber,
+          idempotencyKey: `rzp_${payment.id}`,
+        } as any);
+
+        // Audit log
+        await db.execute(sql`
+          INSERT INTO fee_audit_log (school_id, action, entity_type, entity_id, changed_by, note, created_at)
+          VALUES (${schoolId}, 'payment', 'fee_record', ${feeRecordId}, NULL,
+            ${"Online payment via Razorpay — " + payment.id + " — receipt " + receiptNumber}, ${now.toISOString()})
+        `);
+
+        console.log(`[razorpay webhook] Paid fee #${feeRecordId} receipt ${receiptNumber}`);
+      }
+
+      res.json({ ok: true });
+    } catch (err: any) {
+      console.error("[razorpay webhook]", err);
+      res.status(500).json({ message: String(err) });
+    }
   });
 
   // ── Audit Log ─────────────────────────────────────────────────────────────
@@ -1158,9 +1336,12 @@ export function registerFeesRoutes(app: Express) {
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(403).json({ message: "Student not found" });
     const settings = await storage.getExternalPaymentSettings(student.schoolId);
-    if (!settings?.isEnabled) {
-      return res.json({ isEnabled: false, gatewayUrl: null, bannerMessage: null });
-    }
-    res.json({ isEnabled: true, gatewayUrl: settings.gatewayUrl, bannerMessage: settings.bannerMessage });
+    res.json({
+      isEnabled: settings?.isEnabled ?? false,
+      gatewayUrl: settings?.gatewayUrl ?? null,
+      bannerMessage: settings?.bannerMessage ?? null,
+      razorpayEnabled: settings?.razorpayEnabled ?? false,
+      razorpayKeyId: settings?.razorpayEnabled ? (settings?.razorpayKeyId ?? null) : null,
+    });
   });
 }

@@ -98,9 +98,22 @@ Tabs: Ledger & Transactions | Fee Structures | Reminders | External Portal | Aud
 - `lt` from drizzle-orm is used for date comparison (already imported in storage.ts).
 - `storage` imported in index.ts as a new import (was not there before).
 
+## Razorpay Online Payment Gateway
+- Credentials stored in `external_payment_settings` table: `razorpay_key_id`, `razorpay_key_secret`, `razorpay_webhook_secret`, `razorpay_mode` (test/live), `razorpay_enabled`. Migration run via direct SQL (not drizzle-kit push).
+- GET external-settings: secrets are **masked** (`••••••••`) before returning to browser — never echoed in plaintext.
+- PUT external-settings: if the masked placeholder is sent back unchanged, the secret is not overwritten (`undefined` spread pattern).
+- `POST /api/payments/create-order` — creates Razorpay order via SDK; both student and admin sessions are accepted; returns `{ orderId, amount, currency, keyId }` (never secret).
+- `POST /api/webhooks/razorpay` — HMAC verified against `req.rawBody` (captured by global express.json verify). Handles `payment.captured`: atomically assigns next `ON` receipt number, marks fee Paid, inserts paymentRecord (method=Online, referenceNumber=pay_XXXX), appends audit log.
+- `ON` prefix seeded in `receipt_sequences` for all schools at migration time.
+- Student portal-info endpoint now also returns `razorpayEnabled` and `razorpayKeyId` (never secret).
+- Student-fees.tsx: Pay Now button on pending rows → loads Razorpay checkout.js dynamically → creates order → opens overlay → on success refetches fees after 2s. Online receipts show blue "Online" badge.
+- Admin ExternalPortalTab: new Razorpay card above external portal URL section. Mode toggle (Test/Live), Key ID, masked Key Secret, masked Webhook Secret. Shows CONFIGURED badge when credentials are saved.
+- **Receipt prefix convention**: AF = Add Fee (admin), OP = Offline Payment, ON = Online (Razorpay).
+
 ## Why
 - Idempotency prevents duplicate offline payment records when admins retry on network timeout.
 - High-value re-auth provides a second factor for large cash transactions.
 - Audit log is append-only by design (no endpoint exposed for mutations).
 - `fee_structures` is separate from `fee_records` — it defines templates, not individual invoices.
 - Bulk invoice generation uses `existingSet` check (studentId:feeType composite key) to prevent double-billing within a session.
+- Razorpay secrets are masked on GET so the browser never holds plaintext credentials after initial save.
