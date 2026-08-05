@@ -4850,6 +4850,20 @@ export class DatabaseStorage {
       .limit(limit);
   }
 
+  async getDunningLogByStudent(studentId: number, schoolId: number): Promise<{ id: number; feeRecordId: number | null; channel: string; stage: string; sentAt: Date | null; status: string; recipient: string | null; studentName: string | null }[]> {
+    const result = await db.execute(
+      sql`SELECT dl.id, dl.fee_record_id, dl.channel, dl.stage, dl.sent_at, dl.status,
+                 dl.recipient, dl.student_name
+          FROM dunning_log dl
+          INNER JOIN fee_records fr ON fr.id = dl.fee_record_id
+          WHERE dl.school_id = ${schoolId}
+            AND fr.student_id = ${studentId}
+          ORDER BY dl.sent_at DESC
+          LIMIT 200`
+    );
+    return result.rows as any[];
+  }
+
   // ===== FEE SUMMARY =====
 
   async getFeeSummary(schoolId: number, sessionId?: number | null): Promise<{

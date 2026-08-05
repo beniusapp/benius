@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, GraduationCap, Loader2, CreditCard, CheckCircle2, Clock, AlertTriangle, Receipt, Download, Lock, ExternalLink, Copy, Check, Zap } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
+import { ArrowLeft, GraduationCap, Loader2, CreditCard, CheckCircle2, Clock, AlertTriangle, Receipt, Download, Lock, ExternalLink, Copy, Check, Bell, Mail, MessageSquare, Webhook } from "lucide-react";
 
 interface StudentMeResponse {
   id: number;
@@ -30,6 +31,16 @@ interface FeeRecord {
   notes: string | null;
   academicYear: string | null;
   createdAt: string;
+}
+
+interface NotificationHistoryEntry {
+  id: number;
+  feeRecordId: number | null;
+  channel: string;
+  stage: string;
+  sentAt: string | null;
+  status: string;
+  recipient: string | null;
 }
 
 interface PortalInfo {
@@ -125,6 +136,12 @@ export default function StudentFees() {
     queryKey: ["/api/student/fees/portal-info"],
     enabled: !!student,
     staleTime: 60_000,
+  });
+
+  const { data: notificationHistory = [], isLoading: notifLoading } = useQuery<NotificationHistoryEntry[]>({
+    queryKey: ["/api/student/fees/notification-history"],
+    enabled: !!student,
+    staleTime: 30_000,
   });
 
   useEffect(() => {
@@ -528,6 +545,80 @@ export default function StudentFees() {
               </motion.div>
             )}
           </>
+        )}
+
+        {/* Reminders Sent section */}
+        {(notifLoading || notificationHistory.length > 0) && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3, duration: 0.4 }}
+          >
+            <h2 className="text-sm font-bold text-slate-600 mb-3 flex items-center gap-2">
+              <Bell className="w-4 h-4 text-violet-500" />
+              Reminders Sent
+            </h2>
+            {notifLoading ? (
+              <div className="flex justify-center py-6">
+                <Loader2 className="w-6 h-6 animate-spin text-violet-400" />
+              </div>
+            ) : (
+              <div
+                className="rounded-2xl overflow-hidden"
+                style={{
+                  background: "rgba(255,255,255,0.82)",
+                  border: "1px solid rgba(255,255,255,0.75)",
+                  boxShadow: "0 4px 18px rgba(0,0,0,0.06)",
+                }}
+                data-testid="section-notification-history"
+              >
+                <div className="divide-y divide-slate-100">
+                  {notificationHistory.map((entry) => {
+                    const ChannelIcon = entry.channel === "email" ? Mail : entry.channel === "sms" ? MessageSquare : Webhook;
+                    const channelLabel = entry.channel === "email" ? "Email" : entry.channel === "sms" ? "SMS" : entry.channel === "whatsapp" ? "WhatsApp" : entry.channel;
+                    const isSent = entry.status === "sent";
+                    return (
+                      <div
+                        key={entry.id}
+                        className="flex items-center gap-3 px-4 py-3"
+                        data-testid={`row-notif-${entry.id}`}
+                      >
+                        <div
+                          className="flex items-center justify-center w-8 h-8 rounded-lg flex-shrink-0"
+                          style={{
+                            background: isSent ? "#f5f3ff" : "#fef2f2",
+                            color: isSent ? "#7c3aed" : "#dc2626",
+                          }}
+                        >
+                          <ChannelIcon className="w-4 h-4" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-slate-700">
+                            {channelLabel} reminder
+                            <span className="ml-1.5 font-normal text-slate-400">· Stage {entry.stage}</span>
+                          </p>
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            {entry.sentAt
+                              ? new Date(entry.sentAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
+                              : "—"}
+                          </p>
+                        </div>
+                        <span
+                          className="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0"
+                          style={isSent
+                            ? { background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0" }
+                            : { background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" }}
+                          data-testid={`badge-notif-status-${entry.id}`}
+                        >
+                          {isSent ? "Sent" : "Failed"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </motion.div>
         )}
 
         <motion.p

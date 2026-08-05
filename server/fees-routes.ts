@@ -1330,6 +1330,25 @@ export function registerFeesRoutes(app: Express) {
     }
   });
 
+  // ── Student: Notification History ─────────────────────────────────────────
+  app.get("/api/student/fees/notification-history", async (req, res) => {
+    if (!req.session?.studentId) return res.status(403).json({ message: "Student access required" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(403).json({ message: "Student not found" });
+    const rows = await storage.getDunningLogByStudent(student.id, student.schoolId);
+    // Strip any admin-only fields — only expose channel, stage, sentAt, status, recipient
+    const safe = rows.map(r => ({
+      id: r.id,
+      feeRecordId: r.feeRecordId,
+      channel: r.channel,
+      stage: r.stage,
+      sentAt: r.sentAt,
+      status: r.status,
+      recipient: r.recipient,
+    }));
+    res.json(safe);
+  });
+
   // ── Student: External Portal Info ─────────────────────────────────────────
   app.get("/api/student/fees/portal-info", async (req, res) => {
     if (!req.session?.studentId) return res.status(403).json({ message: "Student access required" });
