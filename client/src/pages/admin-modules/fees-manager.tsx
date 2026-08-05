@@ -106,6 +106,14 @@ interface DunningLogEntry {
   studentName: string | null;
 }
 
+interface DunningTemplateRow {
+  id: number;
+  stage: string;
+  channel: string;
+  bodyText: string;
+  subjectText: string | null;
+}
+
 interface SimResult {
   totalFees: number;
   entriesLogged: number;
@@ -2445,6 +2453,11 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [simResult, setSimResult] = useState<SimResult | null>(null);
   const [simOpen,   setSimOpen]   = useState(false);
 
+  // Template editor state — keyed "stage|channel"
+  const [templateDraft, setTemplateDraft] = useState<Record<string, { bodyText: string; subjectText: string }>>({});
+  const [templatesSynced, setTemplatesSynced] = useState(false);
+  const [activeTemplateStage, setActiveTemplateStage] = useState<string>("D0");
+
   const { data: cfg, isLoading } = useQuery<NotifConfig | null>({
     queryKey: ["/api/admin/fees/notification-config"],
     staleTime: 60_000,
@@ -2453,6 +2466,11 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const { data: logEntries = [] } = useQuery<DunningLogEntry[]>({
     queryKey: ["/api/admin/fees/dunning-log"],
     staleTime: 30_000,
+  });
+
+  const { data: savedTemplates, isSuccess: templatesLoaded } = useQuery<DunningTemplateRow[]>({
+    queryKey: ["/api/admin/fees/dunning-templates"],
+    staleTime: 60_000,
   });
 
   useEffect(() => {
@@ -2472,6 +2490,69 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       setSynced(true);
     }
   }, [cfg, synced]);
+
+  // Default template texts shown before any school-specific override is saved
+  const DEFAULT_SMS: Record<string, string> = {
+    D0:  `Dear {guardian_name}, {student_name}'s fee "{fee_name}" of Rs.{amount} is due today. Please pay promptly.`,
+    D7:  `Reminder: {student_name}'s fee "{fee_name}" of Rs.{amount} is 7 days overdue. Please clear it at the earliest.`,
+    D14: `2nd Notice: {student_name}'s fee "{fee_name}" of Rs.{amount} is 14 days overdue. Please contact admin immediately.`,
+    D30: `FINAL NOTICE: {student_name}'s fee "{fee_name}" of Rs.{amount} is 30 days overdue. Account may be flagged.`,
+  };
+  const DEFAULT_EMAIL_SUBJECT: Record<string, string> = {
+    D0:  "Fee Due Today",
+    D7:  "Fee Reminder — 7 Days Overdue",
+    D14: "Second Notice — Fee 14 Days Overdue",
+    D30: "Final Notice — Fee 30 Days Overdue",
+  };
+  const DEFAULT_EMAIL_BODY: Record<string, string> = {
+    D0:  `This is a reminder that {student_name}'s fee "{fee_name}" of ₹{amount} is due today. Please pay to avoid late penalties.`,
+    D7:  `{student_name}'s fee "{fee_name}" of ₹{amount} is 7 days overdue. Please clear the dues immediately.`,
+    D14: `This is a second notice. {student_name}'s fee "{fee_name}" of ₹{amount} is 14 days overdue. Please contact the school admin without further delay.`,
+    D30: `FINAL NOTICE: {student_name}'s fee "{fee_name}" of ₹{amount} is 30 days overdue. Failure to pay may result in account restrictions.`,
+  };
+
+  useEffect(() => {
+    // Only seed draft once the query has actually resolved (templatesLoaded = true).
+    // Using the isSuccess flag prevents premature hydration before API data arrives,
+    // which would seed defaults and silently ignore saved school-specific templates.
+    if (!templatesSynced && templatesLoaded) {
+      const rows = savedTemplates ?? [];
+      const draft: Record<string, { bodyText: string; subjectText: string }> = {};
+      for (const stage of ["D0", "D7", "D14", "D30"]) {
+        for (const channel of ["sms", "email"]) {
+          const key = `${stage}|${channel}`;
+          const saved = rows.find(t => t.stage === stage && t.channel === channel);
+          draft[key] = {
+            bodyText: saved?.bodyText ?? (channel === "sms" ? DEFAULT_SMS[stage] : DEFAULT_EMAIL_BODY[stage]),
+            subjectText: saved?.subjectText ?? (channel === "email" ? DEFAULT_EMAIL_SUBJECT[stage] : ""),
+          };
+        }
+      }
+      setTemplateDraft(draft);
+      setTemplatesSynced(true);
+    }
+  }, [templatesLoaded, templatesSynced, savedTemplates]);
+
+  const saveTemplatesMut = useMutation({
+    mutationFn: () => {
+      const templates: Array<{ stage: string; channel: string; bodyText: string; subjectText: string | null }> = [];
+      for (const [key, val] of Object.entries(templateDraft)) {
+        const [stage, channel] = key.split("|");
+        templates.push({
+          stage,
+          channel,
+          bodyText: val.bodyText,
+          subjectText: channel === "email" ? (val.subjectText || null) : null,
+        });
+      }
+      return apiRequest("PUT", "/api/admin/fees/dunning-templates", { templates });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/dunning-templates"] });
+      toast({ title: "Message templates saved" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
 
   const saveMut = useMutation({
     mutationFn: () => apiRequest("PUT", "/api/admin/fees/notification-config", {
@@ -2806,6 +2887,100 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ── Message Templates ── */}
+      <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-white font-semibold text-sm">Message Templates</p>
+            <p className="text-white/40 text-xs mt-0.5">Customise the text sent at each overdue stage. Supports variables: <code className="text-cyan-400 text-[10px]">{"{student_name}"}</code> <code className="text-cyan-400 text-[10px]">{"{guardian_name}"}</code> <code className="text-cyan-400 text-[10px]">{"{fee_name}"}</code> <code className="text-cyan-400 text-[10px]">{"{amount}"}</code> <code className="text-cyan-400 text-[10px]">{"{due_date}"}</code></p>
+          </div>
+          {!isArchiveMode && (
+            <Button size="sm" onClick={() => saveTemplatesMut.mutate()} disabled={saveTemplatesMut.isPending}
+              className="bg-cyan-700 hover:bg-cyan-600 text-white text-xs h-8 px-3">
+              {saveTemplatesMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <CheckCircle2 className="w-3.5 h-3.5 mr-1" />}
+              Save Templates
+            </Button>
+          )}
+        </div>
+
+        {/* Stage tabs */}
+        <div className="flex gap-1">
+          {[
+            { key: "D0",  label: "D+0",  color: "text-cyan-400",   border: "border-cyan-500/60" },
+            { key: "D7",  label: "D+7",  color: "text-amber-400",  border: "border-amber-500/60" },
+            { key: "D14", label: "D+14", color: "text-orange-400", border: "border-orange-500/60" },
+            { key: "D30", label: "D+30", color: "text-red-400",    border: "border-red-500/60" },
+          ].map(({ key, label, color, border }) => (
+            <button key={key} onClick={() => setActiveTemplateStage(key)}
+              className={`px-3 py-1 rounded text-xs font-bold border transition-colors ${activeTemplateStage === key ? `${color} ${border} bg-white/5` : "text-white/40 border-white/10 hover:text-white/70"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* SMS template */}
+        {templatesSynced && (
+          <div className="space-y-3">
+            {/* SMS */}
+            <div>
+              <div className="flex items-center gap-2 mb-1.5">
+                <MessageSquare className="w-3.5 h-3.5 text-blue-400" />
+                <span className="text-white/70 text-xs font-medium">SMS Body</span>
+              </div>
+              <textarea
+                rows={3}
+                value={templateDraft[`${activeTemplateStage}|sms`]?.bodyText ?? ""}
+                onChange={e => setTemplateDraft(d => ({
+                  ...d,
+                  [`${activeTemplateStage}|sms`]: { ...d[`${activeTemplateStage}|sms`], bodyText: e.target.value },
+                }))}
+                disabled={isArchiveMode}
+                className="w-full bg-[#0f1923] border border-white/10 text-white text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500/50 placeholder:text-white/20 resize-y disabled:opacity-50"
+              />
+            </div>
+
+            {/* Email */}
+            <div>
+              <div className="flex items-center gap-2 mb-1.5">
+                <Mail className="w-3.5 h-3.5 text-purple-400" />
+                <span className="text-white/70 text-xs font-medium">Email</span>
+              </div>
+              <div className="space-y-2">
+                <div>
+                  <p className="text-white/40 text-[10px] mb-1">Subject line</p>
+                  <input
+                    value={templateDraft[`${activeTemplateStage}|email`]?.subjectText ?? ""}
+                    onChange={e => setTemplateDraft(d => ({
+                      ...d,
+                      [`${activeTemplateStage}|email`]: { ...d[`${activeTemplateStage}|email`], subjectText: e.target.value },
+                    }))}
+                    disabled={isArchiveMode}
+                    className="w-full bg-[#0f1923] border border-white/10 text-white text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-purple-500/50 placeholder:text-white/20 disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <p className="text-white/40 text-[10px] mb-1">Message body</p>
+                  <textarea
+                    rows={3}
+                    value={templateDraft[`${activeTemplateStage}|email`]?.bodyText ?? ""}
+                    onChange={e => setTemplateDraft(d => ({
+                      ...d,
+                      [`${activeTemplateStage}|email`]: { ...d[`${activeTemplateStage}|email`], bodyText: e.target.value },
+                    }))}
+                    disabled={isArchiveMode}
+                    className="w-full bg-[#0f1923] border border-white/10 text-white text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-purple-500/50 placeholder:text-white/20 resize-y disabled:opacity-50"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="p-2.5 rounded-lg bg-white/5 border border-white/10">
+              <p className="text-white/30 text-[10px]">WhatsApp uses a pre-approved MSG91 template (configured above) — its body text is managed in your MSG91 dashboard and cannot be customised here.</p>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* ── Dunning schedule ── */}
       <div>

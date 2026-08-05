@@ -425,6 +425,17 @@ app.use((req, res, next) => {
       student_name TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_dunning_log_school_fee ON dunning_log(school_id, fee_record_id);
+    CREATE TABLE IF NOT EXISTS dunning_templates (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      stage TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      body_text TEXT NOT NULL,
+      subject_text TEXT,
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS dunning_templates_school_stage_channel
+      ON dunning_templates(school_id, stage, channel);
   `);
 
   // Back-fill session_id on existing payment_records that are linked to a fee_record

@@ -1062,3 +1062,17 @@ export const dunningLog = pgTable("dunning_log", {
   studentName: text("student_name"),
 });
 export type DunningLog = typeof dunningLog.$inferSelect;
+
+// ── Dunning message templates (per school × stage × channel) ─────────────────
+export const dunningTemplates = pgTable("dunning_templates", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  stage: text("stage").notNull(),    // 'D0' | 'D7' | 'D14' | 'D30'
+  channel: text("channel").notNull(), // 'sms' | 'email'
+  bodyText: text("body_text").notNull(),
+  subjectText: text("subject_text"), // email subject only
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("dunning_templates_school_stage_channel").on(table.schoolId, table.stage, table.channel),
+]);
+export type DunningTemplate = typeof dunningTemplates.$inferSelect;

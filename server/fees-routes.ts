@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { storage } from "./storage";
 import { db } from "./db";
-import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog } from "@shared/schema";
+import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates } from "@shared/schema";
 import { and, eq, sql, desc } from "drizzle-orm";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -984,6 +984,55 @@ export function registerFeesRoutes(app: Express) {
             LIMIT 50`,
     );
     res.json(result.rows);
+  });
+
+  // ── Admin: Dunning Templates GET ─────────────────────────────────────────
+  app.get("/api/admin/fees/dunning-templates", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const rows = await db.select().from(dunningTemplates).where(eq(dunningTemplates.schoolId, schoolId));
+    res.json(rows);
+  });
+
+  // ── Admin: Dunning Templates PUT (upsert all) ────────────────────────────
+  const dunningTemplateEntrySchema = z.object({
+    stage:       z.enum(["D0", "D7", "D14", "D30"]),
+    channel:     z.enum(["sms", "email"]),
+    bodyText:    z.string().min(1, "Template body cannot be empty"),
+    subjectText: z.string().optional().nullable(),
+  });
+  const dunningTemplatesSchema = z.object({
+    templates: z.array(dunningTemplateEntrySchema),
+  });
+
+  app.put("/api/admin/fees/dunning-templates", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const parsed = dunningTemplatesSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+    const { templates } = parsed.data;
+    for (const t of templates) {
+      await db
+        .insert(dunningTemplates)
+        .values({
+          schoolId,
+          stage: t.stage,
+          channel: t.channel,
+          bodyText: t.bodyText,
+          subjectText: t.subjectText ?? null,
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [dunningTemplates.schoolId, dunningTemplates.stage, dunningTemplates.channel],
+          set: {
+            bodyText: t.bodyText,
+            subjectText: t.subjectText ?? null,
+            updatedAt: new Date(),
+          },
+        });
+    }
+    res.json({ ok: true });
   });
 
   // ── Admin: Dunning Simulation ─────────────────────────────────────────────

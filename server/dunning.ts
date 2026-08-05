@@ -16,9 +16,9 @@
 
 import { db } from "./db";
 import {
-  feeRecords, students, notificationConfig, dunningLog, academicSessions,
+  feeRecords, students, notificationConfig, dunningLog, academicSessions, dunningTemplates,
 } from "@shared/schema";
-import { eq, and, inArray, or, ne } from "drizzle-orm";
+import { eq, and, inArray, or } from "drizzle-orm";
 function log(msg: string, _tag?: string) { console.log(`[dunning] ${msg}`); }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -57,34 +57,87 @@ export interface SimulationResult {
   }>;
 }
 
-// ─── Message templates ───────────────────────────────────────────────────────
+// ─── Default message templates (with {variable} placeholders) ────────────────
 
-const SMS_TEMPLATES: Record<Stage, (f: FeeForDunning) => string> = {
-  D0:  f => `Dear ${f.guardianName || "Parent"}, ${f.studentName}'s fee "${f.feeType}" of Rs.${f.amount} is due today. Please pay promptly.`,
-  D7:  f => `Reminder: ${f.studentName}'s fee "${f.feeType}" of Rs.${f.amount} is 7 days overdue. Please clear it at the earliest.`,
-  D14: f => `2nd Notice: ${f.studentName}'s fee "${f.feeType}" of Rs.${f.amount} is 14 days overdue. Please contact admin immediately.`,
-  D30: f => `FINAL NOTICE: ${f.studentName}'s fee "${f.feeType}" of Rs.${f.amount} is 30 days overdue. Account may be flagged.`,
+export const DEFAULT_SMS_TEMPLATES: Record<Stage, string> = {
+  D0:  `Dear {guardian_name}, {student_name}'s fee "{fee_name}" of Rs.{amount} is due today. Please pay promptly.`,
+  D7:  `Reminder: {student_name}'s fee "{fee_name}" of Rs.{amount} is 7 days overdue. Please clear it at the earliest.`,
+  D14: `2nd Notice: {student_name}'s fee "{fee_name}" of Rs.{amount} is 14 days overdue. Please contact admin immediately.`,
+  D30: `FINAL NOTICE: {student_name}'s fee "{fee_name}" of Rs.{amount} is 30 days overdue. Account may be flagged.`,
 };
 
-const EMAIL_SUBJECTS: Record<Stage, string> = {
+export const DEFAULT_EMAIL_SUBJECTS: Record<Stage, string> = {
   D0:  "Fee Due Today",
   D7:  "Fee Reminder — 7 Days Overdue",
   D14: "Second Notice — Fee 14 Days Overdue",
   D30: "Final Notice — Fee 30 Days Overdue",
 };
 
-function emailHtml(f: FeeForDunning, stage: Stage): string {
-  const messages: Record<Stage, string> = {
-    D0:  `This is a reminder that ${f.studentName}'s fee <strong>"${f.feeType}"</strong> of <strong>₹${f.amount}</strong> is due today. Please pay to avoid late penalties.`,
-    D7:  `${f.studentName}'s fee <strong>"${f.feeType}"</strong> of <strong>₹${f.amount}</strong> is <strong>7 days overdue</strong>. Please clear the dues immediately.`,
-    D14: `This is a second notice. ${f.studentName}'s fee <strong>"${f.feeType}"</strong> of <strong>₹${f.amount}</strong> is <strong>14 days overdue</strong>. Please contact the school admin without further delay.`,
-    D30: `<strong>FINAL NOTICE:</strong> ${f.studentName}'s fee <strong>"${f.feeType}"</strong> of <strong>₹${f.amount}</strong> is <strong>30 days overdue</strong>. Failure to pay may result in account restrictions.`,
-  };
+export const DEFAULT_EMAIL_BODIES: Record<Stage, string> = {
+  D0:  `This is a reminder that {student_name}'s fee "{fee_name}" of ₹{amount} is due today. Please pay to avoid late penalties.`,
+  D7:  `{student_name}'s fee "{fee_name}" of ₹{amount} is 7 days overdue. Please clear the dues immediately.`,
+  D14: `This is a second notice. {student_name}'s fee "{fee_name}" of ₹{amount} is 14 days overdue. Please contact the school admin without further delay.`,
+  D30: `FINAL NOTICE: {student_name}'s fee "{fee_name}" of ₹{amount} is 30 days overdue. Failure to pay may result in account restrictions.`,
+};
+
+/** Replace {variable} placeholders with actual fee data. */
+function interpolate(template: string, f: FeeForDunning): string {
+  return template
+    .replace(/\{student_name\}/g, f.studentName)
+    .replace(/\{guardian_name\}/g, f.guardianName || "Parent")
+    .replace(/\{fee_name\}/g, f.feeType)
+    .replace(/\{amount\}/g, String(f.amount))
+    .replace(/\{due_date\}/g, f.dueDate);
+}
+
+// ─── DB template cache (loaded once per dunning run, keyed by schoolId) ──────
+
+interface TemplateMap {
+  sms:   Partial<Record<Stage, string>>;
+  email: Partial<Record<Stage, { subject: string; body: string }>>;
+}
+
+async function loadTemplates(schoolId: number): Promise<TemplateMap> {
+  const rows = await db
+    .select()
+    .from(dunningTemplates)
+    .where(eq(dunningTemplates.schoolId, schoolId));
+
+  const map: TemplateMap = { sms: {}, email: {} };
+  for (const row of rows) {
+    const stage = row.stage as Stage;
+    if (row.channel === "sms") {
+      map.sms[stage] = row.bodyText;
+    } else if (row.channel === "email") {
+      map.email[stage] = {
+        subject: row.subjectText || DEFAULT_EMAIL_SUBJECTS[stage],
+        body: row.bodyText,
+      };
+    }
+  }
+  return map;
+}
+
+function getSmsText(tmap: TemplateMap, stage: Stage, f: FeeForDunning): string {
+  const tmpl = tmap.sms[stage] ?? DEFAULT_SMS_TEMPLATES[stage];
+  return interpolate(tmpl, f);
+}
+
+function getEmailSubject(tmap: TemplateMap, stage: Stage, f: FeeForDunning): string {
+  const tmpl = tmap.email[stage]?.subject ?? DEFAULT_EMAIL_SUBJECTS[stage];
+  return interpolate(tmpl, f);
+}
+
+function getEmailBody(tmap: TemplateMap, stage: Stage, f: FeeForDunning): string {
+  const body = tmap.email[stage]?.body ?? DEFAULT_EMAIL_BODIES[stage];
+  const bodyHtml = interpolate(body, f)
+    // wrap **text** in bold for simple markdown-lite support
+    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
   return `
 <!DOCTYPE html><html><body style="font-family:Arial,sans-serif;background:#f4f4f4;padding:20px;">
 <div style="max-width:480px;margin:auto;background:#fff;border-radius:8px;padding:24px;border:1px solid #ddd;">
   <h2 style="color:#1a2942;margin-top:0;">Fee Notification</h2>
-  <p style="color:#444;">${messages[stage]}</p>
+  <p style="color:#444;">${bodyHtml}</p>
   <table style="width:100%;border-collapse:collapse;margin-top:16px;">
     <tr><td style="padding:6px 0;color:#888;font-size:13px;">Student</td><td style="padding:6px 0;font-weight:600;font-size:13px;">${f.studentName}</td></tr>
     <tr><td style="padding:6px 0;color:#888;font-size:13px;">Fee Type</td><td style="padding:6px 0;font-size:13px;">${f.feeType}</td></tr>
@@ -387,6 +440,10 @@ async function processDunningForSchool(
   const rows = await fetchFeeRows(cfg.schoolId, ["Due", "Overdue"], sessionId);
   if (rows.length === 0) return;
 
+  // Load per-school templates (with fallback to defaults if table missing or query fails)
+  let tmap: TemplateMap = { sms: {}, email: {} };
+  try { tmap = await loadTemplates(cfg.schoolId); } catch { /* use defaults */ }
+
   const feeIds = rows.map(r => r.feeId);
   const existingLogs = await db
     .select({ feeRecordId: dunningLog.feeRecordId, channel: dunningLog.channel, stage: dunningLog.stage })
@@ -466,7 +523,7 @@ async function processDunningForSchool(
             errorMessage = "Missing SMS config or student phone";
           } else {
             recipient = fee.studentPhone;
-            await sendSms(cfg.msg91AuthKey, cfg.msg91SenderId, fee.studentPhone, SMS_TEMPLATES[stage](fee));
+            await sendSms(cfg.msg91AuthKey, cfg.msg91SenderId, fee.studentPhone, getSmsText(tmap, stage, fee));
             status = "sent";
           }
         } else if (channel === "whatsapp") {
@@ -489,8 +546,8 @@ async function processDunningForSchool(
               provider,
               apiKey, fromEmail, cfg.sendgridFromName || "School Admin",
               fee.studentEmail, fee.guardianName || fee.studentName,
-              `${EMAIL_SUBJECTS[stage]} — ${fee.studentName}`,
-              emailHtml(fee, stage),
+              `${getEmailSubject(tmap, stage, fee)} — ${fee.studentName}`,
+              getEmailBody(tmap, stage, fee),
               cfg.mailtrapInboxId,
             );
             status = "sent";
