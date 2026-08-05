@@ -425,6 +425,33 @@ async function processDunningForSchool(
       stage,
     };
 
+    // Re-check fee status immediately before sending — the fee may have been
+    // paid or waived after the initial SELECT (race-window guard).
+    const freshRow = await db
+      .select({ status: feeRecords.status })
+      .from(feeRecords)
+      .where(eq(feeRecords.id, fee.feeId))
+      .limit(1);
+    const freshStatus = freshRow[0]?.status ?? fee.status;
+    if (freshStatus === "Paid" || freshStatus === "Waived") {
+      log(`fee #${fee.feeId} (${fee.studentName}) is now ${freshStatus} — skipping all channels`);
+      for (const channel of channels) {
+        const key = `${fee.feeId}|${channel}|${stage}`;
+        if (sentSet.has(key)) continue;
+        await db.insert(dunningLog).values({
+          schoolId: cfg.schoolId,
+          feeRecordId: fee.feeId,
+          channel,
+          stage,
+          status: "skipped",
+          errorMessage: `skipped — ${freshStatus.toLowerCase()} after job queued`,
+          recipient: null,
+          studentName: fee.studentName,
+        });
+      }
+      continue;
+    }
+
     for (const channel of channels) {
       const key = `${fee.feeId}|${channel}|${stage}`;
       if (sentSet.has(key)) continue;
