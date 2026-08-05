@@ -955,12 +955,35 @@ export function registerFeesRoutes(app: Express) {
     res.json({ ok: true });
   });
 
-  // ── Admin: Dunning Log GET ─────────────────────────────────────────────────
+  // ── Admin: Dunning Log GET (school-wide or per-student) ─────────────────
+  // ?studentId=X → all dunning attempts for that student (up to 200)
   app.get("/api/admin/fees/dunning-log", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
-    const rows = await storage.getDunningLog(schoolId, 50);
-    res.json(rows);
+    const studentId = req.query.studentId ? parseInt(req.query.studentId as string) : null;
+    if (studentId !== null && isNaN(studentId)) {
+      return res.status(400).json({ message: "Invalid studentId" });
+    }
+    const result = await db.execute(
+      studentId !== null
+        ? sql`
+            SELECT dl.id, dl.fee_record_id, dl.channel, dl.stage, dl.sent_at, dl.status,
+                   dl.error_message, dl.recipient, dl.student_name
+            FROM dunning_log dl
+            INNER JOIN fee_records fr ON fr.id = dl.fee_record_id
+            WHERE dl.school_id = ${schoolId}
+              AND fr.student_id = ${studentId}
+            ORDER BY dl.sent_at DESC
+            LIMIT 200`
+        : sql`
+            SELECT id, fee_record_id, channel, stage, sent_at, status,
+                   error_message, recipient, student_name
+            FROM dunning_log
+            WHERE school_id = ${schoolId}
+            ORDER BY sent_at DESC
+            LIMIT 50`,
+    );
+    res.json(result.rows);
   });
 
   // ── Admin: Dunning Simulation ─────────────────────────────────────────────

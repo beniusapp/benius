@@ -1160,8 +1160,11 @@ ${filterDesc ? `<div class="filter-badge">Filtered: ${esc(filterDesc)}</div>` : 
   );
 }
 
-// ─── Fee Form Schema ──────────────────────────────────────────────────────────
-
+const NOTIF_CHANNEL_ICONS: Record<string, React.ReactNode> = {
+  sms:      <MessageSquare className="w-3.5 h-3.5" />,
+  whatsapp: <Phone className="w-3.5 h-3.5" />,
+  email:    <Mail className="w-3.5 h-3.5" />,
+};
 const feeFormSchema = z.object({
   studentId: z.string().min(1, "Select a student"),
   feeType: z.string().min(1, "Fee type is required"),
@@ -1335,6 +1338,9 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [showPaymentsModal, setShowPaymentsModal] = useState(false);
   const [viewPaymentsRecord, setViewPaymentsRecord] = useState<FeeRecordWithStudent | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [showNotifModal, setShowNotifModal] = useState(false);
+  const [notifStudentId, setNotifStudentId] = useState<number | null>(null);
+  const [notifStudentName, setNotifStudentName] = useState<string | null>(null);
   const [studentSearchCls, setStudentSearchCls] = useState("");
   const [studentSearchQ, setStudentSearchQ] = useState("");
   const [studentResults, setStudentResults] = useState<StudentItem[] | null>(null);
@@ -1440,11 +1446,14 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   }, [dueDateNotNeeded]);
 
   const createMut = useMutation({
-    mutationFn: (data: FeeFormValues) => apiRequest("POST", "/api/admin/fees", {
-      studentId: Number(data.studentId), feeType: data.feeType, amount: Number(data.amount),
-      dueDate: data.dueDate, status: data.status, paidDate: data.paidDate || null,
-      receiptNumber: data.receiptNumber || null, notes: data.notes || null, academicYear: data.academicYear || null,
-    }),
+    mutationFn: async (data: FeeFormValues) => {
+      const res = await apiRequest("POST", "/api/admin/fees", {
+        studentId: Number(data.studentId), feeType: data.feeType, amount: Number(data.amount),
+        dueDate: data.dueDate, status: data.status, paidDate: data.paidDate || null,
+        receiptNumber: data.receiptNumber || null, notes: data.notes || null, academicYear: data.academicYear || null,
+      });
+      return res.json();
+    },
     onSuccess: (rec: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
@@ -1676,6 +1685,16 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                             </Button>
                           );
                         })()}
+                        <Button size="icon" variant="ghost"
+                          onClick={() => {
+                            setNotifStudentId(rec.studentId);
+                            setNotifStudentName(rec.student?.name ?? null);
+                            setShowNotifModal(true);
+                          }}
+                          className="h-7 w-7 text-white/30 hover:text-violet-400"
+                          title="View notification history">
+                          <Bell className="w-3.5 h-3.5" />
+                        </Button>
                         {(() => {
                           // Prefer the most recent offline (OP) payment receipt;
                           // fall back to the fee-record (AF) receipt for Add Fee entries.
@@ -1739,6 +1758,12 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         onClose={() => setShowExportLedger(false)}
         availableClasses={classes}
         availableFeeTypes={allFeeTypes}
+      />
+      <NotificationHistoryModal
+        open={showNotifModal}
+        onClose={() => { setShowNotifModal(false); setNotifStudentId(null); setNotifStudentName(null); }}
+        studentId={notifStudentId}
+        studentName={notifStudentName}
       />
 
       {/* Delete confirmation */}
@@ -3219,5 +3244,153 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
       {activeTab === "external"   && <ExternalPortalTab isArchiveMode={isArchiveMode} />}
       {activeTab === "audit"      && <AuditTab />}
     </div>
+  );
+}
+
+const NOTIF_CHANNEL_COLORS: Record<string, string> = {
+  sms:      "bg-blue-900/40 text-blue-300 border-blue-700/40",
+  whatsapp: "bg-green-900/40 text-green-300 border-green-700/40",
+  email:    "bg-purple-900/40 text-purple-300 border-purple-700/40",
+};
+
+const NOTIF_STAGE_COLORS: Record<string, string> = {
+  D0: "text-cyan-400", D7: "text-amber-400", D14: "text-orange-400", D30: "text-red-400",
+};
+
+const NOTIF_STAGE_LABELS: Record<string, string> = {
+  D0: "Due today", D7: "7 days overdue", D14: "14 days overdue", D30: "30 days overdue",
+};
+
+interface NotificationHistoryModalProps {
+  open: boolean;
+  onClose: () => void;
+  studentId: number | null;
+  studentName: string | null;
+}
+
+function NotificationHistoryModal({ open, onClose, studentId, studentName }: NotificationHistoryModalProps) {
+  const { data: entries = [], isLoading } = useQuery<DunningLogEntry[]>({
+    queryKey: ["/api/admin/fees/dunning-log", studentId],
+    queryFn: async () => {
+      if (!studentId) return [];
+      const r = await sessionFetch(`/api/admin/fees/dunning-log?studentId=${studentId}`);
+      if (!r.ok) return [];
+      const rows: any[] = await r.json();
+      // Normalise snake_case from raw SQL → camelCase
+      return rows.map(row => ({
+        id:            row.id,
+        feeRecordId:   row.fee_record_id,
+        channel:       row.channel,
+        stage:         row.stage,
+        sentAt:        row.sent_at,
+        status:        row.status,
+        errorMessage:  row.error_message ?? null,
+        recipient:     row.recipient ?? null,
+        studentName:   row.student_name ?? null,
+      }));
+    },
+    enabled: open && !!studentId,
+    staleTime: 60_000,
+  });
+
+  const sentCount  = entries.filter(e => e.status === "sent").length;
+  const failCount  = entries.filter(e => e.status !== "sent").length;
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-2xl max-h-[80vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-violet-400">
+            <Bell className="w-5 h-5" />
+            Notification History
+            {isLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-400/60 ml-1" />}
+          </DialogTitle>
+        </DialogHeader>
+
+        {/* Student + summary strip */}
+        <div className="shrink-0 p-3 rounded-lg bg-white/5 border border-white/10 text-sm">
+          <p className="text-white font-semibold">{studentName ?? "—"}</p>
+          <div className="flex items-center gap-4 mt-1 flex-wrap">
+            <span className="text-white/40 text-xs">
+              Total: <span className="text-white font-medium">{entries.length}</span>
+            </span>
+            {sentCount > 0 && (
+              <span className="text-white/40 text-xs">
+                Sent: <span className="text-emerald-400 font-medium">{sentCount}</span>
+              </span>
+            )}
+            {failCount > 0 && (
+              <span className="text-white/40 text-xs">
+                Failed: <span className="text-red-400 font-medium">{failCount}</span>
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Log table */}
+        <div className="flex-1 overflow-y-auto min-h-0">
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12 text-white/30">
+              <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading…
+            </div>
+          ) : entries.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-14 text-white/30">
+              <Bell className="w-10 h-10 mb-3 opacity-20" />
+              <p className="text-sm">No notifications sent for this student yet.</p>
+              <p className="text-xs mt-1">Dunning reminders appear here once the automated job fires.</p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-white/10 overflow-hidden mt-0">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-white/10 bg-white/5">
+                    <th className="px-3 py-2.5 text-left text-white/50 font-medium">Channel</th>
+                    <th className="px-3 py-2.5 text-left text-white/50 font-medium">Stage</th>
+                    <th className="px-3 py-2.5 text-left text-white/50 font-medium">Sent</th>
+                    <th className="px-3 py-2.5 text-left text-white/50 font-medium">Recipient</th>
+                    <th className="px-3 py-2.5 text-left text-white/50 font-medium">Status</th>
+                    <th className="px-3 py-2.5 text-left text-white/50 font-medium">Fee Record</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {entries.map((e, i) => (
+                    <tr key={e.id} className={`border-b border-white/5 ${i % 2 === 0 ? "" : "bg-white/[0.02]"}`}>
+                      <td className="px-3 py-2">
+                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-xs ${NOTIF_CHANNEL_COLORS[e.channel] ?? "text-white/50 border-white/10"}`}>
+                          {NOTIF_CHANNEL_ICONS[e.channel]} {e.channel}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={`font-bold ${NOTIF_STAGE_COLORS[e.stage] ?? "text-white/60"}`}>{e.stage}</span>
+                        <span className="text-white/30 ml-1.5">{NOTIF_STAGE_LABELS[e.stage] ?? ""}</span>
+                      </td>
+                      <td className="px-3 py-2 text-white/50 whitespace-nowrap">{fmtDateTime(e.sentAt)}</td>
+                      <td className="px-3 py-2 text-white/50 max-w-[140px] truncate" title={e.recipient ?? ""}>{e.recipient ?? "—"}</td>
+                      <td className="px-3 py-2">
+                        {e.status === "sent" ? (
+                          <span className="text-emerald-400 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" /> sent
+                          </span>
+                        ) : (
+                          <span className="text-red-400 flex items-center gap-1" title={e.errorMessage ?? ""}>
+                            <AlertTriangle className="w-3 h-3" /> failed
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-white/30 font-mono">#{e.feeRecordId}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="shrink-0 pt-2 border-t border-white/10 flex justify-between items-center">
+          <p className="text-white/25 text-xs">Showing up to 200 most recent notifications</p>
+          <Button variant="ghost" onClick={onClose} className="text-white/60 h-8 text-sm">Close</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

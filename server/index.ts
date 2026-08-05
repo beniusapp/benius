@@ -391,6 +391,40 @@ app.use((req, res, next) => {
       prefix VARCHAR(10) PRIMARY KEY,
       current_number INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS notification_config (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL UNIQUE REFERENCES schools(id) ON DELETE CASCADE,
+      sms_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      msg91_auth_key TEXT,
+      msg91_sender_id TEXT,
+      wa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      msg91_wa_number TEXT,
+      msg91_wa_template TEXT,
+      email_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      email_provider TEXT NOT NULL DEFAULT 'sendgrid',
+      sendgrid_api_key TEXT,
+      sendgrid_from_email TEXT,
+      sendgrid_from_name TEXT,
+      mailtrap_api_key TEXT,
+      mailtrap_inbox_id TEXT,
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE notification_config ADD COLUMN IF NOT EXISTS email_provider TEXT NOT NULL DEFAULT 'sendgrid';
+    ALTER TABLE notification_config ADD COLUMN IF NOT EXISTS mailtrap_api_key TEXT;
+    ALTER TABLE notification_config ADD COLUMN IF NOT EXISTS mailtrap_inbox_id TEXT;
+    CREATE TABLE IF NOT EXISTS dunning_log (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL,
+      fee_record_id INTEGER NOT NULL REFERENCES fee_records(id) ON DELETE CASCADE,
+      channel TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      sent_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      status TEXT NOT NULL,
+      error_message TEXT,
+      recipient TEXT,
+      student_name TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_dunning_log_school_fee ON dunning_log(school_id, fee_record_id);
   `);
 
   // Back-fill session_id on existing payment_records that are linked to a fee_record

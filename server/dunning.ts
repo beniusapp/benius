@@ -1,6 +1,6 @@
 /**
  * Dunning engine — sends fee-overdue notifications via SMS (MSG91),
- * WhatsApp (MSG91) and email (SendGrid) at four stages:
+ * WhatsApp (MSG91) and email (SendGrid/Mailtrap) at four stages:
  *   D0  — due today
  *   D7  — 7 days overdue
  *   D14 — 14 days overdue
@@ -19,7 +19,7 @@ import {
   feeRecords, students, notificationConfig, dunningLog, academicSessions,
 } from "@shared/schema";
 import { eq, and, inArray, or, ne } from "drizzle-orm";
-function log(msg: string) { console.log(`[dunning] ${msg}`); }
+function log(msg: string, _tag?: string) { console.log(`[dunning] ${msg}`); }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -99,6 +99,7 @@ function emailHtml(f: FeeForDunning, stage: Stage): string {
 // ─── Provider send functions ──────────────────────────────────────────────────
 
 async function sendSms(authKey: string, senderId: string, phone: string, text: string): Promise<void> {
+  // Normalise to 91XXXXXXXXXX
   const mobile = phone.replace(/\D/g, "").replace(/^0/, "91").replace(/^(?!91)/, "91");
   const res = await fetch("https://api.msg91.com/api/v2/sendsms", {
     method: "POST",
@@ -198,6 +199,7 @@ async function sendEmail(
 }
 
 // ─── Stage calculators ────────────────────────────────────────────────────────
+
 
 /** Exact match — only returns a stage on the precise day. Used by the real cron job. */
 function getStage(dueDateStr: string): Stage | null {
