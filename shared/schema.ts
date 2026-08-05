@@ -1019,7 +1019,8 @@ export type ExternalPaymentSettings = typeof externalPaymentSettings.$inferSelec
 // Deletion of any ledger row NEVER decrements these counters.
 export const receiptSequences = pgTable("receipt_sequences", {
   id: serial("id").primaryKey(),
-  prefix: varchar("prefix", { length: 10 }).notNull().unique(),
+  schoolId: integer("school_id").notNull().default(1),
+  prefix: varchar("prefix", { length: 10 }).notNull(),
   currentNumber: integer("current_number").notNull().default(0),
 });
 

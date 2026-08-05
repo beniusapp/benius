@@ -89,12 +89,9 @@ interface NotifConfig {
   msg91WaNumber: string | null;
   msg91WaTemplate: string | null;
   emailEnabled: boolean;
-  emailProvider: "sendgrid" | "mailtrap";
   sendgridApiKey: string | null;
   sendgridFromEmail: string | null;
   sendgridFromName: string | null;
-  mailtrapApiKey: string | null;
-  mailtrapInboxId: string | null;
 }
 
 interface DunningLogEntry {
@@ -2412,9 +2409,6 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [sgApiKey,          setSgApiKey]           = useState("");
   const [sgFromEmail,       setSgFromEmail]        = useState("");
   const [sgFromName,        setSgFromName]         = useState("");
-  const [emailProvider,     setEmailProvider]      = useState<"sendgrid" | "mailtrap">("sendgrid");
-  const [mailtrapApiKey,    setMailtrapApiKey]     = useState("");
-  const [mailtrapInboxId,   setMailtrapInboxId]    = useState("");
   const [synced,            setSynced]             = useState(false);
 
   // Test notification state
@@ -2446,12 +2440,9 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         setMsg91WaNumber(cfg.msg91WaNumber ?? "");
         setMsg91WaTemplate(cfg.msg91WaTemplate ?? "");
         setEmailEnabled(cfg.emailEnabled);
-        setEmailProvider(cfg.emailProvider ?? "sendgrid");
         setSgApiKey(cfg.sendgridApiKey ?? "");
         setSgFromEmail(cfg.sendgridFromEmail ?? "");
         setSgFromName(cfg.sendgridFromName ?? "");
-        setMailtrapApiKey(cfg.mailtrapApiKey ?? "");
-        setMailtrapInboxId(cfg.mailtrapInboxId ?? "");
       }
       setSynced(true);
     }
@@ -2461,9 +2452,8 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     mutationFn: () => apiRequest("PUT", "/api/admin/fees/notification-config", {
       smsEnabled, msg91AuthKey: msg91AuthKey || null, msg91SenderId: msg91SenderId || null,
       waEnabled, msg91WaNumber: msg91WaNumber || null, msg91WaTemplate: msg91WaTemplate || null,
-      emailEnabled, emailProvider,
+      emailEnabled,
       sendgridApiKey: sgApiKey || null, sendgridFromEmail: sgFromEmail || null, sendgridFromName: sgFromName || null,
-      mailtrapApiKey: mailtrapApiKey || null, mailtrapInboxId: mailtrapInboxId || null,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/notification-config"] });
@@ -2479,7 +2469,7 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   });
 
   const simulateMut = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/admin/fees/dunning-simulate", {}),
+    mutationFn: (): Promise<SimResult> => apiRequest("POST", "/api/admin/fees/dunning-simulate", {}).then(r => r.json()),
     onSuccess: (data: SimResult) => {
       setSimResult(data);
       setSimOpen(true);
@@ -2598,61 +2588,25 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
           <Switch checked={emailEnabled} onCheckedChange={setEmailEnabled} disabled={isArchiveMode} />
         </div>
         {emailEnabled && (
-          <div className="space-y-3 pt-1">
-            {/* Provider toggle */}
+          <div className="space-y-2 pt-1">
             <div>
-              <p className="text-white/50 text-xs mb-2">Email Provider</p>
-              <div className="flex gap-2">
-                {(["sendgrid", "mailtrap"] as const).map(p => (
-                  <button key={p} onClick={() => setEmailProvider(p)} disabled={isArchiveMode}
-                    className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-colors ${emailProvider === p ? "bg-purple-700/40 border-purple-500/60 text-white" : "border-white/10 text-white/40 hover:text-white/70"}`}>
-                    {p === "sendgrid" ? "SendGrid" : "Mailtrap (free test)"}
-                  </button>
-                ))}
+              <p className="text-white/50 text-xs mb-1">SendGrid API Key</p>
+              <KeyInput value={sgApiKey} onChange={setSgApiKey} placeholder="SG.xxxxxxxxxxxx" />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <p className="text-white/50 text-xs mb-1">From Email</p>
+                <input value={sgFromEmail} onChange={e => setSgFromEmail(e.target.value)}
+                  placeholder="fees@school.edu"
+                  className="w-full bg-[#0f1923] border border-white/10 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500/60 placeholder:text-white/20" />
+              </div>
+              <div>
+                <p className="text-white/50 text-xs mb-1">From Name</p>
+                <input value={sgFromName} onChange={e => setSgFromName(e.target.value)}
+                  placeholder="School Admin"
+                  className="w-full bg-[#0f1923] border border-white/10 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500/60 placeholder:text-white/20" />
               </div>
             </div>
-
-            {emailProvider === "sendgrid" ? (
-              <>
-                <div>
-                  <p className="text-white/50 text-xs mb-1">SendGrid API Key</p>
-                  <KeyInput value={sgApiKey} onChange={setSgApiKey} placeholder="SG.xxxxxxxxxxxx" />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <p className="text-white/50 text-xs mb-1">From Email</p>
-                    <input value={sgFromEmail} onChange={e => setSgFromEmail(e.target.value)}
-                      placeholder="fees@school.edu"
-                      className="w-full bg-[#0f1923] border border-white/10 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500/60 placeholder:text-white/20" />
-                  </div>
-                  <div>
-                    <p className="text-white/50 text-xs mb-1">From Name</p>
-                    <input value={sgFromName} onChange={e => setSgFromName(e.target.value)}
-                      placeholder="School Admin"
-                      className="w-full bg-[#0f1923] border border-white/10 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500/60 placeholder:text-white/20" />
-                  </div>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="p-2.5 rounded-lg bg-purple-900/20 border border-purple-700/30">
-                  <p className="text-purple-300 text-xs">
-                    <strong>Mailtrap</strong> catches emails in a test inbox — nothing goes to real parents.
-                    Free plan: 1,000 emails/month. Sign up at <span className="text-cyan-400">mailtrap.io</span> → Inboxes → Show Credentials → copy <strong>API Token</strong> and <strong>Inbox ID</strong>.
-                  </p>
-                </div>
-                <div>
-                  <p className="text-white/50 text-xs mb-1">Mailtrap API Token</p>
-                  <KeyInput value={mailtrapApiKey} onChange={setMailtrapApiKey} placeholder="your-mailtrap-token" />
-                </div>
-                <div>
-                  <p className="text-white/50 text-xs mb-1">Inbox ID <span className="text-white/30">(found in Mailtrap inbox settings)</span></p>
-                  <input value={mailtrapInboxId} onChange={e => setMailtrapInboxId(e.target.value)}
-                    placeholder="1234567"
-                    className="w-full bg-[#0f1923] border border-white/10 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-cyan-500/60 placeholder:text-white/20" />
-                </div>
-              </>
-            )}
           </div>
         )}
       </div>
@@ -2801,13 +2755,6 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                   3. Click Send — the server will POST the notification payload to your URL.<br />
                   4. Watch it arrive live at webhook.site.
                 </p>
-              </div>
-            )}
-
-            {/* Mailtrap instructions */}
-            {testChannel === "email" && emailProvider === "mailtrap" && (
-              <div className="p-3 rounded-lg bg-purple-900/20 border border-purple-700/30">
-                <p className="text-purple-300 text-xs">Using <strong>Mailtrap</strong> — enter any email address below. The email will appear in your Mailtrap inbox, not the real address.</p>
               </div>
             )}
 

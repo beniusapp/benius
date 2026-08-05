@@ -4723,10 +4723,11 @@ export class DatabaseStorage {
     return rec;
   }
 
-  async getPaymentRecordsBySchool(schoolId: number, opts?: { studentId?: number; feeRecordId?: number }): Promise<PaymentRecord[]> {
+  async getPaymentRecordsBySchool(schoolId: number, opts?: { studentId?: number; feeRecordId?: number; sessionId?: number | null }): Promise<PaymentRecord[]> {
     const conditions: any[] = [eq(paymentRecords.schoolId, schoolId)];
     if (opts?.studentId) conditions.push(eq(paymentRecords.studentId, opts.studentId));
     if (opts?.feeRecordId !== undefined) conditions.push(eq(paymentRecords.feeRecordId, opts.feeRecordId));
+    if (opts?.sessionId != null) conditions.push(eq(paymentRecords.sessionId, opts.sessionId!));
     return db.select().from(paymentRecords)
       .where(and(...conditions))
       .orderBy(desc(paymentRecords.createdAt));
@@ -4743,9 +4744,9 @@ export class DatabaseStorage {
 
   // Read-only peek — returns what the NEXT number would be without incrementing.
   // Safe to call as many times as needed (modal open previews, no DB writes).
-  async peekReceiptNumber(prefix: string): Promise<string> {
+  async peekReceiptNumber(schoolId: number, prefix: string): Promise<string> {
     const result = await db.execute(
-      sql`SELECT current_number FROM receipt_sequences WHERE prefix = ${prefix}`,
+      sql`SELECT current_number FROM receipt_sequences WHERE school_id = ${schoolId} AND prefix = ${prefix}`,
     );
     const current = Number((result.rows[0] as any)?.current_number ?? 0);
     return `${prefix}${String(current + 1).padStart(2, "0")}`;
@@ -4755,6 +4756,7 @@ export class DatabaseStorage {
   // Atomically increments the counter for `prefix` (e.g. "OP", "AF") and
   // returns the formatted receipt number (e.g. "OP01", "AF12").
   // Uses INSERT … ON CONFLICT DO UPDATE so it self-seeds on first use.
+  // Scoped per (school_id, prefix) — each school has its own counter.
   // Deleting ledger rows NEVER touches this table — numbers are permanent.
   //
   // IMPORTANT — INTENTIONAL GAP BEHAVIOUR:
@@ -4767,11 +4769,11 @@ export class DatabaseStorage {
   //   no two payments ever share a receipt number, even under concurrent
   //   requests or partial failures.  Gaps do NOT represent missing or
   //   duplicated payments.
-  async nextReceiptNumber(prefix: string): Promise<string> {
+  async nextReceiptNumber(schoolId: number, prefix: string): Promise<string> {
     const result = await db.execute(
-      sql`INSERT INTO receipt_sequences (prefix, current_number)
-          VALUES (${prefix}, 1)
-          ON CONFLICT (prefix) DO UPDATE
+      sql`INSERT INTO receipt_sequences (school_id, prefix, current_number)
+          VALUES (${schoolId}, ${prefix}, 1)
+          ON CONFLICT (school_id, prefix) DO UPDATE
             SET current_number = receipt_sequences.current_number + 1
           RETURNING current_number`,
     );

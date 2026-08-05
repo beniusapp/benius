@@ -140,9 +140,13 @@ export function registerFeesRoutes(app: Express) {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
     const { studentId, feeRecordId } = req.query as { studentId?: string; feeRecordId?: string };
-    const opts: { studentId?: number; feeRecordId?: number } = {};
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const opts: { studentId?: number; feeRecordId?: number; sessionId?: number | null } = {};
     if (studentId) opts.studentId = parseInt(studentId);
+    // When fetching for a specific fee record, skip session filter (receipt lookup by ID)
     if (feeRecordId) opts.feeRecordId = parseInt(feeRecordId);
+    else opts.sessionId = sessionFilter;
     const records = await storage.getPaymentRecordsBySchool(schoolId, opts);
     res.json(records);
   });
@@ -213,7 +217,7 @@ export function registerFeesRoutes(app: Express) {
     //   NOT represent missing or duplicate payments — they are a deliberate
     //   side-effect of the uniqueness guarantee.  Accountants auditing the
     //   OP sequence should treat non-consecutive numbers as normal.
-    const opReceipt = await storage.nextReceiptNumber("OP");
+    const opReceipt = await storage.nextReceiptNumber(schoolId, "OP");
 
     // Auto-create a fee record when none is pre-linked but fee details were supplied
     if (!paymentData.feeRecordId && paymentData.feeType) {
@@ -465,11 +469,12 @@ export function registerFeesRoutes(app: Express) {
   // Used by the Add Fee and Record Offline Payment modals to show a preview.
   app.get("/api/admin/fees/next-receipt", async (req, res) => {
     if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
     const prefix = String(req.query.prefix ?? "").toUpperCase();
     if (!["AF", "OP"].includes(prefix)) {
       return res.status(400).json({ message: "prefix must be AF or OP" });
     }
-    const preview = await storage.peekReceiptNumber(prefix);
+    const preview = await storage.peekReceiptNumber(schoolId, prefix);
     res.json({ preview });
   });
 
@@ -633,6 +638,8 @@ export function registerFeesRoutes(app: Express) {
   app.get("/api/admin/fees/export-ledger", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
 
     // Parse optional query filters
     const { dateFrom, dateTo, class: classFilter, feeType: feeTypeFilter } = req.query as {
@@ -640,7 +647,7 @@ export function registerFeesRoutes(app: Express) {
     };
 
     // Build a joined query: fee_records LEFT JOIN students LEFT JOIN (aggregated payment_records)
-    // One row per fee record; amounts in rupees.
+    // One row per fee record; amounts in rupees. Always scoped to the viewed session.
     const rows = await db.execute(sql`
       SELECT
         s.name              AS student_name,
@@ -674,6 +681,7 @@ export function registerFeesRoutes(app: Express) {
         GROUP BY fee_record_id
       ) p ON p.fee_record_id = fr.id
       WHERE fr.school_id = ${schoolId}
+        ${sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``}
         ${dateFrom ? sql`AND fr.due_date >= ${dateFrom}` : sql``}
         ${dateTo   ? sql`AND fr.due_date <= ${dateTo}`   : sql``}
         ${classFilter  ? sql`AND s.class = ${classFilter}`   : sql``}
@@ -943,7 +951,7 @@ export function registerFeesRoutes(app: Express) {
     };
 
     await storage.upsertNotificationConfig(schoolId, update);
-    await appendAudit(req, "update_notification_config", "notification_config", schoolId, `Notification config updated`);
+    await appendAudit(req, schoolId, "update_notification_config", "notification_config", null, `Notification config updated`);
     res.json({ ok: true });
   });
 
@@ -960,8 +968,10 @@ export function registerFeesRoutes(app: Express) {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
     try {
+      const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+      const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
       const { runDunningSimulation } = await import("./dunning");
-      const result = await runDunningSimulation(schoolId);
+      const result = await runDunningSimulation(schoolId, sessionFilter);
       res.json(result);
     } catch (err) {
       res.status(500).json({ message: String(err) });

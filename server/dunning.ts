@@ -16,7 +16,7 @@
 
 import { db } from "./db";
 import {
-  feeRecords, students, notificationConfig, dunningLog,
+  feeRecords, students, notificationConfig, dunningLog, academicSessions,
 } from "@shared/schema";
 import { eq, and, inArray, or, ne } from "drizzle-orm";
 function log(msg: string) { console.log(`[dunning] ${msg}`); }
@@ -228,9 +228,10 @@ function getStageForSimulation(dueDateStr: string): Stage {
 
 // ─── Fetch fee rows helper ────────────────────────────────────────────────────
 
-async function fetchFeeRows(schoolId: number, statusFilter: string[] | null) {
+async function fetchFeeRows(schoolId: number, statusFilter: string[] | null, sessionId?: number | null) {
   const conditions: any[] = [eq(feeRecords.schoolId, schoolId)];
   if (statusFilter) conditions.push(inArray(feeRecords.status, statusFilter));
+  if (sessionId != null) conditions.push(eq(feeRecords.sessionId, sessionId));
   return db
     .select({
       feeId: feeRecords.id,
@@ -282,8 +283,8 @@ export async function runDunningJob(): Promise<void> {
  * - Does NOT deduplicate against prior simulations (each run is fresh)
  * - Returns a detailed report
  */
-export async function runDunningSimulation(schoolId: number): Promise<SimulationResult> {
-  const rows = await fetchFeeRows(schoolId, null); // ALL statuses
+export async function runDunningSimulation(schoolId: number, sessionId?: number | null): Promise<SimulationResult> {
+  const rows = await fetchFeeRows(schoolId, null, sessionId); // ALL statuses for viewed session
 
   const result: SimulationResult = {
     totalFees: rows.length,
@@ -375,7 +376,13 @@ async function processDunningForSchool(
   cfg: typeof notificationConfig.$inferSelect,
   _simulate: boolean,
 ): Promise<void> {
-  const rows = await fetchFeeRows(cfg.schoolId, ["Due", "Overdue"]);
+  // Scope to the school's active session — never send reminders for archived sessions
+  const activeSession = await db.select({ id: academicSessions.id })
+    .from(academicSessions)
+    .where(and(eq(academicSessions.schoolId, cfg.schoolId), eq(academicSessions.isActive, true)))
+    .limit(1);
+  const sessionId = activeSession[0]?.id ?? null;
+  const rows = await fetchFeeRows(cfg.schoolId, ["Due", "Overdue"], sessionId);
   if (rows.length === 0) return;
 
   const feeIds = rows.map(r => r.feeId);

@@ -4010,7 +4010,7 @@ export async function registerRoutes(
     const today = new Date().toISOString().split("T")[0];
     const dueDateForDb = parsed.data.dueDate || parsed.data.paidDate || today;
     // Auto-generate a non-reusable AF receipt number (sequence never resets on deletion).
-    const afReceipt = await storage.nextReceiptNumber("AF");
+    const afReceipt = await storage.nextReceiptNumber(schoolId, "AF");
     const rec = await storage.createFeeRecord({ ...parsed.data, dueDate: dueDateForDb, schoolId, sessionId: activeSession?.id ?? null, createdBy: req.session.userId, receiptNumber: afReceipt });
 
     // Auto-create a payment record so payment history is always populated for Paid records.
