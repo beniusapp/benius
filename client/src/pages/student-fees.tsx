@@ -1,11 +1,17 @@
 import { useEffect, useState, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { motion } from "framer-motion";
-import { ArrowLeft, GraduationCap, Loader2, CreditCard, CheckCircle2, Clock, AlertTriangle, Receipt, Download, Lock, ExternalLink, Copy, Check, Zap } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  ArrowLeft, CreditCard, Loader2, CheckCircle2, Clock, AlertTriangle,
+  Receipt, Download, Lock, ExternalLink, Copy, Check, Zap, Bell,
+  Mail, MessageSquare, Webhook, TrendingUp, Shield, ChevronRight,
+  Sparkles, CircleDollarSign, CalendarDays, BadgeCheck, WifiOff,
+} from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
-import { ArrowLeft, GraduationCap, Loader2, CreditCard, CheckCircle2, Clock, AlertTriangle, Receipt, Download, Lock, ExternalLink, Copy, Check, Bell, Mail, MessageSquare, Webhook } from "lucide-react";
+
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 interface StudentMeResponse {
   id: number;
@@ -16,6 +22,12 @@ interface StudentMeResponse {
   schoolName: string;
   schoolCode: string;
   schoolId?: number;
+}
+
+interface BreakdownItem {
+  name: string;
+  purpose: string;
+  amount: number;
 }
 
 interface FeeRecord {
@@ -31,6 +43,7 @@ interface FeeRecord {
   notes: string | null;
   academicYear: string | null;
   createdAt: string;
+  breakdown: BreakdownItem[];
 }
 
 interface NotificationHistoryEntry {
@@ -51,50 +64,21 @@ interface PortalInfo {
   razorpayKeyId: string | null;
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
 function formatAmount(amount: number) {
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency", currency: "INR", maximumFractionDigits: 0,
+  }).format(amount);
 }
 
 function formatDate(dateStr: string | null) {
   if (!dateStr) return "—";
-  return new Date(dateStr).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return new Date(dateStr).toLocaleDateString("en-IN", {
+    day: "2-digit", month: "short", year: "numeric",
+  });
 }
 
-function StatusChip({ status }: { status: string }) {
-  if (status === "Paid") {
-    return (
-      <span
-        className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold"
-        style={{ background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0" }}
-        data-testid={`badge-fee-status-paid`}
-      >
-        <CheckCircle2 className="w-3 h-3" /> Paid
-      </span>
-    );
-  }
-  if (status === "Overdue") {
-    return (
-      <span
-        className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold"
-        style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" }}
-        data-testid={`badge-fee-status-overdue`}
-      >
-        <AlertTriangle className="w-3 h-3" /> Overdue
-      </span>
-    );
-  }
-  return (
-    <span
-      className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold"
-      style={{ background: "#fffbeb", color: "#d97706", border: "1px solid #fde68a" }}
-      data-testid={`badge-fee-status-due`}
-    >
-      <Clock className="w-3 h-3" /> Due
-    </span>
-  );
-}
-
-// ── Load Razorpay checkout script dynamically ─────────────────────────────────
 function loadRazorpayScript(): Promise<void> {
   return new Promise((resolve, reject) => {
     if ((window as any).Razorpay) { resolve(); return; }
@@ -107,6 +91,48 @@ function loadRazorpayScript(): Promise<void> {
   });
 }
 
+// ── Stagger animation config ───────────────────────────────────────────────────
+const container = {
+  hidden: { opacity: 0 },
+  show: { opacity: 1, transition: { staggerChildren: 0.07 } },
+};
+const item = {
+  hidden: { opacity: 0, y: 18 },
+  show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 260, damping: 22 } },
+};
+
+// ── Sub-components ─────────────────────────────────────────────────────────────
+
+function StatusPill({ status }: { status: string }) {
+  if (status === "Paid") return (
+    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold tracking-wide"
+      style={{ background: "linear-gradient(135deg,#d1fae5,#a7f3d0)", color: "#065f46", border: "1px solid #6ee7b7" }}>
+      <BadgeCheck className="w-3 h-3" /> Paid
+    </span>
+  );
+  if (status === "Overdue") return (
+    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold tracking-wide"
+      style={{ background: "linear-gradient(135deg,#fee2e2,#fecaca)", color: "#991b1b", border: "1px solid #fca5a5" }}>
+      <AlertTriangle className="w-3 h-3" /> Overdue
+    </span>
+  );
+  return (
+    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold tracking-wide"
+      style={{ background: "linear-gradient(135deg,#fef3c7,#fde68a)", color: "#92400e", border: "1px solid #fcd34d" }}>
+      <Clock className="w-3 h-3" /> Due
+    </span>
+  );
+}
+
+function ChannelIcon({ channel }: { channel: string }) {
+  if (channel === "email") return <Mail className="w-4 h-4" />;
+  if (channel === "sms") return <MessageSquare className="w-4 h-4" />;
+  if (channel === "whatsapp") return <Webhook className="w-4 h-4" />;
+  return <Bell className="w-4 h-4" />;
+}
+
+// ── Main component ─────────────────────────────────────────────────────────────
+
 export default function StudentFees() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
@@ -114,6 +140,7 @@ export default function StudentFees() {
   const [copiedReceiptId, setCopiedReceiptId] = useState<number | null>(null);
   const [payingFeeId, setPayingFeeId] = useState<number | null>(null);
   const [payError, setPayError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"outstanding" | "history" | "reminders">("outstanding");
 
   const copyReceiptNumber = useCallback((recId: number, receiptNumber: string) => {
     navigator.clipboard.writeText(receiptNumber).then(() => {
@@ -135,7 +162,8 @@ export default function StudentFees() {
   const { data: portalInfo } = useQuery<PortalInfo>({
     queryKey: ["/api/student/fees/portal-info"],
     enabled: !!student,
-    staleTime: 60_000,
+    staleTime: 0,              // always fetch fresh — admin can toggle at any time
+    refetchOnWindowFocus: true,
   });
 
   const { data: notificationHistory = [], isLoading: notifLoading } = useQuery<NotificationHistoryEntry[]>({
@@ -150,16 +178,13 @@ export default function StudentFees() {
     }
   }, [studentLoading, isError, student, setLocation]);
 
-  // ── Razorpay Pay Now handler ────────────────────────────────────────────────
+  // Real Razorpay payment
   const handlePayNow = useCallback(async (rec: FeeRecord, studentData: StudentMeResponse) => {
     if (!portalInfo?.razorpayEnabled || !portalInfo.razorpayKeyId) return;
     setPayingFeeId(rec.id);
     setPayError(null);
     try {
-      // 1. Load SDK
       await loadRazorpayScript();
-
-      // 2. Create Razorpay order via backend
       const resp = await fetch("/api/payments/create-order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -171,465 +196,593 @@ export default function StudentFees() {
         throw new Error(err.message ?? "Failed to create order");
       }
       const { orderId, amount, currency, keyId } = await resp.json();
-
-      // 3. Open Razorpay checkout
       await new Promise<void>((resolve, reject) => {
         const options = {
-          key: keyId,
-          amount,
-          currency,
+          key: keyId, amount, currency,
           name: studentData.schoolName,
           description: rec.feeType,
           order_id: orderId,
-          prefill: {
-            name: studentData.name,
-            contact: "",
-            email: "",
-          },
-          theme: { color: "#06b6d4" },
+          prefill: { name: studentData.name, contact: "", email: "" },
+          theme: { color: "#6366f1" },
           handler: () => {
-            // Payment succeeded — webhook will update DB; refetch after a moment
             setTimeout(() => {
               refetchFees();
               queryClient.invalidateQueries({ queryKey: ["/api/student/fees"] });
             }, 2000);
             resolve();
           },
-          modal: {
-            ondismiss: () => reject(new Error("dismissed")),
-          },
+          modal: { ondismiss: () => reject(new Error("dismissed")) },
         };
         const rzp = new (window as any).Razorpay(options);
         rzp.open();
       });
     } catch (err: any) {
-      if (err?.message !== "dismissed") {
-        setPayError(err?.message ?? "Payment failed");
-      }
+      if (err?.message !== "dismissed") setPayError(err?.message ?? "Payment failed");
     } finally {
       setPayingFeeId(null);
     }
   }, [portalInfo, refetchFees, queryClient]);
 
+  // Simulated test payment (no real Razorpay keys needed)
+  const handleTestPay = useCallback(async (rec: FeeRecord) => {
+    setPayingFeeId(rec.id);
+    setPayError(null);
+    try {
+      const resp = await fetch("/api/payments/simulate-pay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ feeRecordId: rec.id }),
+        credentials: "include",
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.message ?? "Simulation failed");
+      await refetchFees();
+      queryClient.invalidateQueries({ queryKey: ["/api/student/fees"] });
+    } catch (err: any) {
+      setPayError(err?.message ?? "Test payment failed");
+    } finally {
+      setPayingFeeId(null);
+    }
+  }, [refetchFees, queryClient]);
+
+  // ── Loading splash ───────────────────────────────────────────────────────────
   if (studentLoading || !student) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "#f8fafc" }}>
-        <Loader2 className="w-10 h-10 animate-spin text-cyan-500" />
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4"
+        style={{ background: "linear-gradient(135deg,#0f172a 0%,#1e1b4b 50%,#0f172a 100%)" }}>
+        <div className="relative">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
+            style={{ background: "linear-gradient(135deg,#6366f1,#06b6d4)" }}>
+            <CreditCard className="w-8 h-8 text-white" />
+          </div>
+          <motion.div className="absolute inset-0 rounded-2xl"
+            style={{ background: "linear-gradient(135deg,#6366f1,#06b6d4)", opacity: 0.4 }}
+            animate={{ scale: [1, 1.4, 1], opacity: [0.4, 0, 0.4] }}
+            transition={{ repeat: Infinity, duration: 1.8 }} />
+        </div>
+        <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
       </div>
     );
   }
 
-  const totalDue = feeRecords.filter(r => r.status !== "Paid").reduce((s, r) => s + r.amount, 0);
-  const totalPaid = feeRecords.filter(r => r.status === "Paid").reduce((s, r) => s + r.amount, 0);
+  // ── Derived values ───────────────────────────────────────────────────────────
+  const totalDue    = feeRecords.filter(r => r.status !== "Paid").reduce((s, r) => s + r.amount, 0);
+  const totalPaid   = feeRecords.filter(r => r.status === "Paid").reduce((s, r) => s + r.amount, 0);
   const overdueCount = feeRecords.filter(r => r.status === "Overdue").length;
-
   const paidRecords = feeRecords.filter(r => r.status === "Paid");
   const pendingRecords = feeRecords.filter(r => r.status !== "Paid");
-
   const razorpayActive = !isArchiveMode && (portalInfo?.razorpayEnabled ?? false) && !!portalInfo?.razorpayKeyId;
 
+  const tabs = [
+    { key: "outstanding" as const, label: "Outstanding", count: pendingRecords.length },
+    { key: "history"     as const, label: "History",     count: paidRecords.length },
+    { key: "reminders"   as const, label: "Reminders",   count: notificationHistory.length },
+  ];
+
   return (
-    <div className="min-h-screen" style={{ background: "#f8fafc" }}>
+    <div className="min-h-screen" style={{ background: "#f1f5f9" }}>
+
+      {/* ── Ambient background ─────────────────────────────────────────────── */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
-        <div style={{ position: "absolute", top: "-120px", right: "-80px", width: "500px", height: "500px", borderRadius: "50%", background: "radial-gradient(circle, rgba(6,182,212,0.08) 0%, transparent 65%)" }} />
-        <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "460px", height: "460px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "340px",
+          background: "linear-gradient(160deg,#0f172a 0%,#1e1b4b 55%,#0c4a6e 100%)" }} />
+        <div style={{ position: "absolute", top: "60px", right: "-100px", width: "380px", height: "380px",
+          borderRadius: "50%", background: "radial-gradient(circle,rgba(99,102,241,0.25) 0%,transparent 65%)" }} />
+        <div style={{ position: "absolute", top: "100px", left: "-60px", width: "300px", height: "300px",
+          borderRadius: "50%", background: "radial-gradient(circle,rgba(6,182,212,0.18) 0%,transparent 65%)" }} />
       </div>
 
-      <header
-        className="fixed top-0 left-0 right-0 z-50"
-        style={{
-          backdropFilter: "blur(18px)",
-          WebkitBackdropFilter: "blur(18px)",
-          background: "rgba(255, 255, 255, 0.75)",
-          borderBottom: "1px solid rgba(255,255,255,0.7)",
-          boxShadow: "0 1px 28px rgba(0,0,0,0.07)",
-        }}
-      >
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 h-16 flex items-center gap-3">
-          <button
-            onClick={() => setLocation("/student-dashboard")}
-            className="flex items-center justify-center w-9 h-9 rounded-xl transition-all hover:bg-slate-100"
-            data-testid="button-back"
-          >
-            <ArrowLeft className="w-5 h-5 text-slate-600" />
+      {/* ── Sticky header ──────────────────────────────────────────────────── */}
+      <header className="fixed top-0 left-0 right-0 z-50"
+        style={{ backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
+          background: "rgba(15,23,42,0.72)", borderBottom: "1px solid rgba(99,102,241,0.18)",
+          boxShadow: "0 1px 30px rgba(0,0,0,0.35)" }}>
+        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
+          <button onClick={() => setLocation("/student-dashboard")}
+            className="flex items-center justify-center w-9 h-9 rounded-xl transition-all active:scale-90"
+            style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)" }}
+            data-testid="button-back">
+            <ArrowLeft className="w-4 h-4 text-white" />
           </button>
-          <div
-            className="flex items-center justify-center w-9 h-9 rounded-xl"
-            style={{ background: "linear-gradient(135deg, #06b6d4, #0891b2)" }}
-          >
-            <CreditCard className="w-5 h-5 text-white" />
+          <div className="flex items-center justify-center w-9 h-9 rounded-xl flex-shrink-0"
+            style={{ background: "linear-gradient(135deg,#6366f1,#06b6d4)" }}>
+            <CreditCard className="w-4 h-4 text-white" />
           </div>
-          <div className="leading-tight">
-            <p className="font-bold text-base text-slate-800 tracking-tight">Fees & Payments</p>
-            <p className="text-[11px] text-slate-400 font-medium">{student.schoolName}</p>
+          <div className="leading-tight flex-1 min-w-0">
+            <p className="font-bold text-sm text-white tracking-tight truncate">Fees & Payments</p>
+            <p className="text-[10px] text-indigo-300 font-medium truncate">{student.schoolName}</p>
           </div>
+          {isArchiveMode && (
+            <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold"
+              style={{ background: "rgba(251,191,36,0.15)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.3)" }}>
+              <Lock className="w-3 h-3" /> Archive
+            </span>
+          )}
         </div>
       </header>
 
-      <motion.main
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: "easeOut" }}
-        className="relative z-10 max-w-4xl mx-auto w-full px-4 sm:px-6 pt-24 pb-12 space-y-6"
-      >
+      <div className="relative z-10 max-w-2xl mx-auto px-4 pt-14">
 
-        {/* Archive mode banner */}
-        {isArchiveMode && selectedSession && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-            className="flex items-center gap-3 rounded-2xl px-4 py-3"
-            style={{ background: "#fefce8", border: "1.5px solid #fde68a", boxShadow: "0 2px 10px rgba(234,179,8,0.12)" }}
-            data-testid="banner-archive-fees"
-          >
-            <Lock className="w-4 h-4 text-amber-500 flex-shrink-0" />
-            <div>
-              <p className="text-sm font-bold text-amber-800">Archive Mode — Read Only</p>
-              <p className="text-xs text-amber-600 mt-0.5">Viewing fee records for <span className="font-semibold">{selectedSession.sessionName}</span>. No payments can be processed.</p>
+        {/* ── Hero balance card ───────────────────────────────────────────── */}
+        <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: [0.22,1,0.36,1] }}
+          className="relative mt-6 rounded-3xl overflow-hidden p-6"
+          style={{ background: "linear-gradient(135deg,rgba(99,102,241,0.18) 0%,rgba(6,182,212,0.12) 100%)",
+            border: "1px solid rgba(99,102,241,0.28)", boxShadow: "0 20px 60px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.08)" }}>
+
+          {/* Decorative glow orbs */}
+          <div className="absolute top-[-40px] right-[-40px] w-48 h-48 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle,rgba(99,102,241,0.3) 0%,transparent 65%)" }} />
+          <div className="absolute bottom-[-30px] left-[-20px] w-36 h-36 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle,rgba(6,182,212,0.2) 0%,transparent 65%)" }} />
+
+          <div className="relative">
+            <p className="text-xs font-semibold text-indigo-300 uppercase tracking-widest mb-1 flex items-center gap-1.5">
+              <CircleDollarSign className="w-3.5 h-3.5" />
+              Outstanding Balance
+            </p>
+            <div className="flex items-end gap-3 mb-4">
+              <p className="text-4xl sm:text-5xl font-black text-white tracking-tight"
+                style={{ fontVariantNumeric: "tabular-nums" }}>
+                {formatAmount(totalDue)}
+              </p>
+              {overdueCount > 0 && (
+                <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }}
+                  transition={{ delay: 0.3, type: "spring", stiffness: 300 }}
+                  className="mb-1 px-2.5 py-1 rounded-xl text-[11px] font-bold"
+                  style={{ background: "rgba(239,68,68,0.2)", color: "#fca5a5", border: "1px solid rgba(239,68,68,0.35)" }}>
+                  {overdueCount} overdue
+                </motion.span>
+              )}
             </div>
-          </motion.div>
-        )}
 
-        {/* Pay error banner */}
-        {payError && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex items-center gap-3 rounded-2xl px-4 py-3"
-            style={{ background: "#fef2f2", border: "1.5px solid #fecaca" }}
-          >
-            <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
-            <p className="text-sm text-red-700 flex-1">{payError}</p>
-            <button onClick={() => setPayError(null)} className="text-red-400 hover:text-red-600 text-xs font-semibold">Dismiss</button>
-          </motion.div>
-        )}
-
-        {/* External payment portal banner (legacy external link) */}
-        {portalInfo?.isEnabled && !portalInfo.razorpayEnabled && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-            className="rounded-2xl p-4"
-            style={{
-              background: "rgba(255,255,255,0.82)",
-              border: "1px solid rgba(255,255,255,0.75)",
-              boxShadow: "0 4px 18px rgba(0,0,0,0.06)",
-              borderTop: "4px solid #06b6d4",
-            }}
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <div
-                className="flex items-center justify-center w-8 h-8 rounded-lg flex-shrink-0"
-                style={{ background: "linear-gradient(135deg, #06b6d4, #0891b2)" }}
-              >
-                <CreditCard className="w-4 h-4 text-white" />
-              </div>
-              <p className="font-bold text-slate-800 text-sm">Pay Fees Online</p>
+            {/* Stats row */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "Paid",    value: formatAmount(totalPaid), color: "#34d399", icon: <TrendingUp className="w-3.5 h-3.5" /> },
+                { label: "Records", value: feeRecords.length,       color: "#818cf8", icon: <Receipt className="w-3.5 h-3.5" /> },
+                { label: "Pending", value: pendingRecords.length,   color: "#fb923c", icon: <Clock className="w-3.5 h-3.5" /> },
+              ].map((s) => (
+                <div key={s.label} className="rounded-2xl p-3 text-center"
+                  style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.09)" }}>
+                  <div className="flex items-center justify-center gap-1 mb-1" style={{ color: s.color }}>
+                    {s.icon}
+                    <p className="text-[10px] font-bold uppercase tracking-wide">{s.label}</p>
+                  </div>
+                  <p className="font-extrabold text-white text-sm" style={{ fontVariantNumeric: "tabular-nums" }}>{s.value}</p>
+                </div>
+              ))}
             </div>
-            {portalInfo.bannerMessage && (
-              <p className="text-sm text-slate-600 mb-3">{portalInfo.bannerMessage}</p>
-            )}
-            {portalInfo.gatewayUrl && (
-              <a
-                href={portalInfo.gatewayUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white"
-                style={{ background: "linear-gradient(135deg, #06b6d4, #0891b2)" }}
-              >
-                <ExternalLink className="w-4 h-4" />
-                Pay Now
-              </a>
-            )}
-          </motion.div>
-        )}
-
-        {/* Summary cards */}
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-          className="grid grid-cols-3 gap-3"
-        >
-          <div
-            className="rounded-2xl p-4 text-center"
-            style={{ background: "rgba(255,255,255,0.82)", border: "1px solid rgba(255,255,255,0.75)", boxShadow: "0 4px 18px rgba(0,0,0,0.06)", borderTop: "4px solid #ef4444" }}
-            data-testid="card-total-due"
-          >
-            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Outstanding</p>
-            <p className="text-lg sm:text-xl font-extrabold text-red-500">{formatAmount(totalDue)}</p>
-            {overdueCount > 0 && <p className="text-[10px] text-red-400 font-medium mt-0.5">{overdueCount} overdue</p>}
-          </div>
-          <div
-            className="rounded-2xl p-4 text-center"
-            style={{ background: "rgba(255,255,255,0.82)", border: "1px solid rgba(255,255,255,0.75)", boxShadow: "0 4px 18px rgba(0,0,0,0.06)", borderTop: "4px solid #10b981" }}
-            data-testid="card-total-paid"
-          >
-            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Paid</p>
-            <p className="text-lg sm:text-xl font-extrabold text-emerald-500">{formatAmount(totalPaid)}</p>
-          </div>
-          <div
-            className="rounded-2xl p-4 text-center"
-            style={{ background: "rgba(255,255,255,0.82)", border: "1px solid rgba(255,255,255,0.75)", boxShadow: "0 4px 18px rgba(0,0,0,0.06)", borderTop: "4px solid #06b6d4" }}
-            data-testid="card-total-records"
-          >
-            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Records</p>
-            <p className="text-lg sm:text-xl font-extrabold text-cyan-500">{feeRecords.length}</p>
           </div>
         </motion.div>
 
-        {feesLoading ? (
-          <div className="flex justify-center py-16">
-            <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
-          </div>
-        ) : feeRecords.length === 0 ? (
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.15, duration: 0.4 }}
-            className="rounded-2xl p-10 flex flex-col items-center gap-3 text-center"
-            style={{ background: "rgba(255,255,255,0.82)", border: "1px solid rgba(255,255,255,0.75)", boxShadow: "0 4px 18px rgba(0,0,0,0.06)" }}
-            data-testid="section-no-fees"
-          >
-            <div className="text-4xl">💳</div>
-            <p className="font-bold text-slate-700 text-base">No fee records yet</p>
-            <p className="text-sm text-slate-400">Your school has not posted any fee records for you yet.</p>
-          </motion.div>
-        ) : (
-          <>
-            {/* Pending/Overdue fees */}
-            {pendingRecords.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1, duration: 0.4 }}
-              >
-                <h2 className="text-sm font-bold text-slate-600 mb-3 flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-amber-500" />
-                  Outstanding Fees
-                </h2>
-                <div className="space-y-3">
-                  {pendingRecords.map((rec) => (
-                    <div
-                      key={rec.id}
-                      className="rounded-2xl p-4"
-                      style={{
-                        background: "rgba(255,255,255,0.82)",
-                        border: rec.status === "Overdue" ? "1px solid #fecaca" : "1px solid rgba(255,255,255,0.75)",
-                        boxShadow: "0 4px 18px rgba(0,0,0,0.06)",
-                        borderLeft: `4px solid ${rec.status === "Overdue" ? "#ef4444" : "#f59e0b"}`,
-                      }}
-                      data-testid={`card-fee-${rec.id}`}
-                    >
-                      <div className="flex items-start justify-between gap-3 flex-wrap">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <StatusChip status={rec.status} />
-                            {rec.academicYear && (
-                              <span className="text-[10px] font-medium text-slate-400 bg-slate-100 rounded px-1.5 py-0.5">{rec.academicYear}</span>
-                            )}
-                          </div>
-                          <p className="font-bold text-slate-800 text-sm mt-1" data-testid={`text-fee-type-${rec.id}`}>{rec.feeType}</p>
-                          <p className="text-xs text-slate-400 mt-0.5">Due: {formatDate(rec.dueDate)}</p>
-                          {rec.notes && <p className="text-xs text-slate-400 mt-0.5 italic">{rec.notes}</p>}
-                        </div>
-                        <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                          <p className="text-lg font-extrabold text-slate-800" data-testid={`text-fee-amount-${rec.id}`}>{formatAmount(rec.amount)}</p>
-                          {/* Razorpay Pay Now button */}
-                          {razorpayActive && (
-                            <button
-                              onClick={() => handlePayNow(rec, student)}
-                              disabled={payingFeeId === rec.id}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-white transition-all active:scale-95 disabled:opacity-60"
-                              style={{ background: payingFeeId === rec.id ? "#94a3b8" : "linear-gradient(135deg,#528FF0,#2D6EE8)" }}
-                              data-testid={`button-pay-now-${rec.id}`}
-                            >
-                              {payingFeeId === rec.id
-                                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Processing…</>
-                                : <><Zap className="w-3.5 h-3.5" /> Pay Now</>}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </motion.div>
-            )}
+        {/* ── Archive banner ──────────────────────────────────────────────── */}
+        <AnimatePresence>
+          {isArchiveMode && selectedSession && (
+            <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+              className="mt-4 flex items-center gap-3 rounded-2xl px-4 py-3"
+              style={{ background: "rgba(251,191,36,0.1)", border: "1.5px solid rgba(251,191,36,0.3)" }}
+              data-testid="banner-archive-fees">
+              <Lock className="w-4 h-4 text-amber-400 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-bold text-amber-300">Archive Mode — Read Only</p>
+                <p className="text-xs text-amber-500 mt-0.5">
+                  Viewing <span className="font-semibold">{selectedSession.sessionName}</span>. Payments disabled.
+                </p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-            {/* Payment history */}
-            {paidRecords.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2, duration: 0.4 }}
-              >
-                <h2 className="text-sm font-bold text-slate-600 mb-3 flex items-center gap-2">
-                  <Receipt className="w-4 h-4 text-emerald-500" />
-                  Payment History
-                </h2>
-                <div className="space-y-3">
-                  {paidRecords.map((rec) => (
-                    <div
-                      key={rec.id}
-                      className="rounded-2xl p-4"
-                      style={{
-                        background: "rgba(255,255,255,0.82)",
-                        border: "1px solid rgba(255,255,255,0.75)",
-                        boxShadow: "0 4px 18px rgba(0,0,0,0.06)",
-                        borderLeft: "4px solid #10b981",
-                      }}
-                      data-testid={`card-fee-paid-${rec.id}`}
-                    >
-                      <div className="flex items-start justify-between gap-3 flex-wrap">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <StatusChip status={rec.status} />
-                            {rec.academicYear && (
-                              <span className="text-[10px] font-medium text-slate-400 bg-slate-100 rounded px-1.5 py-0.5">{rec.academicYear}</span>
-                            )}
-                            {/* Online payment badge */}
-                            {rec.receiptNumber?.startsWith("ON") && (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe" }}>
-                                Online
-                              </span>
-                            )}
-                          </div>
-                          <p className="font-bold text-slate-800 text-sm mt-1">{rec.feeType}</p>
-                          <p className="text-xs text-slate-400 mt-0.5">Paid on: {formatDate(rec.paidDate)}</p>
-                          {rec.receiptNumber && (
-                            <div className="flex items-center gap-1.5 mt-1.5" data-testid={`text-receipt-${rec.id}`}>
-                              <Receipt className="w-3 h-3 text-emerald-500 flex-shrink-0" />
-                              <span
-                                className="font-mono text-xs font-bold tracking-wider px-2 py-0.5 rounded"
-                                style={{ background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", letterSpacing: "0.08em" }}
-                              >
-                                {rec.receiptNumber}
-                              </span>
-                              <button
-                                onClick={() => copyReceiptNumber(rec.id, rec.receiptNumber!)}
-                                className="flex items-center justify-center w-6 h-6 rounded-md transition-all hover:bg-emerald-50 active:scale-90"
-                                style={{ color: copiedReceiptId === rec.id ? "#16a34a" : "#94a3b8" }}
-                                title="Copy receipt number"
-                                data-testid={`button-copy-receipt-${rec.id}`}
-                              >
-                                {copiedReceiptId === rec.id
-                                  ? <Check className="w-3.5 h-3.5" />
-                                  : <Copy className="w-3.5 h-3.5" />
-                                }
-                              </button>
+        {/* ── Pay error banner ────────────────────────────────────────────── */}
+        <AnimatePresence>
+          {payError && (
+            <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              className="mt-4 flex items-center gap-3 rounded-2xl px-4 py-3"
+              style={{ background: "rgba(239,68,68,0.1)", border: "1.5px solid rgba(239,68,68,0.3)" }}>
+              <WifiOff className="w-4 h-4 text-red-400 flex-shrink-0" />
+              <p className="text-sm text-red-300 flex-1">{payError}</p>
+              <button onClick={() => setPayError(null)}
+                className="text-red-400 hover:text-red-200 text-xs font-semibold transition-colors">✕</button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── External portal banner — shows independently of Razorpay ───── */}
+        {portalInfo?.isEnabled && portalInfo.gatewayUrl && (
+          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
+            className="mt-4 rounded-2xl p-4 flex items-center gap-3"
+            style={{ background: "rgba(6,182,212,0.08)", border: "1px solid rgba(6,182,212,0.25)" }}>
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+              style={{ background: "linear-gradient(135deg,#06b6d4,#0891b2)" }}>
+              <ExternalLink className="w-5 h-5 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              {portalInfo.bannerMessage && <p className="text-sm text-slate-300 mb-2">{portalInfo.bannerMessage}</p>}
+              <a href={portalInfo.gatewayUrl} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold text-white"
+                style={{ background: "linear-gradient(135deg,#06b6d4,#0891b2)" }}>
+                Pay Online <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          </motion.div>
+        )}
+
+        {/* ── Tabs ───────────────────────────────────────────────────────── */}
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}
+          className="mt-5 flex gap-2">
+          {tabs.map((t) => (
+            <button key={t.key} onClick={() => setActiveTab(t.key)}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-2xl text-xs font-bold transition-all active:scale-95"
+              style={activeTab === t.key
+                ? { background: "linear-gradient(135deg,#6366f1,#818cf8)", color: "#fff",
+                    boxShadow: "0 4px 20px rgba(99,102,241,0.4)", border: "1px solid rgba(129,140,248,0.5)" }
+                : { background: "rgba(255,255,255,0.9)", color: "#64748b",
+                    border: "1px solid rgba(255,255,255,0.8)", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}>
+              {t.label}
+              {t.count > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black"
+                  style={activeTab === t.key
+                    ? { background: "rgba(255,255,255,0.25)", color: "#fff" }
+                    : { background: "#e0e7ff", color: "#4f46e5" }}>
+                  {t.count}
+                </span>
+              )}
+            </button>
+          ))}
+        </motion.div>
+
+        {/* ── Tab content ────────────────────────────────────────────────── */}
+        <div className="mt-4 pb-12">
+          <AnimatePresence mode="wait">
+
+            {/* ══ OUTSTANDING TAB ══════════════════════════════════════════ */}
+            {activeTab === "outstanding" && (
+              <motion.div key="outstanding"
+                initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 16 }}
+                transition={{ duration: 0.22 }}>
+                {feesLoading ? (
+                  <div className="flex justify-center py-20">
+                    <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
+                  </div>
+                ) : pendingRecords.length === 0 ? (
+                  <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+                    className="flex flex-col items-center gap-4 py-20 rounded-3xl"
+                    style={{ background: "rgba(255,255,255,0.9)", border: "1px solid rgba(255,255,255,0.8)",
+                      boxShadow: "0 4px 24px rgba(0,0,0,0.06)" }}>
+                    <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                      style={{ background: "linear-gradient(135deg,#d1fae5,#a7f3d0)" }}>
+                      <Shield className="w-8 h-8 text-emerald-600" />
+                    </div>
+                    <div className="text-center">
+                      <p className="font-extrabold text-slate-700 text-lg">All Clear!</p>
+                      <p className="text-sm text-slate-400 mt-1">No outstanding fees. You're all good.</p>
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div variants={container} initial="hidden" animate="show" className="space-y-3">
+                    {pendingRecords.map((rec) => (
+                      <motion.div key={rec.id} variants={item}
+                        className="rounded-3xl overflow-hidden"
+                        style={{ background: "rgba(255,255,255,0.95)", border: "1px solid rgba(255,255,255,0.8)",
+                          boxShadow: "0 4px 20px rgba(0,0,0,0.07)" }}
+                        data-testid={`card-fee-${rec.id}`}>
+                        {/* Accent top bar */}
+                        <div className="h-1 w-full"
+                          style={{ background: rec.status === "Overdue"
+                            ? "linear-gradient(90deg,#ef4444,#f87171)"
+                            : "linear-gradient(90deg,#f59e0b,#fbbf24)" }} />
+                        <div className="p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap mb-2">
+                                <StatusPill status={rec.status} />
+                                {rec.academicYear && (
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-semibold"
+                                    style={{ background: "#f1f5f9", color: "#64748b" }}>
+                                    {rec.academicYear}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="font-extrabold text-slate-800 text-base leading-tight"
+                                data-testid={`text-fee-type-${rec.id}`}>{rec.feeType}</p>
+                              <div className="flex items-center gap-1.5 mt-1.5 text-xs text-slate-400">
+                                <CalendarDays className="w-3 h-3 flex-shrink-0" />
+                                Due {formatDate(rec.dueDate)}
+                              </div>
+                              {rec.notes && (
+                                <p className="text-xs text-slate-400 mt-1 italic">{rec.notes}</p>
+                              )}
+                              {/* Fee breakdown */}
+                              {rec.breakdown?.length > 0 && (
+                                <div className="mt-2.5 w-full rounded-xl overflow-hidden border border-slate-100">
+                                  <div className="px-2.5 py-1 bg-slate-50 border-b border-slate-100">
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">What's included</p>
+                                  </div>
+                                  {rec.breakdown.map((b, i) => (
+                                    <div key={i} className="flex items-start justify-between gap-2 px-2.5 py-1.5 border-b border-slate-50 last:border-0">
+                                      <div className="min-w-0 flex-1">
+                                        <p className="text-xs font-semibold text-slate-700 leading-tight">{b.name}</p>
+                                        {b.purpose && <p className="text-[10px] text-slate-400 mt-0.5 leading-tight">{b.purpose}</p>}
+                                      </div>
+                                      <p className="text-xs font-bold text-slate-600 flex-shrink-0 tabular-nums">{formatAmount(b.amount)}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
-                          )}
-                          {rec.notes && <p className="text-xs text-slate-400 mt-0.5 italic">{rec.notes}</p>}
+                            <div className="flex flex-col items-end gap-3 flex-shrink-0">
+                              <p className="text-2xl font-black text-slate-800"
+                                style={{ fontVariantNumeric: "tabular-nums" }}
+                                data-testid={`text-fee-amount-${rec.id}`}>
+                                {formatAmount(rec.amount)}
+                              </p>
+                              {/* Real Razorpay Pay Now */}
+                              {razorpayActive && (
+                                <button
+                                  onClick={() => handlePayNow(rec, student)}
+                                  disabled={payingFeeId === rec.id}
+                                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black text-white transition-all active:scale-95 disabled:opacity-60"
+                                  style={{ background: payingFeeId === rec.id
+                                    ? "linear-gradient(135deg,#94a3b8,#cbd5e1)"
+                                    : "linear-gradient(135deg,#6366f1,#818cf8)",
+                                    boxShadow: payingFeeId === rec.id ? "none" : "0 4px 18px rgba(99,102,241,0.45)" }}
+                                  data-testid={`button-pay-now-${rec.id}`}>
+                                  {payingFeeId === rec.id
+                                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Processing…</>
+                                    : <><Zap className="w-3.5 h-3.5" /> Pay Now</>}
+                                </button>
+                              )}
+                              {/* Simulated test payment — shown when Razorpay toggle is ON but no real keys saved */}
+                              {!isArchiveMode && !razorpayActive && portalInfo?.razorpayEnabled && !portalInfo.razorpayKeyId && (
+                                <button
+                                  onClick={() => handleTestPay(rec)}
+                                  disabled={payingFeeId === rec.id}
+                                  className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl text-xs font-black text-white transition-all active:scale-95 disabled:opacity-60"
+                                  style={{ background: payingFeeId === rec.id
+                                    ? "linear-gradient(135deg,#94a3b8,#cbd5e1)"
+                                    : "linear-gradient(135deg,#f59e0b,#d97706)",
+                                    boxShadow: payingFeeId === rec.id ? "none" : "0 4px 14px rgba(245,158,11,0.4)" }}
+                                  data-testid={`button-test-pay-${rec.id}`}>
+                                  {payingFeeId === rec.id
+                                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Processing…</>
+                                    : <>🧪 Test Pay</>}
+                                </button>
+                              )}
+                              {!isArchiveMode && !portalInfo?.razorpayEnabled && (
+                                <span className="text-[10px] text-slate-400 font-medium">Pay at school</span>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                        <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                          <p className="text-lg font-extrabold text-emerald-600">{formatAmount(rec.amount)}</p>
-                          <a
-                            href={`/api/student/fees/${rec.id}/receipt`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:opacity-80"
-                            style={{ background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0" }}
-                            data-testid={`button-download-receipt-${rec.id}`}
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            Download Receipt
-                          </a>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                      </motion.div>
+                    ))}
+                  </motion.div>
+                )}
               </motion.div>
             )}
-          </>
-        )}
 
-        {/* Reminders Sent section */}
-        {(notifLoading || notificationHistory.length > 0) && (
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3, duration: 0.4 }}
-          >
-            <h2 className="text-sm font-bold text-slate-600 mb-3 flex items-center gap-2">
-              <Bell className="w-4 h-4 text-violet-500" />
-              Reminders Sent
-            </h2>
-            {notifLoading ? (
-              <div className="flex justify-center py-6">
-                <Loader2 className="w-6 h-6 animate-spin text-violet-400" />
-              </div>
-            ) : (
-              <div
-                className="rounded-2xl overflow-hidden"
-                style={{
-                  background: "rgba(255,255,255,0.82)",
-                  border: "1px solid rgba(255,255,255,0.75)",
-                  boxShadow: "0 4px 18px rgba(0,0,0,0.06)",
-                }}
-                data-testid="section-notification-history"
-              >
-                <div className="divide-y divide-slate-100">
-                  {notificationHistory.map((entry) => {
-                    const ChannelIcon = entry.channel === "email" ? Mail : entry.channel === "sms" ? MessageSquare : Webhook;
-                    const channelLabel = entry.channel === "email" ? "Email" : entry.channel === "sms" ? "SMS" : entry.channel === "whatsapp" ? "WhatsApp" : entry.channel;
-                    const isSent = entry.status === "sent";
-                    return (
-                      <div
-                        key={entry.id}
-                        className="flex items-center gap-3 px-4 py-3"
-                        data-testid={`row-notif-${entry.id}`}
-                      >
-                        <div
-                          className="flex items-center justify-center w-8 h-8 rounded-lg flex-shrink-0"
-                          style={{
-                            background: isSent ? "#f5f3ff" : "#fef2f2",
-                            color: isSent ? "#7c3aed" : "#dc2626",
-                          }}
-                        >
-                          <ChannelIcon className="w-4 h-4" />
+            {/* ══ HISTORY TAB ══════════════════════════════════════════════ */}
+            {activeTab === "history" && (
+              <motion.div key="history"
+                initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }}
+                transition={{ duration: 0.22 }}>
+                {feesLoading ? (
+                  <div className="flex justify-center py-20">
+                    <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
+                  </div>
+                ) : paidRecords.length === 0 ? (
+                  <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+                    className="flex flex-col items-center gap-4 py-20 rounded-3xl"
+                    style={{ background: "rgba(255,255,255,0.9)", border: "1px solid rgba(255,255,255,0.8)",
+                      boxShadow: "0 4px 24px rgba(0,0,0,0.06)" }}>
+                    <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                      style={{ background: "linear-gradient(135deg,#e0e7ff,#c7d2fe)" }}>
+                      <Receipt className="w-8 h-8 text-indigo-500" />
+                    </div>
+                    <div className="text-center">
+                      <p className="font-extrabold text-slate-700 text-lg">No payments yet</p>
+                      <p className="text-sm text-slate-400 mt-1">Paid fees and receipts will appear here.</p>
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div variants={container} initial="hidden" animate="show" className="space-y-3">
+                    {paidRecords.map((rec) => (
+                      <motion.div key={rec.id} variants={item}
+                        className="rounded-3xl overflow-hidden"
+                        style={{ background: "rgba(255,255,255,0.95)", border: "1px solid rgba(255,255,255,0.8)",
+                          boxShadow: "0 4px 20px rgba(0,0,0,0.07)" }}
+                        data-testid={`card-fee-paid-${rec.id}`}>
+                        <div className="h-1 w-full"
+                          style={{ background: "linear-gradient(90deg,#10b981,#34d399)" }} />
+                        <div className="p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap mb-2">
+                                <StatusPill status={rec.status} />
+                                {rec.academicYear && (
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-semibold"
+                                    style={{ background: "#f1f5f9", color: "#64748b" }}>
+                                    {rec.academicYear}
+                                  </span>
+                                )}
+                                {rec.receiptNumber?.startsWith("ON") && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold"
+                                    style={{ background: "linear-gradient(135deg,#eff6ff,#dbeafe)", color: "#1d4ed8", border: "1px solid #bfdbfe" }}>
+                                    <Sparkles className="w-2.5 h-2.5" /> Online
+                                  </span>
+                                )}
+                              </div>
+                              <p className="font-extrabold text-slate-800 text-base leading-tight">{rec.feeType}</p>
+                              <div className="flex items-center gap-1.5 mt-1.5 text-xs text-slate-400">
+                                <CalendarDays className="w-3 h-3 flex-shrink-0" />
+                                Paid {formatDate(rec.paidDate)}
+                              </div>
+                              {rec.receiptNumber && (
+                                <div className="flex items-center gap-2 mt-2.5" data-testid={`text-receipt-${rec.id}`}>
+                                  <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl"
+                                    style={{ background: "linear-gradient(135deg,#f0fdf4,#dcfce7)", border: "1px solid #86efac" }}>
+                                    <Receipt className="w-3 h-3 text-emerald-600 flex-shrink-0" />
+                                    <span className="font-mono text-xs font-black tracking-widest text-emerald-700">{rec.receiptNumber}</span>
+                                  </div>
+                                  <button
+                                    onClick={() => copyReceiptNumber(rec.id, rec.receiptNumber!)}
+                                    className="flex items-center justify-center w-7 h-7 rounded-xl transition-all active:scale-90"
+                                    style={{ background: copiedReceiptId === rec.id ? "#d1fae5" : "#f1f5f9",
+                                      color: copiedReceiptId === rec.id ? "#059669" : "#94a3b8",
+                                      border: `1px solid ${copiedReceiptId === rec.id ? "#6ee7b7" : "#e2e8f0"}` }}
+                                    title="Copy receipt number"
+                                    data-testid={`button-copy-receipt-${rec.id}`}>
+                                    {copiedReceiptId === rec.id
+                                      ? <Check className="w-3.5 h-3.5" />
+                                      : <Copy className="w-3.5 h-3.5" />}
+                                  </button>
+                                </div>
+                              )}
+                              {rec.notes && <p className="text-xs text-slate-400 mt-1.5 italic">{rec.notes}</p>}
+                            </div>
+                            <div className="flex flex-col items-end gap-3 flex-shrink-0">
+                              <p className="text-2xl font-black text-emerald-600"
+                                style={{ fontVariantNumeric: "tabular-nums" }}>
+                                {formatAmount(rec.amount)}
+                              </p>
+                              <a
+                                href={`/api/student/fees/${rec.id}/receipt`}
+                                target="_blank" rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-bold transition-all hover:opacity-80 active:scale-95"
+                                style={{ background: "linear-gradient(135deg,#f0fdf4,#dcfce7)",
+                                  color: "#065f46", border: "1px solid #86efac",
+                                  boxShadow: "0 2px 8px rgba(16,185,129,0.15)" }}
+                                data-testid={`button-download-receipt-${rec.id}`}>
+                                <Download className="w-3.5 h-3.5" /> Receipt
+                              </a>
+                            </div>
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-slate-700">
-                            {channelLabel} reminder
-                            <span className="ml-1.5 font-normal text-slate-400">· Stage {entry.stage}</span>
-                          </p>
-                          <p className="text-[10px] text-slate-400 mt-0.5">
-                            {entry.sentAt
-                              ? new Date(entry.sentAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
-                              : "—"}
-                          </p>
-                        </div>
-                        <span
-                          className="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0"
-                          style={isSent
-                            ? { background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0" }
-                            : { background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" }}
-                          data-testid={`badge-notif-status-${entry.id}`}
-                        >
-                          {isSent ? "Sent" : "Failed"}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+                      </motion.div>
+                    ))}
+                  </motion.div>
+                )}
+              </motion.div>
             )}
-          </motion.div>
-        )}
 
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.6, duration: 0.4 }}
-          className="text-center text-[11px] text-slate-400 pb-2"
-        >
+            {/* ══ REMINDERS TAB ════════════════════════════════════════════ */}
+            {activeTab === "reminders" && (
+              <motion.div key="reminders"
+                initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }}
+                transition={{ duration: 0.22 }}>
+                {notifLoading ? (
+                  <div className="flex justify-center py-20">
+                    <Loader2 className="w-8 h-8 animate-spin text-violet-400" />
+                  </div>
+                ) : notificationHistory.length === 0 ? (
+                  <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+                    className="flex flex-col items-center gap-4 py-20 rounded-3xl"
+                    style={{ background: "rgba(255,255,255,0.9)", border: "1px solid rgba(255,255,255,0.8)",
+                      boxShadow: "0 4px 24px rgba(0,0,0,0.06)" }}>
+                    <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                      style={{ background: "linear-gradient(135deg,#f5f3ff,#ede9fe)" }}>
+                      <Bell className="w-8 h-8 text-violet-500" />
+                    </div>
+                    <div className="text-center">
+                      <p className="font-extrabold text-slate-700 text-lg">No reminders yet</p>
+                      <p className="text-sm text-slate-400 mt-1">Fee reminder notifications will appear here.</p>
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div variants={container} initial="hidden" animate="show"
+                    className="rounded-3xl overflow-hidden"
+                    style={{ background: "rgba(255,255,255,0.95)", border: "1px solid rgba(255,255,255,0.8)",
+                      boxShadow: "0 4px 20px rgba(0,0,0,0.07)" }}
+                    data-testid="section-notification-history">
+                    {notificationHistory.map((entry, idx) => {
+                      const isSent = entry.status === "sent";
+                      const channelLabel =
+                        entry.channel === "email"     ? "Email"
+                        : entry.channel === "sms"     ? "SMS"
+                        : entry.channel === "whatsapp" ? "WhatsApp"
+                        : entry.channel;
+                      const stageColors: Record<string, string> = {
+                        D0: "#06b6d4", D7: "#f59e0b", D14: "#ef4444", D30: "#7c3aed",
+                      };
+                      const stageColor = stageColors[entry.stage] ?? "#6366f1";
+                      return (
+                        <motion.div key={entry.id} variants={item}
+                          className="flex items-center gap-3 px-4 py-3.5"
+                          style={{ borderBottom: idx < notificationHistory.length - 1 ? "1px solid #f1f5f9" : "none" }}
+                          data-testid={`row-notif-${entry.id}`}>
+                          {/* Channel icon */}
+                          <div className="flex items-center justify-center w-9 h-9 rounded-2xl flex-shrink-0"
+                            style={{ background: isSent ? "#f5f3ff" : "#fef2f2",
+                              color: isSent ? "#7c3aed" : "#dc2626" }}>
+                            <ChannelIcon channel={entry.channel} />
+                          </div>
+
+                          {/* Text */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-bold text-slate-700">{channelLabel} reminder</p>
+                              <span className="px-2 py-0.5 rounded-lg text-[10px] font-black"
+                                style={{ background: `${stageColor}18`, color: stageColor }}>
+                                {entry.stage}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-400 mt-0.5">
+                              {entry.sentAt
+                                ? new Date(entry.sentAt).toLocaleString("en-IN", {
+                                    day: "2-digit", month: "short", year: "numeric",
+                                    hour: "2-digit", minute: "2-digit",
+                                  })
+                                : "—"}
+                            </p>
+                          </div>
+
+                          {/* Status badge */}
+                          <span className="text-[10px] font-black px-2.5 py-1 rounded-xl flex-shrink-0"
+                            style={isSent
+                              ? { background: "linear-gradient(135deg,#d1fae5,#a7f3d0)", color: "#065f46", border: "1px solid #6ee7b7" }
+                              : { background: "linear-gradient(135deg,#fee2e2,#fecaca)", color: "#991b1b", border: "1px solid #fca5a5" }}
+                            data-testid={`badge-notif-status-${entry.id}`}>
+                            {isSent ? "Sent" : "Failed"}
+                          </span>
+                        </motion.div>
+                      );
+                    })}
+                  </motion.div>
+                )}
+              </motion.div>
+            )}
+
+          </AnimatePresence>
+        </div>
+      </div>
+
+      {/* ── Footer ─────────────────────────────────────────────────────────── */}
+      <div className="relative z-10 text-center pb-8 pt-2">
+        <p className="text-[10px] text-slate-400">
           © {new Date().getFullYear()} BENIUS · {student.schoolName}
-        </motion.p>
-      </motion.main>
+        </p>
+      </div>
     </div>
   );
 }

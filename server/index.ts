@@ -462,6 +462,89 @@ app.use((req, res, next) => {
   // Also run once on startup to catch any fees that fell due during downtime
   runDunningJob().catch(err => log(`Dunning startup run error: ${String(err)}`, "cron"));
 
+  // ===== MONTHLY AUTO-INVOICE GENERATION =====
+  // Runs at 06:00 on the 1st of every month.
+  // For every school, finds all active fee structures with autoGenerate=true,
+  // then generates invoices for eligible enrolled students (respecting applicableClasses).
+  // Writes one audit-log entry per structure summarising created/skipped counts.
+  async function runMonthlyAutoInvoice() {
+    log("Monthly auto-invoice job starting…", "cron");
+    try {
+      const allSchools = await storage.getSchools();
+      for (const school of allSchools) {
+        const structures = await storage.getFeeStructuresBySchool(school.id);
+        // Strict double-check: both autoGenerate AND isActive must be explicitly true.
+        // Boolean() coercion guards against "true" string from driver edge cases.
+        const autoStructures = structures.filter(
+          (s: any) => Boolean(s.autoGenerate) === true && Boolean(s.isActive) === true,
+        );
+        if (autoStructures.length === 0) continue;
+
+        // Use the school's active session
+        const activeSession = await storage.getActiveSession(school.id);
+        if (!activeSession) {
+          log(`School ${school.id}: no active session — skipping`, "cron");
+          continue;
+        }
+
+        const enrollments = await storage.getEnrollmentsBySession(school.id, activeSession.id);
+        const existingRecords = await storage.getFeeRecordsBySchool(school.id, { sessionId: activeSession.id });
+
+        for (const structure of autoStructures) {
+          const applicableClasses: string[] = (structure as any).applicableClasses ?? [];
+          const eligible = applicableClasses.length > 0
+            ? enrollments.filter((e: any) => applicableClasses.includes(e.className))
+            : enrollments;
+
+          // Due date: use autoGenDueDay if set, otherwise dueDayOfMonth, otherwise 10th
+          const dueDay: number = (structure as any).autoGenDueDay ?? (structure as any).dueDayOfMonth ?? 10;
+          const now = new Date();
+          const dueDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(Math.min(dueDay, 28)).padStart(2, "0")}`;
+
+          const existingSet = new Set(existingRecords.map((r: any) => `${r.studentId}:${r.feeType}:${String(r.dueDate).slice(0, 7)}`));
+
+          let created = 0, skipped = 0;
+          for (const enrollment of eligible) {
+            // Key includes year-month so we don't skip a new month's invoice just because last month exists
+            const key = `${enrollment.studentId}:${structure.feeType}:${dueDate.slice(0, 7)}`;
+            if (existingSet.has(key)) { skipped++; continue; }
+            await storage.createFeeRecord({
+              schoolId: school.id,
+              studentId: enrollment.studentId,
+              sessionId: activeSession.id,
+              feeType: structure.feeType,
+              amount: structure.amount,
+              dueDate,
+              status: "Due",
+              notes: `Auto-generated on ${now.toLocaleDateString("en-IN")} from fee structure: ${structure.name}`,
+            });
+            created++;
+          }
+
+          await storage.appendFeeAuditLog({
+            schoolId: school.id,
+            actorId: null,
+            actorName: "System (auto)",
+            ipAddress: null,
+            action: "auto_invoice",
+            entityType: "fee_structure",
+            entityId: structure.id,
+            description: `Auto-invoice run for "${structure.name}" (${structure.feeType}): ${created} created, ${skipped} skipped — due ${dueDate}`,
+          });
+
+          log(`School ${school.id} | "${structure.name}": ${created} invoices created, ${skipped} skipped`, "cron");
+        }
+      }
+      log("Monthly auto-invoice job complete", "cron");
+    } catch (err) {
+      log(`Monthly auto-invoice job error: ${String(err)}`, "cron");
+    }
+  }
+
+  // Run at 06:00 on the 1st of every month
+  cron.schedule("0 6 1 * *", runMonthlyAutoInvoice);
+  log("Monthly auto-invoice job scheduled (06:00 on 1st of each month)", "cron");
+
   // ===== NIGHTLY OVERDUE-FEE SWEEP =====
   // Runs at 01:00 every night. Marks all "Due" fee records whose due_date has
   // passed as "Overdue" and writes an audit log entry for each change.

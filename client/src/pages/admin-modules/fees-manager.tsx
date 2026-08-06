@@ -58,6 +58,9 @@ interface FeeStructure {
   concessionPercent: number;
   dueDayOfMonth: number | null;
   isActive: boolean;
+  autoGenerate: boolean;
+  autoGenDueDay: number | null;
+  breakdown: Array<{ name: string; purpose: string; amount: number }>;
   createdAt: string;
 }
 
@@ -2022,6 +2025,22 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [concPct, setConcPct] = useState("0");
   const [dueDay, setDueDay] = useState("");
   const [isActive, setIsActive] = useState(true);
+  const [autoGenerate, setAutoGenerate] = useState(false);
+  const [autoGenDueDay, setAutoGenDueDay] = useState("");
+  const [breakdown, setBreakdown] = useState<Array<{ name: string; purpose: string; amount: string }>>([]);
+
+  function addBreakdownRow() {
+    setBreakdown(prev => [...prev, { name: "", purpose: "", amount: "" }]);
+  }
+  function removeBreakdownRow(idx: number) {
+    setBreakdown(prev => prev.filter((_, i) => i !== idx));
+  }
+  function updateBreakdownRow(idx: number, field: "name" | "purpose" | "amount", value: string) {
+    setBreakdown(prev => prev.map((row, i) => i === idx ? { ...row, [field]: value } : row));
+  }
+  const breakdownTotal = breakdown.reduce((s, r) => s + (parseInt(r.amount) || 0), 0);
+  const amountNum = parseInt(amount) || 0;
+  const breakdownMismatch = breakdown.length > 0 && breakdownTotal !== amountNum;
 
   const { data: structures = [], isLoading } = useQuery<FeeStructure[]>({
     queryKey: ["/api/admin/fees/structures"],
@@ -2042,6 +2061,8 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     setEditing(null);
     setName(""); setFeeType(""); setAmount(""); setFrequency("annual");
     setSelectedClasses([]); setConcType("none"); setConcPct("0"); setDueDay(""); setIsActive(true);
+    setAutoGenerate(false); setAutoGenDueDay("");
+    setBreakdown([]);
     setShowModal(true);
   }
 
@@ -2058,16 +2079,27 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       setDueDay(`${y}-${mo}-${d}`);
     } else { setDueDay(""); }
     setIsActive(s.isActive);
+    setAutoGenerate(!!(s as any).autoGenerate);
+    setAutoGenDueDay((s as any).autoGenDueDay ? String((s as any).autoGenDueDay) : "");
+    setBreakdown(((s as any).breakdown ?? []).map((b: any) => ({
+      name: b.name ?? "", purpose: b.purpose ?? "", amount: String(b.amount ?? ""),
+    })));
     setShowModal(true);
   }
 
   const saveMut = useMutation({
     mutationFn: async () => {
+      const parsedBreakdown = breakdown
+        .filter(b => b.name.trim())
+        .map(b => ({ name: b.name.trim(), purpose: b.purpose.trim(), amount: parseInt(b.amount) || 0 }));
       const payload = {
         name, feeType, amount: parseInt(amount), frequency,
         applicableClasses: selectedClasses,
         concessionType: concType, concessionPercent: parseInt(concPct) || 0,
         dueDayOfMonth: dueDay ? new Date(dueDay + "T00:00:00").getDate() : null, isActive,
+        breakdown: parsedBreakdown,
+        autoGenerate,
+        autoGenDueDay: autoGenDueDay ? parseInt(autoGenDueDay) : null,
       };
       return editing
         ? apiRequest("PATCH", `/api/admin/fees/structures/${editing.id}`, payload)
@@ -2093,6 +2125,30 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  // Manually trigger the auto-invoice job for a single structure right now
+  const triggerAutoMut = useMutation({
+    mutationFn: async (structureId: number) => {
+      const r = await fetch(`/api/admin/fees/structures/${structureId}/auto-invoice/trigger`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!r.ok) throw new Error((await r.json()).message ?? "Failed");
+      return r.json() as Promise<{ created: number; skipped: number; dueDate: string; session: string }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/structures"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
+      toast({
+        title: `✅ Auto-invoice run complete`,
+        description: `${data.created} invoice${data.created !== 1 ? "s" : ""} created, ${data.skipped} skipped (due ${data.dueDate})`,
+      });
+    },
+    onError: (e: Error) => toast({ title: "Auto-invoice failed", description: e.message, variant: "destructive" }),
+  });
+
   // ── Generate Invoices state ────────────────────────────────────────────────
   const [genTarget, setGenTarget] = useState<FeeStructure | null>(null);
   const [genSessionId, setGenSessionId] = useState("");
@@ -2113,7 +2169,8 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionId: parseInt(genSessionId),
-          targetClasses: genTarget!.applicableClasses.length > 0 ? genClasses : [],
+          // targetClasses is ignored by the backend — the structure's applicableClasses
+          // are the single source of truth. We omit it to keep the payload clean.
           dueDate: genDueDate,
         }),
       });
@@ -2168,9 +2225,16 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                   <h3 className="text-white font-semibold leading-tight">{s.name}</h3>
                   <p className="text-white/50 text-xs">{s.feeType}</p>
                 </div>
-                <span className={`text-xs px-2 py-0.5 rounded-full border flex-shrink-0 ${s.isActive ? "bg-emerald-900/30 text-emerald-400 border-emerald-700/30" : "bg-white/5 text-white/30 border-white/10"}`}>
-                  {s.isActive ? "Active" : "Inactive"}
-                </span>
+                <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                  <span className={`text-xs px-2 py-0.5 rounded-full border ${s.isActive ? "bg-emerald-900/30 text-emerald-400 border-emerald-700/30" : "bg-white/5 text-white/30 border-white/10"}`}>
+                    {s.isActive ? "Active" : "Inactive"}
+                  </span>
+                  {(s as any).autoGenerate && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-900/40 text-emerald-300 border border-emerald-700/30 font-bold flex items-center gap-1">
+                      ⚙ Auto
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="flex items-baseline gap-1">
                 <span className="text-xl font-bold text-white">{fmt(s.amount)}</span>
@@ -2193,6 +2257,17 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                     className="w-full text-cyan-400 hover:bg-cyan-900/30 text-xs h-7 gap-1 border border-cyan-700/30">
                     <Printer className="w-3 h-3" /> Generate Invoices
                   </Button>
+                  {(s as any).autoGenerate && (
+                    <Button size="sm" variant="ghost"
+                      onClick={() => triggerAutoMut.mutate(s.id)}
+                      disabled={triggerAutoMut.isPending && triggerAutoMut.variables === s.id}
+                      className="w-full text-emerald-400 hover:bg-emerald-900/30 text-xs h-7 gap-1 border border-emerald-700/30">
+                      {triggerAutoMut.isPending && triggerAutoMut.variables === s.id
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : <span>⚙</span>}
+                      Run Auto-Invoice Now
+                    </Button>
+                  )}
                   <div className="flex gap-1">
                     <Button size="sm" variant="ghost" onClick={() => openEdit(s)} className="flex-1 text-white/50 hover:text-white text-xs h-7 gap-1">
                       <Pencil className="w-3 h-3" /> Edit
@@ -2289,13 +2364,134 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                 )}
               </div>
             </div>
+            {/* ── Fee Breakdown / Components ─────────────────────────────── */}
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-white/60 flex items-center gap-1.5">
+                  <span className="text-cyan-400">⊞</span> Fee Breakdown / Components
+                  <span className="text-white/30 font-normal">(optional — shown to students)</span>
+                </label>
+                <button type="button" onClick={addBreakdownRow}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all hover:bg-cyan-900/40 border border-cyan-700/40 text-cyan-400">
+                  <Plus className="w-3 h-3" /> Add Component
+                </button>
+              </div>
+
+              {breakdown.length > 0 && (
+                <div className="rounded-xl border border-white/10 overflow-hidden">
+                  {/* Column headers */}
+                  <div className="grid grid-cols-[1fr_1.5fr_80px_32px] gap-2 px-3 py-2 bg-white/5 border-b border-white/10">
+                    <span className="text-[10px] font-bold text-white/40 uppercase tracking-wide">Component</span>
+                    <span className="text-[10px] font-bold text-white/40 uppercase tracking-wide">Purpose / Description</span>
+                    <span className="text-[10px] font-bold text-white/40 uppercase tracking-wide text-right">Amount ₹</span>
+                    <span />
+                  </div>
+                  {breakdown.map((row, idx) => (
+                    <div key={idx} className="grid grid-cols-[1fr_1.5fr_80px_32px] gap-2 px-3 py-2 border-b border-white/5 last:border-0 bg-[#0A1628]/60">
+                      <input
+                        value={row.name}
+                        onChange={e => updateBreakdownRow(idx, "name", e.target.value)}
+                        placeholder="Lab Fee…"
+                        className="bg-transparent border border-white/10 rounded-md px-2 py-1 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-cyan-500 w-full"
+                      />
+                      <input
+                        value={row.purpose}
+                        onChange={e => updateBreakdownRow(idx, "purpose", e.target.value)}
+                        placeholder="Covers equipment & software…"
+                        className="bg-transparent border border-white/10 rounded-md px-2 py-1 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-cyan-500 w-full"
+                      />
+                      <input
+                        type="number"
+                        value={row.amount}
+                        onChange={e => updateBreakdownRow(idx, "amount", e.target.value)}
+                        placeholder="0"
+                        min={0}
+                        className="bg-transparent border border-white/10 rounded-md px-2 py-1 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-cyan-500 w-full text-right"
+                      />
+                      <button type="button" onClick={() => removeBreakdownRow(idx)}
+                        className="flex items-center justify-center w-7 h-7 rounded-lg hover:bg-red-900/30 text-white/30 hover:text-red-400 transition-all">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  {/* Totals row */}
+                  <div className="grid grid-cols-[1fr_1.5fr_80px_32px] gap-2 px-3 py-2 bg-white/5 border-t border-white/10">
+                    <span className="text-xs font-bold text-white/60 col-span-2">Components Total</span>
+                    <span className={`text-xs font-black text-right ${breakdownMismatch ? "text-red-400" : "text-emerald-400"}`}>
+                      ₹{breakdownTotal.toLocaleString("en-IN")}
+                    </span>
+                    <span />
+                  </div>
+                </div>
+              )}
+
+              {breakdownMismatch && (
+                <p className="text-xs text-red-400 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                  Components total (₹{breakdownTotal.toLocaleString("en-IN")}) doesn't match main amount (₹{amountNum.toLocaleString("en-IN")}). Adjust or remove components.
+                </p>
+              )}
+              {breakdown.length === 0 && (
+                <p className="text-[11px] text-white/25 px-1">
+                  No components added. Click "+ Add Component" to itemise this fee (e.g. Tuition ₹2,500 + Library ₹500).
+                </p>
+              )}
+            </div>
+
+            {/* ── Auto-Invoice Generation ─────────────────────────────── */}
+            <div className={`rounded-xl border p-4 space-y-3 transition-all ${autoGenerate ? "border-emerald-600/40 bg-emerald-900/10" : "border-white/10 bg-white/5"}`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <Switch checked={autoGenerate} onCheckedChange={setAutoGenerate} />
+                  <div>
+                    <p className="text-sm font-semibold text-white/80">Auto-Generate Invoices</p>
+                    <p className="text-xs text-white/40 leading-tight">
+                      Automatically create invoices on the 1st of every month
+                    </p>
+                  </div>
+                </div>
+                {autoGenerate && (
+                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-900/40 text-emerald-400 border border-emerald-700/40 flex-shrink-0">
+                    AUTO ON
+                  </span>
+                )}
+              </div>
+              {autoGenerate && (
+                <div className="pt-1 border-t border-white/10 space-y-2">
+                  <label className="text-xs text-white/50 block">
+                    Invoice due day each month
+                  </label>
+                  <select
+                    value={autoGenDueDay}
+                    onChange={e => setAutoGenDueDay(e.target.value)}
+                    className="w-44 bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="">
+                      {dueDay
+                        ? `Same as Due Date (${new Date(dueDay + "T00:00:00").getDate()}th)`
+                        : "Default (10th of month)"}
+                    </option>
+                    {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+                      <option key={d} value={String(d)}>
+                        {d}{d === 1 ? "st" : d === 2 ? "nd" : d === 3 ? "rd" : "th"} of every month
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-emerald-400/70">
+                    🗓 Invoices will be auto-created on the 1st of each month for all enrolled students in the applicable classes.
+                    You can still generate manually anytime — both work independently.
+                  </p>
+                </div>
+              )}
+            </div>
+
             <div className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/10">
               <Switch checked={isActive} onCheckedChange={setIsActive} />
               <label className="text-sm text-white/70">Active — visible in fee reports</label>
             </div>
             <div className="flex gap-2 justify-end pt-1">
               <Button variant="ghost" onClick={() => setShowModal(false)} className="text-white/60">Cancel</Button>
-              <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !name || !feeType || !amount}
+              <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !name || !feeType || !amount || breakdownMismatch}
                 className="bg-cyan-600 hover:bg-cyan-500 text-white">
                 {saveMut.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
                 {editing ? "Save Changes" : "Create Structure"}
@@ -2349,26 +2545,25 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                 <input type="date" value={genDueDate} onChange={e => setGenDueDate(e.target.value)}
                   className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
               </div>
-              {genTarget.applicableClasses.length > 0 && (
-                <div>
-                  <label className="text-xs text-white/60 mb-2 block">Target Classes (uncheck to exclude)</label>
-                  <div className="flex flex-wrap gap-3">
+              {genTarget.applicableClasses.length > 0 ? (
+                <div className="p-3 rounded-lg bg-cyan-900/15 border border-cyan-700/30 space-y-1.5">
+                  <p className="text-xs font-semibold text-cyan-400 flex items-center gap-1.5">
+                    <span>🎯</span> Strictly applies to these classes only
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
                     {genTarget.applicableClasses.map(cls => (
-                      <label key={cls} className="flex items-center gap-1.5 cursor-pointer">
-                        <input type="checkbox" checked={genClasses.includes(cls)}
-                          onChange={e => setGenClasses(prev =>
-                            e.target.checked ? [...prev, cls] : prev.filter(c => c !== cls)
-                          )}
-                          className="accent-cyan-500 w-4 h-4" />
-                        <span className="text-sm text-white/80">{cls}</span>
-                      </label>
+                      <span key={cls} className="px-2 py-0.5 rounded-full text-xs font-semibold bg-cyan-900/40 text-cyan-300 border border-cyan-700/40">
+                        {cls}
+                      </span>
                     ))}
                   </div>
+                  <p className="text-[11px] text-white/30 pt-0.5">
+                    Invoices will only be generated for students enrolled in the above classes. This is set on the fee structure and cannot be changed here.
+                  </p>
                 </div>
-              )}
-              {genTarget.applicableClasses.length === 0 && (
+              ) : (
                 <p className="text-white/40 text-xs p-3 rounded-lg bg-white/5 border border-white/10">
-                  No classes defined — invoices will be generated for{" "}
+                  No class restriction — invoices will be generated for{" "}
                   <span className="text-white/70 font-medium">all enrolled students</span> in the selected session.
                 </p>
               )}
@@ -2376,8 +2571,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                 <Button variant="ghost" onClick={() => setGenTarget(null)} className="text-white/60">Cancel</Button>
                 <Button
                   onClick={() => genMut.mutate()}
-                  disabled={genMut.isPending || !genSessionId || !genDueDate ||
-                    (genTarget.applicableClasses.length > 0 && genClasses.length === 0)}
+                  disabled={genMut.isPending || !genSessionId || !genDueDate}
                   className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1"
                 >
                   {genMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
@@ -3069,16 +3263,20 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [isEnabled, setIsEnabled] = useState(false);
-  const [url, setUrl] = useState("");
-  const [banner, setBanner] = useState("");
-  const [maxOvercollectionPercent, setMaxOvercollectionPercent] = useState(150);
-  // Razorpay
+
+  // ── Razorpay state ─────────────────────────────────────────────────────────
   const [rzpEnabled, setRzpEnabled] = useState(false);
   const [rzpKeyId, setRzpKeyId] = useState("");
   const [rzpKeySecret, setRzpKeySecret] = useState("");
   const [rzpWebhookSecret, setRzpWebhookSecret] = useState("");
   const [rzpMode, setRzpMode] = useState<"test" | "live">("test");
+
+  // ── External portal state ──────────────────────────────────────────────────
+  const [isEnabled, setIsEnabled] = useState(false);
+  const [url, setUrl] = useState("");
+  const [banner, setBanner] = useState("");
+  const [maxOvercollectionPercent, setMaxOvercollectionPercent] = useState(150);
+
   const [synced, setSynced] = useState(false);
 
   const { data: settings, isLoading } = useQuery<ExternalSettings>({
@@ -3088,208 +3286,246 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
   useEffect(() => {
     if (settings && !synced) {
-      setIsEnabled(settings.isEnabled);
-      setUrl(settings.gatewayUrl ?? "");
-      setBanner(settings.bannerMessage ?? "");
-      setMaxOvercollectionPercent(settings.maxOvercollectionPercent ?? 150);
       setRzpEnabled(settings.razorpayEnabled ?? false);
       setRzpKeyId(settings.razorpayKeyId ?? "");
       setRzpKeySecret(settings.razorpayKeySecret ?? "");
       setRzpWebhookSecret(settings.razorpayWebhookSecret ?? "");
       setRzpMode((settings.razorpayMode as "test" | "live") ?? "test");
+      setIsEnabled(settings.isEnabled);
+      setUrl(settings.gatewayUrl ?? "");
+      setBanner(settings.bannerMessage ?? "");
+      setMaxOvercollectionPercent(settings.maxOvercollectionPercent ?? 150);
       setSynced(true);
     }
   }, [settings, synced]);
 
-  const saveMut = useMutation({
-    mutationFn: () => apiRequest("PUT", "/api/admin/fees/external-settings", {
-      isEnabled, gatewayUrl: url || null, bannerMessage: banner || null, maxOvercollectionPercent,
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/external-settings"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
+  };
+
+  // ── Razorpay save mutation ─────────────────────────────────────────────────
+  const rzpMut = useMutation({
+    mutationFn: () => apiRequest("PUT", "/api/admin/fees/external-settings/razorpay", {
       razorpayEnabled: rzpEnabled,
-      razorpayKeyId: rzpKeyId || null,
-      razorpayKeySecret: rzpKeySecret || null,
+      razorpayKeyId:   rzpKeyId || null,
+      razorpayKeySecret:     rzpKeySecret || null,
       razorpayWebhookSecret: rzpWebhookSecret || null,
       razorpayMode: rzpMode,
     }),
     onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/external-settings"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
-      // Refresh masked values from server response
+      invalidate();
       if (data) {
         setRzpKeySecret(data.razorpayKeySecret ?? "");
         setRzpWebhookSecret(data.razorpayWebhookSecret ?? "");
       }
-      toast({ title: "Payment settings saved" });
+      toast({ title: "✅ Razorpay settings saved" });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  if (isLoading) return <div className="flex items-center justify-center py-16 text-white/40"><Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading…</div>;
+  // ── Portal link save mutation ──────────────────────────────────────────────
+  const portalMut = useMutation({
+    mutationFn: () => apiRequest("PUT", "/api/admin/fees/external-settings/portal", {
+      isEnabled,
+      gatewayUrl:               url || null,
+      bannerMessage:            banner || null,
+      maxOvercollectionPercent,
+    }),
+    onSuccess: () => {
+      invalidate();
+      toast({ title: "✅ External portal settings saved" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  if (isLoading) return (
+    <div className="flex items-center justify-center py-16 text-white/40">
+      <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading…
+    </div>
+  );
 
   const rzpConfigured = !!(settings?.razorpayKeyId && settings?.razorpayKeySecret);
 
   return (
-    <div className="space-y-5 max-w-xl">
+    <div className="space-y-6 max-w-xl">
 
-      {/* ── Razorpay Gateway ──────────────────────────────────────────────── */}
-      <div className="p-4 rounded-xl border border-blue-700/30 bg-blue-900/10 space-y-4">
-        {/* Header row */}
-        <div className="flex items-start justify-between gap-3">
+      {/* ══ SECTION 1 — Razorpay Gateway ══════════════════════════════════════ */}
+      <div className="rounded-2xl border border-blue-700/30 bg-blue-900/10 overflow-hidden">
+        {/* Section header */}
+        <div className="px-5 py-4 border-b border-blue-700/20 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "linear-gradient(135deg,#528FF0,#2D6EE8)" }}>
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+              style={{ background: "linear-gradient(135deg,#528FF0,#2D6EE8)" }}>
               <CreditCard className="w-4 h-4 text-white" />
             </div>
             <div>
-              <p className="text-white font-semibold flex items-center gap-2">
+              <p className="text-white font-bold flex items-center gap-2">
                 Razorpay Gateway
-                {rzpConfigured && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">CONFIGURED</span>}
+                {rzpConfigured
+                  ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">✓ CONFIGURED</span>
+                  : <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">NOT SET UP</span>
+                }
               </p>
-              <p className="text-white/40 text-xs mt-0.5">Accept UPI, cards, net banking & wallets directly in the student portal.</p>
+              <p className="text-white/40 text-xs mt-0.5">Accept UPI, cards, net banking & wallets in the student portal.</p>
             </div>
           </div>
           <Switch checked={rzpEnabled} onCheckedChange={setRzpEnabled} disabled={isArchiveMode} />
         </div>
 
-        {/* Mode */}
-        <div className="flex items-center gap-3">
-          {(["test", "live"] as const).map(m => (
-            <button
-              key={m}
-              onClick={() => !isArchiveMode && setRzpMode(m)}
-              disabled={isArchiveMode}
-              className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all ${rzpMode === m
-                ? m === "live" ? "bg-emerald-600/30 border-emerald-500/60 text-emerald-300" : "bg-amber-600/20 border-amber-500/40 text-amber-300"
-                : "bg-[#1A2942] border-white/10 text-white/30 hover:text-white/50"
-              } disabled:opacity-40`}
-            >
-              {m === "test" ? "🧪 Test / Sandbox" : "🚀 Live"}
-            </button>
-          ))}
-        </div>
-
-        {/* Key ID */}
-        <div className="space-y-1.5">
-          <label className="text-xs text-white/60">Key ID</label>
-          <input
-            value={rzpKeyId}
-            onChange={e => setRzpKeyId(e.target.value)}
-            placeholder={rzpMode === "test" ? "rzp_test_…" : "rzp_live_…"}
-            disabled={isArchiveMode}
-            className="w-full bg-[#0F1E35] border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40"
-          />
-        </div>
-
-        {/* Key Secret */}
-        <div className="space-y-1.5">
-          <label className="text-xs text-white/60">Key Secret</label>
-          <input
-            type="password"
-            value={rzpKeySecret}
-            onChange={e => setRzpKeySecret(e.target.value)}
-            placeholder={rzpKeySecret === "••••••••" ? "Leave blank to keep existing" : "Enter secret…"}
-            disabled={isArchiveMode}
-            className="w-full bg-[#0F1E35] border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40"
-          />
-          <p className="text-white/25 text-[11px]">Stored server-side only — never sent to the browser after saving.</p>
-        </div>
-
-        {/* Webhook Secret */}
-        <div className="space-y-1.5">
-          <label className="text-xs text-white/60">Webhook Secret</label>
-          <input
-            type="password"
-            value={rzpWebhookSecret}
-            onChange={e => setRzpWebhookSecret(e.target.value)}
-            placeholder={rzpWebhookSecret === "••••••••" ? "Leave blank to keep existing" : "Enter webhook secret…"}
-            disabled={isArchiveMode}
-            className="w-full bg-[#0F1E35] border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40"
-          />
-          <p className="text-white/25 text-[11px]">
-            Set this in your Razorpay dashboard under Webhooks. Endpoint: <span className="font-mono text-blue-400/60">/api/webhooks/razorpay</span>
-          </p>
-        </div>
-
-        {rzpEnabled && !rzpConfigured && (
-          <p className="text-amber-400/80 text-xs flex items-center gap-1.5">
-            <Shield className="w-3.5 h-3.5 flex-shrink-0" />
-            Save Key ID and Key Secret before enabling — students cannot pay until both are configured.
-          </p>
-        )}
-      </div>
-
-      {/* ── External Portal URL (legacy / other gateways) ─────────────────── */}
-      <div className="p-4 rounded-xl border border-white/10 bg-[#1A2942] flex items-center justify-between">
-        <div>
-          <p className="text-white font-semibold">External Portal Link</p>
-          <p className="text-white/40 text-xs mt-0.5">Show an external payment link to students (e.g. a third-party portal).</p>
-        </div>
-        <Switch checked={isEnabled} onCheckedChange={setIsEnabled} disabled={isArchiveMode} />
-      </div>
-
-      <div className="space-y-1.5">
-        <label className="text-xs text-white/60 flex items-center gap-1"><ExternalLink className="w-3 h-3" /> Gateway / Portal URL</label>
-        <input value={url} onChange={e => setUrl(e.target.value)} placeholder="https://pay.yourschool.edu/" disabled={isArchiveMode}
-          className="w-full bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20 disabled:opacity-40" />
-      </div>
-
-      <div className="space-y-1.5">
-        <label className="text-xs text-white/60 flex items-center gap-1"><Bell className="w-3 h-3" /> Banner Message (shown to students)</label>
-        <textarea value={banner} onChange={e => setBanner(e.target.value)} rows={3} disabled={isArchiveMode}
-          placeholder="Pay your fees online at the link below. For queries, contact the accounts office."
-          className="w-full bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20 resize-none disabled:opacity-40" />
-        <p className="text-white/25 text-xs text-right">{banner.length}/500</p>
-      </div>
-
-      {/* ── Over-collection cap ───────────────────────────────────────────── */}
-      <div className="p-4 rounded-xl border border-white/10 bg-[#1A2942] space-y-3">
-        <div>
-          <p className="text-white font-semibold flex items-center gap-2"><Shield className="w-4 h-4 text-amber-400" /> Max Over-collection Cap</p>
-          <p className="text-white/40 text-xs mt-0.5">Payments that would bring the total collected above this percentage of the invoice amount are blocked. Default is 150%.</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <input
-            type="number"
-            min={100}
-            max={500}
-            step={1}
-            value={maxOvercollectionPercent}
-            onChange={e => {
-              const v = parseInt(e.target.value, 10);
-              if (!isNaN(v)) setMaxOvercollectionPercent(Math.min(500, Math.max(100, v)));
-            }}
-            disabled={isArchiveMode}
-            className="w-24 bg-[#0F1E35] border border-white/10 rounded-lg px-3 py-2 text-sm text-white text-center focus:outline-none focus:border-amber-500 disabled:opacity-40"
-          />
-          <span className="text-white/60 text-sm">%</span>
-          <span className="text-white/30 text-xs">Range: 100% – 500%</span>
-        </div>
-        {maxOvercollectionPercent !== 150 && (
-          <p className="text-amber-400/70 text-xs flex items-center gap-1">
-            <Shield className="w-3 h-3" />
-            {maxOvercollectionPercent < 150
-              ? `Tighter than default — payments exceeding ${maxOvercollectionPercent}% of the invoice will be blocked.`
-              : `Looser than default — payments up to ${maxOvercollectionPercent}% of the invoice are allowed.`}
-          </p>
-        )}
-      </div>
-
-      {(isEnabled || banner) && (
-        <div className="space-y-1.5">
-          <p className="text-white/40 text-xs uppercase tracking-widest">Student Portal Preview</p>
-          <div className="p-4 rounded-xl border border-cyan-700/30 bg-cyan-900/10">
-            <p className="text-cyan-400 text-sm font-semibold flex items-center gap-2"><CreditCard className="w-4 h-4" /> Pay Fees Online</p>
-            {banner && <p className="text-white/60 text-xs mt-2 leading-relaxed">{banner}</p>}
-            {isEnabled && url
-              ? <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 mt-2 text-cyan-400 text-xs underline"><ExternalLink className="w-3 h-3" /> {url}</a>
-              : isEnabled && <p className="text-white/25 text-xs mt-2">No gateway URL configured.</p>}
+        <div className="px-5 py-4 space-y-4">
+          {/* Mode toggle */}
+          <div className="flex items-center gap-2">
+            {(["test", "live"] as const).map(m => (
+              <button key={m} onClick={() => !isArchiveMode && setRzpMode(m)} disabled={isArchiveMode}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${rzpMode === m
+                  ? m === "live" ? "bg-emerald-600/30 border-emerald-500/60 text-emerald-300" : "bg-amber-600/20 border-amber-500/40 text-amber-300"
+                  : "bg-[#1A2942] border-white/10 text-white/30 hover:text-white/50"
+                } disabled:opacity-40`}>
+                {m === "test" ? "🧪 Test / Sandbox" : "🚀 Live"}
+              </button>
+            ))}
           </div>
-        </div>
-      )}
 
-      {!isArchiveMode && (
-        <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending} className="bg-cyan-600 hover:bg-cyan-500 text-white">
-          {saveMut.isPending && <Loader2 className="w-4 h-4 animate-spin mr-1" />} Save Settings
-        </Button>
-      )}
+          {/* Key ID */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-white/60">Key ID <span className="text-red-400">*</span></label>
+            <input value={rzpKeyId} onChange={e => setRzpKeyId(e.target.value)}
+              placeholder={rzpMode === "test" ? "rzp_test_XXXXXXXXXXXXXXXX" : "rzp_live_XXXXXXXXXXXXXXXX"}
+              disabled={isArchiveMode}
+              className="w-full bg-[#0F1E35] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40" />
+          </div>
+
+          {/* Key Secret */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-white/60">Key Secret <span className="text-red-400">*</span></label>
+            <input type="password" value={rzpKeySecret} onChange={e => setRzpKeySecret(e.target.value)}
+              placeholder={rzpKeySecret === "••••••••" ? "Leave blank to keep existing secret" : "Enter Key Secret…"}
+              disabled={isArchiveMode}
+              className="w-full bg-[#0F1E35] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40" />
+            <p className="text-white/25 text-[11px]">Stored server-side only — never exposed to the browser after saving.</p>
+          </div>
+
+          {/* Webhook Secret */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-white/60">Webhook Secret</label>
+            <input type="password" value={rzpWebhookSecret} onChange={e => setRzpWebhookSecret(e.target.value)}
+              placeholder={rzpWebhookSecret === "••••••••" ? "Leave blank to keep existing secret" : "Enter Webhook Secret…"}
+              disabled={isArchiveMode}
+              className="w-full bg-[#0F1E35] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40" />
+            <p className="text-white/25 text-[11px]">
+              Register this URL in Razorpay Dashboard → Webhooks → <span className="font-mono text-blue-400/70">/api/webhooks/razorpay</span> → enable <span className="font-mono text-blue-400/70">payment.captured</span>
+            </p>
+          </div>
+
+          {rzpEnabled && !rzpConfigured && (
+            <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25">
+              <Shield className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
+              <p className="text-amber-400/90 text-xs leading-relaxed">
+                Enter and save Key ID + Key Secret before enabling. Students cannot pay until both are saved.
+              </p>
+            </div>
+          )}
+
+          {!isArchiveMode && (
+            <Button onClick={() => rzpMut.mutate()} disabled={rzpMut.isPending}
+              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl py-2.5">
+              {rzpMut.isPending ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Saving…</> : "Save Razorpay Settings"}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* ══ SECTION 2 — External Portal Link ══════════════════════════════════ */}
+      <div className="rounded-2xl border border-white/10 bg-[#1A2942] overflow-hidden">
+        {/* Section header */}
+        <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+              style={{ background: "linear-gradient(135deg,#06b6d4,#0891b2)" }}>
+              <ExternalLink className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <p className="text-white font-bold">External Payment Portal</p>
+              <p className="text-white/40 text-xs mt-0.5">Show a third-party payment link to students (Instamojo, PayU, etc.).</p>
+            </div>
+          </div>
+          <Switch checked={isEnabled} onCheckedChange={setIsEnabled} disabled={isArchiveMode} />
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          {/* URL */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-white/60 flex items-center gap-1">
+              <ExternalLink className="w-3 h-3" /> Gateway / Portal URL
+            </label>
+            <input value={url} onChange={e => setUrl(e.target.value)}
+              placeholder="https://pay.yourschool.edu/fees"
+              disabled={isArchiveMode}
+              className="w-full bg-[#0F1E35] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20 disabled:opacity-40" />
+          </div>
+
+          {/* Banner message */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-white/60 flex items-center gap-1">
+              <Bell className="w-3 h-3" /> Banner Message (shown to students)
+            </label>
+            <textarea value={banner} onChange={e => setBanner(e.target.value)} rows={3}
+              disabled={isArchiveMode}
+              placeholder="Pay your fees online at the link below. For queries, contact the accounts office."
+              className="w-full bg-[#0F1E35] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20 resize-none disabled:opacity-40" />
+            <p className="text-white/25 text-xs text-right">{banner.length}/500</p>
+          </div>
+
+          {/* Over-collection cap */}
+          <div className="p-3.5 rounded-xl border border-amber-700/25 bg-amber-900/10 space-y-2.5">
+            <p className="text-white font-semibold text-sm flex items-center gap-2">
+              <Shield className="w-4 h-4 text-amber-400" /> Max Over-collection Cap
+            </p>
+            <p className="text-white/40 text-xs leading-relaxed">
+              Payments that would bring total collected above this % of the invoice are blocked. Default 150%.
+            </p>
+            <div className="flex items-center gap-3">
+              <input type="number" min={100} max={500} step={1}
+                value={maxOvercollectionPercent}
+                onChange={e => {
+                  const v = parseInt(e.target.value, 10);
+                  if (!isNaN(v)) setMaxOvercollectionPercent(Math.min(500, Math.max(100, v)));
+                }}
+                disabled={isArchiveMode}
+                className="w-24 bg-[#0F1E35] border border-white/10 rounded-lg px-3 py-2 text-sm text-white text-center focus:outline-none focus:border-amber-500 disabled:opacity-40" />
+              <span className="text-white/60 text-sm">%</span>
+              <span className="text-white/30 text-xs">Range: 100–500%</span>
+            </div>
+          </div>
+
+          {/* Preview */}
+          {(isEnabled || banner) && (
+            <div className="space-y-1.5">
+              <p className="text-white/40 text-xs uppercase tracking-widest font-semibold">Student Portal Preview</p>
+              <div className="p-4 rounded-xl border border-cyan-700/30 bg-cyan-900/10">
+                <p className="text-cyan-400 text-sm font-semibold flex items-center gap-2">
+                  <CreditCard className="w-4 h-4" /> Pay Fees Online
+                </p>
+                {banner && <p className="text-white/60 text-xs mt-2 leading-relaxed">{banner}</p>}
+                {isEnabled && url
+                  ? <a href={url} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 mt-2 text-cyan-400 text-xs underline">
+                      <ExternalLink className="w-3 h-3" /> {url}
+                    </a>
+                  : isEnabled && <p className="text-white/25 text-xs mt-2">No gateway URL configured yet.</p>}
+              </div>
+            </div>
+          )}
+
+          {!isArchiveMode && (
+            <Button onClick={() => portalMut.mutate()} disabled={portalMut.isPending}
+              className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-xl py-2.5">
+              {portalMut.isPending ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Saving…</> : "Save Portal Settings"}
+            </Button>
+          )}
+        </div>
+      </div>
 
       {/* ── Data Maintenance ─────────────────────────────────────────────── */}
       <BackfillReceiptsSection />

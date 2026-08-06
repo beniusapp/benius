@@ -4084,7 +4084,24 @@ export async function registerRoutes(
     if (!student) return res.status(403).json({ message: "Student not found" });
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const records = await storage.getFeeRecordsByStudent(req.session.studentId, student.schoolId, viewSessionId);
-    res.json(records);
+
+    // Attach fee-structure breakdown to each record so students can see component details
+    const structures = await storage.getFeeStructuresBySchool(student.schoolId);
+    // Build a lookup: feeType (trimmed, lower) → breakdown array
+    const breakdownMap = new Map<string, Array<{ name: string; purpose: string; amount: number }>>();
+    for (const s of structures) {
+      const key = s.feeType.trim().toLowerCase();
+      if (!breakdownMap.has(key) && Array.isArray((s as any).breakdown) && (s as any).breakdown.length > 0) {
+        breakdownMap.set(key, (s as any).breakdown);
+      }
+    }
+
+    const enriched = records.map(r => ({
+      ...r,
+      breakdown: breakdownMap.get(r.feeType.trim().toLowerCase()) ?? [],
+    }));
+
+    res.json(enriched);
   });
 
   // ===== STUDENT: DOWNLOAD RECEIPT =====

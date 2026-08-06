@@ -962,6 +962,9 @@ export const feeStructures = pgTable("fee_structures", {
   concessionPercent: integer("concession_percent").notNull().default(0),
   dueDayOfMonth: integer("due_day_of_month"),
   isActive: boolean("is_active").notNull().default(true),
+  breakdown: jsonb("breakdown").$type<Array<{ name: string; purpose: string; amount: number }>>().notNull().default([]),
+  autoGenerate: boolean("auto_generate").notNull().default(false),
+  autoGenDueDay: integer("auto_gen_due_day"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
 });
