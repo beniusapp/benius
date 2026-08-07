@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { storage } from "./storage";
 import { db } from "./db";
-import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings } from "@shared/schema";
+import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings, feeStructures } from "@shared/schema";
 import { and, eq, sql, desc } from "drizzle-orm";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -854,6 +854,11 @@ export function registerFeesRoutes(app: Express) {
       created++;
     }
 
+    // Stamp last-generated timestamp on the structure
+    await db.update(feeStructures)
+      .set({ lastInvoicesGeneratedAt: new Date() })
+      .where(eq(feeStructures.id, structureId));
+
     await appendAudit(req, schoolId, "auto_invoice", "fee_structure", structureId,
       `Manual auto-invoice trigger for "${structure.name}" (${structure.feeType}): ${created} created, ${skipped} skipped — due ${dueDate}`);
 
@@ -917,6 +922,11 @@ export function registerFeesRoutes(app: Express) {
       });
       created++;
     }
+
+    // Stamp last-generated timestamp on the structure
+    await db.update(feeStructures)
+      .set({ lastInvoicesGeneratedAt: new Date() })
+      .where(eq(feeStructures.id, structureId));
 
     await appendAudit(req, schoolId, "create", "fee_record", null,
       `Bulk generated ${created} invoices from "${structure.name}" (${skipped} skipped as duplicates)`);

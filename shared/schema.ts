@@ -965,6 +965,7 @@ export const feeStructures = pgTable("fee_structures", {
   breakdown: jsonb("breakdown").$type<Array<{ name: string; purpose: string; amount: number }>>().notNull().default([]),
   autoGenerate: boolean("auto_generate").notNull().default(false),
   autoGenDueDay: integer("auto_gen_due_day"),
+  lastInvoicesGeneratedAt: timestamp("last_invoices_generated_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
 });

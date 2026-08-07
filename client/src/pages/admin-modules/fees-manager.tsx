@@ -61,6 +61,7 @@ interface FeeStructure {
   autoGenerate: boolean;
   autoGenDueDay: number | null;
   breakdown: Array<{ name: string; purpose: string; amount: number }>;
+  lastInvoicesGeneratedAt: string | null;
   createdAt: string;
 }
 
@@ -2098,8 +2099,8 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         concessionType: concType, concessionPercent: parseInt(concPct) || 0,
         dueDayOfMonth: dueDay ? new Date(dueDay + "T00:00:00").getDate() : null, isActive,
         breakdown: parsedBreakdown,
-        autoGenerate,
-        autoGenDueDay: autoGenDueDay ? parseInt(autoGenDueDay) : null,
+        autoGenerate: frequency === "monthly" ? autoGenerate : false,
+        autoGenDueDay: frequency === "monthly" && autoGenDueDay ? parseInt(autoGenDueDay) : null,
       };
       return editing
         ? apiRequest("PATCH", `/api/admin/fees/structures/${editing.id}`, payload)
@@ -2107,6 +2108,9 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/structures"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/payments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
       toast({ title: editing ? "Structure updated" : "Structure created" });
       setShowModal(false);
@@ -2178,8 +2182,11 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       return r.json() as Promise<{ created: number; skipped: number }>;
     },
     onSuccess: (data: { created: number; skipped: number }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/structures"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/payments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
       toast({ title: "Invoices generated", description: `${data.created} created${data.skipped > 0 ? `, ${data.skipped} skipped` : ""}` });
       setGenResult(data);
     },
@@ -2250,6 +2257,14 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                 {s.dueDayOfMonth != null && (
                   <div><p className="text-white/40 mb-0.5">Due Day</p><p className="text-white/70">{s.dueDayOfMonth}<sup>th</sup></p></div>
                 )}
+                {s.lastInvoicesGeneratedAt && (
+                  <div className="col-span-2">
+                    <p className="text-white/40 mb-0.5">Last Invoices Generated</p>
+                    <p className="text-emerald-400/80 text-[11px]">
+                      🕐 {new Date(s.lastInvoicesGeneratedAt).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                  </div>
+                )}
               </div>
               {!isArchiveMode && (
                 <div className="space-y-1 pt-1 border-t border-white/10">
@@ -2307,7 +2322,13 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
               </div>
               <div>
                 <label className="text-xs text-white/60 mb-1 block">Frequency</label>
-                <select value={frequency} onChange={e => setFrequency(e.target.value)}
+                <select value={frequency} onChange={e => {
+                  setFrequency(e.target.value);
+                  if (e.target.value !== "monthly") {
+                    setAutoGenerate(false);
+                    setAutoGenDueDay("");
+                  }
+                }}
                   className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
                   {Object.entries(FREQ).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
@@ -2439,6 +2460,15 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
             </div>
 
             {/* ── Auto-Invoice Generation ─────────────────────────────── */}
+            {frequency !== "monthly" ? (
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs text-white/40 text-center">
+                  {frequency === "one-time"
+                    ? "⚡ Auto-Generate is not available for One-Time fees — these are issued manually when needed."
+                    : `⚡ Auto-Generate is only available for Monthly fees. ${frequency === "quarterly" ? "Quarterly" : "Annual"} invoices should be generated manually so you control the exact billing cycle.`}
+                </p>
+              </div>
+            ) : (
             <div className={`rounded-xl border p-4 space-y-3 transition-all ${autoGenerate ? "border-emerald-600/40 bg-emerald-900/10" : "border-white/10 bg-white/5"}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
@@ -2484,6 +2514,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                 </div>
               )}
             </div>
+            )}
 
             <div className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/10">
               <Switch checked={isActive} onCheckedChange={setIsActive} />
