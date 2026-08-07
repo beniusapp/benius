@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { storage } from "./storage";
 import { db } from "./db";
 import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings, feeStructures } from "@shared/schema";
-import { and, eq, sql, desc } from "drizzle-orm";
+import { and, eq, sql, desc, or } from "drizzle-orm";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
@@ -109,10 +109,44 @@ export function registerFeesRoutes(app: Express) {
     const parsed = structureBodySchema.partial().safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
+
+    // Read the current structure before updating so we can detect amount changes
+    const before = await storage.getFeeStructureById(id, schoolId);
+    if (!before) return res.status(404).json({ message: "Fee structure not found" });
+
     const updated = await storage.updateFeeStructure(id, schoolId, parsed.data);
     if (!updated) return res.status(404).json({ message: "Fee structure not found" });
-    await appendAudit(req, schoolId, "update", "fee_structure", id, `Updated fee structure: ${updated.name}`);
-    res.json(updated);
+
+    // Sync ALL snapshot fields on unpaid (Due / Overdue) fee records so the
+    // ledger always reflects the current structure data after any save.
+    const amountChanged  = parsed.data.amount  !== undefined && parsed.data.amount  !== before.amount;
+    const feeTypeChanged = parsed.data.feeType !== undefined && parsed.data.feeType !== before.feeType;
+
+    let syncedCount = 0;
+    if (amountChanged || feeTypeChanged) {
+      const patch: Record<string, unknown> = {};
+      if (amountChanged)  patch.amount  = parsed.data.amount;
+      if (feeTypeChanged) patch.feeType = parsed.data.feeType;
+
+      const result = await db.update(feeRecords)
+        .set(patch as any)
+        .where(and(
+          eq(feeRecords.schoolId, schoolId),
+          eq(feeRecords.feeType, before.feeType),           // match by OLD feeType
+          or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue"))
+        ))
+        .returning({ id: feeRecords.id });
+      syncedCount = result.length;
+    }
+
+    const syncNote = syncedCount > 0
+      ? ` — synced ${syncedCount} unpaid invoice(s)` +
+        (amountChanged  ? ` to ₹${parsed.data.amount}` : "") +
+        (feeTypeChanged ? ` (fee type → ${parsed.data.feeType})` : "")
+      : "";
+    await appendAudit(req, schoolId, "update", "fee_structure", id,
+      `Updated fee structure: ${updated.name}${syncNote}`);
+    res.json({ ...updated, syncedInvoices: syncedCount });
   });
 
   app.delete("/api/admin/fees/structures/:id", async (req, res) => {

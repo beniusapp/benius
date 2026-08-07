@@ -2124,13 +2124,19 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         ? apiRequest("PATCH", `/api/admin/fees/structures/${editing.id}`, payload)
         : apiRequest("POST", "/api/admin/fees/structures", payload);
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/structures"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/payments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
-      toast({ title: editing ? "Structure updated" : "Structure created" });
+      const synced = data?.syncedInvoices ?? 0;
+      toast({
+        title: editing ? "Structure updated" : "Structure created",
+        description: synced > 0
+          ? `✅ ${synced} unpaid invoice${synced !== 1 ? "s" : ""} automatically updated to the new amount`
+          : undefined,
+      });
       setShowModal(false);
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
