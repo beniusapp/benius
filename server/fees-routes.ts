@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { storage } from "./storage";
 import { db } from "./db";
-import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings, feeStructures } from "@shared/schema";
+import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings, feeStructures, dunningJobStatus } from "@shared/schema";
 import { and, eq, sql, desc, or } from "drizzle-orm";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -1598,6 +1598,20 @@ export function registerFeesRoutes(app: Express) {
         });
     }
     res.json({ ok: true });
+  });
+
+  // ── Admin: Dunning Job Status ─────────────────────────────────────────────
+  app.get("/api/admin/fees/dunning-job-status", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    try {
+      const rows = await db.select().from(dunningJobStatus).where(eq(dunningJobStatus.id, 1)).limit(1);
+      if (rows.length === 0) {
+        return res.json({ isRunning: false, startedAt: null, lastCompletedAt: null });
+      }
+      return res.json(rows[0]);
+    } catch (err) {
+      return res.status(500).json({ message: String(err) });
+    }
   });
 
   // ── Admin: Dunning Simulation ─────────────────────────────────────────────

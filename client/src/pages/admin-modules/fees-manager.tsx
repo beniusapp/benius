@@ -139,6 +139,12 @@ interface SimResult {
   }>;
 }
 
+interface DunningJobStatusData {
+  isRunning: boolean;
+  startedAt: string | null;
+  lastCompletedAt: string | null;
+}
+
 interface AcademicSession {
   id: number;
   sessionName: string;
@@ -2762,6 +2768,19 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     staleTime: 60_000,
   });
 
+  // Job status — poll every 5s so the UI reflects live running state
+  const { data: jobStatus } = useQuery<DunningJobStatusData>({
+    queryKey: ["/api/admin/fees/dunning-job-status"],
+    queryFn: async () => {
+      const r = await sessionFetch("/api/admin/fees/dunning-job-status");
+      if (!r.ok) return { isRunning: false, startedAt: null, lastCompletedAt: null };
+      return r.json();
+    },
+    staleTime: 0,
+    refetchInterval: 5_000,
+  });
+  const jobRunning = jobStatus?.isRunning ?? false;
+
   useEffect(() => {
     if (cfg !== undefined && !synced) {
       if (cfg) {
@@ -2914,6 +2933,31 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         )}
       </div>
 
+      {/* ── Dunning job status row ── */}
+      <div className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-xs ${
+        jobRunning
+          ? "bg-amber-900/20 border-amber-700/40 text-amber-300"
+          : "bg-white/5 border-white/10 text-white/50"
+      }`}>
+        <div className="flex items-center gap-2">
+          {jobRunning
+            ? <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
+            : <Clock className="w-3.5 h-3.5 text-white/30" />
+          }
+          <span className="font-medium">
+            {jobRunning
+              ? "Job running…"
+              : jobStatus?.lastCompletedAt
+                ? `Last run: ${fmtDateTime(jobStatus.lastCompletedAt)}`
+                : "Job has not run yet"
+            }
+          </span>
+        </div>
+        {jobRunning && jobStatus?.startedAt && (
+          <span className="text-amber-400/70">Started {fmtDateTime(jobStatus.startedAt)}</span>
+        )}
+      </div>
+
       {/* ── SMS Card ── */}
       <div className={`rounded-xl border p-4 space-y-3 transition-colors ${smsEnabled ? "border-blue-700/40 bg-blue-900/10" : "border-white/10 bg-white/5"}`}>
         <div className="flex items-center justify-between">
@@ -3020,10 +3064,11 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
               <Send className="w-4 h-4 mr-1" /> Test Send
             </Button>
           )}
-          <Button variant="outline" onClick={() => simulateMut.mutate()} disabled={simulateMut.isPending}
-            className="border-amber-700/40 text-amber-400 hover:bg-amber-900/20">
+          <Button variant="outline" onClick={() => simulateMut.mutate()} disabled={simulateMut.isPending || jobRunning}
+            title={jobRunning ? "Dunning job is currently running — please wait" : undefined}
+            className="border-amber-700/40 text-amber-400 hover:bg-amber-900/20 disabled:opacity-50 disabled:cursor-not-allowed">
             {simulateMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Zap className="w-4 h-4 mr-1" />}
-            Run Simulation
+            {jobRunning ? "Job Running…" : "Run Simulation"}
           </Button>
         </div>
       )}

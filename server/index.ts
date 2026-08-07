@@ -436,6 +436,16 @@ app.use((req, res, next) => {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS dunning_templates_school_stage_channel
       ON dunning_templates(school_id, stage, channel);
+    -- Dunning job status — single global row (id=1) written by runDunningJob()
+    CREATE TABLE IF NOT EXISTS dunning_job_status (
+      id SERIAL PRIMARY KEY,
+      is_running BOOLEAN NOT NULL DEFAULT false,
+      started_at TIMESTAMP,
+      last_completed_at TIMESTAMP
+    );
+    INSERT INTO dunning_job_status (id, is_running)
+      VALUES (1, false)
+      ON CONFLICT (id) DO NOTHING;
   `);
 
   // Back-fill session_id on existing payment_records that are linked to a fee_record

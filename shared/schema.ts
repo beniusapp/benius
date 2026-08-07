@@ -1086,3 +1086,14 @@ export const dunningTemplates = pgTable("dunning_templates", {
   uniqueIndex("dunning_templates_school_stage_channel").on(table.schoolId, table.stage, table.channel),
 ]);
 export type DunningTemplate = typeof dunningTemplates.$inferSelect;
+
+// ── Dunning job status (single global row, id=1) ──────────────────────────────
+// Tracks whether the dunning job is currently running and when it last finished.
+// Written by runDunningJob() so the admin panel can surface live status.
+export const dunningJobStatus = pgTable("dunning_job_status", {
+  id: serial("id").primaryKey(),
+  isRunning: boolean("is_running").notNull().default(false),
+  startedAt: timestamp("started_at"),
+  lastCompletedAt: timestamp("last_completed_at"),
+});
+export type DunningJobStatus = typeof dunningJobStatus.$inferSelect;

@@ -16,7 +16,7 @@
 
 import { db, pool } from "./db";
 import {
-  feeRecords, students, notificationConfig, dunningLog, academicSessions, dunningTemplates,
+  feeRecords, students, notificationConfig, dunningLog, academicSessions, dunningTemplates, dunningJobStatus,
 } from "@shared/schema";
 import { eq, and, inArray, or } from "drizzle-orm";
 function log(msg: string, _tag?: string) { console.log(`[dunning] ${msg}`); }
@@ -313,6 +313,29 @@ async function fetchFeeRows(schoolId: number, statusFilter: string[] | null, ses
 
 // ─── Main dunning runner ──────────────────────────────────────────────────────
 
+/** Write or update the single global dunning_job_status row (id = 1). */
+async function setJobStatus(isRunning: boolean): Promise<void> {
+  try {
+    await db
+      .insert(dunningJobStatus)
+      .values({
+        id: 1,
+        isRunning,
+        startedAt:       isRunning ? new Date() : undefined,
+        lastCompletedAt: isRunning ? undefined  : new Date(),
+      })
+      .onConflictDoUpdate({
+        target: dunningJobStatus.id,
+        set: isRunning
+          ? { isRunning: true,  startedAt: new Date() }
+          : { isRunning: false, lastCompletedAt: new Date() },
+      });
+  } catch (err) {
+    // Non-critical — status display is best-effort
+    log(`setJobStatus error: ${String(err)}`);
+  }
+}
+
 export async function runDunningJob(): Promise<void> {
   // Acquire a session-level advisory lock so concurrent invocations (e.g. a
   // slow scheduled run overlapping a manual trigger) cannot double-send.
@@ -329,6 +352,9 @@ export async function runDunningJob(): Promise<void> {
       log("already running (advisory lock held) — skipping this invocation");
       return;
     }
+
+    // Mark job as running so the admin panel can show the live indicator
+    await setJobStatus(true);
 
     const configs = await db.select().from(notificationConfig).where(
       or(
@@ -348,6 +374,10 @@ export async function runDunningJob(): Promise<void> {
     }
   } finally {
     if (locked) {
+      // Mark the job as completed BEFORE releasing the advisory lock so that
+      // any concurrent invocation waiting to acquire the lock cannot write
+      // isRunning=true before we clear it — the lock still excludes them here.
+      await setJobStatus(false);
       await client.query("SELECT pg_advisory_unlock($1)", [DUNNING_LOCK_KEY]);
     }
     client.release();
