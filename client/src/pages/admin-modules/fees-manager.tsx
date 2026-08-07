@@ -1205,23 +1205,25 @@ type FeeFormValues = z.infer<typeof feeFormSchema>;
 // ─── Export Ledger Dialog ─────────────────────────────────────────────────────
 
 interface ExportLedgerDialogProps {
+  availableFeeNames: string[];
   open: boolean;
   onClose: () => void;
   availableClasses: string[];
   availableFeeTypes: string[];
 }
 
-function ExportLedgerDialog({ open, onClose, availableClasses, availableFeeTypes }: ExportLedgerDialogProps) {
+function ExportLedgerDialog({ open, onClose, availableClasses, availableFeeTypes, availableFeeNames }: ExportLedgerDialogProps) {
   const { toast } = useToast();
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [cls, setCls] = useState("");
   const [feeType, setFeeType] = useState("");
+  const [feeName, setFeeName] = useState("");
   const [isDownloading, setIsDownloading] = useState(false);
 
   useEffect(() => {
     if (!open) {
-      setDateFrom(""); setDateTo(""); setCls(""); setFeeType(""); setIsDownloading(false);
+      setDateFrom(""); setDateTo(""); setCls(""); setFeeType(""); setFeeName(""); setIsDownloading(false);
     }
   }, [open]);
 
@@ -1233,6 +1235,7 @@ function ExportLedgerDialog({ open, onClose, availableClasses, availableFeeTypes
       if (dateTo)   params.set("dateTo",   dateTo);
       if (cls)      params.set("class",    cls);
       if (feeType)  params.set("feeType",  feeType);
+      if (feeName)  params.set("feeName",  feeName);
 
       const url = `/api/admin/fees/export-ledger${params.size ? "?" + params.toString() : ""}`;
       const r = await fetch(url, { credentials: "include" });
@@ -1300,6 +1303,16 @@ function ExportLedgerDialog({ open, onClose, availableClasses, availableFeeTypes
             </select>
           </div>
 
+          {/* Fee Name filter */}
+          <div>
+            <label className="text-xs text-white/60 mb-1 block">Fee Name</label>
+            <select value={feeName} onChange={e => setFeeName(e.target.value)}
+              className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+              <option value="">All Fee Names</option>
+              {availableFeeNames.map(fn => <option key={fn} value={fn}>{fn}</option>)}
+            </select>
+          </div>
+
           {/* Fee Type filter */}
           <div>
             <label className="text-xs text-white/60 mb-1 block">Fee Type</label>
@@ -1311,12 +1324,13 @@ function ExportLedgerDialog({ open, onClose, availableClasses, availableFeeTypes
           </div>
 
           {/* Active filters summary */}
-          {(dateFrom || dateTo || cls || feeType) && (
+          {(dateFrom || dateTo || cls || feeName || feeType) && (
             <div className="px-3 py-2 rounded-lg bg-emerald-900/20 border border-emerald-700/30 text-xs text-emerald-400 space-y-0.5">
               <p className="font-semibold mb-1">Active filters:</p>
               {dateFrom && <p>Due from: {new Date(dateFrom).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>}
               {dateTo   && <p>Due to: {new Date(dateTo).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>}
               {cls      && <p>Class: {cls}</p>}
+              {feeName  && <p>Fee Name: {feeName}</p>}
               {feeType  && <p>Fee Type: {feeType}</p>}
             </div>
           )}
@@ -1345,6 +1359,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [classFilter, setClassFilter] = useState("all");
+  const [feeNameFilter, setFeeNameFilter] = useState("all");
+  const [feeTypeFilter, setFeeTypeFilter] = useState("all");
   const [showForm, setShowForm] = useState(false);
   const [addFeeSuccessId, setAddFeeSuccessId] = useState<number | null>(null);
   const [showExportLedger, setShowExportLedger] = useState(false);
@@ -1569,8 +1585,16 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       : statusFilter === "offline"
         ? offlinePaidIds.has(r.id)
         : r.status === statusFilter;
-    return ms && statusMatch && (classFilter === "all" || r.student?.class === classFilter);
-  }), [feeRecords, search, statusFilter, classFilter, offlinePaidIds]);
+    const classMatch    = classFilter   === "all" || r.student?.class === classFilter;
+    const feeTypeMatch  = feeTypeFilter === "all" || r.feeType === feeTypeFilter;
+    const feeNameMatch  = feeNameFilter === "all" || (feeTypeToName.get(r.feeType) ?? r.feeType) === feeNameFilter;
+    return ms && statusMatch && classMatch && feeTypeMatch && feeNameMatch;
+  }), [feeRecords, search, statusFilter, classFilter, feeTypeFilter, feeNameFilter, offlinePaidIds, feeTypeToName]);
+
+  // Distinct fee names and fee types from all loaded records
+  const allFeeNames = useMemo(() =>
+    [...new Set(feeRecords.map(r => feeTypeToName.get(r.feeType) ?? r.feeType))].sort(),
+    [feeRecords, feeTypeToName]);
 
   // Distinct fee types from all loaded records (for the export dialog filter)
   const allFeeTypes = useMemo(() =>
@@ -1616,6 +1640,16 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
           className="bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-28">
           <option value="all">All Classes</option>
           {classes.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={feeNameFilter} onChange={e => setFeeNameFilter(e.target.value)}
+          className="bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-32">
+          <option value="all">All Fee Names</option>
+          {allFeeNames.map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
+        <select value={feeTypeFilter} onChange={e => setFeeTypeFilter(e.target.value)}
+          className="bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-32">
+          <option value="all">All Fee Types</option>
+          {allFeeTypes.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
         <div className="flex gap-2 ml-auto">
           <Button size="sm" variant="outline" onClick={() => setShowExportLedger(true)}
@@ -1793,6 +1827,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         onClose={() => setShowExportLedger(false)}
         availableClasses={classes}
         availableFeeTypes={allFeeTypes}
+        availableFeeNames={allFeeNames}
       />
       <NotificationHistoryModal
         open={showNotifModal}

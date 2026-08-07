@@ -1149,7 +1149,10 @@ export function registerFeesRoutes(app: Express) {
       dateFrom?: string; dateTo?: string; class?: string; feeType?: string;
     };
 
-    // Build a joined query: fee_records LEFT JOIN students LEFT JOIN (aggregated payment_records)
+    // Parse optional fee-name filter (maps to structure name via fee_type)
+    const { feeName: feeNameFilter } = req.query as { feeName?: string };
+
+    // Build a joined query: fee_records LEFT JOIN students LEFT JOIN fee_structures LEFT JOIN (aggregated payment_records)
     // One row per fee record; amounts in rupees. Always scoped to the viewed session.
     const rows = await db.execute(sql`
       SELECT
@@ -1157,6 +1160,7 @@ export function registerFeesRoutes(app: Express) {
         s.digital_student_id AS student_id,
         s.class             AS class,
         s.section           AS section,
+        COALESCE(fs.name, fr.fee_type) AS fee_name,
         fr.fee_type         AS fee_type,
         fr.amount           AS invoice_amount,
         COALESCE(p.total_paid, 0)::int  AS amount_paid,
@@ -1172,6 +1176,7 @@ export function registerFeesRoutes(app: Express) {
         fr.id               AS fee_record_id
       FROM fee_records fr
       LEFT JOIN students s ON s.id = fr.student_id
+      LEFT JOIN fee_structures fs ON fs.fee_type = fr.fee_type AND fs.school_id = fr.school_id
       LEFT JOIN (
         SELECT
           fee_record_id,
@@ -1187,8 +1192,9 @@ export function registerFeesRoutes(app: Express) {
         ${sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``}
         ${dateFrom ? sql`AND fr.due_date >= ${dateFrom}` : sql``}
         ${dateTo   ? sql`AND fr.due_date <= ${dateTo}`   : sql``}
-        ${classFilter  ? sql`AND s.class = ${classFilter}`   : sql``}
-        ${feeTypeFilter ? sql`AND fr.fee_type = ${feeTypeFilter}` : sql``}
+        ${classFilter   ? sql`AND s.class = ${classFilter}`         : sql``}
+        ${feeTypeFilter ? sql`AND fr.fee_type = ${feeTypeFilter}`   : sql``}
+        ${feeNameFilter ? sql`AND fs.name = ${feeNameFilter}`       : sql``}
       ORDER BY s.class, s.name, fr.due_date
     `);
 
@@ -1206,7 +1212,8 @@ export function registerFeesRoutes(app: Express) {
 
     const headers = [
       "Student Name", "Student ID", "Class", "Section",
-      "Fee Type", "Invoice Amount (₹)", "Amount Paid (₹)", "Outstanding (₹)",
+      "Fee Name", "Fee Type",
+      "Invoice Amount (₹)", "Amount Paid (₹)", "Outstanding (₹)",
       "Status", "Due Date", "Paid Date", "Academic Year",
       "Payment Method", "Reference No.", "Receipt No.", "Notes",
     ];
@@ -1216,6 +1223,7 @@ export function registerFeesRoutes(app: Express) {
       esc(r.student_id),
       esc(r.class),
       esc(r.section),
+      esc(r.fee_name),
       esc(r.fee_type),
       esc(r.invoice_amount),
       esc(r.amount_paid),
