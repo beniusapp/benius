@@ -14,12 +14,17 @@
  * and logs with status "simulated". Used for testing without real keys.
  */
 
-import { db } from "./db";
+import { db, pool } from "./db";
 import {
   feeRecords, students, notificationConfig, dunningLog, academicSessions, dunningTemplates,
 } from "@shared/schema";
 import { eq, and, inArray, or } from "drizzle-orm";
 function log(msg: string, _tag?: string) { console.log(`[dunning] ${msg}`); }
+
+// ─── Advisory lock key ────────────────────────────────────────────────────────
+// A stable integer used with pg_try_advisory_lock / pg_advisory_unlock so that
+// only one runDunningJob invocation can execute at a time across the process.
+const DUNNING_LOCK_KEY = 7473328; // arbitrary constant — must not collide with other advisory locks
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -309,21 +314,43 @@ async function fetchFeeRows(schoolId: number, statusFilter: string[] | null, ses
 // ─── Main dunning runner ──────────────────────────────────────────────────────
 
 export async function runDunningJob(): Promise<void> {
-  const configs = await db.select().from(notificationConfig).where(
-    or(
-      eq(notificationConfig.smsEnabled, true),
-      eq(notificationConfig.waEnabled, true),
-      eq(notificationConfig.emailEnabled, true),
-    ),
-  );
-  if (configs.length === 0) return;
-
-  for (const cfg of configs) {
-    try {
-      await processDunningForSchool(cfg, false);
-    } catch (err) {
-      log(`school ${cfg.schoolId} error: ${String(err)}`);
+  // Acquire a session-level advisory lock so concurrent invocations (e.g. a
+  // slow scheduled run overlapping a manual trigger) cannot double-send.
+  // pg_try_advisory_lock returns immediately: true = lock acquired, false = already held.
+  const client = await pool.connect();
+  let locked = false;
+  try {
+    const { rows } = await client.query<{ acquired: boolean }>(
+      "SELECT pg_try_advisory_lock($1) AS acquired",
+      [DUNNING_LOCK_KEY],
+    );
+    locked = rows[0]?.acquired === true;
+    if (!locked) {
+      log("already running (advisory lock held) — skipping this invocation");
+      return;
     }
+
+    const configs = await db.select().from(notificationConfig).where(
+      or(
+        eq(notificationConfig.smsEnabled, true),
+        eq(notificationConfig.waEnabled, true),
+        eq(notificationConfig.emailEnabled, true),
+      ),
+    );
+    if (configs.length === 0) return;
+
+    for (const cfg of configs) {
+      try {
+        await processDunningForSchool(cfg, false);
+      } catch (err) {
+        log(`school ${cfg.schoolId} error: ${String(err)}`);
+      }
+    }
+  } finally {
+    if (locked) {
+      await client.query("SELECT pg_advisory_unlock($1)", [DUNNING_LOCK_KEY]);
+    }
+    client.release();
   }
 }
 
