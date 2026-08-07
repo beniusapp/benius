@@ -483,13 +483,25 @@ async function processDunningForSchool(
     };
 
     // Re-check fee status immediately before sending — the fee may have been
-    // paid or waived after the initial SELECT (race-window guard).
+    // paid, waived, or hard-deleted after the initial SELECT (race-window guard).
     const freshRow = await db
       .select({ status: feeRecords.status })
       .from(feeRecords)
       .where(eq(feeRecords.id, fee.feeId))
       .limit(1);
-    const freshStatus = freshRow[0]?.status ?? fee.status;
+
+    // If the row is missing the fee was hard-deleted between the bulk SELECT and
+    // this re-check. Do NOT fall back to the stale fee.status — treat it as
+    // skipped so we never send a notification for a record that no longer exists.
+    // We intentionally skip the dunning_log insert here: feeRecordId has a
+    // non-null FK to feeRecords, so inserting against a deleted row would throw
+    // a referential-integrity error. A log line is sufficient audit trail.
+    if (!freshRow[0]) {
+      log(`fee #${fee.feeId} (${fee.studentName}) no longer exists — skipping all channels`);
+      continue;
+    }
+
+    const freshStatus = freshRow[0].status;
     if (freshStatus === "Paid" || freshStatus === "Waived") {
       log(`fee #${fee.feeId} (${fee.studentName}) is now ${freshStatus} — skipping all channels`);
       for (const channel of channels) {
