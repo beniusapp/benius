@@ -1424,6 +1424,41 @@ export function registerFeesRoutes(app: Express) {
     res.json({ ok: true });
   });
 
+  // ── Admin: Dunning Counts (aggregated per-fee-record, for ledger badges) ──
+  // Returns { feeRecordId: sentCount } map scoped to the active/viewed session.
+  // Only counts entries with status = 'sent' so failed attempts are not presented
+  // as delivered reminders to the admin.
+  app.get("/api/admin/fees/dunning-counts", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+
+    const result = await db.execute(
+      sessionFilter != null
+        ? sql`
+            SELECT dl.fee_record_id AS "feeRecordId", COUNT(dl.id)::int AS count
+            FROM dunning_log dl
+            INNER JOIN fee_records fr ON fr.id = dl.fee_record_id
+            WHERE dl.school_id = ${schoolId}
+              AND dl.status = 'sent'
+              AND fr.session_id = ${sessionFilter}
+            GROUP BY dl.fee_record_id`
+        : sql`
+            SELECT dl.fee_record_id AS "feeRecordId", COUNT(dl.id)::int AS count
+            FROM dunning_log dl
+            WHERE dl.school_id = ${schoolId}
+              AND dl.status = 'sent'
+            GROUP BY dl.fee_record_id`,
+    );
+    // Return as a plain object { [feeRecordId]: count }
+    const counts: Record<number, number> = {};
+    for (const row of result.rows as Array<{ feeRecordId: number; count: number }>) {
+      counts[row.feeRecordId] = row.count;
+    }
+    res.json(counts);
+  });
+
   // ── Admin: Dunning Log GET (school-wide or per-student) ─────────────────
   // ?studentId=X → all dunning attempts for that student (up to 200)
   app.get("/api/admin/fees/dunning-log", async (req, res) => {

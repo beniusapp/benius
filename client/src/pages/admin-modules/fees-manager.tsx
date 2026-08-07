@@ -1393,6 +1393,17 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     return m;
   }, [activeStructures]);
 
+  // Dunning counts — per-student reminder counts for the bell badge
+  const { data: dunningCounts = {} } = useQuery<Record<number, number>>({
+    queryKey: ["/api/admin/fees/dunning-counts", viewSessionId],
+    queryFn: async () => {
+      const r = await sessionFetch("/api/admin/fees/dunning-counts");
+      if (!r.ok) return {};
+      return r.json();
+    },
+    staleTime: 30_000,
+  });
+
   // Payment records — used for "Offline Payment" filter + method badge
   const { data: paymentRecordsList = [] } = useQuery<PaymentRecord[]>({
     queryKey: ["/api/admin/fees/payments"],
@@ -1702,16 +1713,23 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                             </Button>
                           );
                         })()}
-                        <Button size="icon" variant="ghost"
-                          onClick={() => {
-                            setNotifStudentId(rec.studentId);
-                            setNotifStudentName(rec.student?.name ?? null);
-                            setShowNotifModal(true);
-                          }}
-                          className="h-7 w-7 text-white/30 hover:text-violet-400"
-                          title="View notification history">
-                          <Bell className="w-3.5 h-3.5" />
-                        </Button>
+                        {(() => {
+                          const dCount = dunningCounts[rec.id] ?? 0;
+                          const hasDunning = dCount > 0;
+                          return (
+                            <Button size="sm" variant="ghost"
+                              onClick={() => {
+                                setNotifStudentId(rec.studentId);
+                                setNotifStudentName(rec.student?.name ?? null);
+                                setShowNotifModal(true);
+                              }}
+                              className={`h-7 px-2 text-xs gap-1 ${hasDunning ? "text-violet-400 hover:bg-violet-900/30" : "text-white/20 hover:bg-white/5 hover:text-white/40"}`}
+                              title={hasDunning ? `${dCount} reminder${dCount !== 1 ? "s" : ""} sent` : "No reminders sent yet"}>
+                              <Bell className="w-3 h-3" />
+                              <span>{dCount}</span>
+                            </Button>
+                          );
+                        })()}
                         {(() => {
                           // Prefer the most recent offline (OP) payment receipt;
                           // fall back to the fee-record (AF) receipt for Add Fee entries.
