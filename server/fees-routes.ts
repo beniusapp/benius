@@ -1210,15 +1210,26 @@ export function registerFeesRoutes(app: Express) {
       catch { return String(d); }
     };
 
+    // Columns match ledger display order exactly, then extra financial columns appended.
+    // Ledger order: Receipt No. | Student | Class | Section | Fee Name | Fee Type | Amount | Due Date | Status | Paid On | Acad. Year | Notes
     const headers = [
-      "Student Name", "Student ID", "Class", "Section",
+      "Receipt No.",
+      "Student Name", "Student ID",
+      "Class", "Section",
       "Fee Name", "Fee Type",
-      "Invoice Amount (₹)", "Amount Paid (₹)", "Outstanding (₹)",
-      "Status", "Due Date", "Paid Date", "Academic Year",
-      "Payment Method", "Reference No.", "Receipt No.", "Notes",
+      "Amount (₹)",
+      "Due Date",
+      "Status",
+      "Paid On",
+      "Acad. Year",
+      "Notes",
+      // Extra financial detail (not in ledger view but useful for accountants)
+      "Amount Paid (₹)", "Outstanding (₹)",
+      "Payment Method", "Reference No.",
     ];
 
     const dataRows = (rows.rows as any[]).map(r => [
+      esc(r.receipt_number),
       esc(r.student_name),
       esc(r.student_id),
       esc(r.class),
@@ -1226,16 +1237,15 @@ export function registerFeesRoutes(app: Express) {
       esc(r.fee_name),
       esc(r.fee_type),
       esc(r.invoice_amount),
-      esc(r.amount_paid),
-      esc(r.outstanding),
-      esc(r.status),
       esc(fmtDateLocal(r.due_date)),
+      esc(r.status),
       esc(fmtDateLocal(r.paid_date)),
       esc(r.academic_year),
+      esc(r.notes),
+      esc(r.amount_paid),
+      esc(r.outstanding),
       esc(r.payment_method),
       esc(r.last_reference ?? r.reference_number),
-      esc(r.receipt_number),
-      esc(r.notes),
     ].join(","));
 
     const csv = [headers.map(h => `"${h}"`).join(","), ...dataRows].join("\r\n");
