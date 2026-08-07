@@ -1513,20 +1513,29 @@ export function registerFeesRoutes(app: Express) {
     const result = await db.execute(
       studentId !== null
         ? sql`
+            -- Use LEFT JOIN so orphaned dunning_log rows (fee record deleted but
+            -- cascade somehow missed) are still visible to the admin rather than
+            -- being silently dropped.  We filter by student via a sub-select on
+            -- fee_records so we don't need the FK to be intact.
             SELECT dl.id, dl.fee_record_id, dl.channel, dl.stage, dl.sent_at, dl.status,
-                   dl.error_message, dl.recipient, dl.student_name
+                   dl.error_message, dl.recipient, dl.student_name,
+                   (fr.id IS NULL) AS fee_record_deleted
             FROM dunning_log dl
-            INNER JOIN fee_records fr ON fr.id = dl.fee_record_id
+            LEFT JOIN fee_records fr ON fr.id = dl.fee_record_id
             WHERE dl.school_id = ${schoolId}
-              AND fr.student_id = ${studentId}
+              AND dl.fee_record_id IN (
+                SELECT id FROM fee_records WHERE student_id = ${studentId}
+              )
             ORDER BY dl.sent_at DESC
             LIMIT 200`
         : sql`
-            SELECT id, fee_record_id, channel, stage, sent_at, status,
-                   error_message, recipient, student_name
-            FROM dunning_log
-            WHERE school_id = ${schoolId}
-            ORDER BY sent_at DESC
+            SELECT dl.id, dl.fee_record_id, dl.channel, dl.stage, dl.sent_at, dl.status,
+                   dl.error_message, dl.recipient, dl.student_name,
+                   (fr.id IS NULL) AS fee_record_deleted
+            FROM dunning_log dl
+            LEFT JOIN fee_records fr ON fr.id = dl.fee_record_id
+            WHERE dl.school_id = ${schoolId}
+            ORDER BY dl.sent_at DESC
             LIMIT 50`,
     );
     res.json(result.rows);

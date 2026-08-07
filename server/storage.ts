@@ -4626,6 +4626,18 @@ export class DatabaseStorage {
   }
 
   async deleteFeeRecord(id: number, schoolId: number): Promise<boolean> {
+    // Explicitly remove all dunning_log rows for this fee record before deleting
+    // it.  The FK already has ON DELETE CASCADE so the DB would handle this
+    // automatically, but we do it explicitly here so the deletion is logged at
+    // the application level and so the intent is unambiguous if the FK
+    // constraint is ever altered in the future.
+    const dunningDeleted = await db.delete(dunningLog)
+      .where(and(eq(dunningLog.feeRecordId, id), eq(dunningLog.schoolId, schoolId)))
+      .returning({ id: dunningLog.id });
+    if (dunningDeleted.length > 0) {
+      console.log(`[fees] deleted ${dunningDeleted.length} dunning_log row(s) for fee_record #${id} (school ${schoolId})`);
+    }
+
     const result = await db.delete(feeRecords)
       .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)))
       .returning();
@@ -4850,14 +4862,22 @@ export class DatabaseStorage {
       .limit(limit);
   }
 
-  async getDunningLogByStudent(studentId: number, schoolId: number): Promise<{ id: number; feeRecordId: number | null; channel: string; stage: string; sentAt: Date | null; status: string; recipient: string | null; studentName: string | null }[]> {
+  async getDunningLogByStudent(studentId: number, schoolId: number): Promise<{ id: number; feeRecordId: number | null; channel: string; stage: string; sentAt: Date | null; status: string; recipient: string | null; studentName: string | null; feeRecordDeleted: boolean }[]> {
+    // Filter by student via a sub-select rather than an INNER JOIN so the query
+    // does not silently drop dunning_log rows whose fee record was deleted.
+    // LEFT JOIN fee_records is kept so we can expose a feeRecordDeleted flag to
+    // callers; with ON DELETE CASCADE in place those rows should never exist, but
+    // the LEFT JOIN makes the view defensive against manual DB changes.
     const result = await db.execute(
       sql`SELECT dl.id, dl.fee_record_id, dl.channel, dl.stage, dl.sent_at, dl.status,
-                 dl.recipient, dl.student_name
+                 dl.recipient, dl.student_name,
+                 (fr.id IS NULL) AS fee_record_deleted
           FROM dunning_log dl
-          INNER JOIN fee_records fr ON fr.id = dl.fee_record_id
+          LEFT JOIN fee_records fr ON fr.id = dl.fee_record_id
           WHERE dl.school_id = ${schoolId}
-            AND fr.student_id = ${studentId}
+            AND dl.fee_record_id IN (
+              SELECT id FROM fee_records WHERE student_id = ${studentId}
+            )
           ORDER BY dl.sent_at DESC
           LIMIT 200`
     );
