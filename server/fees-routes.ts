@@ -392,6 +392,7 @@ export function registerFeesRoutes(app: Express) {
       rec = insertResult.rows[0];
 
       // Auto-update linked fee record status (sum includes the row just inserted)
+      // Also persist any notes the admin edited in the Pay modal.
       if (paymentOnly.feeRecordId && rec) {
         const feeRow = await tx.execute(
           sql`SELECT amount FROM fee_records
@@ -406,11 +407,13 @@ export function registerFeesRoutes(app: Express) {
           );
           const totalPaid = Number((paidRow.rows[0] as any)?.total_paid) || 0;
           const newStatus = totalPaid >= linkedFee.amount ? "Paid" : "Partial";
+          const notesPatch = _fn != null ? sql`, notes = ${_fn}` : sql``;
           await tx.execute(
             sql`UPDATE fee_records
                 SET status = ${newStatus},
                     paid_date = ${paymentOnly.receivedDate},
                     receipt_number = ${opReceipt}
+                    ${notesPatch}
                 WHERE id = ${paymentOnly.feeRecordId} AND school_id = ${schoolId}`,
           );
         }
@@ -869,12 +872,28 @@ export function registerFeesRoutes(app: Express) {
     const dueDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(Math.min(dueDay, 28)).padStart(2, "0")}`;
 
     const existingRecords = await storage.getFeeRecordsBySchool(schoolId, { sessionId: activeSession.id });
-    const existingSet = new Set(existingRecords.map((r: any) => `${r.studentId}:${r.feeType}:${String(r.dueDate).slice(0, 7)}`));
+    // Map: "studentId:feeType:YYYY-MM" → existing record (month-scoped for monthly fees)
+    const existingMap = new Map(existingRecords.map((r: any) => [`${r.studentId}:${r.feeType}:${String(r.dueDate).slice(0, 7)}`, r]));
 
-    let created = 0, skipped = 0;
+    let created = 0, synced = 0, skipped = 0;
     for (const enrollment of eligible) {
       const key = `${enrollment.studentId}:${structure.feeType}:${dueDate.slice(0, 7)}`;
-      if (existingSet.has(key)) { skipped++; continue; }
+      const existing = existingMap.get(key);
+      if (existing) {
+        if (existing.status === "Due" || existing.status === "Overdue") {
+          if (existing.amount !== structure.amount) {
+            await db.update(feeRecords)
+              .set({ amount: structure.amount })
+              .where(and(eq(feeRecords.id, existing.id), eq(feeRecords.schoolId, schoolId)));
+            synced++;
+          } else {
+            skipped++;
+          }
+        } else {
+          skipped++;
+        }
+        continue;
+      }
       await storage.createFeeRecord({
         schoolId,
         studentId: enrollment.studentId,
@@ -883,7 +902,8 @@ export function registerFeesRoutes(app: Express) {
         amount: structure.amount,
         dueDate,
         status: "Due",
-        notes: `Auto-generated (manual trigger) on ${now.toLocaleDateString("en-IN")} from fee structure: ${structure.name}`,
+        academicYear: activeSession.sessionName,
+        notes: null,
       });
       created++;
     }
@@ -933,6 +953,7 @@ export function registerFeesRoutes(app: Express) {
     const { sessionId, dueDate } = parsed.data;
     const structure = await storage.getFeeStructureById(structureId, schoolId);
     if (!structure) return res.status(404).json({ message: "Fee structure not found" });
+    const invoiceSession = await storage.getAcademicSessionById(sessionId);
 
     const enrollments = await storage.getEnrollmentsBySession(schoolId, sessionId);
     // Always enforce the structure's own applicableClasses — the frontend cannot override this.
@@ -943,16 +964,35 @@ export function registerFeesRoutes(app: Express) {
       : enrollments;
 
     const existingRecords = await storage.getFeeRecordsBySchool(schoolId, { sessionId });
-    const existingSet = new Set(existingRecords.map(r => `${r.studentId}:${r.feeType}`));
+    // Map: "studentId:feeType" → existing fee record (for syncing unpaid ones)
+    const existingMap = new Map(existingRecords.map(r => [`${r.studentId}:${r.feeType}`, r]));
 
-    let created = 0, skipped = 0;
+    let created = 0, synced = 0, skipped = 0;
     for (const enrollment of filtered) {
       const key = `${enrollment.studentId}:${structure.feeType}`;
-      if (existingSet.has(key)) { skipped++; continue; }
+      const existing = existingMap.get(key);
+      if (existing) {
+        // Record exists — sync amount + dueDate if still unpaid, skip if already settled
+        if (existing.status === "Due" || existing.status === "Overdue") {
+          const needsSync = existing.amount !== structure.amount || existing.dueDate !== dueDate;
+          if (needsSync) {
+            await db.update(feeRecords)
+              .set({ amount: structure.amount, dueDate })
+              .where(and(eq(feeRecords.id, existing.id), eq(feeRecords.schoolId, schoolId)));
+            synced++;
+          } else {
+            skipped++;
+          }
+        } else {
+          skipped++; // Paid/Partial/Waived — never touch
+        }
+        continue;
+      }
       await storage.createFeeRecord({
         schoolId, studentId: enrollment.studentId, sessionId,
         feeType: structure.feeType, amount: structure.amount, dueDate, status: "Due",
-        notes: `Auto-generated from fee structure: ${structure.name}`,
+        academicYear: invoiceSession?.sessionName ?? null,
+        notes: null,
       });
       created++;
     }
@@ -963,8 +1003,8 @@ export function registerFeesRoutes(app: Express) {
       .where(eq(feeStructures.id, structureId));
 
     await appendAudit(req, schoolId, "create", "fee_record", null,
-      `Bulk generated ${created} invoices from "${structure.name}" (${skipped} skipped as duplicates)`);
-    res.json({ created, skipped, total: filtered.length });
+      `Generated invoices from "${structure.name}": ${created} created, ${synced} synced to ₹${structure.amount}, ${skipped} unchanged`);
+    res.json({ created, synced, skipped, total: filtered.length });
   });
 
   // ── Receipt Number Preview (no-commit peek) ───────────────────────────────

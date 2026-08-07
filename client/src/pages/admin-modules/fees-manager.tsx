@@ -351,9 +351,13 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
     if (feeRecord) {
       setAmount(String(feeRecord.amount));
       setSid(String(feeRecord.studentId));
+      setAcademicYear(feeRecord.academicYear ?? selectedSession?.sessionName ?? "");
+      setFeeNotes(feeRecord.notes ?? "");
     } else {
       setAmount("");
       setSid("");
+      setAcademicYear(selectedSession?.sessionName ?? "");
+      setFeeNotes("");
     }
     setStep("form");
     setLastPaymentId(null);
@@ -368,8 +372,6 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
     setFeeType("");
     setDueDate("");
     setFeeStatus("Due");
-    setAcademicYear(selectedSession?.sessionName ?? "");
-    setFeeNotes("");
     // Reset student search
     setPaySearchCls("");
     setPaySearchQ("");
@@ -434,7 +436,7 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
       dueDate: feeRecord ? null : (dueDate || null),
       feeStatus: feeRecord ? null : (feeStatus || null),
       academicYear: feeRecord ? null : (academicYear || null),
-      feeNotes: feeRecord ? null : (feeNotes || null),
+      feeNotes: feeNotes || null,
       paymentMethod: method,
       referenceNumber: ref || null,
       receivedDate: date,
@@ -676,11 +678,31 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
             </div>
 
             {feeRecord && (
-              <div>
-                <label className="text-xs text-white/60 mb-1 block">Received Date</label>
-                <input type="date" value={date} onChange={e => setDate(e.target.value)}
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
-              </div>
+              <>
+                <div>
+                  <label className="text-xs text-white/60 mb-1 block">Received Date</label>
+                  <input type="date" value={date} onChange={e => setDate(e.target.value)}
+                    className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">Status</label>
+                    <input value="Paid" readOnly
+                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-emerald-400 font-medium cursor-default" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">Academic Year</label>
+                    <input value={academicYear} readOnly
+                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/50 cursor-default" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-white/60 mb-1 block">Notes</label>
+                  <input value={feeNotes} onChange={e => setFeeNotes(e.target.value)}
+                    placeholder="Optional note for this payment…"
+                    className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                </div>
+              </>
             )}
 
             {method !== "Cash" && (
@@ -2203,17 +2225,17 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         headers: { "Content-Type": "application/json" },
       });
       if (!r.ok) throw new Error((await r.json()).message ?? "Failed");
-      return r.json() as Promise<{ created: number; skipped: number; dueDate: string; session: string }>;
+      return r.json() as Promise<{ created: number; synced: number; skipped: number; dueDate: string; session: string }>;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/structures"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
-      toast({
-        title: `✅ Auto-invoice run complete`,
-        description: `${data.created} invoice${data.created !== 1 ? "s" : ""} created, ${data.skipped} skipped (due ${data.dueDate})`,
-      });
+      const parts = [`${data.created} created`];
+      if ((data.synced ?? 0) > 0) parts.push(`${data.synced} updated to latest amount`);
+      if (data.skipped > 0) parts.push(`${data.skipped} unchanged`);
+      toast({ title: `✅ Auto-invoice run complete`, description: `${parts.join(", ")} (due ${data.dueDate})` });
     },
     onError: (e: Error) => toast({ title: "Auto-invoice failed", description: e.message, variant: "destructive" }),
   });
@@ -2223,7 +2245,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [genSessionId, setGenSessionId] = useState("");
   const [genClasses, setGenClasses] = useState<string[]>([]);
   const [genDueDate, setGenDueDate] = useState(() => new Date().toISOString().split("T")[0]);
-  const [genResult, setGenResult] = useState<{ created: number; skipped: number } | null>(null);
+  const [genResult, setGenResult] = useState<{ created: number; synced: number; skipped: number } | null>(null);
 
   const { data: sessions = [] } = useQuery<AcademicSession[]>({
     queryKey: ["/api/admin/fees/sessions"],
@@ -2244,15 +2266,18 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         }),
       });
       if (!r.ok) throw new Error((await r.json()).message ?? "Failed");
-      return r.json() as Promise<{ created: number; skipped: number }>;
+      return r.json() as Promise<{ created: number; synced: number; skipped: number }>;
     },
-    onSuccess: (data: { created: number; skipped: number }) => {
+    onSuccess: (data: { created: number; synced: number; skipped: number }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/structures"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/payments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
-      toast({ title: "Invoices generated", description: `${data.created} created${data.skipped > 0 ? `, ${data.skipped} skipped` : ""}` });
+      const parts = [`${data.created} new`];
+      if ((data.synced ?? 0) > 0) parts.push(`${data.synced} updated to latest amount`);
+      if (data.skipped > 0) parts.push(`${data.skipped} unchanged`);
+      toast({ title: "✅ Invoices generated", description: parts.join(", ") });
       setGenResult(data);
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -2681,10 +2706,15 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
               <div className="p-4 rounded-xl bg-emerald-900/20 border border-emerald-700/40 text-center">
                 <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2" />
                 <p className="text-emerald-400 font-semibold text-lg">
-                  {genResult.created} Invoice{genResult.created !== 1 ? "s" : ""} Generated
+                  {genResult.created > 0
+                    ? `${genResult.created} Invoice${genResult.created !== 1 ? "s" : ""} Generated`
+                    : genResult.synced > 0 ? "Invoices Updated" : "No Changes"}
                 </p>
+                {genResult.synced > 0 && (
+                  <p className="text-cyan-400 text-xs mt-1">✅ {genResult.synced} existing invoice{genResult.synced !== 1 ? "s" : ""} synced to latest amount</p>
+                )}
                 {genResult.skipped > 0 && (
-                  <p className="text-white/50 text-xs mt-1">{genResult.skipped} skipped — already existed</p>
+                  <p className="text-white/50 text-xs mt-1">{genResult.skipped} already up to date</p>
                 )}
               </div>
               <Button
