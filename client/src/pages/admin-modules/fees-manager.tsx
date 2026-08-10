@@ -2331,7 +2331,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [genSessionId, setGenSessionId] = useState("");
   const [genClasses, setGenClasses] = useState<string[]>([]);
   const [genDueDate, setGenDueDate] = useState(() => new Date().toISOString().split("T")[0]);
-  const [genResult, setGenResult] = useState<{ created: number; synced: number; skipped: number } | null>(null);
+  const [genResult, setGenResult] = useState<{ created: number; synced: number; skipped: number; voided: number; total: number } | null>(null);
 
   const { data: sessions = [] } = useQuery<AcademicSession[]>({
     queryKey: ["/api/admin/fees/sessions"],
@@ -2352,18 +2352,21 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         }),
       });
       if (!r.ok) throw new Error((await r.json()).message ?? "Failed");
-      return r.json() as Promise<{ created: number; synced: number; skipped: number }>;
+      return r.json() as Promise<{ created: number; synced: number; skipped: number; voided: number; total: number }>;
     },
-    onSuccess: (data: { created: number; synced: number; skipped: number }) => {
+    onSuccess: (data: { created: number; synced: number; skipped: number; voided: number; total: number }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/structures"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/payments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
-      const parts = [`${data.created} new`];
-      if ((data.synced ?? 0) > 0) parts.push(`${data.synced} updated to latest amount`);
+      const parts: string[] = [];
+      if (data.created > 0) parts.push(`${data.created} created`);
+      if ((data.synced ?? 0) > 0) parts.push(`${data.synced} synced`);
       if (data.skipped > 0) parts.push(`${data.skipped} unchanged`);
-      toast({ title: "✅ Invoices generated", description: parts.join(", ") });
+      if ((data.voided ?? 0) > 0) parts.push(`${data.voided} out-of-scope removed`);
+      const totalStr = (data.total ?? 0) > 0 ? ` · ${data.total} eligible students` : "";
+      toast({ title: "✅ Invoices generated", description: (parts.join(" · ") || "No changes") + totalStr });
       setGenResult(data);
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -2917,19 +2920,41 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
           )}
           {genResult && (
             <div className="space-y-4">
-              <div className="p-4 rounded-xl bg-emerald-900/20 border border-emerald-700/40 text-center">
-                <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2" />
-                <p className="text-emerald-400 font-semibold text-lg">
-                  {genResult.created > 0
-                    ? `${genResult.created} Invoice${genResult.created !== 1 ? "s" : ""} Generated`
-                    : genResult.synced > 0 ? "Invoices Updated" : "No Changes"}
-                </p>
-                {genResult.synced > 0 && (
-                  <p className="text-cyan-400 text-xs mt-1">✅ {genResult.synced} existing invoice{genResult.synced !== 1 ? "s" : ""} synced to latest amount</p>
-                )}
-                {genResult.skipped > 0 && (
-                  <p className="text-white/50 text-xs mt-1">{genResult.skipped} already up to date</p>
-                )}
+              <div className="p-4 rounded-xl bg-emerald-900/20 border border-emerald-700/40 space-y-3">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-6 h-6 text-emerald-400 flex-shrink-0" />
+                  <p className="text-emerald-400 font-semibold text-base leading-snug">
+                    {genResult.created > 0
+                      ? `${genResult.created} invoice${genResult.created !== 1 ? "s" : ""} created`
+                      : genResult.synced > 0 ? "Invoices synced" : "No changes"}
+                  </p>
+                </div>
+                <div className="divide-y divide-white/10 text-sm">
+                  <div className="flex justify-between py-2">
+                    <span className="text-white/60">New invoices created</span>
+                    <span className="text-emerald-400 font-semibold">{genResult.created}</span>
+                  </div>
+                  <div className="flex justify-between py-2">
+                    <span className="text-white/60">Already existed · synced to latest amount</span>
+                    <span className="text-cyan-400 font-semibold">{genResult.synced}</span>
+                  </div>
+                  <div className="flex justify-between py-2">
+                    <span className="text-white/60">Already up to date / settled — no change</span>
+                    <span className="text-white/50 font-semibold">{genResult.skipped}</span>
+                  </div>
+                  {(genResult.total ?? 0) > 0 && (
+                    <div className="flex justify-between py-2 border-t border-white/20">
+                      <span className="text-white/80 font-medium">Eligible students in this run</span>
+                      <span className="text-white font-bold">{genResult.total}</span>
+                    </div>
+                  )}
+                  {(genResult.voided ?? 0) > 0 && (
+                    <div className="flex justify-between py-2">
+                      <span className="text-amber-400/80">Stale invoices cleaned up (no longer in scope)</span>
+                      <span className="text-amber-400 font-semibold">{genResult.voided}</span>
+                    </div>
+                  )}
+                </div>
               </div>
               <Button
                 className="w-full bg-cyan-600 hover:bg-cyan-500 text-white"
