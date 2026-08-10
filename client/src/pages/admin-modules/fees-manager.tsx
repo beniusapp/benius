@@ -4466,6 +4466,7 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
   <div>
     <div class="report-title">Financial Analytics Report</div>
     <div class="report-subtitle">${schoolName} &nbsp;&middot;&nbsp; <span class="session-pill">${sessionLabel}</span></div>
+    <div style="margin-top:4px;font-size:9.5px;color:#0369a1;font-weight:600;">&#128197; Period View: ${esc(periodLabel)}</div>
   </div>
   <div class="report-meta">
     <div>Exported on ${exportedAt}</div>
