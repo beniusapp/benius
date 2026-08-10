@@ -5061,6 +5061,14 @@ function AgingDefaultersDrawer({
 }) {
   const { toast } = useToast();
   const [sendingId, setSendingId] = useState<number | null>(null);
+  const [filterClass, setFilterClass] = useState<string>("__all__");
+  const [filterFeeType, setFilterFeeType] = useState<string>("__all__");
+
+  // Reset filters whenever a different bucket is opened
+  useEffect(() => {
+    setFilterClass("__all__");
+    setFilterFeeType("__all__");
+  }, [bucket?.key]);
 
   const { data: students = [], isLoading } = useQuery<AgingStudent[]>({
     queryKey: ["/api/fees/analytics/aging-students", bucket?.key],
@@ -5073,6 +5081,31 @@ function AgingDefaultersDrawer({
     enabled: !!bucket,
     staleTime: 30_000,
   });
+
+  // Derive unique option lists from the full fetched data (not the filtered slice)
+  const classOptions = useMemo(() => {
+    const seen = new Set<string>();
+    students.forEach(s => { if (s.class) seen.add(s.class); });
+    return Array.from(seen).sort((a, b) => {
+      const na = Number(a), nb = Number(b);
+      return (!isNaN(na) && !isNaN(nb)) ? na - nb : a.localeCompare(b);
+    });
+  }, [students]);
+
+  const feeTypeOptions = useMemo(() => {
+    const seen = new Set<string>();
+    students.forEach(s => { if (s.fee_type) seen.add(s.fee_type); });
+    return Array.from(seen).sort((a, b) => a.localeCompare(b));
+  }, [students]);
+
+  // Apply client-side filters
+  const visibleStudents = useMemo(() => {
+    return students.filter(s => {
+      if (filterClass !== "__all__" && s.class !== filterClass) return false;
+      if (filterFeeType !== "__all__" && s.fee_type !== filterFeeType) return false;
+      return true;
+    });
+  }, [students, filterClass, filterFeeType]);
 
   async function sendReminder(student: AgingStudent) {
     setSendingId(student.fee_record_id);
@@ -5130,6 +5163,44 @@ function AgingDefaultersDrawer({
               </p>
             </SheetHeader>
 
+            {/* Filter bar */}
+            {!isLoading && students.length > 0 && (
+              <div className="px-5 py-3 border-b border-white/10 flex gap-2 flex-wrap">
+                <Select value={filterClass} onValueChange={setFilterClass}>
+                  <SelectTrigger className="h-8 text-xs bg-white/5 border-white/10 text-white/80 w-36">
+                    <SelectValue placeholder="All Classes" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#0D1F3C] border-white/10 text-white">
+                    <SelectItem value="__all__" className="text-xs text-white/60">All Classes</SelectItem>
+                    {classOptions.map(c => (
+                      <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={filterFeeType} onValueChange={setFilterFeeType}>
+                  <SelectTrigger className="h-8 text-xs bg-white/5 border-white/10 text-white/80 flex-1 min-w-36">
+                    <SelectValue placeholder="All Fee Types" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#0D1F3C] border-white/10 text-white">
+                    <SelectItem value="__all__" className="text-xs text-white/60">All Fee Types</SelectItem>
+                    {feeTypeOptions.map(ft => (
+                      <SelectItem key={ft} value={ft} className="text-xs">{ft}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {(filterClass !== "__all__" || filterFeeType !== "__all__") && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => { setFilterClass("__all__"); setFilterFeeType("__all__"); }}
+                    className="h-8 px-2 text-xs text-white/40 hover:text-white/70"
+                  >
+                    <X className="w-3 h-3 mr-1" />Clear
+                  </Button>
+                )}
+              </div>
+            )}
+
             {/* Body */}
             <div className="px-5 py-4">
               {isLoading ? (
@@ -5141,10 +5212,17 @@ function AgingDefaultersDrawer({
                   <Users className="w-10 h-10" />
                   <p className="text-sm">No defaulters in this bucket</p>
                 </div>
+              ) : visibleStudents.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-48 gap-3 text-white/25">
+                  <Search className="w-10 h-10" />
+                  <p className="text-sm">No matches for the selected filters</p>
+                </div>
               ) : (
                 <div className="space-y-2">
-                  <p className="text-white/40 text-xs mb-3">{students.length} student{students.length !== 1 ? "s" : ""} found</p>
-                  {students.map(s => (
+                  <p className="text-white/40 text-xs mb-3">
+                    {visibleStudents.length}{visibleStudents.length !== students.length ? ` of ${students.length}` : ""} student{visibleStudents.length !== 1 ? "s" : ""} found
+                  </p>
+                  {visibleStudents.map(s => (
                     <div
                       key={s.fee_record_id}
                       className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-2.5"
