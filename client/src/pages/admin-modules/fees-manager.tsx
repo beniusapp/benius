@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -10,7 +10,7 @@ import { z } from "zod";
 import {
   CreditCard, Plus, Search, Loader2, Trash2, Pencil, CheckCircle2, AlertTriangle, Clock,
   Receipt, DollarSign, TrendingUp, TrendingDown, Banknote, BookOpen, Bell, ExternalLink,
-  Shield, ChevronLeft, ChevronRight, Lock, X, Printer, History, Download, FileText,
+  Shield, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Lock, X, Printer, History, Download, FileText,
   MessageSquare, Mail, Send, Eye, EyeOff, Zap, Phone, BarChart2, Calendar, Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -4229,6 +4229,7 @@ function AuditTab() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate]     = useState("");
   const [actionFilter, setActionFilter] = useState("");
+  const [expandedRow, setExpandedRow] = useState<number | null>(null);
 
   // Reset to page 0 when filters change
   const handleFromDate     = (v: string) => { setFromDate(v); setPage(0); };
@@ -4327,18 +4328,49 @@ function AuditTab() {
                   {["Timestamp","Actor","Action","Description","IP"].map(h => (
                     <th key={h} className="text-left px-4 py-3 text-white/50 font-medium text-xs">{h}</th>
                   ))}
+                  <th className="px-2 py-3 w-6" />
                 </tr>
               </thead>
               <tbody>
-                {data.entries.map(e => (
-                  <tr key={e.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                    <td className="px-4 py-3 text-white/40 text-xs whitespace-nowrap">{fmtDateTime(e.createdAt)}</td>
-                    <td className="px-4 py-3 text-white/70 text-xs">{e.actorName ?? `#${e.actorId}`}</td>
-                    <td className="px-4 py-3"><ActionBadge action={e.action} /></td>
-                    <td className="px-4 py-3 text-white/60 text-xs max-w-xs truncate" title={e.description ?? ""}>{e.description ?? "—"}</td>
-                    <td className="px-4 py-3 text-white/30 text-xs font-mono">{e.ipAddress ?? "—"}</td>
-                  </tr>
-                ))}
+                {data.entries.map(e => {
+                  const isExpanded = expandedRow === e.id;
+                  const hasDesc = !!e.description;
+                  return (
+                    <React.Fragment key={e.id}>
+                      <tr
+                        onClick={() => hasDesc && setExpandedRow(isExpanded ? null : e.id)}
+                        className={`border-b border-white/5 transition-colors ${hasDesc ? "cursor-pointer" : ""} ${isExpanded ? "bg-white/5" : "hover:bg-white/5"}`}
+                      >
+                        <td className="px-4 py-3 text-white/40 text-xs whitespace-nowrap">{fmtDateTime(e.createdAt)}</td>
+                        <td className="px-4 py-3 text-white/70 text-xs">{e.actorName ?? `#${e.actorId}`}</td>
+                        <td className="px-4 py-3"><ActionBadge action={e.action} /></td>
+                        <td className="px-4 py-3 text-white/60 text-xs max-w-xs truncate">{e.description ?? "—"}</td>
+                        <td className="px-4 py-3 text-white/30 text-xs font-mono">{e.ipAddress ?? "—"}</td>
+                        <td className="px-2 py-3 text-white/30">
+                          {hasDesc && (
+                            isExpanded
+                              ? <ChevronUp className="w-3.5 h-3.5" />
+                              : <ChevronDown className="w-3.5 h-3.5" />
+                          )}
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr className="border-b border-white/5 bg-white/[0.03]">
+                          <td colSpan={6} className="px-4 py-3">
+                            <div className="flex flex-col gap-2">
+                              <p className="text-white/80 text-xs leading-relaxed whitespace-pre-wrap break-words">{e.description}</p>
+                              <div className="flex flex-wrap gap-4 mt-1 text-xs text-white/40">
+                                <span><span className="text-white/30">Actor: </span>{e.actorName ?? `#${e.actorId}`}</span>
+                                <span><span className="text-white/30">IP: </span>{e.ipAddress ?? "—"}</span>
+                                <span><span className="text-white/30">Time: </span>{fmtDateTime(e.createdAt)}</span>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
