@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -35,6 +35,7 @@ interface FeeRecordWithStudent {
   studentId: number;
   schoolId: number;
   feeType: string;
+  feeName: string;          // resolved server-side: always current structure name
   amount: number;
   dueDate: string;
   paidDate: string | null;
@@ -1430,12 +1431,25 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       s.applicableClasses.length === 0 || (cls && s.applicableClasses.includes(cls))
     );
   }, [activeStructures, selectedStudent]);
-  // Map feeType → structure name for the Fee Name column
+  // Map feeType (normalized: trim+lowercase) → structure name.
+  // Used as a client-side fallback when the server-side feeName field is absent
+  // (e.g. stale React Query cache from before the field was added).
   const feeTypeToName = useMemo(() => {
     const m = new Map<string, string>();
-    activeStructures.forEach(s => { if (!m.has(s.feeType)) m.set(s.feeType, s.name); });
+    activeStructures.forEach(s => {
+      const key = s.feeType.trim().toLowerCase();
+      if (!m.has(key)) m.set(key, s.name);
+    });
     return m;
   }, [activeStructures]);
+
+  // Resolve display name for a fee record: prefer server-supplied feeName,
+  // fall back to client-side map, then raw feeType. || catches empty strings too.
+  const resolveFeeDisplayName = useCallback(
+    (rec: { feeType: string; feeName?: string }) =>
+      rec.feeName || feeTypeToName.get(rec.feeType.trim().toLowerCase()) || rec.feeType || "—",
+    [feeTypeToName],
+  );
 
   // Dunning counts — per-student reminder counts for the bell badge
   const { data: dunningCounts = {} } = useQuery<Record<number, number>>({
@@ -1615,14 +1629,14 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         : r.status === statusFilter;
     const classMatch    = classFilter   === "all" || r.student?.class === classFilter;
     const feeTypeMatch  = feeTypeFilter === "all" || r.feeType === feeTypeFilter;
-    const feeNameMatch  = feeNameFilter === "all" || (feeTypeToName.get(r.feeType) ?? r.feeType) === feeNameFilter;
+    const feeNameMatch  = feeNameFilter === "all" || resolveFeeDisplayName(r) === feeNameFilter;
     return ms && statusMatch && classMatch && feeTypeMatch && feeNameMatch;
-  }), [feeRecords, search, statusFilter, classFilter, feeTypeFilter, feeNameFilter, offlinePaidIds, feeTypeToName]);
+  }), [feeRecords, search, statusFilter, classFilter, feeTypeFilter, feeNameFilter, offlinePaidIds, resolveFeeDisplayName]);
 
-  // Distinct fee names and fee types from all loaded records
+  // Distinct fee names from all loaded records — uses resolver so stale cache still populates list
   const allFeeNames = useMemo(() =>
-    [...new Set(feeRecords.map(r => feeTypeToName.get(r.feeType) ?? r.feeType))].sort(),
-    [feeRecords, feeTypeToName]);
+    [...new Set(feeRecords.map(r => resolveFeeDisplayName(r)))].filter(Boolean).sort(),
+    [feeRecords, resolveFeeDisplayName]);
 
   // Distinct fee types from all loaded records (for the export dialog filter)
   const allFeeTypes = useMemo(() =>
@@ -1737,7 +1751,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     <td className="px-4 py-3 text-white/70 text-xs text-center">{rec.student?.class ?? "—"}</td>
                     {/* Section */}
                     <td className="px-4 py-3 text-white/70 text-xs text-center">{rec.student?.section ?? "—"}</td>
-                    <td className="px-4 py-3 text-white/80 text-sm">{feeTypeToName.get(rec.feeType) ?? "—"}</td>
+                    <td className="px-4 py-3 text-white/80 text-sm">{resolveFeeDisplayName(rec)}</td>
                     <td className="px-4 py-3 text-white/70 text-xs">{rec.feeType}</td>
                     <td className="px-4 py-3 text-right font-semibold text-white">{fmt(rec.amount)}</td>
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{fmtDate(rec.dueDate)}</td>
@@ -2194,10 +2208,11 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/payments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
       const synced = data?.syncedInvoices ?? 0;
+      const fields: string[] = data?.syncedFields ?? [];
       toast({
         title: editing ? "Structure updated" : "Structure created",
         description: synced > 0
-          ? `✅ ${synced} unpaid invoice${synced !== 1 ? "s" : ""} automatically updated to the new amount`
+          ? `✅ ${synced} unpaid invoice${synced !== 1 ? "s" : ""} updated — ${fields.join(", ")}`
           : undefined,
       });
       setShowModal(false);

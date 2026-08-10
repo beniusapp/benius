@@ -35,6 +35,7 @@ interface FeeRecord {
   studentId: number;
   schoolId: number;
   feeType: string;
+  feeName: string;          // current structure display name — always fresh from server
   amount: number;
   dueDate: string;
   paidDate: string | null;
@@ -505,7 +506,7 @@ export default function StudentFees() {
                                 )}
                               </div>
                               <p className="font-extrabold text-slate-800 text-base leading-tight"
-                                data-testid={`text-fee-type-${rec.id}`}>{rec.feeType}</p>
+                                data-testid={`text-fee-type-${rec.id}`}>{rec.feeName || rec.feeType}</p>
                               <div className="flex items-center gap-1.5 mt-1.5 text-xs text-slate-400">
                                 <CalendarDays className="w-3 h-3 flex-shrink-0" />
                                 Due {formatDate(rec.dueDate)}
@@ -633,7 +634,7 @@ export default function StudentFees() {
                                   </span>
                                 )}
                               </div>
-                              <p className="font-extrabold text-slate-800 text-base leading-tight">{rec.feeType}</p>
+                              <p className="font-extrabold text-slate-800 text-base leading-tight">{rec.feeName || rec.feeType}</p>
                               <div className="flex items-center gap-1.5 mt-1.5 text-xs text-slate-400">
                                 <CalendarDays className="w-3 h-3 flex-shrink-0" />
                                 Paid {formatDate(rec.paidDate)}

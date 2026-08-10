@@ -48,6 +48,7 @@ interface ExamSummary {
 interface FeeRecord {
   id: number;
   feeType: string;
+  feeName: string;          // current structure display name — always fresh from server
   amount: number;
   status: string;
   dueDate: string;
@@ -593,7 +594,7 @@ ${summary.rank ? `<div class="sr"><span>Class Rank</span><span><b>${summary.rank
                             style={{ background: i % 2 === 0 ? "#fff" : "#fafbff", borderBottom: "1px solid #f1f5f9" }}
                             data-testid={`row-fee-${fee.id}`}
                           >
-                            <td className="px-3 sm:px-4 py-3 font-semibold text-slate-700 whitespace-nowrap">{fee.feeType}</td>
+                            <td className="px-3 sm:px-4 py-3 font-semibold text-slate-700 whitespace-nowrap">{fee.feeName || fee.feeType}</td>
                             <td className="px-3 sm:px-4 py-3 font-bold text-slate-800 whitespace-nowrap">{fmtCurrency(fee.amount)}</td>
                             <td className="px-3 sm:px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{fmtDate(fee.dueDate)}</td>
                             <td className="px-3 sm:px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{fmtDate(fee.paidDate)}</td>

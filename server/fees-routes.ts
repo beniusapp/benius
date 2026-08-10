@@ -119,10 +119,14 @@ export function registerFeesRoutes(app: Express) {
 
     // Sync ALL snapshot fields on unpaid (Due / Overdue) fee records so the
     // ledger always reflects the current structure data after any save.
-    const amountChanged  = parsed.data.amount  !== undefined && parsed.data.amount  !== before.amount;
-    const feeTypeChanged = parsed.data.feeType !== undefined && parsed.data.feeType !== before.feeType;
+    const amountChanged     = parsed.data.amount        !== undefined && parsed.data.amount        !== before.amount;
+    const feeTypeChanged    = parsed.data.feeType       !== undefined && parsed.data.feeType       !== before.feeType;
+    const dueDayChanged     = parsed.data.dueDayOfMonth !== undefined && parsed.data.dueDayOfMonth !== null
+                              && parsed.data.dueDayOfMonth !== before.dueDayOfMonth;
 
     let syncedCount = 0;
+
+    // 1. Sync amount + feeType in a single UPDATE
     if (amountChanged || feeTypeChanged) {
       const patch: Record<string, unknown> = {};
       if (amountChanged)  patch.amount  = parsed.data.amount;
@@ -139,14 +143,82 @@ export function registerFeesRoutes(app: Express) {
       syncedCount = result.length;
     }
 
-    const syncNote = syncedCount > 0
-      ? ` — synced ${syncedCount} unpaid invoice(s)` +
-        (amountChanged  ? ` to ₹${parsed.data.amount}` : "") +
-        (feeTypeChanged ? ` (fee type → ${parsed.data.feeType})` : "")
+    // 2. Sync due date — replace the day component while keeping the existing
+    //    month + year.  LEAST(newDay, days_in_month) prevents invalid dates
+    //    e.g. day 31 in a 30-day month.
+    if (dueDayChanged) {
+      const newDay = parsed.data.dueDayOfMonth!;
+      // Use the (possibly already-updated) feeType when matching records
+      const matchFeeType = feeTypeChanged ? parsed.data.feeType! : before.feeType;
+      const dueDateResult = await db.execute(sql`
+        UPDATE fee_records
+        SET due_date = MAKE_DATE(
+          EXTRACT(YEAR  FROM due_date)::int,
+          EXTRACT(MONTH FROM due_date)::int,
+          LEAST(
+            ${newDay}::int,
+            EXTRACT(DAY FROM (DATE_TRUNC('month', due_date) + INTERVAL '1 month' - INTERVAL '1 day'))::int
+          )
+        )
+        WHERE school_id   = ${schoolId}
+          AND fee_type    = ${matchFeeType}
+          AND status IN ('Due', 'Overdue')
+        RETURNING id
+      `);
+      // Avoid double-counting if amount/feeType was also changed in the same save
+      if (!amountChanged && !feeTypeChanged) {
+        syncedCount = (dueDateResult.rows ?? []).length;
+      }
+    }
+
+    // 3. Void out-of-scope Due/Overdue records when applicableClasses narrows.
+    //    When a structure's class list is tightened, existing invoices for students
+    //    who no longer qualify must be removed so the ledger stays accurate.
+    let voidedCount = 0;
+    const newClasses: string[] | undefined = parsed.data.applicableClasses;
+    if (newClasses !== undefined && newClasses.length > 0) {
+      // Fetch all Due/Overdue records for this feeType in this school
+      const matchFeeTypeForVoid = feeTypeChanged ? parsed.data.feeType! : before.feeType;
+      const unpaidRecs = await db.select({ id: feeRecords.id, studentId: feeRecords.studentId })
+        .from(feeRecords)
+        .where(and(
+          eq(feeRecords.schoolId, schoolId),
+          eq(feeRecords.feeType, matchFeeTypeForVoid),
+          or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue"))
+        ));
+      // Resolve each student's current class from the active session's enrollment
+      const activeSession = await storage.getActiveSession(schoolId);
+      if (activeSession && unpaidRecs.length > 0) {
+        const allEnrollments = await storage.getEnrollmentsBySession(schoolId, activeSession.id);
+        const enrollMap = new Map(allEnrollments.map(e => [e.studentId, e.className]));
+        const toVoid = unpaidRecs.filter(r => {
+          const cls = enrollMap.get(r.studentId);
+          return !cls || !newClasses.includes(cls);
+        });
+        if (toVoid.length > 0) {
+          const toVoidIds = toVoid.map(r => r.id);
+          await db.delete(feeRecords)
+            .where(and(
+              eq(feeRecords.schoolId, schoolId),
+              sql`id = ANY(${sql.raw(`ARRAY[${toVoidIds.join(",")}]`)})`,
+              or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue"))
+            ));
+          voidedCount = toVoid.length;
+        }
+      }
+    }
+
+    const syncParts: string[] = [];
+    if (amountChanged)  syncParts.push(`amount → ₹${parsed.data.amount}`);
+    if (feeTypeChanged) syncParts.push(`fee type → ${parsed.data.feeType}`);
+    if (dueDayChanged)  syncParts.push(`due day → ${parsed.data.dueDayOfMonth}th`);
+    if (voidedCount > 0) syncParts.push(`voided ${voidedCount} out-of-scope invoice(s)`);
+    const syncNote = (syncedCount > 0 || voidedCount > 0)
+      ? ` — ${syncParts.join("; ")}`
       : "";
     await appendAudit(req, schoolId, "update", "fee_structure", id,
       `Updated fee structure: ${updated.name}${syncNote}`);
-    res.json({ ...updated, syncedInvoices: syncedCount });
+    res.json({ ...updated, syncedInvoices: syncedCount, voidedInvoices: voidedCount, syncedFields: syncParts });
   });
 
   app.delete("/api/admin/fees/structures/:id", async (req, res) => {
@@ -908,15 +980,36 @@ export function registerFeesRoutes(app: Express) {
       created++;
     }
 
+    // Void out-of-scope Due/Overdue records for students no longer in applicableClasses
+    let voided = 0;
+    if (applicableClasses.length > 0) {
+      const eligibleIds = new Set(eligible.map((e: any) => e.studentId));
+      const outOfScopeRecs = existingRecords.filter((r: any) =>
+        r.feeType === structure.feeType &&
+        (r.status === "Due" || r.status === "Overdue") &&
+        !eligibleIds.has(r.studentId)
+      );
+      if (outOfScopeRecs.length > 0) {
+        const outIds = outOfScopeRecs.map((r: any) => r.id);
+        await db.delete(feeRecords)
+          .where(and(
+            eq(feeRecords.schoolId, schoolId),
+            sql`id = ANY(${sql.raw(`ARRAY[${outIds.join(",")}]`)})`,
+            or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue"))
+          ));
+        voided = outOfScopeRecs.length;
+      }
+    }
+
     // Stamp last-generated timestamp on the structure
     await db.update(feeStructures)
       .set({ lastInvoicesGeneratedAt: new Date() })
       .where(eq(feeStructures.id, structureId));
 
     await appendAudit(req, schoolId, "auto_invoice", "fee_structure", structureId,
-      `Manual auto-invoice trigger for "${structure.name}" (${structure.feeType}): ${created} created, ${skipped} skipped — due ${dueDate}`);
+      `Manual auto-invoice trigger for "${structure.name}" (${structure.feeType}): ${created} created, ${synced} synced, ${skipped} skipped${voided > 0 ? `, ${voided} out-of-scope voided` : ""} — due ${dueDate}`);
 
-    res.json({ created, skipped, dueDate, session: activeSession.sessionName });
+    res.json({ created, synced, skipped, voided, dueDate, session: activeSession.sessionName });
   });
 
   // ── Audit Log ─────────────────────────────────────────────────────────────
@@ -997,14 +1090,36 @@ export function registerFeesRoutes(app: Express) {
       created++;
     }
 
+    // Void out-of-scope Due/Overdue records — students who were previously invoiced
+    // but are no longer in applicableClasses (e.g. structure classes narrowed after invoice).
+    let voided = 0;
+    if (applicableClasses.length > 0) {
+      const eligibleStudentIds = new Set(filtered.map(e => e.studentId));
+      const outOfScopeRecs = existingRecords.filter(r =>
+        r.feeType === structure.feeType &&
+        (r.status === "Due" || r.status === "Overdue") &&
+        !eligibleStudentIds.has(r.studentId)
+      );
+      if (outOfScopeRecs.length > 0) {
+        const outIds = outOfScopeRecs.map(r => r.id);
+        await db.delete(feeRecords)
+          .where(and(
+            eq(feeRecords.schoolId, schoolId),
+            sql`id = ANY(${sql.raw(`ARRAY[${outIds.join(",")}]`)})`,
+            or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue"))
+          ));
+        voided = outOfScopeRecs.length;
+      }
+    }
+
     // Stamp last-generated timestamp on the structure
     await db.update(feeStructures)
       .set({ lastInvoicesGeneratedAt: new Date() })
       .where(eq(feeStructures.id, structureId));
 
     await appendAudit(req, schoolId, "create", "fee_record", null,
-      `Generated invoices from "${structure.name}": ${created} created, ${synced} synced to ₹${structure.amount}, ${skipped} unchanged`);
-    res.json({ created, synced, skipped, total: filtered.length });
+      `Generated invoices from "${structure.name}": ${created} created, ${synced} synced to ₹${structure.amount}, ${skipped} unchanged${voided > 0 ? `, ${voided} out-of-scope voided` : ""}`);
+    res.json({ created, synced, skipped, voided, total: filtered.length });
   });
 
   // ── Receipt Number Preview (no-commit peek) ───────────────────────────────

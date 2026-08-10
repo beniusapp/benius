@@ -3992,7 +3992,19 @@ export async function registerRoutes(
         .where(and(inArray(students.id, studentIds), eq(students.schoolId, schoolId)));
       for (const s of stList) studentMap[s.id] = s;
     }
-    res.json(records.map(r => ({ ...r, student: studentMap[r.studentId] ?? null })));
+    // Resolve feeName server-side so the ledger always reflects the current
+    // structure name even when feeType strings differ by case or whitespace.
+    const allStructures = await storage.getFeeStructuresBySchool(schoolId);
+    const ftToName = new Map<string, string>();
+    for (const s of allStructures) {
+      const key = s.feeType.trim().toLowerCase();
+      if (!ftToName.has(key)) ftToName.set(key, s.name);
+    }
+    res.json(records.map(r => ({
+      ...r,
+      feeName: ftToName.get(r.feeType.trim().toLowerCase()) ?? r.feeType,
+      student: studentMap[r.studentId] ?? null,
+    })));
   });
 
   app.post("/api/admin/fees", async (req, res) => {
@@ -4085,12 +4097,14 @@ export async function registerRoutes(
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const records = await storage.getFeeRecordsByStudent(req.session.studentId, student.schoolId, viewSessionId);
 
-    // Attach fee-structure breakdown to each record so students can see component details
+    // Attach fee-structure name + breakdown to each record so students always
+    // see the current display name and component details.
     const structures = await storage.getFeeStructuresBySchool(student.schoolId);
-    // Build a lookup: feeType (trimmed, lower) → breakdown array
-    const breakdownMap = new Map<string, Array<{ name: string; purpose: string; amount: number }>>();
+    const ftToName       = new Map<string, string>();
+    const breakdownMap   = new Map<string, Array<{ name: string; purpose: string; amount: number }>>();
     for (const s of structures) {
       const key = s.feeType.trim().toLowerCase();
+      if (!ftToName.has(key)) ftToName.set(key, s.name);
       if (!breakdownMap.has(key) && Array.isArray((s as any).breakdown) && (s as any).breakdown.length > 0) {
         breakdownMap.set(key, (s as any).breakdown);
       }
@@ -4098,6 +4112,7 @@ export async function registerRoutes(
 
     const enriched = records.map(r => ({
       ...r,
+      feeName:   ftToName.get(r.feeType.trim().toLowerCase()) ?? r.feeType,
       breakdown: breakdownMap.get(r.feeType.trim().toLowerCase()) ?? [],
     }));
 
