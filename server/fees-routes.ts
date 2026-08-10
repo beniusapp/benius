@@ -71,6 +71,38 @@ export function registerFeesRoutes(app: Express) {
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionId = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
 
+    // ── Fetch session boundaries first — used for time-series date range ──
+    let sessionInfo: { startDate: string; endDate: string; sessionName: string } | null = null;
+    if (sessionId) {
+      const sesRow = await db.execute(sql`
+        SELECT start_date, end_date, session_name
+        FROM academic_sessions WHERE id = ${sessionId} LIMIT 1
+      `);
+      const s = sesRow.rows[0] as any;
+      if (s) {
+        sessionInfo = {
+          startDate:   String(s.start_date).slice(0, 10),
+          endDate:     String(s.end_date).slice(0, 10),
+          sessionName: String(s.session_name),
+        };
+      }
+    }
+
+    // Time-series date range: use session start→end when available;
+    // fall back to rolling 18-month window for unscoped queries.
+    const tsStart = sessionInfo?.startDate ?? null;
+    // For active sessions the end date may be in the future — cap at today
+    const tsEndRaw = sessionInfo?.endDate ?? null;
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const tsEnd    = tsEndRaw && tsEndRaw < todayStr ? tsEndRaw : todayStr;
+
+    const tsDateMC = tsStart
+      ? sql` AND pr.received_date::date BETWEEN ${tsStart}::date AND ${tsEnd}::date`
+      : sql` AND pr.received_date::date >= CURRENT_DATE - INTERVAL '18 months'`;
+    const tsDateMB = tsStart
+      ? sql` AND fr.due_date::date BETWEEN ${tsStart}::date AND ${tsEnd}::date`
+      : sql` AND fr.due_date::date >= CURRENT_DATE - INTERVAL '18 months'`;
+
     // Session filter on fee_records (fr alias)
     const sfFR  = sessionId ? sql` AND fr.session_id  = ${sessionId}` : sql``;
     // Session filter on fee_records (fr2 alias) — used in payment joins
@@ -113,8 +145,9 @@ export function registerFeesRoutes(app: Express) {
           WHERE fr.school_id = ${schoolId}
             AND fr.status IN ('Due','Overdue','Partial')${sfFR}
         `),
-        // ── 2. Monthly time-series — collected bucketed by received_date,
-        //        session-scoped via the linked fee_record (not pr.session_id).
+        // ── 2. Time-series — bounded by session start/end dates so every
+        //        school's full academic year is always covered regardless of
+        //        when the query runs. Client slices/aggregates for each view.
         db.execute(sql`
           WITH mc AS (
             SELECT DATE_TRUNC('month', pr.received_date::date) AS pd,
@@ -123,7 +156,7 @@ export function registerFeesRoutes(app: Express) {
             JOIN fee_records fr2 ON fr2.id = pr.fee_record_id
             WHERE pr.school_id = ${schoolId}
               AND pr.received_date IS NOT NULL
-              AND pr.received_date::date >= CURRENT_DATE - INTERVAL '18 months'
+              ${tsDateMC}
               AND fr2.school_id = ${schoolId}${sfFR2}
             GROUP BY pd
           ),
@@ -133,7 +166,7 @@ export function registerFeesRoutes(app: Express) {
             FROM fee_records fr
             WHERE fr.school_id = ${schoolId}
               AND fr.due_date IS NOT NULL
-              AND fr.due_date::date >= CURRENT_DATE - INTERVAL '18 months'
+              ${tsDateMB}
               ${sfFR}
             GROUP BY pd
           )
@@ -201,23 +234,6 @@ export function registerFeesRoutes(app: Express) {
           GROUP BY bucket
         `),
       ]);
-
-      // Fetch session date boundaries so the client can build correct period skeletons
-      let sessionInfo: { startDate: string; endDate: string; sessionName: string } | null = null;
-      if (sessionId) {
-        const sesRow = await db.execute(sql`
-          SELECT start_date, end_date, session_name
-          FROM academic_sessions WHERE id = ${sessionId} LIMIT 1
-        `);
-        const s = sesRow.rows[0] as any;
-        if (s) {
-          sessionInfo = {
-            startDate:   String(s.start_date).slice(0, 10),
-            endDate:     String(s.end_date).slice(0, 10),
-            sessionName: String(s.session_name),
-          };
-        }
-      }
 
       const grossBilled        = Number(billedRow.rows[0]?.gross_billed     ?? 0);
       const netCollected       = Number(payRow.rows[0]?.total_collected      ?? 0);

@@ -4088,89 +4088,101 @@ const CHANNEL_COLORS = ["#06b6d4", "#10b981", "#8b5cf6", "#f59e0b", "#64748b"];
 
 interface TSRow { period: string; period_date: string; billed: number; collected: number; }
 
+const MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
 /** Parse "YYYY-MM-DD..." safely to a local Date (ignores time/tz suffix). */
 function parseLocalDate(s: string): Date {
   const [y, m, d] = s.slice(0, 10).split("-").map(Number);
   return new Date(y, m - 1, d);
 }
 
-/** Build the academic-year start from a session start_date string.
- *  If the session itself starts in April that's the acadStart; otherwise
- *  we snap back to the nearest April 1 before the session start. */
-function acadYearStartFrom(sessionStartDate: string): Date {
-  const d = parseLocalDate(sessionStartDate);
-  // If the session starts in April or later → use that year's April 1
-  // If the session starts Jan–Mar → the academic year started the previous April
-  const year = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
-  return new Date(year, 3, 1); // April 1
-}
-
 /**
- * Indian academic quarters (Q1=Apr–Jun, Q2=Jul–Sep, Q3=Oct–Dec, Q4=Jan–Mar).
- * Returns all 4 quarters as a full skeleton — quarters with no data show 0.
- * Uses the session's academic year, not today's date.
+ * Quarterly view — fully multi-tenant aware.
+ * Q1 starts from the session's own start month. Each quarter = 3 consecutive
+ * months. All 4 quarters are always rendered as a full skeleton (₹0 for
+ * quarters with no data). Works for any academic calendar:
+ *   June start  → Q1=Jun–Aug, Q2=Sep–Nov, Q3=Dec–Feb, Q4=Mar–May
+ *   January start → Q1=Jan–Mar, Q2=Apr–Jun, Q3=Jul–Sep, Q4=Oct–Dec
+ *   April start → Q1=Apr–Jun, Q2=Jul–Sep, Q3=Oct–Dec, Q4=Jan–Mar
  */
-function aggregateToQuarterly(rows: TSRow[], sessionStartDate: string): TSRow[] {
-  const acadStart = acadYearStartFrom(sessionStartDate);
-  const startYear = acadStart.getFullYear();
-  const yearLabel = `'${String(startYear).slice(2)}-${String(startYear + 1).slice(2)}`;
+function aggregateToQuarterly(rows: TSRow[], sessionStartDate: string, sessionEndDate: string): TSRow[] {
+  const start     = parseLocalDate(sessionStartDate);
+  const end       = parseLocalDate(sessionEndDate);
+  const startMon  = start.getMonth();   // 0-indexed calendar month
+  const startYear = start.getFullYear();
 
-  // Build skeleton: all 4 quarters with 0 values
-  const skeleton: TSRow[] = [1, 2, 3, 4].map(q => ({
-    period:      `Q${q} ${yearLabel}`,
-    period_date: new Date(startYear + (q >= 4 ? 1 : 0), [3, 6, 9, 0][q - 1], 1).toISOString(),
-    billed:      0,
-    collected:   0,
-  }));
+  // Build skeleton: 4 quarters, each 3 months from session start month
+  const skeleton: TSRow[] = [0, 1, 2, 3].map(qi => {
+    const offsetM   = qi * 3;
+    const absMonth  = startMon + offsetM;
+    const calMonth  = absMonth % 12;
+    const calYear   = startYear + Math.floor(absMonth / 12);
+    // Label: "Q1 Jun–Aug '27", "Q2 Sep–Nov '27", …
+    const m1 = MONTH_ABBR[(startMon + offsetM    ) % 12];
+    const m2 = MONTH_ABBR[(startMon + offsetM + 2) % 12];
+    return {
+      period:      `Q${qi + 1} ${m1}–${m2}`,
+      period_date: new Date(calYear, calMonth, 1).toISOString(),
+      billed:      0,
+      collected:   0,
+    };
+  });
   const map = new Map<string, TSRow>(skeleton.map(r => [r.period, { ...r }]));
-
-  const acadEnd = new Date(startYear + 1, 2, 31); // March 31 next year
 
   for (const r of rows) {
     const d = parseLocalDate(r.period_date);
-    if (d < acadStart || d > acadEnd) continue;
-    const acadMonth = (d.getMonth() - 3 + 12) % 12; // Apr=0…Mar=11
-    const q         = Math.floor(acadMonth / 3) + 1; // 1–4
-    const key       = `Q${q} ${yearLabel}`;
-    const ex        = map.get(key)!;
+    if (d < start || d > end) continue;
+    // How many months from session start?
+    const monthsFromStart = (d.getFullYear() - startYear) * 12 + d.getMonth() - startMon;
+    if (monthsFromStart < 0 || monthsFromStart >= 12) continue;
+    const qi  = Math.floor(monthsFromStart / 3); // 0–3
+    const key = skeleton[qi]?.period;
+    if (!key) continue;
+    const ex = map.get(key)!;
     map.set(key, { ...ex, billed: ex.billed + r.billed, collected: ex.collected + r.collected });
   }
   return skeleton.map(s => map.get(s.period)!);
 }
 
 /**
- * YTD: all 12 months of the session's academic year (Apr → Mar),
- * filled with data where available and 0 for months with no transactions.
+ * YTD — shows every month of the session's academic year as a full skeleton.
+ * The skeleton runs from session start_date to session end_date so it works
+ * for any school calendar (June–May, January–December, April–March, etc.).
+ * Months with no data show ₹0 billed / ₹0 collected.
  */
-function buildYTD(rows: TSRow[], sessionStartDate: string): TSRow[] {
-  const acadStart = acadYearStartFrom(sessionStartDate);
-  const startYear = acadStart.getFullYear();
-  const MONTH_NAMES = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
+function buildYTD(rows: TSRow[], sessionStartDate: string, sessionEndDate: string): TSRow[] {
+  const start    = parseLocalDate(sessionStartDate);
+  const end      = parseLocalDate(sessionEndDate);
+  const startMon = start.getMonth();
+  const startY   = start.getFullYear();
 
-  // Build skeleton of 12 months
-  const skeleton: TSRow[] = MONTH_NAMES.map((mn, i) => {
-    const calMonth = (i + 3) % 12; // Apr=3…Mar=2 (0-indexed)
-    const calYear  = i < 9 ? startYear : startYear + 1;
+  // Total months in session (inclusive)
+  const totalMonths =
+    (end.getFullYear() - startY) * 12 + end.getMonth() - startMon + 1;
+
+  const skeleton: TSRow[] = Array.from({ length: totalMonths }, (_, i) => {
+    const absMonth = startMon + i;
+    const calMonth = absMonth % 12;
+    const calYear  = startY + Math.floor(absMonth / 12);
     return {
-      period:      `${mn} '${String(calYear).slice(2)}`,
+      period:      `${MONTH_ABBR[calMonth]} '${String(calYear).slice(2)}`,
       period_date: new Date(calYear, calMonth, 1).toISOString(),
       billed:      0,
       collected:   0,
     };
   });
 
-  // Index existing rows by YYYY-MM key
+  // Index existing rows by YYYY-MM
   const dataMap = new Map<string, { billed: number; collected: number }>();
   for (const r of rows) {
-    const key = r.period_date.slice(0, 7); // "YYYY-MM"
+    const key = r.period_date.slice(0, 7);
     const ex  = dataMap.get(key) ?? { billed: 0, collected: 0 };
     dataMap.set(key, { billed: ex.billed + r.billed, collected: ex.collected + r.collected });
   }
 
   return skeleton.map(s => {
-    const key  = s.period_date.slice(0, 7);
-    const data = dataMap.get(key);
-    return data ? { ...s, billed: data.billed, collected: data.collected } : s;
+    const data = dataMap.get(s.period_date.slice(0, 7));
+    return data ? { ...s, ...data } : s;
   });
 }
 
@@ -4676,18 +4688,15 @@ ${categories.length > 0 ? `
       collected:   Number(r.collected),
     }));
 
-    // Use the session's own start date for academic-year boundaries.
-    // Fall back to today-derived April 1 if session info is missing.
-    const sessionStart: string =
-      raw?.sessionInfo?.startDate ??
-      (() => {
-        const now = new Date();
-        const y   = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
-        return `${y}-04-01`;
-      })();
+    // Use the session's own start/end dates for period boundaries.
+    // Fall back to a rolling 12-month window anchored on today if missing.
+    const now = new Date();
+    const fallbackStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+    const sessionStart: string = raw?.sessionInfo?.startDate ?? `${fallbackStartYear}-04-01`;
+    const sessionEnd:   string = raw?.sessionInfo?.endDate   ?? `${fallbackStartYear + 1}-03-31`;
 
-    if (period === "quarterly") return aggregateToQuarterly(rows, sessionStart);
-    if (period === "ytd")       return buildYTD(rows, sessionStart);
+    if (period === "quarterly") return aggregateToQuarterly(rows, sessionStart, sessionEnd);
+    if (period === "ytd")       return buildYTD(rows, sessionStart, sessionEnd);
 
     // Monthly: last 12 calendar months by date, not by row count
     const cutoff = new Date();
