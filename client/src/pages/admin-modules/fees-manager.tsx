@@ -1424,6 +1424,11 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [showPaymentsModal, setShowPaymentsModal] = useState(false);
   const [viewPaymentsRecord, setViewPaymentsRecord] = useState<FeeRecordWithStudent | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  // ── Bulk selection & delete ──────────────────────────────────────────────
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [showBulkDelete, setShowBulkDelete] = useState(false);
+  const [bulkPassword, setBulkPassword] = useState("");
+  const [bulkPasswordVisible, setBulkPasswordVisible] = useState(false);
   const [showNotifModal, setShowNotifModal] = useState(false);
   const [notifStudentId, setNotifStudentId] = useState<number | null>(null);
   const [notifStudentName, setNotifStudentName] = useState<string | null>(null);
@@ -1599,6 +1604,20 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const bulkDeleteMut = useMutation({
+    mutationFn: ({ ids, password }: { ids: number[]; password: string }) =>
+      apiRequest("POST", "/api/admin/fees/bulk-delete", { ids, password }),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
+      setSelectedIds(new Set());
+      setShowBulkDelete(false);
+      setBulkPassword("");
+      toast({ title: `${data.deleted} record${data.deleted !== 1 ? "s" : ""} deleted successfully` });
+    },
+    onError: (e: Error) => toast({ title: "Deletion failed", description: e.message, variant: "destructive" }),
+  });
+
   const classes = useMemo(() =>
     [...new Set(feeRecords.map(r => r.student?.class).filter(Boolean))].sort() as string[],
     [feeRecords]);
@@ -1717,7 +1736,27 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
           <option value="all">All Fee Types</option>
           {allFeeTypes.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
-        <div className="flex gap-2 ml-auto">
+        <div className="flex gap-2 ml-auto items-center">
+          {canRecord && !isArchiveMode && selectedIds.size === 0 && filtered.length > 0 && (
+            <button
+              onClick={() => setSelectedIds(new Set(filtered.map(r => r.id)))}
+              className="text-xs text-white/40 hover:text-cyan-400 transition-colors underline underline-offset-2">
+              Select all
+            </button>
+          )}
+          {selectedIds.size > 0 && canRecord && !isArchiveMode && (
+            <>
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="text-xs text-white/40 hover:text-white/70 transition-colors underline underline-offset-2">
+                Clear
+              </button>
+              <Button size="sm" onClick={() => { setBulkPassword(""); setShowBulkDelete(true); }}
+                className="bg-red-700 hover:bg-red-600 text-white gap-1.5 font-semibold">
+                <Trash2 className="w-4 h-4" /> Delete Selected ({selectedIds.size})
+              </Button>
+            </>
+          )}
           <Button size="sm" variant="outline" onClick={() => setShowExportLedger(true)}
             className="border-emerald-700 text-emerald-400 hover:bg-emerald-900/30 gap-1">
             <Download className="w-4 h-4" /> Export Ledger
@@ -1752,6 +1791,10 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-white/5">
+                  {/* Checkbox column header — only visible when rows are selected */}
+                  {selectedIds.size > 0 && canRecord && !isArchiveMode && (
+                    <th className="px-3 py-3 w-8" />
+                  )}
                   {["Receipt No.","Student","DSID","Class","Section","Fee Name","Fee Type","Amount","Due Date","Status","Paid On","Acad. Year","Notes","Actions"].map((h, i) => (
                     <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 7 ? "text-right" : i >= 13 ? "text-right" : i >= 8 ? "text-center" : "text-left"}`}>{h}</th>
                   ))}
@@ -1759,7 +1802,22 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
               </thead>
               <tbody>
                 {filtered.map(rec => (
-                  <tr key={rec.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                  <tr key={rec.id} className={`border-b border-white/5 hover:bg-white/5 transition-colors ${selectedIds.has(rec.id) ? "bg-red-900/10" : ""}`}>
+                    {/* Row checkbox — appears only after "Select All" activates selection mode */}
+                    {selectedIds.size > 0 && canRecord && !isArchiveMode && (
+                      <td className="px-3 py-3">
+                        <input
+                          type="checkbox"
+                          className="accent-cyan-500 w-4 h-4 cursor-pointer"
+                          checked={selectedIds.has(rec.id)}
+                          onChange={e => {
+                            const next = new Set(selectedIds);
+                            if (e.target.checked) next.add(rec.id); else next.delete(rec.id);
+                            setSelectedIds(next);
+                          }}
+                        />
+                      </td>
+                    )}
                     {/* Receipt */}
                     <td className="px-4 py-3 text-left">
                       {rec.receiptNumber
@@ -1889,7 +1947,26 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         </div>
       )}
 
-      <p className="text-white/30 text-xs">{filtered.length} of {feeRecords.length} records</p>
+      {/* Summary strip — updates live as filters change */}
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+        <span className="text-white/30">
+          <span className="text-white/50 font-semibold">{students.length}</span> active student{students.length !== 1 ? "s" : ""} in registry
+        </span>
+        <span className="text-white/20">·</span>
+        <span className="text-white/30">
+          <span className="text-white/50 font-semibold">{new Set(filtered.map(r => r.studentId)).size}</span> student{new Set(filtered.map(r => r.studentId)).size !== 1 ? "s" : ""} in view
+        </span>
+        <span className="text-white/20">·</span>
+        <span className="text-white/30">
+          <span className="text-white/50 font-semibold">{filtered.length}</span> of <span className="text-white/50 font-semibold">{feeRecords.length}</span> records
+        </span>
+        {selectedIds.size > 0 && (
+          <>
+            <span className="text-white/20">·</span>
+            <span className="text-red-400/80"><span className="font-semibold">{selectedIds.size}</span> selected</span>
+          </>
+        )}
+      </div>
 
       {/* Payment modals */}
       <RecordPaymentModal open={showPay} onClose={() => { setShowPay(false); setPayTarget(null); }} feeRecord={payTarget} students={students} existingFeeRecords={feeRecords} />
@@ -1912,6 +1989,56 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         studentId={notifStudentId}
         studentName={notifStudentName}
       />
+
+      {/* Bulk delete confirmation — requires principal password */}
+      <Dialog open={showBulkDelete} onOpenChange={v => { if (!v) { setShowBulkDelete(false); setBulkPassword(""); } }}>
+        <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-red-400 flex items-center gap-2">
+              <Trash2 className="w-4 h-4" /> Delete {selectedIds.size} Record{selectedIds.size !== 1 ? "s" : ""}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-white/70 text-sm">
+              You are about to permanently delete <span className="text-white font-semibold">{selectedIds.size}</span> selected fee record{selectedIds.size !== 1 ? "s" : ""}.
+              This cannot be undone.
+            </p>
+            <p className="text-amber-400/80 text-xs">
+              ⚠️ Records with status <strong>Paid</strong>, <strong>Partial</strong>, or <strong>Waived</strong> that have payment history may still be deleted — please verify your selection before proceeding.
+            </p>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-white/60">Enter your password to confirm</label>
+              <div className="relative">
+                <input
+                  type={bulkPasswordVisible ? "text" : "password"}
+                  value={bulkPassword}
+                  onChange={e => setBulkPassword(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && bulkPassword) bulkDeleteMut.mutate({ ids: [...selectedIds], password: bulkPassword }); }}
+                  placeholder="Your current password"
+                  className="w-full bg-[#0F1E35] border border-white/10 rounded-lg px-3 pr-10 py-2.5 text-sm text-white focus:outline-none focus:border-red-500 placeholder:text-white/20"
+                />
+                <button type="button" onClick={() => setBulkPasswordVisible(v => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70">
+                  {bulkPasswordVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" className="text-white/60" onClick={() => { setShowBulkDelete(false); setBulkPassword(""); }}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={!bulkPassword || bulkDeleteMut.isPending}
+              onClick={() => bulkDeleteMut.mutate({ ids: [...selectedIds], password: bulkPassword })}
+            >
+              {bulkDeleteMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Trash2 className="w-4 h-4 mr-1" />}
+              Delete {selectedIds.size} Record{selectedIds.size !== 1 ? "s" : ""}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete confirmation */}
       <Dialog open={confirmDeleteId !== null} onOpenChange={v => { if (!v) setConfirmDeleteId(null); }}>

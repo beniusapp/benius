@@ -4098,6 +4098,38 @@ export async function registerRoutes(
     res.json({ success: true });
   });
 
+  // ── Bulk-delete fee records (requires principal password) ─────────────────
+  app.post("/api/admin/fees/bulk-delete", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+
+    const { ids, password } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0)
+      return res.status(400).json({ message: "No records selected for deletion" });
+    if (!password || typeof password !== "string")
+      return res.status(400).json({ message: "Password is required to confirm bulk deletion" });
+
+    // Verify the admin's current password
+    const [user] = await db.select({ passwordHash: users.passwordHash })
+      .from(users)
+      .where(eq(users.id, req.session.userId!));
+    if (!user?.passwordHash || !(await bcrypt.compare(password, user.passwordHash)))
+      return res.status(403).json({ message: "Incorrect password. Bulk deletion cancelled." });
+
+    // Delete each record; respect school isolation
+    let deleted = 0;
+    let notFound = 0;
+    for (const rawId of ids) {
+      const id = parseInt(String(rawId));
+      if (isNaN(id)) { notFound++; continue; }
+      const ok = await storage.deleteFeeRecord(id, schoolId);
+      if (ok) deleted++; else notFound++;
+    }
+
+    res.json({ deleted, notFound });
+  });
+
   // ===== STUDENT: VIEW OWN FEES =====
   app.get("/api/student/academic-sessions", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
