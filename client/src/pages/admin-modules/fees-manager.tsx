@@ -4121,6 +4121,7 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
   const { selectedSession } = useSessionView();
   const [period, setPeriod] = useState<"monthly" | "quarterly" | "ytd">("monthly");
   const [selectedBucket, setSelectedBucket] = useState<(typeof AGING_BUCKETS)[number] | null>(null);
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   const { data: raw, isLoading, error } = useQuery<any>({
     queryKey: ["/api/fees/analytics", viewSessionId],
@@ -4131,6 +4132,366 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
     },
     staleTime: 60_000,
   });
+
+  const { data: meData } = useQuery<{ schoolName?: string }>({
+    queryKey: ["/api/me"],
+    staleTime: 300_000,
+  });
+
+  // ── PDF Export ─────────────────────────────────────────────────────────────
+  function handleExportPdf() {
+    if (!raw) return;
+    setExportingPdf(true);
+    try {
+      // ── HTML escape helper — applied to every non-numeric text value ──────
+      const esc = (v: unknown): string =>
+        String(v ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+
+      const schoolName   = esc(meData?.schoolName ?? "School");
+      const sessionLabel = esc(selectedSession?.sessionName ?? "All Sessions");
+      const periodLabel  = period === "quarterly" ? "Quarterly" : period === "ytd" ? "Year-to-Date" : "Monthly (Last 12)";
+      const exportedAt   = esc(new Date().toLocaleString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      }));
+
+      const s          = raw?.summary ?? {};
+      const classWise: any[] = raw?.classWise ?? [];
+      const channels:  any[] = raw?.paymentChannels ?? [];
+      const categories: any[] = raw?.feeCategories ?? [];
+      const aging:     any[] = raw?.aging ?? [];
+
+      // Use the already-computed, period-filtered time series (respects Monthly/Quarterly/YTD mode)
+      const tsSeries = timeSeriesData;
+
+      // Channel grouping (mirrors the chart logic)
+      const chGroups: Record<string, number> = {};
+      for (const ch of channels) {
+        const m   = String(ch.payment_method ?? "Other");
+        const cat = ["Online","Razorpay","UPI","Card","NetBanking"].includes(m) ? "Online"
+                  : m === "Cash" ? "Cash"
+                  : ["Cheque","DD","Bank Transfer"].includes(m) ? "Cheque" : m;
+        chGroups[cat] = (chGroups[cat] ?? 0) + Number(ch.amount);
+      }
+      const chTotal = Object.values(chGroups).reduce((a, b) => a + b, 0);
+
+      const fmtINR = (n: number) =>
+        new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
+
+      // Aging bucket metadata — keys are fixed constants, safe to use without escaping
+      const agingBucketMeta: Record<string, { label: string; risk: string }> = {
+        "1-30":  { label: "1\u201330 Days",  risk: "Low Risk"      },
+        "31-60": { label: "31\u201360 Days", risk: "Medium Risk"   },
+        "61-90": { label: "61\u201390 Days", risk: "High Risk"     },
+        "90+":   { label: "90+ Days",        risk: "Critical Risk" },
+      };
+
+      const classWiseTotals = classWise.reduce(
+        (acc, r) => ({ billed: acc.billed + Number(r.billed), collected: acc.collected + Number(r.collected), outstanding: acc.outstanding + Number(r.outstanding) }),
+        { billed: 0, collected: 0, outstanding: 0 },
+      );
+
+      // Build the report by constructing safe HTML — all user/DB-sourced text goes through esc()
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>Financial Analytics Report &#8212; ${schoolName}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; color: #1a1a2e; background: #fff; }
+  @page { margin: 15mm 12mm; size: A4 portrait; }
+  .page-break { page-break-before: always; }
+
+  /* Header */
+  .report-header { border-bottom: 3px solid #0e7490; padding-bottom: 12px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: flex-end; }
+  .report-title { font-size: 20px; font-weight: 800; color: #0e7490; letter-spacing: -0.5px; }
+  .report-subtitle { font-size: 11px; color: #64748b; margin-top: 2px; }
+  .report-meta { text-align: right; font-size: 10px; color: #64748b; line-height: 1.6; }
+  .session-pill { display: inline-block; background: #e0f2fe; color: #0369a1; border-radius: 12px; padding: 2px 10px; font-weight: 700; font-size: 10px; }
+
+  /* KPI cards */
+  .kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
+  .kpi-card { border: 1.5px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; }
+  .kpi-label { font-size: 9.5px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .kpi-value { font-size: 18px; font-weight: 800; color: #0f172a; letter-spacing: -0.5px; }
+  .kpi-card.gold   { border-color: #d97706; background: #fffbeb; }
+  .kpi-card.gold .kpi-value { color: #b45309; }
+  .kpi-card.red    { border-color: #ef4444; background: #fef2f2; }
+  .kpi-card.red .kpi-value  { color: #dc2626; }
+  .kpi-card.green  { border-color: #10b981; background: #f0fdf4; }
+  .kpi-card.green .kpi-value { color: #059669; }
+  .kpi-card.purple { border-color: #8b5cf6; background: #f5f3ff; }
+  .kpi-card.purple .kpi-value { color: #7c3aed; }
+  .kpi-card.amber  { border-color: #f59e0b; background: #fffbeb; }
+  .kpi-card.amber .kpi-value  { color: #d97706; }
+
+  /* Section headings */
+  .section { margin-bottom: 18px; }
+  .section-title { font-size: 12px; font-weight: 700; color: #0e7490; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1.5px solid #e0f2fe; text-transform: uppercase; letter-spacing: 0.5px; }
+  .section-sub { font-size: 9px; color: #94a3b8; margin-left: 6px; font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+  thead tr { background: #f1f5f9; }
+  th { padding: 6px 8px; text-align: left; font-weight: 700; color: #475569; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.4px; }
+  th.right, td.right { text-align: right; }
+  td { padding: 5px 8px; border-bottom: 1px solid #f1f5f9; color: #1e293b; }
+  tr:last-child td { border-bottom: none; }
+  tfoot td { font-weight: 700; border-top: 1.5px solid #cbd5e1; padding-top: 7px; }
+  .pct { color: #64748b; font-size: 9px; margin-left: 4px; }
+  .green-val { color: #059669; font-weight: 700; }
+  .red-val   { color: #dc2626; font-weight: 600; }
+
+  /* Two-column layout */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+
+  /* Channel list */
+  .channel-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid #f1f5f9; }
+  .channel-bar { height: 6px; background: #0e7490; border-radius: 3px; margin-top: 3px; }
+
+  /* Aging grid */
+  .aging-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .aging-card { border-radius: 8px; padding: 12px; border: 1.5px solid; }
+  .aging-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .aging-amount { font-size: 16px; font-weight: 800; }
+  .aging-meta { font-size: 9px; margin-top: 4px; }
+  .bucket-low      { border-color: #f59e0b; background: #fffbeb; color: #92400e; }
+  .bucket-medium   { border-color: #f97316; background: #fff7ed; color: #9a3412; }
+  .bucket-high     { border-color: #ef4444; background: #fef2f2; color: #991b1b; }
+  .bucket-critical { border-color: #9b1c1c; background: #fef2f2; color: #7f1d1d; }
+
+  /* Time-series progress bar */
+  .ts-bar-wrap { width: 80px; background: #f1f5f9; border-radius: 3px; overflow: hidden; display: inline-block; height: 7px; vertical-align: middle; margin-left: 4px; }
+  .ts-bar-fill { height: 100%; border-radius: 3px; }
+
+  /* Footer */
+  .report-footer { margin-top: 24px; padding-top: 8px; border-top: 1px solid #e2e8f0; font-size: 9px; color: #94a3b8; display: flex; justify-content: space-between; }
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<div class="report-header">
+  <div>
+    <div class="report-title">Financial Analytics Report</div>
+    <div class="report-subtitle">${schoolName} &nbsp;&middot;&nbsp; <span class="session-pill">${sessionLabel}</span></div>
+  </div>
+  <div class="report-meta">
+    <div>Exported on ${exportedAt}</div>
+    <div>Powered by Benius</div>
+  </div>
+</div>
+
+<!-- ── KPI Cards ── -->
+<div class="section">
+  <div class="section-title">Executive Summary</div>
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">Gross Billed Demand</div>
+      <div class="kpi-value">${fmtINR(Number(s.grossBilled ?? 0))}</div>
+    </div>
+    <div class="kpi-card gold">
+      <div class="kpi-label">Net Collected Revenue</div>
+      <div class="kpi-value">${fmtINR(Number(s.netCollected ?? 0))}</div>
+    </div>
+    <div class="kpi-card red">
+      <div class="kpi-label">Outstanding Deficit</div>
+      <div class="kpi-value">${fmtINR(Number(s.outstanding ?? 0))}</div>
+    </div>
+    <div class="kpi-card green">
+      <div class="kpi-label">Collection Efficiency</div>
+      <div class="kpi-value">${Number(s.collectionRate ?? 0)}%</div>
+    </div>
+    <div class="kpi-card purple">
+      <div class="kpi-label">Discounts &amp; Concessions</div>
+      <div class="kpi-value">${fmtINR(Number(s.totalDiscounts ?? 0))}</div>
+    </div>
+    <div class="kpi-card amber">
+      <div class="kpi-label">Late Penalties Collected</div>
+      <div class="kpi-value">${fmtINR(Number(s.totalLatePenalties ?? 0))}</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Time Series (active period view) ── -->
+${tsSeries.length > 0 ? `
+<div class="section">
+  <div class="section-title">Revenue Collection Trend <span class="section-sub">${esc(periodLabel)}</span></div>
+  <table>
+    <thead>
+      <tr>
+        <th>Period</th>
+        <th class="right">Billed</th>
+        <th class="right">Collected</th>
+        <th class="right">Collection %</th>
+        <th>Progress</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${tsSeries.map(r => {
+        const b = Number(r.billed), c = Number(r.collected);
+        const pct = b > 0 ? Math.round((c / b) * 100) : 0;
+        const barW = Math.min(pct, 100);
+        return `<tr>
+          <td>${esc(r.period)}</td>
+          <td class="right">${fmtINR(b)}</td>
+          <td class="right green-val">${fmtINR(c)}</td>
+          <td class="right">${pct}%</td>
+          <td><div class="ts-bar-wrap"><div class="ts-bar-fill" style="width:${barW}%;background:#0e7490"></div></div></td>
+        </tr>`;
+      }).join("")}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td>Total</td>
+        <td class="right">${fmtINR(tsSeries.reduce((a, r) => a + Number(r.billed), 0))}</td>
+        <td class="right green-val">${fmtINR(tsSeries.reduce((a, r) => a + Number(r.collected), 0))}</td>
+        <td class="right">&#8212;</td>
+        <td></td>
+      </tr>
+    </tfoot>
+  </table>
+</div>
+` : ""}
+
+<!-- ── Class-wise + Channel ── -->
+<div class="two-col">
+
+  <!-- Class-Wise -->
+  <div class="section" style="margin-bottom:0">
+    <div class="section-title">Class-Wise Breakdown</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Class</th>
+          <th class="right">Billed</th>
+          <th class="right">Collected</th>
+          <th class="right">Outstanding</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${classWise.map(row => {
+          const b = Number(row.billed), c = Number(row.collected), o = Number(row.outstanding);
+          const pct = b > 0 ? Math.round((c / b) * 100) : 0;
+          return `<tr>
+            <td>Class ${esc(row.class)}<span class="pct">${pct}%</span></td>
+            <td class="right">${fmtINR(b)}</td>
+            <td class="right green-val">${fmtINR(c)}</td>
+            <td class="right red-val">${fmtINR(o)}</td>
+          </tr>`;
+        }).join("") || '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:12px">No class data</td></tr>'}
+      </tbody>
+      ${classWise.length > 0 ? `<tfoot>
+        <tr>
+          <td>Total</td>
+          <td class="right">${fmtINR(classWiseTotals.billed)}</td>
+          <td class="right green-val">${fmtINR(classWiseTotals.collected)}</td>
+          <td class="right red-val">${fmtINR(classWiseTotals.outstanding)}</td>
+        </tr>
+      </tfoot>` : ""}
+    </table>
+  </div>
+
+  <!-- Payment Channel -->
+  <div class="section" style="margin-bottom:0">
+    <div class="section-title">Payment Channel Split</div>
+    ${Object.entries(chGroups).length === 0
+      ? '<p style="color:#94a3b8;font-size:10px;padding:12px 0">No payment data available</p>'
+      : Object.entries(chGroups).map(([name, val]) => {
+          const pct = chTotal > 0 ? Math.round((val / chTotal) * 100) : 0;
+          return `<div class="channel-row">
+            <div>
+              <span style="font-weight:600">${esc(name)}</span>
+              <span class="pct">${pct}%</span>
+            </div>
+            <span class="green-val">${fmtINR(val)}</span>
+          </div>
+          <div class="channel-bar" style="width:${pct}%"></div>`;
+        }).join("")
+    }
+    ${chTotal > 0 ? `<div class="channel-row" style="margin-top:8px;border-top:1.5px solid #cbd5e1;padding-top:6px">
+      <span style="font-weight:700">Total</span>
+      <span style="font-weight:700">${fmtINR(chTotal)}</span>
+    </div>` : ""}
+  </div>
+</div>
+
+<!-- ── Fee Categories ── -->
+${categories.length > 0 ? `
+<div class="section">
+  <div class="section-title">Fee Category Breakdown</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Fee Category</th>
+        <th class="right">Billed</th>
+        <th class="right">Collected</th>
+        <th class="right">Collection %</th>
+        <th class="right">Outstanding</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${categories.map(r => {
+        const b = Number(r.billed), c = Number(r.collected), o = Math.max(b - c, 0);
+        const pct = b > 0 ? Math.round((c / b) * 100) : 0;
+        return `<tr>
+          <td>${esc(r.fee_type)}</td>
+          <td class="right">${fmtINR(b)}</td>
+          <td class="right green-val">${fmtINR(c)}</td>
+          <td class="right">${pct}%</td>
+          <td class="right red-val">${fmtINR(o)}</td>
+        </tr>`;
+      }).join("")}
+    </tbody>
+  </table>
+</div>
+` : ""}
+
+<!-- ── AR Aging ── -->
+<div class="section">
+  <div class="section-title">Accounts Receivable Aging</div>
+  <div class="aging-grid">
+    ${(["1-30","31-60","61-90","90+"] as const).map(key => {
+      const meta = agingBucketMeta[key];
+      const row  = aging.find((a: any) => a.bucket === key);
+      const amount = Number(row?.amount ?? 0);
+      const count  = Number(row?.count  ?? 0);
+      const riskCls = key === "1-30" ? "bucket-low" : key === "31-60" ? "bucket-medium" : key === "61-90" ? "bucket-high" : "bucket-critical";
+      // meta.label and meta.risk are hardcoded literals — no escaping needed
+      return `<div class="aging-card ${riskCls}">
+        <div class="aging-label">${meta.label}</div>
+        <div class="aging-amount">${fmtINR(amount)}</div>
+        <div class="aging-meta">${count} invoice${count !== 1 ? "s" : ""} &nbsp;&middot;&nbsp; ${meta.risk}</div>
+      </div>`;
+    }).join("")}
+  </div>
+</div>
+
+<!-- ── Footer ── -->
+<div class="report-footer">
+  <span>${schoolName} &nbsp;&middot;&nbsp; ${sessionLabel}</span>
+  <span>Generated ${exportedAt} &nbsp;&middot;&nbsp; Benius School Management</span>
+</div>
+
+<script>window.onload = function() { window.print(); };<\/script>
+</body>
+</html>`;
+
+      const w = window.open("", "_blank");
+      if (w) {
+        w.document.write(html);
+        w.document.close();
+      }
+    } finally {
+      setExportingPdf(false);
+    }
+  }
 
   // Time-series aggregation
   const timeSeriesData = useMemo<TSRow[]>(() => {
@@ -4204,15 +4565,31 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
   return (
     <div className="space-y-5">
 
-      {/* Session label */}
-      {selectedSession && (
+      {/* Session label + Export PDF */}
+      <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-xs">
-          <span className="text-white/40">Showing data for</span>
-          <span className="px-2 py-0.5 rounded-full font-semibold bg-cyan-900/30 text-cyan-400 border border-cyan-700/30">
-            {selectedSession.sessionName}
-          </span>
+          {selectedSession && (
+            <>
+              <span className="text-white/40">Showing data for</span>
+              <span className="px-2 py-0.5 rounded-full font-semibold bg-cyan-900/30 text-cyan-400 border border-cyan-700/30">
+                {selectedSession.sessionName}
+              </span>
+            </>
+          )}
         </div>
-      )}
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={exportingPdf || isLoading || !!error}
+          onClick={handleExportPdf}
+          className="h-7 px-3 text-xs border-white/15 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white gap-1.5 flex-shrink-0"
+        >
+          {exportingPdf
+            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            : <Download className="w-3.5 h-3.5" />}
+          Export PDF
+        </Button>
+      </div>
 
       {/* ── Executive Summary Cards ──────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
