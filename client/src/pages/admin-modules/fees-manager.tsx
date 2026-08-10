@@ -4455,9 +4455,9 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
 type Tab = "ledger" | "structures" | "reminders" | "external" | "audit" | "analytics";
 
 const TABS: { id: Tab; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: "analytics",  label: "Financial Analytics",   Icon: BarChart2     },
   { id: "structures", label: "Fee Structures",        Icon: BookOpen      },
   { id: "ledger",     label: "Ledger & Transactions", Icon: Receipt       },
-  { id: "analytics",  label: "Financial Analytics",   Icon: BarChart2     },
   { id: "reminders",  label: "Reminders",             Icon: Bell          },
   { id: "external",   label: "External Portal",       Icon: ExternalLink  },
   { id: "audit",      label: "Audit Log",             Icon: Shield        },
