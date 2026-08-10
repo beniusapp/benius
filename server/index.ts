@@ -455,6 +455,20 @@ app.use((req, res, next) => {
       ON CONFLICT (id) DO NOTHING;
   `);
 
+  // ── Report email schedule table ──────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS report_email_schedule (
+      id              SERIAL PRIMARY KEY,
+      school_id       INTEGER NOT NULL UNIQUE REFERENCES schools(id) ON DELETE CASCADE,
+      enabled         BOOLEAN NOT NULL DEFAULT FALSE,
+      recipients      TEXT[]  NOT NULL DEFAULT '{}',
+      last_sent_at    TIMESTAMP,
+      last_sent_month VARCHAR(7),
+      updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE report_email_schedule ADD COLUMN IF NOT EXISTS last_sent_month VARCHAR(7);
+  `);
+
   // Back-fill session_id on existing payment_records that are linked to a fee_record
   // (safe to run on every startup — only touches rows where session_id IS NULL)
   await pool.query(`
@@ -561,6 +575,21 @@ app.use((req, res, next) => {
   // Run at 06:00 on the 1st of every month
   cron.schedule("0 6 1 * *", runMonthlyAutoInvoice);
   log("Monthly auto-invoice job scheduled (06:00 on 1st of each month)", "cron");
+
+  // ===== MONTHLY ANALYTICS REPORT EMAIL =====
+  // Runs at 08:00 on days 28-31. Checks if today is the last day of the month
+  // before sending, so it fires exactly once per month regardless of month length.
+  const { runMonthlyAnalyticsReport } = await import("./analytics-report");
+  cron.schedule("0 8 28-31 * *", async () => {
+    // Only proceed if today is the last day of this month
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
+    if (tomorrow.getDate() !== 1) return; // not the last day
+    log("Monthly analytics report job triggering…", "cron");
+    await runMonthlyAnalyticsReport();
+  });
+  log("Monthly analytics report job scheduled (08:00 on last day of each month)", "cron");
 
   // ===== NIGHTLY OVERDUE-FEE SWEEP =====
   // Runs at 01:00 every night. Marks all "Due" fee records whose due_date has

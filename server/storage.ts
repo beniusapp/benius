@@ -4855,6 +4855,100 @@ export class DatabaseStorage {
     return rec;
   }
 
+  // ===== REPORT EMAIL SCHEDULE =====
+
+  async getReportEmailSchedule(schoolId: number): Promise<{ id: number; schoolId: number; enabled: boolean; recipients: string[]; lastSentAt: Date | null; lastSentMonth: string | null; updatedAt: Date } | null> {
+    const res = await pool.query(
+      "SELECT id, school_id, enabled, recipients, last_sent_at, last_sent_month, updated_at FROM report_email_schedule WHERE school_id = $1",
+      [schoolId],
+    );
+    if (!res.rows[0]) return null;
+    const r = res.rows[0];
+    return {
+      id:            r.id,
+      schoolId:      r.school_id,
+      enabled:       r.enabled,
+      recipients:    r.recipients ?? [],
+      lastSentAt:    r.last_sent_at   ?? null,
+      lastSentMonth: r.last_sent_month ?? null,
+      updatedAt:     r.updated_at,
+    };
+  }
+
+  async upsertReportEmailSchedule(schoolId: number, data: { enabled?: boolean; recipients?: string[]; lastSentAt?: Date; lastSentMonth?: string }): Promise<void> {
+    const fields: string[] = ["school_id", "updated_at"];
+    const values: any[] = [schoolId, new Date()];
+    let idx = 3;
+    const setClauses: string[] = ["updated_at = $2"];
+
+    if (data.enabled !== undefined) {
+      fields.push("enabled");
+      values.push(data.enabled);
+      setClauses.push(`enabled = $${idx++}`);
+    }
+    if (data.recipients !== undefined) {
+      fields.push("recipients");
+      values.push(data.recipients);
+      setClauses.push(`recipients = $${idx++}`);
+    }
+    if (data.lastSentAt !== undefined) {
+      fields.push("last_sent_at");
+      values.push(data.lastSentAt);
+      setClauses.push(`last_sent_at = $${idx++}`);
+    }
+    if (data.lastSentMonth !== undefined) {
+      fields.push("last_sent_month");
+      values.push(data.lastSentMonth);
+      setClauses.push(`last_sent_month = $${idx++}`);
+    }
+
+    const placeholders = fields.map((_, i) => `$${i + 1}`).join(", ");
+    await pool.query(
+      `INSERT INTO report_email_schedule (${fields.join(", ")}) VALUES (${placeholders})
+       ON CONFLICT (school_id) DO UPDATE SET ${setClauses.join(", ")}`,
+      values,
+    );
+  }
+
+  /**
+   * Atomically claim the right to send the report for a given month.
+   * Returns true when this caller wins the claim (no concurrent runner has already
+   * claimed this school + month). Safe against parallel cron instances.
+   * The claim is a soft lock — callers MUST call clearMonthClaim() if zero
+   * sends succeed so that a later cron run can retry the month.
+   */
+  async claimReportMonthForSend(schoolId: number, month: string): Promise<boolean> {
+    // Ensure the row exists (idempotent)
+    await pool.query(
+      `INSERT INTO report_email_schedule (school_id) VALUES ($1) ON CONFLICT (school_id) DO NOTHING`,
+      [schoolId],
+    );
+    // Atomically try to claim; only succeeds if last_sent_month is different
+    const res = await pool.query(
+      `UPDATE report_email_schedule
+       SET last_sent_month = $2, updated_at = NOW()
+       WHERE school_id = $1
+         AND (last_sent_month IS NULL OR last_sent_month != $2)
+       RETURNING id`,
+      [schoolId, month],
+    );
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  /**
+   * Revert a month claim when delivery ultimately failed (zero sends).
+   * Only clears the claim if the stored month still matches — a concurrent
+   * runner that succeeded in the interim is left untouched.
+   */
+  async clearMonthClaim(schoolId: number, month: string): Promise<void> {
+    await pool.query(
+      `UPDATE report_email_schedule
+       SET last_sent_month = NULL, updated_at = NOW()
+       WHERE school_id = $1 AND last_sent_month = $2`,
+      [schoolId, month],
+    );
+  }
+
   async getDunningLog(schoolId: number, limit = 50): Promise<DunningLog[]> {
     return db.select().from(dunningLog)
       .where(eq(dunningLog.schoolId, schoolId))

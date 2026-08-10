@@ -2303,6 +2303,56 @@ export function registerFeesRoutes(app: Express) {
     res.json(safe);
   });
 
+  // ── Report Email Schedule ─────────────────────────────────────────────────
+
+  app.get("/api/admin/fees/report-schedule", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const schedule = await storage.getReportEmailSchedule(schoolId);
+    res.json(schedule ?? { enabled: false, recipients: [], lastSentAt: null });
+  });
+
+  const reportScheduleSchema = z.object({
+    enabled:    z.boolean().optional(),
+    recipients: z.array(z.string().email()).max(20).optional(),
+  });
+
+  app.patch("/api/admin/fees/report-schedule", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const parsed = reportScheduleSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const schoolId = req.session.schoolId!;
+    await storage.upsertReportEmailSchedule(schoolId, {
+      enabled:    parsed.data.enabled,
+      recipients: parsed.data.recipients,
+    });
+    const auditParts: string[] = [];
+    if (parsed.data.enabled !== undefined) auditParts.push(`enabled: ${parsed.data.enabled}`);
+    if (parsed.data.recipients !== undefined) auditParts.push(`recipients: ${parsed.data.recipients.join(", ")}`);
+    await appendAudit(req, schoolId, "settings_change", "report_schedule", null,
+      `Report schedule updated — ${auditParts.join(", ") || "(no changes)"}`);
+    res.json({ ok: true });
+  });
+
+  app.post("/api/admin/fees/report-schedule/send-now", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    try {
+      const { sendAnalyticsReport } = await import("./analytics-report");
+      // forceEnabled=true: sends regardless of whether the schedule is enabled,
+      // so admins can test delivery without having to toggle the schedule on.
+      const result = await sendAnalyticsReport(schoolId, { forceEnabled: true });
+      if (result.errors.length > 0 && result.sent === 0) {
+        return res.status(400).json({ message: result.errors.join("; ") });
+      }
+      await appendAudit(req, schoolId, "settings_change", "report_schedule", null,
+        `Manual analytics report send: ${result.sent} sent, ${result.errors.length} error(s)`);
+      res.json({ sent: result.sent, errors: result.errors });
+    } catch (err: any) {
+      res.status(500).json({ message: String(err.message ?? err) });
+    }
+  });
+
   // ── Student: External Portal Info ─────────────────────────────────────────
   app.get("/api/student/fees/portal-info", async (req, res) => {
     if (!req.session?.studentId) return res.status(403).json({ message: "Student access required" });

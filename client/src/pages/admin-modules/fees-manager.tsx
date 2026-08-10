@@ -11,7 +11,7 @@ import {
   CreditCard, Plus, Search, Loader2, Trash2, Pencil, CheckCircle2, AlertTriangle, Clock,
   Receipt, DollarSign, TrendingUp, TrendingDown, Banknote, BookOpen, Bell, ExternalLink,
   Shield, ChevronLeft, ChevronRight, Lock, X, Printer, History, Download, FileText,
-  MessageSquare, Mail, Send, Eye, EyeOff, Zap, Phone, BarChart2,
+  MessageSquare, Mail, Send, Eye, EyeOff, Zap, Phone, BarChart2, Calendar, Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -4197,6 +4197,105 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
   const [selectedBucket, setSelectedBucket] = useState<(typeof AGING_BUCKETS)[number] | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
 
+  // ── Report Schedule state ───────────────────────────────────────────────
+  const { toast } = useToast();
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [recipientInput, setRecipientInput] = useState("");
+  const [recipients, setRecipients] = useState<string[]>([]);
+  const [sendingNow, setSendingNow] = useState(false);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+
+  const { data: scheduleData, refetch: refetchSchedule } = useQuery<{ enabled: boolean; recipients: string[]; lastSentAt: string | null }>({
+    queryKey: ["/api/admin/fees/report-schedule"],
+    queryFn: async () => {
+      const r = await sessionFetch("/api/admin/fees/report-schedule");
+      if (!r.ok) throw new Error("Failed");
+      return r.json();
+    },
+    staleTime: 60_000,
+  });
+
+  // Sync local state when remote data arrives
+  useEffect(() => {
+    if (!scheduleData) return;
+    setScheduleEnabled(scheduleData.enabled);
+    setRecipients(scheduleData.recipients ?? []);
+  }, [scheduleData]);
+
+  function addRecipient() {
+    const email = recipientInput.trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      toast({ title: "Invalid email", description: "Please enter a valid email address.", variant: "destructive" });
+      return;
+    }
+    if (recipients.includes(email)) {
+      toast({ title: "Already added", description: "This email is already in the list.", variant: "destructive" });
+      return;
+    }
+    if (recipients.length >= 20) {
+      toast({ title: "Limit reached", description: "Maximum 20 recipients allowed.", variant: "destructive" });
+      return;
+    }
+    setRecipients(prev => [...prev, email]);
+    setRecipientInput("");
+  }
+
+  async function saveSchedule() {
+    setSavingSchedule(true);
+    try {
+      const r = await sessionFetch("/api/admin/fees/report-schedule", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: scheduleEnabled, recipients }),
+      });
+      if (!r.ok) {
+        const d = await r.json();
+        throw new Error(d.message ?? "Failed to save");
+      }
+      await refetchSchedule();
+      toast({ title: "Schedule saved", description: "Monthly report schedule updated successfully." });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setSavingSchedule(false);
+    }
+  }
+
+  async function sendNow() {
+    if (recipients.length === 0) {
+      toast({ title: "No recipients", description: "Add at least one email recipient before sending.", variant: "destructive" });
+      return;
+    }
+    setSendingNow(true);
+    try {
+      // Persist the current recipient list so the server uses the latest;
+      // we intentionally omit `enabled` here so clicking Send Now never
+      // accidentally changes the scheduled-run toggle as a side effect.
+      const saveR = await sessionFetch("/api/admin/fees/report-schedule", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recipients }),
+      });
+      if (!saveR.ok) {
+        const d = await saveR.json();
+        throw new Error(d.message ?? "Failed to save recipients");
+      }
+      // The send-now endpoint ignores the `enabled` flag (forceEnabled=true server-side)
+      const r = await sessionFetch("/api/admin/fees/report-schedule/send-now", { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.message ?? "Failed to send");
+      await refetchSchedule();
+      toast({
+        title: `Report sent to ${d.sent} recipient${d.sent !== 1 ? "s" : ""}`,
+        description: d.errors?.length ? `Errors: ${d.errors.join("; ")}` : "The PDF report has been delivered. Check your inbox.",
+      });
+    } catch (e: any) {
+      toast({ title: "Send failed", description: e.message, variant: "destructive" });
+    } finally {
+      setSendingNow(false);
+    }
+  }
+
   const { data: raw, isLoading, error } = useQuery<any>({
     queryKey: ["/api/fees/analytics", viewSessionId],
     queryFn: async () => {
@@ -4904,6 +5003,101 @@ ${categories.length > 0 ? `
         {totalAging === 0 && (
           <p className="text-center text-white/25 text-sm py-4">No overdue receivables — all current ✓</p>
         )}
+      </div>
+
+      {/* ── Monthly Board Report Schedule ───────────────────────────── */}
+      <div className="rounded-xl border border-cyan-700/30 bg-[#0d1f35] p-5 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 mb-0.5">
+              <Calendar className="w-4 h-4 text-cyan-400" />
+              <h3 className="text-white font-semibold text-sm">Monthly Board Report</h3>
+            </div>
+            <p className="text-white/40 text-xs">
+              Automatically email this analytics report to board members on the last day of each month.
+              {scheduleData?.lastSentAt && (
+                <span className="text-cyan-500/70"> Last sent: {fmtDate(scheduleData.lastSentAt)}.</span>
+              )}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span className="text-xs text-white/40">{scheduleEnabled ? "Enabled" : "Disabled"}</span>
+            <Switch
+              checked={scheduleEnabled}
+              onCheckedChange={setScheduleEnabled}
+            />
+          </div>
+        </div>
+
+        {/* Recipient list */}
+        <div className="space-y-2">
+          <p className="text-white/50 text-xs font-semibold uppercase tracking-wider">Recipients</p>
+          {recipients.length === 0 ? (
+            <p className="text-white/25 text-xs italic">No recipients added yet.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {recipients.map(email => (
+                <span key={email} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-cyan-900/30 border border-cyan-700/40 text-cyan-300">
+                  <Mail className="w-3 h-3 opacity-70" />
+                  {email}
+                  <button
+                    onClick={() => setRecipients(prev => prev.filter(e => e !== email))}
+                    className="ml-0.5 text-cyan-400/60 hover:text-red-400 transition-colors"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Add recipient */}
+          <div className="flex gap-2 mt-2">
+            <Input
+              type="email"
+              placeholder="board@school.edu"
+              value={recipientInput}
+              onChange={e => setRecipientInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && (e.preventDefault(), addRecipient())}
+              className="h-8 text-xs bg-white/5 border-white/10 text-white placeholder:text-white/25 flex-1"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={addRecipient}
+              className="h-8 px-3 text-xs border-white/15 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-2 pt-1">
+          <Button
+            size="sm"
+            onClick={saveSchedule}
+            disabled={savingSchedule}
+            className="h-8 px-4 text-xs bg-cyan-600 hover:bg-cyan-500 text-white"
+          >
+            {savingSchedule ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null}
+            Save Schedule
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={sendNow}
+            disabled={sendingNow || recipients.length === 0}
+            className="h-8 px-3 text-xs border-white/15 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white gap-1.5"
+            title="Send the report immediately to all recipients as a test"
+          >
+            {sendingNow
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <Send className="w-3.5 h-3.5" />}
+            Send Now
+          </Button>
+          <span className="text-white/25 text-xs ml-1">Sends on the last day of each month at 8 AM</span>
+        </div>
       </div>
 
       {/* ── Aging Defaulters Drawer ───────────────────────────────────── */}
