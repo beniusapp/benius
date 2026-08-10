@@ -71,58 +71,65 @@ export function registerFeesRoutes(app: Express) {
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionId = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
 
-    // Reusable session filter fragments
-    const sfFR = sessionId ? sql` AND fr.session_id = ${sessionId}` : sql``;
-    const sfPR = sessionId
-      ? sql` AND (pr.session_id = ${sessionId} OR (pr.session_id IS NULL AND fr2.session_id = ${sessionId}))`
-      : sql``;
+    // Session filter on fee_records (fr alias)
+    const sfFR  = sessionId ? sql` AND fr.session_id  = ${sessionId}` : sql``;
+    // Session filter on fee_records (fr2 alias) — used in payment joins
+    const sfFR2 = sessionId ? sql` AND fr2.session_id = ${sessionId}` : sql``;
 
-    // Shared sub-query: payments aggregated per fee record
+    // Shared sub-query: payments aggregated per fee record (all sessions —
+    // outer query controls session scope via fee_records filter).
     const paidSub = (sid: number) => sql`
-      SELECT fee_record_id, SUM(amount)::int AS paid
-      FROM payment_records WHERE school_id = ${sid} AND fee_record_id IS NOT NULL
+      SELECT fee_record_id,
+        SUM(amount)::int       AS paid,
+        SUM(late_fee_paid)::int AS late_fees
+      FROM payment_records
+      WHERE school_id = ${sid} AND fee_record_id IS NOT NULL
       GROUP BY fee_record_id`;
 
     try {
       const [billedRow, payRow, outRow, tsRow, cwRow, chRow, catRow, agRow] = await Promise.all([
-        // ── 1a. Gross billed ──────────────────────────────────────────────
+        // ── 1a. Gross billed (base + accrued late fees) ───────────────────
         db.execute(sql`
-          SELECT COALESCE(SUM(fr.amount), 0)::int AS gross_billed
+          SELECT COALESCE(SUM(fr.amount + fr.late_fee_amount), 0)::int AS gross_billed
           FROM fee_records fr
           WHERE fr.school_id = ${schoolId}${sfFR}
         `),
-        // ── 1b. Payment totals ────────────────────────────────────────────
+        // ── 1b. Payment totals — filter by fee_record's session, NOT by
+        //        the session stamped on the payment row (which can be wrong
+        //        when simulate-pay stamps the active session on old records).
         db.execute(sql`
           SELECT
-            COALESCE(SUM(pr.amount), 0)::int        AS total_collected,
-            COALESCE(SUM(pr.late_fee_paid), 0)::int AS total_late_fees
-          FROM payment_records pr
-          LEFT JOIN fee_records fr2 ON fr2.id = pr.fee_record_id
-          WHERE pr.school_id = ${schoolId}${sfPR}
+            COALESCE(SUM(p.paid),      0)::int AS total_collected,
+            COALESCE(SUM(p.late_fees), 0)::int AS total_late_fees
+          FROM fee_records fr
+          JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
+          WHERE fr.school_id = ${schoolId}${sfFR}
         `),
         // ── 1c. Outstanding ───────────────────────────────────────────────
         db.execute(sql`
-          SELECT COALESCE(SUM(GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.paid,0),0)),0)::int AS outstanding
+          SELECT COALESCE(SUM(GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.paid,0), 0)), 0)::int AS outstanding
           FROM fee_records fr
           LEFT JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
-          WHERE fr.school_id = ${schoolId} AND fr.status IN ('Due','Overdue','Partial')${sfFR}
+          WHERE fr.school_id = ${schoolId}
+            AND fr.status IN ('Due','Overdue','Partial')${sfFR}
         `),
-        // ── 2. Monthly time-series (last 18 months) ───────────────────────
+        // ── 2. Monthly time-series — collected bucketed by received_date,
+        //        session-scoped via the linked fee_record (not pr.session_id).
         db.execute(sql`
           WITH mc AS (
             SELECT DATE_TRUNC('month', pr.received_date::date) AS pd,
-                   COALESCE(SUM(pr.amount),0)::int AS collected
+                   COALESCE(SUM(pr.amount), 0)::int AS collected
             FROM payment_records pr
-            LEFT JOIN fee_records fr2 ON fr2.id = pr.fee_record_id
+            JOIN fee_records fr2 ON fr2.id = pr.fee_record_id
             WHERE pr.school_id = ${schoolId}
               AND pr.received_date IS NOT NULL
               AND pr.received_date::date >= CURRENT_DATE - INTERVAL '18 months'
-              ${sfPR}
+              AND fr2.school_id = ${schoolId}${sfFR2}
             GROUP BY pd
           ),
           mb AS (
             SELECT DATE_TRUNC('month', fr.due_date::date) AS pd,
-                   COALESCE(SUM(fr.amount),0)::int AS billed
+                   COALESCE(SUM(fr.amount), 0)::int AS billed
             FROM fee_records fr
             WHERE fr.school_id = ${schoolId}
               AND fr.due_date IS NOT NULL
@@ -138,12 +145,12 @@ export function registerFeesRoutes(app: Express) {
           FROM mc FULL OUTER JOIN mb ON mc.pd = mb.pd
           ORDER BY period_date ASC
         `),
-        // ── 3. Class-wise breakdown ───────────────────────────────────────
+        // ── 3. Class-wise breakdown — outstanding includes late_fee_amount
         db.execute(sql`
           SELECT s.class,
-            COALESCE(SUM(fr.amount),0)::int                              AS billed,
-            COALESCE(SUM(COALESCE(p.paid,0)),0)::int                     AS collected,
-            COALESCE(SUM(GREATEST(fr.amount-COALESCE(p.paid,0),0)),0)::int AS outstanding
+            COALESCE(SUM(fr.amount + fr.late_fee_amount), 0)::int                                          AS billed,
+            COALESCE(SUM(COALESCE(p.paid, 0)), 0)::int                                                     AS collected,
+            COALESCE(SUM(GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.paid, 0), 0)), 0)::int       AS outstanding
           FROM fee_records fr
           JOIN students s ON s.id = fr.student_id
           LEFT JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
@@ -151,21 +158,23 @@ export function registerFeesRoutes(app: Express) {
           GROUP BY s.class
           ORDER BY CASE WHEN s.class ~ '^[0-9]+$' THEN s.class::int ELSE 999 END, s.class
         `),
-        // ── 4. Payment channel ────────────────────────────────────────────
+        // ── 4. Payment channel — session-scoped via fee_record join
         db.execute(sql`
           SELECT pr.payment_method,
-            COUNT(*)::int                    AS count,
-            COALESCE(SUM(pr.amount),0)::int  AS amount
+            COUNT(*)::int                   AS count,
+            COALESCE(SUM(pr.amount), 0)::int AS amount
           FROM payment_records pr
-          LEFT JOIN fee_records fr2 ON fr2.id = pr.fee_record_id
-          WHERE pr.school_id = ${schoolId}${sfPR}
-          GROUP BY pr.payment_method ORDER BY amount DESC
+          JOIN fee_records fr2 ON fr2.id = pr.fee_record_id
+          WHERE pr.school_id = ${schoolId}
+            AND fr2.school_id = ${schoolId}${sfFR2}
+          GROUP BY pr.payment_method
+          ORDER BY amount DESC
         `),
         // ── 5. Fee category ───────────────────────────────────────────────
         db.execute(sql`
           SELECT fr.fee_type,
-            COALESCE(SUM(fr.amount),0)::int           AS billed,
-            COALESCE(SUM(COALESCE(p.paid,0)),0)::int  AS collected
+            COALESCE(SUM(fr.amount + fr.late_fee_amount), 0)::int AS billed,
+            COALESCE(SUM(COALESCE(p.paid, 0)), 0)::int            AS collected
           FROM fee_records fr
           LEFT JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
           WHERE fr.school_id = ${schoolId}${sfFR}
@@ -181,7 +190,7 @@ export function registerFeesRoutes(app: Express) {
               WHEN CURRENT_DATE - fr.due_date::date > 90              THEN '90+'
             END AS bucket,
             COUNT(*)::int AS count,
-            COALESCE(SUM(GREATEST(fr.amount+fr.late_fee_amount-COALESCE(p.paid,0),0)),0)::int AS amount
+            COALESCE(SUM(GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.paid, 0), 0)), 0)::int AS amount
           FROM fee_records fr
           LEFT JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
           WHERE fr.school_id = ${schoolId}
@@ -193,13 +202,34 @@ export function registerFeesRoutes(app: Express) {
         `),
       ]);
 
+      // Fetch session date boundaries so the client can build correct period skeletons
+      let sessionInfo: { startDate: string; endDate: string; sessionName: string } | null = null;
+      if (sessionId) {
+        const sesRow = await db.execute(sql`
+          SELECT start_date, end_date, session_name
+          FROM academic_sessions WHERE id = ${sessionId} LIMIT 1
+        `);
+        const s = sesRow.rows[0] as any;
+        if (s) {
+          sessionInfo = {
+            startDate:   String(s.start_date).slice(0, 10),
+            endDate:     String(s.end_date).slice(0, 10),
+            sessionName: String(s.session_name),
+          };
+        }
+      }
+
       const grossBilled        = Number(billedRow.rows[0]?.gross_billed     ?? 0);
       const netCollected       = Number(payRow.rows[0]?.total_collected      ?? 0);
       const totalLatePenalties = Number(payRow.rows[0]?.total_late_fees      ?? 0);
       const outstanding        = Number(outRow.rows[0]?.outstanding          ?? 0);
-      const collectionRate     = grossBilled > 0 ? Math.round((netCollected / grossBilled) * 100) : 0;
+      // Cap at 100 % — over-collection (advance payments) shows as 100 %
+      const collectionRate     = grossBilled > 0
+        ? Math.min(100, Math.round((netCollected / grossBilled) * 100))
+        : 0;
 
       res.json({
+        sessionInfo,
         summary: { grossBilled, netCollected, outstanding, collectionRate, totalDiscounts: 0, totalLatePenalties },
         timeSeries:      tsRow.rows,
         classWise:       cwRow.rows,
