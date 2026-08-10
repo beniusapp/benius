@@ -10,7 +10,7 @@ import {
   auditLogs, academicSessions, gradingTiers, promotionDecisions,
   leaveRequests, studentLeaveRequests,
   examScores, promotionOverrides, complaints, notices, visitorLogs,
-  feeRecords, academicHistory, homework, classwork,
+  feeRecords, academicHistory, homework, classwork, users,
 } from "@shared/schema";
 import { resolvePolicy, isLateCheckIn, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 import bcrypt from "bcryptjs";
@@ -4024,6 +4024,27 @@ export async function registerRoutes(
     }));
   });
 
+  // ── Local audit helper for fee-record routes defined in this file ───────────
+  async function appendFeeRecordAudit(
+    req: any, schoolId: number, action: string, entityType: string,
+    entityId: number | null, description: string,
+  ) {
+    try {
+      const forwarded = req.headers["x-forwarded-for"] as string | undefined;
+      const ip = forwarded?.split(",")[0]?.trim() ?? req.socket?.remoteAddress ?? null;
+      let actorName: string | null = null;
+      if (req.session?.userId) {
+        const [u] = await db.select({ email: users.email }).from(users)
+          .where(eq(users.id, req.session.userId));
+        actorName = u?.email ?? `User #${req.session.userId}`;
+      }
+      await storage.appendFeeAuditLog({
+        schoolId, actorId: req.session?.userId ?? null, actorName, ipAddress: ip,
+        action, entityType, entityId, description,
+      });
+    } catch { /* non-critical */ }
+  }
+
   app.post("/api/admin/fees", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId;
@@ -4059,6 +4080,8 @@ export async function registerRoutes(
       });
     }
 
+    await appendFeeRecordAudit(req, schoolId, "create", "fee_record", rec.id,
+      `Added fee record #${rec.receiptNumber ?? rec.id}: ${parsed.data.feeType} ₹${parsed.data.amount} for student #${parsed.data.studentId} (${parsed.data.status})`);
     res.status(201).json(rec);
   });
 
@@ -4084,6 +4107,9 @@ export async function registerRoutes(
     }
     const updated = await storage.updateFeeRecord(id, schoolId, patchData);
     if (!updated) return res.status(404).json({ message: "Fee record not found" });
+    const changedFields = Object.keys(parsed.data).join(", ");
+    await appendFeeRecordAudit(req, schoolId, "update", "fee_record", id,
+      `Updated fee record #${id}: changed ${changedFields}`);
     res.json(updated);
   });
 
@@ -4093,8 +4119,19 @@ export async function registerRoutes(
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid fee record ID" });
+
+    // Require password confirmation for single delete
+    const { password } = req.body ?? {};
+    if (!password || typeof password !== "string")
+      return res.status(400).json({ message: "Password is required to delete a fee record" });
+    const passwordOk = await storage.verifyAdminPassword(req.session.userId, password);
+    if (!passwordOk)
+      return res.status(403).json({ message: "Incorrect password. Deletion cancelled." });
+
     const deleted = await storage.deleteFeeRecord(id, schoolId);
     if (!deleted) return res.status(404).json({ message: "Fee record not found" });
+    await appendFeeRecordAudit(req, schoolId, "delete", "fee_record", id,
+      `Deleted fee record #${id} — password-confirmed`);
     res.json({ success: true });
   });
 
@@ -4110,24 +4147,29 @@ export async function registerRoutes(
     if (!password || typeof password !== "string")
       return res.status(400).json({ message: "Password is required to confirm bulk deletion" });
 
-    // Verify the admin's current password
-    const [user] = await db.select({ passwordHash: users.passwordHash })
-      .from(users)
-      .where(eq(users.id, req.session.userId!));
-    if (!user?.passwordHash || !(await bcrypt.compare(password, user.passwordHash)))
+    // Verify the admin's current password (same helper used everywhere else)
+    const passwordOk = await storage.verifyAdminPassword(req.session.userId, password);
+    if (!passwordOk)
       return res.status(403).json({ message: "Incorrect password. Bulk deletion cancelled." });
 
     // Delete each record; respect school isolation
-    let deleted = 0;
-    let notFound = 0;
-    for (const rawId of ids) {
-      const id = parseInt(String(rawId));
-      if (isNaN(id)) { notFound++; continue; }
-      const ok = await storage.deleteFeeRecord(id, schoolId);
-      if (ok) deleted++; else notFound++;
+    try {
+      let deleted = 0;
+      let notFound = 0;
+      for (const rawId of ids) {
+        const id = parseInt(String(rawId));
+        if (isNaN(id)) { notFound++; continue; }
+        const ok = await storage.deleteFeeRecord(id, schoolId);
+        if (ok) deleted++; else notFound++;
+      }
+      // Audit the bulk deletion so it always appears in the fee audit log
+      await appendFeeRecordAudit(req, schoolId, "delete", "fee_record", null,
+        `Bulk-deleted ${deleted} fee record${deleted !== 1 ? "s" : ""} (IDs: ${ids.slice(0, 20).join(", ")}${ids.length > 20 ? "…" : ""}) — password-confirmed`);
+      res.json({ deleted, notFound });
+    } catch (e: any) {
+      console.error("[bulk-delete] error:", e);
+      res.status(500).json({ message: e?.message || "Deletion failed. Please try again." });
     }
-
-    res.json({ deleted, notFound });
   });
 
   // ===== STUDENT: VIEW OWN FEES =====

@@ -4804,11 +4804,21 @@ export class DatabaseStorage {
     return rec;
   }
 
-  async getFeeAuditLog(schoolId: number, limit = 50, offset = 0): Promise<{ entries: FeeAuditLog[]; total: number }> {
-    const [{ cnt }] = await db.select({ cnt: count() }).from(feeAuditLog)
-      .where(eq(feeAuditLog.schoolId, schoolId));
+  async getFeeAuditLog(
+    schoolId: number,
+    limit = 50,
+    offset = 0,
+    from?: string | null,
+    to?: string | null,
+  ): Promise<{ entries: FeeAuditLog[]; total: number }> {
+    const conditions: SQL[] = [eq(feeAuditLog.schoolId, schoolId)];
+    // Parse dates as IST (UTC+5:30) day boundaries so filtering is accurate for Indian users
+    if (from) conditions.push(gte(feeAuditLog.createdAt, new Date(from + "T00:00:00+05:30")));
+    if (to)   conditions.push(lte(feeAuditLog.createdAt, new Date(to   + "T23:59:59+05:30")));
+    const where = conditions.length === 1 ? conditions[0] : and(...conditions);
+    const [{ cnt }] = await db.select({ cnt: count() }).from(feeAuditLog).where(where);
     const entries = await db.select().from(feeAuditLog)
-      .where(eq(feeAuditLog.schoolId, schoolId))
+      .where(where)
       .orderBy(desc(feeAuditLog.createdAt))
       .limit(limit)
       .offset(offset);

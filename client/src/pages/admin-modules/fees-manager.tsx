@@ -1424,6 +1424,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [showPaymentsModal, setShowPaymentsModal] = useState(false);
   const [viewPaymentsRecord, setViewPaymentsRecord] = useState<FeeRecordWithStudent | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deletePasswordVisible, setDeletePasswordVisible] = useState(false);
   // ── Bulk selection & delete ──────────────────────────────────────────────
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [showBulkDelete, setShowBulkDelete] = useState(false);
@@ -1595,21 +1597,27 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   });
 
   const deleteMut = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/admin/fees/${id}`),
+    mutationFn: ({ id, password }: { id: number; password: string }) =>
+      apiRequest("DELETE", `/api/admin/fees/${id}`, { password }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
+      setDeletePassword("");
       toast({ title: "Fee record deleted" });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const bulkDeleteMut = useMutation({
-    mutationFn: ({ ids, password }: { ids: number[]; password: string }) =>
-      apiRequest("POST", "/api/admin/fees/bulk-delete", { ids, password }),
-    onSuccess: (data: any) => {
+    mutationFn: async ({ ids, password }: { ids: number[]; password: string }) => {
+      const res = await apiRequest("POST", "/api/admin/fees/bulk-delete", { ids, password });
+      return res.json() as Promise<{ deleted: number; notFound: number }>;
+    },
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
       setSelectedIds(new Set());
       setShowBulkDelete(false);
       setBulkPassword("");
@@ -2041,7 +2049,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       </Dialog>
 
       {/* Delete confirmation */}
-      <Dialog open={confirmDeleteId !== null} onOpenChange={v => { if (!v) setConfirmDeleteId(null); }}>
+      <Dialog open={confirmDeleteId !== null} onOpenChange={v => { if (!v) { setConfirmDeleteId(null); setDeletePassword(""); setDeletePasswordVisible(false); } }}>
         <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-red-400 flex items-center gap-2">
@@ -2049,18 +2057,45 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
             </DialogTitle>
           </DialogHeader>
           <p className="text-white/70 text-sm">Are you sure you want to delete this fee record? This action cannot be undone.</p>
+          <div className="space-y-2 pt-1">
+            <label className="text-white/50 text-xs">Enter your password to confirm</label>
+            <div className="relative">
+              <input
+                type={deletePasswordVisible ? "text" : "password"}
+                value={deletePassword}
+                onChange={e => setDeletePassword(e.target.value)}
+                placeholder="Your admin password"
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm pr-10 focus:outline-none focus:border-red-500/50"
+                onKeyDown={e => {
+                  if (e.key === "Enter" && deletePassword && confirmDeleteId !== null) {
+                    deleteMut.mutate({ id: confirmDeleteId, password: deletePassword }, {
+                      onSuccess: () => { setConfirmDeleteId(null); setDeletePasswordVisible(false); },
+                      onError: () => {},
+                    });
+                  }
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => setDeletePasswordVisible(v => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60"
+              >
+                {deletePasswordVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="ghost" className="text-white/60" onClick={() => setConfirmDeleteId(null)}>
+            <Button variant="ghost" className="text-white/60" onClick={() => { setConfirmDeleteId(null); setDeletePassword(""); setDeletePasswordVisible(false); }}>
               Cancel
             </Button>
             <Button
               variant="destructive"
-              disabled={deleteMut.isPending}
+              disabled={deleteMut.isPending || !deletePassword}
               onClick={() => {
                 if (confirmDeleteId !== null) {
-                  deleteMut.mutate(confirmDeleteId, {
-                    onSuccess: () => setConfirmDeleteId(null),
-                    onError: () => setConfirmDeleteId(null),
+                  deleteMut.mutate({ id: confirmDeleteId, password: deletePassword }, {
+                    onSuccess: () => { setConfirmDeleteId(null); setDeletePasswordVisible(false); },
+                    onError: () => {},
                   });
                 }
               }}
@@ -4181,11 +4216,23 @@ function BackfillReceiptsSection() {
 function AuditTab() {
   const PAGE = 20;
   const [page, setPage] = useState(0);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate]     = useState("");
+
+  // Reset to page 0 when dates change
+  const handleFromDate = (v: string) => { setFromDate(v); setPage(0); };
+  const handleToDate   = (v: string) => { setToDate(v);   setPage(0); };
+  const clearDates     = () => { setFromDate(""); setToDate(""); setPage(0); };
+
+  const hasFilter = fromDate || toDate;
 
   const { data, isLoading } = useQuery<{ entries: AuditLogEntry[]; total: number }>({
-    queryKey: ["/api/admin/fees/audit-log", page],
+    queryKey: ["/api/admin/fees/audit-log", page, fromDate, toDate],
     queryFn: async () => {
-      const r = await fetch(`/api/admin/fees/audit-log?limit=${PAGE}&offset=${page * PAGE}`, { credentials: "include" });
+      const params = new URLSearchParams({ limit: String(PAGE), offset: String(page * PAGE) });
+      if (fromDate) params.set("from", fromDate);
+      if (toDate)   params.set("to",   toDate);
+      const r = await fetch(`/api/admin/fees/audit-log?${params}`, { credentials: "include" });
       if (!r.ok) throw new Error("Failed");
       return r.json();
     },
@@ -4196,17 +4243,47 @@ function AuditTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-white/40 text-sm">{data ? `${data.total} entries` : "…"}</p>
+      {/* Date filter bar */}
+      <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="ghost" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="h-7 px-2 text-white/50">
-            <ChevronLeft className="w-4 h-4" />
-          </Button>
-          <span className="text-white/40 text-xs">{page + 1} / {totalPages || 1}</span>
-          <Button size="sm" variant="ghost" onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} className="h-7 px-2 text-white/50">
-            <ChevronRight className="w-4 h-4" />
-          </Button>
+          <label className="text-white/40 text-xs whitespace-nowrap">From</label>
+          <input
+            type="date"
+            value={fromDate}
+            onChange={e => handleFromDate(e.target.value)}
+            className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:border-cyan-500/50 [color-scheme:dark]"
+          />
         </div>
+        <div className="flex items-center gap-2">
+          <label className="text-white/40 text-xs whitespace-nowrap">To</label>
+          <input
+            type="date"
+            value={toDate}
+            onChange={e => handleToDate(e.target.value)}
+            className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:border-cyan-500/50 [color-scheme:dark]"
+          />
+        </div>
+        {hasFilter && (
+          <button
+            onClick={clearDates}
+            className="text-xs text-white/40 hover:text-white/70 underline underline-offset-2 transition-colors">
+            Clear dates
+          </button>
+        )}
+        <p className="text-white/30 text-xs ml-auto">
+          {data ? `${data.total} entr${data.total !== 1 ? "ies" : "y"}${hasFilter ? " matching filter" : ""}` : "…"}
+        </p>
+      </div>
+
+      {/* Pagination */}
+      <div className="flex items-center justify-end gap-2">
+        <Button size="sm" variant="ghost" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="h-7 px-2 text-white/50">
+          <ChevronLeft className="w-4 h-4" />
+        </Button>
+        <span className="text-white/40 text-xs">{page + 1} / {totalPages || 1}</span>
+        <Button size="sm" variant="ghost" onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} className="h-7 px-2 text-white/50">
+          <ChevronRight className="w-4 h-4" />
+        </Button>
       </div>
 
       {isLoading ? (
@@ -4214,7 +4291,7 @@ function AuditTab() {
       ) : !data?.entries.length ? (
         <div className="text-center py-16 text-white/30">
           <Shield className="w-12 h-12 mx-auto mb-3 opacity-20" />
-          <p className="text-sm">No audit entries yet. Actions in this module will appear here.</p>
+          <p className="text-sm">{hasFilter ? "No entries match the selected date range." : "No audit entries yet. Actions in this module will appear here."}</p>
         </div>
       ) : (
         <div className="rounded-xl border border-white/10 overflow-hidden">
@@ -4233,7 +4310,7 @@ function AuditTab() {
                     <td className="px-4 py-3 text-white/40 text-xs whitespace-nowrap">{fmtDateTime(e.createdAt)}</td>
                     <td className="px-4 py-3 text-white/70 text-xs">{e.actorName ?? `#${e.actorId}`}</td>
                     <td className="px-4 py-3"><ActionBadge action={e.action} /></td>
-                    <td className="px-4 py-3 text-white/60 text-xs max-w-xs truncate">{e.description ?? "—"}</td>
+                    <td className="px-4 py-3 text-white/60 text-xs max-w-xs truncate" title={e.description ?? ""}>{e.description ?? "—"}</td>
                     <td className="px-4 py-3 text-white/30 text-xs font-mono">{e.ipAddress ?? "—"}</td>
                   </tr>
                 ))}
