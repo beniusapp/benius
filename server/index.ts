@@ -518,14 +518,20 @@ app.use((req, res, next) => {
           continue;
         }
 
-        const enrollments = await storage.getEnrollmentsBySession(school.id, activeSession.id);
+        // Student Registry is global/session-independent — use it as the source of truth.
+        // Any active student matching applicableClasses gets an invoice regardless of
+        // whether they have a session-enrollment row.
+        const allActiveStudents = await storage.getStudentsBySchool(school.id);
+        const schoolRoster = allActiveStudents
+          .filter((s: any) => s.class && s.section)
+          .map((s: any) => ({ studentId: s.id, className: s.class as string, sectionName: s.section as string }));
         const existingRecords = await storage.getFeeRecordsBySchool(school.id, { sessionId: activeSession.id });
 
         for (const structure of autoStructures) {
           const applicableClasses: string[] = (structure as any).applicableClasses ?? [];
           const eligible = applicableClasses.length > 0
-            ? enrollments.filter((e: any) => applicableClasses.includes(e.className))
-            : enrollments;
+            ? schoolRoster.filter((e: any) => applicableClasses.includes(e.className))
+            : schoolRoster;
 
           // Due date: use autoGenDueDay if set, otherwise dueDayOfMonth, otherwise 10th
           const dueDay: number = (structure as any).autoGenDueDay ?? (structure as any).dueDayOfMonth ?? 10;

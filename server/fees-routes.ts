@@ -8,6 +8,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import Razorpay from "razorpay";
+import { broadcastPaymentUpdate } from "./sse";
 
 export function registerFeesRoutes(app: Express) {
 
@@ -88,20 +89,18 @@ export function registerFeesRoutes(app: Express) {
       }
     }
 
-    // Time-series date range: use session start→end when available;
-    // fall back to rolling 18-month window for unscoped queries.
-    const tsStart = sessionInfo?.startDate ?? null;
-    // For active sessions the end date may be in the future — cap at today
-    const tsEndRaw = sessionInfo?.endDate ?? null;
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const tsEnd    = tsEndRaw && tsEndRaw < todayStr ? tsEndRaw : todayStr;
-
-    const tsDateMC = tsStart
-      ? sql` AND pr.received_date::date BETWEEN ${tsStart}::date AND ${tsEnd}::date`
-      : sql` AND pr.received_date::date >= CURRENT_DATE - INTERVAL '18 months'`;
-    const tsDateMB = tsStart
-      ? sql` AND fr.due_date::date BETWEEN ${tsStart}::date AND ${tsEnd}::date`
-      : sql` AND fr.due_date::date >= CURRENT_DATE - INTERVAL '18 months'`;
+    // NOTE: We do NOT filter the time-series by received_date/due_date against
+    // the session's date boundaries. Payments can legitimately arrive before a
+    // session's official start (advance payments, test data, admin backdating).
+    // Session scoping is already enforced by the fee_record join (sfFR / sfFR2).
+    // Without a session we fall back to a 36-month rolling window so the query
+    // stays bounded even across all-school unscoped calls.
+    const tsDateMC = sessionId
+      ? sql``
+      : sql` AND pr.received_date::date >= CURRENT_DATE - INTERVAL '36 months'`;
+    const tsDateMB = sessionId
+      ? sql``
+      : sql` AND fr.due_date::date >= CURRENT_DATE - INTERVAL '36 months'`;
 
     // Session filter on fee_records (fr alias)
     const sfFR  = sessionId ? sql` AND fr.session_id  = ${sessionId}` : sql``;
@@ -400,13 +399,13 @@ export function registerFeesRoutes(app: Express) {
           eq(feeRecords.feeType, matchFeeTypeForVoid),
           or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue"))
         ));
-      // Resolve each student's current class from the active session's enrollment
-      const activeSession = await storage.getActiveSession(schoolId);
-      if (activeSession && unpaidRecs.length > 0) {
-        const allEnrollments = await storage.getEnrollmentsBySession(schoolId, activeSession.id);
-        const enrollMap = new Map(allEnrollments.map(e => [e.studentId, e.className]));
+      // Resolve each student's current class directly from the Student Registry
+      // (global, session-independent — the correct source of truth for current class).
+      if (unpaidRecs.length > 0) {
+        const activeStudents = await storage.getStudentsBySchool(schoolId);
+        const classMap = new Map(activeStudents.map(s => [s.id, s.class]));
         const toVoid = unpaidRecs.filter(r => {
-          const cls = enrollMap.get(r.studentId);
+          const cls = classMap.get(r.studentId);
           return !cls || !newClasses.includes(cls);
         });
         if (toVoid.length > 0) {
@@ -853,7 +852,7 @@ export function registerFeesRoutes(app: Express) {
     // Secret is optional — null means "leave unchanged" when masked placeholder is sent
     razorpayKeySecret: z.string().max(500).optional().nullable(),
     razorpayWebhookSecret: z.string().max(500).optional().nullable(),
-    razorpayMode: z.enum(["test", "live"]).default("test"),
+    // Mode is always "live" — test/sandbox is not supported
   });
 
   app.get("/api/admin/fees/external-settings", async (req, res) => {
@@ -866,6 +865,7 @@ export function registerFeesRoutes(app: Express) {
     // Never return secrets in plaintext — mask them so the UI knows they're set
     res.json({
       ...settings,
+      razorpayMode: "live",   // always live — test mode removed
       razorpayKeySecret: settings.razorpayKeySecret ? "••••••••" : null,
       razorpayWebhookSecret: settings.razorpayWebhookSecret ? "••••••••" : null,
     });
@@ -878,6 +878,12 @@ export function registerFeesRoutes(app: Express) {
     const schoolId = req.session.schoolId!;
     const previous = await storage.getExternalPaymentSettings(schoolId);
 
+    // Reject test/sandbox keys — only live production keys are accepted
+    const keyIdToSave = parsed.data.razorpayKeyId || null;
+    if (keyIdToSave && keyIdToSave.startsWith("rzp_test_")) {
+      return res.status(400).json({ message: "Test/sandbox keys are not accepted. Enter your live production Key ID (rzp_live_…)." });
+    }
+
     // Don't overwrite secrets if the frontend sent the masked placeholder back
     const keySecret = parsed.data.razorpayKeySecret === "••••••••" ? undefined : (parsed.data.razorpayKeySecret || null);
     const webhookSecret = parsed.data.razorpayWebhookSecret === "••••••••" ? undefined : (parsed.data.razorpayWebhookSecret || null);
@@ -889,10 +895,10 @@ export function registerFeesRoutes(app: Express) {
       maxOvercollectionPercent: parsed.data.maxOvercollectionPercent,
       lastUpdatedBy: req.session.userId,
       razorpayEnabled: parsed.data.razorpayEnabled,
-      razorpayKeyId: parsed.data.razorpayKeyId || null,
+      razorpayKeyId: keyIdToSave,
       ...(keySecret !== undefined ? { razorpayKeySecret: keySecret } : {}),
       ...(webhookSecret !== undefined ? { razorpayWebhookSecret: webhookSecret } : {}),
-      razorpayMode: parsed.data.razorpayMode,
+      razorpayMode: "live",
     });
 
     const auditParts: string[] = [];
@@ -915,13 +921,13 @@ export function registerFeesRoutes(app: Express) {
     });
   });
 
-  // ── Save Razorpay settings only ───────────────────────────────────────────
+  // ── Save Razorpay settings only (production/live mode only) ─────────────
   const razorpaySettingsSchema = z.object({
     razorpayEnabled:       z.boolean(),
     razorpayKeyId:         z.string().max(200).optional().nullable(),
     razorpayKeySecret:     z.string().max(500).optional().nullable(),
     razorpayWebhookSecret: z.string().max(500).optional().nullable(),
-    razorpayMode:          z.enum(["test", "live"]).default("test"),
+    // razorpayMode removed — always "live"
   });
 
   app.put("/api/admin/fees/external-settings/razorpay", async (req, res) => {
@@ -931,47 +937,76 @@ export function registerFeesRoutes(app: Express) {
     const schoolId = req.session.schoolId!;
     const previous = await storage.getExternalPaymentSettings(schoolId);
 
+    // Reject test/sandbox keys — only live production keys accepted
+    const keyIdToSave = parsed.data.razorpayKeyId || null;
+    if (keyIdToSave && keyIdToSave.startsWith("rzp_test_")) {
+      return res.status(400).json({ message: "Test/sandbox keys are not accepted. Enter your live production Key ID (rzp_live_…)." });
+    }
+
     const keySecret     = parsed.data.razorpayKeySecret     === "••••••••" ? undefined : (parsed.data.razorpayKeySecret     || null);
     const webhookSecret = parsed.data.razorpayWebhookSecret === "••••••••" ? undefined : (parsed.data.razorpayWebhookSecret || null);
 
     // Validate: if enabling, Key ID must be present (new or existing)
-    const effectiveKeyId = parsed.data.razorpayKeyId || previous?.razorpayKeyId || null;
+    const effectiveKeyId = keyIdToSave ?? previous?.razorpayKeyId ?? null;
     if (parsed.data.razorpayEnabled && !effectiveKeyId) {
       return res.status(400).json({ message: "Key ID is required before enabling Razorpay." });
     }
 
     const updated = await storage.upsertExternalPaymentSettings(schoolId, {
-      // Preserve portal fields from previous settings
       isEnabled:                previous?.isEnabled ?? false,
       gatewayUrl:               previous?.gatewayUrl ?? null,
       bannerMessage:            previous?.bannerMessage ?? null,
       maxOvercollectionPercent: previous?.maxOvercollectionPercent ?? 150,
       lastUpdatedBy:            req.session.userId,
       razorpayEnabled: parsed.data.razorpayEnabled,
-      razorpayKeyId:   parsed.data.razorpayKeyId || null,
+      razorpayKeyId:   keyIdToSave,
       ...(keySecret     !== undefined ? { razorpayKeySecret:     keySecret }     : {}),
       ...(webhookSecret !== undefined ? { razorpayWebhookSecret: webhookSecret } : {}),
-      razorpayMode: parsed.data.razorpayMode,
+      razorpayMode: "live",
     });
 
     const auditParts: string[] = [];
     if (parsed.data.razorpayEnabled !== (previous?.razorpayEnabled ?? false))
       auditParts.push(`Razorpay ${parsed.data.razorpayEnabled ? "enabled" : "disabled"}`);
-    if (parsed.data.razorpayKeyId && parsed.data.razorpayKeyId !== previous?.razorpayKeyId)
-      auditParts.push("Razorpay Key ID updated");
+    if (keyIdToSave && keyIdToSave !== previous?.razorpayKeyId)
+      auditParts.push("Razorpay live Key ID updated");
     if (keySecret     !== undefined) auditParts.push("Razorpay Key Secret updated");
     if (webhookSecret !== undefined) auditParts.push("Razorpay Webhook Secret updated");
-    if (parsed.data.razorpayMode !== (previous?.razorpayMode ?? "test"))
-      auditParts.push(`Razorpay mode: ${parsed.data.razorpayMode}`);
 
     if (auditParts.length)
       await appendAudit(req, schoolId, "settings_change", "razorpay_settings", null, auditParts.join("; "));
 
     res.json({
       ...updated,
+      razorpayMode: "live",
       razorpayKeySecret:     updated.razorpayKeySecret     ? "••••••••" : null,
       razorpayWebhookSecret: updated.razorpayWebhookSecret ? "••••••••" : null,
     });
+  });
+
+  // ── Wipe all Razorpay credentials (purge test/live keys completely) ──────────
+  app.delete("/api/admin/fees/external-settings/razorpay/credentials", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const previous = await storage.getExternalPaymentSettings(schoolId);
+
+    await storage.upsertExternalPaymentSettings(schoolId, {
+      isEnabled:                previous?.isEnabled ?? false,
+      gatewayUrl:               previous?.gatewayUrl ?? null,
+      bannerMessage:            previous?.bannerMessage ?? null,
+      maxOvercollectionPercent: previous?.maxOvercollectionPercent ?? 150,
+      lastUpdatedBy:            req.session.userId,
+      razorpayEnabled:  false,        // disable while wiping
+      razorpayKeyId:    null,
+      razorpayKeySecret: null,
+      razorpayWebhookSecret: null,
+      razorpayMode:     previous?.razorpayMode ?? "test",
+    });
+
+    await appendAudit(req, schoolId, "settings_change", "razorpay_settings", null,
+      "Razorpay credentials wiped — Key ID, Key Secret, and Webhook Secret removed");
+
+    res.json({ ok: true });
   });
 
   // ── Save external portal link settings only ───────────────────────────────
@@ -1024,79 +1059,9 @@ export function registerFeesRoutes(app: Express) {
   // ── Simulated test payment (no Razorpay keys required) ───────────────────
   // Available only when Razorpay is toggled ON but real keys have NOT been saved.
   // Marks the fee Paid immediately with a "TS" receipt prefix.
-  app.post("/api/payments/simulate-pay", async (req, res) => {
-    const studentId = req.session?.studentId;
-    if (!studentId) return res.status(403).json({ message: "Student login required" });
-
-    const { feeRecordId } = req.body;
-    if (!feeRecordId || typeof feeRecordId !== "number")
-      return res.status(400).json({ message: "feeRecordId required" });
-
-    try {
-      // Load fee record + student info
-      const feeRows = await db.execute(sql`
-        SELECT fr.*, s.school_id AS s_school_id
-        FROM fee_records fr
-        JOIN students s ON s.id = fr.student_id
-        WHERE fr.id = ${feeRecordId} AND fr.student_id = ${studentId}
-        LIMIT 1
-      `);
-      const feeRec = feeRows.rows[0] as any;
-      if (!feeRec) return res.status(404).json({ message: "Fee record not found" });
-
-      const schoolId: number = Number(feeRec.s_school_id);
-
-      // Ensure test mode is valid: Razorpay must be enabled but NO real key saved
-      const settings = await storage.getExternalPaymentSettings(schoolId);
-      if (!settings?.razorpayEnabled)
-        return res.status(400).json({ message: "Razorpay is not enabled" });
-      if (settings.razorpayKeyId)
-        return res.status(400).json({ message: "Use real Razorpay checkout — keys are configured" });
-
-      // Idempotent: already paid
-      if (feeRec.status === "Paid")
-        return res.json({ ok: true, idempotent: true, receiptNumber: feeRec.receipt_number });
-
-      const now = new Date();
-      const receiptNumber = await storage.nextReceiptNumber(schoolId, "TS");
-
-      // Mark Paid
-      await db.execute(sql`
-        UPDATE fee_records
-        SET status = 'Paid', paid_date = ${now.toISOString()}, receipt_number = ${receiptNumber}
-        WHERE id = ${feeRecordId} AND school_id = ${schoolId}
-      `);
-
-      // Payment record
-      const activeSession = await storage.getActiveSession(schoolId);
-      await db.insert(paymentRecords).values({
-        schoolId,
-        sessionId: activeSession?.id ?? null,
-        feeRecordId,
-        studentId,
-        paymentMethod: "Online",
-        referenceNumber: `TEST-${Date.now()}`,
-        receivedDate: now.toISOString().slice(0, 10),
-        amount: Number(feeRec.amount) + Number(feeRec.late_fee_amount ?? 0),
-        cashierNotes: "Simulated test payment — no real transaction",
-        recordedBy: null,
-        receiptNumber,
-        idempotencyKey: `sim_${feeRecordId}_${now.getTime()}`,
-      } as any);
-
-      // Audit log
-      await db.execute(sql`
-        INSERT INTO fee_audit_log (school_id, action, entity_type, entity_id, changed_by, note, created_at)
-        VALUES (${schoolId}, 'payment', 'fee_record', ${feeRecordId}, ${studentId},
-          ${"[TEST] Simulated payment — receipt " + receiptNumber}, ${now.toISOString()})
-      `);
-
-      console.log(`[simulate-pay] Fee #${feeRecordId} marked Paid with receipt ${receiptNumber}`);
-      res.json({ ok: true, receiptNumber });
-    } catch (err: any) {
-      console.error("[simulate-pay]", err);
-      res.status(500).json({ message: String(err) });
-    }
+  // simulate-pay removed — live production mode only
+  app.post("/api/payments/simulate-pay", (_req, res) => {
+    res.status(410).json({ message: "Simulated test payments have been removed. Use live Razorpay checkout." });
   });
 
   // ── Razorpay: Create Order ────────────────────────────────────────────────
@@ -1230,6 +1195,9 @@ export function registerFeesRoutes(app: Express) {
             ${"Online payment via Razorpay — " + payment.id + " — receipt " + receiptNumber}, ${now.toISOString()})
         `);
 
+        // Broadcast real-time update → admin dashboard refreshes instantly
+        broadcastPaymentUpdate(schoolId, { feeRecordId, receiptNumber });
+
         console.log(`[razorpay webhook] Paid fee #${feeRecordId} receipt ${receiptNumber}`);
       }
 
@@ -1269,11 +1237,15 @@ export function registerFeesRoutes(app: Express) {
       return res.status(400).json({ message: "No active academic session found for this school." });
     }
 
-    const enrollments = await storage.getEnrollmentsBySession(schoolId, activeSession.id);
+    // Student Registry is global and session-independent — use it directly.
+    const allActiveStudents = await storage.getStudentsBySchool(schoolId);
+    const rosterForTrigger = allActiveStudents
+      .filter(s => s.class && s.section)
+      .map(s => ({ studentId: s.id, className: s.class!, sectionName: s.section! }));
     const applicableClasses: string[] = (structure as any).applicableClasses ?? [];
     const eligible = applicableClasses.length > 0
-      ? enrollments.filter((e: any) => applicableClasses.includes(e.className))
-      : enrollments;
+      ? rosterForTrigger.filter(e => applicableClasses.includes(e.className))
+      : rosterForTrigger;
 
     const dueDay: number = (structure as any).autoGenDueDay ?? (structure as any).dueDayOfMonth ?? 10;
     const now = new Date();
@@ -1384,13 +1356,21 @@ export function registerFeesRoutes(app: Express) {
     if (!structure) return res.status(404).json({ message: "Fee structure not found" });
     const invoiceSession = await storage.getAcademicSessionById(sessionId);
 
-    const enrollments = await storage.getEnrollmentsBySession(schoolId, sessionId);
+    // The Student Registry is global and session-independent — a student's class/section
+    // is always current in the registry regardless of how many sessions exist.
+    // Invoice generation therefore reads directly from the registry (all active students)
+    // rather than the session-enrollment table, ensuring no active student is ever skipped.
+    const allActiveStudents = await storage.getStudentsBySchool(schoolId);
+    const effectiveRoster = allActiveStudents
+      .filter(s => s.class && s.section)
+      .map(s => ({ studentId: s.id, className: s.class!, sectionName: s.section! }));
+
     // Always enforce the structure's own applicableClasses — the frontend cannot override this.
-    // If no classes are set on the structure, the fee applies to every enrolled student.
+    // If no classes are set on the structure, the fee applies to every active student.
     const applicableClasses: string[] = (structure as any).applicableClasses ?? [];
     const filtered = applicableClasses.length > 0
-      ? enrollments.filter(e => applicableClasses.includes(e.className))
-      : enrollments;
+      ? effectiveRoster.filter(e => applicableClasses.includes(e.className))
+      : effectiveRoster;
 
     const existingRecords = await storage.getFeeRecordsBySchool(schoolId, { sessionId });
     // Map: "studentId:feeType" → existing fee record (for syncing unpaid ones)

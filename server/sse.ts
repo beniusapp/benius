@@ -47,3 +47,15 @@ export function broadcastSessionDeleted(
 ): void {
   broadcastToSchool(schoolId, { type: "session-deleted", ...payload });
 }
+
+/**
+ * Push a payment-update event to all connected clients for a school.
+ * Fired by the Razorpay webhook after marking a fee as Paid, so the admin
+ * dashboard refreshes ledger totals and revenue stats in real time.
+ */
+export function broadcastPaymentUpdate(
+  schoolId: number,
+  payload: { feeRecordId: number; receiptNumber: string }
+): void {
+  broadcastToSchool(schoolId, { type: "payment-update", ...payload });
+}

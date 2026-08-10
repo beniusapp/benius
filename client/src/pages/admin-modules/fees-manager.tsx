@@ -1752,8 +1752,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-white/5">
-                  {["Receipt No.","Student","Class","Section","Fee Name","Fee Type","Amount","Due Date","Status","Paid On","Acad. Year","Notes","Actions"].map((h, i) => (
-                    <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 6 ? "text-right" : i >= 12 ? "text-right" : i >= 7 ? "text-center" : "text-left"}`}>{h}</th>
+                  {["Receipt No.","Student","DSID","Class","Section","Fee Name","Fee Type","Amount","Due Date","Status","Paid On","Acad. Year","Notes","Actions"].map((h, i) => (
+                    <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 7 ? "text-right" : i >= 13 ? "text-right" : i >= 8 ? "text-center" : "text-left"}`}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -1769,7 +1769,10 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     {/* Student */}
                     <td className="px-4 py-3">
                       <p className="text-white font-medium leading-tight text-sm">{rec.student?.name ?? "—"}</p>
-                      <p className="text-white/40 text-xs">{rec.student?.digitalStudentId ?? "—"}</p>
+                    </td>
+                    {/* DSID */}
+                    <td className="px-4 py-3 text-left">
+                      <span className="text-xs font-mono text-cyan-400/80">{rec.student?.digitalStudentId ?? "—"}</span>
                     </td>
                     {/* Class */}
                     <td className="px-4 py-3 text-white/70 text-xs text-center">{rec.student?.class ?? "—"}</td>
@@ -3640,12 +3643,11 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // ── Razorpay state ─────────────────────────────────────────────────────────
+  // ── Razorpay state (production / live only — no test mode) ────────────────
   const [rzpEnabled, setRzpEnabled] = useState(false);
   const [rzpKeyId, setRzpKeyId] = useState("");
   const [rzpKeySecret, setRzpKeySecret] = useState("");
   const [rzpWebhookSecret, setRzpWebhookSecret] = useState("");
-  const [rzpMode, setRzpMode] = useState<"test" | "live">("test");
 
   // ── External portal state ──────────────────────────────────────────────────
   const [isEnabled, setIsEnabled] = useState(false);
@@ -3666,7 +3668,6 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       setRzpKeyId(settings.razorpayKeyId ?? "");
       setRzpKeySecret(settings.razorpayKeySecret ?? "");
       setRzpWebhookSecret(settings.razorpayWebhookSecret ?? "");
-      setRzpMode((settings.razorpayMode as "test" | "live") ?? "test");
       setIsEnabled(settings.isEnabled);
       setUrl(settings.gatewayUrl ?? "");
       setBanner(settings.bannerMessage ?? "");
@@ -3680,14 +3681,13 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
   };
 
-  // ── Razorpay save mutation ─────────────────────────────────────────────────
+  // ── Razorpay save mutation (live mode only) ────────────────────────────────
   const rzpMut = useMutation({
     mutationFn: () => apiRequest("PUT", "/api/admin/fees/external-settings/razorpay", {
       razorpayEnabled: rzpEnabled,
       razorpayKeyId:   rzpKeyId || null,
       razorpayKeySecret:     rzpKeySecret || null,
       razorpayWebhookSecret: rzpWebhookSecret || null,
-      razorpayMode: rzpMode,
     }),
     onSuccess: (data: any) => {
       invalidate();
@@ -3750,24 +3750,45 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         </div>
 
         <div className="px-5 py-4 space-y-4">
-          {/* Mode toggle */}
-          <div className="flex items-center gap-2">
-            {(["test", "live"] as const).map(m => (
-              <button key={m} onClick={() => !isArchiveMode && setRzpMode(m)} disabled={isArchiveMode}
-                className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${rzpMode === m
-                  ? m === "live" ? "bg-emerald-600/30 border-emerald-500/60 text-emerald-300" : "bg-amber-600/20 border-amber-500/40 text-amber-300"
-                  : "bg-[#1A2942] border-white/10 text-white/30 hover:text-white/50"
-                } disabled:opacity-40`}>
-                {m === "test" ? "🧪 Test / Sandbox" : "🚀 Live"}
-              </button>
-            ))}
+          {/* Live mode badge — no test/sandbox option */}
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-600/15 border border-emerald-500/30">
+            <span className="text-emerald-400 text-sm">🚀</span>
+            <span className="text-emerald-300 text-xs font-bold">Production / Live Mode</span>
+            <span className="ml-auto text-emerald-500/70 text-[10px]">Only live keys accepted</span>
           </div>
+
+          {/* Wipe credentials button */}
+          {(rzpKeyId || rzpKeySecret === "••••••••" || rzpWebhookSecret === "••••••••") && !isArchiveMode && (
+            <button
+              onClick={() => {
+                const ok = window.confirm(
+                  "Wipe ALL Razorpay credentials?\n\n" +
+                  "Key ID, Key Secret, and Webhook Secret will be permanently removed and Razorpay will be disabled. " +
+                  "This cannot be undone."
+                );
+                if (!ok) return;
+                apiRequest("DELETE", "/api/admin/fees/external-settings/razorpay/credentials")
+                  .then(() => {
+                    setRzpKeyId("");
+                    setRzpKeySecret("");
+                    setRzpWebhookSecret("");
+                    setRzpEnabled(false);
+                    queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/external-settings"] });
+                    setSynced(false);
+                    toast({ title: "Credentials wiped", description: "All Razorpay keys have been removed." });
+                  })
+                  .catch(() => toast({ title: "Error wiping credentials", variant: "destructive" }));
+              }}
+              className="w-full py-2 rounded-xl text-xs font-bold border border-red-700/40 bg-red-900/10 text-red-400 hover:bg-red-900/20 transition-all">
+              🗑️ Clear All Credentials
+            </button>
+          )}
 
           {/* Key ID */}
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-white/60">Key ID <span className="text-red-400">*</span></label>
             <input value={rzpKeyId} onChange={e => setRzpKeyId(e.target.value)}
-              placeholder={rzpMode === "test" ? "rzp_test_XXXXXXXXXXXXXXXX" : "rzp_live_XXXXXXXXXXXXXXXX"}
+              placeholder="rzp_live_XXXXXXXXXXXXXXXX"
               disabled={isArchiveMode}
               className="w-full bg-[#0F1E35] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40" />
           </div>
@@ -4098,28 +4119,28 @@ function parseLocalDate(s: string): Date {
 
 /**
  * Quarterly view — fully multi-tenant aware.
- * Q1 starts from the session's own start month. Each quarter = 3 consecutive
- * months. All 4 quarters are always rendered as a full skeleton (₹0 for
- * quarters with no data). Works for any academic calendar:
+ * Always renders exactly 4 quarters anchored to the session's own start month.
+ * Works for any academic calendar:
  *   June start  → Q1=Jun–Aug, Q2=Sep–Nov, Q3=Dec–Feb, Q4=Mar–May
  *   January start → Q1=Jan–Mar, Q2=Apr–Jun, Q3=Jul–Sep, Q4=Oct–Dec
  *   April start → Q1=Apr–Jun, Q2=Jul–Sep, Q3=Oct–Dec, Q4=Jan–Mar
+ *
+ * Data that falls outside the session's date range (advance payments, backdated
+ * entries) is clamped into the nearest boundary quarter so it is always visible
+ * rather than silently discarded.
  */
-function aggregateToQuarterly(rows: TSRow[], sessionStartDate: string, sessionEndDate: string): TSRow[] {
+function aggregateToQuarterly(rows: TSRow[], sessionStartDate: string, _sessionEndDate: string): TSRow[] {
   const start     = parseLocalDate(sessionStartDate);
-  const end       = parseLocalDate(sessionEndDate);
-  const startMon  = start.getMonth();   // 0-indexed calendar month
+  const startMon  = start.getMonth();
   const startYear = start.getFullYear();
 
-  // Build skeleton: 4 quarters, each 3 months from session start month
+  // Build 4-quarter skeleton aligned to the session's start month
   const skeleton: TSRow[] = [0, 1, 2, 3].map(qi => {
-    const offsetM   = qi * 3;
-    const absMonth  = startMon + offsetM;
-    const calMonth  = absMonth % 12;
-    const calYear   = startYear + Math.floor(absMonth / 12);
-    // Label: "Q1 Jun–Aug '27", "Q2 Sep–Nov '27", …
-    const m1 = MONTH_ABBR[(startMon + offsetM    ) % 12];
-    const m2 = MONTH_ABBR[(startMon + offsetM + 2) % 12];
+    const absMonth = startMon + qi * 3;
+    const calMonth = absMonth % 12;
+    const calYear  = startYear + Math.floor(absMonth / 12);
+    const m1 = MONTH_ABBR[(startMon + qi * 3    ) % 12];
+    const m2 = MONTH_ABBR[(startMon + qi * 3 + 2) % 12];
     return {
       period:      `Q${qi + 1} ${m1}–${m2}`,
       period_date: new Date(calYear, calMonth, 1).toISOString(),
@@ -4131,11 +4152,11 @@ function aggregateToQuarterly(rows: TSRow[], sessionStartDate: string, sessionEn
 
   for (const r of rows) {
     const d = parseLocalDate(r.period_date);
-    if (d < start || d > end) continue;
-    // How many months from session start?
+    // Months offset from session start (can be negative for pre-session data)
     const monthsFromStart = (d.getFullYear() - startYear) * 12 + d.getMonth() - startMon;
-    if (monthsFromStart < 0 || monthsFromStart >= 12) continue;
-    const qi  = Math.floor(monthsFromStart / 3); // 0–3
+    // Clamp: pre-session data → Q1, post-session data → Q4
+    const clamped = Math.max(0, Math.min(11, monthsFromStart));
+    const qi  = Math.floor(clamped / 3);
     const key = skeleton[qi]?.period;
     if (!key) continue;
     const ex = map.get(key)!;
@@ -4145,20 +4166,27 @@ function aggregateToQuarterly(rows: TSRow[], sessionStartDate: string, sessionEn
 }
 
 /**
- * YTD — shows every month of the session's academic year as a full skeleton.
- * The skeleton runs from session start_date to session end_date so it works
- * for any school calendar (June–May, January–December, April–March, etc.).
+ * YTD — shows every month from the effective start to the effective end as a
+ * full skeleton. The effective range is the union of the session date range and
+ * the actual data date range, so payments collected before the session's
+ * official start (advance fees, backdated entries) are always visible.
  * Months with no data show ₹0 billed / ₹0 collected.
  */
 function buildYTD(rows: TSRow[], sessionStartDate: string, sessionEndDate: string): TSRow[] {
-  const start    = parseLocalDate(sessionStartDate);
-  const end      = parseLocalDate(sessionEndDate);
-  const startMon = start.getMonth();
-  const startY   = start.getFullYear();
+  const sessionStart = parseLocalDate(sessionStartDate);
+  const sessionEnd   = parseLocalDate(sessionEndDate);
 
-  // Total months in session (inclusive)
+  // Extend to cover actual data dates
+  const allDates      = rows.map(r => parseLocalDate(r.period_date));
+  const dataMin       = allDates.length > 0 ? allDates.reduce((a, b) => (a < b ? a : b)) : sessionStart;
+  const dataMax       = allDates.length > 0 ? allDates.reduce((a, b) => (a > b ? a : b)) : sessionEnd;
+  const effectiveStart = dataMin < sessionStart ? dataMin : sessionStart;
+  const effectiveEnd   = dataMax > sessionEnd   ? dataMax : sessionEnd;
+
+  const startMon = effectiveStart.getMonth();
+  const startY   = effectiveStart.getFullYear();
   const totalMonths =
-    (end.getFullYear() - startY) * 12 + end.getMonth() - startMon + 1;
+    (effectiveEnd.getFullYear() - startY) * 12 + effectiveEnd.getMonth() - startMon + 1;
 
   const skeleton: TSRow[] = Array.from({ length: totalMonths }, (_, i) => {
     const absMonth = startMon + i;
@@ -4315,7 +4343,8 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
       if (!r.ok) throw new Error("Failed");
       return r.json();
     },
-    staleTime: 60_000,
+    staleTime: 0,           // always fetch fresh — analytics must show live data
+    refetchOnMount: "always",
   });
 
   const { data: meData } = useQuery<{ schoolName?: string }>({
@@ -4699,11 +4728,9 @@ ${categories.length > 0 ? `
     if (period === "quarterly") return aggregateToQuarterly(rows, sessionStart, sessionEnd);
     if (period === "ytd")       return buildYTD(rows, sessionStart, sessionEnd);
 
-    // Monthly: last 12 calendar months by date, not by row count
-    const cutoff = new Date();
-    cutoff.setMonth(cutoff.getMonth() - 12);
-    cutoff.setDate(1);
-    return rows.filter(r => parseLocalDate(r.period_date) >= cutoff);
+    // Monthly: return all rows the backend sent — they are already session-scoped,
+    // so no additional date cutoff is needed. Sorted ascending by the backend.
+    return rows;
   }, [raw, period]);
 
   // Payment channel grouping
@@ -5015,101 +5042,6 @@ ${categories.length > 0 ? `
         )}
       </div>
 
-      {/* ── Monthly Board Report Schedule ───────────────────────────── */}
-      <div className="rounded-xl border border-cyan-700/30 bg-[#0d1f35] p-5 space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2 mb-0.5">
-              <Calendar className="w-4 h-4 text-cyan-400" />
-              <h3 className="text-white font-semibold text-sm">Monthly Board Report</h3>
-            </div>
-            <p className="text-white/40 text-xs">
-              Automatically email this analytics report to board members on the last day of each month.
-              {scheduleData?.lastSentAt && (
-                <span className="text-cyan-500/70"> Last sent: {fmtDate(scheduleData.lastSentAt)}.</span>
-              )}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <span className="text-xs text-white/40">{scheduleEnabled ? "Enabled" : "Disabled"}</span>
-            <Switch
-              checked={scheduleEnabled}
-              onCheckedChange={setScheduleEnabled}
-            />
-          </div>
-        </div>
-
-        {/* Recipient list */}
-        <div className="space-y-2">
-          <p className="text-white/50 text-xs font-semibold uppercase tracking-wider">Recipients</p>
-          {recipients.length === 0 ? (
-            <p className="text-white/25 text-xs italic">No recipients added yet.</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {recipients.map(email => (
-                <span key={email} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-cyan-900/30 border border-cyan-700/40 text-cyan-300">
-                  <Mail className="w-3 h-3 opacity-70" />
-                  {email}
-                  <button
-                    onClick={() => setRecipients(prev => prev.filter(e => e !== email))}
-                    className="ml-0.5 text-cyan-400/60 hover:text-red-400 transition-colors"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-
-          {/* Add recipient */}
-          <div className="flex gap-2 mt-2">
-            <Input
-              type="email"
-              placeholder="board@school.edu"
-              value={recipientInput}
-              onChange={e => setRecipientInput(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && (e.preventDefault(), addRecipient())}
-              className="h-8 text-xs bg-white/5 border-white/10 text-white placeholder:text-white/25 flex-1"
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={addRecipient}
-              className="h-8 px-3 text-xs border-white/15 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white"
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </Button>
-          </div>
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center gap-2 pt-1">
-          <Button
-            size="sm"
-            onClick={saveSchedule}
-            disabled={savingSchedule}
-            className="h-8 px-4 text-xs bg-cyan-600 hover:bg-cyan-500 text-white"
-          >
-            {savingSchedule ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null}
-            Save Schedule
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={sendNow}
-            disabled={sendingNow || recipients.length === 0}
-            className="h-8 px-3 text-xs border-white/15 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white gap-1.5"
-            title="Send the report immediately to all recipients as a test"
-          >
-            {sendingNow
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <Send className="w-3.5 h-3.5" />}
-            Send Now
-          </Button>
-          <span className="text-white/25 text-xs ml-1">Sends on the last day of each month at 8 AM</span>
-        </div>
-      </div>
-
       {/* ── Aging Defaulters Drawer ───────────────────────────────────── */}
       <AgingDefaultersDrawer
         bucket={selectedBucket}
@@ -5137,6 +5069,26 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
   const { isArchiveMode, selectedSession } = useSessionView();
   const viewSessionId = selectedSession?.id ?? null;
   const [activeTab, setActiveTab] = useState<Tab>("ledger");
+  const queryClient = useQueryClient();
+
+  // ── Real-time sync: listen for Razorpay webhook payment-update events ──────
+  // When a student pays via Razorpay the webhook fires on the server, which
+  // broadcasts a "payment-update" SSE event.  We intercept it here so the
+  // ledger, summary and analytics refresh instantly without a manual reload.
+  useEffect(() => {
+    const es = new EventSource("/api/events/session-change");
+    es.onmessage = (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.type === "payment-update") {
+          queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/fees/analytics"] });
+        }
+      } catch { /* ignore parse errors */ }
+    };
+    return () => es.close();
+  }, [queryClient]);
 
   const { data: students = [] } = useQuery<StudentItem[]>({
     queryKey: ["/api/schools", schoolId, "students"],

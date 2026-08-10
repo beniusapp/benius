@@ -219,12 +219,32 @@ export default function StudentFees() {
           prefill: { name: studentData.name, contact: "", email: "" },
           theme: { color: "#6366f1" },
           handler: () => {
-            setTimeout(() => {
-              refetchFees();
-              refetchSummary();
-              queryClient.invalidateQueries({ queryKey: ["/api/student/fees"] });
-              queryClient.invalidateQueries({ queryKey: ["/api/student/fees/summary"] });
-            }, 2000);
+            // Poll every 1.5 s (up to 15 s) until the webhook has marked the
+            // fee as Paid and the receipt number is assigned, then refresh.
+            let attempts = 0;
+            const maxAttempts = 10; // 10 × 1.5 s = 15 s
+            const poll = () => {
+              attempts++;
+              fetch(`/api/student/fees`, { credentials: "include" })
+                .then(r => r.json())
+                .then((fees: any[]) => {
+                  const updated = fees.find((f: any) => f.id === rec.id);
+                  if (updated?.status === "Paid" || attempts >= maxAttempts) {
+                    refetchFees();
+                    refetchSummary();
+                    queryClient.invalidateQueries({ queryKey: ["/api/student/fees"] });
+                    queryClient.invalidateQueries({ queryKey: ["/api/student/fees/summary"] });
+                  } else {
+                    setTimeout(poll, 1500);
+                  }
+                })
+                .catch(() => {
+                  // On any error just do a plain refetch
+                  refetchFees();
+                  refetchSummary();
+                });
+            };
+            setTimeout(poll, 1500); // give webhook ~1.5 s head-start
             resolve();
           },
           modal: { ondismiss: () => reject(new Error("dismissed")) },
@@ -239,29 +259,6 @@ export default function StudentFees() {
     }
   }, [portalInfo, refetchFees, queryClient]);
 
-  // Simulated test payment (no real Razorpay keys needed)
-  const handleTestPay = useCallback(async (rec: FeeRecord) => {
-    setPayingFeeId(rec.id);
-    setPayError(null);
-    try {
-      const resp = await fetch("/api/payments/simulate-pay", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ feeRecordId: rec.id }),
-        credentials: "include",
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error(data.message ?? "Simulation failed");
-      await refetchFees();
-      refetchSummary();
-      queryClient.invalidateQueries({ queryKey: ["/api/student/fees"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/student/fees/summary"] });
-    } catch (err: any) {
-      setPayError(err?.message ?? "Test payment failed");
-    } finally {
-      setPayingFeeId(null);
-    }
-  }, [refetchFees, queryClient]);
 
   // ── Loading splash ───────────────────────────────────────────────────────────
   if (studentLoading || !student) {
@@ -597,7 +594,7 @@ export default function StudentFees() {
                                   </div>
                                 )}
                               </div>
-                              {/* Real Razorpay Pay Now */}
+                              {/* Razorpay Pay Now — shown only when toggle is ON and live keys are saved */}
                               {razorpayActive && (
                                 <button
                                   onClick={() => handlePayNow(rec, student)}
@@ -613,22 +610,7 @@ export default function StudentFees() {
                                     : <><Zap className="w-3.5 h-3.5" /> Pay Now</>}
                                 </button>
                               )}
-                              {/* Simulated test payment — shown when Razorpay toggle is ON but no real keys saved */}
-                              {!isArchiveMode && !razorpayActive && portalInfo?.razorpayEnabled && !portalInfo.razorpayKeyId && (
-                                <button
-                                  onClick={() => handleTestPay(rec)}
-                                  disabled={payingFeeId === rec.id}
-                                  className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl text-xs font-black text-white transition-all active:scale-95 disabled:opacity-60"
-                                  style={{ background: payingFeeId === rec.id
-                                    ? "linear-gradient(135deg,#94a3b8,#cbd5e1)"
-                                    : "linear-gradient(135deg,#f59e0b,#d97706)",
-                                    boxShadow: payingFeeId === rec.id ? "none" : "0 4px 14px rgba(245,158,11,0.4)" }}
-                                  data-testid={`button-test-pay-${rec.id}`}>
-                                  {payingFeeId === rec.id
-                                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Processing…</>
-                                    : <>🧪 Test Pay</>}
-                                </button>
-                              )}
+                              {/* Toggle OFF → hide payment button entirely */}
                               {!isArchiveMode && !portalInfo?.razorpayEnabled && (
                                 <span className="text-[10px] text-slate-400 font-medium">Pay at school</span>
                               )}
