@@ -4211,27 +4211,40 @@ function BackfillReceiptsSection() {
   );
 }
 
-// ─── Audit Tab ────────────────────────────────────────────────────────────────
-
+const AUDIT_ACTION_OPTIONS = [
+  { value: "",               label: "All actions" },
+  { value: "create",         label: "create" },
+  { value: "update",         label: "update" },
+  { value: "delete",         label: "delete" },
+  { value: "payment",        label: "payment" },
+  { value: "settings_change",label: "settings_change" },
+  { value: "waiver",         label: "waiver" },
+  { value: "auto_invoice",   label: "auto_invoice" },
+  { value: "blocked_payment",label: "blocked_payment" },
+  { value: "status_change",  label: "status_change" },
+];
 function AuditTab() {
   const PAGE = 20;
   const [page, setPage] = useState(0);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate]     = useState("");
+  const [actionFilter, setActionFilter] = useState("");
 
-  // Reset to page 0 when dates change
-  const handleFromDate = (v: string) => { setFromDate(v); setPage(0); };
-  const handleToDate   = (v: string) => { setToDate(v);   setPage(0); };
-  const clearDates     = () => { setFromDate(""); setToDate(""); setPage(0); };
+  // Reset to page 0 when filters change
+  const handleFromDate     = (v: string) => { setFromDate(v); setPage(0); };
+  const handleToDate       = (v: string) => { setToDate(v);   setPage(0); };
+  const handleActionFilter = (v: string) => { setActionFilter(v); setPage(0); };
+  const clearFilters       = () => { setFromDate(""); setToDate(""); setActionFilter(""); setPage(0); };
 
-  const hasFilter = fromDate || toDate;
+  const hasFilter = fromDate || toDate || actionFilter;
 
   const { data, isLoading } = useQuery<{ entries: AuditLogEntry[]; total: number }>({
-    queryKey: ["/api/admin/fees/audit-log", page, fromDate, toDate],
+    queryKey: ["/api/admin/fees/audit-log", page, fromDate, toDate, actionFilter],
     queryFn: async () => {
       const params = new URLSearchParams({ limit: String(PAGE), offset: String(page * PAGE) });
-      if (fromDate) params.set("from", fromDate);
-      if (toDate)   params.set("to",   toDate);
+      if (fromDate)     params.set("from",   fromDate);
+      if (toDate)       params.set("to",     toDate);
+      if (actionFilter) params.set("action", actionFilter);
       const r = await fetch(`/api/admin/fees/audit-log?${params}`, { credentials: "include" });
       if (!r.ok) throw new Error("Failed");
       return r.json();
@@ -4243,7 +4256,7 @@ function AuditTab() {
 
   return (
     <div className="space-y-4">
-      {/* Date filter bar */}
+      {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
           <label className="text-white/40 text-xs whitespace-nowrap">From</label>
@@ -4263,11 +4276,23 @@ function AuditTab() {
             className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:border-cyan-500/50 [color-scheme:dark]"
           />
         </div>
+        <div className="flex items-center gap-2">
+          <label className="text-white/40 text-xs whitespace-nowrap">Action</label>
+          <select
+            value={actionFilter}
+            onChange={e => handleActionFilter(e.target.value)}
+            className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:border-cyan-500/50 [color-scheme:dark]"
+          >
+            {AUDIT_ACTION_OPTIONS.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
         {hasFilter && (
           <button
-            onClick={clearDates}
+            onClick={clearFilters}
             className="text-xs text-white/40 hover:text-white/70 underline underline-offset-2 transition-colors">
-            Clear dates
+            Clear filters
           </button>
         )}
         <p className="text-white/30 text-xs ml-auto">

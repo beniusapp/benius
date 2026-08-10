@@ -4810,11 +4810,13 @@ export class DatabaseStorage {
     offset = 0,
     from?: string | null,
     to?: string | null,
+    action?: string | null,
   ): Promise<{ entries: FeeAuditLog[]; total: number }> {
     const conditions: SQL[] = [eq(feeAuditLog.schoolId, schoolId)];
     // Parse dates as IST (UTC+5:30) day boundaries so filtering is accurate for Indian users
     if (from) conditions.push(gte(feeAuditLog.createdAt, new Date(from + "T00:00:00+05:30")));
     if (to)   conditions.push(lte(feeAuditLog.createdAt, new Date(to   + "T23:59:59+05:30")));
+    if (action) conditions.push(eq(feeAuditLog.action, action));
     const where = conditions.length === 1 ? conditions[0] : and(...conditions);
     const [{ cnt }] = await db.select({ cnt: count() }).from(feeAuditLog).where(where);
     const entries = await db.select().from(feeAuditLog)

@@ -1326,9 +1326,10 @@ export function registerFeesRoutes(app: Express) {
     if (!adminGuard(req, res)) return;
     const limit = Math.min(parseInt((req.query.limit as string) || "50", 10), 100);
     const offset = parseInt((req.query.offset as string) || "0", 10);
-    const from = (req.query.from as string) || null;
-    const to   = (req.query.to   as string) || null;
-    const { entries, total } = await storage.getFeeAuditLog(req.session.schoolId!, limit, offset, from, to);
+    const from   = (req.query.from   as string) || null;
+    const to     = (req.query.to     as string) || null;
+    const action = (req.query.action as string) || null;
+    const { entries, total } = await storage.getFeeAuditLog(req.session.schoolId!, limit, offset, from, to, action);
     res.json({ entries, total, limit, offset });
   });
 
