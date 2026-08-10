@@ -12,3 +12,4 @@
 - [Student Dashboard Session Filtering](student-session-filtering.md) — all 8 student modules now session-scoped; critical client fix: setViewSessionId() must be called in student-dashboard on session change.
 - [Global vs Session-Scoped Module Contract](global-module-contract.md) — definitive list of global admin modules, their guard pattern, and the client-side rule; also covers the cache-invalidation approach for session-scoped modules.
 - [Fees & Payments Fintech Hub](fees-fintech-hub.md) — 4 new DB tables, fees-routes.ts registration pattern, idempotency key flow, high-value payment re-auth (≥₹10k), and 5-tab UI architecture.
+- [Late Fee Engine](late-fee-engine.md) — server/late-fee-engine.ts; calculateLateFee() is pure, recalculateLateFees(schoolId) persists to DB; nightly cron calls it after overdue sweep; GET /api/admin/fees computes on-the-fly for freshness.

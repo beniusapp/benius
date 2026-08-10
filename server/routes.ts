@@ -20,6 +20,7 @@ import { parse } from "csv-parse/sync";
 import * as XLSX from "xlsx";
 import { registerTeacherRoutes } from "./teacher-routes";
 import { registerFeesRoutes } from "./fees-routes";
+import { calculateLateFee } from "./late-fee-engine";
 import { addSSEClient, broadcastSessionActivated, broadcastSessionDeleted } from "./sse";
 import { db } from "./db";
 import { eq, and, sql, inArray, not } from "drizzle-orm";
@@ -3994,17 +3995,33 @@ export async function registerRoutes(
     }
     // Resolve feeName server-side so the ledger always reflects the current
     // structure name even when feeType strings differ by case or whitespace.
+    // Also compute lateFeeAmount on-the-fly from each structure's lateFeeConfig.
     const allStructures = await storage.getFeeStructuresBySchool(schoolId);
-    const ftToName = new Map<string, string>();
+    const ftToName   = new Map<string, string>();
+    const ftToConfig = new Map<string, any>();
     for (const s of allStructures) {
       const key = s.feeType.trim().toLowerCase();
-      if (!ftToName.has(key)) ftToName.set(key, s.name);
+      if (!ftToName.has(key))   ftToName.set(key, s.name);
+      if (!ftToConfig.has(key)) ftToConfig.set(key, (s as any).lateFeeConfig ?? null);
     }
-    res.json(records.map(r => ({
-      ...r,
-      feeName: ftToName.get(r.feeType.trim().toLowerCase()) ?? r.feeType,
-      student: studentMap[r.studentId] ?? null,
-    })));
+    const now = new Date();
+    res.json(records.map(r => {
+      const cfg = ftToConfig.get(r.feeType.trim().toLowerCase());
+      const accrued_late_fee = cfg?.enabled
+        ? calculateLateFee(cfg, r.dueDate, r.status, now)
+        : ((r as any).lateFeeAmount ?? 0);
+      const base_amount = r.amount;
+      const total_due   = base_amount + accrued_late_fee;
+      return {
+        ...r,
+        feeName:          ftToName.get(r.feeType.trim().toLowerCase()) ?? r.feeType,
+        student:          studentMap[r.studentId] ?? null,
+        lateFeeAmount:    accrued_late_fee,   // backward-compat alias
+        base_amount,
+        accrued_late_fee,
+        total_due,
+      };
+    }));
   });
 
   app.post("/api/admin/fees", async (req, res) => {
@@ -4100,23 +4117,108 @@ export async function registerRoutes(
     // Attach fee-structure name + breakdown to each record so students always
     // see the current display name and component details.
     const structures = await storage.getFeeStructuresBySchool(student.schoolId);
-    const ftToName       = new Map<string, string>();
-    const breakdownMap   = new Map<string, Array<{ name: string; purpose: string; amount: number }>>();
+    const ftToName    = new Map<string, string>();
+    const breakdownMap = new Map<string, Array<{ name: string; purpose: string; amount: number }>>();
+    const ftToConfig  = new Map<string, any>();
     for (const s of structures) {
       const key = s.feeType.trim().toLowerCase();
       if (!ftToName.has(key)) ftToName.set(key, s.name);
       if (!breakdownMap.has(key) && Array.isArray((s as any).breakdown) && (s as any).breakdown.length > 0) {
         breakdownMap.set(key, (s as any).breakdown);
       }
+      if (!ftToConfig.has(key)) ftToConfig.set(key, (s as any).lateFeeConfig ?? null);
     }
 
-    const enriched = records.map(r => ({
-      ...r,
-      feeName:   ftToName.get(r.feeType.trim().toLowerCase()) ?? r.feeType,
-      breakdown: breakdownMap.get(r.feeType.trim().toLowerCase()) ?? [],
-    }));
+    const now = new Date();
+    const enriched = records.map(r => {
+      const cfg = ftToConfig.get(r.feeType.trim().toLowerCase());
+      const accrued_late_fee = cfg?.enabled
+        ? calculateLateFee(cfg, r.dueDate, r.status, now)
+        : ((r as any).lateFeeAmount ?? 0);
+      return {
+        ...r,
+        feeName:           ftToName.get(r.feeType.trim().toLowerCase()) ?? r.feeType,
+        breakdown:         breakdownMap.get(r.feeType.trim().toLowerCase()) ?? [],
+        base_amount:       r.amount,
+        accrued_late_fee,
+        total_due:         r.amount + accrued_late_fee,
+      };
+    });
 
     res.json(enriched);
+  });
+
+  // ===== STUDENT: FEES BILLING SUMMARY =====
+  // Returns arrears (overdue from prior months) vs current-month charges separately
+  // so the student UI can show "Previous Arrears + Current Month = Total Outstanding".
+  app.get("/api/student/fees/summary", async (req, res) => {
+    if (!req.session.studentId) return res.status(403).json({ message: "Student access required" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(403).json({ message: "Student not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+
+    const sessionCond = viewSessionId != null
+      ? sql`AND fr.session_id = ${viewSessionId}`
+      : sql``;
+
+    const today = new Date();
+    const currentYYYYMM = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+
+    // For each unpaid fee record: compute net balance = invoice amount - total paid so far.
+    // Split into "previous arrears" (due_date before this month) and "current charges" (due this month or later).
+    const rows = await db.execute(sql`
+      SELECT
+        fr.id,
+        fr.amount,
+        fr.late_fee_amount,
+        fr.due_date,
+        fr.status,
+        COALESCE(p.total_paid, 0)::int AS amount_paid,
+        GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.total_paid, 0), 0)::int AS net_balance
+      FROM fee_records fr
+      LEFT JOIN (
+        SELECT fee_record_id, SUM(amount)::int AS total_paid
+        FROM payment_records
+        WHERE school_id = ${student.schoolId} AND fee_record_id IS NOT NULL
+        GROUP BY fee_record_id
+      ) p ON p.fee_record_id = fr.id
+      WHERE fr.student_id = ${req.session.studentId}
+        AND fr.school_id  = ${student.schoolId}
+        AND fr.status IN ('Due', 'Overdue', 'Partial')
+      ${sessionCond}
+    `);
+
+    let previousArrears = 0;
+    let currentMonthCharges = 0;
+    let totalAmountPaid = 0;
+
+    for (const r of rows.rows as any[]) {
+      const dueMonth = String(r.due_date).slice(0, 7); // "YYYY-MM"
+      const net = Number(r.net_balance) || 0;
+      totalAmountPaid += Number(r.amount_paid) || 0;
+      if (dueMonth < currentYYYYMM) {
+        previousArrears += net;
+      } else {
+        currentMonthCharges += net;
+      }
+    }
+
+    // Also fetch total actually paid (for display)
+    const paidRow = await db.execute(sql`
+      SELECT COALESCE(SUM(pr.amount), 0)::int AS total_paid
+      FROM payment_records pr
+      WHERE pr.student_id = ${req.session.studentId}
+        AND pr.school_id  = ${student.schoolId}
+    `);
+    const totalPaid = Number((paidRow.rows[0] as any)?.total_paid) || 0;
+
+    res.json({
+      previousArrears,
+      currentMonthCharges,
+      totalOutstanding: previousArrears + currentMonthCharges,
+      totalPaid,
+      currentMonth: currentYYYYMM,
+    });
   });
 
   // ===== STUDENT: DOWNLOAD RECEIPT =====

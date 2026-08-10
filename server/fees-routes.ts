@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { storage } from "./storage";
 import { db } from "./db";
+import { calculateLateFee, recalculateLateFees } from "./late-fee-engine";
 import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings, feeStructures, dunningJobStatus } from "@shared/schema";
 import { and, eq, sql, desc, or } from "drizzle-orm";
 import { z } from "zod";
@@ -63,12 +64,177 @@ export function registerFeesRoutes(app: Express) {
     res.json(summary);
   });
 
+  // ── GET /api/fees/analytics ──────────────────────────────────────────────
+  app.get("/api/fees/analytics", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionId = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+
+    // Reusable session filter fragments
+    const sfFR = sessionId ? sql` AND fr.session_id = ${sessionId}` : sql``;
+    const sfPR = sessionId
+      ? sql` AND (pr.session_id = ${sessionId} OR (pr.session_id IS NULL AND fr2.session_id = ${sessionId}))`
+      : sql``;
+
+    // Shared sub-query: payments aggregated per fee record
+    const paidSub = (sid: number) => sql`
+      SELECT fee_record_id, SUM(amount)::int AS paid
+      FROM payment_records WHERE school_id = ${sid} AND fee_record_id IS NOT NULL
+      GROUP BY fee_record_id`;
+
+    try {
+      const [billedRow, payRow, outRow, tsRow, cwRow, chRow, catRow, agRow] = await Promise.all([
+        // ── 1a. Gross billed ──────────────────────────────────────────────
+        db.execute(sql`
+          SELECT COALESCE(SUM(fr.amount), 0)::int AS gross_billed
+          FROM fee_records fr
+          WHERE fr.school_id = ${schoolId}${sfFR}
+        `),
+        // ── 1b. Payment totals ────────────────────────────────────────────
+        db.execute(sql`
+          SELECT
+            COALESCE(SUM(pr.amount), 0)::int        AS total_collected,
+            COALESCE(SUM(pr.late_fee_paid), 0)::int AS total_late_fees
+          FROM payment_records pr
+          LEFT JOIN fee_records fr2 ON fr2.id = pr.fee_record_id
+          WHERE pr.school_id = ${schoolId}${sfPR}
+        `),
+        // ── 1c. Outstanding ───────────────────────────────────────────────
+        db.execute(sql`
+          SELECT COALESCE(SUM(GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.paid,0),0)),0)::int AS outstanding
+          FROM fee_records fr
+          LEFT JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
+          WHERE fr.school_id = ${schoolId} AND fr.status IN ('Due','Overdue','Partial')${sfFR}
+        `),
+        // ── 2. Monthly time-series (last 18 months) ───────────────────────
+        db.execute(sql`
+          WITH mc AS (
+            SELECT DATE_TRUNC('month', pr.received_date::date) AS pd,
+                   COALESCE(SUM(pr.amount),0)::int AS collected
+            FROM payment_records pr
+            LEFT JOIN fee_records fr2 ON fr2.id = pr.fee_record_id
+            WHERE pr.school_id = ${schoolId}
+              AND pr.received_date IS NOT NULL
+              AND pr.received_date::date >= CURRENT_DATE - INTERVAL '18 months'
+              ${sfPR}
+            GROUP BY pd
+          ),
+          mb AS (
+            SELECT DATE_TRUNC('month', fr.due_date::date) AS pd,
+                   COALESCE(SUM(fr.amount),0)::int AS billed
+            FROM fee_records fr
+            WHERE fr.school_id = ${schoolId}
+              AND fr.due_date IS NOT NULL
+              AND fr.due_date::date >= CURRENT_DATE - INTERVAL '18 months'
+              ${sfFR}
+            GROUP BY pd
+          )
+          SELECT
+            TO_CHAR(COALESCE(mc.pd, mb.pd), 'Mon ''YY') AS period,
+            COALESCE(mc.pd, mb.pd)                        AS period_date,
+            COALESCE(mc.collected, 0)                     AS collected,
+            COALESCE(mb.billed, 0)                        AS billed
+          FROM mc FULL OUTER JOIN mb ON mc.pd = mb.pd
+          ORDER BY period_date ASC
+        `),
+        // ── 3. Class-wise breakdown ───────────────────────────────────────
+        db.execute(sql`
+          SELECT s.class,
+            COALESCE(SUM(fr.amount),0)::int                              AS billed,
+            COALESCE(SUM(COALESCE(p.paid,0)),0)::int                     AS collected,
+            COALESCE(SUM(GREATEST(fr.amount-COALESCE(p.paid,0),0)),0)::int AS outstanding
+          FROM fee_records fr
+          JOIN students s ON s.id = fr.student_id
+          LEFT JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
+          WHERE fr.school_id = ${schoolId}${sfFR}
+          GROUP BY s.class
+          ORDER BY CASE WHEN s.class ~ '^[0-9]+$' THEN s.class::int ELSE 999 END, s.class
+        `),
+        // ── 4. Payment channel ────────────────────────────────────────────
+        db.execute(sql`
+          SELECT pr.payment_method,
+            COUNT(*)::int                    AS count,
+            COALESCE(SUM(pr.amount),0)::int  AS amount
+          FROM payment_records pr
+          LEFT JOIN fee_records fr2 ON fr2.id = pr.fee_record_id
+          WHERE pr.school_id = ${schoolId}${sfPR}
+          GROUP BY pr.payment_method ORDER BY amount DESC
+        `),
+        // ── 5. Fee category ───────────────────────────────────────────────
+        db.execute(sql`
+          SELECT fr.fee_type,
+            COALESCE(SUM(fr.amount),0)::int           AS billed,
+            COALESCE(SUM(COALESCE(p.paid,0)),0)::int  AS collected
+          FROM fee_records fr
+          LEFT JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
+          WHERE fr.school_id = ${schoolId}${sfFR}
+          GROUP BY fr.fee_type ORDER BY billed DESC LIMIT 10
+        `),
+        // ── 6. AR Aging ───────────────────────────────────────────────────
+        db.execute(sql`
+          SELECT
+            CASE
+              WHEN CURRENT_DATE - fr.due_date::date BETWEEN 1  AND 30 THEN '1-30'
+              WHEN CURRENT_DATE - fr.due_date::date BETWEEN 31 AND 60 THEN '31-60'
+              WHEN CURRENT_DATE - fr.due_date::date BETWEEN 61 AND 90 THEN '61-90'
+              WHEN CURRENT_DATE - fr.due_date::date > 90              THEN '90+'
+            END AS bucket,
+            COUNT(*)::int AS count,
+            COALESCE(SUM(GREATEST(fr.amount+fr.late_fee_amount-COALESCE(p.paid,0),0)),0)::int AS amount
+          FROM fee_records fr
+          LEFT JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
+          WHERE fr.school_id = ${schoolId}
+            AND fr.status IN ('Due','Overdue','Partial')
+            AND fr.due_date IS NOT NULL
+            AND CURRENT_DATE > fr.due_date::date
+            ${sfFR}
+          GROUP BY bucket
+        `),
+      ]);
+
+      const grossBilled        = Number(billedRow.rows[0]?.gross_billed     ?? 0);
+      const netCollected       = Number(payRow.rows[0]?.total_collected      ?? 0);
+      const totalLatePenalties = Number(payRow.rows[0]?.total_late_fees      ?? 0);
+      const outstanding        = Number(outRow.rows[0]?.outstanding          ?? 0);
+      const collectionRate     = grossBilled > 0 ? Math.round((netCollected / grossBilled) * 100) : 0;
+
+      res.json({
+        summary: { grossBilled, netCollected, outstanding, collectionRate, totalDiscounts: 0, totalLatePenalties },
+        timeSeries:      tsRow.rows,
+        classWise:       cwRow.rows,
+        paymentChannels: chRow.rows,
+        feeCategories:   catRow.rows,
+        aging:           agRow.rows,
+      });
+    } catch (err: any) {
+      console.error("[fees/analytics]", err);
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
   // ── Fee Structures ────────────────────────────────────────────────────────
 
   const breakdownItemSchema = z.object({
     name:    z.string().min(1).max(100),
     purpose: z.string().max(300).default(""),
     amount:  z.number().int().min(0),
+  });
+
+  const tieredSlabSchema = z.object({
+    from_day: z.number().int().min(1),
+    to_day:   z.number().int().min(1),
+    amount:   z.number().int().min(0),
+  });
+
+  const lateFeeConfigSchema = z.object({
+    enabled:           z.boolean().default(false),
+    type:              z.enum(["NONE", "FLAT", "DAILY", "TIERED"]).default("NONE"),
+    grace_period_days: z.number().int().min(0).default(0),
+    flat_amount:       z.number().int().min(0).default(0),
+    daily_rate:        z.number().min(0).default(0),
+    max_cap:           z.number().int().min(0).default(0),
+    tiered_slabs:      z.array(tieredSlabSchema).default([]),
   });
 
   const structureBodySchema = z.object({
@@ -84,6 +250,7 @@ export function registerFeesRoutes(app: Express) {
     breakdown: z.array(breakdownItemSchema).default([]),
     autoGenerate: z.boolean().default(false),
     autoGenDueDay: z.number().int().min(1).max(31).optional().nullable(),
+    lateFeeConfig: lateFeeConfigSchema.optional(),
   });
 
   app.get("/api/admin/fees/structures", async (req, res) => {
@@ -99,6 +266,7 @@ export function registerFeesRoutes(app: Express) {
     const schoolId = req.session.schoolId!;
     const rec = await storage.createFeeStructure({ ...parsed.data, schoolId, createdBy: req.session.userId });
     await appendAudit(req, schoolId, "create", "fee_structure", rec.id, `Created fee structure: ${rec.name} (₹${rec.amount})`);
+    recalculateLateFees(schoolId).catch(() => {/* non-critical */});
     res.status(201).json(rec);
   });
 
@@ -218,6 +386,10 @@ export function registerFeesRoutes(app: Express) {
       : "";
     await appendAudit(req, schoolId, "update", "fee_structure", id,
       `Updated fee structure: ${updated.name}${syncNote}`);
+
+    // Re-run late fee calculation for this school after any structure change
+    recalculateLateFees(schoolId).catch(() => {/* non-critical */});
+
     res.json({ ...updated, syncedInvoices: syncedCount, voidedInvoices: voidedCount, syncedFields: syncParts });
   });
 
@@ -237,7 +409,10 @@ export function registerFeesRoutes(app: Express) {
   const paymentBodySchema = z.object({
     feeRecordId: z.number().int().positive().optional().nullable(),
     studentId: z.number().int().positive(),
-    // Fee record fields — used to auto-create a fee record when feeRecordId is null
+    // FIFO mode: when true and feeRecordId is null, funds are auto-allocated to the
+    // student's unpaid invoices oldest-first (due_date ASC) rather than freeform.
+    autoFifo: z.boolean().default(false),
+    // Fee record fields — used to auto-create a fee record when feeRecordId is null and autoFifo is false
     feeType: z.string().min(1).max(100).optional().nullable(),
     dueDate: z.string().optional().nullable(),
     feeStatus: z.enum(["Due","Paid","Partial","Overdue","Waived"]).optional().nullable(),
@@ -251,6 +426,7 @@ export function registerFeesRoutes(app: Express) {
     cashierNotes: z.string().max(500).optional().nullable(),
     idempotencyKey: z.string().max(64).optional().nullable(),
     adminPassword: z.string().optional(),
+    lateFeePaid: z.number().int().min(0).default(0),
   });
 
   app.get("/api/admin/fees/payments", async (req, res) => {
@@ -304,6 +480,118 @@ export function registerFeesRoutes(app: Express) {
         return res.status(400).json({ message: "Fee record does not belong to the specified student" });
       }
     }
+
+    // ── FIFO AUTO-ALLOCATION ──────────────────────────────────────────────────
+    // When autoFifo=true the payment amount is spread across the student's unpaid
+    // invoices, oldest due-date first.  Each invoice gets its own payment_record
+    // and its status is updated atomically inside a single transaction.
+    if (paymentData.autoFifo && !paymentData.feeRecordId) {
+      // Fetch unpaid invoices ordered oldest-first; compute per-invoice net balance
+      const unpaidRows = await db.execute(sql`
+        SELECT
+          fr.id,
+          fr.amount,
+          fr.due_date,
+          fr.session_id,
+          COALESCE(p.total_paid, 0)::int AS amount_paid,
+          GREATEST(fr.amount - COALESCE(p.total_paid, 0), 0)::int AS balance
+        FROM fee_records fr
+        LEFT JOIN (
+          SELECT fee_record_id, SUM(amount)::int AS total_paid
+          FROM payment_records
+          WHERE school_id = ${schoolId} AND fee_record_id IS NOT NULL
+          GROUP BY fee_record_id
+        ) p ON p.fee_record_id = fr.id
+        WHERE fr.student_id = ${paymentData.studentId}
+          AND fr.school_id  = ${schoolId}
+          AND fr.status IN ('Due', 'Overdue', 'Partial')
+        HAVING GREATEST(fr.amount - COALESCE(p.total_paid, 0), 0) > 0
+        ORDER BY fr.due_date ASC, fr.id ASC
+      `);
+
+      const invoices = unpaidRows.rows as Array<{
+        id: number; amount: number; due_date: string;
+        session_id: number | null; amount_paid: number; balance: number;
+      }>;
+
+      if (invoices.length === 0) {
+        return res.status(400).json({ message: "No unpaid invoices found for this student to allocate against." });
+      }
+
+      // Build allocation plan (oldest-first)
+      let remaining = paymentData.amount;
+      const plan: Array<{ invoiceId: number; allocation: number; sessionId: number | null }> = [];
+      for (const inv of invoices) {
+        if (remaining <= 0) break;
+        const allocation = Math.min(remaining, Number(inv.balance));
+        plan.push({ invoiceId: inv.id, allocation, sessionId: inv.session_id });
+        remaining -= allocation;
+      }
+
+      // Execute the plan atomically
+      const results: Array<{ feeRecordId: number; amount: number; receiptNumber: string; newStatus: string }> = [];
+
+      await db.transaction(async (tx) => {
+        for (const step of plan) {
+          const opReceipt = await storage.nextReceiptNumber(schoolId, "OP");
+
+          // Acquire row-level lock to prevent concurrent over-payment
+          const lockedRow = await tx.execute(sql`
+            SELECT amount FROM fee_records
+            WHERE id = ${step.invoiceId} AND school_id = ${schoolId}
+            FOR UPDATE
+          `);
+          const invoiceAmount = Number((lockedRow.rows[0] as any)?.amount) || 0;
+
+          // Sum already-paid (including any sibling steps in this same tx that committed before)
+          const paidSoFar = await tx.execute(sql`
+            SELECT COALESCE(SUM(amount), 0)::int AS total_paid
+            FROM payment_records
+            WHERE fee_record_id = ${step.invoiceId}
+          `);
+          const alreadyPaid = Number((paidSoFar.rows[0] as any)?.total_paid) || 0;
+
+          // Safety cap — never exceed invoice amount in FIFO mode
+          const safeAllocation = Math.min(step.allocation, Math.max(0, invoiceAmount - alreadyPaid));
+          if (safeAllocation <= 0) continue;
+
+          await tx.execute(sql`
+            INSERT INTO payment_records
+              (school_id, session_id, fee_record_id, student_id, payment_method,
+               reference_number, received_date, amount, cashier_notes,
+               idempotency_key, recorded_by, receipt_number, late_fee_paid)
+            VALUES (
+              ${schoolId}, ${step.sessionId}, ${step.invoiceId},
+              ${paymentData.studentId}, ${paymentData.paymentMethod},
+              ${paymentData.referenceNumber ?? null}, ${paymentData.receivedDate},
+              ${safeAllocation},
+              ${paymentData.cashierNotes ?? null},
+              ${idempotencyKey ? `${idempotencyKey}-${step.invoiceId}` : null},
+              ${req.session.userId ?? null}, ${opReceipt}, 0
+            )
+          `);
+
+          const newTotal = alreadyPaid + safeAllocation;
+          const newStatus = newTotal >= invoiceAmount ? "Paid" : "Partial";
+          await tx.execute(sql`
+            UPDATE fee_records
+            SET status       = ${newStatus},
+                paid_date    = ${paymentData.receivedDate},
+                receipt_number = ${opReceipt}
+            WHERE id = ${step.invoiceId} AND school_id = ${schoolId}
+          `);
+
+          results.push({ feeRecordId: step.invoiceId, amount: safeAllocation, receiptNumber: opReceipt, newStatus });
+        }
+      });
+
+      const totalAllocated = results.reduce((s, r) => s + r.amount, 0);
+      await appendAudit(req, schoolId, "fifo_payment", "payment_record", null,
+        `FIFO payment ₹${totalAllocated.toLocaleString("en-IN")} (${paymentData.paymentMethod}) allocated across ${results.length} invoice(s) for student #${paymentData.studentId} — receipts: ${results.map(r => r.receiptNumber).join(", ")}`);
+
+      return res.status(201).json({ fifo: true, allocations: results, totalAllocated, unallocated: remaining });
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     // Idempotency guard — scoped by school to prevent cross-tenant key collisions
     if (idempotencyKey) {
@@ -444,7 +732,7 @@ export function registerFeesRoutes(app: Express) {
         sql`INSERT INTO payment_records
               (school_id, session_id, fee_record_id, student_id, payment_method,
                reference_number, received_date, amount, cashier_notes,
-               idempotency_key, recorded_by, receipt_number)
+               idempotency_key, recorded_by, receipt_number, late_fee_paid)
             VALUES (
               ${schoolId},
               ${resolvedSessionId},
@@ -457,7 +745,8 @@ export function registerFeesRoutes(app: Express) {
               ${paymentOnly.cashierNotes ?? null},
               ${idempotencyKey ?? null},
               ${req.session.userId ?? null},
-              ${opReceipt}
+              ${opReceipt},
+              ${paymentData.lateFeePaid ?? 0}
             )
             RETURNING *`,
       );
@@ -742,7 +1031,7 @@ export function registerFeesRoutes(app: Express) {
         paymentMethod: "Online",
         referenceNumber: `TEST-${Date.now()}`,
         receivedDate: now.toISOString().slice(0, 10),
-        amount: Number(feeRec.amount),
+        amount: Number(feeRec.amount) + Number(feeRec.late_fee_amount ?? 0),
         cashierNotes: "Simulated test payment — no real transaction",
         recordedBy: null,
         receiptNumber,
@@ -805,7 +1094,8 @@ export function registerFeesRoutes(app: Express) {
         key_secret: settings.razorpayKeySecret,
       });
 
-      const amountPaise = Math.round(Number(fee.amount) * 100);
+      const lateFeeForOrder = Number(fee.late_fee_amount ?? 0);
+      const amountPaise = Math.round((Number(fee.amount) + lateFeeForOrder) * 100);
       const order = await razorpay.orders.create({
         amount: amountPaise,
         currency: "INR",

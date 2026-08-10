@@ -1,4 +1,8 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend,
+} from "recharts";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -7,7 +11,7 @@ import {
   CreditCard, Plus, Search, Loader2, Trash2, Pencil, CheckCircle2, AlertTriangle, Clock,
   Receipt, DollarSign, TrendingUp, TrendingDown, Banknote, BookOpen, Bell, ExternalLink,
   Shield, ChevronLeft, ChevronRight, Lock, X, Printer, History, Download, FileText,
-  MessageSquare, Mail, Send, Eye, EyeOff, Zap, Phone,
+  MessageSquare, Mail, Send, Eye, EyeOff, Zap, Phone, BarChart2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -350,7 +354,8 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
   // Sync amount + student when feeRecord changes; generate a fresh idempotency key
   useEffect(() => {
     if (feeRecord) {
-      setAmount(String(feeRecord.amount));
+      const fine = (feeRecord as any).accrued_late_fee ?? 0;
+      setAmount(String(feeRecord.amount + fine));
       setSid(String(feeRecord.studentId));
       setAcademicYear(feeRecord.academicYear ?? selectedSession?.sessionName ?? "");
       setFeeNotes(feeRecord.notes ?? "");
@@ -442,6 +447,7 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
       referenceNumber: ref || null,
       receivedDate: date,
       amount: parseInt(amount),
+      lateFeePaid: feeRecord ? ((feeRecord as any).accrued_late_fee ?? 0) : 0,
       cashierNotes: notes || null,
       idempotencyKey: idempotencyKey || null,
       ...overrides,
@@ -513,10 +519,27 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
               <span className="text-white/20 text-[10px] ml-auto">auto-assigned on save</span>
             </div>
             {feeRecord ? (
-              <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-sm">
+              <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-sm space-y-1">
                 <p className="text-white font-semibold">{feeRecord.student?.name}</p>
                 <p className="text-white/50 text-xs">{feeRecord.feeType} · {feeRecord.student?.class}-{feeRecord.student?.section}</p>
-                <p className="text-white/40 text-xs">Invoice: {fmt(feeRecord.amount)}</p>
+                {(feeRecord as any).accrued_late_fee > 0 ? (
+                  <div className="space-y-0.5 pt-1 border-t border-white/10">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-white/40">Base Amount</span>
+                      <span className="text-white/60">{fmt(feeRecord.amount)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-amber-400/80">Accrued Late Fine</span>
+                      <span className="text-amber-400 font-semibold">+{fmt((feeRecord as any).accrued_late_fee)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs font-bold border-t border-white/10 pt-0.5 mt-0.5">
+                      <span className="text-white/70">Total Due</span>
+                      <span className="text-white">{fmt(feeRecord.amount + (feeRecord as any).accrued_late_fee)}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-white/40 text-xs">Invoice: {fmt(feeRecord.amount)}</p>
+                )}
               </div>
             ) : (
               <div>
@@ -1753,7 +1776,15 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     <td className="px-4 py-3 text-white/70 text-xs text-center">{rec.student?.section ?? "—"}</td>
                     <td className="px-4 py-3 text-white/80 text-sm">{resolveFeeDisplayName(rec)}</td>
                     <td className="px-4 py-3 text-white/70 text-xs">{rec.feeType}</td>
-                    <td className="px-4 py-3 text-right font-semibold text-white">{fmt(rec.amount)}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-white">
+                      {(rec as any).lateFeeAmount > 0 ? (
+                        <div className="text-right leading-tight space-y-0.5">
+                          <p className="text-white/50 text-xs">Base {fmt(rec.amount)}</p>
+                          <p className="text-amber-400 text-xs">+{fmt((rec as any).lateFeeAmount)} fine</p>
+                          <p className="font-black text-white text-sm">{fmt(rec.amount + (rec as any).lateFeeAmount)}</p>
+                        </div>
+                      ) : fmt(rec.amount)}
+                    </td>
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{fmtDate(rec.dueDate)}</td>
                     <td className="px-4 py-3 text-center">
                       <StatusChip status={rec.status} />
@@ -2125,6 +2156,15 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [autoGenDueDay, setAutoGenDueDay] = useState("");
   const [breakdown, setBreakdown] = useState<Array<{ name: string; purpose: string; amount: string }>>([]);
 
+  // ── Late Fee state ────────────────────────────────────────────────────────
+  const [lateFeeEnabled, setLateFeeEnabled] = useState(false);
+  const [lateFeeType, setLateFeeType] = useState<"NONE" | "FLAT" | "DAILY" | "TIERED">("NONE");
+  const [lateFeeGraceDays, setLateFeeGraceDays] = useState("0");
+  const [lateFeeFlat, setLateFeeFlat] = useState("0");
+  const [lateFeeDailyRate, setLateFeeDailyRate] = useState("0");
+  const [lateFeeCap, setLateFeeCap] = useState("0");
+  const [lateFeeSlabs, setLateFeeSlabs] = useState<Array<{ from_day: string; to_day: string; amount: string }>>([]);
+
   function addBreakdownRow() {
     setBreakdown(prev => [...prev, { name: "", purpose: "", amount: "" }]);
   }
@@ -2159,6 +2199,8 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     setSelectedClasses([]); setConcType("none"); setConcPct("0"); setDueDay(""); setIsActive(true);
     setAutoGenerate(false); setAutoGenDueDay("");
     setBreakdown([]);
+    setLateFeeEnabled(false); setLateFeeType("FLAT"); setLateFeeGraceDays("0");
+    setLateFeeFlat("0"); setLateFeeDailyRate("0"); setLateFeeCap("0"); setLateFeeSlabs([]);
     setShowModal(true);
   }
 
@@ -2180,6 +2222,16 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     setBreakdown(((s as any).breakdown ?? []).map((b: any) => ({
       name: b.name ?? "", purpose: b.purpose ?? "", amount: String(b.amount ?? ""),
     })));
+    const lfc = (s as any).lateFeeConfig ?? {};
+    setLateFeeEnabled(!!lfc.enabled);
+    setLateFeeType(lfc.type && lfc.type !== "NONE" ? lfc.type : "FLAT");
+    setLateFeeGraceDays(String(lfc.grace_period_days ?? 0));
+    setLateFeeFlat(String(lfc.flat_amount ?? 0));
+    setLateFeeDailyRate(String(lfc.daily_rate ?? 0));
+    setLateFeeCap(String(lfc.max_cap ?? 0));
+    setLateFeeSlabs((lfc.tiered_slabs ?? []).map((sl: any) => ({
+      from_day: String(sl.from_day ?? ""), to_day: String(sl.to_day ?? ""), amount: String(sl.amount ?? ""),
+    })));
     setShowModal(true);
   }
 
@@ -2196,6 +2248,21 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         breakdown: parsedBreakdown,
         autoGenerate: frequency === "monthly" ? autoGenerate : false,
         autoGenDueDay: frequency === "monthly" && autoGenDueDay ? parseInt(autoGenDueDay) : null,
+        lateFeeConfig: {
+          enabled: lateFeeEnabled,
+          type: lateFeeEnabled ? lateFeeType : "NONE",
+          // Grace period only applies to DAILY (FLAT fires immediately; TIERED uses slab from_day)
+          grace_period_days: (lateFeeEnabled && lateFeeType === "DAILY")
+            ? (parseInt(lateFeeGraceDays) || 0) : 0,
+          flat_amount: parseInt(lateFeeFlat) || 0,
+          daily_rate: parseFloat(lateFeeDailyRate) || 0,
+          // Max cap only applies to DAILY (0 = no cap)
+          max_cap: (lateFeeEnabled && lateFeeType === "DAILY")
+            ? (parseInt(lateFeeCap) || 0) : 0,
+          tiered_slabs: lateFeeSlabs
+            .filter(s => s.from_day && s.to_day && s.amount)
+            .map(s => ({ from_day: parseInt(s.from_day), to_day: parseInt(s.to_day), amount: parseInt(s.amount) })),
+        },
       };
       return editing
         ? apiRequest("PATCH", `/api/admin/fees/structures/${editing.id}`, payload)
@@ -2490,6 +2557,134 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                 )}
               </div>
             </div>
+
+            {/* ── Late Fee & Penalty Settings ────────────────────────────── */}
+            <div className={`rounded-xl border p-4 space-y-3 transition-all ${lateFeeEnabled ? "border-amber-600/40 bg-amber-900/10" : "border-white/10 bg-white/5"}`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <Switch checked={lateFeeEnabled} onCheckedChange={v => {
+        setLateFeeEnabled(v);
+        // Ensure a concrete rule type is selected when turning on
+        if (v && (lateFeeType === "NONE" || !lateFeeType)) setLateFeeType("FLAT");
+      }} />
+                  <div>
+                    <p className="text-sm font-semibold text-white/80">Late Fee &amp; Penalty</p>
+                    <p className="text-xs text-white/40 leading-tight">Automatically fine overdue invoices</p>
+                  </div>
+                </div>
+                {lateFeeEnabled && (
+                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-900/40 text-amber-400 border border-amber-700/40 flex-shrink-0">
+                    ACTIVE
+                  </span>
+                )}
+              </div>
+
+              {lateFeeEnabled && (
+                <div className="pt-2 border-t border-white/10 space-y-3">
+                  {/* Rule Type */}
+                  <div>
+                    <label className="text-xs text-white/50 block mb-1">Rule Type</label>
+                    <select value={lateFeeType} onChange={e => setLateFeeType(e.target.value as any)}
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500">
+                      <option value="FLAT">Flat One-Time Penalty</option>
+                      <option value="DAILY">Daily Accumulating Fine</option>
+                      <option value="TIERED">Tiered Schedule</option>
+                    </select>
+                  </div>
+
+                  {/* Flat penalty */}
+                  {lateFeeType === "FLAT" && (
+                    <div>
+                      <label className="text-xs text-white/50 block mb-1">Penalty Amount (₹)</label>
+                      <input type="number" min={0} value={lateFeeFlat}
+                        onChange={e => setLateFeeFlat(e.target.value)}
+                        className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500" />
+                    </div>
+                  )}
+
+                  {/* Daily rate */}
+                  {lateFeeType === "DAILY" && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs text-white/50 block mb-1">Grace Period (Days)</label>
+                        <input type="number" min={0} value={lateFeeGraceDays}
+                          onChange={e => setLateFeeGraceDays(e.target.value)}
+                          className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-white/50 block mb-1">Daily Rate (₹/day)</label>
+                        <input type="number" min={0} step="0.5" value={lateFeeDailyRate}
+                          onChange={e => setLateFeeDailyRate(e.target.value)}
+                          className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500" />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tiered slabs */}
+                  {lateFeeType === "TIERED" && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs text-white/50">Penalty Slabs</label>
+                        <button type="button"
+                          onClick={() => setLateFeeSlabs(prev => [...prev, { from_day: "", to_day: "", amount: "" }])}
+                          className="text-xs px-2.5 py-0.5 rounded border border-amber-700/40 text-amber-400 hover:bg-amber-900/20 transition-all">
+                          + Add Slab
+                        </button>
+                      </div>
+                      {lateFeeSlabs.length > 0 && (
+                        <div className="rounded-lg border border-white/10 overflow-hidden">
+                          <div className="grid grid-cols-[1fr_1fr_1fr_28px] gap-2 px-3 py-1.5 bg-white/5 border-b border-white/10">
+                            <span className="text-[10px] font-bold text-white/40 uppercase tracking-wide">From Day</span>
+                            <span className="text-[10px] font-bold text-white/40 uppercase tracking-wide">To Day</span>
+                            <span className="text-[10px] font-bold text-white/40 uppercase tracking-wide">Fine (₹)</span>
+                            <span />
+                          </div>
+                          {lateFeeSlabs.map((slab, idx) => (
+                            <div key={idx} className="grid grid-cols-[1fr_1fr_1fr_28px] gap-2 px-3 py-2 border-b border-white/5 last:border-0 bg-[#0A1628]/60">
+                              <input type="number" min={1} placeholder="e.g. 1" value={slab.from_day}
+                                onChange={e => setLateFeeSlabs(prev => prev.map((s, i) => i === idx ? { ...s, from_day: e.target.value } : s))}
+                                className="bg-transparent border border-white/10 rounded px-2 py-1 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-amber-500 w-full" />
+                              <input type="number" min={1} placeholder="e.g. 7" value={slab.to_day}
+                                onChange={e => setLateFeeSlabs(prev => prev.map((s, i) => i === idx ? { ...s, to_day: e.target.value } : s))}
+                                className="bg-transparent border border-white/10 rounded px-2 py-1 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-amber-500 w-full" />
+                              <input type="number" min={0} placeholder="e.g. 100" value={slab.amount}
+                                onChange={e => setLateFeeSlabs(prev => prev.map((s, i) => i === idx ? { ...s, amount: e.target.value } : s))}
+                                className="bg-transparent border border-white/10 rounded px-2 py-1 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-amber-500 w-full" />
+                              <button type="button" onClick={() => setLateFeeSlabs(prev => prev.filter((_, i) => i !== idx))}
+                                className="flex items-center justify-center w-7 h-7 rounded hover:bg-red-900/30 text-white/30 hover:text-red-400 transition-all">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {lateFeeSlabs.length === 0 && (
+                        <p className="text-[11px] text-white/25 px-1">
+                          No slabs. Add slabs — e.g. Day 1–7: ₹100 fine, Day 8–14: ₹200 fine.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Max cap — only for Daily Accumulating Fine (spec: FLAT has no cap; TIERED uses slab amounts directly) */}
+                  {lateFeeType === "DAILY" && (
+                    <div>
+                      <label className="text-xs text-white/50 block mb-1">
+                        Maximum Cap (₹) <span className="text-white/30">— 0 = no cap</span>
+                      </label>
+                      <input type="number" min={0} value={lateFeeCap}
+                        onChange={e => setLateFeeCap(e.target.value)}
+                        className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500" />
+                    </div>
+                  )}
+
+                  <p className="text-[11px] text-amber-400/60 leading-snug">
+                    ⏰ The nightly cron recalculates fines for all overdue invoices under this structure automatically.
+                  </p>
+                </div>
+              )}
+            </div>
+
             {/* ── Fee Breakdown / Components ─────────────────────────────── */}
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
@@ -3879,11 +4074,356 @@ function AuditTab() {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-type Tab = "ledger" | "structures" | "reminders" | "external" | "audit";
+// ─── Financial Analytics Tab ──────────────────────────────────────────────────
+
+const AGING_BUCKETS = [
+  { key: "1-30",  label: "1–30 Days",  color: "#f59e0b", risk: "Low",      dot: "bg-amber-500"  },
+  { key: "31-60", label: "31–60 Days", color: "#f97316", risk: "Medium",   dot: "bg-orange-500" },
+  { key: "61-90", label: "61–90 Days", color: "#ef4444", risk: "High",     dot: "bg-red-500"    },
+  { key: "90+",   label: "90+ Days",   color: "#9b1c1c", risk: "Critical", dot: "bg-red-900"    },
+] as const;
+
+const CHANNEL_COLORS = ["#06b6d4", "#10b981", "#8b5cf6", "#f59e0b", "#64748b"];
+
+interface TSRow { period: string; period_date: string; billed: number; collected: number; }
+
+function aggregateToQuarterly(rows: TSRow[]): TSRow[] {
+  const map = new Map<string, TSRow>();
+  for (const r of rows) {
+    const d   = new Date(r.period_date);
+    const q   = Math.ceil((d.getMonth() + 1) / 3);
+    const key = `Q${q} '${String(d.getFullYear()).slice(2)}`;
+    const ex  = map.get(key) ?? { period: key, period_date: r.period_date, billed: 0, collected: 0 };
+    map.set(key, { ...ex, billed: ex.billed + r.billed, collected: ex.collected + r.collected });
+  }
+  return Array.from(map.values());
+}
+
+const CustomTooltipStyle = {
+  contentStyle: { background: "#0A1628", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 },
+  labelStyle:   { color: "rgba(255,255,255,0.7)" },
+};
+
+function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
+  const { selectedSession } = useSessionView();
+  const [period, setPeriod] = useState<"monthly" | "quarterly" | "ytd">("monthly");
+
+  const { data: raw, isLoading, error } = useQuery<any>({
+    queryKey: ["/api/fees/analytics", viewSessionId],
+    queryFn: async () => {
+      const r = await sessionFetch("/api/fees/analytics");
+      if (!r.ok) throw new Error("Failed");
+      return r.json();
+    },
+    staleTime: 60_000,
+  });
+
+  // Time-series aggregation
+  const timeSeriesData = useMemo<TSRow[]>(() => {
+    if (!raw?.timeSeries) return [];
+    const rows: TSRow[] = (raw.timeSeries as any[]).map(r => ({
+      period: r.period, period_date: r.period_date,
+      billed: Number(r.billed), collected: Number(r.collected),
+    }));
+    if (period === "quarterly") return aggregateToQuarterly(rows);
+    if (period === "ytd") {
+      const now = new Date();
+      // Indian academic year starts April; fall back to Jan if before April
+      const ytdStart = new Date(now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1, 3, 1);
+      return rows.filter(r => new Date(r.period_date) >= ytdStart);
+    }
+    return rows.slice(-12); // monthly: last 12
+  }, [raw, period]);
+
+  // Payment channel grouping
+  const channelData = useMemo(() => {
+    if (!raw?.paymentChannels) return [];
+    const groups: Record<string, number> = {};
+    for (const ch of raw.paymentChannels as any[]) {
+      const m   = String(ch.payment_method ?? "Other");
+      const cat = ["Online", "Razorpay", "UPI", "Card", "NetBanking"].includes(m) ? "Online"
+                : m === "Cash" ? "Cash"
+                : ["Cheque", "DD", "Bank Transfer"].includes(m) ? "Cheque"
+                : m;
+      groups[cat] = (groups[cat] ?? 0) + Number(ch.amount);
+    }
+    return Object.entries(groups).filter(([, v]) => v > 0).map(([name, value]) => ({ name, value }));
+  }, [raw]);
+
+  // Aging with guaranteed 4 buckets
+  const agingData = useMemo(() => {
+    const map = Object.fromEntries(((raw?.aging ?? []) as any[]).map((a: any) => [a.bucket, a]));
+    return AGING_BUCKETS.map(b => ({
+      ...b,
+      count:  Number(map[b.key]?.count  ?? 0),
+      amount: Number(map[b.key]?.amount ?? 0),
+    }));
+  }, [raw]);
+
+  const totalAging = agingData.reduce((s, r) => s + r.amount, 0);
+  const feeCategories = ((raw?.feeCategories ?? []) as any[]).map(r => ({
+    fee_type: r.fee_type, billed: Number(r.billed), collected: Number(r.collected),
+  }));
+
+  if (isLoading) return (
+    <div className="flex items-center justify-center h-64">
+      <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
+    </div>
+  );
+  if (error) return (
+    <div className="rounded-xl border border-red-700/40 bg-red-900/10 p-6 text-center text-sm text-red-400">
+      Failed to load analytics data. Please refresh and try again.
+    </div>
+  );
+
+  const s = raw?.summary ?? {};
+
+  const execCards = [
+    { label: "Gross Billed Demand",      value: fmt(s.grossBilled ?? 0),        Icon: FileText,     ib: "border-white/10 bg-white/5",              ic: "text-white/50"    },
+    { label: "Net Collected Revenue",    value: fmt(s.netCollected ?? 0),       Icon: DollarSign,   ib: "border-[#D4AF37]/30 bg-[#D4AF37]/5",      ic: "text-[#D4AF37]"  },
+    { label: "Outstanding Deficit",      value: fmt(s.outstanding ?? 0),        Icon: TrendingDown, ib: "border-red-500/30 bg-red-500/5",           ic: "text-red-400"    },
+    { label: "Collection Efficiency",    value: `${s.collectionRate ?? 0}%`,    Icon: TrendingUp,   ib: "border-emerald-500/30 bg-emerald-500/5",   ic: "text-emerald-400"},
+    { label: "Discounts & Concessions",  value: fmt(s.totalDiscounts ?? 0),     Icon: Banknote,     ib: "border-purple-500/30 bg-purple-500/5",     ic: "text-purple-400" },
+    { label: "Late Penalties Collected", value: fmt(s.totalLatePenalties ?? 0), Icon: AlertTriangle,ib: "border-amber-500/30 bg-amber-500/5",       ic: "text-amber-400"  },
+  ];
+
+  return (
+    <div className="space-y-5">
+
+      {/* Session label */}
+      {selectedSession && (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-white/40">Showing data for</span>
+          <span className="px-2 py-0.5 rounded-full font-semibold bg-cyan-900/30 text-cyan-400 border border-cyan-700/30">
+            {selectedSession.sessionName}
+          </span>
+        </div>
+      )}
+
+      {/* ── Executive Summary Cards ──────────────────────────────────── */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+        {execCards.map(({ label, value, Icon, ib, ic }) => (
+          <div key={label} className={`rounded-xl border ${ib} p-4 flex items-center gap-3`}>
+            <div className={`p-2 rounded-lg bg-white/5 ${ic} flex-shrink-0`}><Icon className="w-5 h-5" /></div>
+            <div className="min-w-0">
+              <p className="text-white/50 text-xs mb-0.5 leading-tight">{label}</p>
+              <p className="text-white font-bold text-lg leading-none tabular-nums truncate">{value}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Revenue Collection Trend ─────────────────────────────────── */}
+      <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-white font-semibold text-sm">Revenue Collection Trend</h3>
+            <p className="text-white/40 text-xs">Billed demand vs collected revenue by period</p>
+          </div>
+          <div className="flex gap-0.5 p-0.5 bg-black/20 rounded-lg border border-white/10">
+            {(["monthly", "quarterly", "ytd"] as const).map(p => (
+              <button key={p} onClick={() => setPeriod(p)}
+                className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${period === p ? "bg-cyan-600 text-white" : "text-white/40 hover:text-white"}`}>
+                {p === "monthly" ? "Monthly" : p === "quarterly" ? "Quarterly" : "YTD"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {timeSeriesData.length === 0 ? (
+          <div className="h-48 flex items-center justify-center text-white/25 text-sm">
+            No collection data for this period
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={timeSeriesData} barGap={2} barCategoryGap="28%">
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+              <XAxis dataKey="period" tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tickFormatter={v => `₹${(v / 1000).toFixed(0)}k`}
+                tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 11 }} axisLine={false} tickLine={false} width={52} />
+              <Tooltip {...CustomTooltipStyle}
+                formatter={(v: number, name: string) => [fmt(v), name === "billed" ? "Billed" : "Collected"]} />
+              <Legend formatter={v => v === "billed" ? "Billed" : "Collected"}
+                wrapperStyle={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }} />
+              <Bar dataKey="billed"    name="billed"    fill="rgba(255,255,255,0.08)" radius={[4,4,0,0]} />
+              <Bar dataKey="collected" name="collected" fill="#06b6d4"                radius={[4,4,0,0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* ── Class-Wise Table + Payment Channel Pie ───────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+        {/* Class-Wise */}
+        <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5 space-y-3">
+          <h3 className="text-white font-semibold text-sm">Class-Wise Breakdown</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-white/10 text-white/40 uppercase tracking-widest text-[10px]">
+                  <th className="pb-2 text-left font-semibold">Class</th>
+                  <th className="pb-2 text-right font-semibold">Billed</th>
+                  <th className="pb-2 text-right font-semibold">Collected</th>
+                  <th className="pb-2 text-right font-semibold">Outstanding</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {((raw?.classWise ?? []) as any[]).map((row: any) => {
+                  const billed = Number(row.billed), collected = Number(row.collected), out = Number(row.outstanding);
+                  const pct = billed > 0 ? Math.round((collected / billed) * 100) : 0;
+                  return (
+                    <tr key={row.class} className="hover:bg-white/[0.03] transition-colors">
+                      <td className="py-2 text-white font-medium">
+                        Class {row.class}
+                        <span className="ml-1.5 text-[10px] text-white/30">{pct}%</span>
+                      </td>
+                      <td className="py-2 text-right text-white/50 tabular-nums">{fmt(billed)}</td>
+                      <td className="py-2 text-right text-emerald-400 tabular-nums font-semibold">{fmt(collected)}</td>
+                      <td className="py-2 text-right text-red-400 tabular-nums">{fmt(out)}</td>
+                    </tr>
+                  );
+                })}
+                {((raw?.classWise ?? []) as any[]).length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="py-10 text-center text-white/25">No class data available</td>
+                  </tr>
+                )}
+              </tbody>
+              {((raw?.classWise ?? []) as any[]).length > 0 && (
+                <tfoot className="border-t border-white/10">
+                  <tr className="text-xs font-bold">
+                    <td className="pt-2 text-white/60">Total</td>
+                    <td className="pt-2 text-right text-white/60 tabular-nums">
+                      {fmt((raw?.classWise as any[]).reduce((s: number, r: any) => s + Number(r.billed), 0))}
+                    </td>
+                    <td className="pt-2 text-right text-emerald-400 tabular-nums">
+                      {fmt((raw?.classWise as any[]).reduce((s: number, r: any) => s + Number(r.collected), 0))}
+                    </td>
+                    <td className="pt-2 text-right text-red-400 tabular-nums">
+                      {fmt((raw?.classWise as any[]).reduce((s: number, r: any) => s + Number(r.outstanding), 0))}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+
+        {/* Payment Channel Pie */}
+        <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5 space-y-3">
+          <h3 className="text-white font-semibold text-sm">Payment Channel Split</h3>
+          {channelData.length === 0 ? (
+            <div className="h-52 flex items-center justify-center text-white/25 text-sm">No payment data yet</div>
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={180}>
+                <PieChart>
+                  <Pie data={channelData} cx="50%" cy="50%" innerRadius={54} outerRadius={80}
+                    dataKey="value" paddingAngle={3} stroke="none">
+                    {channelData.map((_, i) => (
+                      <Cell key={i} fill={CHANNEL_COLORS[i % CHANNEL_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip {...CustomTooltipStyle} formatter={(v: number) => [fmt(v), "Amount"]} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="flex flex-wrap gap-3 justify-center">
+                {channelData.map((d, i) => {
+                  const total = channelData.reduce((s, c) => s + c.value, 0);
+                  const pct   = total > 0 ? Math.round((d.value / total) * 100) : 0;
+                  return (
+                    <div key={d.name} className="flex items-center gap-1.5 text-xs text-white/60">
+                      <div className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                        style={{ background: CHANNEL_COLORS[i % CHANNEL_COLORS.length] }} />
+                      <span>{d.name}</span>
+                      <span className="text-white/30">{pct}%</span>
+                      <span className="text-white/40 tabular-nums">{fmt(d.value)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── Fee Category Breakdown (horizontal bars) ─────────────────── */}
+      <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5 space-y-4">
+        <h3 className="text-white font-semibold text-sm">Fee Category Breakdown</h3>
+        {feeCategories.length === 0 ? (
+          <div className="h-40 flex items-center justify-center text-white/25 text-sm">No fee category data</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={Math.max(160, feeCategories.length * 44)}>
+            <BarChart data={feeCategories} layout="vertical" margin={{ left: 8, right: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
+              <XAxis type="number" tickFormatter={v => `₹${(v / 1000).toFixed(0)}k`}
+                tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="fee_type" width={110}
+                tick={{ fill: "rgba(255,255,255,0.6)", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <Tooltip {...CustomTooltipStyle}
+                formatter={(v: number, name: string) => [fmt(v), name === "billed" ? "Billed" : "Collected"]} />
+              <Legend formatter={v => v === "billed" ? "Billed" : "Collected"}
+                wrapperStyle={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }} />
+              <Bar dataKey="billed"    name="billed"    fill="rgba(255,255,255,0.08)" radius={[0,4,4,0]} />
+              <Bar dataKey="collected" name="collected" fill="#10b981"                radius={[0,4,4,0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* ── AR Aging Analysis ────────────────────────────────────────── */}
+      <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5 space-y-4">
+        <div>
+          <h3 className="text-white font-semibold text-sm">Accounts Receivable Aging</h3>
+          <p className="text-white/40 text-xs">Outstanding balance segmented by days overdue</p>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {agingData.map(bucket => (
+            <div key={bucket.key}
+              className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-2.5"
+              style={{ borderColor: `${bucket.color}30` }}>
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${bucket.dot}`} />
+                <span className="text-white/60 text-xs font-semibold leading-none">{bucket.label}</span>
+              </div>
+              <p className="text-white font-black text-xl tabular-nums leading-none">{fmt(bucket.amount)}</p>
+              <div className="flex items-center justify-between">
+                <span className="text-white/30 text-xs">{bucket.count} invoice{bucket.count !== 1 ? "s" : ""}</span>
+                {totalAging > 0 && (
+                  <span className="text-xs font-bold" style={{ color: bucket.color }}>
+                    {Math.round((bucket.amount / totalAging) * 100)}%
+                  </span>
+                )}
+              </div>
+              {totalAging > 0 && (
+                <div className="w-full bg-white/5 rounded-full h-1">
+                  <div className="h-1 rounded-full transition-all duration-500"
+                    style={{ width: `${Math.round((bucket.amount / totalAging) * 100)}%`, background: bucket.color }} />
+                </div>
+              )}
+              <span className="inline-block text-[10px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider"
+                style={{ color: bucket.color, background: `${bucket.color}22` }}>
+                {bucket.risk} Risk
+              </span>
+            </div>
+          ))}
+        </div>
+        {totalAging === 0 && (
+          <p className="text-center text-white/25 text-sm py-4">No overdue receivables — all current ✓</p>
+        )}
+      </div>
+
+    </div>
+  );
+}
+
+type Tab = "ledger" | "structures" | "reminders" | "external" | "audit" | "analytics";
 
 const TABS: { id: Tab; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "structures", label: "Fee Structures",        Icon: BookOpen      },
   { id: "ledger",     label: "Ledger & Transactions", Icon: Receipt       },
+  { id: "analytics",  label: "Financial Analytics",   Icon: BarChart2     },
   { id: "reminders",  label: "Reminders",             Icon: Bell          },
   { id: "external",   label: "External Portal",       Icon: ExternalLink  },
   { id: "audit",      label: "Audit Log",             Icon: Shield        },
@@ -3928,9 +4468,6 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
         ) : null}
       </div>
 
-      {/* Metric bar */}
-      <MetricBar viewSessionId={viewSessionId} />
-
       {/* Tab nav */}
       <div className="flex gap-1 p-1 bg-[#1A2942] rounded-xl border border-white/10 overflow-x-auto">
         {TABS.map(({ id, label, Icon }) => {
@@ -3948,6 +4485,7 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
       {/* Content */}
       {activeTab === "ledger"     && <LedgerTab canRecord={canRecord} isArchiveMode={isArchiveMode} students={students} viewSessionId={viewSessionId} />}
       {activeTab === "structures" && <StructuresTab isArchiveMode={isArchiveMode} />}
+      {activeTab === "analytics"  && <AnalyticsTab viewSessionId={viewSessionId} />}
       {activeTab === "reminders"  && <RemindersTab isArchiveMode={isArchiveMode} />}
       {activeTab === "external"   && <ExternalPortalTab isArchiveMode={isArchiveMode} />}
       {activeTab === "audit"      && <AuditTab />}

@@ -7,6 +7,7 @@ import { createServer } from "http";
 import { pool } from "./db";
 import { storage } from "./storage";
 import cron from "node-cron";
+import { recalculateLateFees } from "./late-fee-engine";
 import path from "path";
 import { storage } from "./storage";
 
@@ -581,6 +582,16 @@ app.use((req, res, next) => {
         }
       }
       log(`Overdue sweep complete: ${totalUpdated} record(s) updated across ${allSchools.length} school(s)`, "cron");
+
+      // After status sweep, recalculate stored late-fee amounts for every school
+      let lfTotal = 0;
+      for (const school of allSchools) {
+        try {
+          const n = await recalculateLateFees(school.id);
+          lfTotal += n;
+        } catch { /* non-critical per school */ }
+      }
+      if (lfTotal > 0) log(`Late fee recalc: ${lfTotal} invoice(s) updated`, "cron");
     } catch (err) {
       log(`Overdue sweep error: ${String(err)}`, "cron");
     }

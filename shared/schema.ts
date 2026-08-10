@@ -603,6 +603,7 @@ export const feeRecords = pgTable("fee_records", {
   status: varchar("status", { length: 20 }).notNull().default("Due"),
   receiptNumber: varchar("receipt_number", { length: 50 }),
   notes: text("notes"),
+  lateFeeAmount: integer("late_fee_amount").notNull().default(0),
   academicYear: varchar("academic_year", { length: 20 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
@@ -950,6 +951,16 @@ export type RemovedTeacherLog = typeof removedTeachersLog.$inferSelect;
 
 // ── Financial Hub tables ──────────────────────────────────────────────────────
 
+export interface LateFeeConfig {
+  enabled: boolean;
+  type: "NONE" | "FLAT" | "DAILY" | "TIERED";
+  grace_period_days: number;
+  flat_amount: number;
+  daily_rate: number;
+  max_cap: number;
+  tiered_slabs: Array<{ from_day: number; to_day: number; amount: number }>;
+}
+
 export const feeStructures = pgTable("fee_structures", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
@@ -968,6 +979,7 @@ export const feeStructures = pgTable("fee_structures", {
   lastInvoicesGeneratedAt: timestamp("last_invoices_generated_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
+  lateFeeConfig: jsonb("late_fee_config").$type<LateFeeConfig>().default({ enabled: false, type: "NONE", grace_period_days: 0, flat_amount: 0, daily_rate: 0, max_cap: 0, tiered_slabs: [] }),
 });
 export const insertFeeStructureSchema = createInsertSchema(feeStructures).omit({ id: true, createdAt: true });
 export type InsertFeeStructure = z.infer<typeof insertFeeStructureSchema>;
@@ -987,6 +999,7 @@ export const paymentRecords = pgTable("payment_records", {
   idempotencyKey: varchar("idempotency_key", { length: 64 }).unique(),
   recordedBy: integer("recorded_by").references(() => users.id, { onDelete: "set null" }),
   receiptNumber: varchar("receipt_number", { length: 20 }),
+  lateFeePaid: integer("late_fee_paid").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 export const insertPaymentRecordSchema = createInsertSchema(paymentRecords).omit({ id: true, createdAt: true });

@@ -47,6 +47,14 @@ interface FeeRecord {
   breakdown: BreakdownItem[];
 }
 
+interface FeesSummary {
+  previousArrears: number;
+  currentMonthCharges: number;
+  totalOutstanding: number;
+  totalPaid: number;
+  currentMonth: string; // "YYYY-MM"
+}
+
 interface NotificationHistoryEntry {
   id: number;
   feeRecordId: number | null;
@@ -160,6 +168,11 @@ export default function StudentFees() {
     enabled: !!student,
   });
 
+  const { data: feesSummary, refetch: refetchSummary } = useQuery<FeesSummary>({
+    queryKey: ["/api/student/fees/summary"],
+    enabled: !!student,
+  });
+
   const { data: portalInfo } = useQuery<PortalInfo>({
     queryKey: ["/api/student/fees/portal-info"],
     enabled: !!student,
@@ -208,7 +221,9 @@ export default function StudentFees() {
           handler: () => {
             setTimeout(() => {
               refetchFees();
+              refetchSummary();
               queryClient.invalidateQueries({ queryKey: ["/api/student/fees"] });
+              queryClient.invalidateQueries({ queryKey: ["/api/student/fees/summary"] });
             }, 2000);
             resolve();
           },
@@ -238,7 +253,9 @@ export default function StudentFees() {
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.message ?? "Simulation failed");
       await refetchFees();
+      refetchSummary();
       queryClient.invalidateQueries({ queryKey: ["/api/student/fees"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/student/fees/summary"] });
     } catch (err: any) {
       setPayError(err?.message ?? "Test payment failed");
     } finally {
@@ -267,7 +284,7 @@ export default function StudentFees() {
   }
 
   // ── Derived values ───────────────────────────────────────────────────────────
-  const totalDue    = feeRecords.filter(r => r.status !== "Paid").reduce((s, r) => s + r.amount, 0);
+  const totalDue    = feeRecords.filter(r => r.status !== "Paid").reduce((s, r) => s + r.amount + ((r as any).accrued_late_fee ?? 0), 0);
   const totalPaid   = feeRecords.filter(r => r.status === "Paid").reduce((s, r) => s + r.amount, 0);
   const overdueCount = feeRecords.filter(r => r.status === "Overdue").length;
   const paidRecords = feeRecords.filter(r => r.status === "Paid");
@@ -357,10 +374,42 @@ export default function StudentFees() {
               )}
             </div>
 
+            {/* Arrears breakdown — shows when there are both prior and current charges */}
+            {feesSummary && (feesSummary.previousArrears > 0 || feesSummary.currentMonthCharges > 0) && (
+              <div className="mb-4 rounded-2xl overflow-hidden"
+                style={{ border: "1px solid rgba(255,255,255,0.1)", background: "rgba(0,0,0,0.18)" }}>
+                <div className="grid grid-cols-2 divide-x"
+                  style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+                  <div className="p-3 text-center">
+                    <p className="text-[9px] font-bold uppercase tracking-widest mb-0.5"
+                      style={{ color: feesSummary.previousArrears > 0 ? "#fca5a5" : "rgba(255,255,255,0.4)" }}>
+                      Previous Arrears
+                    </p>
+                    <p className="font-extrabold text-sm"
+                      style={{ color: feesSummary.previousArrears > 0 ? "#f87171" : "rgba(255,255,255,0.3)",
+                        fontVariantNumeric: "tabular-nums" }}>
+                      {formatAmount(feesSummary.previousArrears)}
+                    </p>
+                  </div>
+                  <div className="p-3 text-center">
+                    <p className="text-[9px] font-bold uppercase tracking-widest mb-0.5"
+                      style={{ color: feesSummary.currentMonthCharges > 0 ? "#93c5fd" : "rgba(255,255,255,0.4)" }}>
+                      Current Month
+                    </p>
+                    <p className="font-extrabold text-sm"
+                      style={{ color: feesSummary.currentMonthCharges > 0 ? "#60a5fa" : "rgba(255,255,255,0.3)",
+                        fontVariantNumeric: "tabular-nums" }}>
+                      {formatAmount(feesSummary.currentMonthCharges)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Stats row */}
             <div className="grid grid-cols-3 gap-3">
               {[
-                { label: "Paid",    value: formatAmount(totalPaid), color: "#34d399", icon: <TrendingUp className="w-3.5 h-3.5" /> },
+                { label: "Paid",    value: formatAmount(feesSummary?.totalPaid ?? totalPaid), color: "#34d399", icon: <TrendingUp className="w-3.5 h-3.5" /> },
                 { label: "Records", value: feeRecords.length,       color: "#818cf8", icon: <Receipt className="w-3.5 h-3.5" /> },
                 { label: "Pending", value: pendingRecords.length,   color: "#fb923c", icon: <Clock className="w-3.5 h-3.5" /> },
               ].map((s) => (
@@ -533,11 +582,21 @@ export default function StudentFees() {
                               )}
                             </div>
                             <div className="flex flex-col items-end gap-3 flex-shrink-0">
-                              <p className="text-2xl font-black text-slate-800"
-                                style={{ fontVariantNumeric: "tabular-nums" }}
-                                data-testid={`text-fee-amount-${rec.id}`}>
-                                {formatAmount(rec.amount)}
-                              </p>
+                              <div className="text-right">
+                                <p className="text-2xl font-black text-slate-800"
+                                  style={{ fontVariantNumeric: "tabular-nums" }}
+                                  data-testid={`text-fee-amount-${rec.id}`}>
+                                  {(rec as any).accrued_late_fee > 0
+                                    ? formatAmount(rec.amount + (rec as any).accrued_late_fee)
+                                    : formatAmount(rec.amount)}
+                                </p>
+                                {(rec as any).accrued_late_fee > 0 && (
+                                  <div className="mt-0.5 space-y-px text-right">
+                                    <p className="text-xs text-slate-400 tabular-nums">Base {formatAmount(rec.amount)}</p>
+                                    <p className="text-xs font-bold text-amber-500 tabular-nums">+{formatAmount((rec as any).accrued_late_fee)} fine</p>
+                                  </div>
+                                )}
+                              </div>
                               {/* Real Razorpay Pay Now */}
                               {razorpayActive && (
                                 <button

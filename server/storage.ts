@@ -4889,12 +4889,38 @@ export class DatabaseStorage {
   async getFeeSummary(schoolId: number, sessionId?: number | null): Promise<{
     totalRevenue: number; outstanding: number; collectionRate: number; offlinePaymentsCount: number;
   }> {
-    const conditions: any[] = [eq(feeRecords.schoolId, schoolId)];
-    if (sessionId != null) conditions.push(eq(feeRecords.sessionId, sessionId));
-    const records = await db.select({ status: feeRecords.status, amount: feeRecords.amount })
-      .from(feeRecords).where(and(...conditions));
-    const totalRevenue = records.filter(r => r.status === "Paid").reduce((s, r) => s + r.amount, 0);
-    const outstanding = records.filter(r => r.status !== "Paid").reduce((s, r) => s + r.amount, 0);
+    // Total revenue = actual money received (sum of all payment_records), not invoice amounts.
+    // This correctly counts partial payments that haven't yet closed the full invoice.
+    const sessionJoin = sessionId != null
+      ? sql`AND (pr.session_id = ${sessionId} OR (pr.session_id IS NULL AND fr2.session_id = ${sessionId}))`
+      : sql``;
+    const revenueRow = await db.execute(sql`
+      SELECT COALESCE(SUM(pr.amount), 0)::int AS total_revenue
+      FROM payment_records pr
+      LEFT JOIN fee_records fr2 ON fr2.id = pr.fee_record_id
+      WHERE pr.school_id = ${schoolId}
+      ${sessionJoin}
+    `);
+    const totalRevenue = Number((revenueRow.rows[0] as any)?.total_revenue) || 0;
+
+    // Outstanding = net balance of all unpaid invoices (invoice amount minus any partial payments).
+    // Waived records are excluded; Paid records contribute zero.
+    const sessionCond = sessionId != null ? sql`AND fr.session_id = ${sessionId}` : sql``;
+    const outstandingRow = await db.execute(sql`
+      SELECT COALESCE(SUM(GREATEST(fr.amount - COALESCE(p.total_paid, 0), 0)), 0)::int AS outstanding
+      FROM fee_records fr
+      LEFT JOIN (
+        SELECT fee_record_id, SUM(amount)::int AS total_paid
+        FROM payment_records
+        WHERE school_id = ${schoolId} AND fee_record_id IS NOT NULL
+        GROUP BY fee_record_id
+      ) p ON p.fee_record_id = fr.id
+      WHERE fr.school_id = ${schoolId}
+        AND fr.status IN ('Due', 'Overdue', 'Partial')
+      ${sessionCond}
+    `);
+    const outstanding = Number((outstandingRow.rows[0] as any)?.outstanding) || 0;
+
     const total = totalRevenue + outstanding;
     const collectionRate = total > 0 ? Math.round((totalRevenue / total) * 100) : 0;
     let offlineCount: number;
