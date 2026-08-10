@@ -9,7 +9,6 @@ import { storage } from "./storage";
 import cron from "node-cron";
 import { recalculateLateFees } from "./late-fee-engine";
 import path from "path";
-import { storage } from "./storage";
 
 const app = express();
 const httpServer = createServer(app);
@@ -385,6 +384,13 @@ app.use((req, res, next) => {
     ALTER TABLE external_payment_settings ADD COLUMN IF NOT EXISTS max_overcollection_percent INTEGER NOT NULL DEFAULT 150;
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS payment_method VARCHAR(30);
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS reference_number VARCHAR(100);
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS late_fee_amount INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS late_fee_config JSONB;
+    ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS breakdown JSONB;
+    ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS auto_generate BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS auto_gen_due_day INTEGER;
+    ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS last_invoices_generated_at TIMESTAMP;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS late_fee_paid INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES academic_sessions(id) ON DELETE SET NULL;
     CREATE INDEX IF NOT EXISTS idx_payment_records_school_session ON payment_records(school_id, session_id);
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS receipt_number VARCHAR(20);

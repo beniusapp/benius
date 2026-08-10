@@ -2176,6 +2176,84 @@ export function registerFeesRoutes(app: Express) {
     }
   });
 
+  // ── GET /api/fees/analytics/aging-students ───────────────────────────────
+  // Returns student-level detail for a specific AR aging bucket.
+  // Query params: bucket = "1-30" | "31-60" | "61-90" | "90+"
+  app.get("/api/fees/analytics/aging-students", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const bucket = req.query.bucket as string;
+
+    const allowed = ["1-30", "31-60", "61-90", "90+"];
+    if (!bucket || !allowed.includes(bucket)) {
+      return res.status(400).json({ message: "bucket must be one of: 1-30, 31-60, 61-90, 90+" });
+    }
+
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionId = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const sfFR = sessionId ? sql` AND fr.session_id = ${sessionId}` : sql``;
+
+    let bucketCondition: ReturnType<typeof sql>;
+    if (bucket === "1-30")  bucketCondition = sql`CURRENT_DATE - fr.due_date::date BETWEEN 1 AND 30`;
+    else if (bucket === "31-60") bucketCondition = sql`CURRENT_DATE - fr.due_date::date BETWEEN 31 AND 60`;
+    else if (bucket === "61-90") bucketCondition = sql`CURRENT_DATE - fr.due_date::date BETWEEN 61 AND 90`;
+    else                         bucketCondition = sql`CURRENT_DATE - fr.due_date::date > 90`;
+
+    try {
+      const result = await db.execute(sql`
+        SELECT
+          fr.id                                                                          AS fee_record_id,
+          fr.student_id,
+          s.name                                                                         AS student_name,
+          s.class,
+          s.section,
+          fr.fee_type,
+          fr.due_date,
+          GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.paid, 0), 0)::int        AS amount,
+          (CURRENT_DATE - fr.due_date::date)::int                                       AS days_overdue
+        FROM fee_records fr
+        JOIN students s ON s.id = fr.student_id
+        LEFT JOIN (
+          SELECT fee_record_id, SUM(amount)::int AS paid
+          FROM payment_records
+          WHERE school_id = ${schoolId} AND fee_record_id IS NOT NULL
+          GROUP BY fee_record_id
+        ) p ON p.fee_record_id = fr.id
+        WHERE fr.school_id = ${schoolId}
+          AND fr.status IN ('Due', 'Overdue', 'Partial')
+          AND fr.due_date IS NOT NULL
+          AND ${bucketCondition}
+          ${sfFR}
+        ORDER BY amount DESC
+        LIMIT 200
+      `);
+      res.json(result.rows);
+    } catch (err: any) {
+      console.error("[fees/aging-students]", err);
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── POST /api/admin/fees/dunning-trigger ─────────────────────────────────
+  // Fires a dunning reminder for a single fee record (all enabled channels).
+  app.post("/api/admin/fees/dunning-trigger", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const { feeRecordId } = req.body as { feeRecordId: number };
+    if (!feeRecordId || isNaN(Number(feeRecordId))) {
+      return res.status(400).json({ message: "feeRecordId is required" });
+    }
+
+    try {
+      const { runDunningForSingleFee } = await import("./dunning");
+      const result = await runDunningForSingleFee(schoolId, Number(feeRecordId));
+      res.json(result);
+    } catch (err: any) {
+      console.error("[fees/dunning-trigger]", err);
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
   // ── Student: Notification History ─────────────────────────────────────────
   app.get("/api/student/fees/notification-history", async (req, res) => {
     if (!req.session?.studentId) return res.status(403).json({ message: "Student access required" });

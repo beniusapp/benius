@@ -273,6 +273,19 @@ function getStage(dueDateStr: string): Stage | null {
   return null;
 }
 
+/** Manual-trigger match — like simulation but always returns a non-null stage. Used for admin-triggered reminders. */
+function getStageForManualTrigger(dueDateStr: string): Stage {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = new Date(dueDateStr);
+  due.setHours(0, 0, 0, 0);
+  const days = Math.round((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
+  if (days <= 0)  return "D0";
+  if (days <= 10) return "D7";
+  if (days <= 22) return "D14";
+  return "D30";
+}
+
 /** Flexible match — assigns the nearest stage to ANY fee. Used only in simulation. */
 function getStageForSimulation(dueDateStr: string): Stage {
   const today = new Date();
@@ -483,6 +496,154 @@ export async function runDunningSimulation(schoolId: number, sessionId?: number 
 }
 
 // ─── Per-school real processing ───────────────────────────────────────────────
+
+// ─── Single-fee manual trigger ────────────────────────────────────────────────
+
+/**
+ * Fire a dunning reminder for one specific fee record.
+ * Called when an admin clicks "Send Reminder" from the aging defaulters drawer.
+ * Uses flexible stage matching (same as simulation) so it works for any overdue day.
+ * Always sends — does NOT skip if a matching (feeRecordId, channel, stage) was already sent.
+ */
+export async function runDunningForSingleFee(
+  schoolId: number,
+  feeRecordId: number,
+): Promise<{ sent: string[]; failed: string[]; skipped: string[] }> {
+  const sent: string[] = [];
+  const failed: string[] = [];
+  const skipped: string[] = [];
+
+  // Fetch fee record + student
+  const rows = await db
+    .select({
+      feeId: feeRecords.id,
+      schoolId: feeRecords.schoolId,
+      studentId: feeRecords.studentId,
+      studentName: students.name,
+      studentPhone: students.phone,
+      studentEmail: students.email,
+      guardianName: students.guardianName,
+      feeType: feeRecords.feeType,
+      amount: feeRecords.amount,
+      dueDate: feeRecords.dueDate,
+      status: feeRecords.status,
+    })
+    .from(feeRecords)
+    .innerJoin(students, eq(feeRecords.studentId, students.id))
+    .where(and(eq(feeRecords.id, feeRecordId), eq(feeRecords.schoolId, schoolId)))
+    .limit(1);
+
+  if (rows.length === 0) throw new Error("Fee record not found or does not belong to this school");
+
+  const row = rows[0];
+  if (row.status === "Paid" || row.status === "Waived") {
+    return { sent, failed, skipped: [`${row.status} — no reminder needed`] };
+  }
+
+  const cfg = await db.select().from(notificationConfig)
+    .where(eq(notificationConfig.schoolId, schoolId)).limit(1);
+  if (cfg.length === 0) {
+    return { sent, failed, skipped: ["No notification config configured for this school"] };
+  }
+
+  const c = cfg[0];
+  const channels: Channel[] = [];
+  if (c.smsEnabled)   channels.push("sms");
+  if (c.waEnabled)    channels.push("whatsapp");
+  if (c.emailEnabled) channels.push("email");
+
+  if (channels.length === 0) {
+    return { sent, failed, skipped: ["No notification channels are enabled"] };
+  }
+
+  let tmap: TemplateMap = { sms: {}, email: {} };
+  try { tmap = await loadTemplates(schoolId); } catch { /* use defaults */ }
+
+  const stage = getStageForManualTrigger(String(row.dueDate));
+
+  const fee: FeeForDunning = {
+    feeId: row.feeId,
+    schoolId: row.schoolId,
+    studentId: row.studentId,
+    studentName: row.studentName,
+    studentPhone: row.studentPhone ?? null,
+    studentEmail: row.studentEmail ?? null,
+    guardianName: row.guardianName ?? null,
+    feeType: row.feeType,
+    amount: row.amount,
+    dueDate: String(row.dueDate),
+    status: row.status,
+    stage,
+  };
+
+  for (const channel of channels) {
+    let status: "sent" | "failed" = "failed";
+    let errorMessage: string | undefined;
+    let recipient: string | undefined;
+
+    try {
+      if (channel === "sms") {
+        if (!c.msg91AuthKey || !c.msg91SenderId || !fee.studentPhone) {
+          errorMessage = "Missing SMS config or student phone";
+        } else {
+          recipient = fee.studentPhone;
+          await sendSms(c.msg91AuthKey, c.msg91SenderId, fee.studentPhone, getSmsText(tmap, stage, fee));
+          status = "sent";
+        }
+      } else if (channel === "whatsapp") {
+        if (!c.msg91AuthKey || !c.msg91WaNumber || !c.msg91WaTemplate || !fee.studentPhone) {
+          errorMessage = "Missing WhatsApp config or student phone";
+        } else {
+          recipient = fee.studentPhone;
+          await sendWhatsapp(c.msg91AuthKey, c.msg91WaNumber, c.msg91WaTemplate, fee.studentPhone, fee, stage);
+          status = "sent";
+        }
+      } else if (channel === "email") {
+        const provider = c.emailProvider ?? "sendgrid";
+        const apiKey = provider === "mailtrap" ? c.mailtrapApiKey : c.sendgridApiKey;
+        const fromEmail = provider === "mailtrap" ? "fees@school.local" : (c.sendgridFromEmail ?? "");
+        if (!apiKey || !fee.studentEmail) {
+          errorMessage = `Missing ${provider} API key or student email`;
+        } else {
+          recipient = fee.studentEmail;
+          await sendEmail(
+            provider,
+            apiKey, fromEmail, c.sendgridFromName || "School Admin",
+            fee.studentEmail, fee.guardianName || fee.studentName,
+            `${getEmailSubject(tmap, stage, fee)} — ${fee.studentName}`,
+            getEmailBody(tmap, stage, fee),
+            c.mailtrapInboxId,
+          );
+          status = "sent";
+        }
+      }
+    } catch (err) {
+      status = "failed";
+      errorMessage = String(err);
+    }
+
+    await db.insert(dunningLog).values({
+      schoolId,
+      feeRecordId: fee.feeId,
+      channel,
+      stage,
+      status: errorMessage && status === "failed" ? "failed" : status,
+      errorMessage: errorMessage ?? null,
+      recipient: recipient ?? null,
+      studentName: fee.studentName,
+    });
+
+    if (status === "sent") {
+      sent.push(channel);
+    } else if (errorMessage) {
+      skipped.push(`${channel}: ${errorMessage}`);
+    } else {
+      failed.push(channel);
+    }
+  }
+
+  return { sent, failed, skipped };
+}
 
 async function processDunningForSchool(
   cfg: typeof notificationConfig.$inferSelect,

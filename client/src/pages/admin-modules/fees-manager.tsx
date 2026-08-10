@@ -24,6 +24,7 @@ import { apiRequest, sessionFetch, queryClient } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 
 interface StudentItem {
   id: number;
@@ -4104,9 +4105,22 @@ const CustomTooltipStyle = {
   labelStyle:   { color: "rgba(255,255,255,0.7)" },
 };
 
+interface AgingStudent {
+  fee_record_id: number;
+  student_id: number;
+  student_name: string;
+  class: string;
+  section: string;
+  fee_type: string;
+  due_date: string;
+  amount: number;
+  days_overdue: number;
+}
+
 function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
   const { selectedSession } = useSessionView();
   const [period, setPeriod] = useState<"monthly" | "quarterly" | "ytd">("monthly");
+  const [selectedBucket, setSelectedBucket] = useState<(typeof AGING_BUCKETS)[number] | null>(null);
 
   const { data: raw, isLoading, error } = useQuery<any>({
     queryKey: ["/api/fees/analytics", viewSessionId],
@@ -4376,16 +4390,23 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
       <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5 space-y-4">
         <div>
           <h3 className="text-white font-semibold text-sm">Accounts Receivable Aging</h3>
-          <p className="text-white/40 text-xs">Outstanding balance segmented by days overdue</p>
+          <p className="text-white/40 text-xs">Outstanding balance by days overdue — click any bucket to see which students are responsible</p>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {agingData.map(bucket => (
-            <div key={bucket.key}
-              className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-2.5"
-              style={{ borderColor: `${bucket.color}30` }}>
+            <button
+              key={bucket.key}
+              onClick={() => bucket.count > 0 ? setSelectedBucket(bucket) : undefined}
+              disabled={bucket.count === 0}
+              className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-2.5 text-left transition-all duration-150 disabled:opacity-50 disabled:cursor-default enabled:cursor-pointer enabled:hover:bg-black/40 enabled:hover:scale-[1.02] group"
+              style={{ borderColor: `${bucket.color}30` }}
+            >
               <div className="flex items-center gap-2">
                 <div className={`w-2 h-2 rounded-full flex-shrink-0 ${bucket.dot}`} />
                 <span className="text-white/60 text-xs font-semibold leading-none">{bucket.label}</span>
+                {bucket.count > 0 && (
+                  <Users className="w-3 h-3 ml-auto text-white/20 group-hover:text-white/50 transition-colors" />
+                )}
               </div>
               <p className="text-white font-black text-xl tabular-nums leading-none">{fmt(bucket.amount)}</p>
               <div className="flex items-center justify-between">
@@ -4402,17 +4423,30 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
                     style={{ width: `${Math.round((bucket.amount / totalAging) * 100)}%`, background: bucket.color }} />
                 </div>
               )}
-              <span className="inline-block text-[10px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider"
-                style={{ color: bucket.color, background: `${bucket.color}22` }}>
-                {bucket.risk} Risk
-              </span>
-            </div>
+              <div className="flex items-center justify-between">
+                <span className="inline-block text-[10px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider"
+                  style={{ color: bucket.color, background: `${bucket.color}22` }}>
+                  {bucket.risk} Risk
+                </span>
+                {bucket.count > 0 && (
+                  <span className="text-[10px] text-white/30 group-hover:text-white/60 transition-colors font-medium">
+                    View →
+                  </span>
+                )}
+              </div>
+            </button>
           ))}
         </div>
         {totalAging === 0 && (
           <p className="text-center text-white/25 text-sm py-4">No overdue receivables — all current ✓</p>
         )}
       </div>
+
+      {/* ── Aging Defaulters Drawer ───────────────────────────────────── */}
+      <AgingDefaultersDrawer
+        bucket={selectedBucket}
+        onClose={() => setSelectedBucket(null)}
+      />
 
     </div>
   );
@@ -4638,5 +4672,160 @@ function NotificationHistoryModal({ open, onClose, studentId, studentName }: Not
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function AgingDefaultersDrawer({
+  bucket,
+  onClose,
+}: {
+  bucket: (typeof AGING_BUCKETS)[number] | null;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [sendingId, setSendingId] = useState<number | null>(null);
+
+  const { data: students = [], isLoading } = useQuery<AgingStudent[]>({
+    queryKey: ["/api/fees/analytics/aging-students", bucket?.key],
+    queryFn: async () => {
+      if (!bucket) return [];
+      const r = await sessionFetch(`/api/fees/analytics/aging-students?bucket=${encodeURIComponent(bucket.key)}`);
+      if (!r.ok) throw new Error("Failed to load defaulters");
+      return r.json();
+    },
+    enabled: !!bucket,
+    staleTime: 30_000,
+  });
+
+  async function sendReminder(student: AgingStudent) {
+    setSendingId(student.fee_record_id);
+    try {
+      const r = await sessionFetch("/api/admin/fees/dunning-trigger", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ feeRecordId: student.fee_record_id }),
+      });
+      const body = await r.json();
+      if (!r.ok) {
+        toast({ title: "Failed", description: body.message ?? "Could not send reminder", variant: "destructive" });
+        return;
+      }
+      const sentCount = (body.sent ?? []).length;
+      const skipped   = (body.skipped ?? []).length;
+      if (sentCount > 0) {
+        toast({ title: "Reminder sent", description: `Notified ${student.student_name} via ${(body.sent as string[]).join(", ")}` });
+      } else if (skipped > 0) {
+        toast({ title: "Reminder skipped", description: (body.skipped as string[])[0] ?? "No channels available", variant: "destructive" });
+      } else {
+        toast({ title: "Reminder failed", description: "Could not send on any channel", variant: "destructive" });
+      }
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSendingId(null);
+    }
+  }
+
+  return (
+    <Sheet open={!!bucket} onOpenChange={open => { if (!open) onClose(); }}>
+      <SheetContent
+        side="right"
+        className="w-full sm:max-w-xl bg-[#0A1628] border-l border-white/10 text-white overflow-y-auto p-0"
+      >
+        {bucket && (
+          <>
+            {/* Header */}
+            <SheetHeader className="px-5 pt-5 pb-4 border-b border-white/10">
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: bucket.color }} />
+                <SheetTitle className="text-white font-bold text-base leading-tight">
+                  {bucket.label} Defaulters
+                </SheetTitle>
+                <span
+                  className="ml-auto text-[10px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider"
+                  style={{ color: bucket.color, background: `${bucket.color}22` }}
+                >
+                  {bucket.risk} Risk
+                </span>
+              </div>
+              <p className="text-white/40 text-xs mt-1">
+                Overdue invoices sorted by outstanding amount — highest risk first
+              </p>
+            </SheetHeader>
+
+            {/* Body */}
+            <div className="px-5 py-4">
+              {isLoading ? (
+                <div className="flex items-center justify-center h-48">
+                  <Loader2 className="w-6 h-6 animate-spin text-cyan-400" />
+                </div>
+              ) : students.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-48 gap-3 text-white/25">
+                  <Users className="w-10 h-10" />
+                  <p className="text-sm">No defaulters in this bucket</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-white/40 text-xs mb-3">{students.length} student{students.length !== 1 ? "s" : ""} found</p>
+                  {students.map(s => (
+                    <div
+                      key={s.fee_record_id}
+                      className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-2.5"
+                      style={{ borderColor: `${bucket.color}20` }}
+                    >
+                      {/* Student info row */}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-white font-semibold text-sm leading-tight truncate">
+                            {s.student_name}
+                          </p>
+                          <p className="text-white/40 text-xs mt-0.5">
+                            Class {s.class}{s.section ? `–${s.section}` : ""}
+                          </p>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <p className="text-white font-black text-base tabular-nums leading-tight">
+                            {fmt(s.amount)}
+                          </p>
+                          <p className="text-[10px] mt-0.5 font-bold" style={{ color: bucket.color }}>
+                            {s.days_overdue}d overdue
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Fee detail row */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex flex-wrap gap-1.5">
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-white/5 text-white/50 border border-white/10">
+                            {s.fee_type}
+                          </span>
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-white/5 text-white/30 border border-white/10">
+                            Due {fmtDate(s.due_date)}
+                          </span>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={sendingId === s.fee_record_id}
+                          onClick={() => sendReminder(s)}
+                          className="h-7 px-2.5 text-xs font-semibold border-cyan-700/50 text-cyan-400 bg-cyan-900/20 hover:bg-cyan-900/40 hover:text-cyan-300 flex-shrink-0"
+                        >
+                          {sendingId === s.fee_record_id ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Bell className="w-3 h-3 mr-1" />
+                          )}
+                          {sendingId === s.fee_record_id ? "Sending…" : "Remind"}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }
