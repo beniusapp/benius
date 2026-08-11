@@ -4028,6 +4028,7 @@ export async function registerRoutes(
   async function appendFeeRecordAudit(
     req: any, schoolId: number, action: string, entityType: string,
     entityId: number | null, description: string,
+    studentId?: number | null,
   ) {
     try {
       const forwarded = req.headers["x-forwarded-for"] as string | undefined;
@@ -4040,7 +4041,7 @@ export async function registerRoutes(
       }
       await storage.appendFeeAuditLog({
         schoolId, actorId: req.session?.userId ?? null, actorName, ipAddress: ip,
-        action, entityType, entityId, description,
+        action, entityType, entityId, studentId: studentId ?? null, description,
       });
     } catch { /* non-critical */ }
   }
@@ -4051,7 +4052,7 @@ export async function registerRoutes(
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const parsed = feeRecordBodySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-    const [studentCheck] = await db.select({ id: students.id }).from(students)
+    const [studentCheck] = await db.select({ id: students.id, name: students.name, cls: students.class, section: students.section }).from(students)
       .where(and(eq(students.id, parsed.data.studentId), eq(students.schoolId, schoolId)));
     if (!studentCheck) return res.status(400).json({ message: "Student does not belong to this school" });
     const activeSession = await storage.getActiveSession(schoolId);
@@ -4080,8 +4081,12 @@ export async function registerRoutes(
       });
     }
 
+    const createStuLabel = studentCheck
+      ? `${studentCheck.name} (${studentCheck.cls ?? ""}${studentCheck.section ? "-" + studentCheck.section : ""})`
+      : `Student #${parsed.data.studentId}`;
     await appendFeeRecordAudit(req, schoolId, "create", "fee_record", rec.id,
-      `Added fee record #${rec.receiptNumber ?? rec.id}: ${parsed.data.feeType} ₹${parsed.data.amount} for student #${parsed.data.studentId} (${parsed.data.status})`);
+      `Added fee record #${rec.receiptNumber ?? rec.id}: ${parsed.data.feeType} ₹${parsed.data.amount} for ${createStuLabel} (${parsed.data.status})`,
+      parsed.data.studentId);
     res.status(201).json(rec);
   });
 
@@ -4116,7 +4121,8 @@ export async function registerRoutes(
       : `Student #${updated.studentId}`;
     const changedFields = Object.keys(parsed.data).join(", ");
     await appendFeeRecordAudit(req, schoolId, "update", "fee_record", id,
-      `Updated fee record: ${updStudentLabel} | ${updated.feeType} | ₹${Number(updated.amount).toLocaleString("en-IN")} — changed: ${changedFields}`);
+      `Updated fee record: ${updStudentLabel} | ${updated.feeType} | ₹${Number(updated.amount).toLocaleString("en-IN")} — changed: ${changedFields}`,
+      updated.studentId);
     res.json(updated);
   });
 
@@ -4137,7 +4143,7 @@ export async function registerRoutes(
 
     // Fetch record details BEFORE deleting so the audit log shows human-readable info
     const [feeDetail] = await db
-      .select({ feeType: feeRecords.feeType, amount: feeRecords.amount, studentName: students.name, studentClass: students.class, studentSection: students.section })
+      .select({ feeType: feeRecords.feeType, amount: feeRecords.amount, studentId: feeRecords.studentId, studentName: students.name, studentClass: students.class, studentSection: students.section })
       .from(feeRecords)
       .leftJoin(students, eq(students.id, feeRecords.studentId))
       .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)));
@@ -4148,7 +4154,7 @@ export async function registerRoutes(
     const humanDesc = feeDetail
       ? `Deleted fee record: ${feeDetail.studentName ?? "Unknown student"} (${feeDetail.studentClass ?? ""}${feeDetail.studentSection ? "-" + feeDetail.studentSection : ""}) | ${feeDetail.feeType} | ₹${Number(feeDetail.amount).toLocaleString("en-IN")} — password-confirmed`
       : `Deleted fee record #${id} — password-confirmed`;
-    await appendFeeRecordAudit(req, schoolId, "delete", "fee_record", id, humanDesc);
+    await appendFeeRecordAudit(req, schoolId, "delete", "fee_record", id, humanDesc, feeDetail?.studentId ?? null);
     res.json({ success: true });
   });
 

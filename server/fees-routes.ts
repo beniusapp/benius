@@ -31,6 +31,7 @@ export function registerFeesRoutes(app: Express) {
     entityType: string,
     entityId: number | null,
     description: string,
+    studentId?: number | null,
   ) {
     try {
       const forwarded = req.headers["x-forwarded-for"] as string | undefined;
@@ -50,6 +51,7 @@ export function registerFeesRoutes(app: Express) {
         action,
         entityType,
         entityId,
+        studentId: studentId ?? null,
         description,
       });
     } catch {/* non-critical */ }
@@ -634,7 +636,8 @@ export function registerFeesRoutes(app: Express) {
       const [fifoStu] = await db.select({ name: students.name }).from(students).where(eq(students.id, paymentData.studentId));
       const fifoStuLabel = fifoStu?.name ?? `Student #${paymentData.studentId}`;
       await appendAudit(req, schoolId, "fifo_payment", "payment_record", null,
-        `FIFO payment ₹${totalAllocated.toLocaleString("en-IN")} (${paymentData.paymentMethod}) allocated across ${results.length} invoice(s) for ${fifoStuLabel} — receipts: ${results.map(r => r.receiptNumber).join(", ")}`);
+        `FIFO payment ₹${totalAllocated.toLocaleString("en-IN")} (${paymentData.paymentMethod}) allocated across ${results.length} invoice(s) for ${fifoStuLabel} — receipts: ${results.map(r => r.receiptNumber).join(", ")}`,
+        paymentData.studentId);
 
       return res.status(201).json({ fifo: true, allocations: results, totalAllocated, unallocated: remaining });
     }
@@ -836,16 +839,24 @@ export function registerFeesRoutes(app: Express) {
       ? `${paymentStu.name} (${paymentStu.cls ?? ""}${paymentStu.section ? "-" + paymentStu.section : ""})`
       : `Student #${paymentOnly.studentId}`;
 
-    if (overpaymentBlock) {
+    // TypeScript cannot track mutations to `let` variables that happen inside
+    // async callbacks (the transaction lambda), so it infers `overpaymentBlock`
+    // as the literal type `null` after the await, making the if-body unreachable.
+    // Restore the declared union type with an explicit cast so the narrowing works.
+    type OverpaymentBlock = { message: string; invoiceAmount: number; totalAlreadyPaid: number; newAmount: number };
+    const overpaymentBlockSnap = overpaymentBlock as OverpaymentBlock | null;
+    if (overpaymentBlockSnap) {
       await appendAudit(
         req, schoolId, "blocked_payment", "payment_record", paymentOnly.feeRecordId ?? null,
-        `Blocked overpayment attempt: ₹${overpaymentBlock.newAmount.toLocaleString("en-IN")} for ${paymentStuLabel} — invoice ₹${overpaymentBlock.invoiceAmount.toLocaleString("en-IN")}, already paid ₹${overpaymentBlock.totalAlreadyPaid.toLocaleString("en-IN")}`,
+        `Blocked overpayment attempt: ₹${overpaymentBlockSnap.newAmount.toLocaleString("en-IN")} for ${paymentStuLabel} — invoice ₹${overpaymentBlockSnap.invoiceAmount.toLocaleString("en-IN")}, already paid ₹${overpaymentBlockSnap.totalAlreadyPaid.toLocaleString("en-IN")}`,
+        paymentOnly.studentId,
       );
-      return res.status(400).json({ ...overpaymentBlock, overpaymentGuard: true });
+      return res.status(400).json({ ...overpaymentBlockSnap, overpaymentGuard: true });
     }
 
     await appendAudit(req, schoolId, "payment", "payment_record", rec?.id ?? null,
-      `Recorded ${paymentOnly.paymentMethod} ₹${Number(paymentOnly.amount).toLocaleString("en-IN")} for ${paymentStuLabel} — receipt ${opReceipt}`);
+      `Recorded ${paymentOnly.paymentMethod} ₹${Number(paymentOnly.amount).toLocaleString("en-IN")} for ${paymentStuLabel} — receipt ${opReceipt}`,
+      paymentOnly.studentId);
     res.status(201).json(rec);
   });
 
@@ -1197,11 +1208,13 @@ export function registerFeesRoutes(app: Express) {
           idempotencyKey: `rzp_${payment.id}`,
         } as any);
 
-        // Audit log
+        // Audit log — use correct schema columns (actor_id, description, student_id)
         await db.execute(sql`
-          INSERT INTO fee_audit_log (school_id, action, entity_type, entity_id, changed_by, note, created_at)
+          INSERT INTO fee_audit_log (school_id, action, entity_type, entity_id, actor_id, student_id, description, created_at)
           VALUES (${schoolId}, 'payment', 'fee_record', ${feeRecordId}, NULL,
-            ${"Online payment via Razorpay — " + payment.id + " — receipt " + receiptNumber}, ${now.toISOString()})
+            ${Number(feeRec.student_id)},
+            ${"Online payment via Razorpay — " + payment.id + " — receipt " + receiptNumber},
+            ${now.toISOString()})
         `);
 
         // Broadcast real-time update → admin dashboard refreshes instantly
@@ -1333,12 +1346,13 @@ export function registerFeesRoutes(app: Express) {
 
   app.get("/api/admin/fees/audit-log", async (req, res) => {
     if (!adminGuard(req, res)) return;
-    const limit = Math.min(parseInt((req.query.limit as string) || "50", 10), 100);
+    const limit  = Math.min(parseInt((req.query.limit  as string) || "50", 10), 100);
     const offset = parseInt((req.query.offset as string) || "0", 10);
     const from   = (req.query.from   as string) || null;
     const to     = (req.query.to     as string) || null;
     const action = (req.query.action as string) || null;
-    const { entries, total } = await storage.getFeeAuditLog(req.session.schoolId!, limit, offset, from, to, action);
+    const search = (req.query.search as string) || null;
+    const { entries, total } = await storage.getFeeAuditLog(req.session.schoolId!, limit, offset, from, to, action, search);
     res.json({ entries, total, limit, offset });
   });
 

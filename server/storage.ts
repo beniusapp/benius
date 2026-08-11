@@ -4798,7 +4798,7 @@ export class DatabaseStorage {
   async appendFeeAuditLog(entry: {
     schoolId: number; actorId?: number | null; actorName?: string | null;
     ipAddress?: string | null; action: string; entityType?: string | null;
-    entityId?: number | null; description?: string | null;
+    entityId?: number | null; studentId?: number | null; description?: string | null;
   }): Promise<FeeAuditLog> {
     const [rec] = await db.insert(feeAuditLog).values(entry as any).returning();
     return rec;
@@ -4811,7 +4811,53 @@ export class DatabaseStorage {
     from?: string | null,
     to?: string | null,
     action?: string | null,
+    search?: string | null,
   ): Promise<{ entries: FeeAuditLog[]; total: number }> {
+    const searchTrimmed = search?.trim() || null;
+
+    if (searchTrimmed) {
+      // When a search term is present, LEFT JOIN students so we can match on the
+      // student's name (for entries with student_id set) as well as the description
+      // text (catches historical entries without a student_id, and non-student entries).
+      const searchPat = `%${searchTrimmed}%`;
+      const fromClause = from
+        ? sql`AND (fal.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date >= ${from}::date`
+        : sql``;
+      const toClause = to
+        ? sql`AND (fal.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date <= ${to}::date`
+        : sql``;
+      const actionClause = action ? sql`AND fal.action = ${action}` : sql``;
+
+      const countResult = await db.execute(sql`
+        SELECT COUNT(*)::int AS cnt
+        FROM fee_audit_log fal
+        LEFT JOIN students s ON s.id = fal.student_id AND s.school_id = ${schoolId}
+        WHERE fal.school_id = ${schoolId}
+          ${fromClause}
+          ${toClause}
+          ${actionClause}
+          AND (s.name ILIKE ${searchPat} OR fal.description ILIKE ${searchPat})
+      `);
+      const total = Number((countResult.rows[0] as any)?.cnt ?? 0);
+
+      const rowsResult = await db.execute(sql`
+        SELECT fal.*
+        FROM fee_audit_log fal
+        LEFT JOIN students s ON s.id = fal.student_id AND s.school_id = ${schoolId}
+        WHERE fal.school_id = ${schoolId}
+          ${fromClause}
+          ${toClause}
+          ${actionClause}
+          AND (s.name ILIKE ${searchPat} OR fal.description ILIKE ${searchPat})
+        ORDER BY fal.created_at DESC
+        LIMIT ${limit} OFFSET ${offset}
+      `);
+
+      const entries = rowsResult.rows as unknown as FeeAuditLog[];
+      return { entries, total };
+    }
+
+    // No search term — use the fast ORM path (no join needed)
     const conditions: SQL[] = [eq(feeAuditLog.schoolId, schoolId)];
     // Convert stored UTC timestamp to IST date inside PostgreSQL before comparing,
     // so the user's selected calendar date (which is an IST date) is matched correctly.

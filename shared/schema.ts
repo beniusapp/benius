@@ -1015,6 +1015,7 @@ export const feeAuditLog = pgTable("fee_audit_log", {
   action: varchar("action", { length: 50 }).notNull(),
   entityType: varchar("entity_type", { length: 50 }),
   entityId: integer("entity_id"),
+  studentId: integer("student_id").references(() => students.id, { onDelete: "set null" }),
   description: text("description"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

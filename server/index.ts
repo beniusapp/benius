@@ -368,6 +368,7 @@ app.use((req, res, next) => {
       action VARCHAR(50) NOT NULL,
       entity_type VARCHAR(50),
       entity_id INTEGER,
+      student_id INTEGER REFERENCES students(id) ON DELETE SET NULL,
       description TEXT,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
@@ -392,6 +393,7 @@ app.use((req, res, next) => {
     ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS last_invoices_generated_at TIMESTAMP;
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS late_fee_paid INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES academic_sessions(id) ON DELETE SET NULL;
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS student_id INTEGER REFERENCES students(id) ON DELETE SET NULL;
     CREATE INDEX IF NOT EXISTS idx_payment_records_school_session ON payment_records(school_id, session_id);
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS receipt_number VARCHAR(20);
     CREATE TABLE IF NOT EXISTS receipt_sequences (

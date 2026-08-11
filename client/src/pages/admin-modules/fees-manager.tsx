@@ -4229,23 +4229,26 @@ function AuditTab() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate]     = useState("");
   const [actionFilter, setActionFilter] = useState("");
+  const [searchTerm, setSearchTerm]     = useState("");
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
 
   // Reset to page 0 when filters change
   const handleFromDate     = (v: string) => { setFromDate(v); setPage(0); };
   const handleToDate       = (v: string) => { setToDate(v);   setPage(0); };
   const handleActionFilter = (v: string) => { setActionFilter(v); setPage(0); };
-  const clearFilters       = () => { setFromDate(""); setToDate(""); setActionFilter(""); setPage(0); };
+  const handleSearchTerm   = (v: string) => { setSearchTerm(v);   setPage(0); };
+  const clearFilters       = () => { setFromDate(""); setToDate(""); setActionFilter(""); setSearchTerm(""); setPage(0); };
 
-  const hasFilter = fromDate || toDate || actionFilter;
+  const hasFilter = fromDate || toDate || actionFilter || searchTerm;
 
   const { data, isLoading } = useQuery<{ entries: AuditLogEntry[]; total: number }>({
-    queryKey: ["/api/admin/fees/audit-log", page, fromDate, toDate, actionFilter],
+    queryKey: ["/api/admin/fees/audit-log", page, fromDate, toDate, actionFilter, searchTerm],
     queryFn: async () => {
       const params = new URLSearchParams({ limit: String(PAGE), offset: String(page * PAGE) });
       if (fromDate)     params.set("from",   fromDate);
       if (toDate)       params.set("to",     toDate);
       if (actionFilter) params.set("action", actionFilter);
+      if (searchTerm)   params.set("search", searchTerm);
       const r = await fetch(`/api/admin/fees/audit-log?${params}`, { credentials: "include" });
       if (!r.ok) throw new Error("Failed");
       return r.json();
@@ -4259,6 +4262,16 @@ function AuditTab() {
     <div className="space-y-4">
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex items-center">
+          <Search className="absolute left-2.5 w-3.5 h-3.5 text-white/30 pointer-events-none" />
+          <input
+            type="text"
+            placeholder="Search by student name…"
+            value={searchTerm}
+            onChange={e => handleSearchTerm(e.target.value)}
+            className="bg-white/5 border border-white/10 rounded-lg pl-8 pr-3 py-1.5 text-white text-xs placeholder:text-white/25 focus:outline-none focus:border-cyan-500/50 w-52"
+          />
+        </div>
         <div className="flex items-center gap-2">
           <label className="text-white/40 text-xs whitespace-nowrap">From</label>
           <input
