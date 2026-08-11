@@ -211,6 +211,13 @@ export default function StudentFees() {
       }
       const { orderId, amount, currency, keyId } = await resp.json();
       await new Promise<void>((resolve, reject) => {
+        const refreshFeesData = () => {
+          refetchFees();
+          refetchSummary();
+          queryClient.invalidateQueries({ queryKey: ["/api/student/fees"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/student/fees/summary"] });
+        };
+
         const options = {
           key: keyId, amount, currency,
           name: studentData.schoolName,
@@ -218,38 +225,37 @@ export default function StudentFees() {
           order_id: orderId,
           prefill: { name: studentData.name, contact: "", email: "" },
           theme: { color: "#6366f1" },
-          handler: () => {
-            // Poll every 1.5 s (up to 15 s) until the webhook has marked the
-            // fee as Paid and the receipt number is assigned, then refresh.
-            let attempts = 0;
-            const maxAttempts = 10; // 10 × 1.5 s = 15 s
-            const poll = () => {
-              attempts++;
-              fetch(`/api/student/fees`, { credentials: "include" })
-                .then(r => r.json())
-                .then((fees: any[]) => {
-                  const updated = fees.find((f: any) => f.id === rec.id);
-                  if (updated?.status === "Paid" || attempts >= maxAttempts) {
-                    refetchFees();
-                    refetchSummary();
-                    queryClient.invalidateQueries({ queryKey: ["/api/student/fees"] });
-                    queryClient.invalidateQueries({ queryKey: ["/api/student/fees/summary"] });
-                  } else {
-                    setTimeout(poll, 1500);
-                  }
-                })
-                .catch(() => {
-                  // On any error just do a plain refetch
-                  refetchFees();
-                  refetchSummary();
-                });
-            };
-            setTimeout(poll, 1500); // give webhook ~1.5 s head-start
+          handler: (response: any) => {
+            // Immediately verify via our endpoint — no 15 s polling wait.
+            // Falls back to a plain refetch if verify fails (webhook may have
+            // already run, making the fee Paid anyway).
+            fetch("/api/payments/verify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_order_id:   response.razorpay_order_id,
+                razorpay_signature:  response.razorpay_signature,
+                feeRecordId: rec.id,
+              }),
+            })
+              .then(r => r.json())
+              .catch(() => ({ ok: false }))
+              .finally(() => refreshFeesData());
             resolve();
           },
           modal: { ondismiss: () => reject(new Error("dismissed")) },
         };
+
         const rzp = new (window as any).Razorpay(options);
+
+        // Capture payment failures from the Razorpay SDK (card declined, etc.)
+        rzp.on("payment.failed", (response: any) => {
+          const desc = response?.error?.description ?? response?.error?.reason ?? "Payment failed";
+          reject(new Error(desc));
+        });
+
         rzp.open();
       });
     } catch (err: any) {

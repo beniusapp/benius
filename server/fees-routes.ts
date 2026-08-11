@@ -12,6 +12,24 @@ import { broadcastPaymentUpdate } from "./sse";
 
 export function registerFeesRoutes(app: Express) {
 
+  // ── Razorpay credential resolver ─────────────────────────────────────────────
+  // Reads DB settings first; falls back to process.env when DB fields are absent.
+  // Returns null when no credentials can be found anywhere.
+  async function resolveRazorpayCredentials(schoolId: number): Promise<{
+    keyId: string;
+    keySecret: string;
+    webhookSecret: string | null;
+    enabled: boolean;
+  } | null> {
+    const settings = await storage.getExternalPaymentSettings(schoolId);
+    const keyId      = settings?.razorpayKeyId      ?? process.env.RAZORPAY_KEY_ID      ?? null;
+    const keySecret  = settings?.razorpayKeySecret  ?? process.env.RAZORPAY_KEY_SECRET  ?? null;
+    const webhookSec = settings?.razorpayWebhookSecret ?? process.env.RAZORPAY_WEBHOOK_SECRET ?? null;
+    const enabled    = settings?.razorpayEnabled ?? (!!keyId && !!keySecret);
+    if (!keyId || !keySecret) return null;
+    return { keyId, keySecret, webhookSecret: webhookSec, enabled };
+  }
+
   function adminGuard(req: any, res: any): boolean {
     if (!req.session?.userId || req.session.userRole !== "admin") {
       res.status(403).json({ message: "Admin access required" });
@@ -1113,16 +1131,16 @@ export function registerFeesRoutes(app: Express) {
         ? (await storage.getStudentById(studentId))!.schoolId
         : adminSchoolId!;
 
-      const settings = await storage.getExternalPaymentSettings(schoolId);
-      if (!settings?.razorpayEnabled || !settings.razorpayKeyId || !settings.razorpayKeySecret)
+      const creds = await resolveRazorpayCredentials(schoolId);
+      if (!creds || !creds.enabled)
         return res.status(400).json({ message: "Razorpay is not configured for this school" });
 
       if (!["Due", "Overdue", "Partial"].includes(fee.status))
         return res.status(400).json({ message: "Fee is not payable (status: " + fee.status + ")" });
 
       const razorpay = new Razorpay({
-        key_id: settings.razorpayKeyId,
-        key_secret: settings.razorpayKeySecret,
+        key_id: creds.keyId,
+        key_secret: creds.keySecret,
       });
 
       const lateFeeForOrder = Number(fee.late_fee_amount ?? 0);
@@ -1134,7 +1152,7 @@ export function registerFeesRoutes(app: Express) {
         notes: { feeRecordId: String(feeRecordId), schoolId: String(schoolId) },
       });
 
-      res.json({ orderId: order.id, amount: amountPaise, currency: "INR", keyId: settings.razorpayKeyId });
+      res.json({ orderId: order.id, amount: amountPaise, currency: "INR", keyId: creds.keyId });
     } catch (err: any) {
       console.error("[razorpay create-order]", err);
       res.status(500).json({ message: err?.error?.description ?? String(err) });
@@ -1159,12 +1177,12 @@ export function registerFeesRoutes(app: Express) {
       const schoolId = notes.schoolId ? parseInt(notes.schoolId) : null;
       if (!schoolId) return res.status(400).json({ message: "schoolId missing from payment notes" });
 
-      const settings = await storage.getExternalPaymentSettings(schoolId);
-      if (!settings?.razorpayWebhookSecret)
+      const creds = await resolveRazorpayCredentials(schoolId);
+      if (!creds?.webhookSecret)
         return res.status(400).json({ message: "Webhook secret not configured" });
 
       // Verify HMAC
-      const expected = crypto.createHmac("sha256", settings.razorpayWebhookSecret).update(bodyStr).digest("hex");
+      const expected = crypto.createHmac("sha256", creds.webhookSecret).update(bodyStr).digest("hex");
       if (!crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex")))
         return res.status(400).json({ message: "Signature mismatch" });
 
@@ -1221,11 +1239,118 @@ export function registerFeesRoutes(app: Express) {
         broadcastPaymentUpdate(schoolId, { feeRecordId, receiptNumber });
 
         console.log(`[razorpay webhook] Paid fee #${feeRecordId} receipt ${receiptNumber}`);
+
+      } else if (event.event === "payment.failed") {
+        // Log failed payment attempts — does NOT change the fee status
+        const payment  = event.payload?.payment?.entity ?? {};
+        const feeRecordId = notes.feeRecordId ? parseInt(notes.feeRecordId) : null;
+        const errCode  = payment?.error_code        ?? "UNKNOWN";
+        const errDesc  = payment?.error_description ?? "No description";
+        const now = new Date();
+        await db.execute(sql`
+          INSERT INTO fee_audit_log (school_id, action, entity_type, entity_id, actor_id, student_id, description, created_at)
+          VALUES (
+            ${schoolId}, 'payment_failed', 'fee_record',
+            ${feeRecordId ?? null},
+            NULL,
+            ${notes.studentId ? parseInt(notes.studentId) : null},
+            ${"Razorpay payment failed — " + errCode + ": " + errDesc + (payment.id ? " (" + payment.id + ")" : "")},
+            ${now.toISOString()}
+          )
+        `);
+        console.log(`[razorpay webhook] Payment failed for fee #${feeRecordId}: ${errCode} — ${errDesc}`);
       }
 
       res.json({ ok: true });
     } catch (err: any) {
       console.error("[razorpay webhook]", err);
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── Razorpay: Client-side Verify ──────────────────────────────────────────
+  // Called by the student UI immediately after the Razorpay handler fires.
+  // Verifies the HMAC signature client-side and marks the fee Paid without
+  // waiting for the webhook — idempotent if the webhook already ran first.
+  app.post("/api/payments/verify", async (req, res) => {
+    const studentId   = req.session?.studentId;
+    const adminSchId  = req.session?.schoolId;
+    if (!studentId && !adminSchId) return res.status(403).json({ message: "Authentication required" });
+
+    const { razorpay_payment_id, razorpay_order_id, razorpay_signature, feeRecordId } = req.body;
+    if (!razorpay_payment_id || !razorpay_order_id || !razorpay_signature || !feeRecordId)
+      return res.status(400).json({ message: "razorpay_payment_id, razorpay_order_id, razorpay_signature, feeRecordId required" });
+
+    try {
+      const feeResult = await db.execute(sql`
+        SELECT fr.*, s.school_id FROM fee_records fr
+        JOIN students s ON s.id = fr.student_id
+        WHERE fr.id = ${feeRecordId}
+        LIMIT 1
+      `);
+      const feeRec = feeResult.rows[0] as any;
+      if (!feeRec) return res.status(404).json({ message: "Fee record not found" });
+
+      const schoolId: number = studentId
+        ? (await storage.getStudentById(studentId))!.schoolId
+        : adminSchId!;
+
+      // Scope check
+      if (studentId && Number(feeRec.student_id) !== studentId)
+        return res.status(403).json({ message: "Access denied" });
+
+      const creds = await resolveRazorpayCredentials(schoolId);
+      if (!creds?.keySecret) return res.status(400).json({ message: "Razorpay not configured" });
+
+      // Verify HMAC: SHA-256 of "order_id|payment_id"
+      const body = `${razorpay_order_id}|${razorpay_payment_id}`;
+      const expected = crypto.createHmac("sha256", creds.keySecret).update(body).digest("hex");
+      if (expected !== razorpay_signature)
+        return res.status(400).json({ message: "Signature verification failed" });
+
+      // Already Paid? Idempotent — return success immediately
+      if (feeRec.status === "Paid")
+        return res.json({ ok: true, idempotent: true, receiptNumber: feeRec.receipt_number });
+
+      // Mark Paid (same logic as webhook)
+      const receiptNumber = await storage.nextReceiptNumber(schoolId, "ON");
+      const now = new Date();
+      await db.execute(sql`
+        UPDATE fee_records
+        SET status = 'Paid', paid_date = ${now.toISOString()}, receipt_number = ${receiptNumber}
+        WHERE id = ${feeRecordId} AND school_id = ${schoolId}
+      `);
+
+      const activeSession = await storage.getActiveSession(schoolId);
+      await db.insert(paymentRecords).values({
+        schoolId,
+        sessionId: activeSession?.id ?? null,
+        feeRecordId,
+        studentId: Number(feeRec.student_id),
+        paymentMethod: "Online",
+        referenceNumber: razorpay_payment_id,
+        receivedDate: now.toISOString().slice(0, 10),
+        amount: Number(feeRec.amount),
+        cashierNotes: `Razorpay payment ID: ${razorpay_payment_id} (client-verified)`,
+        recordedBy: null,
+        receiptNumber,
+        idempotencyKey: `rzp_${razorpay_payment_id}`,
+      } as any);
+
+      await db.execute(sql`
+        INSERT INTO fee_audit_log (school_id, action, entity_type, entity_id, actor_id, student_id, description, created_at)
+        VALUES (${schoolId}, 'payment', 'fee_record', ${feeRecordId}, NULL,
+          ${Number(feeRec.student_id)},
+          ${"Online payment via Razorpay — " + razorpay_payment_id + " — receipt " + receiptNumber + " (client-verified)"},
+          ${now.toISOString()})
+      `);
+
+      broadcastPaymentUpdate(schoolId, { feeRecordId, receiptNumber });
+      console.log(`[razorpay verify] Paid fee #${feeRecordId} receipt ${receiptNumber}`);
+
+      res.json({ ok: true, receiptNumber });
+    } catch (err: any) {
+      console.error("[razorpay verify]", err);
       res.status(500).json({ message: String(err) });
     }
   });
@@ -2381,12 +2506,16 @@ export function registerFeesRoutes(app: Express) {
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(403).json({ message: "Student not found" });
     const settings = await storage.getExternalPaymentSettings(student.schoolId);
+    // Resolve credentials with env-var fallback so the Pay Now button appears
+    // even when only process.env.RAZORPAY_* vars are set (no DB config saved yet).
+    const creds = await resolveRazorpayCredentials(student.schoolId);
+    const razorpayEnabled = creds?.enabled ?? false;
     res.json({
       isEnabled: settings?.isEnabled ?? false,
       gatewayUrl: settings?.gatewayUrl ?? null,
       bannerMessage: settings?.bannerMessage ?? null,
-      razorpayEnabled: settings?.razorpayEnabled ?? false,
-      razorpayKeyId: settings?.razorpayEnabled ? (settings?.razorpayKeyId ?? null) : null,
+      razorpayEnabled,
+      razorpayKeyId: razorpayEnabled ? (creds?.keyId ?? null) : null,
     });
   });
 }
