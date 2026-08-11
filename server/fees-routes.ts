@@ -1244,17 +1244,28 @@ export function registerFeesRoutes(app: Express) {
         // Log failed payment attempts — does NOT change the fee status
         const payment  = event.payload?.payment?.entity ?? {};
         const feeRecordId = notes.feeRecordId ? parseInt(notes.feeRecordId) : null;
+        const studentIdFromNotes = notes.studentId ? parseInt(notes.studentId) : null;
         const errCode  = payment?.error_code        ?? "UNKNOWN";
         const errDesc  = payment?.error_description ?? "No description";
+
+        // Warn when notes are incomplete — audit row will have NULL entity/student
+        if (!feeRecordId) {
+          console.warn(`[razorpay webhook] payment.failed: feeRecordId missing from notes (payment ${payment.id ?? "unknown"}) — audit row will have NULL entity_id`);
+        }
+        if (!studentIdFromNotes) {
+          console.warn(`[razorpay webhook] payment.failed: studentId missing from notes (payment ${payment.id ?? "unknown"}) — audit row will have NULL student_id`);
+        }
+
         const now = new Date();
         await db.execute(sql`
-          INSERT INTO fee_audit_log (school_id, action, entity_type, entity_id, actor_id, student_id, description, created_at)
+          INSERT INTO fee_audit_log (school_id, action, entity_type, entity_id, actor_id, actor_name, student_id, description, created_at)
           VALUES (
             ${schoolId}, 'payment_failed', 'fee_record',
             ${feeRecordId ?? null},
             NULL,
-            ${notes.studentId ? parseInt(notes.studentId) : null},
-            ${"Razorpay payment failed — " + errCode + ": " + errDesc + (payment.id ? " (" + payment.id + ")" : "")},
+            'Razorpay Webhook',
+            ${studentIdFromNotes},
+            ${"Razorpay payment failed — " + errCode + ": " + errDesc + (payment.id ? " (" + payment.id + ")" : "") + (!feeRecordId || !studentIdFromNotes ? " [incomplete notes — student/fee could not be identified]" : "")},
             ${now.toISOString()}
           )
         `);

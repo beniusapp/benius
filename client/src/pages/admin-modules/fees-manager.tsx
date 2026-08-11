@@ -4357,7 +4357,7 @@ function AuditTab() {
                         className={`border-b transition-colors ${e.action === "payment_failed" ? "border-red-900/30" : "border-white/5"} ${hasDesc ? "cursor-pointer" : ""} ${isExpanded ? (e.action === "payment_failed" ? "bg-red-950/30" : "bg-white/5") : (e.action === "payment_failed" ? "bg-red-950/20 hover:bg-red-950/30" : "hover:bg-white/5")}`}
                       >
                         <td className="px-4 py-3 text-white/40 text-xs whitespace-nowrap">{fmtDateTime(e.createdAt)}</td>
-                        <td className="px-4 py-3 text-white/70 text-xs">{e.actorName ?? `#${e.actorId}`}</td>
+                        <td className="px-4 py-3 text-white/70 text-xs">{e.actorName ?? (e.actorId != null ? `#${e.actorId}` : "System")}</td>
                         <td className="px-4 py-3"><ActionBadge action={e.action} /></td>
                         <td className="px-4 py-3 text-white/60 text-xs max-w-xs truncate">{e.description ?? "—"}</td>
                         <td className="px-4 py-3 text-white/30 text-xs font-mono">{e.ipAddress ?? "—"}</td>
@@ -4375,7 +4375,7 @@ function AuditTab() {
                             <div className="flex flex-col gap-2">
                               <p className="text-white/80 text-xs leading-relaxed whitespace-pre-wrap break-words">{e.description}</p>
                               <div className="flex flex-wrap gap-4 mt-1 text-xs text-white/40">
-                                <span><span className="text-white/30">Actor: </span>{e.actorName ?? `#${e.actorId}`}</span>
+                                <span><span className="text-white/30">Actor: </span>{e.actorName ?? (e.actorId != null ? `#${e.actorId}` : "System")}</span>
                                 <span><span className="text-white/30">IP: </span>{e.ipAddress ?? "—"}</span>
                                 <span><span className="text-white/30">Time: </span>{fmtDateTime(e.createdAt)}</span>
                               </div>
