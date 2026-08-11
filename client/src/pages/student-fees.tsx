@@ -88,14 +88,46 @@ function formatDate(dateStr: string | null) {
   });
 }
 
+class RazorpayScriptError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RazorpayScriptError";
+  }
+}
+
 function loadRazorpayScript(): Promise<void> {
   return new Promise((resolve, reject) => {
     if ((window as any).Razorpay) { resolve(); return; }
+
+    const TIMEOUT_MS = 10_000;
+    let settled = false;
+
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new RazorpayScriptError("Razorpay script load timed out after 10 s"));
+    }, TIMEOUT_MS);
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      fn();
+    };
+
     const script = document.createElement("script");
     script.src = "https://checkout.razorpay.com/v1/checkout.js";
     script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Failed to load Razorpay checkout"));
+    script.onload = () =>
+      settle(() => {
+        if ((window as any).Razorpay) {
+          resolve();
+        } else {
+          reject(new RazorpayScriptError("Razorpay script loaded but SDK is unavailable"));
+        }
+      });
+    script.onerror = () =>
+      settle(() => reject(new RazorpayScriptError("Failed to load Razorpay checkout script")));
     document.head.appendChild(script);
   });
 }
@@ -259,7 +291,13 @@ export default function StudentFees() {
         rzp.open();
       });
     } catch (err: any) {
-      if (err?.message !== "dismissed") setPayError(err?.message ?? "Payment failed");
+      if (err?.message === "dismissed") {
+        // User closed the modal — no error shown
+      } else if (err instanceof RazorpayScriptError) {
+        setPayError("Payment service unavailable — please try again later");
+      } else {
+        setPayError(err?.message ?? "Payment failed");
+      }
     } finally {
       setPayingFeeId(null);
     }
