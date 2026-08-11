@@ -1361,6 +1361,40 @@ export function registerFeesRoutes(app: Express) {
 
       res.json({ ok: true, receiptNumber });
     } catch (err: any) {
+      // Unique-constraint violation on idempotency_key (PG code 23505) means the
+      // webhook inserted its payment_records row between the moment this handler
+      // read the fee as "Due" and the moment it tried to insert.
+      //
+      // By this point our UPDATE fee_records has already committed, stamping the
+      // fee with *our* receipt number instead of the webhook's canonical receipt.
+      // We must restore fee_records.receipt_number to the value in payment_records
+      // so the two tables stay consistent before returning success.
+      if (err?.code === "23505" && String(err?.constraint ?? err?.message ?? "").includes("idempotency_key")) {
+        try {
+          const winnerRows = (await db.execute(sql`
+            SELECT receipt_number FROM payment_records
+            WHERE idempotency_key = ${"rzp_" + razorpay_payment_id}
+            LIMIT 1
+          `)).rows;
+          const canonicalReceipt = (winnerRows[0] as any)?.receipt_number as string | undefined;
+          if (canonicalReceipt) {
+            // Restore the fee record to the webhook's canonical receipt number
+            await db.execute(sql`
+              UPDATE fee_records
+              SET receipt_number = ${canonicalReceipt}
+              WHERE id = ${feeRecordId}
+            `);
+            console.log(`[razorpay verify] idempotency conflict — restored canonical receipt ${canonicalReceipt} on fee #${feeRecordId}`);
+            return res.json({ ok: true, idempotent: true, receiptNumber: canonicalReceipt });
+          }
+        } catch (restoreErr) {
+          console.error("[razorpay verify] failed to restore canonical receipt after idempotency conflict", restoreErr);
+        }
+        // Fallback: webhook row vanished between the conflict and our lookup (extremely
+        // unlikely), but fee is Paid — still return success
+        console.log(`[razorpay verify] idempotency conflict — canonical receipt lookup missed, returning OK`);
+        return res.json({ ok: true, idempotent: true });
+      }
       console.error("[razorpay verify]", err);
       res.status(500).json({ message: String(err) });
     }
