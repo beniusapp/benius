@@ -218,6 +218,7 @@ function ActionBadge({ action }: { action: string }) {
     settings_change:  "bg-purple-900/40 text-purple-400 border-purple-700/40",
     waiver:           "bg-amber-900/40 text-amber-400 border-amber-700/40",
     blocked_payment:  "bg-orange-900/40 text-orange-400 border-orange-700/40",
+    payment_failed:   "bg-red-900/60 text-red-400 border-red-700/60",
   };
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-bold border ${map[action] ?? "bg-white/10 text-white/60 border-white/10"}`}>
@@ -4221,6 +4222,7 @@ const AUDIT_ACTION_OPTIONS = [
   { value: "waiver",         label: "waiver" },
   { value: "auto_invoice",   label: "auto_invoice" },
   { value: "blocked_payment",label: "blocked_payment" },
+  { value: "payment_failed", label: "payment_failed" },
   { value: "status_change",  label: "status_change" },
 ];
 function AuditTab() {
@@ -4352,7 +4354,7 @@ function AuditTab() {
                     <React.Fragment key={e.id}>
                       <tr
                         onClick={() => hasDesc && setExpandedRow(isExpanded ? null : e.id)}
-                        className={`border-b border-white/5 transition-colors ${hasDesc ? "cursor-pointer" : ""} ${isExpanded ? "bg-white/5" : "hover:bg-white/5"}`}
+                        className={`border-b transition-colors ${e.action === "payment_failed" ? "border-red-900/30" : "border-white/5"} ${hasDesc ? "cursor-pointer" : ""} ${isExpanded ? (e.action === "payment_failed" ? "bg-red-950/30" : "bg-white/5") : (e.action === "payment_failed" ? "bg-red-950/20 hover:bg-red-950/30" : "hover:bg-white/5")}`}
                       >
                         <td className="px-4 py-3 text-white/40 text-xs whitespace-nowrap">{fmtDateTime(e.createdAt)}</td>
                         <td className="px-4 py-3 text-white/70 text-xs">{e.actorName ?? `#${e.actorId}`}</td>
