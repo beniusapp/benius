@@ -631,8 +631,10 @@ export function registerFeesRoutes(app: Express) {
       });
 
       const totalAllocated = results.reduce((s, r) => s + r.amount, 0);
+      const [fifoStu] = await db.select({ name: students.name }).from(students).where(eq(students.id, paymentData.studentId));
+      const fifoStuLabel = fifoStu?.name ?? `Student #${paymentData.studentId}`;
       await appendAudit(req, schoolId, "fifo_payment", "payment_record", null,
-        `FIFO payment ₹${totalAllocated.toLocaleString("en-IN")} (${paymentData.paymentMethod}) allocated across ${results.length} invoice(s) for student #${paymentData.studentId} — receipts: ${results.map(r => r.receiptNumber).join(", ")}`);
+        `FIFO payment ₹${totalAllocated.toLocaleString("en-IN")} (${paymentData.paymentMethod}) allocated across ${results.length} invoice(s) for ${fifoStuLabel} — receipts: ${results.map(r => r.receiptNumber).join(", ")}`);
 
       return res.status(201).json({ fifo: true, allocations: results, totalAllocated, unallocated: remaining });
     }
@@ -827,16 +829,23 @@ export function registerFeesRoutes(app: Express) {
     });
     // ─────────────────────────────────────────────────────────────────────────
 
+    // Resolve student name once for all payment audit entries below
+    const [paymentStu] = await db.select({ name: students.name, cls: students.class, section: students.section })
+      .from(students).where(eq(students.id, paymentOnly.studentId));
+    const paymentStuLabel = paymentStu
+      ? `${paymentStu.name} (${paymentStu.cls ?? ""}${paymentStu.section ? "-" + paymentStu.section : ""})`
+      : `Student #${paymentOnly.studentId}`;
+
     if (overpaymentBlock) {
       await appendAudit(
         req, schoolId, "blocked_payment", "payment_record", paymentOnly.feeRecordId ?? null,
-        `Blocked overpayment attempt: ₹${overpaymentBlock.newAmount.toLocaleString("en-IN")} attempted for student #${paymentOnly.studentId} — invoice ₹${overpaymentBlock.invoiceAmount.toLocaleString("en-IN")}, already paid ₹${overpaymentBlock.totalAlreadyPaid.toLocaleString("en-IN")}, cumulative total would have been ₹${(overpaymentBlock.totalAlreadyPaid + overpaymentBlock.newAmount).toLocaleString("en-IN")}`,
+        `Blocked overpayment attempt: ₹${overpaymentBlock.newAmount.toLocaleString("en-IN")} for ${paymentStuLabel} — invoice ₹${overpaymentBlock.invoiceAmount.toLocaleString("en-IN")}, already paid ₹${overpaymentBlock.totalAlreadyPaid.toLocaleString("en-IN")}`,
       );
       return res.status(400).json({ ...overpaymentBlock, overpaymentGuard: true });
     }
 
     await appendAudit(req, schoolId, "payment", "payment_record", rec?.id ?? null,
-      `Recorded ${paymentOnly.paymentMethod} ₹${paymentOnly.amount} for student #${paymentOnly.studentId} — receipt ${opReceipt}. Note: gaps in the OP receipt sequence are expected and do not indicate missing payments (pre-transaction counter consumption guarantees uniqueness).`);
+      `Recorded ${paymentOnly.paymentMethod} ₹${Number(paymentOnly.amount).toLocaleString("en-IN")} for ${paymentStuLabel} — receipt ${opReceipt}`);
     res.status(201).json(rec);
   });
 

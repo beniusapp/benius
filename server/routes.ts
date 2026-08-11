@@ -4107,9 +4107,16 @@ export async function registerRoutes(
     }
     const updated = await storage.updateFeeRecord(id, schoolId, patchData);
     if (!updated) return res.status(404).json({ message: "Fee record not found" });
+
+    // Resolve student name for a human-readable audit entry
+    const [updStudentInfo] = await db.select({ name: students.name, cls: students.class, section: students.section })
+      .from(students).where(eq(students.id, updated.studentId));
+    const updStudentLabel = updStudentInfo
+      ? `${updStudentInfo.name} (${updStudentInfo.cls ?? ""}${updStudentInfo.section ? "-" + updStudentInfo.section : ""})`
+      : `Student #${updated.studentId}`;
     const changedFields = Object.keys(parsed.data).join(", ");
     await appendFeeRecordAudit(req, schoolId, "update", "fee_record", id,
-      `Updated fee record #${id}: changed ${changedFields}`);
+      `Updated fee record: ${updStudentLabel} | ${updated.feeType} | ₹${Number(updated.amount).toLocaleString("en-IN")} — changed: ${changedFields}`);
     res.json(updated);
   });
 
@@ -4128,10 +4135,20 @@ export async function registerRoutes(
     if (!passwordOk)
       return res.status(403).json({ message: "Incorrect password. Deletion cancelled." });
 
+    // Fetch record details BEFORE deleting so the audit log shows human-readable info
+    const [feeDetail] = await db
+      .select({ feeType: feeRecords.feeType, amount: feeRecords.amount, studentName: students.name, studentClass: students.class, studentSection: students.section })
+      .from(feeRecords)
+      .leftJoin(students, eq(students.id, feeRecords.studentId))
+      .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)));
+
     const deleted = await storage.deleteFeeRecord(id, schoolId);
     if (!deleted) return res.status(404).json({ message: "Fee record not found" });
-    await appendFeeRecordAudit(req, schoolId, "delete", "fee_record", id,
-      `Deleted fee record #${id} — password-confirmed`);
+
+    const humanDesc = feeDetail
+      ? `Deleted fee record: ${feeDetail.studentName ?? "Unknown student"} (${feeDetail.studentClass ?? ""}${feeDetail.studentSection ? "-" + feeDetail.studentSection : ""}) | ${feeDetail.feeType} | ₹${Number(feeDetail.amount).toLocaleString("en-IN")} — password-confirmed`
+      : `Deleted fee record #${id} — password-confirmed`;
+    await appendFeeRecordAudit(req, schoolId, "delete", "fee_record", id, humanDesc);
     res.json({ success: true });
   });
 
@@ -4152,6 +4169,16 @@ export async function registerRoutes(
     if (!passwordOk)
       return res.status(403).json({ message: "Incorrect password. Bulk deletion cancelled." });
 
+    // Fetch details for all records BEFORE deleting so audit log is human-readable
+    const numericIds = ids.map((r: any) => parseInt(String(r))).filter((n: number) => !isNaN(n));
+    const preDeleteDetails = numericIds.length > 0
+      ? await db
+          .select({ id: feeRecords.id, feeType: feeRecords.feeType, amount: feeRecords.amount, studentName: students.name })
+          .from(feeRecords)
+          .leftJoin(students, eq(students.id, feeRecords.studentId))
+          .where(and(eq(feeRecords.schoolId, schoolId), inArray(feeRecords.id, numericIds)))
+      : [];
+
     // Delete each record; respect school isolation
     try {
       let deleted = 0;
@@ -4162,9 +4189,14 @@ export async function registerRoutes(
         const ok = await storage.deleteFeeRecord(id, schoolId);
         if (ok) deleted++; else notFound++;
       }
-      // Audit the bulk deletion so it always appears in the fee audit log
+      // Build human-readable summary: "Ravi Kumar (Annual Fee ₹20,000), Priya (Monthly Fee ₹2,000)"
+      const summaryLines = preDeleteDetails
+        .slice(0, 10)
+        .map(r => `${r.studentName ?? "Unknown"} — ${r.feeType} ₹${Number(r.amount).toLocaleString("en-IN")}`)
+        .join("; ");
+      const extraNote = preDeleteDetails.length > 10 ? ` … and ${preDeleteDetails.length - 10} more` : "";
       await appendFeeRecordAudit(req, schoolId, "delete", "fee_record", null,
-        `Bulk-deleted ${deleted} fee record${deleted !== 1 ? "s" : ""} (IDs: ${ids.slice(0, 20).join(", ")}${ids.length > 20 ? "…" : ""}) — password-confirmed`);
+        `Bulk-deleted ${deleted} fee record${deleted !== 1 ? "s" : ""}: ${summaryLines}${extraNote} — password-confirmed`);
       res.json({ deleted, notFound });
     } catch (e: any) {
       console.error("[bulk-delete] error:", e);

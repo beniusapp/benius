@@ -4813,9 +4813,14 @@ export class DatabaseStorage {
     action?: string | null,
   ): Promise<{ entries: FeeAuditLog[]; total: number }> {
     const conditions: SQL[] = [eq(feeAuditLog.schoolId, schoolId)];
-    // Parse dates as IST (UTC+5:30) day boundaries so filtering is accurate for Indian users
-    if (from) conditions.push(gte(feeAuditLog.createdAt, new Date(from + "T00:00:00+05:30")));
-    if (to)   conditions.push(lte(feeAuditLog.createdAt, new Date(to   + "T23:59:59+05:30")));
+    // Convert stored UTC timestamp to IST date inside PostgreSQL before comparing,
+    // so the user's selected calendar date (which is an IST date) is matched correctly.
+    if (from) conditions.push(
+      sql`(${feeAuditLog.createdAt} AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date >= ${from}::date`
+    );
+    if (to) conditions.push(
+      sql`(${feeAuditLog.createdAt} AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date <= ${to}::date`
+    );
     if (action) conditions.push(eq(feeAuditLog.action, action));
     const where = conditions.length === 1 ? conditions[0] : and(...conditions);
     const [{ cnt }] = await db.select({ cnt: count() }).from(feeAuditLog).where(where);
