@@ -97,6 +97,32 @@ class RazorpayScriptError extends Error {
   }
 }
 
+class RazorpayOrderExpiredError extends Error {
+  constructor() {
+    super("order_expired");
+    this.name = "RazorpayOrderExpiredError";
+  }
+}
+
+/** Returns true when the Razorpay payment.failed response indicates the order
+ *  window has closed (15-minute expiry).  Razorpay does not publish a single
+ *  canonical error code for this case, so we match on the most reliable
+ *  signals: the `reason` field and key phrases in the `description`. */
+function isOrderExpiredError(error: any): boolean {
+  if (!error) return false;
+  const reason = (error.reason ?? "").toLowerCase();
+  const desc   = (error.description ?? "").toLowerCase();
+  return (
+    reason === "order_expired" ||
+    reason === "expired_order" ||
+    desc.includes("order has expired") ||
+    desc.includes("order expired") ||
+    desc.includes("payment session expired") ||
+    desc.includes("session has expired") ||
+    desc.includes("session expired")
+  );
+}
+
 function loadRazorpayScript(): Promise<void> {
   return new Promise((resolve, reject) => {
     if ((window as any).Razorpay) { resolve(); return; }
@@ -303,6 +329,21 @@ export default function StudentFees() {
           queryClient.invalidateQueries({ queryKey: ["/api/student/fees/summary"] });
         };
 
+        // ── Checkout-timeout tracking ────────────────────────────────────────
+        // Razorpay fires `ondismiss` for both voluntary closes (user clicks ✕)
+        // and automatic closes when the configured `timeout` elapses — there is
+        // no separate callback for the two cases.  We use a parallel timer that
+        // fires 500 ms before Razorpay's own timeout to set a flag; when
+        // ondismiss then fires, the flag tells us which path triggered it.
+        const CHECKOUT_TIMEOUT_S  = 600;
+        let   timedOut            = false;
+        let   timeoutHandle: ReturnType<typeof setTimeout> | null =
+          setTimeout(() => { timedOut = true; }, (CHECKOUT_TIMEOUT_S - 1) * 1_000);
+
+        const clearCheckoutTimer = () => {
+          if (timeoutHandle !== null) { clearTimeout(timeoutHandle); timeoutHandle = null; }
+        };
+
         const options = {
           key: keyId, amount, currency,
           name: studentData.schoolName,
@@ -311,6 +352,8 @@ export default function StudentFees() {
           prefill: { name: studentData.name, contact: "", email: "" },
           theme: { color: "#6366f1" },
           handler: (response: any) => {
+            // Payment succeeded — cancel the expiry tracker.
+            clearCheckoutTimer();
             // Immediately verify via our endpoint — no 15 s polling wait.
             // Falls back to a plain refetch if verify fails (webhook may have
             // already run, making the fee Paid anyway).
@@ -331,20 +374,39 @@ export default function StudentFees() {
             resolve();
           },
           // Auto-close the checkout after 10 minutes.  Razorpay fires ondismiss
-          // when the timeout elapses, which rejects the promise and clears
-          // payingFeeId via the finally block below.  This handles the
-          // in-session case where the student opened the modal, switched away
-          // within the SPA, and the component is still mounted in the background.
-          timeout: 600,
-          modal: { ondismiss: () => reject(new Error("dismissed")) },
+          // when the timeout elapses OR when the user closes the modal manually.
+          // The `timedOut` flag above distinguishes the two cases so we can show
+          // a helpful message on timeout while staying silent on voluntary close.
+          timeout: CHECKOUT_TIMEOUT_S,
+          modal: {
+            ondismiss: () => {
+              clearCheckoutTimer();
+              if (timedOut) {
+                // The checkout window closed because the timeout elapsed — the
+                // student likely stepped away.  Show a friendly "try again" prompt.
+                reject(new RazorpayOrderExpiredError());
+              } else {
+                // Voluntary close by the student — no error message needed.
+                reject(new Error("dismissed"));
+              }
+            },
+          },
         };
 
         const rzp = new (window as any).Razorpay(options);
 
-        // Capture payment failures from the Razorpay SDK (card declined, etc.)
+        // Capture payment failures reported by the Razorpay SDK (card declined,
+        // gateway-side order expiry, etc.)
         rzp.on("payment.failed", (response: any) => {
-          const desc = response?.error?.description ?? response?.error?.reason ?? "Payment failed";
-          reject(new Error(desc));
+          clearCheckoutTimer();
+          if (isOrderExpiredError(response?.error)) {
+            // Gateway rejected the payment because the order window had already
+            // elapsed (e.g. student left the tab open overnight then returned).
+            reject(new RazorpayOrderExpiredError());
+          } else {
+            const desc = response?.error?.description ?? response?.error?.reason ?? "Payment failed";
+            reject(new Error(desc));
+          }
         });
 
         rzp.open();
@@ -358,6 +420,10 @@ export default function StudentFees() {
         // state on a dead component.
         paymentAbortRef.current = null;
         return;
+      } else if (err instanceof RazorpayOrderExpiredError) {
+        // The 10-minute checkout window elapsed (or the gateway rejected the
+        // order as expired) before the student completed payment.
+        if (isMountedRef.current) setPayError("Your payment session expired — please try again");
       } else if (err instanceof RazorpayScriptError) {
         if (isMountedRef.current) setPayError("Payment service unavailable — please try again later");
       } else {
