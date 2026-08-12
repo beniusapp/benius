@@ -45,6 +45,8 @@ interface FeeRecord {
   academicYear: string | null;
   createdAt: string;
   breakdown: BreakdownItem[];
+  failed_count?: number;
+  last_failed_error?: string | null;
 }
 
 interface FeesSummary {
@@ -716,6 +718,30 @@ export default function StudentFees() {
                               )}
                             </div>
                           </div>
+
+                          {/* Failed payment warning — shown when ≥1 attempt failed and fee still unpaid */}
+                          {(rec.failed_count ?? 0) > 0 && (
+                            <div className="mt-3 flex items-start gap-2.5 rounded-2xl px-3.5 py-3"
+                              style={{ background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.22)" }}
+                              data-testid={`banner-payment-failed-${rec.id}`}>
+                              <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-bold text-red-600 leading-snug">
+                                  Your last payment attempt failed — please try again
+                                </p>
+                                {rec.last_failed_error && (
+                                  <p className="text-[11px] text-red-400 mt-0.5 leading-snug truncate"
+                                    data-testid={`text-failed-reason-${rec.id}`}>
+                                    {rec.last_failed_error}
+                                  </p>
+                                )}
+                              </div>
+                              <span className="text-[10px] font-black px-2 py-0.5 rounded-xl flex-shrink-0 self-center"
+                                style={{ background: "rgba(239,68,68,0.15)", color: "#dc2626" }}>
+                                {rec.failed_count}×
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </motion.div>
                     ))}

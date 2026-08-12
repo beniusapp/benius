@@ -4241,12 +4241,37 @@ export async function registerRoutes(
       if (!ftToConfig.has(key)) ftToConfig.set(key, (s as any).lateFeeConfig ?? null);
     }
 
+    // Fetch payment_failed audit entries for this student's fee records so we
+    // can surface a "last attempt failed" warning on each card.
+    const feeIds = records.map(r => r.id);
+    const failedMap = new Map<number, { count: number; lastError: string | null }>();
+    if (feeIds.length > 0) {
+      const failedRows = await db.execute(sql`
+        SELECT
+          entity_id::int                                                          AS "feeRecordId",
+          COUNT(id)::int                                                          AS count,
+          (ARRAY_AGG(description ORDER BY created_at DESC))[1]                   AS "lastError"
+        FROM fee_audit_log
+        WHERE school_id   = ${student.schoolId}
+          AND student_id  = ${req.session.studentId!}
+          AND action      = 'payment_failed'
+          AND entity_type = 'fee_record'
+          AND entity_id  IS NOT NULL
+          AND entity_id::int = ANY(${sql.raw(`ARRAY[${feeIds.join(",")}]::int[]`)})
+        GROUP BY entity_id
+      `);
+      for (const row of failedRows.rows as Array<{ feeRecordId: number; count: number; lastError: string | null }>) {
+        failedMap.set(row.feeRecordId, { count: row.count, lastError: row.lastError ?? null });
+      }
+    }
+
     const now = new Date();
     const enriched = records.map(r => {
       const cfg = ftToConfig.get(r.feeType.trim().toLowerCase());
       const accrued_late_fee = cfg?.enabled
         ? calculateLateFee(cfg, r.dueDate, r.status, now)
         : ((r as any).lateFeeAmount ?? 0);
+      const failedInfo = failedMap.get(r.id);
       return {
         ...r,
         feeName:           ftToName.get(r.feeType.trim().toLowerCase()) ?? r.feeType,
@@ -4254,6 +4279,8 @@ export async function registerRoutes(
         base_amount:       r.amount,
         accrued_late_fee,
         total_due:         r.amount + accrued_late_fee,
+        failed_count:      failedInfo?.count ?? 0,
+        last_failed_error: failedInfo?.lastError ?? null,
       };
     });
 
