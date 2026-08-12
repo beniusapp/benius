@@ -572,7 +572,243 @@ describe("Fee card shows correct Paid/Due status from server data", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test suite C: shared SSE connection — payment-update path
+// Test suite C: expiry-banner lifecycle — banner appears on payment.failed with
+// expiry reason, Pay Now re-enables, banner clears on successful retry.
+//
+// The test uses a two-phase MockRazorpay:
+//   • First instantiation  → open() fires payment.failed with order_expired
+//   • Second instantiation → open() fires the success handler
+//
+// This directly exercises:
+//   • payment.failed → RazorpayOrderExpiredError → setPayError()
+//   • handlePayNow start → setPayError(null) (banner cleared before new modal)
+//   • successful handler → verify → refreshFeesData
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("StudentFees — expiry banner clears on successful payment retry", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  // Counts Razorpay instantiations so the mock knows which phase it is in.
+  let rzpInstanceCount: number;
+
+  beforeEach(() => {
+    rzpInstanceCount = 0;
+
+    /**
+     * Two-phase Razorpay mock.
+     *
+     * Phase 1 (first `new Razorpay()`):
+     *   open() fires the `payment.failed` callback with an order_expired error,
+     *   causing handlePayNow to catch RazorpayOrderExpiredError and call
+     *   setPayError("Your payment session expired — please try again").
+     *
+     * Phase 2 (second `new Razorpay()`):
+     *   open() immediately fires the success handler, simulating a successful
+     *   second attempt.
+     */
+    class TwoPhaseRazorpay {
+      private _opts: any;
+      private _failedCb: ((response: any) => void) | null = null;
+      private _phase: number;
+
+      constructor(opts: any) {
+        this._opts = opts;
+        rzpInstanceCount += 1;
+        this._phase = rzpInstanceCount;
+      }
+
+      on(event: string, cb: (response: any) => void) {
+        if (event === "payment.failed") {
+          this._failedCb = cb;
+        }
+      }
+
+      open() {
+        if (this._phase === 1) {
+          // Fire payment.failed with an expiry reason — matches isOrderExpiredError().
+          this._failedCb?.({
+            error: {
+              reason: "order_expired",
+              description: "Order has expired",
+              code: "BAD_REQUEST_ERROR",
+            },
+          });
+        } else {
+          // Second attempt succeeds.
+          this._opts.handler({
+            razorpay_payment_id: "pay_retry_001",
+            razorpay_order_id:   "order_retry_001",
+            razorpay_signature:  "sig_retry_001",
+          });
+        }
+      }
+    }
+
+    (window as any).Razorpay = TwoPhaseRazorpay;
+
+    let feesPayload: object[] = [FEE_DUE];
+
+    fetchSpy = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/student/fees/portal-info") return makeOkJson(PORTAL_RAZORPAY_ON);
+      if (url === "/api/student/fees")             return makeOkJson(feesPayload);
+      if (url === "/api/student/fees/summary")     return makeOkJson(SUMMARY);
+      if (url === "/api/payments/create-order") {
+        return makeOkJson({
+          orderId:  "order_retry_001",
+          amount:   1000000,
+          currency: "INR",
+          keyId:    "rzp_test_key123",
+        });
+      }
+      if (url === "/api/payments/verify") {
+        // After successful retry the fee is paid.
+        feesPayload = [FEE_PAID];
+        return makeOkJson({ ok: true, receiptNumber: "RCP-RETRY-001" });
+      }
+      console.warn("[fetch mock] unexpected call:", url);
+      return Promise.resolve(new Response(null, { status: 404 }));
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    delete (window as any).Razorpay;
+  });
+
+  it("expiry banner appears with the correct text after payment.failed with order_expired", async () => {
+    const qc = buildQueryClient([FEE_DUE]);
+
+    render(
+      <Wrapper queryClient={qc}>
+        <StudentFees />
+      </Wrapper>,
+    );
+
+    // Trigger the first (failing) payment attempt.
+    const payBtn = await screen.findByTestId(`button-pay-now-${FEE_DUE.id}`);
+    await act(async () => { payBtn.click(); });
+
+    // The expiry banner must appear with the exact text the component renders.
+    await waitFor(() =>
+      expect(
+        screen.getByText("Your payment session expired — please try again"),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("Pay Now button is re-enabled after the expiry error (payingFeeId cleared in finally)", async () => {
+    const qc = buildQueryClient([FEE_DUE]);
+
+    render(
+      <Wrapper queryClient={qc}>
+        <StudentFees />
+      </Wrapper>,
+    );
+
+    const payBtn = await screen.findByTestId(`button-pay-now-${FEE_DUE.id}`);
+    await act(async () => { payBtn.click(); });
+
+    // Wait for the expiry banner to confirm the first attempt has settled.
+    await waitFor(() =>
+      expect(
+        screen.getByText("Your payment session expired — please try again"),
+      ).toBeInTheDocument(),
+    );
+
+    // The button must no longer be disabled — the finally block cleared payingFeeId.
+    const btn = screen.getByTestId(`button-pay-now-${FEE_DUE.id}`);
+    expect(btn).not.toBeDisabled();
+  });
+
+  it("expiry banner disappears as soon as the student clicks Pay Now for the retry", async () => {
+    const qc = buildQueryClient([FEE_DUE]);
+
+    render(
+      <Wrapper queryClient={qc}>
+        <StudentFees />
+      </Wrapper>,
+    );
+
+    // ── First attempt: fails with expiry ──────────────────────────────────────
+    const payBtn = await screen.findByTestId(`button-pay-now-${FEE_DUE.id}`);
+    await act(async () => { payBtn.click(); });
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Your payment session expired — please try again"),
+      ).toBeInTheDocument(),
+    );
+
+    // ── Second attempt: succeeds ──────────────────────────────────────────────
+    // handlePayNow calls setPayError(null) at the very start — before the new
+    // Razorpay modal opens — so the banner must be gone by the time the
+    // component re-renders after the click.
+    const retryBtn = screen.getByTestId(`button-pay-now-${FEE_DUE.id}`);
+    await act(async () => { retryBtn.click(); });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Your payment session expired — please try again"),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("full retry flow: expiry → banner → retry → banner gone → fee paid", async () => {
+    const qc = buildQueryClient([FEE_DUE]);
+
+    render(
+      <Wrapper queryClient={qc}>
+        <StudentFees />
+      </Wrapper>,
+    );
+
+    // ── Step 1: trigger first (expiry) attempt ────────────────────────────────
+    const payBtn = await screen.findByTestId(`button-pay-now-${FEE_DUE.id}`);
+    await act(async () => { payBtn.click(); });
+
+    // Banner appears.
+    await waitFor(() =>
+      expect(
+        screen.getByText("Your payment session expired — please try again"),
+      ).toBeInTheDocument(),
+    );
+
+    // Button is re-enabled.
+    expect(screen.getByTestId(`button-pay-now-${FEE_DUE.id}`)).not.toBeDisabled();
+
+    // ── Step 2: trigger second (success) attempt ──────────────────────────────
+    const retryBtn = screen.getByTestId(`button-pay-now-${FEE_DUE.id}`);
+    await act(async () => { retryBtn.click(); });
+
+    // Banner must be gone.
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Your payment session expired — please try again"),
+      ).not.toBeInTheDocument(),
+    );
+
+    // Verify was called — confirms the success handler ran.
+    await waitFor(() =>
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "/api/payments/verify",
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+
+    // The Pay Now button disappears once the fee flips to Paid
+    // (fee moves out of pendingRecords — the outstanding tab shows nothing for it).
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId(`button-pay-now-${FEE_DUE.id}`),
+      ).not.toBeInTheDocument(),
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test suite D: shared SSE connection — payment-update path
 //
 // Mounts <StudentFees /> inside the real <StudentSessionProvider> to confirm:
 //   1. Only one EventSource socket is opened per browser tab.
