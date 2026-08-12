@@ -1131,6 +1131,12 @@ export function registerFeesRoutes(app: Express) {
         ? (await storage.getStudentById(studentId))!.schoolId
         : adminSchoolId!;
 
+      // Scope check: admin can only create orders for their own school's fees.
+      // This prevents a rogue admin from binding their Razorpay credentials to
+      // another tenant's fee record via the razorpay_order_id fallback.
+      if (Number(fee.school_id) !== schoolId)
+        return res.status(403).json({ message: "Access denied" });
+
       const creds = await resolveRazorpayCredentials(schoolId);
       if (!creds || !creds.enabled)
         return res.status(400).json({ message: "Razorpay is not configured for this school" });
@@ -1151,6 +1157,20 @@ export function registerFeesRoutes(app: Express) {
         receipt: `fee_${feeRecordId}`,
         notes: { feeRecordId: String(feeRecordId), schoolId: String(schoolId) },
       });
+
+      // Persist the Razorpay order ID so the webhook can fall back to it
+      // when payment notes are missing or malformed.
+      // Scoped by both id AND school_id so a cross-tenant attacker cannot
+      // overwrite another school's fee record even if they know the fee ID.
+      const updateResult = await db.execute(sql`
+        UPDATE fee_records
+        SET razorpay_order_id = ${order.id}
+        WHERE id = ${feeRecordId} AND school_id = ${schoolId}
+      `);
+      if ((updateResult.rowCount ?? 0) === 0) {
+        // Should be unreachable given the ownership checks above, but guard anyway.
+        console.error(`[razorpay create-order] order_id persist: no row updated for fee #${feeRecordId} school #${schoolId}`);
+      }
 
       res.json({ orderId: order.id, amount: amountPaise, currency: "INR", keyId: creds.keyId });
     } catch (err: any) {
@@ -1174,8 +1194,28 @@ export function registerFeesRoutes(app: Express) {
       try { event = JSON.parse(bodyStr); } catch { return res.status(400).json({ message: "Invalid JSON" }); }
 
       const notes = event?.payload?.payment?.entity?.notes ?? {};
-      const schoolId = notes.schoolId ? parseInt(notes.schoolId) : null;
-      if (!schoolId) return res.status(400).json({ message: "schoolId missing from payment notes" });
+      const payment = event?.payload?.payment?.entity ?? {};
+      let schoolId: number | null = notes.schoolId ? parseInt(notes.schoolId) : null;
+
+      // Fallback: when schoolId is absent from notes, resolve it from the stored
+      // razorpay_order_id (written at order-creation time) so we can still locate
+      // the correct school credentials and verify the HMAC signature.
+      if (!schoolId && payment.order_id) {
+        const orderRow = (await db.execute(sql`
+          SELECT school_id FROM fee_records
+          WHERE razorpay_order_id = ${payment.order_id}
+          LIMIT 1
+        `)).rows[0] as any;
+        if (orderRow) {
+          schoolId = Number(orderRow.school_id);
+          console.warn(
+            `[razorpay webhook] schoolId missing from notes for payment ${payment.id ?? "unknown"} ` +
+            `— resolved school #${schoolId} via order_id ${payment.order_id}`
+          );
+        }
+      }
+
+      if (!schoolId) return res.status(400).json({ message: "schoolId missing from payment notes and could not be resolved from order_id" });
 
       const creds = await resolveRazorpayCredentials(schoolId);
       if (!creds?.webhookSecret)
@@ -1187,7 +1227,7 @@ export function registerFeesRoutes(app: Express) {
         return res.status(400).json({ message: "Signature mismatch" });
 
       if (event.event === "payment.captured") {
-        const payment = event.payload.payment.entity;
+        // `payment` is already declared in the outer scope above
         const feeRecordId = notes.feeRecordId ? parseInt(notes.feeRecordId) : null;
         if (!feeRecordId) return res.status(400).json({ message: "feeRecordId missing from notes" });
 
@@ -1242,20 +1282,47 @@ export function registerFeesRoutes(app: Express) {
 
       } else if (event.event === "payment.failed") {
         // Log failed payment attempts — does NOT change the fee status
-        const payment  = event.payload?.payment?.entity ?? {};
-        const feeRecordId = notes.feeRecordId ? parseInt(notes.feeRecordId) : null;
-        const studentIdFromNotes = notes.studentId ? parseInt(notes.studentId) : null;
+        // `payment` is already declared in the outer scope above
+        let feeRecordId: number | null = notes.feeRecordId ? parseInt(notes.feeRecordId) : null;
+        let studentIdResolved: number | null = notes.studentId ? parseInt(notes.studentId) : null;
         const errCode  = payment?.error_code        ?? "UNKNOWN";
         const errDesc  = payment?.error_description ?? "No description";
+        let fallbackUsed = false;
 
-        // Warn when notes are incomplete — audit row will have NULL entity/student
-        if (!feeRecordId) {
-          console.warn(`[razorpay webhook] payment.failed: feeRecordId missing from notes (payment ${payment.id ?? "unknown"}) — audit row will have NULL entity_id`);
-        }
-        if (!studentIdFromNotes) {
-          console.warn(`[razorpay webhook] payment.failed: studentId missing from notes (payment ${payment.id ?? "unknown"}) — audit row will have NULL student_id`);
+        // When notes are incomplete, try to recover fee/student context from
+        // the Razorpay order_id stored at order-creation time.
+        if ((!feeRecordId || !studentIdResolved) && payment.order_id) {
+          const fallback = (await db.execute(sql`
+            SELECT id, student_id FROM fee_records
+            WHERE school_id = ${schoolId} AND razorpay_order_id = ${payment.order_id}
+            LIMIT 1
+          `)).rows[0] as any;
+
+          if (fallback) {
+            if (!feeRecordId) feeRecordId = Number(fallback.id);
+            if (!studentIdResolved) studentIdResolved = Number(fallback.student_id);
+            fallbackUsed = true;
+            console.warn(
+              `[razorpay webhook] payment.failed: notes incomplete for payment ${payment.id ?? "unknown"} ` +
+              `— recovered fee #${feeRecordId} / student #${studentIdResolved} via order_id ${payment.order_id}`
+            );
+          } else {
+            console.warn(
+              `[razorpay webhook] payment.failed: notes incomplete for payment ${payment.id ?? "unknown"} ` +
+              `and fallback by order_id ${payment.order_id} found no match — audit row will have NULL entity_id/student_id`
+            );
+          }
+        } else {
+          // Notes were present; log warnings only for genuinely missing fields
+          if (!feeRecordId) {
+            console.warn(`[razorpay webhook] payment.failed: feeRecordId missing from notes (payment ${payment.id ?? "unknown"}) — audit row will have NULL entity_id`);
+          }
+          if (!studentIdResolved) {
+            console.warn(`[razorpay webhook] payment.failed: studentId missing from notes (payment ${payment.id ?? "unknown"}) — audit row will have NULL student_id`);
+          }
         }
 
+        const notesIncomplete = !feeRecordId || !studentIdResolved;
         const now = new Date();
         await db.execute(sql`
           INSERT INTO fee_audit_log (school_id, action, entity_type, entity_id, actor_id, actor_name, student_id, description, created_at)
@@ -1264,8 +1331,13 @@ export function registerFeesRoutes(app: Express) {
             ${feeRecordId ?? null},
             NULL,
             'Razorpay Webhook',
-            ${studentIdFromNotes},
-            ${"Razorpay payment failed — " + errCode + ": " + errDesc + (payment.id ? " (" + payment.id + ")" : "") + (!feeRecordId || !studentIdFromNotes ? " [incomplete notes — student/fee could not be identified]" : "")},
+            ${studentIdResolved},
+            ${
+              "Razorpay payment failed — " + errCode + ": " + errDesc +
+              (payment.id ? " (" + payment.id + ")" : "") +
+              (fallbackUsed ? " [context recovered via order_id fallback]" : "") +
+              (notesIncomplete && !fallbackUsed ? " [incomplete notes — student/fee could not be identified]" : "")
+            },
             ${now.toISOString()}
           )
         `);

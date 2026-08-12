@@ -605,6 +605,7 @@ export const feeRecords = pgTable("fee_records", {
   notes: text("notes"),
   lateFeeAmount: integer("late_fee_amount").notNull().default(0),
   academicYear: varchar("academic_year", { length: 20 }),
+  razorpayOrderId: varchar("razorpay_order_id", { length: 100 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
 });
