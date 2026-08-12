@@ -10,6 +10,11 @@ export interface AcademicSession {
   createdAt: string;
 }
 
+export interface PaymentUpdatePayload {
+  feeRecordId: number;
+  receiptNumber: string;
+}
+
 export interface SessionViewContextValue {
   sessions: AcademicSession[];
   selectedSession: AcademicSession | null;
@@ -20,6 +25,12 @@ export interface SessionViewContextValue {
   pendingActivation: AcademicSession | null;
   /** Call this when the student taps "Confirm & Continue" in the activation modal. */
   confirmActivation: () => void;
+  /**
+   * Subscribe to payment-update events from the shared SSE connection.
+   * Returns an unsubscribe function — call it in a useEffect cleanup.
+   * Using this avoids opening a second EventSource for the same endpoint.
+   */
+  subscribeToPaymentUpdate: (cb: (payload: PaymentUpdatePayload) => void) => () => void;
 }
 
 export const SessionViewContext = createContext<SessionViewContextValue>({
@@ -30,6 +41,7 @@ export const SessionViewContext = createContext<SessionViewContextValue>({
   isSessionsLoading: true,
   pendingActivation: null,
   confirmActivation: () => { /* noop */ },
+  subscribeToPaymentUpdate: () => () => { /* noop */ },
 });
 
 export function useSessionView() {

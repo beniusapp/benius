@@ -30,6 +30,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Router } from "wouter";
 
 import { SessionViewContext } from "@/contexts/session-view-context";
+import { StudentSessionProvider } from "@/contexts/student-session-provider";
 import StudentFees from "@/pages/student-fees";
 import { getQueryFn } from "@/lib/queryClient";
 
@@ -141,6 +142,7 @@ function Wrapper({
             isSessionsLoading: false,
             pendingActivation: null,
             confirmActivation: vi.fn(),
+            subscribeToPaymentUpdate: () => () => { /* noop */ },
           }}
         >
           {children}
@@ -566,5 +568,124 @@ describe("Fee card shows correct Paid/Due status from server data", () => {
     await waitFor(() =>
       expect(screen.getByTestId(`card-fee-paid-${FEE_PAID.id}`)).toBeInTheDocument(),
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test suite C: shared SSE connection — payment-update path
+//
+// Mounts <StudentFees /> inside the real <StudentSessionProvider> to confirm:
+//   1. Only one EventSource socket is opened per browser tab.
+//   2. A payment-update message delivered through the provider's EventSource
+//      causes StudentFees to invalidate /api/student/fees and
+//      /api/student/fees/summary — without opening a second socket.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("StudentFees — shared SSE connection via StudentSessionProvider", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let eventSourceInstances: any[] = [];
+  let EventSourceSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    eventSourceInstances = [];
+
+    // Minimal EventSource mock: captures every constructed instance so tests
+    // can fire synthetic messages and count how many sockets were opened.
+    EventSourceSpy = vi.fn().mockImplementation(function(this: any, _url: string) {
+      this.onmessage = null;
+      this.close = vi.fn();
+      eventSourceInstances.push(this);
+    });
+    vi.stubGlobal("EventSource", EventSourceSpy);
+
+    // Stub fetch for all routes the component and provider may call.
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/student/fees/portal-info") return makeOkJson(PORTAL_RAZORPAY_ON);
+      if (url === "/api/student/academic-sessions") return makeOkJson([]);
+      if (url === "/api/student/fees") return makeOkJson([FEE_DUE]);
+      if (url === "/api/student/fees/summary") return makeOkJson(SUMMARY);
+      return Promise.resolve(new Response(null, { status: 404 }));
+    }));
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    eventSourceInstances = [];
+  });
+
+  /** Wrapper using the real StudentSessionProvider (not the mock context). */
+  function RealProviderWrapper({
+    queryClient,
+    children,
+  }: {
+    queryClient: QueryClient;
+    children: React.ReactNode;
+  }) {
+    return (
+      <Router>
+        <QueryClientProvider client={queryClient}>
+          <StudentSessionProvider>
+            {children}
+          </StudentSessionProvider>
+        </QueryClientProvider>
+      </Router>
+    );
+  }
+
+  it("opens exactly one EventSource when StudentFees is mounted", async () => {
+    const qc = buildQueryClient([FEE_DUE]);
+
+    render(
+      <RealProviderWrapper queryClient={qc}>
+        <StudentFees />
+      </RealProviderWrapper>,
+    );
+
+    // Wait for the component to settle (provider effect runs on mount).
+    await waitFor(() => expect(eventSourceInstances.length).toBeGreaterThan(0));
+
+    // Only the provider's single shared socket should exist — not a second one
+    // from the fees page itself.
+    expect(eventSourceInstances).toHaveLength(1);
+  });
+
+  it("payment-update SSE event invalidates fee queries without a second socket", async () => {
+    const qc = buildQueryClient([FEE_DUE]);
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+
+    render(
+      <RealProviderWrapper queryClient={qc}>
+        <StudentFees />
+      </RealProviderWrapper>,
+    );
+
+    // Wait for the provider's EventSource to be created.
+    await waitFor(() => expect(eventSourceInstances.length).toBeGreaterThan(0));
+
+    const [providerES] = eventSourceInstances;
+
+    // Fire a payment-update through the provider's single socket.
+    await act(async () => {
+      providerES.onmessage?.({
+        data: JSON.stringify({
+          type: "payment-update",
+          feeRecordId: FEE_DUE.id,
+          receiptNumber: "RCP-SSE-001",
+        }),
+      });
+    });
+
+    // Both fee caches must be invalidated.
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ["/api/student/fees"] }),
+    );
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ["/api/student/fees/summary"] }),
+    );
+
+    // Confirm no extra sockets were opened.
+    expect(eventSourceInstances).toHaveLength(1);
   });
 });

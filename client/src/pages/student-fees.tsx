@@ -179,7 +179,7 @@ function ChannelIcon({ channel }: { channel: string }) {
 export default function StudentFees() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
-  const { isArchiveMode, selectedSession } = useSessionView();
+  const { isArchiveMode, selectedSession, subscribeToPaymentUpdate } = useSessionView();
   const [copiedReceiptId, setCopiedReceiptId] = useState<number | null>(null);
   const [payingFeeId, setPayingFeeId] = useState<number | null>(null);
   const [payError, setPayError] = useState<string | null>(null);
@@ -257,6 +257,17 @@ export default function StudentFees() {
       setLocation("/student-login");
     }
   }, [studentLoading, isError, student, setLocation]);
+
+  // ── Real-time payment updates via the shared SSE connection ─────────────────
+  // The StudentSessionProvider already holds the single EventSource for this
+  // tab.  Subscribing here (instead of opening a second EventSource) keeps the
+  // server fan-out count at one per tab regardless of how many pages are mounted.
+  useEffect(() => {
+    return subscribeToPaymentUpdate(() => {
+      queryClient.invalidateQueries({ queryKey: ["/api/student/fees"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/student/fees/summary"] });
+    });
+  }, [subscribeToPaymentUpdate, queryClient]);
 
   // Real Razorpay payment
   const handlePayNow = useCallback(async (rec: FeeRecord, studentData: StudentMeResponse) => {

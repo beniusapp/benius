@@ -989,6 +989,7 @@ export default function AdminDashboard() {
       isSessionsLoading,
       pendingActivation: null,
       confirmActivation: () => { /* admin portal never shows the activation modal */ },
+      subscribeToPaymentUpdate: () => () => { /* admin portal uses its own SSE listener */ },
     }}>
     <div className="min-h-screen text-white flex flex-col" style={{ background: "#0f172a" }}>
 

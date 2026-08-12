@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { SessionViewContext, AcademicSession } from "./session-view-context";
+import { SessionViewContext, AcademicSession, PaymentUpdatePayload } from "./session-view-context";
 
 async function fetchSessions(): Promise<AcademicSession[]> {
   const res = await fetch("/api/student/academic-sessions", { credentials: "include" });
@@ -11,6 +11,19 @@ async function fetchSessions(): Promise<AcademicSession[]> {
 
 export function StudentSessionProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
+
+  // ── Payment-update pub/sub ───────────────────────────────────────────────
+  // Pages that need payment-update events (e.g. student-fees) subscribe here
+  // instead of opening a second EventSource to the same endpoint.
+  const paymentUpdateSubscribers = useRef<Set<(payload: PaymentUpdatePayload) => void>>(new Set());
+
+  const subscribeToPaymentUpdate = useCallback(
+    (cb: (payload: PaymentUpdatePayload) => void) => {
+      paymentUpdateSubscribers.current.add(cb);
+      return () => { paymentUpdateSubscribers.current.delete(cb); };
+    },
+    [],
+  );
 
   const { data: sessions = [], isLoading } = useQuery<AcademicSession[]>({
     queryKey: ["/api/student/academic-sessions"],
@@ -51,6 +64,8 @@ export function StudentSessionProvider({ children }: { children: React.ReactNode
   }, [queryClient]);
 
   // ── Real-time session activation listener ────────────────────────────────
+  // Single shared EventSource for the browser tab.  All SSE event types are
+  // handled here; pages subscribe via context rather than opening extra sockets.
   useEffect(() => {
     const es = new EventSource("/api/events/session-change");
     es.onmessage = (e: MessageEvent) => {
@@ -75,6 +90,14 @@ export function StudentSessionProvider({ children }: { children: React.ReactNode
           // Session deleted — silently refresh and snap to active
           setSelectedSession(null);
           queryClient.invalidateQueries({ queryKey: ["/api/student/academic-sessions"] });
+        } else if (data.type === "payment-update") {
+          // Fan out to any subscribed pages (e.g. student-fees) so they can
+          // invalidate their caches without opening a second EventSource.
+          const payload: PaymentUpdatePayload = {
+            feeRecordId: data.feeRecordId,
+            receiptNumber: data.receiptNumber,
+          };
+          paymentUpdateSubscribers.current.forEach((cb) => cb(payload));
         }
       } catch { /* malformed event — ignore */ }
     };
@@ -93,6 +116,7 @@ export function StudentSessionProvider({ children }: { children: React.ReactNode
         isSessionsLoading: isLoading,
         pendingActivation,
         confirmActivation,
+        subscribeToPaymentUpdate,
       }}
     >
       {children}
