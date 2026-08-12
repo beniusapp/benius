@@ -2178,6 +2178,49 @@ export function registerFeesRoutes(app: Express) {
     res.json(counts);
   });
 
+  // ── GET /api/admin/fees/failed-counts ────────────────────────────────────
+  // Returns { [feeRecordId]: { count, lastError } } for payment_failed entries
+  app.get("/api/admin/fees/failed-counts", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+
+    const result = await db.execute(
+      sessionFilter != null
+        ? sql`
+            SELECT
+              al.entity_id::int            AS "feeRecordId",
+              COUNT(al.id)::int            AS count,
+              (ARRAY_AGG(al.description ORDER BY al.created_at DESC))[1] AS "lastError"
+            FROM fee_audit_log al
+            INNER JOIN fee_records fr ON fr.id = al.entity_id::int
+            WHERE al.school_id   = ${schoolId}
+              AND al.action      = 'payment_failed'
+              AND al.entity_type = 'fee_record'
+              AND al.entity_id   IS NOT NULL
+              AND fr.session_id  = ${sessionFilter}
+            GROUP BY al.entity_id`
+        : sql`
+            SELECT
+              entity_id::int               AS "feeRecordId",
+              COUNT(id)::int               AS count,
+              (ARRAY_AGG(description ORDER BY created_at DESC))[1] AS "lastError"
+            FROM fee_audit_log
+            WHERE school_id   = ${schoolId}
+              AND action      = 'payment_failed'
+              AND entity_type = 'fee_record'
+              AND entity_id   IS NOT NULL
+            GROUP BY entity_id`,
+    );
+
+    const counts: Record<number, { count: number; lastError: string | null }> = {};
+    for (const row of result.rows as Array<{ feeRecordId: number; count: number; lastError: string | null }>) {
+      counts[row.feeRecordId] = { count: row.count, lastError: row.lastError ?? null };
+    }
+    res.json(counts);
+  });
+
   // ── Admin: Dunning Log GET (school-wide or per-student) ─────────────────
   // ?studentId=X → all dunning attempts for that student (up to 200)
   app.get("/api/admin/fees/dunning-log", async (req, res) => {

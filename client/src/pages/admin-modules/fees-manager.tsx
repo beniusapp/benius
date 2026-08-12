@@ -1483,6 +1483,17 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     [feeTypeToName],
   );
 
+  // Failed payment counts — per-fee-record badge showing how many payment_failed audit entries exist
+  const { data: failedCounts = {} } = useQuery<Record<number, { count: number; lastError: string | null }>>({
+    queryKey: ["/api/admin/fees/failed-counts", viewSessionId],
+    queryFn: async () => {
+      const r = await sessionFetch("/api/admin/fees/failed-counts");
+      if (!r.ok) return {};
+      return r.json();
+    },
+    staleTime: 30_000,
+  });
+
   // Dunning counts — per-student reminder counts for the bell badge
   const { data: dunningCounts = {} } = useQuery<Record<number, number>>({
     queryKey: ["/api/admin/fees/dunning-counts", viewSessionId],
@@ -1906,6 +1917,18 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                               <Bell className="w-3 h-3" />
                               <span>{dCount}</span>
                             </Button>
+                          );
+                        })()}
+                        {(() => {
+                          const failedInfo = failedCounts[rec.id];
+                          if (!failedInfo || failedInfo.count === 0) return null;
+                          return (
+                            <span
+                              title={failedInfo.lastError ? `Last error: ${failedInfo.lastError}` : `${failedInfo.count} failed payment attempt${failedInfo.count !== 1 ? "s" : ""}`}
+                              className="inline-flex items-center gap-0.5 h-5 px-1.5 rounded text-[10px] font-semibold bg-red-900/50 border border-red-700/60 text-red-400 cursor-default select-none"
+                            >
+                              {failedInfo.count} failed
+                            </span>
                           );
                         })()}
                         {(() => {
