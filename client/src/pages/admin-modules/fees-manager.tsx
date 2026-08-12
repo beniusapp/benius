@@ -3859,10 +3859,17 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const queryClient = useQueryClient();
 
   // ── Razorpay state (production / live only — no test mode) ────────────────
+  // Draft values survive a mobile page-reload (switching apps to copy a key).
+  // They are cleared from localStorage after a successful Save.
   const [rzpEnabled, setRzpEnabled] = useState(false);
-  const [rzpKeyId, setRzpKeyId] = useState("");
-  const [rzpKeySecret, setRzpKeySecret] = useState("");
-  const [rzpWebhookSecret, setRzpWebhookSecret] = useState("");
+  const [rzpKeyId, setRzpKeyId] = useState(() => localStorage.getItem("rzp_draft_key_id") ?? "");
+  const [rzpKeySecret, setRzpKeySecret] = useState(() => localStorage.getItem("rzp_draft_key_secret") ?? "");
+  const [rzpWebhookSecret, setRzpWebhookSecret] = useState(() => localStorage.getItem("rzp_draft_webhook_secret") ?? "");
+
+  const saveKeyIdDraft     = (v: string) => { setRzpKeyId(v);         v && v !== "••••••••" ? localStorage.setItem("rzp_draft_key_id", v)         : localStorage.removeItem("rzp_draft_key_id"); };
+  const saveSecretDraft    = (v: string) => { setRzpKeySecret(v);     v && v !== "••••••••" ? localStorage.setItem("rzp_draft_key_secret", v)     : localStorage.removeItem("rzp_draft_key_secret"); };
+  const saveWebhookDraft   = (v: string) => { setRzpWebhookSecret(v); v && v !== "••••••••" ? localStorage.setItem("rzp_draft_webhook_secret", v) : localStorage.removeItem("rzp_draft_webhook_secret"); };
+  const clearDrafts        = () => { localStorage.removeItem("rzp_draft_key_id"); localStorage.removeItem("rzp_draft_key_secret"); localStorage.removeItem("rzp_draft_webhook_secret"); };
 
   // ── External portal state ──────────────────────────────────────────────────
   const [isEnabled, setIsEnabled] = useState(false);
@@ -3880,9 +3887,10 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   useEffect(() => {
     if (settings && !synced) {
       setRzpEnabled(settings.razorpayEnabled ?? false);
-      setRzpKeyId(settings.razorpayKeyId ?? "");
-      setRzpKeySecret(settings.razorpayKeySecret ?? "");
-      setRzpWebhookSecret(settings.razorpayWebhookSecret ?? "");
+      // Only restore from server when there is no in-progress draft (draft wins).
+      if (!localStorage.getItem("rzp_draft_key_id"))     setRzpKeyId(settings.razorpayKeyId ?? "");
+      if (!localStorage.getItem("rzp_draft_key_secret"))  setRzpKeySecret(settings.razorpayKeySecret ?? "");
+      if (!localStorage.getItem("rzp_draft_webhook_secret")) setRzpWebhookSecret(settings.razorpayWebhookSecret ?? "");
       setIsEnabled(settings.isEnabled);
       setUrl(settings.gatewayUrl ?? "");
       setBanner(settings.bannerMessage ?? "");
@@ -3906,6 +3914,7 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     }),
     onSuccess: (data: any) => {
       invalidate();
+      clearDrafts(); // wipe localStorage drafts — server is now the source of truth
       if (data) {
         setRzpKeySecret(data.razorpayKeySecret ?? "");
         setRzpWebhookSecret(data.razorpayWebhookSecret ?? "");
@@ -4002,7 +4011,7 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
           {/* Key ID */}
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-white/60">Key ID <span className="text-red-400">*</span></label>
-            <input value={rzpKeyId} onChange={e => setRzpKeyId(e.target.value)}
+            <input value={rzpKeyId} onChange={e => saveKeyIdDraft(e.target.value)}
               placeholder="rzp_live_XXXXXXXXXXXXXXXX"
               disabled={isArchiveMode}
               className="w-full bg-[#0F1E35] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40" />
@@ -4011,7 +4020,7 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
           {/* Key Secret */}
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-white/60">Key Secret <span className="text-red-400">*</span></label>
-            <input type="password" value={rzpKeySecret} onChange={e => setRzpKeySecret(e.target.value)}
+            <input type="password" value={rzpKeySecret} onChange={e => saveSecretDraft(e.target.value)}
               placeholder={rzpKeySecret === "••••••••" ? "Leave blank to keep existing secret" : "Enter Key Secret…"}
               disabled={isArchiveMode}
               className="w-full bg-[#0F1E35] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40" />
@@ -4021,7 +4030,7 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
           {/* Webhook Secret */}
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-white/60">Webhook Secret</label>
-            <input type="password" value={rzpWebhookSecret} onChange={e => setRzpWebhookSecret(e.target.value)}
+            <input type="password" value={rzpWebhookSecret} onChange={e => saveWebhookDraft(e.target.value)}
               placeholder={rzpWebhookSecret === "••••••••" ? "Leave blank to keep existing secret" : "Enter Webhook Secret…"}
               disabled={isArchiveMode}
               className="w-full bg-[#0F1E35] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40" />
