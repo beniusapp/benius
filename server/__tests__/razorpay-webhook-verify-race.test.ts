@@ -402,3 +402,239 @@ describe("Razorpay race: webhook fires between verify's fee UPDATE and its INSER
     ).toBe("other_error");
   });
 });
+
+// ── Webhook duplicate-delivery (payment.captured resent by Razorpay) ──────────
+//
+// Razorpay retries webhook delivery when it does not receive a 200 quickly.
+// The second delivery hits the same idempotency_key already in payment_records
+// and must return { ok: true, idempotent: true } instead of 500.
+//
+// Crucially, both deliveries may read the fee as "Due" before either commits.
+// The losing handler can overwrite fee_records.receipt_number with its own
+// allocated receipt before its INSERT raises 23505.  The catch block must
+// restore the canonical receipt (from the winning payment_records row) so the
+// fee row remains consistent with the sole payment row.
+
+/**
+ * Simulate the full payment.captured webhook handler DB sequence, including
+ * the nested-try/catch recovery added to fees-routes.ts.
+ *
+ * Structure mirrors production exactly:
+ *  1. Read fee; early-return if already Paid.
+ *  2. Allocate receipt, UPDATE fee_records.
+ *  3. INSERT payment_records inside its own nested try/catch.
+ *     On 23505/idempotency_key: restore canonical receipt, return idempotent.
+ *     On any other error: rethrow to the caller (outer catch → 500 in prod).
+ *
+ * A raceHook (optional) fires between the fee UPDATE and the INSERT —
+ * simulating the first delivery committing while the second is in-flight.
+ *
+ * Returns the same shape as the HTTP response body.
+ */
+async function runWebhookLogic(
+  fixture: Fixture,
+  paymentId: string,
+  raceHook?: () => Promise<void>,
+): Promise<{ ok: boolean; idempotent?: boolean }> {
+  const { schoolId, feeRecordId, studentId, sessionId, feeAmount } = fixture;
+
+  // ── mirrors payment.captured handler in fees-routes.ts ──────────────────
+
+  const feeResult = (
+    await db.execute(
+      sql`SELECT * FROM fee_records WHERE id = ${feeRecordId} AND school_id = ${schoolId} LIMIT 1`,
+    )
+  ).rows[0] as any;
+
+  // Early-return when first delivery already committed (fee is Paid)
+  if (feeResult.status === "Paid") {
+    return { ok: true, idempotent: true };
+  }
+
+  const receiptNumber = await storage.nextReceiptNumber(schoolId, "ON");
+  const now = new Date();
+
+  await db.execute(sql`
+    UPDATE fee_records
+    SET status = 'Paid', paid_date = ${now.toISOString()}, receipt_number = ${receiptNumber}
+    WHERE id = ${feeRecordId} AND school_id = ${schoolId}
+  `);
+
+  // ── Race window: first delivery commits here (overwrites our receipt) ──
+  if (raceHook) await raceHook();
+
+  // Nested try/catch mirrors the production guard in fees-routes.ts:
+  // only the INSERT is wrapped; a 23505/idempotency_key conflict means the
+  // first delivery already committed and we must restore the canonical receipt.
+  try {
+    await db.insert(paymentRecords).values({
+      schoolId,
+      sessionId,
+      feeRecordId,
+      studentId,
+      paymentMethod: "Online",
+      referenceNumber: paymentId,
+      receivedDate: now.toISOString().slice(0, 10),
+      amount: feeAmount,
+      cashierNotes: `Razorpay payment ID: ${paymentId}`,
+      recordedBy: null,
+      receiptNumber,
+      idempotencyKey: `rzp_${paymentId}`,
+    } as any);
+  } catch (insertErr: any) {
+    // ── mirrors the nested catch block in fees-routes.ts payment.captured ─
+    if (
+      insertErr?.code === "23505" &&
+      String(insertErr?.constraint ?? insertErr?.message ?? "").includes("idempotency_key")
+    ) {
+      try {
+        const winnerRows = (
+          await db.execute(sql`
+            SELECT receipt_number FROM payment_records
+            WHERE idempotency_key = ${"rzp_" + paymentId}
+            LIMIT 1
+          `)
+        ).rows;
+        const canonicalReceipt = (winnerRows[0] as any)?.receipt_number as string | undefined;
+        if (canonicalReceipt) {
+          await db.execute(sql`
+            UPDATE fee_records
+            SET receipt_number = ${canonicalReceipt}
+            WHERE id = ${feeRecordId} AND school_id = ${schoolId}
+          `);
+        }
+      } catch {
+        // restore failed — still return idempotent success
+      }
+      return { ok: true, idempotent: true };
+    }
+    throw insertErr; // non-idempotency error — rethrow
+  }
+
+  return { ok: true };
+}
+
+// ── Error-classification unit tests ────────────────────────────────────────
+
+function webhookCatchClassify(err: {
+  code?: string;
+  constraint?: string;
+  message?: string;
+}): "idempotent_race" | "other_error" {
+  if (
+    err?.code === "23505" &&
+    String(err?.constraint ?? err?.message ?? "").includes("idempotency_key")
+  ) {
+    return "idempotent_race";
+  }
+  return "other_error";
+}
+
+describe("Razorpay webhook: duplicate payment.captured delivery — error classification", () => {
+  it("the 23505 idempotency_key constraint is classified as a safe duplicate, not a 500", () => {
+    expect(
+      webhookCatchClassify({
+        code: "23505",
+        constraint: "payment_records_idempotency_key_unique",
+        message:
+          'duplicate key value violates unique constraint "payment_records_idempotency_key_unique"',
+      }),
+    ).toBe("idempotent_race");
+  });
+
+  it("a different 23505 constraint is NOT silenced — it propagates as a 500", () => {
+    expect(
+      webhookCatchClassify({
+        code: "23505",
+        constraint: "payment_records_reference_number_unique",
+        message:
+          'duplicate key value violates unique constraint "payment_records_reference_number_unique"',
+      }),
+    ).toBe("other_error");
+  });
+
+  it("a non-unique-constraint error is NOT silenced", () => {
+    expect(
+      webhookCatchClassify({ code: "08006", message: "connection failure" }),
+    ).toBe("other_error");
+  });
+});
+
+// ── Full overlapping-delivery integration tests ─────────────────────────────
+//
+// Both webhook deliveries read the fee as "Due".  The first delivery commits
+// (fee=Paid, receiptA, payment row).  While in-flight, the second delivery
+// has already updated the fee to receiptB.  Its INSERT then hits 23505.
+// The catch block must restore receiptA and return idempotent success.
+
+describe("Razorpay webhook: two overlapping payment.captured deliveries", () => {
+  let fixture: Fixture;
+
+  afterEach(async () => {
+    if (fixture) await teardown(fixture.schoolId);
+  });
+
+  it("the losing delivery catches the 23505 conflict and returns idempotent:true", async () => {
+    fixture = await createFixture();
+    const paymentId = `pay_${uid()}`;
+
+    // raceHook: first delivery commits fully between the second's fee UPDATE
+    // and its payment_records INSERT — exactly the window that causes 23505.
+    const raceHook = async () => {
+      await webhookCapture(fixture, paymentId);
+    };
+
+    const result = await runWebhookLogic(fixture, paymentId, raceHook);
+
+    expect(result.ok).toBe(true);
+    expect(result.idempotent).toBe(true);
+  });
+
+  it("fee_records.receipt_number is restored to the canonical (winning) receipt after the race", async () => {
+    fixture = await createFixture();
+    const { feeRecordId } = fixture;
+    const paymentId = `pay_${uid()}`;
+
+    let winningReceipt: string | undefined;
+    const raceHook = async () => {
+      winningReceipt = await webhookCapture(fixture, paymentId);
+    };
+
+    await runWebhookLogic(fixture, paymentId, raceHook);
+
+    const feeRow = (
+      await db.execute(
+        sql`SELECT status, receipt_number FROM fee_records WHERE id = ${feeRecordId} LIMIT 1`,
+      )
+    ).rows[0] as any;
+    const paymentRow = (
+      await db.execute(
+        sql`SELECT receipt_number FROM payment_records WHERE fee_record_id = ${feeRecordId} LIMIT 1`,
+      )
+    ).rows[0] as any;
+
+    expect(feeRow.status).toBe("Paid");
+    // The losing delivery's receipt must be replaced with the winner's receipt
+    expect(feeRow.receipt_number).toBe(winningReceipt);
+    // fee and payment_records must agree on the same receipt
+    expect(feeRow.receipt_number).toBe(paymentRow.receipt_number);
+  });
+
+  it("exactly one payment_records row exists after both deliveries race", async () => {
+    fixture = await createFixture();
+    const { feeRecordId } = fixture;
+    const paymentId = `pay_${uid()}`;
+
+    const raceHook = async () => {
+      await webhookCapture(fixture, paymentId);
+    };
+
+    await runWebhookLogic(fixture, paymentId, raceHook);
+
+    const [{ value: rowCount }] = await db
+      .select({ value: count() })
+      .from(paymentRecords)
+      .where(eq(paymentRecords.feeRecordId, feeRecordId));
+    expect(Number(rowCount)).toBe(1);
+  });
+});

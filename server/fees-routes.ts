@@ -1263,22 +1263,60 @@ export function registerFeesRoutes(app: Express) {
           WHERE id = ${feeRecordId} AND school_id = ${schoolId}
         `);
 
-        // Insert payment record
+        // Insert payment record — guarded against duplicate delivery (23505)
         const activeSession = await storage.getActiveSession(schoolId);
-        await db.insert(paymentRecords).values({
-          schoolId,
-          sessionId: activeSession?.id ?? null,
-          feeRecordId,
-          studentId: Number(feeRec.student_id),
-          paymentMethod: "Online",
-          referenceNumber: payment.id,        // pay_XXXX
-          receivedDate: now.toISOString().slice(0, 10),
-          amount: Number(feeRec.amount),
-          cashierNotes: `Razorpay payment ID: ${payment.id}`,
-          recordedBy: null,
-          receiptNumber,
-          idempotencyKey: `rzp_${payment.id}`,
-        } as any);
+        try {
+          await db.insert(paymentRecords).values({
+            schoolId,
+            sessionId: activeSession?.id ?? null,
+            feeRecordId,
+            studentId: Number(feeRec.student_id),
+            paymentMethod: "Online",
+            referenceNumber: payment.id,        // pay_XXXX
+            receivedDate: now.toISOString().slice(0, 10),
+            amount: Number(feeRec.amount),
+            cashierNotes: `Razorpay payment ID: ${payment.id}`,
+            recordedBy: null,
+            receiptNumber,
+            idempotencyKey: `rzp_${payment.id}`,
+          } as any);
+        } catch (insertErr: any) {
+          // Unique-constraint on idempotency_key (PG 23505) = Razorpay re-sent
+          // this webhook.  The losing handler may have already overwritten
+          // fee_records.receipt_number with its own allocated receipt before the
+          // INSERT failed, so restore it to the canonical receipt held by the
+          // winning payment_records row before returning 200.
+          if (
+            insertErr?.code === "23505" &&
+            String(insertErr?.constraint ?? insertErr?.message ?? "").includes("idempotency_key")
+          ) {
+            console.warn(
+              "[razorpay webhook] duplicate payment.captured delivery — restoring canonical receipt and returning idempotent 200",
+              insertErr?.constraint ?? insertErr?.message,
+            );
+            try {
+              const winnerRows = (
+                await db.execute(sql`
+                  SELECT receipt_number FROM payment_records
+                  WHERE idempotency_key = ${"rzp_" + payment.id}
+                  LIMIT 1
+                `)
+              ).rows;
+              const canonicalReceipt = (winnerRows[0] as any)?.receipt_number as string | undefined;
+              if (canonicalReceipt) {
+                await db.execute(sql`
+                  UPDATE fee_records
+                  SET receipt_number = ${canonicalReceipt}
+                  WHERE id = ${feeRecordId} AND school_id = ${schoolId}
+                `);
+              }
+            } catch (restoreErr) {
+              console.error("[razorpay webhook] failed to restore canonical receipt after 23505", restoreErr);
+            }
+            return res.json({ ok: true, idempotent: true });
+          }
+          throw insertErr; // non-idempotency error — rethrow to outer catch → 500
+        }
 
         // Audit log — use correct schema columns (actor_id, description, student_id)
         await db.execute(sql`
