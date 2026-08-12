@@ -10,6 +10,137 @@ import crypto from "crypto";
 import Razorpay from "razorpay";
 import { broadcastPaymentUpdate } from "./sse";
 
+// ── Exported for integration testing ─────────────────────────────────────────
+// acquireRazorpayOrder contains the atomic lock → check → create → persist
+// sequence that the /api/payments/create-order route handler delegates to.
+// Extracting it lets tests call the function directly with a mocked Razorpay
+// instance without standing up a full HTTP server.
+export type AcquireOrderResult =
+  | { ok: true;  orderId: string; amount: number }
+  | { ok: false; status: 409; code: "PAYMENT_IN_PROGRESS"; message: string }
+  | { ok: false; status: 503; code: "ORDER_STATUS_UNKNOWN"; message: string }
+  | { ok: false; status: 400 | 404; message: string };
+
+/** Minimal Razorpay orders-API surface consumed by acquireRazorpayOrder. */
+export interface RzpOrdersApi {
+  fetch(orderId: string): Promise<{ status: string }>;
+  create(opts: {
+    amount: number; currency: string; receipt: string;
+    notes: Record<string, string>;
+  }): Promise<{ id: string }>;
+}
+
+/**
+ * Atomically checks for an in-progress Razorpay order on the given fee record
+ * and, if none is open, creates a new one and persists its ID.
+ *
+ * Uses SELECT … FOR UPDATE so two concurrent HTTP requests for the same fee row
+ * are serialised: the second request blocks until the first commits the new
+ * razorpay_order_id, then reads it and returns 409 instead of creating a
+ * duplicate order.
+ */
+export async function acquireRazorpayOrder(
+  feeRecordId: number,
+  schoolId: number,
+  rzpOrders: RzpOrdersApi,
+): Promise<AcquireOrderResult> {
+  let result: AcquireOrderResult | null = null;
+
+  await db.transaction(async (tx) => {
+    // Row-level write lock — concurrent requests for this fee block here.
+    const lockedResult = await tx.execute(sql`
+      SELECT id, status, amount, late_fee_amount, razorpay_order_id
+      FROM fee_records
+      WHERE id = ${feeRecordId} AND school_id = ${schoolId}
+      FOR UPDATE
+    `);
+    const locked = lockedResult.rows[0] as any;
+    if (!locked) {
+      result = { ok: false, status: 404, message: "Fee record not found" };
+      return;
+    }
+
+    // Re-check payable status under lock — a concurrent webhook may have just
+    // marked this fee Paid between the pre-flight read and now.
+    if (!["Due", "Overdue", "Partial"].includes(locked.status)) {
+      result = { ok: false, status: 400, message: `Fee is not payable (status: ${locked.status})` };
+      return;
+    }
+
+    // If a Razorpay order already exists on this record, verify its lifecycle
+    // before deciding whether to allow a new order.
+    //
+    // Razorpay order states:
+    //   "created"   → checkout window open, no attempt yet             → BLOCK
+    //   "attempted" → payment attempt made, window still live          → BLOCK
+    //   "expired"   → Razorpay closed the order (definitively terminal) → allow
+    //   "paid"      → payment captured (definitively terminal)          → allow
+    //
+    // Fetch errors (network, 5xx, timeout) are treated as BLOCK because we
+    // cannot distinguish a live order from a stale one.  Silently falling
+    // through to create a second order while the first's state is unknown
+    // risks a duplicate charge, which is worse than a brief retry delay.
+    if (locked.razorpay_order_id) {
+      let existingStatus: string | null = null;
+      let fetchError = false;
+
+      try {
+        const existing = await rzpOrders.fetch(locked.razorpay_order_id as string);
+        existingStatus = existing.status;
+      } catch {
+        fetchError = true;
+      }
+
+      if (fetchError) {
+        // Razorpay is unreachable or returned an unexpected error.  Fail safe:
+        // preserve the known order ID and ask the student to retry shortly.
+        result = {
+          ok: false, status: 503, code: "ORDER_STATUS_UNKNOWN",
+          message: "Unable to verify your existing payment status. Please try again in a moment.",
+        };
+        return;
+      }
+
+      if (existingStatus === "created" || existingStatus === "attempted") {
+        result = {
+          ok: false, status: 409, code: "PAYMENT_IN_PROGRESS",
+          message: "A payment is already in progress for this fee. Please complete or close your other payment window before trying again.",
+        };
+        return;
+      }
+
+      // "expired" or "paid" — definitively terminal on Razorpay's side;
+      // safe to create a fresh order for this fee record.
+    }
+
+    // Create the order while holding the row lock.  Any concurrent request for
+    // this fee is blocked here until this transaction commits.
+    const lateFeeForOrder = Number(locked.late_fee_amount ?? 0);
+    const amountPaise = Math.round((Number(locked.amount) + lateFeeForOrder) * 100);
+    const order = await rzpOrders.create({
+      amount: amountPaise,
+      currency: "INR",
+      receipt: `fee_${feeRecordId}`,
+      notes: { feeRecordId: String(feeRecordId), schoolId: String(schoolId) },
+    });
+
+    // Persist the order ID inside the transaction so it becomes visible to the
+    // next concurrent request the moment we commit.
+    const updateResult = await tx.execute(sql`
+      UPDATE fee_records
+      SET razorpay_order_id = ${order.id}
+      WHERE id = ${feeRecordId} AND school_id = ${schoolId}
+    `);
+    if ((updateResult.rowCount ?? 0) === 0) {
+      console.error(`[razorpay create-order] persist: no row updated fee #${feeRecordId} school #${schoolId}`);
+    }
+
+    result = { ok: true, orderId: order.id, amount: amountPaise };
+  });
+
+  return result!;
+}
+
 export function registerFeesRoutes(app: Express) {
 
   // ── Razorpay credential resolver ─────────────────────────────────────────────
@@ -1127,7 +1258,9 @@ export function registerFeesRoutes(app: Express) {
     if (!feeRecordId || typeof feeRecordId !== "number") return res.status(400).json({ message: "feeRecordId required" });
 
     try {
-      // Look up fee record
+      // ── Pre-flight checks (outside transaction — read-only) ───────────────
+      // Resolve ownership and credentials before acquiring the row lock so we
+      // fail fast on obvious bad requests without holding any DB lock.
       const feeResult = await db.execute(sql`
         SELECT fr.*, s.school_id FROM fee_records fr
         JOIN students s ON s.id = fr.student_id
@@ -1155,38 +1288,21 @@ export function registerFeesRoutes(app: Express) {
       if (!creds || !creds.enabled)
         return res.status(400).json({ message: "Razorpay is not configured for this school" });
 
-      if (!["Due", "Overdue", "Partial"].includes(fee.status))
-        return res.status(400).json({ message: "Fee is not payable (status: " + fee.status + ")" });
-
       const razorpay = new Razorpay({
         key_id: creds.keyId,
         key_secret: creds.keySecret,
       });
 
-      const lateFeeForOrder = Number(fee.late_fee_amount ?? 0);
-      const amountPaise = Math.round((Number(fee.amount) + lateFeeForOrder) * 100);
-      const order = await razorpay.orders.create({
-        amount: amountPaise,
-        currency: "INR",
-        receipt: `fee_${feeRecordId}`,
-        notes: { feeRecordId: String(feeRecordId), schoolId: String(schoolId) },
-      });
+      // Delegate to the exported helper — see acquireRazorpayOrder above.
+      const result = await acquireRazorpayOrder(feeRecordId, schoolId, razorpay.orders);
 
-      // Persist the Razorpay order ID so the webhook can fall back to it
-      // when payment notes are missing or malformed.
-      // Scoped by both id AND school_id so a cross-tenant attacker cannot
-      // overwrite another school's fee record even if they know the fee ID.
-      const updateResult = await db.execute(sql`
-        UPDATE fee_records
-        SET razorpay_order_id = ${order.id}
-        WHERE id = ${feeRecordId} AND school_id = ${schoolId}
-      `);
-      if ((updateResult.rowCount ?? 0) === 0) {
-        // Should be unreachable given the ownership checks above, but guard anyway.
-        console.error(`[razorpay create-order] order_id persist: no row updated for fee #${feeRecordId} school #${schoolId}`);
+      if (!result.ok) {
+        const body: Record<string, string> = { message: result.message };
+        if ("code" in result) body.code = result.code;
+        return res.status(result.status).json(body);
       }
 
-      res.json({ orderId: order.id, amount: amountPaise, currency: "INR", keyId: creds.keyId });
+      res.json({ orderId: result.orderId, amount: result.amount, currency: "INR", keyId: creds.keyId });
     } catch (err: any) {
       console.error("[razorpay create-order]", err);
       res.status(500).json({ message: err?.error?.description ?? String(err) });
