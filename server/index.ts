@@ -471,6 +471,11 @@ app.use((req, res, next) => {
     ALTER TABLE report_email_schedule ADD COLUMN IF NOT EXISTS last_sent_month VARCHAR(7);
   `);
 
+  await pool.query(`
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS razorpay_order_id VARCHAR(100);
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS razorpay_order_expires_at TIMESTAMPTZ;
+  `);
+
   // Back-fill session_id on existing payment_records that are linked to a fee_record
   // (safe to run on every startup — only touches rows where session_id IS NULL)
   await pool.query(`

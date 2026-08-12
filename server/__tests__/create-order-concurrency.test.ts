@@ -3,12 +3,17 @@
  *
  * Scenarios covered:
  *
- *  1. No existing order → succeeds, persists razorpay_order_id to the DB.
- *  2. Existing order in "created" state → returns 409 PAYMENT_IN_PROGRESS.
- *  3. Existing order in "attempted" state → returns 409 PAYMENT_IN_PROGRESS.
- *  4. Existing order in "expired" state → succeeds (stale order, new one allowed).
- *  5. Two concurrent calls for the same fee record → exactly ONE succeeds
- *     (calls orders.create once) and the other returns 409.
+ *  1. No existing order → succeeds, persists razorpay_order_id + razorpay_order_expires_at.
+ *  2. Existing "created" order + future razorpay_order_expires_at → 409.
+ *  3. Existing "attempted" order (any deadline) → 409 — payment may still be settling.
+ *  4. Existing "expired" order (Razorpay-authoritative) → succeeds.
+ *  5. Existing "created" + past razorpay_order_expires_at → succeeds (checkout window elapsed).
+ *  6. Existing "created" + NULL deadline + recent order.created_at → 409 (legacy fallback).
+ *  7. Existing "created" + NULL deadline + old order.created_at → succeeds (legacy fallback).
+ *  8. Existing "attempted" + elapsed deadline → 409 (never released by local deadline).
+ *  9. Razorpay fetch error → 503 ORDER_STATUS_UNKNOWN; no duplicate order.
+ * 10. Two concurrent calls → exactly ONE succeeds, one 409.
+ * 11. Concurrent loser's fetch fails → 503, not a second order.
  *
  * All tests call acquireRazorpayOrder() directly with a mock RzpOrdersApi so
  * no HTTP server or real Razorpay credentials are required.  The real database
@@ -131,6 +136,28 @@ function existingOrderApi(orderId: string, existingStatus: string): RzpOrdersApi
   };
 }
 
+/** Seed razorpay_order_expires_at on a fee record (ISO string). */
+async function setOrderExpiresAt(feeRecordId: number, isoDate: string): Promise<void> {
+  await db.execute(sql`
+    UPDATE fee_records SET razorpay_order_expires_at = ${isoDate}::timestamptz
+    WHERE id = ${feeRecordId}
+  `);
+}
+
+/** Read razorpay_order_expires_at from a fee record (returns null if not set). */
+async function storedExpiresAt(feeRecordId: number): Promise<Date | null> {
+  const rows = await db.execute(sql`
+    SELECT razorpay_order_expires_at FROM fee_records WHERE id = ${feeRecordId}
+  `);
+  const raw = (rows.rows[0] as any)?.razorpay_order_expires_at;
+  return raw ? new Date(raw) : null;
+}
+
+/** Returns an ISO timestamp offset from now by offsetMs milliseconds. */
+function nowPlusMs(offsetMs: number): string {
+  return new Date(Date.now() + offsetMs).toISOString();
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("acquireRazorpayOrder: basic paths", () => {
@@ -226,6 +253,165 @@ describe("acquireRazorpayOrder: basic paths", () => {
     expect(result.orderId).toBe("order_fresh_001");
     // New order_id must be persisted
     expect(await storedOrderId(feeRecordId)).toBe("order_fresh_001");
+  });
+
+  it("creates a new order when 'created' order's checkout window has elapsed (razorpay_order_expires_at in the past)", async () => {
+    fixture = await createFixture();
+    const { feeRecordId, schoolId } = fixture;
+
+    // Seed a stale order and a deadline that has already passed (5 minutes ago).
+    // Razorpay still reports "created" because it does not update the status
+    // immediately when the client checkout modal times out.
+    await db.execute(sql`
+      UPDATE fee_records SET razorpay_order_id = 'order_stale_created_001'
+      WHERE id = ${feeRecordId}
+    `);
+    await setOrderExpiresAt(feeRecordId, nowPlusMs(-5 * 60 * 1000));
+
+    const api: RzpOrdersApi = {
+      fetch: async () => ({ status: "created" }),
+      create: async () => ({ id: "order_fresh_after_window_elapsed_001" }),
+    };
+
+    const result = await acquireRazorpayOrder(feeRecordId, schoolId, api);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.orderId).toBe("order_fresh_after_window_elapsed_001");
+    // New order ID and a fresh deadline must be persisted
+    expect(await storedOrderId(feeRecordId)).toBe("order_fresh_after_window_elapsed_001");
+    const newExpiry = await storedExpiresAt(feeRecordId);
+    expect(newExpiry).not.toBeNull();
+    expect(newExpiry!.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("returns 409 when 'attempted' order's checkout window has elapsed — payment may still be settling", async () => {
+    // An "attempted" order means a payment form was submitted; Razorpay may
+    // still capture / webhook even after the client modal closes.  A local
+    // deadline is not authoritative proof of failure, so the server must keep
+    // blocking until Razorpay reports a terminal status.
+    fixture = await createFixture();
+    const { feeRecordId, schoolId } = fixture;
+
+    await db.execute(sql`
+      UPDATE fee_records SET razorpay_order_id = 'order_attempted_past_deadline_001'
+      WHERE id = ${feeRecordId}
+    `);
+    // Deadline elapsed 5 minutes ago — but status is still "attempted"
+    await setOrderExpiresAt(feeRecordId, nowPlusMs(-5 * 60 * 1000));
+
+    let createCalled = false;
+    const api: RzpOrdersApi = {
+      fetch: async () => ({ status: "attempted" }),
+      create: async () => { createCalled = true; return { id: "should_not_be_created" }; },
+    };
+
+    const result = await acquireRazorpayOrder(feeRecordId, schoolId, api);
+
+    // Must block — do not create a second order while a capture may be pending
+    expect(createCalled).toBe(false);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.status).toBe(409);
+    expect((result as any).code).toBe("PAYMENT_IN_PROGRESS");
+  });
+
+  it("returns 409 when 'created' order has a future razorpay_order_expires_at (checkout still open)", async () => {
+    fixture = await createFixture();
+    const { feeRecordId, schoolId } = fixture;
+
+    await db.execute(sql`
+      UPDATE fee_records SET razorpay_order_id = 'order_still_live_001'
+      WHERE id = ${feeRecordId}
+    `);
+    // Deadline is 10 minutes in the future — checkout window still open
+    await setOrderExpiresAt(feeRecordId, nowPlusMs(10 * 60 * 1000));
+
+    const result = await acquireRazorpayOrder(
+      feeRecordId,
+      schoolId,
+      existingOrderApi("order_still_live_001", "created"),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.status).toBe(409);
+    expect((result as any).code).toBe("PAYMENT_IN_PROGRESS");
+  });
+
+  it("returns 409 for legacy 'created' order with NULL deadline when created_at is recent (window still open)", async () => {
+    // Legacy rows pre-dating razorpay_order_expires_at fall back to the order's
+    // created_at Unix timestamp from Razorpay.  A recently-created order still
+    // has an active checkout window and must not be replaced.
+    fixture = await createFixture();
+    const { feeRecordId, schoolId } = fixture;
+
+    await db.execute(sql`
+      UPDATE fee_records
+      SET razorpay_order_id = 'order_legacy_recent_001', razorpay_order_expires_at = NULL
+      WHERE id = ${feeRecordId}
+    `);
+
+    // created_at is 60 seconds ago — well within the 600 s checkout window
+    const recentCreatedAt = Math.floor(Date.now() / 1000) - 60;
+    const api: RzpOrdersApi = {
+      fetch: async () => ({ status: "created", created_at: recentCreatedAt }),
+      create: async () => { throw new Error("create should not be called"); },
+    };
+
+    const result = await acquireRazorpayOrder(feeRecordId, schoolId, api);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.status).toBe(409);
+    expect((result as any).code).toBe("PAYMENT_IN_PROGRESS");
+  });
+
+  it("creates a new order for legacy 'created' order with NULL deadline when created_at is old (window elapsed)", async () => {
+    // Legacy rows pre-dating razorpay_order_expires_at fall back to the order's
+    // created_at Unix timestamp from Razorpay.  An order older than
+    // CHECKOUT_TIMEOUT_SECONDS (600 s) can no longer have an active checkout
+    // window, so it is safe to create a replacement.
+    fixture = await createFixture();
+    const { feeRecordId, schoolId } = fixture;
+
+    await db.execute(sql`
+      UPDATE fee_records
+      SET razorpay_order_id = 'order_legacy_old_001', razorpay_order_expires_at = NULL
+      WHERE id = ${feeRecordId}
+    `);
+
+    // created_at is 20 minutes ago — well past the 600 s checkout window
+    const staleCreatedAt = Math.floor(Date.now() / 1000) - 20 * 60;
+    const api: RzpOrdersApi = {
+      fetch: async () => ({ status: "created", created_at: staleCreatedAt }),
+      create: async () => ({ id: "order_fresh_after_legacy_expiry_001" }),
+    };
+
+    const result = await acquireRazorpayOrder(feeRecordId, schoolId, api);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.orderId).toBe("order_fresh_after_legacy_expiry_001");
+    // New order ID and a deadline must be persisted
+    expect(await storedOrderId(feeRecordId)).toBe("order_fresh_after_legacy_expiry_001");
+    const newExpiry = await storedExpiresAt(feeRecordId);
+    expect(newExpiry).not.toBeNull();
+    expect(newExpiry!.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("persists razorpay_order_expires_at in the future when a new order is created", async () => {
+    fixture = await createFixture();
+    const { feeRecordId, schoolId } = fixture;
+
+    const before = Date.now();
+    const result = await acquireRazorpayOrder(feeRecordId, schoolId, okCreate("order_deadline_check_001"));
+
+    expect(result.ok).toBe(true);
+    const expiresAt = await storedExpiresAt(feeRecordId);
+    expect(expiresAt).not.toBeNull();
+    // Deadline must be in the future and at least CHECKOUT_TIMEOUT_SECONDS (600) seconds ahead
+    expect(expiresAt!.getTime()).toBeGreaterThan(before + 599_000);
   });
 
   it("returns 503 ORDER_STATUS_UNKNOWN when Razorpay fetch fails — does NOT create a duplicate order", async () => {

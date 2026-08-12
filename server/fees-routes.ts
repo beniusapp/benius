@@ -23,12 +23,32 @@ export type AcquireOrderResult =
 
 /** Minimal Razorpay orders-API surface consumed by acquireRazorpayOrder. */
 export interface RzpOrdersApi {
-  fetch(orderId: string): Promise<{ status: string }>;
+  /**
+   * Fetch a Razorpay order by ID.
+   *
+   * `status`     — Razorpay lifecycle state ("created" | "attempted" | "expired" | "paid").
+   * `created_at` — Unix timestamp (seconds) when the order was created on Razorpay.
+   *                Present on every standard order; used as a safe fallback to detect
+   *                stale orders on fee records that pre-date the razorpay_order_expires_at
+   *                column (legacy rows where the column is NULL).
+   */
+  fetch(orderId: string): Promise<{ status: string; created_at?: number }>;
   create(opts: {
     amount: number; currency: string; receipt: string;
     notes: Record<string, string>;
   }): Promise<{ id: string }>;
 }
+
+/**
+ * Checkout window duration (seconds) — must match the `timeout` value
+ * configured in the Razorpay checkout modal on the client.  When a new
+ * Razorpay order is created we persist NOW() + this offset as
+ * razorpay_order_expires_at so subsequent requests can detect that the
+ * checkout window has elapsed even though Razorpay still shows the order
+ * as "created" (Razorpay does not expose an expire_by field on orders
+ * created via the standard checkout flow).
+ */
+const CHECKOUT_TIMEOUT_SECONDS = 600;
 
 /**
  * Atomically checks for an in-progress Razorpay order on the given fee record
@@ -49,7 +69,7 @@ export async function acquireRazorpayOrder(
   await db.transaction(async (tx) => {
     // Row-level write lock — concurrent requests for this fee block here.
     const lockedResult = await tx.execute(sql`
-      SELECT id, status, amount, late_fee_amount, razorpay_order_id
+      SELECT id, status, amount, late_fee_amount, razorpay_order_id, razorpay_order_expires_at
       FROM fee_records
       WHERE id = ${feeRecordId} AND school_id = ${schoolId}
       FOR UPDATE
@@ -82,11 +102,13 @@ export async function acquireRazorpayOrder(
     // risks a duplicate charge, which is worse than a brief retry delay.
     if (locked.razorpay_order_id) {
       let existingStatus: string | null = null;
+      let existingCreatedAt: number | undefined;
       let fetchError = false;
 
       try {
         const existing = await rzpOrders.fetch(locked.razorpay_order_id as string);
-        existingStatus = existing.status;
+        existingStatus    = existing.status;
+        existingCreatedAt = existing.created_at;
       } catch {
         fetchError = true;
       }
@@ -101,7 +123,12 @@ export async function acquireRazorpayOrder(
         return;
       }
 
-      if (existingStatus === "created" || existingStatus === "attempted") {
+      if (existingStatus === "attempted") {
+        // A payment attempt has already been submitted for this order.  A
+        // local checkout-modal timeout is NOT evidence the attempt failed —
+        // the capture or webhook can still complete after the modal closes,
+        // so we must not allow a second order before Razorpay reports a
+        // terminal status ("expired" or "paid").  Block unconditionally.
         result = {
           ok: false, status: 409, code: "PAYMENT_IN_PROGRESS",
           message: "A payment is already in progress for this fee. Please complete or close your other payment window before trying again.",
@@ -109,7 +136,45 @@ export async function acquireRazorpayOrder(
         return;
       }
 
-      // "expired" or "paid" — definitively terminal on Razorpay's side;
+      if (existingStatus === "created") {
+        // No payment attempt yet — the student opened checkout but never
+        // submitted a card.  Detect a stale checkout window and allow a retry.
+        //
+        // Primary signal: application-owned razorpay_order_expires_at column,
+        // persisted at order-creation time as NOW() + CHECKOUT_TIMEOUT_SECONDS.
+        //
+        // Fallback for legacy rows (razorpay_order_expires_at IS NULL): use the
+        // Razorpay order's created_at Unix timestamp, which is returned by every
+        // standard Orders fetch.  If the order is older than
+        // CHECKOUT_TIMEOUT_SECONDS, the checkout modal will have auto-closed.
+        //
+        // If neither signal is available, err on the side of caution (block).
+        const rawExpiry = locked.razorpay_order_expires_at;
+        let isCheckoutWindowElapsed: boolean;
+
+        if (rawExpiry) {
+          // Stored deadline — authoritative for orders created post-deployment.
+          isCheckoutWindowElapsed = new Date(rawExpiry as string).getTime() < Date.now();
+        } else if (typeof existingCreatedAt === "number") {
+          // Legacy row: derive deadline from Razorpay's own order timestamp.
+          const orderAgeSeconds = Date.now() / 1000 - existingCreatedAt;
+          isCheckoutWindowElapsed = orderAgeSeconds > CHECKOUT_TIMEOUT_SECONDS;
+        } else {
+          // Neither signal available — cannot safely determine age.
+          isCheckoutWindowElapsed = false;
+        }
+
+        if (!isCheckoutWindowElapsed) {
+          result = {
+            ok: false, status: 409, code: "PAYMENT_IN_PROGRESS",
+            message: "A payment is already in progress for this fee. Please complete or close your other payment window before trying again.",
+          };
+          return;
+        }
+        // Checkout window definitively elapsed → fall through to create a fresh order.
+      }
+
+      // "expired", "paid", or checkout-window-elapsed "created" — terminal;
       // safe to create a fresh order for this fee record.
     }
 
@@ -124,11 +189,16 @@ export async function acquireRazorpayOrder(
       notes: { feeRecordId: String(feeRecordId), schoolId: String(schoolId) },
     });
 
-    // Persist the order ID inside the transaction so it becomes visible to the
-    // next concurrent request the moment we commit.
+    // Persist the order ID and checkout deadline inside the transaction so they
+    // become visible to the next concurrent request the moment we commit.
+    // razorpay_order_expires_at mirrors the client's checkout modal timeout
+    // (CHECKOUT_TIMEOUT_SECONDS) and lets a subsequent request detect that the
+    // checkout window has elapsed even though Razorpay still shows "created".
+    const orderExpiresAt = new Date(Date.now() + CHECKOUT_TIMEOUT_SECONDS * 1_000);
     const updateResult = await tx.execute(sql`
       UPDATE fee_records
-      SET razorpay_order_id = ${order.id}
+      SET razorpay_order_id         = ${order.id},
+          razorpay_order_expires_at = ${orderExpiresAt.toISOString()}
       WHERE id = ${feeRecordId} AND school_id = ${schoolId}
     `);
     if ((updateResult.rowCount ?? 0) === 0) {
