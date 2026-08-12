@@ -895,17 +895,31 @@ export function registerFeesRoutes(app: Express) {
 
   app.get("/api/admin/fees/external-settings", async (req, res) => {
     if (!adminGuard(req, res)) return;
-    const settings = await storage.getExternalPaymentSettings(req.session.schoolId!);
-    if (!settings) {
-      return res.json({ isEnabled: false, gatewayUrl: null, bannerMessage: null, maxOvercollectionPercent: 150,
-        razorpayEnabled: false, razorpayKeyId: null, razorpayKeySecret: null, razorpayWebhookSecret: null, razorpayMode: "test" });
-    }
-    // Never return secrets in plaintext — mask them so the UI knows they're set
+    const schoolId = req.session.schoolId!;
+    const settings = await storage.getExternalPaymentSettings(schoolId);
+
+    // Resolve effective credentials (DB first, env-var fallback).
+    // This makes the admin UI accurately reflect what the system will actually
+    // use — including when only process.env.RAZORPAY_* vars are set (no DB save
+    // needed on a local dev machine or fresh deployment).
+    const creds = await resolveRazorpayCredentials(schoolId);
+
+    const base = settings ?? {
+      isEnabled: false, gatewayUrl: null, bannerMessage: null,
+      maxOvercollectionPercent: 150, razorpayEnabled: false,
+      razorpayKeyId: null, razorpayKeySecret: null, razorpayWebhookSecret: null,
+    };
+
+    // Key ID is not a secret — safe to show.  Secrets are always masked.
+    const effectiveKeyId = settings?.razorpayKeyId ?? (creds ? (process.env.RAZORPAY_KEY_ID ?? null) : null);
+
     res.json({
-      ...settings,
-      razorpayMode: "live",   // always live — test mode removed
-      razorpayKeySecret: settings.razorpayKeySecret ? "••••••••" : null,
-      razorpayWebhookSecret: settings.razorpayWebhookSecret ? "••••••••" : null,
+      ...base,
+      razorpayMode: "live",
+      razorpayEnabled:       creds?.enabled ?? false,
+      razorpayKeyId:         effectiveKeyId,
+      razorpayKeySecret:     creds ? "••••••••" : null,
+      razorpayWebhookSecret: creds?.webhookSecret ? "••••••••" : null,
     });
   });
 
