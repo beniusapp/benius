@@ -3235,6 +3235,75 @@ td:last-child{font-weight:600;word-break:break-all;}
   });
 
   // ── Student: Notification History ─────────────────────────────────────────
+  // ── Student: All payment attempts (paid + failed) ────────────────────────
+  // Powers the History tab — shows every attempt, not just receipts.
+  app.get("/api/student/fees/payment-attempts", async (req, res) => {
+    if (!req.session?.studentId) return res.status(403).json({ message: "Student access required" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(403).json({ message: "Student not found" });
+
+    try {
+      // Successful payments (from payment_records)
+      const paid = await db.execute(sql`
+        SELECT
+          pr.id,
+          'paid'::text                                AS type,
+          fr.fee_type                                 AS "feeType",
+          fr.fee_type                                 AS "feeName",
+          pr.amount,
+          pr.received_date                            AS "date",
+          pr.receipt_number                           AS "receiptNumber",
+          pr.payment_method                           AS "paymentMethod",
+          pr.payment_mode                             AS "paymentMode",
+          pr.razorpay_payment_id                      AS "razorpayPaymentId",
+          NULL::text                                  AS "errorDescription",
+          pr.created_at                               AS "createdAt"
+        FROM payment_records pr
+        LEFT JOIN fee_records fr ON fr.id = pr.fee_record_id
+        WHERE pr.student_id = ${student.id}
+          AND pr.school_id  = ${student.schoolId}
+        ORDER BY pr.created_at DESC
+        LIMIT 200
+      `);
+
+      // Failed payment attempts (from fee_audit_log)
+      const failed = await db.execute(sql`
+        SELECT
+          al.id,
+          'failed'::text                              AS type,
+          fr.fee_type                                 AS "feeType",
+          fr.fee_type                                 AS "feeName",
+          fr.amount,
+          al.created_at::date                         AS "date",
+          NULL::text                                  AS "receiptNumber",
+          NULL::text                                  AS "paymentMethod",
+          NULL::text                                  AS "paymentMode",
+          NULL::text                                  AS "razorpayPaymentId",
+          al.description                              AS "errorDescription",
+          al.created_at                               AS "createdAt"
+        FROM fee_audit_log al
+        LEFT JOIN fee_records fr ON fr.id = al.entity_id::int
+        WHERE al.student_id  = ${student.id}
+          AND al.school_id   = ${student.schoolId}
+          AND al.action      = 'payment_failed'
+          AND al.entity_type = 'fee_record'
+        ORDER BY al.created_at DESC
+        LIMIT 200
+      `);
+
+      // Merge and sort by createdAt descending
+      const all = [
+        ...paid.rows,
+        ...failed.rows,
+      ].sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      res.json(all);
+    } catch (err: any) {
+      console.error("[/api/student/fees/payment-attempts]", err);
+      res.status(500).json({ message: "Failed to load payment history" });
+    }
+  });
+
   app.get("/api/student/fees/notification-history", async (req, res) => {
     if (!req.session?.studentId) return res.status(403).json({ message: "Student access required" });
     const student = await storage.getStudentById(req.session.studentId);

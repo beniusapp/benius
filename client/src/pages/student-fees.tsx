@@ -7,6 +7,7 @@ import {
   Receipt, Download, Lock, ExternalLink, Copy, Check, Zap, Bell,
   Mail, MessageSquare, Webhook, TrendingUp, Shield, ChevronRight,
   Sparkles, CircleDollarSign, CalendarDays, BadgeCheck, WifiOff,
+  XCircle, RotateCcw,
 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
@@ -73,6 +74,21 @@ interface PortalInfo {
   bannerMessage: string | null;
   razorpayEnabled: boolean;
   razorpayKeyId: string | null;
+}
+
+interface PaymentAttempt {
+  id: number;
+  type: "paid" | "failed";
+  feeType: string | null;
+  feeName: string | null;
+  amount: number | null;
+  date: string | null;
+  receiptNumber: string | null;
+  paymentMethod: string | null;
+  paymentMode: string | null;
+  razorpayPaymentId: string | null;
+  errorDescription: string | null;
+  createdAt: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -192,6 +208,12 @@ function StatusPill({ status }: { status: string }) {
       <AlertTriangle className="w-3 h-3" /> Overdue
     </span>
   );
+  if (status === "Payment Failed") return (
+    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold tracking-wide"
+      style={{ background: "linear-gradient(135deg,#fff1f2,#ffe4e6)", color: "#9f1239", border: "1px solid #fda4af" }}>
+      <XCircle className="w-3 h-3" /> Payment Failed
+    </span>
+  );
   return (
     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold tracking-wide"
       style={{ background: "linear-gradient(135deg,#fef3c7,#fde68a)", color: "#92400e", border: "1px solid #fcd34d" }}>
@@ -290,6 +312,13 @@ export default function StudentFees() {
     staleTime: 30_000,
   });
 
+  const { data: paymentAttempts = [], isLoading: attemptsLoading } = useQuery<PaymentAttempt[]>({
+    queryKey: ["/api/student/fees/payment-attempts"],
+    enabled: !!student,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+  });
+
   useEffect(() => {
     if (!studentLoading && (isError || !student || !student.schoolId)) {
       setLocation("/student-login");
@@ -304,6 +333,7 @@ export default function StudentFees() {
     return subscribeToPaymentUpdate(() => {
       queryClient.invalidateQueries({ queryKey: ["/api/student/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/student/fees/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/student/fees/payment-attempts"] });
     });
   }, [subscribeToPaymentUpdate, queryClient]);
 
@@ -498,7 +528,7 @@ export default function StudentFees() {
 
   const tabs = [
     { key: "outstanding" as const, label: "Outstanding", count: pendingRecords.length },
-    { key: "history"     as const, label: "History",     count: paidRecords.length },
+    { key: "history"     as const, label: "History",     count: paymentAttempts.length },
     { key: "reminders"   as const, label: "Reminders",   count: notificationHistory.length },
   ];
 
@@ -756,16 +786,20 @@ export default function StudentFees() {
                         style={{ background: "rgba(255,255,255,0.95)", border: "1px solid rgba(255,255,255,0.8)",
                           boxShadow: "0 4px 20px rgba(0,0,0,0.07)" }}
                         data-testid={`card-fee-${rec.id}`}>
-                        {/* Accent top bar */}
+                        {/* Accent top bar — red-rose when last attempt failed */}
                         <div className="h-1 w-full"
-                          style={{ background: rec.status === "Overdue"
+                          style={{ background: (rec.failed_count ?? 0) > 0
+                            ? "linear-gradient(90deg,#f43f5e,#fb7185)"
+                            : rec.status === "Overdue"
                             ? "linear-gradient(90deg,#ef4444,#f87171)"
                             : "linear-gradient(90deg,#f59e0b,#fbbf24)" }} />
                         <div className="p-4">
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap mb-2">
-                                <StatusPill status={rec.status} />
+                                {(rec.failed_count ?? 0) > 0
+                                  ? <StatusPill status="Payment Failed" />
+                                  : <StatusPill status={rec.status} />}
                                 {rec.academicYear && (
                                   <span className="px-2 py-0.5 rounded-lg text-[10px] font-semibold"
                                     style={{ background: "#f1f5f9", color: "#64748b" }}>
@@ -816,22 +850,34 @@ export default function StudentFees() {
                                   </div>
                                 )}
                               </div>
-                              {/* Razorpay Pay Now — shown only when toggle is ON and live keys are saved */}
-                              {razorpayActive && (
-                                <button
-                                  onClick={() => handlePayNow(rec, student)}
-                                  disabled={payingFeeId === rec.id}
-                                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black text-white transition-all active:scale-95 disabled:opacity-60"
-                                  style={{ background: payingFeeId === rec.id
-                                    ? "linear-gradient(135deg,#94a3b8,#cbd5e1)"
-                                    : "linear-gradient(135deg,#6366f1,#818cf8)",
-                                    boxShadow: payingFeeId === rec.id ? "none" : "0 4px 18px rgba(99,102,241,0.45)" }}
-                                  data-testid={`button-pay-now-${rec.id}`}>
-                                  {payingFeeId === rec.id
-                                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Processing…</>
-                                    : <><Zap className="w-3.5 h-3.5" /> Pay Now</>}
-                                </button>
-                              )}
+                              {/* Razorpay Pay Now / Try Again — shown only when toggle is ON and live keys are saved */}
+                              {razorpayActive && (() => {
+                                const hasFailed = (rec.failed_count ?? 0) > 0;
+                                const isProcessing = payingFeeId === rec.id;
+                                return (
+                                  <button
+                                    onClick={() => handlePayNow(rec, student)}
+                                    disabled={isProcessing}
+                                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black text-white transition-all active:scale-95 disabled:opacity-60"
+                                    style={{
+                                      background: isProcessing
+                                        ? "linear-gradient(135deg,#94a3b8,#cbd5e1)"
+                                        : hasFailed
+                                        ? "linear-gradient(135deg,#e11d48,#f43f5e)"
+                                        : "linear-gradient(135deg,#6366f1,#818cf8)",
+                                      boxShadow: isProcessing ? "none" : hasFailed
+                                        ? "0 4px 18px rgba(225,29,72,0.45)"
+                                        : "0 4px 18px rgba(99,102,241,0.45)",
+                                    }}
+                                    data-testid={`button-pay-now-${rec.id}`}>
+                                    {isProcessing
+                                      ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Processing…</>
+                                      : hasFailed
+                                      ? <><RotateCcw className="w-3.5 h-3.5" /> Try Again</>
+                                      : <><Zap className="w-3.5 h-3.5" /> Pay Now</>}
+                                  </button>
+                                );
+                              })()}
                               {/* Toggle OFF → hide payment button entirely */}
                               {!isArchiveMode && !portalInfo?.razorpayEnabled && (
                                 <span className="text-[10px] text-slate-400 font-medium">Pay at school</span>
@@ -875,11 +921,11 @@ export default function StudentFees() {
               <motion.div key="history"
                 initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }}
                 transition={{ duration: 0.22 }}>
-                {feesLoading ? (
+                {attemptsLoading ? (
                   <div className="flex justify-center py-20">
                     <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
                   </div>
-                ) : paidRecords.length === 0 ? (
+                ) : paymentAttempts.length === 0 ? (
                   <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
                     className="flex flex-col items-center gap-4 py-20 rounded-3xl"
                     style={{ background: "rgba(255,255,255,0.9)", border: "1px solid rgba(255,255,255,0.8)",
@@ -889,86 +935,112 @@ export default function StudentFees() {
                       <Receipt className="w-8 h-8 text-indigo-500" />
                     </div>
                     <div className="text-center">
-                      <p className="font-extrabold text-slate-700 text-lg">No payments yet</p>
-                      <p className="text-sm text-slate-400 mt-1">Paid fees and receipts will appear here.</p>
+                      <p className="font-extrabold text-slate-700 text-lg">No attempts yet</p>
+                      <p className="text-sm text-slate-400 mt-1">All payment attempts — successful and failed — will appear here.</p>
                     </div>
                   </motion.div>
                 ) : (
                   <motion.div variants={container} initial="hidden" animate="show" className="space-y-3">
-                    {paidRecords.map((rec) => (
-                      <motion.div key={rec.id} variants={item}
-                        className="rounded-3xl overflow-hidden"
-                        style={{ background: "rgba(255,255,255,0.95)", border: "1px solid rgba(255,255,255,0.8)",
-                          boxShadow: "0 4px 20px rgba(0,0,0,0.07)" }}
-                        data-testid={`card-fee-paid-${rec.id}`}>
-                        <div className="h-1 w-full"
-                          style={{ background: "linear-gradient(90deg,#10b981,#34d399)" }} />
-                        <div className="p-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap mb-2">
-                                <StatusPill status={rec.status} />
-                                {rec.academicYear && (
-                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-semibold"
-                                    style={{ background: "#f1f5f9", color: "#64748b" }}>
-                                    {rec.academicYear}
-                                  </span>
-                                )}
-                                {rec.receiptNumber?.startsWith("ON") && (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold"
-                                    style={{ background: "linear-gradient(135deg,#eff6ff,#dbeafe)", color: "#1d4ed8", border: "1px solid #bfdbfe" }}>
-                                    <Sparkles className="w-2.5 h-2.5" /> Online
-                                  </span>
-                                )}
-                              </div>
-                              <p className="font-extrabold text-slate-800 text-base leading-tight">{rec.feeName || rec.feeType}</p>
-                              <div className="flex items-center gap-1.5 mt-1.5 text-xs text-slate-400">
-                                <CalendarDays className="w-3 h-3 flex-shrink-0" />
-                                Paid {formatDate(rec.paidDate)}
-                              </div>
-                              {rec.receiptNumber && (
-                                <div className="flex items-center gap-2 mt-2.5" data-testid={`text-receipt-${rec.id}`}>
-                                  <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl"
-                                    style={{ background: "linear-gradient(135deg,#f0fdf4,#dcfce7)", border: "1px solid #86efac" }}>
-                                    <Receipt className="w-3 h-3 text-emerald-600 flex-shrink-0" />
-                                    <span className="font-mono text-xs font-black tracking-widest text-emerald-700">{rec.receiptNumber}</span>
-                                  </div>
-                                  <button
-                                    onClick={() => copyReceiptNumber(rec.id, rec.receiptNumber!)}
-                                    className="flex items-center justify-center w-7 h-7 rounded-xl transition-all active:scale-90"
-                                    style={{ background: copiedReceiptId === rec.id ? "#d1fae5" : "#f1f5f9",
-                                      color: copiedReceiptId === rec.id ? "#059669" : "#94a3b8",
-                                      border: `1px solid ${copiedReceiptId === rec.id ? "#6ee7b7" : "#e2e8f0"}` }}
-                                    title="Copy receipt number"
-                                    data-testid={`button-copy-receipt-${rec.id}`}>
-                                    {copiedReceiptId === rec.id
-                                      ? <Check className="w-3.5 h-3.5" />
-                                      : <Copy className="w-3.5 h-3.5" />}
-                                  </button>
+                    {paymentAttempts.map((attempt, idx) => {
+                      const isPaid   = attempt.type === "paid";
+                      const isFailed = attempt.type === "failed";
+                      return (
+                        <motion.div key={`${attempt.type}-${attempt.id}-${idx}`} variants={item}
+                          className="rounded-3xl overflow-hidden"
+                          style={{ background: "rgba(255,255,255,0.95)", border: "1px solid rgba(255,255,255,0.8)",
+                            boxShadow: "0 4px 20px rgba(0,0,0,0.07)" }}
+                          data-testid={isPaid ? `card-attempt-paid-${attempt.id}` : `card-attempt-failed-${attempt.id}`}>
+                          {/* Accent bar — green for paid, rose for failed */}
+                          <div className="h-1 w-full"
+                            style={{ background: isPaid
+                              ? "linear-gradient(90deg,#10b981,#34d399)"
+                              : "linear-gradient(90deg,#f43f5e,#fb7185)" }} />
+                          <div className="p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                {/* Status pill + Online badge */}
+                                <div className="flex items-center gap-2 flex-wrap mb-2">
+                                  <StatusPill status={isPaid ? "Paid" : "Payment Failed"} />
+                                  {isPaid && attempt.receiptNumber?.startsWith("ON") && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold"
+                                      style={{ background: "linear-gradient(135deg,#eff6ff,#dbeafe)", color: "#1d4ed8", border: "1px solid #bfdbfe" }}>
+                                      <Sparkles className="w-2.5 h-2.5" /> Online
+                                    </span>
+                                  )}
                                 </div>
-                              )}
-                              {rec.notes && <p className="text-xs text-slate-400 mt-1.5 italic">{rec.notes}</p>}
-                            </div>
-                            <div className="flex flex-col items-end gap-3 flex-shrink-0">
-                              <p className="text-2xl font-black text-emerald-600"
-                                style={{ fontVariantNumeric: "tabular-nums" }}>
-                                {formatAmount(rec.amount)}
-                              </p>
-                              <a
-                                href={`/api/student/fees/${rec.id}/receipt`}
-                                target="_blank" rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-bold transition-all hover:opacity-80 active:scale-95"
-                                style={{ background: "linear-gradient(135deg,#f0fdf4,#dcfce7)",
-                                  color: "#065f46", border: "1px solid #86efac",
-                                  boxShadow: "0 2px 8px rgba(16,185,129,0.15)" }}
-                                data-testid={`button-download-receipt-${rec.id}`}>
-                                <Download className="w-3.5 h-3.5" /> Receipt
-                              </a>
+
+                                {/* Fee name */}
+                                <p className="font-extrabold text-slate-800 text-base leading-tight">
+                                  {attempt.feeName || attempt.feeType || "Fee"}
+                                </p>
+
+                                {/* Date line */}
+                                <div className="flex items-center gap-1.5 mt-1.5 text-xs text-slate-400">
+                                  <CalendarDays className="w-3 h-3 flex-shrink-0" />
+                                  {isPaid ? "Paid" : "Failed"} {formatDate(attempt.date ?? attempt.createdAt)}
+                                </div>
+
+                                {/* Receipt row (paid only) */}
+                                {isPaid && attempt.receiptNumber && (
+                                  <div className="flex items-center gap-2 mt-2.5"
+                                    data-testid={`text-attempt-receipt-${attempt.id}`}>
+                                    <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl"
+                                      style={{ background: "linear-gradient(135deg,#f0fdf4,#dcfce7)", border: "1px solid #86efac" }}>
+                                      <Receipt className="w-3 h-3 text-emerald-600 flex-shrink-0" />
+                                      <span className="font-mono text-xs font-black tracking-widest text-emerald-700">
+                                        {attempt.receiptNumber}
+                                      </span>
+                                    </div>
+                                    <button
+                                      onClick={() => copyReceiptNumber(attempt.id, attempt.receiptNumber!)}
+                                      className="flex items-center justify-center w-7 h-7 rounded-xl transition-all active:scale-90"
+                                      style={{ background: copiedReceiptId === attempt.id ? "#d1fae5" : "#f1f5f9",
+                                        color: copiedReceiptId === attempt.id ? "#059669" : "#94a3b8",
+                                        border: `1px solid ${copiedReceiptId === attempt.id ? "#6ee7b7" : "#e2e8f0"}` }}
+                                      title="Copy receipt number">
+                                      {copiedReceiptId === attempt.id
+                                        ? <Check className="w-3.5 h-3.5" />
+                                        : <Copy className="w-3.5 h-3.5" />}
+                                    </button>
+                                  </div>
+                                )}
+
+                                {/* Failure reason (failed only) */}
+                                {isFailed && attempt.errorDescription && (
+                                  <div className="mt-2 flex items-start gap-1.5 rounded-xl px-2.5 py-2"
+                                    style={{ background: "rgba(244,63,94,0.07)", border: "1px solid rgba(244,63,94,0.2)" }}>
+                                    <XCircle className="w-3.5 h-3.5 text-rose-500 flex-shrink-0 mt-0.5" />
+                                    <p className="text-[11px] text-rose-600 leading-snug">
+                                      {attempt.errorDescription.replace(/^Razorpay payment failed — /, "")}
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Amount + Receipt download (paid) */}
+                              <div className="flex flex-col items-end gap-3 flex-shrink-0">
+                                <p className={`text-2xl font-black ${isPaid ? "text-emerald-600" : "text-rose-500"}`}
+                                  style={{ fontVariantNumeric: "tabular-nums" }}>
+                                  {attempt.amount != null ? formatAmount(attempt.amount) : "—"}
+                                </p>
+                                {isPaid && (
+                                  <a
+                                    href={`/api/student/fees/${attempt.id}/receipt`}
+                                    target="_blank" rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-bold transition-all hover:opacity-80 active:scale-95"
+                                    style={{ background: "linear-gradient(135deg,#f0fdf4,#dcfce7)",
+                                      color: "#065f46", border: "1px solid #86efac",
+                                      boxShadow: "0 2px 8px rgba(16,185,129,0.15)" }}
+                                    data-testid={`button-download-receipt-${attempt.id}`}>
+                                    <Download className="w-3.5 h-3.5" /> Receipt
+                                  </a>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </motion.div>
-                    ))}
+                        </motion.div>
+                      );
+                    })}
                   </motion.div>
                 )}
               </motion.div>
