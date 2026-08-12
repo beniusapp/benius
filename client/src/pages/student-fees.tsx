@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
@@ -183,6 +183,38 @@ export default function StudentFees() {
   const [payError, setPayError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"outstanding" | "history" | "reminders">("outstanding");
 
+  // ── Payment lifecycle refs ──────────────────────────────────────────────────
+  //
+  // Scenario A — tab closed / SPA navigation BEFORE create-order response:
+  //   The AbortController cancels the in-flight fetch.  No Razorpay order is
+  //   created (or the server-side call may still complete, but the response is
+  //   discarded).  On return, payingFeeId starts as null — no stale spinner.
+  //
+  // Scenario B — tab closed / SPA navigation AFTER order created but checkout open:
+  //   The Razorpay checkout modal's modal.timeout (600 s) fires ondismiss,
+  //   which rejects the promise and clears payingFeeId.  This is the in-session
+  //   path (SPA navigation unmounts the component; timeout fires on the
+  //   background page).  For a hard tab close, the component is discarded;
+  //   payingFeeId is ephemeral React state and always starts as null on the
+  //   next visit — no stale spinner.  The Razorpay order stays in "created"
+  //   state on Razorpay's dashboard (cosmetic only; it does not block the
+  //   student from paying again — a new order is created on the next attempt).
+  //   This residual order risk is accepted: Razorpay's Orders API does not
+  //   provide a programmatic cancel for orders in "created" state.
+  //
+  // isMountedRef prevents state updates on an already-unmounted component.
+  const paymentAbortRef = useRef<AbortController | null>(null);
+  const isMountedRef    = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      // Abort any in-flight create-order fetch (Scenario A above).
+      paymentAbortRef.current?.abort();
+    };
+  }, []);
+
   const copyReceiptNumber = useCallback((recId: number, receiptNumber: string) => {
     navigator.clipboard.writeText(receiptNumber).then(() => {
       setCopiedReceiptId(recId);
@@ -229,6 +261,13 @@ export default function StudentFees() {
     if (!portalInfo?.razorpayEnabled || !portalInfo.razorpayKeyId) return;
     setPayingFeeId(rec.id);
     setPayError(null);
+
+    // Create a fresh AbortController for this payment attempt and store it so
+    // the unmount cleanup can abort the in-flight request if the student closes
+    // the tab or navigates away before the order response arrives.
+    const abort = new AbortController();
+    paymentAbortRef.current = abort;
+
     try {
       await loadRazorpayScript();
       const resp = await fetch("/api/payments/create-order", {
@@ -236,6 +275,7 @@ export default function StudentFees() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ feeRecordId: rec.id }),
         credentials: "include",
+        signal: abort.signal,
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
@@ -277,6 +317,12 @@ export default function StudentFees() {
               .finally(() => refreshFeesData());
             resolve();
           },
+          // Auto-close the checkout after 10 minutes.  Razorpay fires ondismiss
+          // when the timeout elapses, which rejects the promise and clears
+          // payingFeeId via the finally block below.  This handles the
+          // in-session case where the student opened the modal, switched away
+          // within the SPA, and the component is still mounted in the background.
+          timeout: 600,
           modal: { ondismiss: () => reject(new Error("dismissed")) },
         };
 
@@ -292,14 +338,24 @@ export default function StudentFees() {
       });
     } catch (err: any) {
       if (err?.message === "dismissed") {
-        // User closed the modal — no error shown
+        // User closed the Razorpay modal (or modal.timeout elapsed) — no error shown
+      } else if (err?.name === "AbortError") {
+        // Scenario A: the component unmounted while the create-order fetch was
+        // still in-flight.  The request was aborted; we must not touch React
+        // state on a dead component.
+        paymentAbortRef.current = null;
+        return;
       } else if (err instanceof RazorpayScriptError) {
-        setPayError("Payment service unavailable — please try again later");
+        if (isMountedRef.current) setPayError("Payment service unavailable — please try again later");
       } else {
-        setPayError(err?.message ?? "Payment failed");
+        if (isMountedRef.current) setPayError(err?.message ?? "Payment failed");
       }
     } finally {
-      setPayingFeeId(null);
+      paymentAbortRef.current = null;
+      // Guard: component may have unmounted while the modal was open (Scenario B).
+      // payingFeeId is ephemeral React state — it always starts null on mount,
+      // so there is no stale spinner risk on the student's next visit.
+      if (isMountedRef.current) setPayingFeeId(null);
     }
   }, [portalInfo, refetchFees, queryClient]);
 
