@@ -104,6 +104,13 @@ class RazorpayOrderExpiredError extends Error {
   }
 }
 
+class PaymentInProgressError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PaymentInProgressError";
+  }
+}
+
 /** Returns true when the Razorpay payment.failed response indicates the order
  *  window has closed (15-minute expiry).  Razorpay does not publish a single
  *  canonical error code for this case, so we match on the most reliable
@@ -209,6 +216,7 @@ export default function StudentFees() {
   const [copiedReceiptId, setCopiedReceiptId] = useState<number | null>(null);
   const [payingFeeId, setPayingFeeId] = useState<number | null>(null);
   const [payError, setPayError] = useState<string | null>(null);
+  const [payWarning, setPayWarning] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"outstanding" | "history" | "reminders">("outstanding");
 
   // ── Payment lifecycle refs ──────────────────────────────────────────────────
@@ -258,11 +266,15 @@ export default function StudentFees() {
   const { data: feeRecords = [], isLoading: feesLoading, refetch: refetchFees } = useQuery<FeeRecord[]>({
     queryKey: ["/api/student/fees"],
     enabled: !!student,
+    staleTime: 0,               // always treat as stale — payment status must never be served from cache
+    refetchOnWindowFocus: true, // re-check status the moment the student returns to this tab
   });
 
   const { data: feesSummary, refetch: refetchSummary } = useQuery<FeesSummary>({
     queryKey: ["/api/student/fees/summary"],
     enabled: !!student,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
 
   const { data: portalInfo } = useQuery<PortalInfo>({
@@ -318,6 +330,8 @@ export default function StudentFees() {
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
+        if (err.code === "PAYMENT_IN_PROGRESS")
+          throw new PaymentInProgressError(err.message ?? "A payment is already in progress for this fee.");
         throw new Error(err.message ?? "Failed to create order");
       }
       const { orderId, amount, currency, keyId } = await resp.json();
@@ -399,6 +413,15 @@ export default function StudentFees() {
         // gateway-side order expiry, etc.)
         rzp.on("payment.failed", (response: any) => {
           clearCheckoutTimer();
+          // Clear the order lock immediately so the student can retry this
+          // invoice right away — don't wait for the webhook round-trip.
+          fetch("/api/payments/clear-failed-order", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ feeRecordId: rec.id, razorpayOrderId: orderId }),
+          }).catch(() => { /* best-effort — webhook clears it too */ });
+
           if (isOrderExpiredError(response?.error)) {
             // Gateway rejected the payment because the order window had already
             // elapsed (e.g. student left the tab open overnight then returned).
@@ -420,6 +443,9 @@ export default function StudentFees() {
         // state on a dead component.
         paymentAbortRef.current = null;
         return;
+      } else if (err instanceof PaymentInProgressError) {
+        // Server returned 409 PAYMENT_IN_PROGRESS — show as amber warning, not red error.
+        if (isMountedRef.current) setPayWarning(err.message);
       } else if (err instanceof RazorpayOrderExpiredError) {
         // The 10-minute checkout window elapsed (or the gateway rejected the
         // order as expired) before the student completed payment.
@@ -620,7 +646,21 @@ export default function StudentFees() {
           )}
         </AnimatePresence>
 
-        {/* ── Pay error banner ────────────────────────────────────────────── */}
+        {/* ── Payment-in-progress warning (amber) ─────────────────────────── */}
+        <AnimatePresence>
+          {payWarning && (
+            <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              className="mt-4 flex items-center gap-3 rounded-2xl px-4 py-3"
+              style={{ background: "rgba(245,158,11,0.1)", border: "1.5px solid rgba(245,158,11,0.35)" }}>
+              <Clock className="w-4 h-4 text-amber-400 flex-shrink-0" />
+              <p className="text-sm text-amber-300 flex-1">{payWarning}</p>
+              <button onClick={() => setPayWarning(null)}
+                className="text-amber-400 hover:text-amber-200 text-xs font-semibold transition-colors">✕</button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── Pay error banner (red) ───────────────────────────────────────── */}
         <AnimatePresence>
           {payError && (
             <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}

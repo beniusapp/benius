@@ -124,16 +124,41 @@ export async function acquireRazorpayOrder(
       }
 
       if (existingStatus === "attempted") {
-        // A payment attempt has already been submitted for this order.  A
-        // local checkout-modal timeout is NOT evidence the attempt failed —
-        // the capture or webhook can still complete after the modal closes,
-        // so we must not allow a second order before Razorpay reports a
-        // terminal status ("expired" or "paid").  Block unconditionally.
-        result = {
-          ok: false, status: 409, code: "PAYMENT_IN_PROGRESS",
-          message: "A payment is already in progress for this fee. Please complete or close your other payment window before trying again.",
-        };
-        return;
+        // A payment attempt has been submitted for this order.
+        //
+        // Safety window: within the checkout timeout, a capture or webhook can
+        // still complete after the modal closes — block to prevent a duplicate.
+        //
+        // However once the application-side checkout deadline has passed AND no
+        // capture has been recorded in our system, the attempt is definitively
+        // abandoned. Razorpay will expire the order; we clear the lock early so
+        // the student can retry without waiting for Razorpay's own expiry job.
+        const rawExpiry = locked.razorpay_order_expires_at;
+        let isCheckoutWindowElapsed = false;
+        if (rawExpiry) {
+          isCheckoutWindowElapsed = new Date(rawExpiry as string).getTime() < Date.now();
+        } else if (typeof existingCreatedAt === "number") {
+          isCheckoutWindowElapsed = (Date.now() / 1000 - existingCreatedAt) > CHECKOUT_TIMEOUT_SECONDS;
+        }
+
+        if (!isCheckoutWindowElapsed) {
+          // Still within the safety window — block.
+          result = {
+            ok: false, status: 409, code: "PAYMENT_IN_PROGRESS",
+            message: "A payment was already submitted for this fee. If it was successful, the status will update automatically — please check back in a few minutes.",
+          };
+          return;
+        }
+        // Checkout window elapsed — clear the stale order and fall through to create a fresh one.
+        console.log(
+          `[razorpay create-order] Clearing stale attempted order ${locked.razorpay_order_id} ` +
+          `on fee #${feeRecordId} (checkout window elapsed)`
+        );
+        await tx.execute(sql`
+          UPDATE fee_records
+          SET razorpay_order_id = NULL, razorpay_order_expires_at = NULL
+          WHERE id = ${feeRecordId} AND school_id = ${schoolId}
+        `);
       }
 
       if (existingStatus === "created") {
@@ -165,9 +190,18 @@ export async function acquireRazorpayOrder(
         }
 
         if (!isCheckoutWindowElapsed) {
+          // Compute how many minutes remain so the student knows when to retry.
+          let minutesLeft = 10;
+          if (rawExpiry) {
+            minutesLeft = Math.max(1, Math.ceil((new Date(rawExpiry as string).getTime() - Date.now()) / 60_000));
+          } else if (typeof existingCreatedAt === "number") {
+            const elapsedSeconds = Date.now() / 1000 - existingCreatedAt;
+            minutesLeft = Math.max(1, Math.ceil((CHECKOUT_TIMEOUT_SECONDS - elapsedSeconds) / 60));
+          }
+          const minLabel = `${minutesLeft} minute${minutesLeft !== 1 ? "s" : ""}`;
           result = {
             ok: false, status: 409, code: "PAYMENT_IN_PROGRESS",
-            message: "A payment is already in progress for this fee. Please complete or close your other payment window before trying again.",
+            message: `A payment window is already open for this fee. Please try again in ${minLabel}.`,
           };
           return;
         }
@@ -1091,7 +1125,7 @@ export function registerFeesRoutes(app: Express) {
     // Secret is optional — null means "leave unchanged" when masked placeholder is sent
     razorpayKeySecret: z.string().max(500).optional().nullable(),
     razorpayWebhookSecret: z.string().max(500).optional().nullable(),
-    // Mode is always "live" — test/sandbox is not supported
+    // No prefix validation — both rzp_test_* and rzp_live_* keys are accepted.
   });
 
   app.get("/api/admin/fees/external-settings", async (req, res) => {
@@ -1131,11 +1165,7 @@ export function registerFeesRoutes(app: Express) {
     const schoolId = req.session.schoolId!;
     const previous = await storage.getExternalPaymentSettings(schoolId);
 
-    // Reject test/sandbox keys — only live production keys are accepted
     const keyIdToSave = parsed.data.razorpayKeyId || null;
-    if (keyIdToSave && keyIdToSave.startsWith("rzp_test_")) {
-      return res.status(400).json({ message: "Test/sandbox keys are not accepted. Enter your live production Key ID (rzp_live_…)." });
-    }
 
     // Don't overwrite secrets if the frontend sent the masked placeholder back
     const keySecret = parsed.data.razorpayKeySecret === "••••••••" ? undefined : (parsed.data.razorpayKeySecret || null);
@@ -1174,13 +1204,13 @@ export function registerFeesRoutes(app: Express) {
     });
   });
 
-  // ── Save Razorpay settings only (production/live mode only) ─────────────
+  // ── Save Razorpay settings only ──────────────────────────────────────────
   const razorpaySettingsSchema = z.object({
     razorpayEnabled:       z.boolean(),
     razorpayKeyId:         z.string().max(200).optional().nullable(),
     razorpayKeySecret:     z.string().max(500).optional().nullable(),
     razorpayWebhookSecret: z.string().max(500).optional().nullable(),
-    // razorpayMode removed — always "live"
+    // razorpayMode field removed — both test and live key prefixes are accepted
   });
 
   app.put("/api/admin/fees/external-settings/razorpay", async (req, res) => {
@@ -1190,11 +1220,7 @@ export function registerFeesRoutes(app: Express) {
     const schoolId = req.session.schoolId!;
     const previous = await storage.getExternalPaymentSettings(schoolId);
 
-    // Reject test/sandbox keys — only live production keys accepted
     const keyIdToSave = parsed.data.razorpayKeyId || null;
-    if (keyIdToSave && keyIdToSave.startsWith("rzp_test_")) {
-      return res.status(400).json({ message: "Test/sandbox keys are not accepted. Enter your live production Key ID (rzp_live_…)." });
-    }
 
     const keySecret     = parsed.data.razorpayKeySecret     === "••••••••" ? undefined : (parsed.data.razorpayKeySecret     || null);
     const webhookSecret = parsed.data.razorpayWebhookSecret === "••••••••" ? undefined : (parsed.data.razorpayWebhookSecret || null);
@@ -1579,6 +1605,21 @@ export function registerFeesRoutes(app: Express) {
             ${now.toISOString()}
           )
         `);
+
+        // Clear the order lock so the student can retry immediately.
+        // A failed payment is definitively terminal — keeping razorpay_order_id
+        // on the fee record would block all future Pay Now attempts for this invoice.
+        if (feeRecordId) {
+          await db.execute(sql`
+            UPDATE fee_records
+            SET razorpay_order_id         = NULL,
+                razorpay_order_expires_at = NULL
+            WHERE id = ${feeRecordId} AND school_id = ${schoolId}
+              AND razorpay_order_id = ${payment.order_id ?? null}
+          `);
+          console.log(`[razorpay webhook] Order lock cleared for fee #${feeRecordId} after payment failure`);
+        }
+
         console.log(`[razorpay webhook] Payment failed for fee #${feeRecordId}: ${errCode} — ${errDesc}`);
       }
 
@@ -1587,6 +1628,45 @@ export function registerFeesRoutes(app: Express) {
       console.error("[razorpay webhook]", err);
       res.status(500).json({ message: String(err) });
     }
+  });
+
+  // ── Razorpay: Clear failed order lock (client-side) ──────────────────────
+  // Called immediately by the student UI when rzp.on("payment.failed") fires.
+  // The webhook may arrive seconds later — this ensures the student can retry
+  // the same invoice right away without waiting for the webhook round-trip.
+  app.post("/api/payments/clear-failed-order", async (req, res) => {
+    const studentId  = req.session?.studentId;
+    const adminSchId = req.session?.schoolId;
+    if (!studentId && !adminSchId) return res.status(403).json({ message: "Authentication required" });
+
+    const { feeRecordId, razorpayOrderId } = req.body ?? {};
+    if (!feeRecordId || typeof feeRecordId !== "number")
+      return res.status(400).json({ message: "feeRecordId required" });
+
+    // Resolve schoolId — students use session.schoolId via their own session,
+    // admins already have it directly.
+    let schoolId: number | null = adminSchId ?? null;
+    if (!schoolId && studentId) {
+      const student = await storage.getStudentById(studentId);
+      schoolId = student?.schoolId ?? null;
+    }
+    if (!schoolId) return res.status(403).json({ message: "School not found" });
+
+    // Only clear the lock when the order ID on record matches what the client
+    // reports — prevents a malicious call from wiping an unrelated order.
+    const condition = razorpayOrderId
+      ? sql`id = ${feeRecordId} AND school_id = ${schoolId} AND razorpay_order_id = ${razorpayOrderId}`
+      : sql`id = ${feeRecordId} AND school_id = ${schoolId}`;
+
+    await db.execute(sql`
+      UPDATE fee_records
+      SET razorpay_order_id         = NULL,
+          razorpay_order_expires_at = NULL
+      WHERE ${condition}
+        AND status IN ('Due', 'Overdue', 'Partial')
+    `);
+
+    res.json({ ok: true });
   });
 
   // ── Razorpay: Client-side Verify ──────────────────────────────────────────

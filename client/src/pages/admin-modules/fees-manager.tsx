@@ -3866,7 +3866,7 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [rzpKeySecret, setRzpKeySecret] = useState(() => localStorage.getItem("rzp_draft_key_secret") ?? "");
   const [rzpWebhookSecret, setRzpWebhookSecret] = useState(() => localStorage.getItem("rzp_draft_webhook_secret") ?? "");
 
-  const saveKeyIdDraft     = (v: string) => { setRzpKeyId(v);         v && v !== "••••••••" ? localStorage.setItem("rzp_draft_key_id", v)         : localStorage.removeItem("rzp_draft_key_id"); };
+  const saveKeyIdDraft     = (v: string) => { setRzpKeyId(v);         v && v !== "••••••••" ? localStorage.setItem("rzp_draft_key_id", v) : localStorage.removeItem("rzp_draft_key_id"); };
   const saveSecretDraft    = (v: string) => { setRzpKeySecret(v);     v && v !== "••••••••" ? localStorage.setItem("rzp_draft_key_secret", v)     : localStorage.removeItem("rzp_draft_key_secret"); };
   const saveWebhookDraft   = (v: string) => { setRzpWebhookSecret(v); v && v !== "••••••••" ? localStorage.setItem("rzp_draft_webhook_secret", v) : localStorage.removeItem("rzp_draft_webhook_secret"); };
   const clearDrafts        = () => { localStorage.removeItem("rzp_draft_key_id"); localStorage.removeItem("rzp_draft_key_secret"); localStorage.removeItem("rzp_draft_webhook_secret"); };
@@ -3974,12 +3974,20 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         </div>
 
         <div className="px-5 py-4 space-y-4">
-          {/* Live mode badge — no test/sandbox option */}
-          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-600/15 border border-emerald-500/30">
-            <span className="text-emerald-400 text-sm">🚀</span>
-            <span className="text-emerald-300 text-xs font-bold">Production / Live Mode</span>
-            <span className="ml-auto text-emerald-500/70 text-[10px]">Only live keys accepted</span>
-          </div>
+          {/* Mode badge — auto-detected from key prefix */}
+          {rzpKeyId.startsWith("rzp_test_") ? (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-600/15 border border-amber-500/30">
+              <span className="text-amber-400 text-sm">🧪</span>
+              <span className="text-amber-300 text-xs font-bold">Test / Sandbox Mode</span>
+              <span className="ml-auto text-amber-500/70 text-[10px]">No real money charged</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-600/15 border border-emerald-500/30">
+              <span className="text-emerald-400 text-sm">🚀</span>
+              <span className="text-emerald-300 text-xs font-bold">Production / Live Mode</span>
+              <span className="ml-auto text-emerald-500/70 text-[10px]">Real payments accepted</span>
+            </div>
+          )}
 
           {/* Wipe credentials button */}
           {(rzpKeyId || rzpKeySecret === "••••••••" || rzpWebhookSecret === "••••••••") && !isArchiveMode && (
@@ -3997,6 +4005,7 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                     setRzpKeySecret("");
                     setRzpWebhookSecret("");
                     setRzpEnabled(false);
+                    clearDrafts(); // also wipe localStorage so drafts don't resurrect on next reload
                     queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/external-settings"] });
                     setSynced(false);
                     toast({ title: "Credentials wiped", description: "All Razorpay keys have been removed." });
@@ -4012,7 +4021,7 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-white/60">Key ID <span className="text-red-400">*</span></label>
             <input value={rzpKeyId} onChange={e => saveKeyIdDraft(e.target.value)}
-              placeholder="rzp_live_XXXXXXXXXXXXXXXX"
+              placeholder="rzp_live_… or rzp_test_…"
               disabled={isArchiveMode}
               className="w-full bg-[#0F1E35] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40" />
           </div>
@@ -5418,8 +5427,14 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
       try {
         const data = JSON.parse(e.data);
         if (data.type === "payment-update") {
+          // Refresh every data slice that changes when a payment comes in —
+          // ledger rows, summary totals, payment count badges, failed-attempt
+          // badges, analytics, and the audit log (new payment entry).
           queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
           queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/payments"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/failed-counts"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
           queryClient.invalidateQueries({ queryKey: ["/api/fees/analytics"] });
         }
       } catch { /* ignore parse errors */ }
