@@ -380,6 +380,9 @@ export default function StudentFees() {
                 razorpay_order_id:   response.razorpay_order_id,
                 razorpay_signature:  response.razorpay_signature,
                 feeRecordId: rec.id,
+                payer_name:    studentData.name,
+                payer_contact: "",
+                payer_email:   "",
               }),
             })
               .then(r => r.json())

@@ -1003,6 +1003,18 @@ export const paymentRecords = pgTable("payment_records", {
   receiptNumber: varchar("receipt_number", { length: 20 }),
   lateFeePaid: integer("late_fee_paid").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  // ── Razorpay payment metadata (populated at verify time) ─────────────────
+  razorpayPaymentId: varchar("razorpay_payment_id", { length: 100 }),
+  razorpayOrderId: varchar("razorpay_order_id", { length: 100 }),
+  razorpaySignature: text("razorpay_signature"),
+  paymentMode: varchar("payment_mode", { length: 30 }),   // upi | card | netbanking | wallet | emi
+  bankName: varchar("bank_name", { length: 100 }),
+  cardLast4: varchar("card_last4", { length: 4 }),
+  vpa: varchar("vpa", { length: 100 }),                   // UPI VPA / handle
+  payerName: varchar("payer_name", { length: 200 }),
+  payerEmail: varchar("payer_email", { length: 255 }),
+  payerContact: varchar("payer_contact", { length: 20 }),
+  gatewayStatus: varchar("gateway_status", { length: 30 }), // captured | refunded | settled
 });
 export const insertPaymentRecordSchema = createInsertSchema(paymentRecords).omit({ id: true, createdAt: true });
 export type InsertPaymentRecord = z.infer<typeof insertPaymentRecordSchema>;

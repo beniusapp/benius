@@ -1643,6 +1643,11 @@ export function registerFeesRoutes(app: Express) {
     if (!feeRecordId || typeof feeRecordId !== "number")
       return res.status(400).json({ message: "feeRecordId required" });
 
+    // Students MUST supply the order ID they received — this prevents a
+    // malicious call from clearing another student's active payment lock.
+    if (studentId && !razorpayOrderId)
+      return res.status(400).json({ message: "razorpayOrderId required" });
+
     // Resolve schoolId — students use session.schoolId via their own session,
     // admins already have it directly.
     let schoolId: number | null = adminSchId ?? null;
@@ -1652,11 +1657,16 @@ export function registerFeesRoutes(app: Express) {
     }
     if (!schoolId) return res.status(403).json({ message: "School not found" });
 
-    // Only clear the lock when the order ID on record matches what the client
-    // reports — prevents a malicious call from wiping an unrelated order.
-    const condition = razorpayOrderId
-      ? sql`id = ${feeRecordId} AND school_id = ${schoolId} AND razorpay_order_id = ${razorpayOrderId}`
-      : sql`id = ${feeRecordId} AND school_id = ${schoolId}`;
+    // Build WHERE clause:
+    //  • Always scope to school and fee record.
+    //  • Students: must also match student_id (ownership) AND the specific order ID.
+    //  • Admins: order ID match is strongly preferred; omitting it is allowed for
+    //    operational recovery of stuck orders.
+    const condition = studentId
+      ? sql`id = ${feeRecordId} AND school_id = ${schoolId} AND student_id = ${studentId} AND razorpay_order_id = ${razorpayOrderId}`
+      : razorpayOrderId
+        ? sql`id = ${feeRecordId} AND school_id = ${schoolId} AND razorpay_order_id = ${razorpayOrderId}`
+        : sql`id = ${feeRecordId} AND school_id = ${schoolId}`;
 
     await db.execute(sql`
       UPDATE fee_records
@@ -1678,7 +1688,8 @@ export function registerFeesRoutes(app: Express) {
     const adminSchId  = req.session?.schoolId;
     if (!studentId && !adminSchId) return res.status(403).json({ message: "Authentication required" });
 
-    const { razorpay_payment_id, razorpay_order_id, razorpay_signature, feeRecordId } = req.body;
+    const { razorpay_payment_id, razorpay_order_id, razorpay_signature, feeRecordId,
+            payer_name, payer_email, payer_contact } = req.body;
     if (!razorpay_payment_id || !razorpay_order_id || !razorpay_signature || !feeRecordId)
       return res.status(400).json({ message: "razorpay_payment_id, razorpay_order_id, razorpay_signature, feeRecordId required" });
 
@@ -1736,7 +1747,32 @@ export function registerFeesRoutes(app: Express) {
         recordedBy: null,
         receiptNumber,
         idempotencyKey: `rzp_${razorpay_payment_id}`,
+        razorpayPaymentId: razorpay_payment_id ?? null,
+        razorpayOrderId: razorpay_order_id ?? null,
+        razorpaySignature: razorpay_signature ?? null,
+        payerName: payer_name ?? null,
+        payerEmail: payer_email ?? null,
+        payerContact: payer_contact ?? null,
+        gatewayStatus: "captured",
       } as any);
+
+      // Try to enrich with Razorpay Payments API (mode, bank, card, VPA) — non-blocking
+      try {
+        const rzpClient = new Razorpay({ key_id: creds.keyId, key_secret: creds.keySecret });
+        const rzpPay = await (rzpClient.payments as any).fetch(razorpay_payment_id);
+        await db.execute(sql`
+          UPDATE payment_records
+          SET payment_mode   = ${rzpPay.method    ?? null},
+              bank_name      = ${rzpPay.bank       ?? null},
+              card_last4     = ${rzpPay.card?.last4 ?? null},
+              vpa            = ${rzpPay.vpa         ?? null},
+              payer_contact  = COALESCE(payer_contact, ${rzpPay.contact ?? null}),
+              payer_email    = COALESCE(payer_email,   ${rzpPay.email   ?? null})
+          WHERE idempotency_key = ${"rzp_" + razorpay_payment_id}
+        `);
+      } catch (metaErr) {
+        console.warn("[razorpay verify] metadata fetch skipped:", (metaErr as any)?.message);
+      }
 
       await db.execute(sql`
         INSERT INTO fee_audit_log (school_id, action, entity_type, entity_id, actor_id, student_id, description, created_at)
@@ -2114,6 +2150,292 @@ export function registerFeesRoutes(app: Express) {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Content-Disposition", `inline; filename="payment-receipt-${payment.id}.html"`);
     res.send(html);
+  });
+
+  // ── Transaction Detail — JSON (for accordion in Ledger) ─────────────────
+  app.get("/api/admin/fees/:id/transaction-detail", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const feeRecordId = parseInt(req.params.id);
+    if (isNaN(feeRecordId)) return res.status(400).json({ message: "Invalid ID" });
+
+    try {
+      // Fee record + student
+      const feeRow = (await db.execute(sql`
+        SELECT fr.*,
+               s.name AS student_name, s.digital_student_id, s.class, s.section,
+               s.roll_number, s.guardian_name, s.phone, s.email AS student_email
+        FROM fee_records fr
+        JOIN students s ON s.id = fr.student_id
+        WHERE fr.id = ${feeRecordId} AND fr.school_id = ${schoolId}
+        LIMIT 1
+      `)).rows[0] as any;
+      if (!feeRow) return res.status(404).json({ message: "Fee record not found" });
+
+      // Payment records (all for this fee, newest first)
+      const payRows = (await db.execute(sql`
+        SELECT * FROM payment_records
+        WHERE fee_record_id = ${feeRecordId}
+        ORDER BY created_at DESC
+      `)).rows as any[];
+
+      // Audit log entries for this fee record
+      const auditRows = (await db.execute(sql`
+        SELECT * FROM fee_audit_log
+        WHERE entity_id = ${feeRecordId} AND entity_type = 'fee_record'
+        ORDER BY created_at DESC
+        LIMIT 20
+      `)).rows as any[];
+
+      const mapPayment = (p: any) => ({
+        id: p.id,
+        paymentMethod: p.payment_method,
+        amount: Number(p.amount),
+        lateFeePaid: Number(p.late_fee_paid ?? 0),
+        receivedDate: p.received_date,
+        referenceNumber: p.reference_number ?? null,
+        cashierNotes: p.cashier_notes ?? null,
+        receiptNumber: p.receipt_number ?? null,
+        createdAt: p.created_at,
+        razorpayPaymentId: p.razorpay_payment_id ?? null,
+        razorpayOrderId: p.razorpay_order_id ?? null,
+        razorpaySignature: p.razorpay_signature ?? null,
+        paymentMode: p.payment_mode ?? null,
+        bankName: p.bank_name ?? null,
+        cardLast4: p.card_last4 ?? null,
+        vpa: p.vpa ?? null,
+        payerName: p.payer_name ?? null,
+        payerEmail: p.payer_email ?? null,
+        payerContact: p.payer_contact ?? null,
+        gatewayStatus: p.gateway_status ?? null,
+      });
+
+      res.json({
+        feeRecord: {
+          id: feeRow.id,
+          feeType: feeRow.fee_type,
+          feeName: feeRow.fee_name ?? feeRow.fee_type,
+          amount: Number(feeRow.amount),
+          lateFeeAmount: Number(feeRow.late_fee_amount ?? 0),
+          dueDate: feeRow.due_date,
+          paidDate: feeRow.paid_date ?? null,
+          status: feeRow.status,
+          academicYear: feeRow.academic_year ?? null,
+          notes: feeRow.notes ?? null,
+          breakdown: (() => { try { return JSON.parse(feeRow.breakdown ?? "[]"); } catch { return []; } })(),
+        },
+        payments: payRows.map(mapPayment),
+        payment: payRows.length > 0 ? mapPayment(payRows[0]) : null,
+        student: {
+          name: feeRow.student_name,
+          digitalStudentId: feeRow.digital_student_id,
+          class: feeRow.class,
+          section: feeRow.section,
+          rollNumber: feeRow.roll_number ?? null,
+          guardianName: feeRow.guardian_name ?? null,
+          phone: feeRow.phone ?? null,
+          email: feeRow.student_email ?? null,
+        },
+        auditEntries: auditRows.map((a: any) => ({
+          id: a.id,
+          action: a.action,
+          actorName: a.actor_name ?? null,
+          actorId: a.actor_id ?? null,
+          ipAddress: a.ip_address ?? null,
+          description: a.description ?? null,
+          createdAt: a.created_at,
+        })),
+      });
+    } catch (err) {
+      console.error("[transaction-detail]", err);
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── Transaction Detail PDF (printable HTML) ───────────────────────────────
+  app.get("/api/admin/fees/:id/transaction-pdf", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const feeRecordId = parseInt(req.params.id);
+    if (isNaN(feeRecordId)) return res.status(400).json({ message: "Invalid ID" });
+
+    try {
+      const feeRow = (await db.execute(sql`
+        SELECT fr.*,
+               s.name AS student_name, s.digital_student_id, s.class, s.section,
+               s.roll_number, s.guardian_name, s.phone
+        FROM fee_records fr
+        JOIN students s ON s.id = fr.student_id
+        WHERE fr.id = ${feeRecordId} AND fr.school_id = ${schoolId}
+        LIMIT 1
+      `)).rows[0] as any;
+      if (!feeRow) return res.status(404).send("Not found");
+
+      const payRows = (await db.execute(sql`
+        SELECT * FROM payment_records
+        WHERE fee_record_id = ${feeRecordId}
+        ORDER BY created_at ASC
+      `)).rows as any[];
+      const payRow = payRows[payRows.length - 1] ?? null; // most-recent for backward-compat fields
+
+      const auditRows = (await db.execute(sql`
+        SELECT * FROM fee_audit_log
+        WHERE entity_id = ${feeRecordId} AND entity_type = 'fee_record'
+        ORDER BY created_at DESC LIMIT 10
+      `)).rows as any[];
+
+      const [school] = await db.select({ name: schools.name }).from(schools).where(eq(schools.id, schoolId));
+      const esc = (s: any) =>
+        (String(s ?? "—")).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+
+      const fmtInr = (n: number) =>
+        new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(n);
+      const fmtDt = (d: any) =>
+        d ? new Date(d).toLocaleString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",timeZone:"Asia/Kolkata"}) : "—";
+
+      const modeLabel: Record<string,string> = {
+        upi:"UPI",card:"Card",netbanking:"Net Banking",wallet:"Wallet",emi:"EMI",
+      };
+
+      // Build payment detail rows for each payment record
+      const paymentSections = payRows.length === 0
+        ? `<tr><td colspan="2" class="na">No payment records for this fee.</td></tr>`
+        : payRows.map((pr: any, idx: number) => {
+            const isOn = pr.payment_method === "Online";
+            return `
+            <tr style="background:#f8fafc;">
+              <td colspan="2" style="font-weight:700;color:#0891b2;font-size:12px;border-top:2px solid #e2e8f0;">
+                Payment ${payRows.length > 1 ? `#${idx+1} of ${payRows.length}` : ""} — ${esc(pr.payment_method)} — ${fmtInr(Number(pr.amount))}
+                <span style="float:right;color:#64748b;font-weight:400;">${fmtDt(pr.received_date ?? pr.created_at)}</span>
+              </td>
+            </tr>
+            ${isOn ? `
+            <tr><td>Razorpay Payment ID</td><td>${esc(pr.razorpay_payment_id ?? "—")}</td></tr>
+            <tr><td>Razorpay Order ID</td><td>${esc(pr.razorpay_order_id ?? "—")}</td></tr>
+            <tr><td>Payment Mode</td><td>${esc(modeLabel[pr.payment_mode] ?? pr.payment_mode ?? "—")}</td></tr>
+            ${pr.bank_name ? `<tr><td>Bank</td><td>${esc(pr.bank_name)}</td></tr>` : ""}
+            ${pr.card_last4 ? `<tr><td>Card (last 4)</td><td>●●●● ${esc(pr.card_last4)}</td></tr>` : ""}
+            ${pr.vpa ? `<tr><td>UPI VPA</td><td>${esc(pr.vpa)}</td></tr>` : ""}
+            <tr><td>Payer Name</td><td>${esc(pr.payer_name ?? "—")}</td></tr>
+            <tr><td>Payer Email</td><td>${esc(pr.payer_email ?? "—")}</td></tr>
+            <tr><td>Payer Contact</td><td>${esc(pr.payer_contact ?? "—")}</td></tr>
+            <tr><td>Gateway Status</td><td><span class="badge badge-green">${esc(pr.gateway_status ?? "captured")}</span></td></tr>
+            <tr><td>HMAC Signature</td><td style="font-size:10px;word-break:break-all;">${esc(pr.razorpay_signature ?? "—")}</td></tr>
+            ` : `
+            <tr><td>Reference No.</td><td>${esc(pr.reference_number ?? "—")}</td></tr>
+            `}
+            <tr><td>Receipt No.</td><td>${esc(pr.receipt_number ?? "—")}</td></tr>
+            ${pr.cashier_notes ? `<tr><td>Admin Notes</td><td>${esc(pr.cashier_notes)}</td></tr>` : ""}
+            `;
+          }).join("");
+
+      const totalReceived = payRows.reduce((s: number, pr: any) => s + Number(pr.amount), 0);
+
+      const html = `<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>Transaction Detail — ${esc(feeRow.fee_type)}</title>
+<style>
+body{font-family:Arial,sans-serif;margin:0;padding:24px;color:#1e293b;background:#fff;font-size:13px;}
+h1{margin:0 0 4px;font-size:18px;color:#0891b2;}
+.subtitle{color:#64748b;font-size:12px;margin-bottom:20px;}
+.section{margin-bottom:18px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;}
+.section-title{background:#f8fafc;border-bottom:1px solid #e2e8f0;padding:8px 14px;font-weight:700;font-size:12px;color:#475569;text-transform:uppercase;letter-spacing:.05em;}
+table{width:100%;border-collapse:collapse;}
+td{padding:7px 14px;font-size:13px;border-bottom:1px solid #f1f5f9;vertical-align:top;}
+td:first-child{color:#64748b;width:38%;font-size:12px;}
+td:last-child{font-weight:600;word-break:break-all;}
+.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700;}
+.badge-green{background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;}
+.badge-blue{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;}
+.badge-amber{background:#fffbeb;color:#92400e;border:1px solid #fde68a;}
+.na{color:#94a3b8;font-style:italic;font-weight:400;}
+.footer{margin-top:24px;text-align:center;font-size:11px;color:#94a3b8;}
+@media print{button{display:none;}body{padding:12px;}}
+</style></head><body>
+<h1>${esc(school?.name ?? "School")} — Transaction Detail</h1>
+<p class="subtitle">Fee Record #${feeRecordId} &nbsp;·&nbsp; Generated ${new Date().toLocaleString("en-IN",{timeZone:"Asia/Kolkata"})}</p>
+
+<div class="section">
+  <div class="section-title">1. Payment Records (${payRows.length} transaction${payRows.length !== 1 ? "s" : ""})</div>
+  <table>${paymentSections}</table>
+</div>
+
+<div class="section">
+  <div class="section-title">2. Financial &amp; Fee Breakdown</div>
+  <table>
+    <tr><td>Fee Name / Type</td><td>${esc(feeRow.fee_name ?? feeRow.fee_type)}</td></tr>
+    <tr><td>Base Fee</td><td>${fmtInr(Number(feeRow.amount))}</td></tr>
+    <tr><td>Late Fee</td><td>${Number(feeRow.late_fee_amount ?? 0) > 0 ? fmtInr(Number(feeRow.late_fee_amount)) : "—"}</td></tr>
+    <tr><td>Total Charged</td><td>${fmtInr(Number(feeRow.amount) + Number(feeRow.late_fee_amount ?? 0))}</td></tr>
+    <tr><td>Total Received (${payRows.length} payment${payRows.length !== 1 ? "s" : ""})</td><td>${fmtInr(totalReceived)}</td></tr>
+    <tr><td>Receipt No.</td><td>${esc(feeRow.receipt_number ?? payRow?.receipt_number ?? "—")}</td></tr>
+    <tr><td>Status</td><td>${esc(feeRow.status)}</td></tr>
+    <tr><td>Due Date</td><td>${fmtDt(feeRow.due_date)}</td></tr>
+    ${feeRow.paid_date ? `<tr><td>Paid On</td><td>${fmtDt(feeRow.paid_date)}</td></tr>` : ""}
+    <tr><td colspan="2" class="na" style="font-size:11px;">Convenience fee / GST / settlement batch — N/A (requires Razorpay Settlements API)</td></tr>
+  </table>
+</div>
+
+<div class="section">
+  <div class="section-title">3. Student &amp; Academic Profile</div>
+  <table>
+    <tr><td>Student Name</td><td>${esc(feeRow.student_name)}</td></tr>
+    <tr><td>DSID</td><td>${esc(feeRow.digital_student_id)}</td></tr>
+    <tr><td>Class / Section</td><td>${esc(feeRow.class)} / ${esc(feeRow.section)}</td></tr>
+    ${feeRow.roll_number ? `<tr><td>Roll No.</td><td>${esc(feeRow.roll_number)}</td></tr>` : ""}
+    <tr><td>Academic Year</td><td>${esc(feeRow.academic_year)}</td></tr>
+    ${feeRow.guardian_name ? `<tr><td>Guardian</td><td>${esc(feeRow.guardian_name)}</td></tr>` : ""}
+    ${feeRow.phone ? `<tr><td>Contact</td><td>${esc(feeRow.phone)}</td></tr>` : ""}
+  </table>
+</div>
+
+<div class="section">
+  <div class="section-title">4. System Audit &amp; Technical Logs</div>
+  <table>
+    ${payRow ? `<tr><td>Record Created</td><td>${fmtDt(payRow.created_at)} IST</td></tr>` : ""}
+    ${payRow?.cashier_notes ? `<tr><td>Admin Notes</td><td>${esc(payRow.cashier_notes)}</td></tr>` : ""}
+    ${auditRows.map((a: any) => `
+    <tr>
+      <td>${fmtDt(a.created_at)}<br><span style="font-size:10px;color:#94a3b8;">${esc(a.ip_address)} · ${esc(a.actor_name ?? "System")}</span></td>
+      <td style="font-size:12px;">${esc(a.description)}</td>
+    </tr>`).join("")}
+  </table>
+</div>
+
+<div class="footer">
+  <p>Computer-generated transaction record &nbsp;·&nbsp; BENIUS &nbsp;·&nbsp; ${esc(school?.name ?? "School")}</p>
+</div>
+<script>window.print();</script>
+</body></html>`;
+
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Content-Disposition", `inline; filename="txn-detail-${feeRecordId}.html"`);
+      res.send(html);
+    } catch (err) {
+      console.error("[transaction-pdf]", err);
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── PATCH cashier notes on a payment record ───────────────────────────────
+  app.patch("/api/admin/fees/payments/:id/notes", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const { cashierNotes } = req.body;
+    if (typeof cashierNotes !== "string" && cashierNotes !== null)
+      return res.status(400).json({ message: "cashierNotes must be string or null" });
+    try {
+      const result = await db.execute(sql`
+        UPDATE payment_records SET cashier_notes = ${cashierNotes ?? null}
+        WHERE id = ${id} AND school_id = ${schoolId}
+        RETURNING id
+      `);
+      if ((result.rowCount ?? 0) === 0) return res.status(404).json({ message: "Payment record not found" });
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
   });
 
   // ── Fee Record Receipt HTML (Add Fee — AF receipts) ──────────────────────

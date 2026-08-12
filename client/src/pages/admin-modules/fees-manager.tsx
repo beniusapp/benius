@@ -172,14 +172,62 @@ interface PaymentRecord {
   studentId: number;
   paymentMethod: string;
   amount: number;
+  lateFeePaid?: number;
   receivedDate: string;
   referenceNumber: string | null;
   cashierNotes: string | null;
   receiptNumber: string | null;
+  // Razorpay metadata (populated for online payments)
+  razorpayPaymentId?: string | null;
+  razorpayOrderId?: string | null;
+  razorpaySignature?: string | null;
+  paymentMode?: string | null;
+  bankName?: string | null;
+  cardLast4?: string | null;
+  vpa?: string | null;
+  payerName?: string | null;
+  payerEmail?: string | null;
+  payerContact?: string | null;
+  gatewayStatus?: string | null;
+  createdAt?: string;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
+interface TransactionDetail {
+  feeRecord: {
+    id: number;
+    feeType: string;
+    feeName: string;
+    amount: number;
+    lateFeeAmount: number;
+    dueDate: string;
+    paidDate: string | null;
+    status: string;
+    academicYear: string | null;
+    notes: string | null;
+    breakdown: Array<{ name: string; purpose: string; amount: number }>;
+  };
+  payments: PaymentRecord[];
+  payment: PaymentRecord | null;
+  student: {
+    name: string;
+    digitalStudentId: string;
+    class: string;
+    section: string;
+    rollNumber: number | null;
+    guardianName: string | null;
+    phone: string | null;
+    email: string | null;
+  };
+  auditEntries: Array<{
+    id: number;
+    action: string;
+    actorName: string | null;
+    actorId: number | null;
+    ipAddress: string | null;
+    description: string | null;
+    createdAt: string;
+  }>;
+}
 function fmt(amount: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
 }
@@ -227,8 +275,16 @@ function ActionBadge({ action }: { action: string }) {
   );
 }
 
-// ─── MetricBar ────────────────────────────────────────────────────────────────
-
+function TxnDetailRow({ label, value }: { label: string; value: React.ReactNode | string | null | undefined }) {
+  return (
+    <div className="flex items-start gap-2 text-xs">
+      <span className="text-white/35 w-28 shrink-0 leading-snug">{label}</span>
+      <span className="text-white/80 font-medium leading-snug break-all">
+        {value == null || value === "" ? <span className="text-white/25 italic">—</span> : value}
+      </span>
+    </div>
+  );
+}
 function MetricBar({ viewSessionId }: { viewSessionId: number | null }) {
   const { data, isLoading } = useQuery<FeeSummary>({
     queryKey: ["/api/admin/fees/summary", viewSessionId],
@@ -1436,6 +1492,13 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [showNotifModal, setShowNotifModal] = useState(false);
   const [notifStudentId, setNotifStudentId] = useState<number | null>(null);
   const [notifStudentName, setNotifStudentName] = useState<string | null>(null);
+  // ── Expandable accordion state ─────────────────────────────────────────────
+  const [expandedLedgerRow, setExpandedLedgerRow] = useState<number | null>(null);
+  const [detailCache, setDetailCache] = useState<Map<number, TransactionDetail>>(new Map());
+  const [detailLoading, setDetailLoading] = useState<number | null>(null);
+  const [detailSection, setDetailSection] = useState<Record<number, number>>({});
+  const [adminNotes, setAdminNotes] = useState<Record<number, string>>({});
+  const [savingNotes, setSavingNotes] = useState<Set<number>>(new Set());
   const [studentSearchCls, setStudentSearchCls] = useState("");
   const [studentSearchQ, setStudentSearchQ] = useState("");
   const [studentResults, setStudentResults] = useState<StudentItem[] | null>(null);
@@ -1483,6 +1546,46 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       rec.feeName || feeTypeToName.get(rec.feeType.trim().toLowerCase()) || rec.feeType || "—",
     [feeTypeToName],
   );
+
+  // ── Accordion callbacks ────────────────────────────────────────────────────
+  const fetchDetail = useCallback(async (feeRecordId: number) => {
+    if (detailCache.has(feeRecordId)) return;
+    setDetailLoading(feeRecordId);
+    try {
+      const r = await sessionFetch(`/api/admin/fees/${feeRecordId}/transaction-detail`);
+      if (!r.ok) return;
+      const data: TransactionDetail = await r.json();
+      setDetailCache(prev => new Map(prev).set(feeRecordId, data));
+      if (data.payment?.cashierNotes) {
+        setAdminNotes(prev => ({ ...prev, [feeRecordId]: data.payment!.cashierNotes! }));
+      }
+    } catch { /* non-critical */ }
+    finally { setDetailLoading(null); }
+  }, [detailCache]);
+
+  const toggleLedgerRow = useCallback((id: number) => {
+    if (expandedLedgerRow === id) {
+      setExpandedLedgerRow(null);
+    } else {
+      setExpandedLedgerRow(id);
+      fetchDetail(id);
+    }
+  }, [expandedLedgerRow, fetchDetail]);
+
+  const saveAdminNotes = useCallback(async (feeRecordId: number, paymentId: number | undefined, notes: string) => {
+    if (!paymentId) return;
+    setSavingNotes(prev => new Set(prev).add(feeRecordId));
+    try {
+      await sessionFetch(`/api/admin/fees/payments/${paymentId}/notes`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cashierNotes: notes }),
+      });
+      // Invalidate cache so a re-open shows fresh data
+      setDetailCache(prev => { const m = new Map(prev); m.delete(feeRecordId); return m; });
+    } catch { /* non-critical */ }
+    finally { setSavingNotes(prev => { const s = new Set(prev); s.delete(feeRecordId); return s; }); }
+  }, []);
 
   // Failed payment counts — per-fee-record badge showing how many payment_failed audit entries exist
   const { data: failedCounts = {} } = useQuery<Record<number, { count: number; lastError: string | null }>>({
@@ -1815,6 +1918,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-white/5">
+                  {/* Expand chevron */}
+                  <th className="px-2 py-3 w-8" />
                   {/* Checkbox column header — only visible when rows are selected */}
                   {selectedIds.size > 0 && canRecord && !isArchiveMode && (
                     <th className="px-3 py-3 w-8" />
@@ -1825,8 +1930,27 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(rec => (
-                  <tr key={rec.id} className={`border-b border-white/5 hover:bg-white/5 transition-colors ${selectedIds.has(rec.id) ? "bg-red-900/10" : ""}`}>
+                {filtered.map(rec => {
+                  const isExpanded = expandedLedgerRow === rec.id;
+                  const detail = detailCache.get(rec.id);
+                  const isLoadingDetail = detailLoading === rec.id;
+                  const activeSection = detailSection[rec.id] ?? 0;
+                  const mainPayment = detail?.payment ?? null;
+                  const colSpan = 15 + (selectedIds.size > 0 && canRecord && !isArchiveMode ? 1 : 0);
+                  return (
+                  <React.Fragment key={rec.id}>
+                  <tr className={`border-b border-white/5 transition-colors ${selectedIds.has(rec.id) ? "bg-red-900/10" : isExpanded ? "bg-white/[0.04]" : "hover:bg-white/5"}`}
+                    onClick={(e) => {
+                      const t = e.target as HTMLElement;
+                      if (!t.closest("button") && !t.closest("input") && !t.closest("a")) toggleLedgerRow(rec.id);
+                    }}
+                    style={{ cursor: "pointer" }}>
+                    {/* Chevron expand cell */}
+                    <td className="px-2 py-3 text-white/30 select-none">
+                      {isExpanded
+                        ? <ChevronUp className="w-3.5 h-3.5 text-cyan-400" />
+                        : <ChevronDown className="w-3.5 h-3.5" />}
+                    </td>
                     {/* Row checkbox — appears only after "Select All" activates selection mode */}
                     {selectedIds.size > 0 && canRecord && !isArchiveMode && (
                       <td className="px-3 py-3">
@@ -1976,7 +2100,232 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  {/* ── Expandable accordion row ─── */}
+                  {isExpanded && (
+                    <tr className="border-b border-cyan-900/30 bg-[#08111f]">
+                      <td colSpan={colSpan} className="px-0 py-0">
+                        {isLoadingDetail ? (
+                          <div className="flex items-center justify-center gap-2 py-8 text-white/40">
+                            <Loader2 className="w-4 h-4 animate-spin" /> Loading transaction details…
+                          </div>
+                        ) : detail ? (
+                          <div className="px-6 py-5 space-y-4">
+                            {/* Section tabs + action toolbar */}
+                            <div className="flex flex-wrap items-center gap-1 border-b border-white/10 pb-3">
+                              {["Online Payment","Financial","Student Profile","Audit & Notes"].map((label, i) => (
+                                <button key={i}
+                                  onClick={() => setDetailSection(prev => ({ ...prev, [rec.id]: i }))}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${activeSection === i ? "bg-cyan-600 text-white" : "text-white/50 hover:text-white/80 hover:bg-white/5"}`}>
+                                  {label}
+                                </button>
+                              ))}
+                              <div className="ml-auto flex items-center gap-2">
+                                <Button size="sm" variant="ghost"
+                                  onClick={() => window.open(`/api/admin/fees/${rec.id}/transaction-pdf`, "_blank")}
+                                  className="h-7 px-2 text-xs text-emerald-400 hover:bg-emerald-900/30 gap-1">
+                                  <FileText className="w-3 h-3" /> Full Detail PDF
+                                </Button>
+                                {(() => {
+                                  const offPay = (paymentsByFeeRecordId.get(rec.id) ?? []).find(p => p.cashierNotes !== "Auto-recorded from Add Fee Record");
+                                  if (offPay) return (
+                                    <Button size="sm" variant="ghost"
+                                      onClick={() => window.open(`/api/admin/fees/payments/${offPay.id}/receipt`, "_blank")}
+                                      className="h-7 px-2 text-xs text-cyan-400 hover:bg-cyan-900/30 gap-1">
+                                      <Receipt className="w-3 h-3" /> Receipt
+                                    </Button>
+                                  );
+                                  if (rec.status === "Paid" || rec.status === "Partial") return (
+                                    <Button size="sm" variant="ghost"
+                                      onClick={() => window.open(`/api/admin/fees/${rec.id}/receipt`, "_blank")}
+                                      className="h-7 px-2 text-xs text-cyan-400 hover:bg-cyan-900/30 gap-1">
+                                      <Receipt className="w-3 h-3" /> Receipt
+                                    </Button>
+                                  );
+                                  return null;
+                                })()}
+                              </div>
+                            </div>
+
+                            {/* Section 0 — Online Payment Details (all payment records) */}
+                            {activeSection === 0 && (
+                              <div className="space-y-4">
+                                {detail.payments.length === 0 ? (
+                                  <div className="py-6 text-center text-white/30 text-sm">
+                                    <CreditCard className="w-8 h-8 mx-auto mb-2 opacity-20" />
+                                    <p>No payment records found for this fee.</p>
+                                  </div>
+                                ) : detail.payments.map((pay, pi) => (
+                                  <div key={pay.id} className="border border-white/10 rounded-xl p-4 space-y-3">
+                                    <div className="flex items-center gap-2 text-xs font-semibold text-white/60 border-b border-white/8 pb-2">
+                                      <span className="text-white/40">Payment {detail.payments.length > 1 ? `#${pi + 1} of ${detail.payments.length}` : ""}</span>
+                                      <span className="font-mono text-cyan-300">{fmt(pay.amount)}</span>
+                                      <span className="ml-auto text-white/30">{fmtDate(pay.receivedDate)}</span>
+                                    </div>
+                                    {pay.paymentMethod === "Online" ? (
+                                      <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-1.5">
+                                          <TxnDetailRow label="Payment ID" value={
+                                            pay.razorpayPaymentId
+                                              ? <a href={`https://dashboard.razorpay.com/app/payments/${pay.razorpayPaymentId}`} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline font-mono text-xs flex items-center gap-1">{pay.razorpayPaymentId} <ExternalLink className="w-3 h-3" /></a>
+                                              : null
+                                          } />
+                                          <TxnDetailRow label="Order ID" value={<span className="font-mono text-xs">{pay.razorpayOrderId ?? "—"}</span>} />
+                                          <TxnDetailRow label="Mode" value={
+                                            pay.paymentMode
+                                              ? <span className="capitalize px-2 py-0.5 rounded-full text-xs bg-blue-900/40 text-blue-300 border border-blue-700/40">{pay.paymentMode}</span>
+                                              : null
+                                          } />
+                                          <TxnDetailRow label="Bank" value={pay.bankName} />
+                                          <TxnDetailRow label="Card (last 4)" value={pay.cardLast4 ? `●●●● ${pay.cardLast4}` : null} />
+                                          <TxnDetailRow label="UPI VPA" value={<span className="font-mono text-xs">{pay.vpa ?? "—"}</span>} />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                          <TxnDetailRow label="Payer Name" value={pay.payerName} />
+                                          <TxnDetailRow label="Payer Email" value={pay.payerEmail} />
+                                          <TxnDetailRow label="Payer Contact" value={pay.payerContact} />
+                                          <TxnDetailRow label="Gateway Status" value={
+                                            <span className={`px-2 py-0.5 rounded-full text-xs font-bold border ${pay.gatewayStatus === "captured" ? "bg-emerald-900/40 text-emerald-400 border-emerald-700/40" : pay.gatewayStatus === "refunded" ? "bg-red-900/40 text-red-400 border-red-700/40" : "bg-white/10 text-white/50 border-white/10"}`}>
+                                              {pay.gatewayStatus ?? "—"}
+                                            </span>
+                                          } />
+                                          <TxnDetailRow label="Receipt No." value={<span className="font-mono text-cyan-300 text-xs">{pay.receiptNumber ?? "—"}</span>} />
+                                          <div className="mt-1">
+                                            <p className="text-white/30 text-[10px] mb-0.5">HMAC Signature</p>
+                                            <p className="text-white/35 font-mono text-[9px] break-all leading-tight">{pay.razorpaySignature ?? "—"}</p>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-1.5">
+                                          <TxnDetailRow label="Method" value={pay.paymentMethod} />
+                                          <TxnDetailRow label="Reference" value={<span className="font-mono text-xs">{pay.referenceNumber ?? "—"}</span>} />
+                                          <TxnDetailRow label="Receipt No." value={<span className="font-mono text-cyan-300 text-xs">{pay.receiptNumber ?? "—"}</span>} />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                          <TxnDetailRow label="Notes" value={pay.cashierNotes} />
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Section 1 — Financial & Fee Breakdown */}
+                            {activeSection === 1 && (
+                              <div className="grid grid-cols-2 gap-6">
+                                <div className="space-y-2">
+                                  <TxnDetailRow label="Fee Name" value={resolveFeeDisplayName(rec)} />
+                                  <TxnDetailRow label="Fee Type" value={rec.feeType} />
+                                  <TxnDetailRow label="Base Fee" value={fmt(detail.feeRecord.amount)} />
+                                  <TxnDetailRow label="Late Fee" value={detail.feeRecord.lateFeeAmount > 0 ? <span className="text-amber-400">{fmt(detail.feeRecord.lateFeeAmount)}</span> : null} />
+                                  <TxnDetailRow label="Total Charged" value={<span className="font-black">{fmt(detail.feeRecord.amount + detail.feeRecord.lateFeeAmount)}</span>} />
+                                  <TxnDetailRow label="Total Received" value={<span className="font-black text-emerald-400">{fmt(detail.payments.reduce((s, p) => s + p.amount, 0))}</span>} />
+                                  <TxnDetailRow label="Receipt No." value={<span className="font-mono text-cyan-300 text-xs">{rec.receiptNumber ?? mainPayment?.receiptNumber ?? "—"}</span>} />
+                                  {detail.payments.length > 1 && (
+                                    <div className="mt-2 pt-2 border-t border-white/10">
+                                      <p className="text-white/30 text-[10px] mb-1">Payment history ({detail.payments.length} transactions)</p>
+                                      {detail.payments.map((p, i) => (
+                                        <div key={p.id} className="flex justify-between text-xs py-0.5 text-white/50">
+                                          <span>#{i + 1} {p.paymentMethod} · {fmtDate(p.receivedDate)}</span>
+                                          <span className="text-white/70">{fmt(p.amount)}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                                <div>
+                                  <p className="text-white/40 text-xs font-medium mb-2">Fee Breakdown</p>
+                                  {detail.feeRecord.breakdown?.length > 0 ? (
+                                    <div className="space-y-1">
+                                      {detail.feeRecord.breakdown.map((b, bi) => (
+                                        <div key={bi} className="flex justify-between text-xs py-1 border-b border-white/5">
+                                          <span className="text-white/60">{b.name}</span>
+                                          <span className="text-white/80">{fmt(b.amount)}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="text-white/25 text-xs italic">No breakdown items</p>
+                                  )}
+                                  <div className="mt-3 p-2 rounded bg-white/5 border border-white/10 text-[10px] text-white/30 italic">
+                                    Convenience fee / GST / settlement batch — N/A (requires Razorpay Settlements API)
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Section 2 — Student & Academic Profile */}
+                            {activeSection === 2 && (
+                              <div className="grid grid-cols-2 gap-6">
+                                <div className="space-y-2">
+                                  <TxnDetailRow label="Student Name" value={detail.student.name} />
+                                  <TxnDetailRow label="DSID" value={<span className="font-mono text-xs text-cyan-400">{detail.student.digitalStudentId}</span>} />
+                                  <TxnDetailRow label="Class" value={detail.student.class} />
+                                  <TxnDetailRow label="Section" value={detail.student.section} />
+                                  {detail.student.rollNumber != null && <TxnDetailRow label="Roll No." value={String(detail.student.rollNumber)} />}
+                                </div>
+                                <div className="space-y-2">
+                                  <TxnDetailRow label="Academic Year" value={detail.feeRecord.academicYear} />
+                                  {detail.student.guardianName && <TxnDetailRow label="Guardian" value={detail.student.guardianName} />}
+                                  {detail.student.phone && <TxnDetailRow label="Contact" value={detail.student.phone} />}
+                                  {detail.student.email && <TxnDetailRow label="Email" value={detail.student.email} />}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Section 3 — Audit & Notes */}
+                            {activeSection === 3 && (
+                              <div className="space-y-4">
+                                <div>
+                                  <p className="text-white/40 text-xs font-medium mb-1.5">Admin Notes</p>
+                                  <textarea
+                                    value={adminNotes[rec.id] ?? mainPayment?.cashierNotes ?? ""}
+                                    onChange={e => setAdminNotes(prev => ({ ...prev, [rec.id]: e.target.value }))}
+                                    onBlur={() => mainPayment && saveAdminNotes(rec.id, mainPayment.id, adminNotes[rec.id] ?? "")}
+                                    placeholder="Add notes visible only to admins…"
+                                    rows={2}
+                                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-xs placeholder:text-white/20 focus:outline-none focus:border-cyan-500/50 resize-none"
+                                  />
+                                  {savingNotes.has(rec.id) && <p className="text-white/30 text-[10px] mt-0.5">Saving…</p>}
+                                  {!mainPayment && <p className="text-white/25 text-[10px] mt-0.5 italic">Notes can only be saved once a payment is recorded.</p>}
+                                </div>
+                                <div>
+                                  <p className="text-white/40 text-xs font-medium mb-2">Audit Trail ({detail.auditEntries.length} entries)</p>
+                                  <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                                    {detail.auditEntries.length === 0 ? (
+                                      <p className="text-white/20 text-xs italic">No audit entries for this fee record.</p>
+                                    ) : detail.auditEntries.map(a => (
+                                      <div key={a.id} className="flex gap-3 text-xs border-b border-white/5 pb-1.5">
+                                        <div className="shrink-0 text-white/30 text-[10px] w-32 leading-tight">
+                                          {fmtDateTime(a.createdAt)}<br/>
+                                          <span className="font-mono">{a.ipAddress ?? "—"}</span>
+                                        </div>
+                                        <div className="grow">
+                                          <span className="text-white/50 font-medium">{a.actorName ?? "System"}</span>
+                                          <span className="text-white/30 mx-1">·</span>
+                                          <ActionBadge action={a.action} />
+                                          {a.description && <p className="text-white/45 text-[10px] mt-0.5 leading-snug">{a.description}</p>}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center gap-2 py-6 text-white/30 text-xs">
+                            <AlertTriangle className="w-4 h-4" /> Failed to load transaction details.
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
