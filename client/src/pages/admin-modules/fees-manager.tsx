@@ -416,6 +416,7 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/payments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/failed-counts"] });
       onSuccess?.();
       setLastPaymentId(rec?.id ?? null);
       setStep("done");
@@ -1602,6 +1603,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/failed-counts"] });
       toast({ title: "Fee record updated" });
       setEditing(null); setShowForm(false); form.reset();
     },
@@ -1615,6 +1617,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/failed-counts"] });
       setDeletePassword("");
       toast({ title: "Fee record deleted" });
     },
@@ -1630,6 +1633,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/failed-counts"] });
       setSelectedIds(new Set());
       setShowBulkDelete(false);
       setBulkPassword("");

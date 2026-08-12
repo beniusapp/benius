@@ -2324,18 +2324,21 @@ export function registerFeesRoutes(app: Express) {
               AND al.entity_type = 'fee_record'
               AND al.entity_id   IS NOT NULL
               AND fr.session_id  = ${sessionFilter}
+              AND fr.status      NOT IN ('Paid', 'Waived')
             GROUP BY al.entity_id`
         : sql`
             SELECT
-              entity_id::int               AS "feeRecordId",
-              COUNT(id)::int               AS count,
-              (ARRAY_AGG(description ORDER BY created_at DESC))[1] AS "lastError"
-            FROM fee_audit_log
-            WHERE school_id   = ${schoolId}
-              AND action      = 'payment_failed'
-              AND entity_type = 'fee_record'
-              AND entity_id   IS NOT NULL
-            GROUP BY entity_id`,
+              al.entity_id::int            AS "feeRecordId",
+              COUNT(al.id)::int            AS count,
+              (ARRAY_AGG(al.description ORDER BY al.created_at DESC))[1] AS "lastError"
+            FROM fee_audit_log al
+            INNER JOIN fee_records fr ON fr.id = al.entity_id::int
+            WHERE al.school_id   = ${schoolId}
+              AND al.action      = 'payment_failed'
+              AND al.entity_type = 'fee_record'
+              AND al.entity_id   IS NOT NULL
+              AND fr.status      NOT IN ('Paid', 'Waived')
+            GROUP BY al.entity_id`,
     );
 
     const counts: Record<number, { count: number; lastError: string | null }> = {};
