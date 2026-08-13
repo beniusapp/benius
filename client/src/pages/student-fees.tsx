@@ -7,7 +7,7 @@ import {
   Receipt, Download, Lock, ExternalLink, Copy, Check, Zap, Bell,
   Mail, MessageSquare, Webhook, TrendingUp, Shield, ChevronRight,
   Sparkles, CircleDollarSign, CalendarDays, BadgeCheck, WifiOff,
-  XCircle, RotateCcw,
+  XCircle, RotateCcw, X,
 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
@@ -699,13 +699,32 @@ export default function StudentFees() {
         {/* ── Payment-in-progress warning (amber) ─────────────────────────── */}
         <AnimatePresence>
           {payWarning && (
-            <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-              className="mt-4 flex items-center gap-3 rounded-2xl px-4 py-3"
-              style={{ background: "rgba(245,158,11,0.1)", border: "1.5px solid rgba(245,158,11,0.35)" }}>
-              <Clock className="w-4 h-4 text-amber-400 flex-shrink-0" />
-              <p className="text-sm text-amber-300 flex-1">{payWarning}</p>
+            <motion.div
+              initial={{ opacity: 0, y: -10, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -6, scale: 0.98 }}
+              transition={{ duration: 0.2 }}
+              className="mt-4 flex items-start gap-3 rounded-2xl px-4 py-3.5 overflow-hidden relative"
+              style={{
+                background: "linear-gradient(135deg, rgba(120,60,0,0.55) 0%, rgba(92,45,0,0.45) 100%)",
+                border: "1.5px solid rgba(251,191,36,0.35)",
+                boxShadow: "0 0 0 1px rgba(251,191,36,0.08), 0 4px 16px rgba(0,0,0,0.25)",
+              }}>
+              {/* left accent bar */}
+              <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-2xl bg-gradient-to-b from-amber-400 to-amber-600" />
+              <div className="ml-1 mt-0.5 flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center"
+                style={{ background: "rgba(251,191,36,0.15)", border: "1px solid rgba(251,191,36,0.3)" }}>
+                <Clock className="w-3.5 h-3.5 text-amber-300" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-amber-300 uppercase tracking-wider mb-0.5">Payment In Progress</p>
+                <p className="text-sm text-amber-100 leading-snug">{payWarning}</p>
+              </div>
               <button onClick={() => setPayWarning(null)}
-                className="text-amber-400 hover:text-amber-200 text-xs font-semibold transition-colors">✕</button>
+                className="flex-shrink-0 mt-0.5 w-6 h-6 rounded-full flex items-center justify-center transition-colors hover:bg-amber-400/20"
+                style={{ color: "rgba(251,191,36,0.7)" }}>
+                <X className="w-3.5 h-3.5" />
+              </button>
             </motion.div>
           )}
         </AnimatePresence>
@@ -713,13 +732,32 @@ export default function StudentFees() {
         {/* ── Pay error banner (red) ───────────────────────────────────────── */}
         <AnimatePresence>
           {payError && (
-            <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-              className="mt-4 flex items-center gap-3 rounded-2xl px-4 py-3"
-              style={{ background: "rgba(239,68,68,0.1)", border: "1.5px solid rgba(239,68,68,0.3)" }}>
-              <WifiOff className="w-4 h-4 text-red-400 flex-shrink-0" />
-              <p className="text-sm text-red-300 flex-1">{payError}</p>
+            <motion.div
+              initial={{ opacity: 0, y: -10, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -6, scale: 0.98 }}
+              transition={{ duration: 0.2 }}
+              className="mt-4 flex items-start gap-3 rounded-2xl px-4 py-3.5 overflow-hidden relative"
+              style={{
+                background: "linear-gradient(135deg, rgba(100,10,10,0.55) 0%, rgba(80,0,0,0.45) 100%)",
+                border: "1.5px solid rgba(239,68,68,0.35)",
+                boxShadow: "0 0 0 1px rgba(239,68,68,0.08), 0 4px 16px rgba(0,0,0,0.25)",
+              }}>
+              {/* left accent bar */}
+              <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-2xl bg-gradient-to-b from-red-400 to-red-600" />
+              <div className="ml-1 mt-0.5 flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center"
+                style={{ background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.3)" }}>
+                <WifiOff className="w-3.5 h-3.5 text-red-300" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-red-300 uppercase tracking-wider mb-0.5">Payment Error</p>
+                <p className="text-sm text-red-100 leading-snug">{payError}</p>
+              </div>
               <button onClick={() => setPayError(null)}
-                className="text-red-400 hover:text-red-200 text-xs font-semibold transition-colors">✕</button>
+                className="flex-shrink-0 mt-0.5 w-6 h-6 rounded-full flex items-center justify-center transition-colors hover:bg-red-400/20"
+                style={{ color: "rgba(239,68,68,0.7)" }}>
+                <X className="w-3.5 h-3.5" />
+              </button>
             </motion.div>
           )}
         </AnimatePresence>
