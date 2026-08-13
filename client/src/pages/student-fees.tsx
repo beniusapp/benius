@@ -79,6 +79,7 @@ interface PortalInfo {
 interface PaymentAttempt {
   id: number;
   type: "paid" | "failed";
+  feeRecordId: number | null;  // fee_records.id — used for receipt download URL
   feeType: string | null;
   feeName: string | null;
   amount: number | null;
@@ -446,14 +447,30 @@ export default function StudentFees() {
         // gateway-side order expiry, etc.)
         rzp.on("payment.failed", (response: any) => {
           clearCheckoutTimer();
-          // Clear the order lock immediately so the student can retry this
-          // invoice right away — don't wait for the webhook round-trip.
+          // Clear the order lock AND write the audit log entry immediately.
+          // Razorpay webhooks can't reach a Replit dev server, so this is the
+          // only reliable path for recording the failure.
+          const errCode        = response?.error?.code        ?? "";
+          const errDescription = response?.error?.description ?? response?.error?.reason ?? "Payment failed";
+          const rzpPaymentId   = response?.error?.metadata?.payment_id ?? "";
           fetch("/api/payments/clear-failed-order", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
-            body: JSON.stringify({ feeRecordId: rec.id, razorpayOrderId: orderId }),
-          }).catch(() => { /* best-effort — webhook clears it too */ });
+            body: JSON.stringify({
+              feeRecordId:      rec.id,
+              razorpayOrderId:  orderId,
+              razorpayPaymentId: rzpPaymentId || undefined,
+              errorCode:        errCode || undefined,
+              errorDescription: errDescription || undefined,
+            }),
+          })
+            .then(() => {
+              // Refresh fees so the card immediately shows "Payment Failed" + "Try Again"
+              queryClient.invalidateQueries({ queryKey: ["/api/student/fees"] });
+              queryClient.invalidateQueries({ queryKey: ["/api/student/fees/payment-attempts"] });
+            })
+            .catch(() => { /* best-effort — webhook clears it too */ });
 
           if (isOrderExpiredError(response?.error)) {
             // Gateway rejected the payment because the order window had already
@@ -1025,7 +1042,7 @@ export default function StudentFees() {
                                 </p>
                                 {isPaid && (
                                   <a
-                                    href={`/api/student/fees/${attempt.id}/receipt`}
+                                    href={`/api/student/fees/${attempt.feeRecordId ?? attempt.id}/receipt`}
                                     target="_blank" rel="noopener noreferrer"
                                     className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-bold transition-all hover:opacity-80 active:scale-95"
                                     style={{ background: "linear-gradient(135deg,#f0fdf4,#dcfce7)",

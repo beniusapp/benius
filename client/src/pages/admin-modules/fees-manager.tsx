@@ -4214,6 +4214,7 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [rzpKeyId, setRzpKeyId] = useState(() => localStorage.getItem("rzp_draft_key_id") ?? "");
   const [rzpKeySecret, setRzpKeySecret] = useState(() => localStorage.getItem("rzp_draft_key_secret") ?? "");
   const [rzpWebhookSecret, setRzpWebhookSecret] = useState(() => localStorage.getItem("rzp_draft_webhook_secret") ?? "");
+  const [showWebhookEvents, setShowWebhookEvents] = useState(false);
 
   const saveKeyIdDraft     = (v: string) => { setRzpKeyId(v);         v && v !== "••••••••" ? localStorage.setItem("rzp_draft_key_id", v) : localStorage.removeItem("rzp_draft_key_id"); };
   const saveSecretDraft    = (v: string) => { setRzpKeySecret(v);     v && v !== "••••••••" ? localStorage.setItem("rzp_draft_key_secret", v)     : localStorage.removeItem("rzp_draft_key_secret"); };
@@ -4387,14 +4388,47 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
           {/* Webhook Secret */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-white/60">Webhook Secret</label>
+            <label className="text-xs font-semibold text-white/60">Webhook Secret <span className="text-red-400">*</span></label>
             <input type="password" value={rzpWebhookSecret} onChange={e => saveWebhookDraft(e.target.value)}
               placeholder={rzpWebhookSecret === "••••••••" ? "Leave blank to keep existing secret" : "Enter Webhook Secret…"}
               disabled={isArchiveMode}
-              className="w-full bg-[#0F1E35] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40" />
-            <p className="text-white/25 text-[11px]">
-              Register this URL in Razorpay Dashboard → Webhooks → <span className="font-mono text-blue-400/70">/api/webhooks/razorpay</span> → enable <span className="font-mono text-blue-400/70">payment.captured</span>
-            </p>
+              className={`w-full bg-[#0F1E35] border rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40 ${!rzpWebhookSecret ? "border-red-500/50" : "border-white/10"}`} />
+            <div className="space-y-1">
+              <p className="text-white/25 text-[11px]">
+                Register this URL in Razorpay Dashboard → Webhooks →{" "}
+                <span className="font-mono text-blue-400/70">/api/webhooks/razorpay</span> → enable{" "}
+                <button
+                  type="button"
+                  onClick={() => setShowWebhookEvents(v => !v)}
+                  className="inline-flex items-center gap-0.5 font-mono text-blue-400/80 hover:text-blue-300 transition-colors underline underline-offset-2 cursor-pointer"
+                >
+                  15 events
+                  <svg className={`w-2.5 h-2.5 transition-transform ${showWebhookEvents ? "rotate-180" : ""}`} fill="none" viewBox="0 0 10 10" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2 3.5l3 3 3-3" />
+                  </svg>
+                </button>
+              </p>
+              {showWebhookEvents && (
+                <div className="mt-1.5 rounded-xl border border-blue-500/20 bg-blue-950/30 p-3 space-y-2">
+                  {[
+                    { label: "Core payments", events: ["payment.captured", "payment.failed", "payment.authorized"] },
+                    { label: "Refunds", events: ["refund.created", "refund.processed", "refund.failed"] },
+                    { label: "Disputes", events: ["payment.dispute.created", "payment.dispute.action_required", "payment.dispute.won", "payment.dispute.lost", "payment.dispute.closed", "payment.dispute.under_review"] },
+                    { label: "Downtime alerts", events: ["payment.downtime.started", "payment.downtime.updated", "payment.downtime.resolved"] },
+                  ].map(group => (
+                    <div key={group.label}>
+                      <p className="text-[11px] font-bold text-white/70 uppercase tracking-wider mb-1.5">{group.label}</p>
+                      <div className="flex flex-wrap gap-1">
+                        {group.events.map(e => (
+                          <span key={e} className="font-mono text-[11px] bg-blue-900/50 text-blue-200 border border-blue-400/30 rounded px-1.5 py-0.5">{e}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  <p className="text-[11px] text-white/50 pt-2 border-t border-white/10">All others (order.paid, invoice.*, settlement.*, account.*, payment_link.*) can be left disabled.</p>
+                </div>
+              )}
+            </div>
           </div>
 
           {rzpEnabled && !rzpConfigured && (
@@ -4406,9 +4440,18 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
             </div>
           )}
 
+          {!rzpWebhookSecret && (
+            <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-red-500/10 border border-red-500/25">
+              <Shield className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
+              <p className="text-red-400/90 text-xs leading-relaxed">
+                Webhook Secret is required. Copy it from Razorpay Dashboard → Webhooks → your webhook → Secret. Without it, payment confirmations cannot be verified.
+              </p>
+            </div>
+          )}
+
           {!isArchiveMode && (
-            <Button onClick={() => rzpMut.mutate()} disabled={rzpMut.isPending}
-              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl py-2.5">
+            <Button onClick={() => rzpMut.mutate()} disabled={rzpMut.isPending || !rzpWebhookSecret}
+              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl py-2.5 disabled:opacity-50 disabled:cursor-not-allowed">
               {rzpMut.isPending ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Saving…</> : "Save Razorpay Settings"}
             </Button>
           )}

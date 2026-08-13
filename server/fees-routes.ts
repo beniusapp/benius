@@ -1225,10 +1225,16 @@ export function registerFeesRoutes(app: Express) {
     const keySecret     = parsed.data.razorpayKeySecret     === "••••••••" ? undefined : (parsed.data.razorpayKeySecret     || null);
     const webhookSecret = parsed.data.razorpayWebhookSecret === "••••••••" ? undefined : (parsed.data.razorpayWebhookSecret || null);
 
-    // Validate: if enabling, Key ID must be present (new or existing)
+    // Validate: Key ID must be present (new or existing)
     const effectiveKeyId = keyIdToSave ?? previous?.razorpayKeyId ?? null;
     if (parsed.data.razorpayEnabled && !effectiveKeyId) {
       return res.status(400).json({ message: "Key ID is required before enabling Razorpay." });
+    }
+
+    // Validate: Webhook Secret is always mandatory
+    const effectiveWebhookSecret = webhookSecret !== undefined ? webhookSecret : previous?.razorpayWebhookSecret ?? null;
+    if (!effectiveWebhookSecret) {
+      return res.status(400).json({ message: "Webhook Secret is required. Copy it from Razorpay Dashboard → Webhooks → your webhook → Secret." });
     }
 
     const updated = await storage.upsertExternalPaymentSettings(schoolId, {
@@ -1621,6 +1627,120 @@ export function registerFeesRoutes(app: Express) {
         }
 
         console.log(`[razorpay webhook] Payment failed for fee #${feeRecordId}: ${errCode} — ${errDesc}`);
+
+      // ── payment.authorized ───────────────────────────────────────────────────
+      // Some UPI / netbanking flows send authorized → captured.
+      // Do NOT mark fee as Paid here — wait for payment.captured.
+      } else if (event.event === "payment.authorized") {
+        const feeRecordId = notes.feeRecordId ? parseInt(notes.feeRecordId) : null;
+        const studentIdAu = notes.studentId  ? parseInt(notes.studentId)  : null;
+        const now = new Date();
+        await db.execute(sql`
+          INSERT INTO fee_audit_log
+            (school_id, action, entity_type, entity_id, actor_id, actor_name, student_id, description, created_at)
+          VALUES (
+            ${schoolId}, 'payment_authorized', 'fee_record',
+            ${feeRecordId}, NULL, 'Razorpay Webhook', ${studentIdAu},
+            ${"Payment authorized (awaiting capture) — " + (payment.id ?? "unknown")},
+            ${now.toISOString()}
+          )
+        `);
+        console.log(`[razorpay webhook] payment.authorized fee #${feeRecordId} — ${payment.id ?? "?"}`);
+
+      // ── refund.* ─────────────────────────────────────────────────────────────
+      } else if (["refund.created", "refund.processed", "refund.failed", "refund.speed_changed"].includes(event.event)) {
+        const refund        = event?.payload?.refund?.entity  ?? {};
+        const refPmtEntity  = event?.payload?.payment?.entity ?? {};
+        const refPmtId      = refund.payment_id ?? refPmtEntity.id ?? null;
+        let rfFeeRecordId: number | null = null;
+        let rfStudentId:   number | null = null;
+        if (refPmtId) {
+          const pr = (await db.execute(sql`
+            SELECT fee_record_id, student_id FROM payment_records
+            WHERE school_id = ${schoolId} AND reference_number = ${refPmtId}
+            LIMIT 1
+          `)).rows[0] as any;
+          if (pr) { rfFeeRecordId = Number(pr.fee_record_id); rfStudentId = Number(pr.student_id); }
+        }
+        const now = new Date();
+        const amtRs = (Number(refund.amount ?? 0) / 100).toFixed(2);
+        const rfAction =
+          event.event === "refund.created"   ? "refund_initiated" :
+          event.event === "refund.processed" ? "refund_processed" :
+          event.event === "refund.failed"    ? "refund_failed"    : "refund_updated";
+        const rfDesc =
+          event.event === "refund.created"      ? `Refund initiated — ₹${amtRs} — refund ID: ${refund.id ?? "?"} — payment: ${refPmtId ?? "?"}` :
+          event.event === "refund.processed"    ? `Refund completed — ₹${amtRs} — refund ID: ${refund.id ?? "?"} — payment: ${refPmtId ?? "?"}` :
+          event.event === "refund.failed"       ? `Refund failed — ₹${amtRs} — refund ID: ${refund.id ?? "?"} — payment: ${refPmtId ?? "?"}` :
+                                                  `Refund speed changed — refund ID: ${refund.id ?? "?"}`;
+        await db.execute(sql`
+          INSERT INTO fee_audit_log
+            (school_id, action, entity_type, entity_id, actor_id, actor_name, student_id, description, created_at)
+          VALUES (
+            ${schoolId}, ${rfAction}, 'fee_record',
+            ${rfFeeRecordId}, NULL, 'Razorpay Webhook', ${rfStudentId},
+            ${rfDesc}, ${now.toISOString()}
+          )
+        `);
+        console.log(`[razorpay webhook] ${event.event} fee #${rfFeeRecordId} refund ${refund.id ?? "?"}`);
+
+      // ── payment.dispute.* ────────────────────────────────────────────────────
+      } else if (event.event.startsWith("payment.dispute.")) {
+        const dispute   = event?.payload?.dispute?.entity  ?? {};
+        const disPmt    = event?.payload?.payment?.entity  ?? {};
+        const disPmtId  = dispute.payment_id ?? disPmt.id ?? null;
+        let disFeeId:  number | null = null;
+        let disStudId: number | null = null;
+        if (disPmtId) {
+          const pr = (await db.execute(sql`
+            SELECT fee_record_id, student_id FROM payment_records
+            WHERE school_id = ${schoolId} AND reference_number = ${disPmtId}
+            LIMIT 1
+          `)).rows[0] as any;
+          if (pr) { disFeeId = Number(pr.fee_record_id); disStudId = Number(pr.student_id); }
+        }
+        const now = new Date();
+        const disAmtRs  = (Number(dispute.amount ?? 0) / 100).toFixed(2);
+        const disLabel: Record<string, string> = {
+          "payment.dispute.created":         "Dispute raised by student",
+          "payment.dispute.won":             "Dispute resolved — decided in our favour",
+          "payment.dispute.lost":            "Dispute lost — payment reversed to student",
+          "payment.dispute.closed":          "Dispute closed",
+          "payment.dispute.under_review":    "Dispute under review",
+          "payment.dispute.action_required": "⚠️ Dispute action required — respond in Razorpay Dashboard",
+        };
+        const disAction =
+          event.event === "payment.dispute.created"  ? "dispute_created" :
+          event.event === "payment.dispute.won"      ? "dispute_won"     :
+          event.event === "payment.dispute.lost"     ? "dispute_lost"    : "dispute_updated";
+        const disDesc = `${disLabel[event.event] ?? event.event} — ₹${disAmtRs} — dispute ID: ${dispute.id ?? "?"} — payment: ${disPmtId ?? "?"} — reason: ${dispute.reason_code ?? "unknown"}`;
+        await db.execute(sql`
+          INSERT INTO fee_audit_log
+            (school_id, action, entity_type, entity_id, actor_id, actor_name, student_id, description, created_at)
+          VALUES (
+            ${schoolId}, ${disAction}, 'fee_record',
+            ${disFeeId}, NULL, 'Razorpay Webhook', ${disStudId},
+            ${disDesc}, ${now.toISOString()}
+          )
+        `);
+        // Broadcast high-severity dispute events to admin dashboard
+        if (event.event === "payment.dispute.created" || event.event === "payment.dispute.action_required" || event.event === "payment.dispute.lost") {
+          broadcastPaymentUpdate(schoolId, { feeRecordId: disFeeId, disputeAlert: event.event });
+        }
+        console.log(`[razorpay webhook] ${event.event} dispute ${dispute.id ?? "?"} fee #${disFeeId}`);
+
+      // ── payment.downtime.* ───────────────────────────────────────────────────
+      } else if (event.event.startsWith("payment.downtime.")) {
+        const dt     = event?.payload?.downtime?.entity ?? {};
+        const method = dt.method ?? "unknown";
+        console.warn(`[razorpay webhook] ⚠️ Razorpay downtime — ${event.event} — method: ${method} — status: ${dt.status ?? "?"}`);
+
+      // ── all other events ─────────────────────────────────────────────────────
+      // (order.paid, order.notification.*, invoice.*, settlement.processed,
+      //  fund_account.*, account.*, payment_link.*, etc.)
+      // Razorpay requires 200 for all events — acknowledge and log only.
+      } else {
+        console.log(`[razorpay webhook] acknowledged (no action): ${event.event}`);
       }
 
       res.json({ ok: true });
@@ -1639,7 +1759,7 @@ export function registerFeesRoutes(app: Express) {
     const adminSchId = req.session?.schoolId;
     if (!studentId && !adminSchId) return res.status(403).json({ message: "Authentication required" });
 
-    const { feeRecordId, razorpayOrderId } = req.body ?? {};
+    const { feeRecordId, razorpayOrderId, razorpayPaymentId, errorCode, errorDescription } = req.body ?? {};
     if (!feeRecordId || typeof feeRecordId !== "number")
       return res.status(400).json({ message: "feeRecordId required" });
 
@@ -1675,6 +1795,33 @@ export function registerFeesRoutes(app: Express) {
       WHERE ${condition}
         AND status IN ('Due', 'Overdue', 'Partial')
     `);
+
+    // ── Write payment_failed audit log entry ─────────────────────────────────
+    // The Razorpay webhook also writes this, but webhooks never reach a dev/Replit
+    // server (no public URL).  Writing it here (client-side path) ensures every
+    // failure is recorded regardless of webhook delivery.  The webhook entry is
+    // idempotent — two entries for one failure is acceptable; zero entries is not.
+    const now = new Date();
+    const descParts: string[] = ["Razorpay payment failed (client-reported)"];
+    if (errorCode) descParts.push(`${errorCode}`);
+    if (errorDescription) descParts.push(`${errorDescription}`);
+    if (razorpayPaymentId) descParts.push(`(${razorpayPaymentId})`);
+    if (razorpayOrderId) descParts.push(`[order: ${razorpayOrderId}]`);
+    const description = descParts.join(" — ").replace(/ — —/g, " —");
+
+    try {
+      await db.execute(sql`
+        INSERT INTO fee_audit_log
+          (school_id, action, entity_type, entity_id, actor_id, actor_name, student_id, description, created_at)
+        VALUES
+          (${schoolId}, 'payment_failed', 'fee_record', ${feeRecordId},
+           NULL, 'Razorpay (client)', ${studentId ?? null},
+           ${description}, ${now.toISOString()})
+      `);
+    } catch (auditErr) {
+      // Non-fatal — log but don't fail the response
+      console.warn("[clear-failed-order] audit log write failed:", auditErr);
+    }
 
     res.json({ ok: true });
   });
@@ -3248,6 +3395,7 @@ td:last-child{font-weight:600;word-break:break-all;}
         SELECT
           pr.id,
           'paid'::text                                AS type,
+          pr.fee_record_id                            AS "feeRecordId",
           fr.fee_type                                 AS "feeType",
           fr.fee_type                                 AS "feeName",
           pr.amount,
@@ -3267,6 +3415,8 @@ td:last-child{font-weight:600;word-break:break-all;}
       `);
 
       // Failed payment attempts (from fee_audit_log)
+      // Match on student_id directly OR via entity_id → fee_records.student_id
+      // (webhook entries may have student_id = NULL when Razorpay notes were incomplete).
       const failed = await db.execute(sql`
         SELECT
           al.id,
@@ -3283,10 +3433,14 @@ td:last-child{font-weight:600;word-break:break-all;}
           al.created_at                               AS "createdAt"
         FROM fee_audit_log al
         LEFT JOIN fee_records fr ON fr.id = al.entity_id::int
-        WHERE al.student_id  = ${student.id}
-          AND al.school_id   = ${student.schoolId}
+        WHERE al.school_id   = ${student.schoolId}
           AND al.action      = 'payment_failed'
           AND al.entity_type = 'fee_record'
+          AND al.entity_id   IS NOT NULL
+          AND (
+            al.student_id = ${student.id}
+            OR fr.student_id = ${student.id}
+          )
         ORDER BY al.created_at DESC
         LIMIT 200
       `);
