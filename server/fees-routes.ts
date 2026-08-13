@@ -1869,37 +1869,86 @@ export function registerFeesRoutes(app: Express) {
       if (feeRec.status === "Paid")
         return res.json({ ok: true, idempotent: true, receiptNumber: feeRec.receipt_number });
 
-      // Mark Paid (same logic as webhook)
+      // Mark Paid — wrap UPDATE + INSERT in a single transaction so a crash or
+      // INSERT failure (schema mismatch, constraint violation, transient DB error)
+      // can never leave fee_records stamped Paid without a matching payment_records
+      // row.  Matches the pattern used in the webhook handler.
       const receiptNumber = await storage.nextReceiptNumber(schoolId, "ON");
       const now = new Date();
-      await db.execute(sql`
-        UPDATE fee_records
-        SET status = 'Paid', paid_date = ${now.toISOString()}, receipt_number = ${receiptNumber}
-        WHERE id = ${feeRecordId} AND school_id = ${schoolId}
-      `);
-
       const activeSession = await storage.getActiveSession(schoolId);
-      await db.insert(paymentRecords).values({
-        schoolId,
-        sessionId: activeSession?.id ?? null,
-        feeRecordId,
-        studentId: Number(feeRec.student_id),
-        paymentMethod: "Online",
-        referenceNumber: razorpay_payment_id,
-        receivedDate: now.toISOString().slice(0, 10),
-        amount: Number(feeRec.amount),
-        cashierNotes: `Razorpay payment ID: ${razorpay_payment_id} (client-verified)`,
-        recordedBy: null,
-        receiptNumber,
-        idempotencyKey: `rzp_${razorpay_payment_id}`,
-        razorpayPaymentId: razorpay_payment_id ?? null,
-        razorpayOrderId: razorpay_order_id ?? null,
-        razorpaySignature: razorpay_signature ?? null,
-        payerName: payer_name ?? null,
-        payerEmail: payer_email ?? null,
-        payerContact: payer_contact ?? null,
-        gatewayStatus: "captured",
-      } as any);
+
+      let idempotentDuplicate = false;
+      let canonicalReceipt: string | undefined;
+
+      try {
+        await db.transaction(async (tx) => {
+          await tx.execute(sql`
+            UPDATE fee_records
+            SET status = 'Paid', paid_date = ${now.toISOString()}, receipt_number = ${receiptNumber}
+            WHERE id = ${feeRecordId} AND school_id = ${schoolId}
+          `);
+
+          // Insert payment record inside the same transaction — any failure here
+          // automatically rolls back the UPDATE above, so the fee stays Due and
+          // the student can retry.
+          try {
+            await tx.insert(paymentRecords).values({
+              schoolId,
+              sessionId: activeSession?.id ?? null,
+              feeRecordId,
+              studentId: Number(feeRec.student_id),
+              paymentMethod: "Online",
+              referenceNumber: razorpay_payment_id,
+              receivedDate: now.toISOString().slice(0, 10),
+              amount: Number(feeRec.amount),
+              cashierNotes: `Razorpay payment ID: ${razorpay_payment_id} (client-verified)`,
+              recordedBy: null,
+              receiptNumber,
+              idempotencyKey: `rzp_${razorpay_payment_id}`,
+              razorpayPaymentId: razorpay_payment_id ?? null,
+              razorpayOrderId: razorpay_order_id ?? null,
+              razorpaySignature: razorpay_signature ?? null,
+              payerName: payer_name ?? null,
+              payerEmail: payer_email ?? null,
+              payerContact: payer_contact ?? null,
+              gatewayStatus: "captured",
+            } as any);
+          } catch (insertErr: any) {
+            // Unique-constraint on idempotency_key (PG 23505) means the webhook
+            // already inserted a payment_records row for this payment_id while
+            // our transaction was in flight or just before we started.  Throwing
+            // rolls back our UPDATE, preserving the winner's committed state
+            // (including its receipt_number on fee_records).
+            if (
+              insertErr?.code === "23505" &&
+              String(insertErr?.constraint ?? insertErr?.message ?? "").includes("idempotency_key")
+            ) {
+              console.warn(
+                "[razorpay verify] duplicate idempotency_key — rolling back and returning idempotent 200",
+                insertErr?.constraint ?? insertErr?.message,
+              );
+              idempotentDuplicate = true;
+            }
+            throw insertErr; // always rethrow — rolls back the transaction
+          }
+        });
+      } catch (txErr: any) {
+        if (idempotentDuplicate) {
+          // The webhook already committed a payment_records row for this payment.
+          // Look up the canonical receipt it stamped so we return the right number.
+          try {
+            const winnerRows = (await db.execute(sql`
+              SELECT receipt_number FROM payment_records
+              WHERE idempotency_key = ${"rzp_" + razorpay_payment_id}
+              LIMIT 1
+            `)).rows;
+            canonicalReceipt = (winnerRows[0] as any)?.receipt_number as string | undefined;
+          } catch {/* non-critical — fall through to idempotent OK */ }
+          return res.json({ ok: true, idempotent: true, receiptNumber: canonicalReceipt });
+        }
+        console.error("[razorpay verify]", txErr);
+        return res.status(500).json({ message: String(txErr) });
+      }
 
       // Try to enrich with Razorpay Payments API (mode, bank, card, VPA) — non-blocking
       try {
@@ -1932,40 +1981,6 @@ export function registerFeesRoutes(app: Express) {
 
       res.json({ ok: true, receiptNumber });
     } catch (err: any) {
-      // Unique-constraint violation on idempotency_key (PG code 23505) means the
-      // webhook inserted its payment_records row between the moment this handler
-      // read the fee as "Due" and the moment it tried to insert.
-      //
-      // By this point our UPDATE fee_records has already committed, stamping the
-      // fee with *our* receipt number instead of the webhook's canonical receipt.
-      // We must restore fee_records.receipt_number to the value in payment_records
-      // so the two tables stay consistent before returning success.
-      if (err?.code === "23505" && String(err?.constraint ?? err?.message ?? "").includes("idempotency_key")) {
-        try {
-          const winnerRows = (await db.execute(sql`
-            SELECT receipt_number FROM payment_records
-            WHERE idempotency_key = ${"rzp_" + razorpay_payment_id}
-            LIMIT 1
-          `)).rows;
-          const canonicalReceipt = (winnerRows[0] as any)?.receipt_number as string | undefined;
-          if (canonicalReceipt) {
-            // Restore the fee record to the webhook's canonical receipt number
-            await db.execute(sql`
-              UPDATE fee_records
-              SET receipt_number = ${canonicalReceipt}
-              WHERE id = ${feeRecordId}
-            `);
-            console.log(`[razorpay verify] idempotency conflict — restored canonical receipt ${canonicalReceipt} on fee #${feeRecordId}`);
-            return res.json({ ok: true, idempotent: true, receiptNumber: canonicalReceipt });
-          }
-        } catch (restoreErr) {
-          console.error("[razorpay verify] failed to restore canonical receipt after idempotency conflict", restoreErr);
-        }
-        // Fallback: webhook row vanished between the conflict and our lookup (extremely
-        // unlikely), but fee is Paid — still return success
-        console.log(`[razorpay verify] idempotency conflict — canonical receipt lookup missed, returning OK`);
-        return res.json({ ok: true, idempotent: true });
-      }
       console.error("[razorpay verify]", err);
       res.status(500).json({ message: String(err) });
     }
