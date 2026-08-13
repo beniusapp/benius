@@ -1473,67 +1473,63 @@ export function registerFeesRoutes(app: Express) {
         // Atomically assign next ON receipt
         const receiptNumber = await storage.nextReceiptNumber(schoolId, "ON");
 
-        // Update fee record to Paid
+        // Update fee record to Paid + insert payment record — wrapped in a single
+        // transaction so both succeed or fail together.  If the INSERT fails for
+        // any reason (schema mismatch, constraint violation, transient error),
+        // the UPDATE is rolled back automatically: fee_record stays Unpaid, the
+        // webhook returns 500, and Razorpay retries until both operations commit.
         const now = new Date();
-        await db.execute(sql`
-          UPDATE fee_records
-          SET status = 'Paid', paid_date = ${now.toISOString()}, receipt_number = ${receiptNumber}
-          WHERE id = ${feeRecordId} AND school_id = ${schoolId}
-        `);
-
-        // Insert payment record — guarded against duplicate delivery (23505)
         const activeSession = await storage.getActiveSession(schoolId);
+        let idempotentDuplicate = false;
         try {
-          await db.insert(paymentRecords).values({
-            schoolId,
-            sessionId: activeSession?.id ?? null,
-            feeRecordId,
-            studentId: Number(feeRec.student_id),
-            paymentMethod: "Online",
-            referenceNumber: payment.id,        // pay_XXXX
-            receivedDate: now.toISOString().slice(0, 10),
-            amount: Number(feeRec.amount),
-            cashierNotes: `Razorpay payment ID: ${payment.id}`,
-            recordedBy: null,
-            receiptNumber,
-            idempotencyKey: `rzp_${payment.id}`,
-          } as any);
-        } catch (insertErr: any) {
-          // Unique-constraint on idempotency_key (PG 23505) = Razorpay re-sent
-          // this webhook.  The losing handler may have already overwritten
-          // fee_records.receipt_number with its own allocated receipt before the
-          // INSERT failed, so restore it to the canonical receipt held by the
-          // winning payment_records row before returning 200.
-          if (
-            insertErr?.code === "23505" &&
-            String(insertErr?.constraint ?? insertErr?.message ?? "").includes("idempotency_key")
-          ) {
-            console.warn(
-              "[razorpay webhook] duplicate payment.captured delivery — restoring canonical receipt and returning idempotent 200",
-              insertErr?.constraint ?? insertErr?.message,
-            );
+          await db.transaction(async (tx) => {
+            await tx.execute(sql`
+              UPDATE fee_records
+              SET status = 'Paid', paid_date = ${now.toISOString()}, receipt_number = ${receiptNumber}
+              WHERE id = ${feeRecordId} AND school_id = ${schoolId}
+            `);
+
+            // Insert payment record — guarded against duplicate delivery (23505).
+            // Any error thrown here rolls back the UPDATE above automatically.
             try {
-              const winnerRows = (
-                await db.execute(sql`
-                  SELECT receipt_number FROM payment_records
-                  WHERE idempotency_key = ${"rzp_" + payment.id}
-                  LIMIT 1
-                `)
-              ).rows;
-              const canonicalReceipt = (winnerRows[0] as any)?.receipt_number as string | undefined;
-              if (canonicalReceipt) {
-                await db.execute(sql`
-                  UPDATE fee_records
-                  SET receipt_number = ${canonicalReceipt}
-                  WHERE id = ${feeRecordId} AND school_id = ${schoolId}
-                `);
+              await tx.insert(paymentRecords).values({
+                schoolId,
+                sessionId: activeSession?.id ?? null,
+                feeRecordId,
+                studentId: Number(feeRec.student_id),
+                paymentMethod: "Online",
+                referenceNumber: payment.id,        // pay_XXXX
+                receivedDate: now.toISOString().slice(0, 10),
+                amount: Number(feeRec.amount),
+                cashierNotes: `Razorpay payment ID: ${payment.id}`,
+                recordedBy: null,
+                receiptNumber,
+                idempotencyKey: `rzp_${payment.id}`,
+              } as any);
+            } catch (insertErr: any) {
+              // Unique-constraint on idempotency_key (PG 23505) = Razorpay re-sent
+              // this webhook while the first handler's transaction was in flight or
+              // has already committed.  Throwing rolls back our UPDATE; the winner's
+              // committed state (including its receipt_number) is preserved on
+              // fee_records.  Signal idempotent 200 outside the transaction.
+              if (
+                insertErr?.code === "23505" &&
+                String(insertErr?.constraint ?? insertErr?.message ?? "").includes("idempotency_key")
+              ) {
+                console.warn(
+                  "[razorpay webhook] duplicate payment.captured delivery — rolling back and returning idempotent 200",
+                  insertErr?.constraint ?? insertErr?.message,
+                );
+                idempotentDuplicate = true;
               }
-            } catch (restoreErr) {
-              console.error("[razorpay webhook] failed to restore canonical receipt after 23505", restoreErr);
+              throw insertErr; // always rethrow — rolls back the transaction
             }
+          });
+        } catch (txErr: any) {
+          if (idempotentDuplicate) {
             return res.json({ ok: true, idempotent: true });
           }
-          throw insertErr; // non-idempotency error — rethrow to outer catch → 500
+          throw txErr; // non-idempotency error → outer catch → 500, Razorpay retries
         }
 
         // Audit log — use correct schema columns (actor_id, description, student_id)
@@ -3476,6 +3472,17 @@ td:last-child{font-weight:600;word-break:break-all;}
         ORDER BY fr.paid_date DESC
         LIMIT 50
       `);
+
+      // Warn when orphan rows are found — the transaction guard should prevent
+      // new orphans; any rows here indicate a pre-fix payment or a transaction
+      // failure that ops should investigate.
+      if (orphanPaid.rows.length > 0) {
+        console.warn(
+          `[payment-attempts] orphan fallback returned ${orphanPaid.rows.length} row(s) for student #${student.id} ` +
+          `— fee_records marked Paid with no matching payment_record. ` +
+          `Investigate fee IDs: ${orphanPaid.rows.map((r: any) => r.id).join(", ")}`
+        );
+      }
 
       // Merge and sort by createdAt descending
       const all = [
