@@ -476,6 +476,55 @@ app.use((req, res, next) => {
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS razorpay_order_expires_at TIMESTAMPTZ;
   `);
 
+  // ── payment_records extended columns (Razorpay enrichment + payer info) ──
+  // Production-safe: ADD COLUMN IF NOT EXISTS never touches existing rows/data.
+  await pool.query(`
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS razorpay_payment_id VARCHAR(100);
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS razorpay_order_id   VARCHAR(100);
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS razorpay_signature  TEXT;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS payment_mode        TEXT;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS bank_name           TEXT;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS card_last4          TEXT;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS vpa                 TEXT;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS payer_name          TEXT;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS payer_email         TEXT;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS payer_contact       TEXT;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS gateway_status      TEXT;
+  `);
+
+  // ── Reconcile orphaned Paid fee_records that have no payment_record ───────
+  // Inserts a reconstructed payment_record for any fee_record that is Paid
+  // (has a receipt_number) but has no matching row in payment_records.
+  // Uses ON CONFLICT DO NOTHING on idempotency_key so this is safe to run on
+  // every startup — it only fires once and is a no-op on all subsequent boots.
+  await pool.query(`
+    INSERT INTO payment_records
+      (school_id, fee_record_id, student_id, session_id, payment_method,
+       reference_number, razorpay_order_id, received_date, amount,
+       cashier_notes, idempotency_key, receipt_number)
+    SELECT
+      fr.school_id,
+      fr.id                   AS fee_record_id,
+      fr.student_id,
+      fr.session_id,
+      'Online'                AS payment_method,
+      COALESCE(fr.razorpay_order_id, 'reconstructed') AS reference_number,
+      fr.razorpay_order_id,
+      COALESCE(fr.paid_date::date, CURRENT_DATE) AS received_date,
+      fr.amount,
+      'Razorpay payment — reconstructed (webhook failed, order: ' || COALESCE(fr.razorpay_order_id,'unknown') || ')' AS cashier_notes,
+      'rzp_reconstructed_' || fr.receipt_number AS idempotency_key,
+      fr.receipt_number
+    FROM fee_records fr
+    WHERE fr.status = 'Paid'
+      AND fr.receipt_number LIKE 'ON%'
+      AND NOT EXISTS (
+        SELECT 1 FROM payment_records pr
+        WHERE pr.fee_record_id = fr.id AND pr.school_id = fr.school_id
+      )
+    ON CONFLICT (idempotency_key) DO NOTHING
+  `);
+
   // Back-fill session_id on existing payment_records that are linked to a fee_record
   // (safe to run on every startup — only touches rows where session_id IS NULL)
   await pool.query(`
