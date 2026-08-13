@@ -1455,7 +1455,9 @@ export function registerFeesRoutes(app: Express) {
 
       // Verify HMAC
       const expected = crypto.createHmac("sha256", creds.webhookSecret).update(bodyStr).digest("hex");
-      if (!crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex")))
+      const sigBuf = Buffer.from(sig, "hex");
+      const expBuf = Buffer.from(expected, "hex");
+      if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf))
         return res.status(400).json({ message: "Signature mismatch" });
 
       if (event.event === "payment.captured") {
