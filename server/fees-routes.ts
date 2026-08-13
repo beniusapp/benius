@@ -3445,10 +3445,43 @@ td:last-child{font-weight:600;word-break:break-all;}
         LIMIT 200
       `);
 
+      // Fallback: paid fee_records with NO matching payment_record.
+      // This catches the case where the webhook updated fee_records to Paid
+      // but the payment_records INSERT failed (e.g. missing DB column at the
+      // time). Without this, those payments silently vanish from History.
+      const orphanPaid = await db.execute(sql`
+        SELECT
+          fr.id                                       AS id,
+          'paid'::text                                AS type,
+          fr.id                                       AS "feeRecordId",
+          fr.fee_type                                 AS "feeType",
+          fr.fee_type                                 AS "feeName",
+          fr.amount,
+          fr.paid_date                                AS "date",
+          fr.receipt_number                           AS "receiptNumber",
+          'Online'::text                              AS "paymentMethod",
+          NULL::text                                  AS "paymentMode",
+          NULL::text                                  AS "razorpayPaymentId",
+          NULL::text                                  AS "errorDescription",
+          fr.paid_date                                AS "createdAt"
+        FROM fee_records fr
+        WHERE fr.student_id  = ${student.id}
+          AND fr.school_id   = ${student.schoolId}
+          AND fr.status      = 'Paid'
+          AND fr.receipt_number IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM payment_records pr
+            WHERE pr.fee_record_id = fr.id
+          )
+        ORDER BY fr.paid_date DESC
+        LIMIT 50
+      `);
+
       // Merge and sort by createdAt descending
       const all = [
         ...paid.rows,
         ...failed.rows,
+        ...orphanPaid.rows,
       ].sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
       res.json(all);
