@@ -416,7 +416,11 @@ function PaymentSections({ attempt, accent }: { attempt: PaymentAttempt; accent:
       <SectionGroup title="Amount & Financial" accent={accent}>
         <TechRowFull label="Amount"      value={paise(attempt.amountPaise)} />
         <TechRowFull label="Currency"    value={attempt.currency ?? "INR"} />
-        <TechRowFull label="Captured"    value={paise(attempt.amountCapturedPaise)} />
+        <TechRowFull label="Captured"    value={
+          (attempt.outcome === "failed" || attempt.outcome === "cancelled")
+            ? "₹0"
+            : paise(attempt.amountCapturedPaise)
+        } />
         <TechRowFull label="Refunded"    value={paise(attempt.amountRefundedPaise)} />
         <TechRowFull label="Gateway Fee" value={paiseF(attempt.razorpayFeePaise)} />
         <TechRowFull label="GST on Fee"  value={paiseF(attempt.razorpayTaxPaise)} />
