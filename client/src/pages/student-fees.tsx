@@ -449,7 +449,21 @@ export default function StudentFees() {
                 // student likely stepped away.  Show a friendly "try again" prompt.
                 reject(new RazorpayOrderExpiredError());
               } else {
-                // Voluntary close by the student — no error message needed.
+                // Voluntary close by the student — release the order lock
+                // immediately so the student can retry this invoice or pay a
+                // different one without waiting for the 10-minute checkout
+                // window to elapse.  The endpoint is a no-op if the fee is
+                // already Paid (status guard on the server prevents the UPDATE).
+                fetch("/api/payments/clear-failed-order", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  credentials: "include",
+                  body: JSON.stringify({
+                    feeRecordId:     rec.id,
+                    razorpayOrderId: orderId,
+                    errorDescription: "Checkout dismissed by student (no payment attempted)",
+                  }),
+                }).catch(() => { /* best-effort — stale order expires automatically */ });
                 reject(new Error("dismissed"));
               }
             },
