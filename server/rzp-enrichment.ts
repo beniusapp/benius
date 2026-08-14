@@ -254,9 +254,15 @@ export async function upsertPaymentAttempt(data: UpsertAttemptData): Promise<num
       ON CONFLICT (school_id, razorpay_payment_id)
         WHERE razorpay_payment_id IS NOT NULL
       DO UPDATE SET
+        -- Monotonic forward-only transition policy:
+        --   refunded  → always preserved (no event can undo a refund)
+        --   captured  → can only advance to refunded; all other events keep captured
+        --   anything else → accept the new outcome
         outcome               = CASE
-                                  WHEN EXCLUDED.outcome IN ('captured','refunded') THEN EXCLUDED.outcome
-                                  WHEN payment_attempts.outcome IN ('captured','refunded') THEN payment_attempts.outcome
+                                  WHEN payment_attempts.outcome = 'refunded'  THEN 'refunded'
+                                  WHEN payment_attempts.outcome = 'captured'
+                                    AND EXCLUDED.outcome       = 'refunded'   THEN 'refunded'
+                                  WHEN payment_attempts.outcome = 'captured'               THEN 'captured'
                                   ELSE EXCLUDED.outcome
                                 END,
         student_id            = COALESCE(EXCLUDED.student_id,            payment_attempts.student_id),
@@ -284,11 +290,29 @@ export async function upsertPaymentAttempt(data: UpsertAttemptData): Promise<num
         payer_name            = COALESCE(EXCLUDED.payer_name,            payment_attempts.payer_name),
         payer_email           = COALESCE(EXCLUDED.payer_email,           payment_attempts.payer_email),
         payer_contact         = COALESCE(EXCLUDED.payer_contact,         payment_attempts.payer_contact),
-        error_code            = COALESCE(EXCLUDED.error_code,            payment_attempts.error_code),
-        error_description     = COALESCE(EXCLUDED.error_description,     payment_attempts.error_description),
-        error_source          = COALESCE(EXCLUDED.error_source,          payment_attempts.error_source),
-        error_step            = COALESCE(EXCLUDED.error_step,            payment_attempts.error_step),
-        error_reason          = COALESCE(EXCLUDED.error_reason,          payment_attempts.error_reason),
+        -- Error fields must not overwrite a terminal (captured/refunded) row.
+        -- A late failed/authorized webhook must not inject error data into a row
+        -- whose outcome is already protected above.
+        error_code            = CASE
+                                  WHEN payment_attempts.outcome IN ('captured','refunded') THEN payment_attempts.error_code
+                                  ELSE COALESCE(EXCLUDED.error_code,        payment_attempts.error_code)
+                                END,
+        error_description     = CASE
+                                  WHEN payment_attempts.outcome IN ('captured','refunded') THEN payment_attempts.error_description
+                                  ELSE COALESCE(EXCLUDED.error_description, payment_attempts.error_description)
+                                END,
+        error_source          = CASE
+                                  WHEN payment_attempts.outcome IN ('captured','refunded') THEN payment_attempts.error_source
+                                  ELSE COALESCE(EXCLUDED.error_source,      payment_attempts.error_source)
+                                END,
+        error_step            = CASE
+                                  WHEN payment_attempts.outcome IN ('captured','refunded') THEN payment_attempts.error_step
+                                  ELSE COALESCE(EXCLUDED.error_step,        payment_attempts.error_step)
+                                END,
+        error_reason          = CASE
+                                  WHEN payment_attempts.outcome IN ('captured','refunded') THEN payment_attempts.error_reason
+                                  ELSE COALESCE(EXCLUDED.error_reason,      payment_attempts.error_reason)
+                                END,
         rzp_created_at        = COALESCE(EXCLUDED.rzp_created_at,        payment_attempts.rzp_created_at),
         rzp_authorized_at     = COALESCE(EXCLUDED.rzp_authorized_at,     payment_attempts.rzp_authorized_at),
         rzp_captured_at       = COALESCE(EXCLUDED.rzp_captured_at,       payment_attempts.rzp_captured_at),
@@ -363,7 +387,13 @@ export async function updatePaymentAttemptRefund(
   await db.execute(sql`
     UPDATE payment_attempts
     SET
-      outcome             = ${newOutcome},
+      -- Only advance outcome to 'refunded'; never regress from 'refunded' back to
+      -- 'captured' (which the caller passes for refund.created / refund.failed /
+      -- refund.speed_changed events).
+      outcome             = CASE
+                              WHEN ${newOutcome} = 'refunded' THEN 'refunded'
+                              ELSE outcome
+                            END,
       refund_id           = ${refundId},
       refund_status       = ${refundStatus},
       refund_amount_paise = COALESCE(${refundAmountPaise ?? null}, refund_amount_paise),

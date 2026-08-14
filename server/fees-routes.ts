@@ -2279,6 +2279,56 @@ export function registerFeesRoutes(app: Express) {
           ${now.toISOString()})
       `);
 
+      // Record in payment_attempts — this is the primary write for the client-verify path.
+      // The webhook (payment.captured) may arrive later and upsert the same row idempotently.
+      void upsertPaymentAttempt({
+        schoolId,
+        studentId:         Number(feeRec.student_id),
+        feeRecordId,
+        sessionId:         activeSession?.id ?? null,
+        outcome:           "captured",
+        razorpayPaymentId: razorpay_payment_id,
+        razorpayOrderId:   razorpay_order_id   ?? null,
+        amountPaise:       typeof feeRec.amount === "number" ? feeRec.amount * 100 : null,
+        currency:          "INR",
+        payerEmail:        payer_email   ?? null,
+        payerContact:      payer_contact ?? null,
+        payerName:         payer_name    ?? null,
+        webhookEvent:      "verify",
+        webhookReceivedAt: now,
+        source:            "client",
+        receiptNumber,
+      }).catch(err => console.error(
+        `[razorpay verify] ⚠ payment_attempts upsert FAILED for ${razorpay_payment_id} ` +
+        `fee #${feeRecordId} — History tab may be incomplete until webhook arrives:`,
+        err,
+      ));
+
+      // Fire-and-forget API enrichment for payment_attempts (mode, card, RRN, fee, GST)
+      if (creds.keySecret) {
+        void (async () => {
+          try {
+            const { paymentData, orderData } = await fetchRazorpayData(razorpay_payment_id, razorpay_order_id ?? null, creds);
+            if (paymentData) {
+              await upsertPaymentAttempt({
+                schoolId,
+                studentId:       Number(feeRec.student_id),
+                feeRecordId,
+                sessionId:       activeSession?.id ?? null,
+                outcome:         "captured",
+                source:          "client",
+                receiptNumber,
+                webhookEvent:    "verify",
+                webhookVerified: true,
+                ...mapRazorpayPayment(paymentData),
+              });
+            }
+          } catch (enrichErr) {
+            console.warn(`[razorpay verify] API enrichment failed for ${razorpay_payment_id}:`, enrichErr);
+          }
+        })();
+      }
+
       broadcastPaymentUpdate(schoolId, { feeRecordId, receiptNumber });
       console.log(`[razorpay verify] Paid fee #${feeRecordId} receipt ${receiptNumber}`);
 
