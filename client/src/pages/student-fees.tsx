@@ -163,22 +163,33 @@ function formatDate(dateStr: string | null) {
   });
 }
 
-/** Formats a UTC ISO timestamp as IST date + time with seconds.
- *  e.g. "14 Aug 2026, 04:49:24 PM"
+/** Formats any timestamp (ISO string, pg-style string, or Date object) as IST
+ *  date + time with seconds.  e.g. "14 Aug 2026, 04:49:24 PM"
  *
- *  DB columns are `timestamp without time zone` — values are UTC but the
- *  serialised string has no timezone marker (e.g. "2026-08-14 11:19:24.018887").
- *  Without normalisation, V8 parses such strings as *browser-local* time, so an
- *  IST browser would treat 11:19 UTC as 11:19 IST — 5 h 30 m too early.
- *  Fix: replace the space separator with T and append Z before parsing, forcing
- *  UTC interpretation exactly once.  If the server ever starts returning a
- *  timezone-aware string (ends in Z or ±HH:MM) this guard is a no-op. */
-function formatDateTime(dateStr: string | null): string {
+ *  Handles the full range of pg TIMESTAMPTZ serialisations:
+ *   • "2026-08-14 11:19:24.018887"       (bare UTC, no tz)
+ *   • "2026-08-14 11:19:24.018887+00"    (2-digit tz offset)
+ *   • "2026-08-14 11:19:24.018887+05:30" (full ±HH:MM)
+ *   • "2026-08-14T11:19:24.018Z"         (standard ISO)
+ *   • a JavaScript Date object (from pg driver direct row access)
+ *
+ *  Returns "—" for null/undefined/unparseable input. */
+function formatDateTime(dateStr: string | Date | null | undefined): string {
   if (!dateStr) return "—";
-  // Normalise to UTC: "2026-08-14 11:19:24.018887" → "2026-08-14T11:19:24.018887Z"
-  const s = dateStr.trim().replace(" ", "T");
-  const utc = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(s) ? s : s + "Z";
-  const result = new Date(utc).toLocaleString("en-IN", {
+  let d: Date;
+  if (dateStr instanceof Date) {
+    d = dateStr;
+  } else {
+    const s = String(dateStr).trim().replace(" ", "T"); // first space → T
+    const withTz =
+      /[Zz]$/.test(s)               ? s          : // already ends in Z
+      /[+-]\d{2}:\d{2}$/.test(s)    ? s          : // already ±HH:MM
+      /[+-]\d{2}$/.test(s)          ? s + ":00"  : // ±HH only → add :00
+                                      s + "Z";      // bare UTC → add Z
+    d = new Date(withTz);
+  }
+  if (isNaN(d.getTime())) return "—";
+  const result = d.toLocaleString("en-IN", {
     timeZone: "Asia/Kolkata",
     day: "2-digit", month: "short", year: "numeric",
     hour: "2-digit", minute: "2-digit", second: "2-digit",
