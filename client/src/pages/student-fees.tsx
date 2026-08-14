@@ -9,6 +9,7 @@ import {
   Sparkles, CircleDollarSign, CalendarDays, BadgeCheck, WifiOff,
   XCircle, RotateCcw, X,
 } from "lucide-react";
+import { jsPDF } from "jspdf";
 import { getQueryFn } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 
@@ -357,6 +358,367 @@ function TechRowFull({ label, value, mono = false }: {
         style={{ color: display === "—" ? "#cbd5e1" : "#475569" }}>
         {display}
       </span>
+    </div>
+  );
+}
+
+// ── Copy text builder ─────────────────────────────────────────────────────────
+function buildPaymentCopyText(
+  attempt: PaymentAttempt,
+  feeTitle: string,
+  studentName: string,
+  dsid: string,
+): string {
+  const fp = (p: number | null | undefined) =>
+    p != null ? `₹${(p / 100).toLocaleString("en-IN")}` : "—";
+  const fpFixed = (p: number | null | undefined) =>
+    p != null ? `₹${(p / 100).toFixed(2)}` : "—";
+  const attemptLabel = attempt.attemptNumber != null
+    ? `ATTEMPT-${String(attempt.attemptNumber).padStart(4, "0")}` : "—";
+  const outcomeMap: Record<string, string> = {
+    captured: "Captured", failed: "Failed", cancelled: "Cancelled",
+    authorized: "Authorized", refunded: "Refunded", pending: "Pending",
+  };
+  const isFailed = attempt.outcome === "failed" || attempt.outcome === "cancelled";
+  const rawErr = attempt.errorDescription
+    ?.replace(/^Razorpay payment (failed|cancelled) \(client-reported\) — /i, "") ?? "—";
+
+  const L = (label: string, value: string) =>
+    `${label.padEnd(14, " ")}: ${value}`;
+
+  const lines: string[] = [
+    "--- PAYMENT ATTEMPT DETAILS ---",
+    L("Student", studentName),
+    L("DSID", dsid),
+    L("Fee", feeTitle),
+    "",
+    "[PAYMENT IDENTIFICATION]",
+    L("Payment ID", attempt.razorpayPaymentId ?? "—"),
+    L("Order ID", attempt.razorpayOrderId ?? "—"),
+    L("Fee Record", `#${attempt.feeRecordId}`),
+    L("Attempt", attemptLabel),
+    L("Status", outcomeMap[attempt.outcome] ?? attempt.outcome),
+    L("Timestamp", formatDateTime(attempt.rzpCreatedAt ?? attempt.createdAt)),
+    "",
+    "[AMOUNT & FINANCIAL]",
+    L("Amount", fp(attempt.amountPaise)),
+    L("Currency", attempt.currency ?? "INR"),
+    L("Captured", isFailed ? "₹0" : fp(attempt.amountCapturedPaise)),
+    L("Refunded", fp(attempt.amountRefundedPaise)),
+    L("Gateway Fee", fpFixed(attempt.razorpayFeePaise)),
+    L("GST on Fee", fpFixed(attempt.razorpayTaxPaise)),
+  ];
+
+  if (isFailed) {
+    lines.push("", "[FAILURE DETAILS]",
+      L("Error Code", attempt.errorCode ?? "—"),
+      L("Source", attempt.errorSource ?? "—"),
+      L("Step", attempt.errorStep ?? "—"),
+      L("Reason", attempt.errorReason ?? "—"),
+      L("Description", rawErr),
+    );
+  }
+
+  if (attempt.paymentMethod) {
+    lines.push("", "[PAYMENT METHOD]",
+      L("Method", attempt.paymentMethod.charAt(0).toUpperCase() + attempt.paymentMethod.slice(1)),
+    );
+    if (attempt.paymentMethod === "card") {
+      lines.push(
+        L("Card", [attempt.cardNetwork, attempt.cardLast4 ? `•••• ${attempt.cardLast4}` : null].filter(Boolean).join(" ") || "—"),
+        L("Issuer", attempt.cardIssuer ?? "—"),
+        L("Auth Code", attempt.bankAuthCode ?? "—"),
+      );
+    }
+    if (attempt.paymentMethod === "upi")        lines.push(L("UPI VPA", attempt.vpa ?? "—"));
+    if (attempt.paymentMethod === "netbanking") lines.push(L("Bank", attempt.bankName ?? "—"));
+    if (attempt.paymentMethod === "wallet")     lines.push(L("Wallet", attempt.wallet ?? "—"));
+  }
+
+  lines.push("", "[BANK & ACQUIRER]",
+    L("Bank RRN", attempt.bankRrn ?? "—"),
+    L("Auth Code", attempt.bankAuthCode ?? "—"),
+    L("Bank Tx ID", attempt.bankTransactionId ?? "—"),
+  );
+
+  if (attempt.payerEmail || attempt.payerContact) {
+    lines.push("", "[CUSTOMER DETAILS]");
+    if (attempt.payerName)    lines.push(L("Name",  attempt.payerName));
+    if (attempt.payerEmail)   lines.push(L("Email", maskEmail(attempt.payerEmail) ?? "—"));
+    if (attempt.payerContact) lines.push(L("Phone", maskPhone(attempt.payerContact) ?? "—"));
+  }
+
+  lines.push("", "[REFUND STATUS]");
+  if (attempt.refundId) {
+    lines.push(
+      L("Refund ID", attempt.refundId),
+      L("Amount", fp(attempt.refundAmountPaise)),
+      L("ARN", attempt.refundArn ?? "—"),
+    );
+    if (attempt.refundInitiatedAt) lines.push(L("Initiated", formatDateTime(attempt.refundInitiatedAt)));
+    if (attempt.refundProcessedAt) lines.push(L("Processed", formatDateTime(attempt.refundProcessedAt)));
+  } else {
+    lines.push(L("Status", "No refund issued"));
+  }
+
+  lines.push("-------------------------------");
+  return lines.join("\n");
+}
+
+// ── PDF generator ─────────────────────────────────────────────────────────────
+function downloadPaymentPDF(
+  attempt: PaymentAttempt,
+  feeTitle: string,
+  studentName: string,
+  dsid: string,
+  schoolName: string,
+): void {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const W = 210; // A4 width mm
+  const margin = 16;
+  const colLabel = margin;
+  const colValue = margin + 46;
+  let y = 0;
+
+  const fp = (p: number | null | undefined) =>
+    p != null ? `INR ${(p / 100).toLocaleString("en-IN")}` : "—";
+  const fpFixed = (p: number | null | undefined) =>
+    p != null ? `INR ${(p / 100).toFixed(2)}` : "—";
+
+  // ── Header band ──
+  doc.setFillColor(30, 41, 59);       // slate-800
+  doc.rect(0, 0, W, 30, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.setTextColor(255, 255, 255);
+  doc.text("PAYMENT ATTEMPT STATEMENT", margin, 13);
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(148, 163, 184);   // slate-400
+  doc.text(schoolName, margin, 20);
+  doc.text(`Generated: ${formatDateTime(new Date().toISOString())}`, margin, 26);
+  y = 38;
+
+  // ── Student info block ──
+  doc.setFillColor(241, 245, 249);   // slate-100
+  doc.roundedRect(margin, y, W - margin * 2, 22, 2, 2, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(51, 65, 85);
+  doc.text("STUDENT", margin + 4, y + 7);
+  doc.setFont("helvetica", "normal");
+  doc.text(studentName, margin + 4, y + 14);
+  doc.setFont("helvetica", "bold");
+  doc.text("DSID", margin + 70, y + 7);
+  doc.setFont("helvetica", "normal");
+  doc.text(dsid, margin + 70, y + 14);
+  doc.setFont("helvetica", "bold");
+  doc.text("FEE", margin + 120, y + 7);
+  doc.setFont("helvetica", "normal");
+  doc.text(feeTitle, margin + 120, y + 14);
+  y += 30;
+
+  const sectionHeader = (title: string) => {
+    doc.setFillColor(226, 232, 240);  // slate-200
+    doc.rect(margin, y, W - margin * 2, 7, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(71, 85, 105);    // slate-600
+    doc.text(title, margin + 2, y + 5);
+    y += 9;
+  };
+
+  const row = (label: string, value: string, mono = false) => {
+    if (y > 272) { doc.addPage(); y = 16; }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);  // slate-500
+    doc.text(label, colLabel, y);
+    doc.setFont(mono ? "courier" : "helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(30, 41, 59);     // slate-800
+    const wrapped = doc.splitTextToSize(value, W - colValue - margin);
+    doc.text(wrapped, colValue, y);
+    y += Math.max(wrapped.length * 5, 6);
+  };
+
+  const outcomeMap: Record<string, string> = {
+    captured: "Captured", failed: "Failed", cancelled: "Cancelled",
+    authorized: "Authorized", refunded: "Refunded", pending: "Pending",
+  };
+  const isFailed = attempt.outcome === "failed" || attempt.outcome === "cancelled";
+  const attemptLabel = attempt.attemptNumber != null
+    ? `ATTEMPT-${String(attempt.attemptNumber).padStart(4, "0")}` : "—";
+
+  // A: Identification
+  sectionHeader("A  ·  PAYMENT IDENTIFICATION");
+  row("Payment ID",  attempt.razorpayPaymentId ?? "—", true);
+  row("Order ID",    attempt.razorpayOrderId ?? "—", true);
+  row("Fee Record",  `#${attempt.feeRecordId}`);
+  row("Attempt",     attemptLabel, true);
+  row("Status",      outcomeMap[attempt.outcome] ?? attempt.outcome);
+  row("Timestamp",   formatDateTime(attempt.rzpCreatedAt ?? attempt.createdAt));
+  y += 2;
+
+  // B: Amount
+  sectionHeader("B  ·  AMOUNT & FINANCIAL");
+  row("Amount",      fp(attempt.amountPaise));
+  row("Currency",    attempt.currency ?? "INR");
+  row("Captured",    isFailed ? "INR 0" : fp(attempt.amountCapturedPaise));
+  row("Refunded",    fp(attempt.amountRefundedPaise));
+  row("Gateway Fee", fpFixed(attempt.razorpayFeePaise));
+  row("GST on Fee",  fpFixed(attempt.razorpayTaxPaise));
+  y += 2;
+
+  // C: Failure (conditional)
+  if (isFailed) {
+    sectionHeader("C  ·  FAILURE DETAILS");
+    row("Error Code",  attempt.errorCode ?? "—", true);
+    row("Source",      attempt.errorSource ?? "—");
+    row("Step",        attempt.errorStep ?? "—");
+    row("Reason",      attempt.errorReason ?? "—");
+    const rawErr = attempt.errorDescription
+      ?.replace(/^Razorpay payment (failed|cancelled) \(client-reported\) — /i, "") ?? "—";
+    row("Description", rawErr);
+    y += 2;
+  }
+
+  // D: Payment Method
+  if (attempt.paymentMethod) {
+    sectionHeader("D  ·  PAYMENT METHOD");
+    row("Method", attempt.paymentMethod.charAt(0).toUpperCase() + attempt.paymentMethod.slice(1));
+    if (attempt.paymentMethod === "card") {
+      row("Card",    [attempt.cardNetwork, attempt.cardLast4 ? `**** ${attempt.cardLast4}` : null].filter(Boolean).join(" ") || "—");
+      row("Issuer",  attempt.cardIssuer ?? "—");
+    }
+    if (attempt.paymentMethod === "upi")        row("UPI VPA", attempt.vpa ?? "—", true);
+    if (attempt.paymentMethod === "netbanking") row("Bank",    attempt.bankName ?? "—");
+    if (attempt.paymentMethod === "wallet")     row("Wallet",  attempt.wallet ?? "—");
+    y += 2;
+  }
+
+  // E: Bank & Acquirer
+  sectionHeader("E  ·  BANK & ACQUIRER");
+  row("Bank RRN",   attempt.bankRrn ?? "—", true);
+  row("Auth Code",  attempt.bankAuthCode ?? "—", true);
+  row("Bank Tx ID", attempt.bankTransactionId ?? "—", true);
+  y += 2;
+
+  // F: Customer
+  if (attempt.payerEmail || attempt.payerContact || attempt.payerName) {
+    sectionHeader("F  ·  CUSTOMER DETAILS");
+    if (attempt.payerName)    row("Name",  attempt.payerName);
+    if (attempt.payerEmail)   row("Email", maskEmail(attempt.payerEmail) ?? "—");
+    if (attempt.payerContact) row("Phone", maskPhone(attempt.payerContact) ?? "—");
+    y += 2;
+  }
+
+  // G: Notes
+  if (attempt.description || attempt.orderNotes) {
+    sectionHeader("G  ·  DESCRIPTION & NOTES");
+    if (attempt.description) row("Description", attempt.description);
+    if (attempt.orderNotes && typeof attempt.orderNotes === "object") {
+      Object.entries(attempt.orderNotes).forEach(([k, v]) => row(k, String(v)));
+    }
+    y += 2;
+  }
+
+  // H: Refund
+  sectionHeader("H  ·  REFUND STATUS");
+  if (attempt.refundId) {
+    const refundLabel = attempt.refundAmountPaise != null && attempt.amountPaise != null &&
+      attempt.refundAmountPaise >= attempt.amountPaise ? "Full Refund" : "Partial Refund";
+    row("Status",    refundLabel);
+    row("Refund ID", attempt.refundId, true);
+    row("Amount",    fp(attempt.refundAmountPaise));
+    if (attempt.refundArn)         row("ARN",       attempt.refundArn, true);
+    if (attempt.refundInitiatedAt) row("Initiated",  formatDateTime(attempt.refundInitiatedAt));
+    if (attempt.refundProcessedAt) row("Processed",  formatDateTime(attempt.refundProcessedAt));
+  } else {
+    row("Status", "No refund issued");
+  }
+  y += 6;
+
+  // ── Footer ──
+  const pageCount = (doc as any).internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFillColor(241, 245, 249);
+    doc.rect(0, 285, W, 12, "F");
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(7);
+    doc.setTextColor(148, 163, 184);
+    doc.text("Generated automatically via Student Portal. This is a system-generated statement.", margin, 291);
+    doc.text(`Page ${i} of ${pageCount}`, W - margin, 291, { align: "right" });
+  }
+
+  // ── Save ──
+  const ts = new Date();
+  const day = String(ts.getDate()).padStart(2, "0");
+  const mon = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][ts.getMonth()];
+  const yr  = ts.getFullYear();
+  doc.save(`Payment_Statement_${attempt.feeRecordId}_${attemptLabel}_${day}${mon}${yr}.pdf`);
+}
+
+// ── Copy + Download action buttons rendered inside the expanded drawer ────────
+function PaymentActions({
+  attempt, feeTitle, studentName, dsid, schoolName,
+}: {
+  attempt: PaymentAttempt;
+  feeTitle: string;
+  studentName: string;
+  dsid: string;
+  schoolName: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        buildPaymentCopyText(attempt, feeTitle, studentName, dsid),
+      );
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {/* clipboard blocked */ }
+  };
+
+  const handlePDF = () =>
+    downloadPaymentPDF(attempt, feeTitle, studentName, dsid, schoolName);
+
+  return (
+    <div className="absolute top-1.5 right-1.5 flex flex-col gap-1 z-10">
+      {/* Copy */}
+      <div className="relative group">
+        <button onClick={handleCopy}
+          title={copied ? "Copied!" : "Copy Details to Clipboard"}
+          className="flex items-center justify-center w-6 h-6 rounded-lg transition-all active:scale-90"
+          style={{
+            background: copied ? "#d1fae5" : "#f1f5f9",
+            color:      copied ? "#059669" : "#64748b",
+            border:     `1px solid ${copied ? "#6ee7b7" : "#e2e8f0"}`,
+          }}>
+          {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+        </button>
+        <span className="absolute right-7 top-0.5 whitespace-nowrap text-[10px] font-medium
+          px-1.5 py-0.5 rounded bg-slate-800 text-white
+          opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+          {copied ? "Copied!" : "Copy Details to Clipboard"}
+        </span>
+      </div>
+      {/* Download PDF */}
+      <div className="relative group">
+        <button onClick={handlePDF}
+          title="Download Payment Statement (PDF)"
+          className="flex items-center justify-center w-6 h-6 rounded-lg transition-all active:scale-90"
+          style={{ background: "#f1f5f9", color: "#64748b", border: "1px solid #e2e8f0" }}>
+          <Download className="w-3 h-3" />
+        </button>
+        <span className="absolute right-7 top-0.5 whitespace-nowrap text-[10px] font-medium
+          px-1.5 py-0.5 rounded bg-slate-800 text-white
+          opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+          Download Payment Statement (PDF)
+        </span>
+      </div>
     </div>
   );
 }
@@ -1558,8 +1920,15 @@ export default function StudentFees() {
                                           style={{ transform: isTOpen ? "rotate(180deg)" : "rotate(0deg)" }} />
                                       </button>
                                       {isTOpen && (
-                                        <div className="px-3 pb-2 space-y-2"
+                                        <div className="px-3 pb-2 space-y-2 relative"
                                           style={{ borderTop: "1px solid rgba(226,232,240,0.6)" }}>
+                                          <PaymentActions
+                                            attempt={attempt}
+                                            feeTitle={rec.feeName || rec.feeType}
+                                            studentName={student?.name ?? ""}
+                                            dsid={student?.digitalStudentId ?? ""}
+                                            schoolName={student?.schoolName ?? ""}
+                                          />
                                           <PaymentSections attempt={attempt} accent={tAccent} />
                                         </div>
                                       )}
@@ -1645,7 +2014,14 @@ export default function StudentFees() {
                                             style={{ transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }} />
                                         </button>
                                         {isOpen && (
-                                          <div className="px-3 pb-2 space-y-2">
+                                          <div className="px-3 pb-2 space-y-2 relative">
+                                            <PaymentActions
+                                              attempt={attempt}
+                                              feeTitle={rec.feeName || rec.feeType}
+                                              studentName={student?.name ?? ""}
+                                              dsid={student?.digitalStudentId ?? ""}
+                                              schoolName={student?.schoolName ?? ""}
+                                            />
                                             <PaymentSections attempt={attempt} accent={accentColor} />
                                           </div>
                                         )}
