@@ -87,6 +87,9 @@ interface PaymentAttempt {
   receiptNumber: string | null;
   paymentMethod: string | null;
   paymentMode: string | null;
+  cardLast4: string | null;
+  bankName: string | null;
+  vpa: string | null;
   razorpayPaymentId: string | null;
   errorDescription: string | null;
   createdAt: string;
@@ -105,6 +108,18 @@ function formatDate(dateStr: string | null) {
   return new Date(dateStr).toLocaleDateString("en-IN", {
     day: "2-digit", month: "short", year: "numeric",
   });
+}
+
+/** Returns a human-readable payment mode label, e.g. "UPI · priya@okaxis",
+ *  "Card ···4242", "Netbanking · HDFC", or null when mode is unavailable. */
+function formatPaymentMode(attempt: PaymentAttempt): string | null {
+  const mode = (attempt.paymentMode ?? "").toLowerCase().trim();
+  if (!mode) return null;
+  if (mode === "upi")        return attempt.vpa       ? `UPI · ${attempt.vpa}`         : "UPI";
+  if (mode === "card")       return attempt.cardLast4 ? `Card ···${attempt.cardLast4}` : "Card";
+  if (mode === "netbanking") return attempt.bankName  ? `Netbanking · ${attempt.bankName}` : "Netbanking";
+  // wallet, emi, paylater, etc.
+  return mode.charAt(0).toUpperCase() + mode.slice(1);
 }
 
 class RazorpayScriptError extends Error {
@@ -1013,7 +1028,7 @@ export default function StudentFees() {
                           <div className="p-4">
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex-1 min-w-0">
-                                {/* Status pill + Online badge */}
+                                {/* Status pill + Online badge + payment mode */}
                                 <div className="flex items-center gap-2 flex-wrap mb-2">
                                   <StatusPill status={isPaid ? "Paid" : "Payment Failed"} />
                                   {isPaid && attempt.receiptNumber?.startsWith("ON") && (
@@ -1022,6 +1037,17 @@ export default function StudentFees() {
                                       <Sparkles className="w-2.5 h-2.5" /> Online
                                     </span>
                                   )}
+                                  {/* Payment mode chip — UPI, Card ···4242, Netbanking · HDFC, etc. */}
+                                  {isPaid && (() => {
+                                    const modeLabel = formatPaymentMode(attempt);
+                                    if (!modeLabel) return null;
+                                    return (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                                        style={{ background: "#f0fdf4", color: "#166534", border: "1px solid #bbf7d0" }}>
+                                        {modeLabel}
+                                      </span>
+                                    );
+                                  })()}
                                 </div>
 
                                 {/* Fee name */}

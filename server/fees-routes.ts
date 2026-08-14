@@ -1507,6 +1507,17 @@ export function registerFeesRoutes(app: Express) {
                 recordedBy: null,
                 receiptNumber,
                 idempotencyKey: `rzp_${payment.id}`,
+                // Payment instrument metadata — available directly on the webhook payload
+                // (no extra Razorpay API call needed here).
+                paymentMode:      payment.method    ?? null,
+                bankName:         payment.bank       ?? null,
+                cardLast4:        payment.card?.last4 ?? null,
+                vpa:              payment.vpa         ?? null,
+                razorpayPaymentId: payment.id         ?? null,
+                razorpayOrderId:   payment.order_id   ?? null,
+                payerContact:     payment.contact    ?? null,
+                payerEmail:       payment.email      ?? null,
+                gatewayStatus:    "captured",
               } as any);
             } catch (insertErr: any) {
               // Unique-constraint on idempotency_key (PG 23505) = Razorpay re-sent
@@ -1865,9 +1876,34 @@ export function registerFeesRoutes(app: Express) {
       if (expected !== razorpay_signature)
         return res.status(400).json({ message: "Signature verification failed" });
 
-      // Already Paid? Idempotent — return success immediately
-      if (feeRec.status === "Paid")
+      // Already Paid? Idempotent — return success immediately, then try to fill in
+      // payment_mode metadata in case the webhook INSERT missed it (e.g. older code path
+      // or a rare webhook delivery gap).
+      if (feeRec.status === "Paid") {
+        // Non-blocking enrichment — fire and forget so the response is instant.
+        (async () => {
+          try {
+            const rzpClient = new Razorpay({ key_id: creds.keyId, key_secret: creds.keySecret });
+            const rzpPay = await (rzpClient.payments as any).fetch(razorpay_payment_id);
+            await db.execute(sql`
+              UPDATE payment_records
+              SET payment_mode  = COALESCE(payment_mode,  ${rzpPay.method    ?? null}),
+                  bank_name     = COALESCE(bank_name,     ${rzpPay.bank       ?? null}),
+                  card_last4    = COALESCE(card_last4,    ${rzpPay.card?.last4 ?? null}),
+                  vpa           = COALESCE(vpa,           ${rzpPay.vpa         ?? null}),
+                  payer_contact = COALESCE(payer_contact, ${rzpPay.contact     ?? null}),
+                  payer_email   = COALESCE(payer_email,   ${rzpPay.email       ?? null})
+              WHERE idempotency_key = ${"rzp_" + razorpay_payment_id}
+            `);
+          } catch (metaErr) {
+            console.warn(
+              `[razorpay verify idempotent] metadata fill failed for payment ${razorpay_payment_id}: ` +
+              `${(metaErr as any)?.message ?? metaErr}`,
+            );
+          }
+        })();
         return res.json({ ok: true, idempotent: true, receiptNumber: feeRec.receipt_number });
+      }
 
       // Mark Paid — wrap UPDATE + INSERT in a single transaction so a crash or
       // INSERT failure (schema mismatch, constraint violation, transient DB error)
@@ -1965,7 +2001,13 @@ export function registerFeesRoutes(app: Express) {
           WHERE idempotency_key = ${"rzp_" + razorpay_payment_id}
         `);
       } catch (metaErr) {
-        console.warn("[razorpay verify] metadata fetch skipped:", (metaErr as any)?.message);
+        // Non-blocking — the payment is already confirmed; mode data will be NULL
+        // in the student's History tab until a manual re-fetch or future webhook updates it.
+        // Ops can identify affected records by: SELECT id FROM payment_records WHERE payment_mode IS NULL AND payment_method = 'Online' AND razorpay_payment_id IS NOT NULL;
+        console.warn(
+          `[razorpay verify] metadata fetch failed for payment ${razorpay_payment_id} — ` +
+          `payment_mode will be NULL in History tab. Error: ${(metaErr as any)?.message ?? metaErr}`,
+        );
       }
 
       await db.execute(sql`
@@ -3416,6 +3458,9 @@ td:last-child{font-weight:600;word-break:break-all;}
           pr.receipt_number                           AS "receiptNumber",
           pr.payment_method                           AS "paymentMethod",
           pr.payment_mode                             AS "paymentMode",
+          pr.card_last4                               AS "cardLast4",
+          pr.bank_name                                AS "bankName",
+          pr.vpa                                      AS "vpa",
           pr.razorpay_payment_id                      AS "razorpayPaymentId",
           NULL::text                                  AS "errorDescription",
           pr.created_at                               AS "createdAt"
@@ -3441,6 +3486,9 @@ td:last-child{font-weight:600;word-break:break-all;}
           NULL::text                                  AS "receiptNumber",
           NULL::text                                  AS "paymentMethod",
           NULL::text                                  AS "paymentMode",
+          NULL::text                                  AS "cardLast4",
+          NULL::text                                  AS "bankName",
+          NULL::text                                  AS "vpa",
           NULL::text                                  AS "razorpayPaymentId",
           al.description                              AS "errorDescription",
           al.created_at                               AS "createdAt"
@@ -3474,6 +3522,9 @@ td:last-child{font-weight:600;word-break:break-all;}
           fr.receipt_number                           AS "receiptNumber",
           'Online'::text                              AS "paymentMethod",
           NULL::text                                  AS "paymentMode",
+          NULL::text                                  AS "cardLast4",
+          NULL::text                                  AS "bankName",
+          NULL::text                                  AS "vpa",
           NULL::text                                  AS "razorpayPaymentId",
           NULL::text                                  AS "errorDescription",
           fr.paid_date                                AS "createdAt"
