@@ -110,6 +110,31 @@ function formatDate(dateStr: string | null) {
   });
 }
 
+/** Formats a UTC ISO timestamp as IST date + time with seconds.
+ *  e.g. "14 Aug 2026, 04:58:42 PM"
+ *  Always reads from the server-provided timestamp, never from the client clock. */
+function formatDateTime(dateStr: string | null): string {
+  if (!dateStr) return "—";
+  const s = new Date(dateStr).toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: true,
+  });
+  // en-IN gives lowercase am/pm — normalise to uppercase for readability.
+  return s.replace(/\bam\b/gi, "AM").replace(/\bpm\b/gi, "PM");
+}
+
+/** Derives the precise payment outcome from the attempt record.
+ *  Returns a { label, accent } pair used by StatusPill and the date line. */
+function classifyAttempt(attempt: PaymentAttempt): "Paid" | "Payment Cancelled" | "Payment Expired" | "Payment Failed" {
+  if (attempt.type === "paid") return "Paid";
+  const desc = (attempt.errorDescription ?? "").toLowerCase();
+  if (desc.includes("dismissed by student") || desc.includes("no payment attempted")) return "Payment Cancelled";
+  if (desc.includes("expired") || desc.includes("order_expired") || desc.includes("razorpay order expired")) return "Payment Expired";
+  return "Payment Failed";
+}
+
 /** Returns a human-readable payment mode label, e.g. "UPI · priya@okaxis",
  *  "Card ···4242", "Netbanking · HDFC", or null when mode is unavailable. */
 function formatPaymentMode(attempt: PaymentAttempt): string | null {
@@ -228,6 +253,18 @@ function StatusPill({ status }: { status: string }) {
     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold tracking-wide"
       style={{ background: "linear-gradient(135deg,#fff1f2,#ffe4e6)", color: "#9f1239", border: "1px solid #fda4af" }}>
       <XCircle className="w-3 h-3" /> Payment Failed
+    </span>
+  );
+  if (status === "Payment Cancelled") return (
+    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold tracking-wide"
+      style={{ background: "linear-gradient(135deg,#fdf4ff,#f5d0fe)", color: "#7e22ce", border: "1px solid #e879f9" }}>
+      <XCircle className="w-3 h-3" /> Payment Cancelled
+    </span>
+  );
+  if (status === "Payment Expired") return (
+    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold tracking-wide"
+      style={{ background: "linear-gradient(135deg,#fff7ed,#fed7aa)", color: "#92400e", border: "1px solid #fdba74" }}>
+      <Clock className="w-3 h-3" /> Payment Expired
     </span>
   );
   return (
@@ -1028,23 +1065,31 @@ export default function StudentFees() {
                     {paymentAttempts.map((attempt, idx) => {
                       const isPaid   = attempt.type === "paid";
                       const isFailed = attempt.type === "failed";
+                      const outcome  = classifyAttempt(attempt);
+                      const accentGradient =
+                        outcome === "Paid"              ? "linear-gradient(90deg,#10b981,#34d399)" :
+                        outcome === "Payment Cancelled" ? "linear-gradient(90deg,#a855f7,#c084fc)" :
+                        outcome === "Payment Expired"   ? "linear-gradient(90deg,#f97316,#fb923c)" :
+                                                         "linear-gradient(90deg,#f43f5e,#fb7185)";
+                      const dateLineLabel =
+                        outcome === "Paid"              ? "Paid" :
+                        outcome === "Payment Cancelled" ? "Cancelled" :
+                        outcome === "Payment Expired"   ? "Expired" :
+                                                         "Failed";
                       return (
                         <motion.div key={`${attempt.type}-${attempt.id}-${idx}`} variants={item}
                           className="rounded-3xl overflow-hidden"
                           style={{ background: "rgba(255,255,255,0.95)", border: "1px solid rgba(255,255,255,0.8)",
                             boxShadow: "0 4px 20px rgba(0,0,0,0.07)" }}
                           data-testid={isPaid ? `card-attempt-paid-${attempt.id}` : `card-attempt-failed-${attempt.id}`}>
-                          {/* Accent bar — green for paid, rose for failed */}
-                          <div className="h-1 w-full"
-                            style={{ background: isPaid
-                              ? "linear-gradient(90deg,#10b981,#34d399)"
-                              : "linear-gradient(90deg,#f43f5e,#fb7185)" }} />
+                          {/* Accent bar */}
+                          <div className="h-1 w-full" style={{ background: accentGradient }} />
                           <div className="p-4">
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex-1 min-w-0">
                                 {/* Status pill + Online badge + payment mode */}
                                 <div className="flex items-center gap-2 flex-wrap mb-2">
-                                  <StatusPill status={isPaid ? "Paid" : "Payment Failed"} />
+                                  <StatusPill status={outcome} />
                                   {isPaid && attempt.receiptNumber?.startsWith("ON") && (
                                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold"
                                       style={{ background: "linear-gradient(135deg,#eff6ff,#dbeafe)", color: "#1d4ed8", border: "1px solid #bfdbfe" }}>
@@ -1069,10 +1114,10 @@ export default function StudentFees() {
                                   {attempt.feeName || attempt.feeType || "Fee"}
                                 </p>
 
-                                {/* Date line */}
+                                {/* Date + time line — always from server createdAt in IST */}
                                 <div className="flex items-center gap-1.5 mt-1.5 text-xs text-slate-400">
                                   <CalendarDays className="w-3 h-3 flex-shrink-0" />
-                                  {isPaid ? "Paid" : "Failed"} {formatDate(attempt.date ?? attempt.createdAt)}
+                                  {dateLineLabel} {formatDateTime(attempt.createdAt)}
                                 </div>
 
                                 {/* Receipt row (paid only) */}

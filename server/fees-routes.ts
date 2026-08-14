@@ -3482,7 +3482,7 @@ td:last-child{font-weight:600;word-break:break-all;}
           fr.fee_type                                 AS "feeType",
           fr.fee_type                                 AS "feeName",
           fr.amount,
-          al.created_at::date                         AS "date",
+          al.created_at                               AS "date",
           NULL::text                                  AS "receiptNumber",
           NULL::text                                  AS "paymentMethod",
           NULL::text                                  AS "paymentMode",
