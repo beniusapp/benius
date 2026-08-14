@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, CreditCard, Loader2, CheckCircle2, Clock, AlertTriangle,
   Receipt, Download, Lock, ExternalLink, Copy, Check, Zap, Bell,
-  Mail, MessageSquare, Webhook, TrendingUp, Shield, ChevronRight,
+  Mail, MessageSquare, Webhook, TrendingUp, Shield, ChevronRight, ChevronDown,
   Sparkles, CircleDollarSign, CalendarDays, BadgeCheck, WifiOff,
   XCircle, RotateCcw, X,
 } from "lucide-react";
@@ -143,6 +143,35 @@ function classifyAttempt(attempt: PaymentAttempt): "Paid" | "Payment Cancelled" 
   if (desc.includes("dismissed by student") || desc.includes("no payment attempted")) return "Payment Cancelled";
   if (desc.includes("expired") || desc.includes("order_expired") || desc.includes("razorpay order expired")) return "Payment Expired";
   return "Payment Failed";
+}
+
+/** Maps a payment attempt outcome to student-friendly copy.
+ *  Returns the section heading, plain-language reason, and advice line. */
+function getFriendlyFailureContent(outcome: string): {
+  sectionLabel: string;
+  reason: string;
+  advice: string;
+} {
+  if (outcome === "Payment Cancelled") {
+    return {
+      sectionLabel: "Reason",
+      reason: "Payment checkout was closed before the payment was completed.",
+      advice: "You can try the payment again.",
+    };
+  }
+  if (outcome === "Payment Expired") {
+    return {
+      sectionLabel: "Why did it expire?",
+      reason: "The payment session timed out. The checkout window was left open for too long without completing a payment.",
+      advice: "Please try the payment again. The fee has not been marked as paid.",
+    };
+  }
+  // Payment Failed
+  return {
+    sectionLabel: "Why did it fail?",
+    reason: "Payment could not be completed because the payment gateway returned an error.",
+    advice: "Please try the payment again. The fee has not been marked as paid.",
+  };
 }
 
 /** Returns a human-readable payment mode label, e.g. "UPI · priya@okaxis",
@@ -303,6 +332,8 @@ export default function StudentFees() {
   const [payError, setPayError] = useState<string | null>(null);
   const [payWarning, setPayWarning] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"outstanding" | "history" | "reminders">("outstanding");
+  // Tracks which history-card "Technical details" drawers are open (keyed by attempt.id)
+  const [expandedTechnical, setExpandedTechnical] = useState<Set<number>>(new Set());
 
   // ── Payment lifecycle refs ──────────────────────────────────────────────────
   //
@@ -1177,16 +1208,92 @@ export default function StudentFees() {
                                   </div>
                                 )}
 
-                                {/* Failure reason (failed only) */}
-                                {isFailed && attempt.errorDescription && (
-                                  <div className="mt-2 flex items-start gap-1.5 rounded-xl px-2.5 py-2"
-                                    style={{ background: "rgba(244,63,94,0.07)", border: "1px solid rgba(244,63,94,0.2)" }}>
-                                    <XCircle className="w-3.5 h-3.5 text-rose-500 flex-shrink-0 mt-0.5" />
-                                    <p className="text-[11px] text-rose-600 leading-snug">
-                                      {attempt.errorDescription.replace(/^Razorpay payment failed — /, "")}
-                                    </p>
-                                  </div>
-                                )}
+                                {/* ── Friendly failure / cancellation block ─────── */}
+                                {isFailed && (() => {
+                                  const content = getFriendlyFailureContent(outcome);
+                                  const isCancelled = outcome === "Payment Cancelled";
+                                  const isExpired   = outcome === "Payment Expired";
+                                  const accentColor =
+                                    isCancelled ? "#7e22ce" :
+                                    isExpired   ? "#c2410c" :
+                                                  "#9f1239";
+                                  const bg     =
+                                    isCancelled ? "rgba(168,85,247,0.05)"  :
+                                    isExpired   ? "rgba(249,115,22,0.06)"  :
+                                                  "rgba(244,63,94,0.05)";
+                                  const border =
+                                    isCancelled ? "rgba(168,85,247,0.2)"   :
+                                    isExpired   ? "rgba(249,115,22,0.22)"  :
+                                                  "rgba(244,63,94,0.18)";
+                                  const divider =
+                                    isCancelled ? "rgba(168,85,247,0.14)"  :
+                                    isExpired   ? "rgba(249,115,22,0.16)"  :
+                                                  "rgba(244,63,94,0.14)";
+                                  const isOpen = expandedTechnical.has(attempt.id);
+
+                                  const toggleTechnical = () =>
+                                    setExpandedTechnical(prev => {
+                                      const next = new Set(prev);
+                                      isOpen ? next.delete(attempt.id) : next.add(attempt.id);
+                                      return next;
+                                    });
+
+                                  // Raw technical string — strip verbose Razorpay prefix
+                                  const rawError = attempt.errorDescription
+                                    ?.replace(/^Razorpay payment (failed|cancelled) \(client-reported\) — /i, "")
+                                    ?? null;
+
+                                  return (
+                                    <div className="mt-3 rounded-2xl overflow-hidden"
+                                      style={{ background: bg, border: `1px solid ${border}` }}>
+
+                                      {/* ── Friendly section ────────────────────── */}
+                                      <div className="px-3 pt-3 pb-2.5">
+                                        <p className="text-[11px] font-bold uppercase tracking-wider mb-1.5"
+                                          style={{ color: accentColor }}>
+                                          {content.sectionLabel}
+                                        </p>
+                                        <p className="text-[12px] text-slate-600 leading-snug">
+                                          {content.reason}
+                                        </p>
+                                        <p className="text-[11px] font-bold mt-2.5 mb-0.5"
+                                          style={{ color: accentColor }}>
+                                          What can I do?
+                                        </p>
+                                        <p className="text-[12px] text-slate-500 leading-snug">
+                                          {content.advice}
+                                        </p>
+                                      </div>
+
+                                      {/* ── Technical details accordion ─────────── */}
+                                      {rawError && (
+                                        <div style={{ borderTop: `1px solid ${divider}` }}>
+                                          <button
+                                            onClick={toggleTechnical}
+                                            className="w-full flex items-center justify-between px-3 py-2 text-[11px] font-semibold transition-colors"
+                                            style={{ background: "transparent", color: isOpen ? accentColor : "#94a3b8" }}>
+                                            <span>Technical details</span>
+                                            <ChevronDown className="w-3.5 h-3.5 transition-transform"
+                                              style={{ transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }} />
+                                          </button>
+                                          {isOpen && (
+                                            <div className="px-3 pb-3 space-y-1.5">
+                                              <p className="text-[10px] font-mono leading-relaxed break-all"
+                                                style={{ color: "#64748b" }}>
+                                                {rawError}
+                                              </p>
+                                              {attempt.razorpayPaymentId && (
+                                                <p className="text-[10px] font-mono" style={{ color: "#94a3b8" }}>
+                                                  Payment ID: {attempt.razorpayPaymentId}
+                                                </p>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
                               </div>
 
                               {/* Amount + Receipt download (paid) */}
