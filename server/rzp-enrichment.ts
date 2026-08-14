@@ -84,6 +84,9 @@ export interface UpsertAttemptData {
   razorpayOrderData?:   any;
 
   receiptNumber?: string | null;
+  /** Stable dedup key for backfill rows: 'pr:<id>' or 'fal:<id>'.
+   *  Leave undefined/null for all live webhook / client rows. */
+  externalId?: string | null;
 }
 
 /**

@@ -619,45 +619,75 @@ app.use((req, res, next) => {
       receipt_number        VARCHAR(50),
       created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
+    )
+  `);
+
+  // ── Schema evolution: external_id column + index surgery ─────────────────
+  // Must run in the same query BEFORE any statement that references external_id.
+  // ADD COLUMN IF NOT EXISTS is idempotent — no-op on fresh installs where
+  // external_id was already created by the CREATE TABLE above (which won't
+  // reach here on fresh installs since the table didn't exist yet and the
+  // CREATE TABLE already has the column).  On existing deployments that created
+  // the table without this column, ALTER TABLE adds it here.
+  //
+  // pa_school_order_cancelled is dropped because it collapsed all same-order
+  // retry cancellations into one row — that was the cause of the history data
+  // loss bug.  external_id provides idempotent dedup instead.
+  await pool.query(`
+    ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS external_id VARCHAR(50);
+    DROP INDEX IF EXISTS pa_school_order_cancelled;
     CREATE UNIQUE INDEX IF NOT EXISTS pa_school_payment_id
       ON payment_attempts(school_id, razorpay_payment_id)
       WHERE razorpay_payment_id IS NOT NULL;
-    CREATE UNIQUE INDEX IF NOT EXISTS pa_school_order_cancelled
-      ON payment_attempts(school_id, razorpay_order_id)
-      WHERE razorpay_payment_id IS NULL AND razorpay_order_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS pa_school_external_id
+      ON payment_attempts(school_id, external_id)
+      WHERE external_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS pa_student_idx    ON payment_attempts(student_id, school_id);
     CREATE INDEX IF NOT EXISTS pa_fee_record_idx ON payment_attempts(fee_record_id);
   `);
 
-  // Back-fill captured payments from payment_records
+  // ── Back-fill ALL payment_records (online + offline) ─────────────────────
+  // external_id = 'pr:<id>' guarantees idempotency across server restarts.
+  // Offline payments (OP-series, no razorpay_payment_id) are the majority —
+  // the previous filter that excluded them was the main data-loss bug.
   await pool.query(`
     INSERT INTO payment_attempts (
       school_id, student_id, fee_record_id, session_id,
       outcome, razorpay_payment_id, razorpay_order_id,
       amount_paise, currency, payment_method,
       card_last4, bank_name, vpa, payer_email, payer_contact,
-      receipt_number, source, created_at, updated_at
+      receipt_number, external_id, source, created_at, updated_at
     )
     SELECT
       pr.school_id, pr.student_id, pr.fee_record_id, pr.session_id,
-      'captured', pr.razorpay_payment_id, pr.razorpay_order_id,
-      pr.amount::integer * 100, 'INR', pr.payment_mode,
+      'captured',
+      pr.razorpay_payment_id,
+      pr.razorpay_order_id,
+      pr.amount::integer * 100,
+      'INR',
+      COALESCE(pr.payment_mode, 'offline'),
       pr.card_last4, pr.bank_name, pr.vpa, pr.payer_email, pr.payer_contact,
-      pr.receipt_number, 'migrated', pr.created_at, NOW()
+      pr.receipt_number,
+      'pr:' || pr.id,
+      'migrated',
+      pr.created_at,
+      NOW()
     FROM payment_records pr
-    WHERE pr.razorpay_payment_id IS NOT NULL
     ON CONFLICT DO NOTHING
   `);
 
-  // Back-fill failed / cancelled attempts from fee_audit_log
+  // ── Back-fill failed / cancelled attempts from fee_audit_log ─────────────
+  // external_id = 'fal:<id>' lets every distinct audit-log row become its own
+  // payment_attempts row, including multiple retries on the same Razorpay order.
+  // The previous pa_school_order_cancelled unique index collapsed all same-order
+  // cancellations into one — that was the second data-loss bug.
   await pool.query(`
     INSERT INTO payment_attempts (
       school_id, student_id, fee_record_id, session_id,
       outcome, razorpay_payment_id, razorpay_order_id,
       amount_paise, currency, payment_method,
       error_code, error_description, error_source, error_step, error_reason,
-      webhook_payload, source, created_at, updated_at
+      webhook_payload, external_id, source, created_at, updated_at
     )
     SELECT
       al.school_id,
@@ -676,6 +706,7 @@ app.use((req, res, next) => {
       al.error_step,
       al.error_reason,
       al.raw_response,
+      'fal:' || al.id,
       'migrated',
       al.created_at,
       NOW()
@@ -684,7 +715,6 @@ app.use((req, res, next) => {
     WHERE al.action IN ('payment_failed', 'payment_cancelled')
       AND al.entity_type = 'fee_record'
       AND al.entity_id IS NOT NULL
-      AND (al.razorpay_payment_id IS NOT NULL OR al.razorpay_order_id IS NOT NULL)
     ON CONFLICT DO NOTHING
   `);
 

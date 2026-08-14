@@ -3801,7 +3801,10 @@ td:last-child{font-weight:600;word-break:break-all;}
                                      AND pa.razorpay_payment_id IS NOT NULL
 
         WHERE pa.school_id  = ${student.schoolId}
-          AND pa.student_id = ${student.id}
+          AND (
+            pa.student_id = ${student.id}
+            OR (pa.student_id IS NULL AND fr.student_id = ${student.id})
+          )
           ${sessionCond}
 
         ORDER BY pa.created_at DESC
