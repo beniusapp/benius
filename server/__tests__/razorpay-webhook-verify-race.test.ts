@@ -34,6 +34,7 @@ import {
   academicSessions,
   feeRecords,
   paymentRecords,
+  feeAuditLog,
 } from "@shared/schema";
 import { eq, count } from "drizzle-orm";
 import { sql } from "drizzle-orm";
@@ -951,5 +952,457 @@ describe("Webhook HTTP 200 — HMAC-SHA256 signature verification", () => {
     const expectedBuf  = Buffer.from(realExpected, "hex");
     // Endpoint would call timingSafeEqual(attackerBuf, expectedBuf) → false → 400
     expect(crypto.timingSafeEqual(attackerBuf, expectedBuf)).toBe(false);
+  });
+});
+
+// ── Multi-fee History tab tests ───────────────────────────────────────────────
+//
+// All existing tests above verify single-payment scenarios.
+// /api/student/fees/payment-attempts merges three result sets (paid, failed,
+// orphan) and sorts by created_at DESC.  With multiple fees a bug in the merge
+// or sort could drop rows, duplicate them, or return them out of order — causing
+// the student to think a fee was not paid.  These tests cover:
+//
+//   Suite A — Three paid fees: all 3 rows appear with correct fee_type, amount,
+//             and receipt number; ordering is newest-first.
+//
+//   Suite B — One paid + one failed: both appear in the merged result with the
+//             correct type tag (paid / failed).
+
+// ── Multi-fixture helpers ─────────────────────────────────────────────────────
+
+interface FeeSpec {
+  feeType: string;
+  amount: number;
+}
+
+interface MultiFeeFixture {
+  schoolId: number;
+  studentId: number;
+  sessionId: number;
+  fees: Array<{ id: number; feeType: string; amount: number }>;
+}
+
+/** Creates a school → student → session → N fee records. */
+async function createMultiFixture(specs: FeeSpec[]): Promise<MultiFeeFixture> {
+  const code = `MULTI-${uid()}`;
+
+  const [school] = await db
+    .insert(schools)
+    .values({ name: "Multi-Fee Test School", code })
+    .returning();
+
+  const [student] = await db
+    .insert(students)
+    .values({
+      schoolId: school.id,
+      digitalStudentId: `DS-${uid()}`,
+      name: "Multi Student",
+      class: "9",
+      section: "A",
+      phone: "9900000001",
+      dob: "2008-03-10",
+      passwordHash: "x",
+    })
+    .returning();
+
+  const [session] = await db
+    .insert(academicSessions)
+    .values({
+      schoolId: school.id,
+      sessionName: "2025-2026",
+      startDate: "2025-04-01",
+      endDate: "2026-03-31",
+      isActive: true,
+      status: "active",
+      newAdmissionsEnabled: false,
+      promotionStrategy: "defer",
+    })
+    .returning();
+
+  const fees: MultiFeeFixture["fees"] = [];
+  for (const spec of specs) {
+    const [fr] = await db
+      .insert(feeRecords)
+      .values({
+        schoolId: school.id,
+        studentId: student.id,
+        sessionId: session.id,
+        feeType: spec.feeType,
+        amount: spec.amount,
+        dueDate: "2025-09-30",
+        status: "Due",
+      })
+      .returning();
+    fees.push({ id: fr.id, feeType: spec.feeType, amount: spec.amount });
+  }
+
+  return { schoolId: school.id, studentId: student.id, sessionId: session.id, fees };
+}
+
+/**
+ * Mirror the exact three-result-set merge and sort that
+ * /api/student/fees/payment-attempts performs.  Returns the merged array
+ * sorted by createdAt descending — the same ordering the History tab sees.
+ */
+async function runMergedHistoryQuery(
+  studentId: number,
+  schoolId: number,
+): Promise<Array<{ type: string; feeType: string | null; amount: number; receiptNumber: string | null; createdAt: Date | string }>> {
+  // ── 1. Paid: rows from payment_records ───────────────────────────────────
+  const paid = await db.execute(sql`
+    SELECT
+      pr.id,
+      'paid'::text                                AS type,
+      pr.fee_record_id                            AS "feeRecordId",
+      fr.fee_type                                 AS "feeType",
+      fr.fee_type                                 AS "feeName",
+      pr.amount,
+      pr.received_date                            AS "date",
+      pr.receipt_number                           AS "receiptNumber",
+      pr.payment_method                           AS "paymentMethod",
+      pr.created_at                               AS "createdAt"
+    FROM payment_records pr
+    LEFT JOIN fee_records fr ON fr.id = pr.fee_record_id
+    WHERE pr.student_id = ${studentId}
+      AND pr.school_id  = ${schoolId}
+    ORDER BY pr.created_at DESC
+    LIMIT 200
+  `);
+
+  // ── 2. Failed: rows from fee_audit_log ──────────────────────────────────
+  const failed = await db.execute(sql`
+    SELECT
+      al.id,
+      'failed'::text                              AS type,
+      fr.fee_type                                 AS "feeType",
+      fr.fee_type                                 AS "feeName",
+      fr.amount,
+      al.created_at::date                         AS "date",
+      NULL::text                                  AS "receiptNumber",
+      NULL::text                                  AS "paymentMethod",
+      al.description                              AS "errorDescription",
+      al.created_at                               AS "createdAt"
+    FROM fee_audit_log al
+    LEFT JOIN fee_records fr ON fr.id = al.entity_id
+    WHERE al.school_id   = ${schoolId}
+      AND al.action      = 'payment_failed'
+      AND al.entity_type = 'fee_record'
+      AND al.entity_id   IS NOT NULL
+      AND (
+        al.student_id = ${studentId}
+        OR fr.student_id = ${studentId}
+      )
+    ORDER BY al.created_at DESC
+    LIMIT 200
+  `);
+
+  // ── 3. Orphan paid: fee_records=Paid with no payment_record row ──────────
+  const orphanPaid = await db.execute(sql`
+    SELECT
+      fr.id                                       AS id,
+      'paid'::text                                AS type,
+      fr.id                                       AS "feeRecordId",
+      fr.fee_type                                 AS "feeType",
+      fr.fee_type                                 AS "feeName",
+      fr.amount,
+      fr.paid_date                                AS "date",
+      fr.receipt_number                           AS "receiptNumber",
+      'Online'::text                              AS "paymentMethod",
+      NULL::text                                  AS "errorDescription",
+      fr.paid_date                                AS "createdAt"
+    FROM fee_records fr
+    WHERE fr.student_id  = ${studentId}
+      AND fr.school_id   = ${schoolId}
+      AND fr.status      = 'Paid'
+      AND fr.receipt_number IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM payment_records pr
+        WHERE pr.fee_record_id = fr.id
+      )
+    ORDER BY fr.paid_date DESC
+    LIMIT 50
+  `);
+
+  // Merge and sort exactly as the endpoint does
+  const all = [
+    ...paid.rows,
+    ...failed.rows,
+    ...orphanPaid.rows,
+  ].sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  return all as any;
+}
+
+/**
+ * Simulate a failed payment audit-log entry the way the webhook payment.failed
+ * handler writes it.  Inserts one fee_audit_log row so the student's History
+ * tab includes a "failed" entry for the given fee record.
+ */
+async function insertFailedPaymentAuditLog(
+  fixture: MultiFeeFixture,
+  feeRecordId: number,
+  paymentId: string,
+): Promise<void> {
+  await db.insert(feeAuditLog).values({
+    schoolId: fixture.schoolId,
+    studentId: fixture.studentId,
+    action: "payment_failed",
+    entityType: "fee_record",
+    entityId: feeRecordId,
+    description: `Payment failed: Razorpay payment ID ${paymentId}`,
+  } as any);
+}
+
+// ── Suite A: Three paid fees ──────────────────────────────────────────────────
+
+describe("History tab — multi-fee: three paid fees all appear in the merged result", () => {
+  let fixture: MultiFeeFixture;
+
+  afterEach(async () => {
+    if (fixture) await teardown(fixture.schoolId);
+  });
+
+  it("exactly 3 rows are returned after three distinct webhook captures", async () => {
+    fixture = await createMultiFixture([
+      { feeType: "Tuition", amount: 12000 },
+      { feeType: "Transport", amount: 4000 },
+      { feeType: "Exam", amount: 1500 },
+    ]);
+
+    // Build a per-fee Fixture-compatible shape for webhookCapture
+    for (const fee of fixture.fees) {
+      const perFeeFixture: Fixture = {
+        schoolId: fixture.schoolId,
+        studentId: fixture.studentId,
+        sessionId: fixture.sessionId,
+        feeRecordId: fee.id,
+        feeAmount: fee.amount,
+      };
+      await webhookCapture(perFeeFixture, `pay_${uid()}`);
+    }
+
+    const rows = await runMergedHistoryQuery(fixture.studentId, fixture.schoolId);
+    expect(rows.length).toBe(3);
+  });
+
+  it("each row has type=paid and carries the correct fee_type and amount", async () => {
+    fixture = await createMultiFixture([
+      { feeType: "Tuition",   amount: 12000 },
+      { feeType: "Transport", amount: 4000  },
+      { feeType: "Exam",      amount: 1500  },
+    ]);
+
+    const receiptByFeeId = new Map<number, string>();
+    for (const fee of fixture.fees) {
+      const perFeeFixture: Fixture = {
+        schoolId: fixture.schoolId,
+        studentId: fixture.studentId,
+        sessionId: fixture.sessionId,
+        feeRecordId: fee.id,
+        feeAmount: fee.amount,
+      };
+      const receipt = await webhookCapture(perFeeFixture, `pay_${uid()}`);
+      receiptByFeeId.set(fee.id, receipt);
+    }
+
+    const rows = await runMergedHistoryQuery(fixture.studentId, fixture.schoolId);
+    expect(rows.length).toBe(3);
+
+    // All rows must be type=paid
+    for (const row of rows) {
+      expect((row as any).type).toBe("paid");
+    }
+
+    // Every fixture fee type must appear exactly once
+    const returnedFeeTypes = rows.map((r: any) => r.feeType).sort();
+    expect(returnedFeeTypes).toEqual(["Exam", "Transport", "Tuition"].sort());
+
+    // Every receipt number must be non-null and truthy
+    for (const row of rows) {
+      expect((row as any).receiptNumber).toBeTruthy();
+    }
+
+    // Each row's amount must match what we inserted
+    const amountsByType: Record<string, number> = {
+      Tuition: 12000,
+      Transport: 4000,
+      Exam: 1500,
+    };
+    for (const row of rows) {
+      const r = row as any;
+      expect(Number(r.amount)).toBe(amountsByType[r.feeType as string]);
+    }
+  });
+
+  it("rows are sorted newest-first (createdAt descending)", async () => {
+    fixture = await createMultiFixture([
+      { feeType: "Tuition",   amount: 12000 },
+      { feeType: "Transport", amount: 4000  },
+      { feeType: "Exam",      amount: 1500  },
+    ]);
+
+    for (const fee of fixture.fees) {
+      const perFeeFixture: Fixture = {
+        schoolId: fixture.schoolId,
+        studentId: fixture.studentId,
+        sessionId: fixture.sessionId,
+        feeRecordId: fee.id,
+        feeAmount: fee.amount,
+      };
+      await webhookCapture(perFeeFixture, `pay_${uid()}`);
+    }
+
+    const rows = await runMergedHistoryQuery(fixture.studentId, fixture.schoolId);
+    expect(rows.length).toBe(3);
+
+    // Verify descending order
+    for (let i = 0; i < rows.length - 1; i++) {
+      const a = new Date((rows[i] as any).createdAt).getTime();
+      const b = new Date((rows[i + 1] as any).createdAt).getTime();
+      expect(a).toBeGreaterThanOrEqual(b);
+    }
+  });
+
+  it("no row is duplicated — each fee record contributes exactly one entry", async () => {
+    fixture = await createMultiFixture([
+      { feeType: "Tuition",   amount: 12000 },
+      { feeType: "Transport", amount: 4000  },
+      { feeType: "Exam",      amount: 1500  },
+    ]);
+
+    for (const fee of fixture.fees) {
+      const perFeeFixture: Fixture = {
+        schoolId: fixture.schoolId,
+        studentId: fixture.studentId,
+        sessionId: fixture.sessionId,
+        feeRecordId: fee.id,
+        feeAmount: fee.amount,
+      };
+      await webhookCapture(perFeeFixture, `pay_${uid()}`);
+    }
+
+    const rows = await runMergedHistoryQuery(fixture.studentId, fixture.schoolId);
+
+    // Each fee_record_id must appear at most once
+    const feeRecordIds = rows.map((r: any) => r.feeRecordId ?? r.id);
+    const unique = new Set(feeRecordIds);
+    expect(unique.size).toBe(rows.length);
+  });
+});
+
+// ── Suite B: One paid + one failed fee ───────────────────────────────────────
+
+describe("History tab — multi-fee: one paid and one failed fee both appear in merged result", () => {
+  let fixture: MultiFeeFixture;
+
+  afterEach(async () => {
+    if (fixture) await teardown(fixture.schoolId);
+  });
+
+  it("exactly 2 rows are returned — one paid, one failed", async () => {
+    fixture = await createMultiFixture([
+      { feeType: "Tuition",   amount: 12000 },
+      { feeType: "Transport", amount: 4000  },
+    ]);
+
+    const [paidFee, failedFee] = fixture.fees;
+
+    // Pay the first fee via webhook
+    const perFeeFixture: Fixture = {
+      schoolId: fixture.schoolId,
+      studentId: fixture.studentId,
+      sessionId: fixture.sessionId,
+      feeRecordId: paidFee.id,
+      feeAmount: paidFee.amount,
+    };
+    await webhookCapture(perFeeFixture, `pay_${uid()}`);
+
+    // Record a failed payment attempt for the second fee
+    await insertFailedPaymentAuditLog(fixture, failedFee.id, `pay_${uid()}`);
+
+    const rows = await runMergedHistoryQuery(fixture.studentId, fixture.schoolId);
+    expect(rows.length).toBe(2);
+  });
+
+  it("the paid fee has type=paid and the failed fee has type=failed", async () => {
+    fixture = await createMultiFixture([
+      { feeType: "Tuition",   amount: 12000 },
+      { feeType: "Transport", amount: 4000  },
+    ]);
+
+    const [paidFee, failedFee] = fixture.fees;
+
+    const perFeeFixture: Fixture = {
+      schoolId: fixture.schoolId,
+      studentId: fixture.studentId,
+      sessionId: fixture.sessionId,
+      feeRecordId: paidFee.id,
+      feeAmount: paidFee.amount,
+    };
+    await webhookCapture(perFeeFixture, `pay_${uid()}`);
+    await insertFailedPaymentAuditLog(fixture, failedFee.id, `pay_${uid()}`);
+
+    const rows = await runMergedHistoryQuery(fixture.studentId, fixture.schoolId);
+    expect(rows.length).toBe(2);
+
+    const types = rows.map((r: any) => r.type).sort();
+    expect(types).toEqual(["failed", "paid"]);
+  });
+
+  it("the paid row carries a receipt number; the failed row has receiptNumber=null", async () => {
+    fixture = await createMultiFixture([
+      { feeType: "Tuition",   amount: 12000 },
+      { feeType: "Transport", amount: 4000  },
+    ]);
+
+    const [paidFee, failedFee] = fixture.fees;
+
+    const perFeeFixture: Fixture = {
+      schoolId: fixture.schoolId,
+      studentId: fixture.studentId,
+      sessionId: fixture.sessionId,
+      feeRecordId: paidFee.id,
+      feeAmount: paidFee.amount,
+    };
+    await webhookCapture(perFeeFixture, `pay_${uid()}`);
+    await insertFailedPaymentAuditLog(fixture, failedFee.id, `pay_${uid()}`);
+
+    const rows = await runMergedHistoryQuery(fixture.studentId, fixture.schoolId);
+
+    const paidRow   = rows.find((r: any) => r.type === "paid");
+    const failedRow = rows.find((r: any) => r.type === "failed");
+
+    expect(paidRow).toBeDefined();
+    expect(failedRow).toBeDefined();
+    expect((paidRow as any).receiptNumber).toBeTruthy();
+    expect((failedRow as any).receiptNumber).toBeNull();
+  });
+
+  it("each row carries the correct fee_type matching its fee record", async () => {
+    fixture = await createMultiFixture([
+      { feeType: "Tuition",   amount: 12000 },
+      { feeType: "Transport", amount: 4000  },
+    ]);
+
+    const [paidFee, failedFee] = fixture.fees;
+
+    const perFeeFixture: Fixture = {
+      schoolId: fixture.schoolId,
+      studentId: fixture.studentId,
+      sessionId: fixture.sessionId,
+      feeRecordId: paidFee.id,
+      feeAmount: paidFee.amount,
+    };
+    await webhookCapture(perFeeFixture, `pay_${uid()}`);
+    await insertFailedPaymentAuditLog(fixture, failedFee.id, `pay_${uid()}`);
+
+    const rows = await runMergedHistoryQuery(fixture.studentId, fixture.schoolId);
+
+    const paidRow   = rows.find((r: any) => r.type === "paid");
+    const failedRow = rows.find((r: any) => r.type === "failed");
+
+    expect((paidRow as any).feeType).toBe("Tuition");
+    expect((failedRow as any).feeType).toBe("Transport");
   });
 });
