@@ -1924,7 +1924,7 @@ export default function StudentFees() {
                                           style={{ borderTop: "1px solid rgba(226,232,240,0.6)" }}>
                                           <PaymentActions
                                             attempt={attempt}
-                                            feeTitle={rec.feeName || rec.feeType}
+                                            feeTitle={attempt.feeName || attempt.feeType || ""}
                                             studentName={student?.name ?? ""}
                                             dsid={student?.digitalStudentId ?? ""}
                                             schoolName={student?.schoolName ?? ""}
@@ -2017,7 +2017,7 @@ export default function StudentFees() {
                                           <div className="px-3 pb-2 space-y-2 relative">
                                             <PaymentActions
                                               attempt={attempt}
-                                              feeTitle={rec.feeName || rec.feeType}
+                                              feeTitle={attempt.feeName || attempt.feeType || ""}
                                               studentName={student?.name ?? ""}
                                               dsid={student?.digitalStudentId ?? ""}
                                               schoolName={student?.schoolName ?? ""}
