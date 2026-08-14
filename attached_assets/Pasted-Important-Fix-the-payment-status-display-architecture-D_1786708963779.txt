@@ -1,0 +1,38 @@
+Important: Fix the payment status display architecture.
+Do NOT treat Payment Failed, Payment Cancelled, etc. as replacements for the invoice's actual fee status.
+The system has two separate concepts:
+1. Original/current invoice status
+Keep whatever valid status the invoice currently has according to the existing fee-status system.
+2. Latest payment-attempt status
+Show the result of the most recent payment attempt separately, such as:
+Payment Failed
+Payment Cancelled
+Payment Pending
+Payment Processing
+etc., according to the statuses already supported by the application.
+Critical rule: When a payment attempt fails or is cancelled, NEVER overwrite, replace, or lose the invoice's existing status.
+The UI should show both statuses when applicable.
+For example:
+Payment Failed | Overdue
+Payment Failed | Due
+Payment Cancelled | Due
+Payment Failed | [any other existing invoice status]
+The second status must be dynamically taken from the invoice's actual existing status, not hardcoded to Due or Overdue.
+Do not create a new replacement status system. Inspect the existing database schema, enums, status constants, fee-record logic, and UI components and reuse the application's existing invoice/fee statuses.
+The payment-attempt status should be an independent state/history associated with the payment attempt.
+Required behavior
+Existing Invoice Status → Payment Attempt Result → UI
+Any existing status → Failed → show Payment Failed + original status
+Any existing status → Cancelled → show Payment Cancelled + original status
+Any existing status → Pending → show Payment Pending + original status
+Any existing status → Successful → invoice transitions according to the existing successful-payment logic
+Do not break existing functionality for:
+multiple invoices
+retry payment
+duplicate-payment prevention
+payment history
+receipts
+Razorpay webhooks
+successful payments
+Most important: A payment attempt's result must NEVER overwrite the invoice's actual business status unless the existing business rules explicitly require that transition (for example, a successful payment changing an unpaid invoice to Paid).
+First inspect the existing status values in the code/database and then implement this generically for ALL existing invoice statuses, rather than hardcoding Due and Overdue.

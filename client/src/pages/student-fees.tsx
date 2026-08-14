@@ -928,9 +928,21 @@ export default function StudentFees() {
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap mb-2">
-                                {(rec.failed_count ?? 0) > 0
-                                  ? <StatusPill status="Payment Failed" />
-                                  : <StatusPill status={rec.status} />}
+                                {/* Always show the invoice's actual status */}
+                                <StatusPill status={rec.status} />
+                                {/* When ≥1 payment attempt failed, show the attempt
+                                    result as a SECOND independent pill so the
+                                    invoice status is never lost or overwritten. */}
+                                {(rec.failed_count ?? 0) > 0 && (() => {
+                                  const err = (rec.last_failed_error ?? "").toLowerCase();
+                                  const attemptStatus =
+                                    err.includes("dismissed by student") || err.includes("no payment attempted")
+                                      ? "Payment Cancelled"
+                                      : err.includes("expired") || err.includes("order_expired")
+                                      ? "Payment Expired"
+                                      : "Payment Failed";
+                                  return <StatusPill status={attemptStatus} />;
+                                })()}
                                 {rec.academicYear && (
                                   <span className="px-2 py-0.5 rounded-lg text-[10px] font-semibold"
                                     style={{ background: "#f1f5f9", color: "#64748b" }}>
