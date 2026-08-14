@@ -7,7 +7,7 @@ import {
   Receipt, Download, Lock, ExternalLink, Copy, Check, Zap, Bell,
   Mail, MessageSquare, Webhook, TrendingUp, Shield, ChevronRight, ChevronDown,
   Sparkles, CircleDollarSign, CalendarDays, BadgeCheck, WifiOff,
-  XCircle, RotateCcw, X,
+  XCircle, RotateCcw, X, ReceiptText,
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import { getQueryFn } from "@/lib/queryClient";
@@ -1911,13 +1911,28 @@ export default function StudentFees() {
                                   const tAccent = "#475569";
                                   return (
                                     <div className="mt-2 rounded-xl overflow-hidden"
-                                      style={{ background: "rgba(248,250,252,0.9)", border: "1px solid rgba(226,232,240,0.8)" }}>
+                                      style={{ background: "rgba(248,250,252,0.9)", border: isTOpen ? "1px solid rgba(99,102,241,0.25)" : "1px solid rgba(226,232,240,0.8)" }}>
                                       <button onClick={toggleT}
-                                        className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-bold transition-colors"
-                                        style={{ background: "transparent", color: isTOpen ? tAccent : "#94a3b8" }}>
-                                        <span>Payment Details</span>
-                                        <ChevronDown className="w-3.5 h-3.5 transition-transform"
-                                          style={{ transform: isTOpen ? "rotate(180deg)" : "rotate(0deg)" }} />
+                                        className="w-full flex items-center justify-between px-3.5 py-2.5 group transition-all duration-200"
+                                        style={{ background: isTOpen ? "rgba(238,242,255,0.7)" : "transparent" }}>
+                                        <div className="flex items-center gap-2.5">
+                                          <div className="p-1.5 rounded-lg transition-transform duration-200 group-hover:scale-105"
+                                            style={{
+                                              background: isTOpen ? "rgba(99,102,241,0.15)" : "rgba(226,232,240,0.8)",
+                                              color: isTOpen ? "#4f46e5" : "#64748b",
+                                            }}>
+                                            <ReceiptText className="w-3.5 h-3.5" />
+                                          </div>
+                                          <span className="text-[12.5px] font-bold tracking-tight transition-colors duration-200"
+                                            style={{ color: isTOpen ? "#4338ca" : "#475569" }}>
+                                            Payment Details
+                                          </span>
+                                        </div>
+                                        <ChevronDown className="w-3.5 h-3.5 transition-transform duration-300"
+                                          style={{
+                                            transform: isTOpen ? "rotate(180deg)" : "rotate(0deg)",
+                                            color: isTOpen ? "#4f46e5" : "#94a3b8",
+                                          }} />
                                       </button>
                                       {isTOpen && (
                                         <div className="px-3 pb-2 space-y-2 relative"
@@ -2007,11 +2022,26 @@ export default function StudentFees() {
                                       <div style={{ borderTop: `1px solid ${divider}` }}>
                                         <button
                                           onClick={toggleTechnical}
-                                          className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-bold transition-colors"
-                                          style={{ background: "transparent", color: isOpen ? accentColor : "#94a3b8" }}>
-                                          <span>Payment Details</span>
-                                          <ChevronDown className="w-3.5 h-3.5 transition-transform"
-                                            style={{ transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }} />
+                                          className="w-full flex items-center justify-between px-3.5 py-2.5 group transition-all duration-200"
+                                          style={{ background: isOpen ? "rgba(238,242,255,0.5)" : "transparent" }}>
+                                          <div className="flex items-center gap-2.5">
+                                            <div className="p-1.5 rounded-lg transition-transform duration-200 group-hover:scale-105"
+                                              style={{
+                                                background: isOpen ? "rgba(99,102,241,0.15)" : "rgba(255,255,255,0.5)",
+                                                color: isOpen ? "#4f46e5" : "#94a3b8",
+                                              }}>
+                                              <ReceiptText className="w-3.5 h-3.5" />
+                                            </div>
+                                            <span className="text-[12.5px] font-bold tracking-tight transition-colors duration-200"
+                                              style={{ color: isOpen ? "#4338ca" : "#64748b" }}>
+                                              Payment Details
+                                            </span>
+                                          </div>
+                                          <ChevronDown className="w-3.5 h-3.5 transition-transform duration-300"
+                                            style={{
+                                              transform: isOpen ? "rotate(180deg)" : "rotate(0deg)",
+                                              color: isOpen ? "#4f46e5" : "#94a3b8",
+                                            }} />
                                         </button>
                                         {isOpen && (
                                           <div className="px-3 pb-2 space-y-2 relative">
