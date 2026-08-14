@@ -8,6 +8,7 @@ import { pool } from "./db";
 import { storage } from "./storage";
 import cron from "node-cron";
 import { recalculateLateFees } from "./late-fee-engine";
+import { assertNoSchemaDrift } from "./schema-validator";
 import path from "path";
 
 const app = express();
@@ -535,6 +536,17 @@ app.use((req, res, next) => {
       AND pr.session_id IS NULL
       AND fr.session_id IS NOT NULL
   `);
+
+  // ── Schema drift guard ────────────────────────────────────────────────────
+  // Verifies that every column defined in shared/schema.ts actually exists in
+  // the database AFTER all migration statements above have been applied.
+  // If any column is missing the server exits with code 1 so the deployment
+  // health check fails loudly instead of letting a silent crash reach callers.
+  //
+  // RULE: whenever you add a column to shared/schema.ts you MUST also add a
+  // matching `ALTER TABLE … ADD COLUMN IF NOT EXISTS` statement to the
+  // migration block above.  This check enforces that rule at every startup.
+  await assertNoSchemaDrift(pool);
 
   await registerRoutes(httpServer, app);
 
