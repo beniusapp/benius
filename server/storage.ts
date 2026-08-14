@@ -4765,7 +4765,7 @@ export class DatabaseStorage {
   }
 
   // ===== RECEIPT SEQUENCES =====
-  // Atomically increments the counter for `prefix` (e.g. "OP", "AF") and
+  // Atomically increments the counter for `prefix` (e.g. "OF", "AF") and
   // returns the formatted receipt number (e.g. "OP01", "AF12").
   // Uses INSERT … ON CONFLICT DO UPDATE so it self-seeds on first use.
   // Scoped per (school_id, prefix) — each school has its own counter.

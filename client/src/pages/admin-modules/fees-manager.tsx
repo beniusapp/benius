@@ -398,7 +398,7 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
 
   // Preview next OP receipt number — peek only, no DB write
   const { data: opPreviewData } = useQuery<{ preview: string }>({
-    queryKey: ["/api/admin/fees/next-receipt", "OP", open],
+    queryKey: ["/api/admin/fees/next-receipt", "OF", open],
     queryFn: async () => {
       const r = await sessionFetch("/api/admin/fees/next-receipt?prefix=OP");
       if (!r.ok) return { preview: "OP—" };

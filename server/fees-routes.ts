@@ -834,7 +834,7 @@ export function registerFeesRoutes(app: Express) {
 
       await db.transaction(async (tx) => {
         for (const step of plan) {
-          const opReceipt = await storage.nextReceiptNumber(schoolId, "OP");
+          const opReceipt = await storage.nextReceiptNumber(schoolId, "OF");
 
           // Acquire row-level lock to prevent concurrent over-payment
           const lockedRow = await tx.execute(sql`
@@ -926,7 +926,7 @@ export function registerFeesRoutes(app: Express) {
     //   NOT represent missing or duplicate payments — they are a deliberate
     //   side-effect of the uniqueness guarantee.  Accountants auditing the
     //   OP sequence should treat non-consecutive numbers as normal.
-    const opReceipt = await storage.nextReceiptNumber(schoolId, "OP");
+    const opReceipt = await storage.nextReceiptNumber(schoolId, "OF");
 
     // Auto-create a fee record when none is pre-linked but fee details were supplied
     if (!paymentData.feeRecordId && paymentData.feeType) {
@@ -2580,8 +2580,8 @@ export function registerFeesRoutes(app: Express) {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
     const prefix = String(req.query.prefix ?? "").toUpperCase();
-    if (!["AF", "OP"].includes(prefix)) {
-      return res.status(400).json({ message: "prefix must be AF or OP" });
+    if (!["AF", "OF"].includes(prefix)) {
+      return res.status(400).json({ message: "prefix must be AF or OF" });
     }
     const preview = await storage.peekReceiptNumber(schoolId, prefix);
     res.json({ preview });
