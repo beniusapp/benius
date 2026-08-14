@@ -1114,6 +1114,16 @@ export default function StudentFees() {
                                   {attempt.feeName || attempt.feeType || "Fee"}
                                 </p>
 
+                                {/* Student name + DSID — muted, below title */}
+                                {student && (
+                                  <p className="text-[11px] text-slate-400 mt-0.5 leading-snug truncate">
+                                    {student.name}
+                                    {student.digitalStudentId && (
+                                      <span className="text-slate-300"> &bull; DSID: {student.digitalStudentId}</span>
+                                    )}
+                                  </p>
+                                )}
+
                                 {/* Date + time line — always from server createdAt in IST */}
                                 <div className="flex items-center gap-1.5 mt-1.5 text-xs text-slate-400">
                                   <CalendarDays className="w-3 h-3 flex-shrink-0" />
