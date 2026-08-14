@@ -1268,7 +1268,7 @@ export default function StudentFees() {
                     </div>
                   </motion.div>
                 ) : (
-                  <motion.div variants={container} initial="hidden" animate="show" className="space-y-3">
+                  <motion.div variants={container} initial="hidden" animate="show" className="space-y-2">
                     {paymentAttempts.map((attempt, idx) => {
                       const isPaid   = attempt.type === "paid";
                       const isFailed = attempt.type === "failed";
@@ -1291,11 +1291,11 @@ export default function StudentFees() {
                           data-testid={isPaid ? `card-attempt-paid-${attempt.id}` : `card-attempt-failed-${attempt.id}`}>
                           {/* Accent bar */}
                           <div className="h-1 w-full" style={{ background: accentGradient }} />
-                          <div className="p-4">
+                          <div className="p-3">
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex-1 min-w-0">
                                 {/* Status pill + Online badge + payment mode */}
-                                <div className="flex items-center gap-2 flex-wrap mb-2">
+                                <div className="flex items-center gap-2 flex-wrap mb-1.5">
                                   <StatusPill status={outcome} />
                                   {isPaid && attempt.receiptNumber?.startsWith("ON") && (
                                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold"
@@ -1317,7 +1317,7 @@ export default function StudentFees() {
                                 </div>
 
                                 {/* Fee name */}
-                                <p className="font-extrabold text-slate-800 text-base leading-tight">
+                                <p className="font-extrabold text-slate-800 text-[13.5px] leading-tight">
                                   {attempt.feeName || attempt.feeType || "Fee"}
                                 </p>
 
@@ -1339,18 +1339,18 @@ export default function StudentFees() {
 
                                 {/* Receipt row (paid only) */}
                                 {isPaid && attempt.receiptNumber && (
-                                  <div className="flex items-center gap-2 mt-2.5"
+                                  <div className="flex items-center gap-1.5 mt-1.5"
                                     data-testid={`text-attempt-receipt-${attempt.id}`}>
-                                    <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl"
+                                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg"
                                       style={{ background: "linear-gradient(135deg,#f0fdf4,#dcfce7)", border: "1px solid #86efac" }}>
                                       <Receipt className="w-3 h-3 text-emerald-600 flex-shrink-0" />
-                                      <span className="font-mono text-xs font-black tracking-widest text-emerald-700">
+                                      <span className="font-mono text-[11px] font-black tracking-widest text-emerald-700">
                                         {attempt.receiptNumber}
                                       </span>
                                     </div>
                                     <button
                                       onClick={() => copyReceiptNumber(attempt.id, attempt.receiptNumber!)}
-                                      className="flex items-center justify-center w-7 h-7 rounded-xl transition-all active:scale-90"
+                                      className="flex items-center justify-center w-6 h-6 rounded-lg transition-all active:scale-90"
                                       style={{ background: copiedReceiptId === attempt.id ? "#d1fae5" : "#f1f5f9",
                                         color: copiedReceiptId === attempt.id ? "#059669" : "#94a3b8",
                                         border: `1px solid ${copiedReceiptId === attempt.id ? "#6ee7b7" : "#e2e8f0"}` }}
@@ -1378,17 +1378,17 @@ export default function StudentFees() {
                                     });
                                   const tAccent = "#475569";
                                   return (
-                                    <div className="mt-3 rounded-2xl overflow-hidden"
+                                    <div className="mt-2 rounded-xl overflow-hidden"
                                       style={{ background: "rgba(248,250,252,0.9)", border: "1px solid rgba(226,232,240,0.8)" }}>
                                       <button onClick={toggleT}
-                                        className="w-full flex items-center justify-between px-3 py-2 text-[11px] font-semibold transition-colors"
+                                        className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-bold transition-colors"
                                         style={{ background: "transparent", color: isTOpen ? tAccent : "#94a3b8" }}>
-                                        <span>Technical details</span>
+                                        <span>Payment Details</span>
                                         <ChevronDown className="w-3.5 h-3.5 transition-transform"
                                           style={{ transform: isTOpen ? "rotate(180deg)" : "rotate(0deg)" }} />
                                       </button>
                                       {isTOpen && (
-                                        <div className="px-3 pb-3 space-y-3"
+                                        <div className="px-3 pb-2 space-y-2"
                                           style={{ borderTop: "1px solid rgba(226,232,240,0.6)" }}>
                                           {(attempt.razorpayPaymentId || attempt.razorpayOrderId) && (
                                             <SectionGroup title="Payment Identification" accent={tAccent}>
@@ -1489,23 +1489,23 @@ export default function StudentFees() {
                                     ?? null;
 
                                   return (
-                                    <div className="mt-3 rounded-2xl overflow-hidden"
+                                    <div className="mt-2 rounded-xl overflow-hidden"
                                       style={{ background: bg, border: `1px solid ${border}` }}>
 
                                       {/* ── Friendly section ────────────────────── */}
-                                      <div className="px-3 pt-3 pb-2.5">
-                                        <p className="text-[11px] font-bold uppercase tracking-wider mb-1.5"
+                                      <div className="px-3 pt-2 pb-2">
+                                        <p className="text-[10.5px] font-bold uppercase tracking-wider mb-1"
                                           style={{ color: accentColor }}>
                                           {content.sectionLabel}
                                         </p>
-                                        <p className="text-[12px] text-slate-600 leading-snug">
+                                        <p className="text-[11.5px] text-slate-600 leading-snug">
                                           {content.reason}
                                         </p>
-                                        <p className="text-[11px] font-bold mt-2.5 mb-0.5"
+                                        <p className="text-[11px] font-bold mt-2 mb-0"
                                           style={{ color: accentColor }}>
                                           What can I do?
                                         </p>
-                                        <p className="text-[12px] text-slate-500 leading-snug">
+                                        <p className="text-[11.5px] text-slate-500 leading-snug">
                                           {content.advice}
                                         </p>
                                         {/* Bank-debit ambiguity warning — only shown for gateway-sourced failures */}
@@ -1520,21 +1520,21 @@ export default function StudentFees() {
                                         })()}
                                       </div>
 
-                                      {/* ── Technical details accordion (8 structured sections) ── */}
+                                      {/* ── Payment Details accordion (8 structured sections) ── */}
                                       {(attempt.razorpayPaymentId || attempt.razorpayOrderId || attempt.errorCode ||
                                         attempt.cardNetwork || attempt.bankRrn || attempt.bankAuthCode ||
                                         attempt.payerEmail || attempt.rzpCreatedAt || attempt.amountPaise != null) && (
                                         <div style={{ borderTop: `1px solid ${divider}` }}>
                                           <button
                                             onClick={toggleTechnical}
-                                            className="w-full flex items-center justify-between px-3 py-2 text-[11px] font-semibold transition-colors"
+                                            className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-bold transition-colors"
                                             style={{ background: "transparent", color: isOpen ? accentColor : "#94a3b8" }}>
-                                            <span>Technical details</span>
+                                            <span>Payment Details</span>
                                             <ChevronDown className="w-3.5 h-3.5 transition-transform"
                                               style={{ transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }} />
                                           </button>
                                           {isOpen && (
-                                            <div className="px-3 pb-3 space-y-3">
+                                            <div className="px-3 pb-2 space-y-2">
                                               {/* Payment Identification */}
                                               {(attempt.razorpayPaymentId || attempt.razorpayOrderId) && (
                                                 <SectionGroup title="Payment Identification" accent={accentColor}>
@@ -1619,8 +1619,8 @@ export default function StudentFees() {
                               </div>
 
                               {/* Amount + Receipt download (paid) */}
-                              <div className="flex flex-col items-end gap-3 flex-shrink-0">
-                                <p className={`text-2xl font-black ${isPaid ? "text-emerald-600" : "text-rose-500"}`}
+                              <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                                <p className={`text-xl font-black ${isPaid ? "text-emerald-600" : "text-rose-500"}`}
                                   style={{ fontVariantNumeric: "tabular-nums" }}>
                                   {attempt.amount != null ? formatAmount(attempt.amount) : "—"}
                                 </p>
@@ -1628,7 +1628,7 @@ export default function StudentFees() {
                                   <a
                                     href={`/api/student/fees/${attempt.feeRecordId ?? attempt.id}/receipt`}
                                     target="_blank" rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-bold transition-all hover:opacity-80 active:scale-95"
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all hover:opacity-80 active:scale-95"
                                     style={{ background: "linear-gradient(135deg,#f0fdf4,#dcfce7)",
                                       color: "#065f46", border: "1px solid #86efac",
                                       boxShadow: "0 2px 8px rgba(16,185,129,0.15)" }}
