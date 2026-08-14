@@ -111,18 +111,28 @@ function formatDate(dateStr: string | null) {
 }
 
 /** Formats a UTC ISO timestamp as IST date + time with seconds.
- *  e.g. "14 Aug 2026, 04:58:42 PM"
- *  Always reads from the server-provided timestamp, never from the client clock. */
+ *  e.g. "14 Aug 2026, 04:49:24 PM"
+ *
+ *  DB columns are `timestamp without time zone` — values are UTC but the
+ *  serialised string has no timezone marker (e.g. "2026-08-14 11:19:24.018887").
+ *  Without normalisation, V8 parses such strings as *browser-local* time, so an
+ *  IST browser would treat 11:19 UTC as 11:19 IST — 5 h 30 m too early.
+ *  Fix: replace the space separator with T and append Z before parsing, forcing
+ *  UTC interpretation exactly once.  If the server ever starts returning a
+ *  timezone-aware string (ends in Z or ±HH:MM) this guard is a no-op. */
 function formatDateTime(dateStr: string | null): string {
   if (!dateStr) return "—";
-  const s = new Date(dateStr).toLocaleString("en-IN", {
+  // Normalise to UTC: "2026-08-14 11:19:24.018887" → "2026-08-14T11:19:24.018887Z"
+  const s = dateStr.trim().replace(" ", "T");
+  const utc = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(s) ? s : s + "Z";
+  const result = new Date(utc).toLocaleString("en-IN", {
     timeZone: "Asia/Kolkata",
     day: "2-digit", month: "short", year: "numeric",
     hour: "2-digit", minute: "2-digit", second: "2-digit",
     hour12: true,
   });
   // en-IN gives lowercase am/pm — normalise to uppercase for readability.
-  return s.replace(/\bam\b/gi, "AM").replace(/\bpm\b/gi, "PM");
+  return result.replace(/\bam\b/gi, "AM").replace(/\bpm\b/gi, "PM");
 }
 
 /** Derives the precise payment outcome from the attempt record.
