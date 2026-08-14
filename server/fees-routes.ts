@@ -1603,20 +1603,45 @@ export function registerFeesRoutes(app: Express) {
 
         const notesIncomplete = !feeRecordId || !studentIdResolved;
         const now = new Date();
+
+        // Resolve the academic session for this fee record so the attempt is
+        // correctly linked to the right session even when viewSessionId is not set.
+        let webhookFeeSessionId: number | null = null;
+        if (feeRecordId) {
+          const sessionRow = (await db.execute(sql`
+            SELECT session_id FROM fee_records WHERE id = ${feeRecordId} LIMIT 1
+          `)).rows[0] as any;
+          webhookFeeSessionId = sessionRow?.session_id ?? null;
+        }
+
+        const webhookRawJson = JSON.stringify(payment ?? {});
+        const webhookDesc =
+          "Razorpay payment failed — " + errCode + ": " + errDesc +
+          (payment.id ? " (" + payment.id + ")" : "") +
+          (fallbackUsed ? " [context recovered via order_id fallback]" : "") +
+          (notesIncomplete && !fallbackUsed ? " [incomplete notes — student/fee could not be identified]" : "");
+
         await db.execute(sql`
-          INSERT INTO fee_audit_log (school_id, action, entity_type, entity_id, actor_id, actor_name, student_id, description, created_at)
-          VALUES (
+          INSERT INTO fee_audit_log (
+            school_id, action, entity_type, entity_id, actor_id, actor_name, student_id,
+            session_id, razorpay_payment_id, razorpay_order_id, amount, currency,
+            error_code, error_source, error_step, error_reason, payment_method,
+            raw_response, description, created_at
+          ) VALUES (
             ${schoolId}, 'payment_failed', 'fee_record',
-            ${feeRecordId ?? null},
-            NULL,
-            'Razorpay Webhook',
-            ${studentIdResolved},
-            ${
-              "Razorpay payment failed — " + errCode + ": " + errDesc +
-              (payment.id ? " (" + payment.id + ")" : "") +
-              (fallbackUsed ? " [context recovered via order_id fallback]" : "") +
-              (notesIncomplete && !fallbackUsed ? " [incomplete notes — student/fee could not be identified]" : "")
-            },
+            ${feeRecordId ?? null}, NULL, 'Razorpay Webhook', ${studentIdResolved},
+            ${webhookFeeSessionId},
+            ${payment.id        ?? null},
+            ${payment.order_id  ?? null},
+            ${payment.amount    ?? null},
+            ${payment.currency  ?? "INR"},
+            ${errCode !== "UNKNOWN" ? errCode : null},
+            ${payment.error_source ?? null},
+            ${payment.error_step   ?? null},
+            ${payment.error_reason ?? null},
+            ${payment.method       ?? null},
+            ${webhookRawJson}::jsonb,
+            ${webhookDesc},
             ${now.toISOString()}
           )
         `);
@@ -1734,7 +1759,8 @@ export function registerFeesRoutes(app: Express) {
         `);
         // Broadcast high-severity dispute events to admin dashboard
         if (event.event === "payment.dispute.created" || event.event === "payment.dispute.action_required" || event.event === "payment.dispute.lost") {
-          broadcastPaymentUpdate(schoolId, { feeRecordId: disFeeId, disputeAlert: event.event });
+          // Notify admin dashboard — no receipt number for disputes, pass empty string
+          broadcastPaymentUpdate(schoolId, { feeRecordId: disFeeId ?? 0, receiptNumber: "" });
         }
         console.log(`[razorpay webhook] ${event.event} dispute ${dispute.id ?? "?"} fee #${disFeeId}`);
 
@@ -1768,7 +1794,12 @@ export function registerFeesRoutes(app: Express) {
     const adminSchId = req.session?.schoolId;
     if (!studentId && !adminSchId) return res.status(403).json({ message: "Authentication required" });
 
-    const { feeRecordId, razorpayOrderId, razorpayPaymentId, errorCode, errorDescription } = req.body ?? {};
+    const {
+      feeRecordId, razorpayOrderId, razorpayPaymentId,
+      errorCode, errorDescription, errorSource, errorStep, errorReason,
+      isCancelled,   // true when student voluntarily closed the checkout modal
+      rawResponse,   // full Razorpay error response object from the SDK
+    } = req.body ?? {};
     if (!feeRecordId || typeof feeRecordId !== "number")
       return res.status(400).json({ message: "feeRecordId required" });
 
@@ -1805,27 +1836,71 @@ export function registerFeesRoutes(app: Express) {
         AND status IN ('Due', 'Overdue', 'Partial')
     `);
 
-    // ── Write payment_failed audit log entry ─────────────────────────────────
-    // The Razorpay webhook also writes this, but webhooks never reach a dev/Replit
-    // server (no public URL).  Writing it here (client-side path) ensures every
-    // failure is recorded regardless of webhook delivery.  The webhook entry is
-    // idempotent — two entries for one failure is acceptable; zero entries is not.
+    // ── Write payment_failed / payment_cancelled audit log entry ─────────────
+    // isCancelled=true means the student voluntarily closed the checkout modal
+    // (no payment was attempted); isCancelled=false means Razorpay reported a
+    // real payment failure (card declined, gateway error, etc.).
+    // The webhook also writes payment_failed entries — two entries for one
+    // failure is acceptable; zero entries is not.
+    const clientAction = isCancelled ? "payment_cancelled" : "payment_failed";
     const now = new Date();
-    const descParts: string[] = ["Razorpay payment failed (client-reported)"];
-    if (errorCode) descParts.push(`${errorCode}`);
+
+    // Resolve session_id and amount from the fee record for full audit trail
+    let clientFeeSessionId: number | null = null;
+    let clientFeeAmount: number | null = null;
+    if (feeRecordId) {
+      try {
+        const feeRow = (await db.execute(sql`
+          SELECT session_id, amount FROM fee_records WHERE id = ${feeRecordId} LIMIT 1
+        `)).rows[0] as any;
+        clientFeeSessionId = feeRow?.session_id ?? null;
+        clientFeeAmount    = feeRow?.amount     ?? null;
+      } catch { /* non-fatal */ }
+    }
+
+    const descParts: string[] = [
+      isCancelled
+        ? "Razorpay checkout cancelled (client-reported)"
+        : "Razorpay payment failed (client-reported)",
+    ];
+    if (errorCode)        descParts.push(`${errorCode}`);
     if (errorDescription) descParts.push(`${errorDescription}`);
     if (razorpayPaymentId) descParts.push(`(${razorpayPaymentId})`);
-    if (razorpayOrderId) descParts.push(`[order: ${razorpayOrderId}]`);
+    if (razorpayOrderId)   descParts.push(`[order: ${razorpayOrderId}]`);
     const description = descParts.join(" — ").replace(/ — —/g, " —");
+
+    // Sanitise rawResponse before storing: drop any payer contact/email that
+    // the student may not have consented to persist server-side.
+    const safeRaw = rawResponse
+      ? JSON.stringify(
+          typeof rawResponse === "object"
+            ? { ...rawResponse, contact: undefined, email: undefined }
+            : rawResponse
+        )
+      : null;
 
     try {
       await db.execute(sql`
-        INSERT INTO fee_audit_log
-          (school_id, action, entity_type, entity_id, actor_id, actor_name, student_id, description, created_at)
-        VALUES
-          (${schoolId}, 'payment_failed', 'fee_record', ${feeRecordId},
-           NULL, 'Razorpay (client)', ${studentId ?? null},
-           ${description}, ${now.toISOString()})
+        INSERT INTO fee_audit_log (
+          school_id, action, entity_type, entity_id, actor_id, actor_name, student_id,
+          session_id, razorpay_payment_id, razorpay_order_id, amount,
+          error_code, error_source, error_step, error_reason,
+          raw_response, description, created_at
+        ) VALUES (
+          ${schoolId}, ${clientAction}, 'fee_record', ${feeRecordId},
+          NULL, 'Razorpay (client)', ${studentId ?? null},
+          ${clientFeeSessionId},
+          ${razorpayPaymentId ?? null},
+          ${razorpayOrderId   ?? null},
+          ${clientFeeAmount   ?? null},
+          ${errorCode         ?? null},
+          ${errorSource       ?? null},
+          ${errorStep         ?? null},
+          ${errorReason       ?? null},
+          ${safeRaw}::jsonb,
+          ${description},
+          ${now.toISOString()}
+        )
       `);
     } catch (auditErr) {
       // Non-fatal — log but don't fail the response
@@ -3436,13 +3511,30 @@ td:last-child{font-weight:600;word-break:break-all;}
     }
   });
 
-  // ── Student: Notification History ─────────────────────────────────────────
-  // ── Student: All payment attempts (paid + failed) ────────────────────────
+  // ── Student: All payment attempts (paid + failed + cancelled) ───────────
   // Powers the History tab — shows every attempt, not just receipts.
+  // Session-scoped: when viewSessionId is set only attempts for that academic
+  // session are returned (via fee_records.session_id or the attempt's own
+  // session_id column written at INSERT time).
   app.get("/api/student/fees/payment-attempts", async (req, res) => {
     if (!req.session?.studentId) return res.status(403).json({ message: "Student access required" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(403).json({ message: "Student not found" });
+
+    // Session filter: honour the session the student is currently viewing.
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+
+    // Build optional session WHERE fragments — inline sql`` so drizzle
+    // parameterises viewSessionId safely.
+    const paidSessionCond   = viewSessionId != null
+      ? sql`AND COALESCE(pr.session_id, fr.session_id) = ${viewSessionId}`
+      : sql``;
+    const failedSessionCond = viewSessionId != null
+      ? sql`AND COALESCE(al.session_id, fr.session_id) = ${viewSessionId}`
+      : sql``;
+    const orphanSessionCond = viewSessionId != null
+      ? sql`AND fr.session_id = ${viewSessionId}`
+      : sql``;
 
     try {
       // Successful payments (from payment_records)
@@ -3450,6 +3542,7 @@ td:last-child{font-weight:600;word-break:break-all;}
         SELECT
           pr.id,
           'paid'::text                                AS type,
+          FALSE                                       AS "isCancelled",
           pr.fee_record_id                            AS "feeRecordId",
           fr.fee_type                                 AS "feeType",
           fr.fee_type                                 AS "feeName",
@@ -3462,46 +3555,62 @@ td:last-child{font-weight:600;word-break:break-all;}
           pr.bank_name                                AS "bankName",
           pr.vpa                                      AS "vpa",
           pr.razorpay_payment_id                      AS "razorpayPaymentId",
+          pr.razorpay_order_id                        AS "razorpayOrderId",
           NULL::text                                  AS "errorDescription",
+          NULL::text                                  AS "errorCode",
+          NULL::text                                  AS "errorSource",
+          NULL::text                                  AS "errorStep",
+          NULL::text                                  AS "errorReason",
           pr.created_at                               AS "createdAt"
         FROM payment_records pr
         LEFT JOIN fee_records fr ON fr.id = pr.fee_record_id
         WHERE pr.student_id = ${student.id}
           AND pr.school_id  = ${student.schoolId}
+          ${paidSessionCond}
         ORDER BY pr.created_at DESC
         LIMIT 200
       `);
 
-      // Failed payment attempts (from fee_audit_log)
+      // Failed and cancelled payment attempts (from fee_audit_log)
+      // action = 'payment_failed'    → real gateway failure (card declined, etc.)
+      // action = 'payment_cancelled' → student voluntarily closed checkout modal
       // Match on student_id directly OR via entity_id → fee_records.student_id
       // (webhook entries may have student_id = NULL when Razorpay notes were incomplete).
       const failed = await db.execute(sql`
         SELECT
           al.id,
           'failed'::text                              AS type,
+          (al.action = 'payment_cancelled')           AS "isCancelled",
+          al.entity_id::int                           AS "feeRecordId",
           fr.fee_type                                 AS "feeType",
           fr.fee_type                                 AS "feeName",
-          fr.amount,
+          COALESCE(al.amount, fr.amount)              AS amount,
           al.created_at                               AS "date",
           NULL::text                                  AS "receiptNumber",
-          NULL::text                                  AS "paymentMethod",
+          al.payment_method                           AS "paymentMethod",
           NULL::text                                  AS "paymentMode",
           NULL::text                                  AS "cardLast4",
           NULL::text                                  AS "bankName",
           NULL::text                                  AS "vpa",
-          NULL::text                                  AS "razorpayPaymentId",
+          al.razorpay_payment_id                      AS "razorpayPaymentId",
+          al.razorpay_order_id                        AS "razorpayOrderId",
           al.description                              AS "errorDescription",
+          al.error_code                               AS "errorCode",
+          al.error_source                             AS "errorSource",
+          al.error_step                               AS "errorStep",
+          al.error_reason                             AS "errorReason",
           al.created_at                               AS "createdAt"
         FROM fee_audit_log al
         LEFT JOIN fee_records fr ON fr.id = al.entity_id::int
         WHERE al.school_id   = ${student.schoolId}
-          AND al.action      = 'payment_failed'
+          AND al.action      IN ('payment_failed', 'payment_cancelled')
           AND al.entity_type = 'fee_record'
           AND al.entity_id   IS NOT NULL
           AND (
             al.student_id = ${student.id}
             OR fr.student_id = ${student.id}
           )
+          ${failedSessionCond}
         ORDER BY al.created_at DESC
         LIMIT 200
       `);
@@ -3514,6 +3623,7 @@ td:last-child{font-weight:600;word-break:break-all;}
         SELECT
           fr.id                                       AS id,
           'paid'::text                                AS type,
+          FALSE                                       AS "isCancelled",
           fr.id                                       AS "feeRecordId",
           fr.fee_type                                 AS "feeType",
           fr.fee_type                                 AS "feeName",
@@ -3526,7 +3636,12 @@ td:last-child{font-weight:600;word-break:break-all;}
           NULL::text                                  AS "bankName",
           NULL::text                                  AS "vpa",
           NULL::text                                  AS "razorpayPaymentId",
+          NULL::text                                  AS "razorpayOrderId",
           NULL::text                                  AS "errorDescription",
+          NULL::text                                  AS "errorCode",
+          NULL::text                                  AS "errorSource",
+          NULL::text                                  AS "errorStep",
+          NULL::text                                  AS "errorReason",
           fr.paid_date                                AS "createdAt"
         FROM fee_records fr
         WHERE fr.student_id  = ${student.id}
@@ -3537,6 +3652,7 @@ td:last-child{font-weight:600;word-break:break-all;}
             SELECT 1 FROM payment_records pr
             WHERE pr.fee_record_id = fr.id
           )
+          ${orphanSessionCond}
         ORDER BY fr.paid_date DESC
         LIMIT 50
       `);

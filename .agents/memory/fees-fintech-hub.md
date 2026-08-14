@@ -103,6 +103,30 @@ description: Architecture, constraints, and patterns for the refactored Fees & P
 - `getFeeSummary(schoolId, sessionId?)` aggregates `fee_records` (status=Paid → revenue, else → outstanding).
 - `offlinePaymentsCount` from COUNT(*) on `payment_records`.
 
+## Structured Payment Failure Data Model (fee_audit_log)
+
+New columns added to `fee_audit_log` via startup migration (`server/index.ts`):
+`session_id`, `razorpay_payment_id`, `razorpay_order_id`, `amount`, `currency`, `error_code`, `error_source`, `error_step`, `error_reason`, `payment_method`, `raw_response` (JSONB).
+
+Two distinct action values for failed attempts:
+- `payment_failed` — real gateway failure (card declined, bank error, etc.)
+- `payment_cancelled` — student voluntarily closed checkout modal (no payment attempted)
+
+Client sends all Razorpay structured error fields (`error.source`, `error.step`, `error.reason`) to `POST /api/payments/clear-failed-order`. Webhook handler also stores full Razorpay payment entity.
+
+`/api/student/fees/payment-attempts` endpoint:
+- Returns `isCancelled` (bool), `razorpayOrderId`, `errorCode`, `errorSource`, `errorStep`, `errorReason` per failed attempt.
+- Accepts `viewSessionId` from session middleware and filters all three sub-queries (paid/failed/orphanPaid) by `COALESCE(column.session_id, fee_records.session_id)`.
+- Includes `payment_cancelled` rows in addition to `payment_failed`.
+
+`classifyAttempt()` in student-fees.tsx now uses structured `isCancelled` flag first, then `errorReason` for expiry detection — no more string-parsing heuristics.
+
+Technical Details drawer in History tab shows structured rows (Error Code / Description / Source / Step / Reason / Payment ID / Order ID / Timestamp) instead of a raw string dump.
+
+Gateway-source failures show an extra warning: "If your bank account was debited, the amount will be automatically refunded within 5–7 working days."
+
+**Why:** Structured fields make failures searchable, filterable, and auditable. String-parsing was fragile and lost information.
+
 ## Why
 - Idempotency prevents duplicate offline payment records on retry.
 - High-value re-auth provides a second factor for large cash transactions.

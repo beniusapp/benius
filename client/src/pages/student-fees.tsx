@@ -91,7 +91,13 @@ interface PaymentAttempt {
   bankName: string | null;
   vpa: string | null;
   razorpayPaymentId: string | null;
+  razorpayOrderId: string | null;  // Razorpay order identifier
   errorDescription: string | null;
+  errorCode: string | null;        // e.g. BAD_REQUEST_ERROR
+  errorSource: string | null;      // e.g. "gateway" — where the failure originated
+  errorStep: string | null;        // e.g. "payment_authorization"
+  errorReason: string | null;      // e.g. "payment_failed" / "order_expired"
+  isCancelled: boolean;            // true when student closed checkout voluntarily
   createdAt: string;
 }
 
@@ -139,9 +145,18 @@ function formatDateTime(dateStr: string | null): string {
  *  Returns a { label, accent } pair used by StatusPill and the date line. */
 function classifyAttempt(attempt: PaymentAttempt): "Paid" | "Payment Cancelled" | "Payment Expired" | "Payment Failed" {
   if (attempt.type === "paid") return "Paid";
-  const desc = (attempt.errorDescription ?? "").toLowerCase();
-  if (desc.includes("dismissed by student") || desc.includes("no payment attempted")) return "Payment Cancelled";
-  if (desc.includes("expired") || desc.includes("order_expired") || desc.includes("razorpay order expired")) return "Payment Expired";
+  // Use the structured isCancelled flag first (most reliable — set by the server
+  // based on the payment_cancelled action which is written when the student
+  // voluntarily closes the checkout modal without attempting a payment).
+  if (attempt.isCancelled) return "Payment Cancelled";
+  // Detect order-expiry from structured errorReason, then fall back to description text
+  const reason = (attempt.errorReason ?? "").toLowerCase();
+  const desc   = (attempt.errorDescription ?? "").toLowerCase();
+  if (
+    reason === "order_expired" || reason === "expired_order" ||
+    desc.includes("order_expired") || desc.includes("order has expired") ||
+    desc.includes("session expired") || desc.includes("razorpay order expired")
+  ) return "Payment Expired";
   return "Payment Failed";
 }
 
@@ -166,12 +181,23 @@ function getFriendlyFailureContent(outcome: string): {
       advice: "Please try the payment again. The fee has not been marked as paid.",
     };
   }
-  // Payment Failed
+  // Payment Failed — for gateway errors Razorpay may have attempted a debit,
+  // so warn the student about the refund timeline.
   return {
     sectionLabel: "Why did it fail?",
     reason: "Payment could not be completed because the payment gateway returned an error.",
     advice: "Please try the payment again. The fee has not been marked as paid.",
   };
+}
+
+/** Returns a tailored advice string when the error source is "gateway" —
+ *  indicating the bank may have attempted a debit even though the payment
+ *  ultimately failed.  Call after classifyAttempt returns "Payment Failed". */
+function getGatewayAdvice(attempt: PaymentAttempt): string | null {
+  if ((attempt.errorSource ?? "").toLowerCase() === "gateway") {
+    return "If your bank account was debited, the amount will be automatically refunded within 5–7 working days by your bank or Razorpay.";
+  }
+  return null;
 }
 
 /** Returns a human-readable payment mode label, e.g. "UPI · priya@okaxis",
@@ -540,6 +566,7 @@ export default function StudentFees() {
                     feeRecordId:     rec.id,
                     razorpayOrderId: orderId,
                     errorDescription: "Checkout dismissed by student (no payment attempted)",
+                    isCancelled:     true,
                   }),
                 }).catch(() => { /* best-effort — stale order expires automatically */ });
                 reject(new Error("dismissed"));
@@ -559,17 +586,25 @@ export default function StudentFees() {
           // only reliable path for recording the failure.
           const errCode        = response?.error?.code        ?? "";
           const errDescription = response?.error?.description ?? response?.error?.reason ?? "Payment failed";
+          const errSource      = response?.error?.source      ?? "";
+          const errStep        = response?.error?.step        ?? "";
+          const errReason      = response?.error?.reason      ?? "";
           const rzpPaymentId   = response?.error?.metadata?.payment_id ?? "";
           fetch("/api/payments/clear-failed-order", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
             body: JSON.stringify({
-              feeRecordId:      rec.id,
-              razorpayOrderId:  orderId,
-              razorpayPaymentId: rzpPaymentId || undefined,
-              errorCode:        errCode || undefined,
-              errorDescription: errDescription || undefined,
+              feeRecordId:       rec.id,
+              razorpayOrderId:   orderId,
+              razorpayPaymentId: rzpPaymentId  || undefined,
+              errorCode:         errCode        || undefined,
+              errorDescription:  errDescription || undefined,
+              errorSource:       errSource      || undefined,
+              errorStep:         errStep        || undefined,
+              errorReason:       errReason      || undefined,
+              isCancelled:       false,
+              rawResponse:       response       ?? undefined,
             }),
           })
             .then(() => {
@@ -1263,10 +1298,20 @@ export default function StudentFees() {
                                         <p className="text-[12px] text-slate-500 leading-snug">
                                           {content.advice}
                                         </p>
+                                        {/* Bank-debit ambiguity warning — only shown for gateway-sourced failures */}
+                                        {(() => {
+                                          const gatewayAdvice = getGatewayAdvice(attempt);
+                                          return gatewayAdvice ? (
+                                            <p className="text-[11px] mt-2 leading-snug font-medium"
+                                              style={{ color: accentColor }}>
+                                              ⚠ {gatewayAdvice}
+                                            </p>
+                                          ) : null;
+                                        })()}
                                       </div>
 
                                       {/* ── Technical details accordion ─────────── */}
-                                      {rawError && (
+                                      {(rawError || attempt.razorpayPaymentId || attempt.errorCode) && (
                                         <div style={{ borderTop: `1px solid ${divider}` }}>
                                           <button
                                             onClick={toggleTechnical}
@@ -1277,16 +1322,29 @@ export default function StudentFees() {
                                               style={{ transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }} />
                                           </button>
                                           {isOpen && (
-                                            <div className="px-3 pb-3 space-y-1.5">
-                                              <p className="text-[10px] font-mono leading-relaxed break-all"
-                                                style={{ color: "#64748b" }}>
-                                                {rawError}
-                                              </p>
-                                              {attempt.razorpayPaymentId && (
-                                                <p className="text-[10px] font-mono" style={{ color: "#94a3b8" }}>
-                                                  Payment ID: {attempt.razorpayPaymentId}
-                                                </p>
-                                              )}
+                                            <div className="px-3 pb-3 space-y-1">
+                                              {/* Structured rows — one per Razorpay field */}
+                                              {[
+                                                ["Error Code",        attempt.errorCode],
+                                                ["Error Description", rawError],
+                                                ["Error Source",      attempt.errorSource],
+                                                ["Error Step",        attempt.errorStep],
+                                                ["Error Reason",      attempt.errorReason],
+                                                ["Payment ID",        attempt.razorpayPaymentId],
+                                                ["Order ID",          attempt.razorpayOrderId],
+                                                ["Timestamp",         attempt.createdAt ? formatDateTime(attempt.createdAt) : null],
+                                              ].filter(([, v]) => v != null && v !== "").map(([label, value]) => (
+                                                <div key={String(label)} className="flex gap-1.5">
+                                                  <span className="text-[9.5px] font-semibold flex-shrink-0 mt-[1px]"
+                                                    style={{ color: "#94a3b8", minWidth: 100 }}>
+                                                    {label}
+                                                  </span>
+                                                  <span className="text-[10px] font-mono leading-snug break-all"
+                                                    style={{ color: "#64748b" }}>
+                                                    {value}
+                                                  </span>
+                                                </div>
+                                              ))}
                                             </div>
                                           )}
                                         </div>

@@ -477,6 +477,26 @@ app.use((req, res, next) => {
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS razorpay_order_expires_at TIMESTAMPTZ;
   `);
 
+  // ── fee_audit_log: structured Razorpay payment-attempt fields ────────────
+  // Each payment.failed / payment_cancelled event now stores every structured
+  // field Razorpay provides — error_code, error_source, error_step,
+  // error_reason, payment ID, order ID, amount, currency, payment_method, and
+  // the full raw Razorpay response for audit.  session_id links the attempt
+  // to the exact academic session.
+  await pool.query(`
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS session_id         INTEGER REFERENCES academic_sessions(id) ON DELETE SET NULL;
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS razorpay_payment_id VARCHAR(100);
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS razorpay_order_id   VARCHAR(100);
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS amount              INTEGER;
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS currency            VARCHAR(10) DEFAULT 'INR';
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS error_code          VARCHAR(100);
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS error_source        VARCHAR(100);
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS error_step          VARCHAR(100);
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS error_reason        VARCHAR(100);
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS payment_method      VARCHAR(50);
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS raw_response        JSONB;
+  `);
+
   // ── payment_records extended columns (Razorpay enrichment + payer info) ──
   // Production-safe: ADD COLUMN IF NOT EXISTS never touches existing rows/data.
   await pool.query(`
