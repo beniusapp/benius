@@ -557,6 +557,137 @@ app.use((req, res, next) => {
       AND fr.session_id IS NOT NULL
   `);
 
+  // ── payment_attempts: unified payment-attempt ledger ─────────────────────
+  // Every Razorpay interaction (captured, failed, cancelled, authorized) gets
+  // a permanent row here.  This is the authoritative source for the student
+  // History tab.  payment_records stays as the receipt/ledger table;
+  // fee_audit_log stays for general audit events.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payment_attempts (
+      id                    SERIAL PRIMARY KEY,
+      school_id             INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      student_id            INTEGER REFERENCES students(id) ON DELETE SET NULL,
+      fee_record_id         INTEGER,
+      session_id            INTEGER,
+      outcome               VARCHAR(20) NOT NULL DEFAULT 'pending',
+      razorpay_payment_id   VARCHAR(100),
+      razorpay_order_id     VARCHAR(100),
+      amount_paise          INTEGER,
+      currency              VARCHAR(10)  DEFAULT 'INR',
+      amount_captured_paise INTEGER,
+      amount_refunded_paise INTEGER,
+      razorpay_fee_paise    INTEGER,
+      razorpay_tax_paise    INTEGER,
+      payment_method        VARCHAR(50),
+      card_network          VARCHAR(50),
+      card_last4            VARCHAR(4),
+      card_type             VARCHAR(30),
+      card_issuer           VARCHAR(100),
+      card_name             VARCHAR(200),
+      card_international    BOOLEAN,
+      card_emi              BOOLEAN,
+      bank_name             VARCHAR(100),
+      bank_rrn              VARCHAR(100),
+      bank_auth_code        VARCHAR(100),
+      vpa                   VARCHAR(100),
+      wallet                VARCHAR(50),
+      payer_name            VARCHAR(200),
+      payer_email           VARCHAR(255),
+      payer_contact         VARCHAR(20),
+      error_code            VARCHAR(100),
+      error_description     TEXT,
+      error_source          VARCHAR(100),
+      error_step            VARCHAR(100),
+      error_reason          VARCHAR(100),
+      rzp_created_at        TIMESTAMPTZ,
+      rzp_authorized_at     TIMESTAMPTZ,
+      rzp_captured_at       TIMESTAMPTZ,
+      rzp_failed_at         TIMESTAMPTZ,
+      refund_id             VARCHAR(100),
+      refund_status         VARCHAR(30),
+      refund_amount_paise   INTEGER,
+      refund_initiated_at   TIMESTAMPTZ,
+      refund_processed_at   TIMESTAMPTZ,
+      webhook_event         VARCHAR(50),
+      webhook_received_at   TIMESTAMPTZ,
+      webhook_verified      BOOLEAN DEFAULT FALSE,
+      webhook_payload       JSONB,
+      api_synced_at         TIMESTAMPTZ,
+      razorpay_payment_data JSONB,
+      razorpay_order_data   JSONB,
+      source                VARCHAR(20) DEFAULT 'client',
+      receipt_number        VARCHAR(50),
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS pa_school_payment_id
+      ON payment_attempts(school_id, razorpay_payment_id)
+      WHERE razorpay_payment_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS pa_school_order_cancelled
+      ON payment_attempts(school_id, razorpay_order_id)
+      WHERE razorpay_payment_id IS NULL AND razorpay_order_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS pa_student_idx    ON payment_attempts(student_id, school_id);
+    CREATE INDEX IF NOT EXISTS pa_fee_record_idx ON payment_attempts(fee_record_id);
+  `);
+
+  // Back-fill captured payments from payment_records
+  await pool.query(`
+    INSERT INTO payment_attempts (
+      school_id, student_id, fee_record_id, session_id,
+      outcome, razorpay_payment_id, razorpay_order_id,
+      amount_paise, currency, payment_method,
+      card_last4, bank_name, vpa, payer_email, payer_contact,
+      receipt_number, source, created_at, updated_at
+    )
+    SELECT
+      pr.school_id, pr.student_id, pr.fee_record_id, pr.session_id,
+      'captured', pr.razorpay_payment_id, pr.razorpay_order_id,
+      pr.amount::integer * 100, 'INR', pr.payment_mode,
+      pr.card_last4, pr.bank_name, pr.vpa, pr.payer_email, pr.payer_contact,
+      pr.receipt_number, 'migrated', pr.created_at, NOW()
+    FROM payment_records pr
+    WHERE pr.razorpay_payment_id IS NOT NULL
+    ON CONFLICT DO NOTHING
+  `);
+
+  // Back-fill failed / cancelled attempts from fee_audit_log
+  await pool.query(`
+    INSERT INTO payment_attempts (
+      school_id, student_id, fee_record_id, session_id,
+      outcome, razorpay_payment_id, razorpay_order_id,
+      amount_paise, currency, payment_method,
+      error_code, error_description, error_source, error_step, error_reason,
+      webhook_payload, source, created_at, updated_at
+    )
+    SELECT
+      al.school_id,
+      COALESCE(al.student_id, fr.student_id),
+      al.entity_id::integer,
+      COALESCE(al.session_id, fr.session_id),
+      CASE WHEN al.action = 'payment_cancelled' THEN 'cancelled' ELSE 'failed' END,
+      al.razorpay_payment_id,
+      al.razorpay_order_id,
+      COALESCE(fr.amount::integer * 100, al.amount),
+      COALESCE(al.currency, 'INR'),
+      al.payment_method,
+      al.error_code,
+      al.description,
+      al.error_source,
+      al.error_step,
+      al.error_reason,
+      al.raw_response,
+      'migrated',
+      al.created_at,
+      NOW()
+    FROM fee_audit_log al
+    LEFT JOIN fee_records fr ON fr.id = al.entity_id::integer
+    WHERE al.action IN ('payment_failed', 'payment_cancelled')
+      AND al.entity_type = 'fee_record'
+      AND al.entity_id IS NOT NULL
+      AND (al.razorpay_payment_id IS NOT NULL OR al.razorpay_order_id IS NOT NULL)
+    ON CONFLICT DO NOTHING
+  `);
+
   // ── Schema drift guard ────────────────────────────────────────────────────
   // Verifies that every column defined in shared/schema.ts actually exists in
   // the database AFTER all migration statements above have been applied.

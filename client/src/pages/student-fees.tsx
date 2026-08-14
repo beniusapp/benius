@@ -78,26 +78,73 @@ interface PortalInfo {
 
 interface PaymentAttempt {
   id: number;
+  // Backward-compat fields
   type: "paid" | "failed";
-  feeRecordId: number | null;  // fee_records.id — used for receipt download URL
+  isCancelled: boolean;
+  /** Authoritative outcome from payment_attempts table */
+  outcome: "captured" | "failed" | "cancelled" | "authorized" | "refunded" | "pending";
+
+  feeRecordId: number | null;
   feeType: string | null;
   feeName: string | null;
-  amount: number | null;
+
+  // Amount: display rupees + raw paise for the financial breakdown
+  amount: number | null;              // rupees (for display)
+  amountPaise: number | null;         // paise
+  amountCapturedPaise: number | null;
+  amountRefundedPaise: number | null;
+  razorpayFeePaise: number | null;    // Razorpay processing fee in paise
+  razorpayTaxPaise: number | null;    // GST on processing fee in paise
+  currency: string | null;
+
   date: string | null;
   receiptNumber: string | null;
+
+  // Payment method
   paymentMethod: string | null;
-  paymentMode: string | null;
+  paymentMode: string | null;         // alias kept for backward compat
   cardLast4: string | null;
+  cardNetwork: string | null;         // Visa, Mastercard, RuPay…
+  cardType: string | null;            // 'credit' | 'debit'
+  cardIssuer: string | null;          // HDFC, DCBL…
+  cardName: string | null;
+  cardInternational: boolean | null;
   bankName: string | null;
-  vpa: string | null;
+  bankRrn: string | null;             // Retrieval Reference Number
+  bankAuthCode: string | null;        // Authorization code from issuing bank
+  vpa: string | null;                 // UPI VPA
+  wallet: string | null;
+
+  // Identifiers
   razorpayPaymentId: string | null;
-  razorpayOrderId: string | null;  // Razorpay order identifier
+  razorpayOrderId: string | null;
+
+  // Customer (server masks email/phone before sending; never exposes full card/CVV)
+  payerName: string | null;
+  payerEmail: string | null;
+  payerContact: string | null;
+
+  // Failure
+  errorCode: string | null;
   errorDescription: string | null;
-  errorCode: string | null;        // e.g. BAD_REQUEST_ERROR
-  errorSource: string | null;      // e.g. "gateway" — where the failure originated
-  errorStep: string | null;        // e.g. "payment_authorization"
-  errorReason: string | null;      // e.g. "payment_failed" / "order_expired"
-  isCancelled: boolean;            // true when student closed checkout voluntarily
+  errorSource: string | null;
+  errorStep: string | null;
+  errorReason: string | null;
+
+  // Razorpay lifecycle timestamps (epoch from API, returned as ISO strings)
+  rzpCreatedAt: string | null;
+  rzpAuthorizedAt: string | null;
+  rzpCapturedAt: string | null;
+  rzpFailedAt: string | null;
+
+  // Refund
+  refundId: string | null;
+  refundStatus: string | null;
+  refundAmountPaise: number | null;
+  refundInitiatedAt: string | null;
+  refundProcessedAt: string | null;
+
+  apiSyncedAt: string | null;
   createdAt: string;
 }
 
@@ -210,6 +257,67 @@ function formatPaymentMode(attempt: PaymentAttempt): string | null {
   if (mode === "netbanking") return attempt.bankName  ? `Netbanking · ${attempt.bankName}` : "Netbanking";
   // wallet, emi, paylater, etc.
   return mode.charAt(0).toUpperCase() + mode.slice(1);
+}
+
+/** Masks an email for display: shows first char, hides middle of local part and domain. */
+function maskEmail(email: string | null | undefined): string | null {
+  if (!email) return null;
+  const at = email.indexOf("@");
+  if (at <= 0) return email;
+  const local  = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  const dot    = domain.lastIndexOf(".");
+  const tld    = dot >= 0 ? domain.slice(dot) : "";
+  const base   = dot >= 0 ? domain.slice(0, dot) : domain;
+  const maskedLocal  = local.charAt(0) + "●".repeat(Math.max(1, local.length - 1));
+  const maskedDomain = base.charAt(0) + "●".repeat(Math.max(1, base.length - 1));
+  return `${maskedLocal}@${maskedDomain}${tld}`;
+}
+
+/** Masks a phone/contact for display: shows first 2 and last 2 digits. */
+function maskPhone(phone: string | null | undefined): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length < 6) return phone;
+  return digits.slice(0, 2) + "●".repeat(digits.length - 4) + digits.slice(-2);
+}
+
+/** A labeled section header + content group for the Technical Details accordion. */
+function SectionGroup({ title, accent, children }: {
+  title: string;
+  accent: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <p className="text-[9px] font-bold uppercase tracking-widest mb-1.5"
+        style={{ color: accent + "99" }}>
+        {title}
+      </p>
+      <div className="space-y-0.5">{children}</div>
+    </div>
+  );
+}
+
+/** A single key → value row inside a SectionGroup. Suppressed when value is falsy. */
+function TechRow({ label, value, mono = false }: {
+  label: string;
+  value: string | number | null | undefined;
+  mono?: boolean;
+}) {
+  if (value == null || value === "") return null;
+  return (
+    <div className="flex gap-2">
+      <span className="text-[9.5px] font-semibold flex-shrink-0 mt-px"
+        style={{ color: "#94a3b8", minWidth: 96 }}>
+        {label}
+      </span>
+      <span className={`text-[10px] leading-snug break-all ${mono ? "font-mono" : ""}`}
+        style={{ color: "#475569" }}>
+        {String(value)}
+      </span>
+    </div>
+  );
 }
 
 class RazorpayScriptError extends Error {
@@ -1243,6 +1351,97 @@ export default function StudentFees() {
                                   </div>
                                 )}
 
+                                {/* ── Technical details for paid attempts ───────────────────────────── */}
+                                {isPaid && (
+                                  attempt.razorpayPaymentId || attempt.cardNetwork ||
+                                  attempt.bankAuthCode || attempt.bankRrn ||
+                                  attempt.razorpayFeePaise != null ||
+                                  attempt.rzpCreatedAt || attempt.payerEmail
+                                ) && (() => {
+                                  const isTOpen = expandedTechnical.has(attempt.id);
+                                  const toggleT = () =>
+                                    setExpandedTechnical(prev => {
+                                      const next = new Set(prev);
+                                      isTOpen ? next.delete(attempt.id) : next.add(attempt.id);
+                                      return next;
+                                    });
+                                  const tAccent = "#475569";
+                                  return (
+                                    <div className="mt-3 rounded-2xl overflow-hidden"
+                                      style={{ background: "rgba(248,250,252,0.9)", border: "1px solid rgba(226,232,240,0.8)" }}>
+                                      <button onClick={toggleT}
+                                        className="w-full flex items-center justify-between px-3 py-2 text-[11px] font-semibold transition-colors"
+                                        style={{ background: "transparent", color: isTOpen ? tAccent : "#94a3b8" }}>
+                                        <span>Technical details</span>
+                                        <ChevronDown className="w-3.5 h-3.5 transition-transform"
+                                          style={{ transform: isTOpen ? "rotate(180deg)" : "rotate(0deg)" }} />
+                                      </button>
+                                      {isTOpen && (
+                                        <div className="px-3 pb-3 space-y-3"
+                                          style={{ borderTop: "1px solid rgba(226,232,240,0.6)" }}>
+                                          {(attempt.razorpayPaymentId || attempt.razorpayOrderId) && (
+                                            <SectionGroup title="Payment Identification" accent={tAccent}>
+                                              <TechRow label="Payment ID" value={attempt.razorpayPaymentId} mono />
+                                              <TechRow label="Order ID" value={attempt.razorpayOrderId} mono />
+                                              {attempt.feeRecordId ? <TechRow label="Fee Record" value={`#${attempt.feeRecordId}`} /> : null}
+                                              <TechRow label="Timestamp" value={formatDateTime(attempt.createdAt)} />
+                                            </SectionGroup>
+                                          )}
+                                          {attempt.amountPaise != null && (
+                                            <SectionGroup title="Amount & Financial" accent={tAccent}>
+                                              <TechRow label="Amount" value={`₹${(attempt.amountPaise / 100).toLocaleString("en-IN")}`} />
+                                              <TechRow label="Razorpay Fee" value={attempt.razorpayFeePaise != null ? `₹${(attempt.razorpayFeePaise / 100).toFixed(2)}` : null} />
+                                              <TechRow label="GST" value={attempt.razorpayTaxPaise != null ? `₹${(attempt.razorpayTaxPaise / 100).toFixed(2)}` : null} />
+                                              <TechRow label="Currency" value={attempt.currency} />
+                                            </SectionGroup>
+                                          )}
+                                          {attempt.paymentMethod && (
+                                            <SectionGroup title="Payment Method" accent={tAccent}>
+                                              <TechRow label="Method" value={attempt.paymentMethod.charAt(0).toUpperCase() + attempt.paymentMethod.slice(1)} />
+                                              <TechRow label="Network" value={attempt.cardNetwork} />
+                                              <TechRow label="Card" value={attempt.cardLast4 ? `●●●● ${attempt.cardLast4}` : null} />
+                                              <TechRow label="Type" value={attempt.cardType ? attempt.cardType.charAt(0).toUpperCase() + attempt.cardType.slice(1) : null} />
+                                              <TechRow label="Issuer" value={attempt.cardIssuer} />
+                                              <TechRow label="Bank" value={attempt.bankName} />
+                                              <TechRow label="UPI ID" value={attempt.vpa} />
+                                              <TechRow label="Wallet" value={attempt.wallet} />
+                                            </SectionGroup>
+                                          )}
+                                          {(attempt.bankAuthCode || attempt.bankRrn) && (
+                                            <SectionGroup title="Bank & Acquirer" accent={tAccent}>
+                                              <TechRow label="Auth Code" value={attempt.bankAuthCode} mono />
+                                              <TechRow label="Bank RRN" value={attempt.bankRrn} mono />
+                                            </SectionGroup>
+                                          )}
+                                          {(attempt.rzpCreatedAt || attempt.rzpCapturedAt) && (
+                                            <SectionGroup title="Timeline" accent={tAccent}>
+                                              <TechRow label="Created" value={attempt.rzpCreatedAt ? formatDateTime(attempt.rzpCreatedAt) : null} />
+                                              <TechRow label="Authorized" value={attempt.rzpAuthorizedAt ? formatDateTime(attempt.rzpAuthorizedAt) : null} />
+                                              <TechRow label="Captured" value={attempt.rzpCapturedAt ? formatDateTime(attempt.rzpCapturedAt) : null} />
+                                            </SectionGroup>
+                                          )}
+                                          {(attempt.payerName || attempt.payerEmail || attempt.payerContact) && (
+                                            <SectionGroup title="Customer" accent={tAccent}>
+                                              <TechRow label="Name" value={attempt.payerName} />
+                                              <TechRow label="Email" value={maskEmail(attempt.payerEmail)} />
+                                              <TechRow label="Phone" value={maskPhone(attempt.payerContact)} />
+                                            </SectionGroup>
+                                          )}
+                                          {attempt.refundId && (
+                                            <SectionGroup title="Refund" accent={tAccent}>
+                                              <TechRow label="Refund ID" value={attempt.refundId} mono />
+                                              <TechRow label="Status" value={attempt.refundStatus} />
+                                              <TechRow label="Amount" value={attempt.refundAmountPaise != null ? `₹${(attempt.refundAmountPaise / 100).toLocaleString("en-IN")}` : null} />
+                                              <TechRow label="Initiated" value={attempt.refundInitiatedAt ? formatDateTime(attempt.refundInitiatedAt) : null} />
+                                              <TechRow label="Processed" value={attempt.refundProcessedAt ? formatDateTime(attempt.refundProcessedAt) : null} />
+                                            </SectionGroup>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+
                                 {/* ── Friendly failure / cancellation block ─────── */}
                                 {isFailed && (() => {
                                   const content = getFriendlyFailureContent(outcome);
@@ -1310,8 +1509,10 @@ export default function StudentFees() {
                                         })()}
                                       </div>
 
-                                      {/* ── Technical details accordion ─────────── */}
-                                      {(rawError || attempt.razorpayPaymentId || attempt.errorCode) && (
+                                      {/* ── Technical details accordion (8 structured sections) ── */}
+                                      {(attempt.razorpayPaymentId || attempt.razorpayOrderId || attempt.errorCode ||
+                                        attempt.cardNetwork || attempt.bankRrn || attempt.bankAuthCode ||
+                                        attempt.payerEmail || attempt.rzpCreatedAt || attempt.amountPaise != null) && (
                                         <div style={{ borderTop: `1px solid ${divider}` }}>
                                           <button
                                             onClick={toggleTechnical}
@@ -1322,29 +1523,81 @@ export default function StudentFees() {
                                               style={{ transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }} />
                                           </button>
                                           {isOpen && (
-                                            <div className="px-3 pb-3 space-y-1">
-                                              {/* Structured rows — one per Razorpay field */}
-                                              {[
-                                                ["Error Code",        attempt.errorCode],
-                                                ["Error Description", rawError],
-                                                ["Error Source",      attempt.errorSource],
-                                                ["Error Step",        attempt.errorStep],
-                                                ["Error Reason",      attempt.errorReason],
-                                                ["Payment ID",        attempt.razorpayPaymentId],
-                                                ["Order ID",          attempt.razorpayOrderId],
-                                                ["Timestamp",         attempt.createdAt ? formatDateTime(attempt.createdAt) : null],
-                                              ].filter(([, v]) => v != null && v !== "").map(([label, value]) => (
-                                                <div key={String(label)} className="flex gap-1.5">
-                                                  <span className="text-[9.5px] font-semibold flex-shrink-0 mt-[1px]"
-                                                    style={{ color: "#94a3b8", minWidth: 100 }}>
-                                                    {label}
-                                                  </span>
-                                                  <span className="text-[10px] font-mono leading-snug break-all"
-                                                    style={{ color: "#64748b" }}>
-                                                    {value}
-                                                  </span>
-                                                </div>
-                                              ))}
+                                            <div className="px-3 pb-3 space-y-3">
+                                              {/* Payment Identification */}
+                                              {(attempt.razorpayPaymentId || attempt.razorpayOrderId) && (
+                                                <SectionGroup title="Payment Identification" accent={accentColor}>
+                                                  <TechRow label="Payment ID" value={attempt.razorpayPaymentId} mono />
+                                                  <TechRow label="Order ID" value={attempt.razorpayOrderId} mono />
+                                                  {attempt.feeRecordId ? <TechRow label="Fee Record" value={`#${attempt.feeRecordId}`} /> : null}
+                                                  <TechRow label="Timestamp" value={formatDateTime(attempt.createdAt)} />
+                                                </SectionGroup>
+                                              )}
+                                              {/* Amount & Financial */}
+                                              {attempt.amountPaise != null && (
+                                                <SectionGroup title="Amount & Financial" accent={accentColor}>
+                                                  <TechRow label="Amount" value={`₹${(attempt.amountPaise / 100).toLocaleString("en-IN")}`} />
+                                                  <TechRow label="Razorpay Fee" value={attempt.razorpayFeePaise != null ? `₹${(attempt.razorpayFeePaise / 100).toFixed(2)}` : null} />
+                                                  <TechRow label="GST" value={attempt.razorpayTaxPaise != null ? `₹${(attempt.razorpayTaxPaise / 100).toFixed(2)}` : null} />
+                                                  <TechRow label="Currency" value={attempt.currency} />
+                                                </SectionGroup>
+                                              )}
+                                              {/* Payment Method */}
+                                              {attempt.paymentMethod && (
+                                                <SectionGroup title="Payment Method" accent={accentColor}>
+                                                  <TechRow label="Method" value={attempt.paymentMethod.charAt(0).toUpperCase() + attempt.paymentMethod.slice(1)} />
+                                                  <TechRow label="Network" value={attempt.cardNetwork} />
+                                                  <TechRow label="Card" value={attempt.cardLast4 ? `●●●● ${attempt.cardLast4}` : null} />
+                                                  <TechRow label="Type" value={attempt.cardType ? attempt.cardType.charAt(0).toUpperCase() + attempt.cardType.slice(1) : null} />
+                                                  <TechRow label="Issuer" value={attempt.cardIssuer} />
+                                                  <TechRow label="Bank" value={attempt.bankName} />
+                                                  <TechRow label="UPI ID" value={attempt.vpa} />
+                                                  <TechRow label="Wallet" value={attempt.wallet} />
+                                                </SectionGroup>
+                                              )}
+                                              {/* Bank & Acquirer */}
+                                              {(attempt.bankAuthCode || attempt.bankRrn) && (
+                                                <SectionGroup title="Bank & Acquirer" accent={accentColor}>
+                                                  <TechRow label="Auth Code" value={attempt.bankAuthCode} mono />
+                                                  <TechRow label="Bank RRN" value={attempt.bankRrn} mono />
+                                                </SectionGroup>
+                                              )}
+                                              {/* Failure Details */}
+                                              {(attempt.errorCode || attempt.errorSource || rawError) && (
+                                                <SectionGroup title="Failure Details" accent={accentColor}>
+                                                  <TechRow label="Error Code" value={attempt.errorCode} mono />
+                                                  <TechRow label="Source" value={attempt.errorSource} />
+                                                  <TechRow label="Step" value={attempt.errorStep} />
+                                                  <TechRow label="Reason" value={attempt.errorReason} />
+                                                  <TechRow label="Description" value={rawError} />
+                                                </SectionGroup>
+                                              )}
+                                              {/* Timeline */}
+                                              {(attempt.rzpCreatedAt || attempt.rzpFailedAt) && (
+                                                <SectionGroup title="Timeline" accent={accentColor}>
+                                                  <TechRow label="Created" value={attempt.rzpCreatedAt ? formatDateTime(attempt.rzpCreatedAt) : null} />
+                                                  <TechRow label="Authorized" value={attempt.rzpAuthorizedAt ? formatDateTime(attempt.rzpAuthorizedAt) : null} />
+                                                  <TechRow label="Failed at" value={attempt.rzpFailedAt ? formatDateTime(attempt.rzpFailedAt) : null} />
+                                                </SectionGroup>
+                                              )}
+                                              {/* Customer */}
+                                              {(attempt.payerName || attempt.payerEmail || attempt.payerContact) && (
+                                                <SectionGroup title="Customer" accent={accentColor}>
+                                                  <TechRow label="Name" value={attempt.payerName} />
+                                                  <TechRow label="Email" value={maskEmail(attempt.payerEmail)} />
+                                                  <TechRow label="Phone" value={maskPhone(attempt.payerContact)} />
+                                                </SectionGroup>
+                                              )}
+                                              {/* Refund */}
+                                              {attempt.refundId && (
+                                                <SectionGroup title="Refund" accent={accentColor}>
+                                                  <TechRow label="Refund ID" value={attempt.refundId} mono />
+                                                  <TechRow label="Status" value={attempt.refundStatus} />
+                                                  <TechRow label="Amount" value={attempt.refundAmountPaise != null ? `₹${(attempt.refundAmountPaise / 100).toLocaleString("en-IN")}` : null} />
+                                                  <TechRow label="Initiated" value={attempt.refundInitiatedAt ? formatDateTime(attempt.refundInitiatedAt) : null} />
+                                                  <TechRow label="Processed" value={attempt.refundProcessedAt ? formatDateTime(attempt.refundProcessedAt) : null} />
+                                                </SectionGroup>
+                                              )}
                                             </div>
                                           )}
                                         </div>

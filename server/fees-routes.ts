@@ -9,6 +9,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import Razorpay from "razorpay";
 import { broadcastPaymentUpdate } from "./sse";
+import { fetchRazorpayData, mapRazorpayPayment, upsertPaymentAttempt, updatePaymentAttemptRefund } from "./rzp-enrichment";
 
 // ── Exported for integration testing ─────────────────────────────────────────
 // acquireRazorpayOrder contains the atomic lock → check → create → persist
@@ -1557,6 +1558,65 @@ export function registerFeesRoutes(app: Express) {
         // Broadcast real-time update → admin dashboard refreshes instantly
         broadcastPaymentUpdate(schoolId, { feeRecordId, receiptNumber });
 
+        // Write to payment_attempts (non-blocking; existing payment_records write is the source of truth for receipts)
+        void upsertPaymentAttempt({
+          schoolId,
+          studentId:         Number(feeRec.student_id),
+          feeRecordId,
+          sessionId:         activeSession?.id ?? null,
+          outcome:           "captured",
+          razorpayPaymentId: payment.id          ?? null,
+          razorpayOrderId:   payment.order_id    ?? null,
+          amountPaise:       payment.amount      != null ? Number(payment.amount) : Number(feeRec.amount) * 100,
+          currency:          payment.currency    ?? "INR",
+          paymentMethod:     payment.method      ?? null,
+          cardNetwork:       payment.card?.network  ?? null,
+          cardLast4:         payment.card?.last4    ?? null,
+          cardType:          payment.card?.type     ?? null,
+          cardIssuer:        payment.card?.issuer   ?? null,
+          bankName:          payment.bank           ?? null,
+          bankRrn:           (() => { const r = payment.acquirer_data?.rrn; return r && r !== "--" && r !== "---" ? r : null; })(),
+          bankAuthCode:      payment.card?.auth_code ?? payment.acquirer_data?.auth_code ?? null,
+          vpa:               payment.vpa            ?? null,
+          wallet:            payment.wallet         ?? null,
+          payerEmail:        payment.email          ?? null,
+          payerContact:      payment.contact        ?? null,
+          rzpCreatedAt:      payment.created_at  ? new Date(payment.created_at * 1000) : null,
+          rzpCapturedAt:     now,
+          webhookEvent:      "payment.captured",
+          webhookReceivedAt: now,
+          webhookVerified:   true,
+          webhookPayload:    payment,
+          source:            "webhook",
+          receiptNumber,
+        }).catch(err => console.warn("[webhook] payment_attempts upsert (captured) failed:", err));
+
+        // Background: fetch fee/tax/acquirer data from Razorpay API (fire-and-forget after 200)
+        if (payment.id) {
+          void (async () => {
+            try {
+              const { paymentData, orderData } = await fetchRazorpayData(payment.id, payment.order_id ?? null, creds);
+              if (paymentData) {
+                await upsertPaymentAttempt({
+                  schoolId,
+                  studentId:  Number(feeRec.student_id),
+                  feeRecordId,
+                  sessionId:  activeSession?.id ?? null,
+                  outcome:    "captured",
+                  source:     "webhook",
+                  receiptNumber,
+                  webhookEvent:    "payment.captured",
+                  webhookVerified: true,
+                  ...mapRazorpayPayment(paymentData),
+                  razorpayOrderData: orderData,
+                });
+              }
+            } catch (enrichErr) {
+              console.warn("[webhook] captured enrichment failed:", enrichErr);
+            }
+          })();
+        }
+
         console.log(`[razorpay webhook] Paid fee #${feeRecordId} receipt ${receiptNumber}`);
 
       } else if (event.event === "payment.failed") {
@@ -1660,6 +1720,43 @@ export function registerFeesRoutes(app: Express) {
           console.log(`[razorpay webhook] Order lock cleared for fee #${feeRecordId} after payment failure`);
         }
 
+        // Write to payment_attempts — webhook payload already has card + error details
+        void upsertPaymentAttempt({
+          schoolId,
+          studentId:         studentIdResolved,
+          feeRecordId,
+          sessionId:         webhookFeeSessionId,
+          outcome:           "failed",
+          razorpayPaymentId: payment.id          ?? null,
+          razorpayOrderId:   payment.order_id    ?? null,
+          amountPaise:       payment.amount != null ? Number(payment.amount) : null,
+          currency:          payment.currency    ?? "INR",
+          paymentMethod:     payment.method      ?? null,
+          cardNetwork:       payment.card?.network  ?? null,
+          cardLast4:         payment.card?.last4    ?? null,
+          cardType:          payment.card?.type     ?? null,
+          cardIssuer:        payment.card?.issuer   ?? null,
+          bankName:          payment.bank           ?? null,
+          bankRrn:           (() => { const r = payment.acquirer_data?.rrn; return r && r !== "--" && r !== "---" ? r : null; })(),
+          bankAuthCode:      payment.card?.auth_code ?? payment.acquirer_data?.auth_code ?? null,
+          vpa:               payment.vpa            ?? null,
+          wallet:            payment.wallet         ?? null,
+          payerEmail:        payment.email          ?? null,
+          payerContact:      payment.contact        ?? null,
+          errorCode:         errCode !== "UNKNOWN" ? errCode : null,
+          errorDescription:  payment.error_description ?? null,
+          errorSource:       payment.error_source   ?? null,
+          errorStep:         payment.error_step     ?? null,
+          errorReason:       payment.error_reason   ?? null,
+          rzpCreatedAt:      payment.created_at ? new Date(payment.created_at * 1000) : null,
+          rzpFailedAt:       now,
+          webhookEvent:      "payment.failed",
+          webhookReceivedAt: now,
+          webhookVerified:   true,
+          webhookPayload:    payment,
+          source:            "webhook",
+        }).catch(err => console.warn("[webhook] payment_attempts upsert (failed) error:", err));
+
         console.log(`[razorpay webhook] Payment failed for fee #${feeRecordId}: ${errCode} — ${errDesc}`);
 
       // ── payment.authorized ───────────────────────────────────────────────────
@@ -1679,6 +1776,30 @@ export function registerFeesRoutes(app: Express) {
             ${now.toISOString()}
           )
         `);
+        // Write to payment_attempts
+        void upsertPaymentAttempt({
+          schoolId,
+          studentId:         studentIdAu,
+          feeRecordId,
+          sessionId:         null,
+          outcome:           "authorized",
+          razorpayPaymentId: payment.id        ?? null,
+          razorpayOrderId:   payment.order_id  ?? null,
+          amountPaise:       payment.amount != null ? Number(payment.amount) : null,
+          currency:          payment.currency  ?? "INR",
+          paymentMethod:     payment.method    ?? null,
+          cardNetwork:       payment.card?.network ?? null,
+          cardLast4:         payment.card?.last4   ?? null,
+          vpa:               payment.vpa           ?? null,
+          rzpCreatedAt:      payment.created_at ? new Date(payment.created_at * 1000) : null,
+          rzpAuthorizedAt:   now,
+          webhookEvent:      "payment.authorized",
+          webhookReceivedAt: now,
+          webhookVerified:   true,
+          webhookPayload:    payment,
+          source:            "webhook",
+        }).catch(err => console.warn("[webhook] payment_attempts upsert (authorized) error:", err));
+
         console.log(`[razorpay webhook] payment.authorized fee #${feeRecordId} — ${payment.id ?? "?"}`);
 
       // ── refund.* ─────────────────────────────────────────────────────────────
@@ -1716,6 +1837,22 @@ export function registerFeesRoutes(app: Express) {
             ${rfDesc}, ${now.toISOString()}
           )
         `);
+        // Update payment_attempts with refund data
+        if (refPmtId && refund.id) {
+          const rfOutcome  = event.event === "refund.processed" ? "refunded" : "captured";
+          const rfStatus   = event.event === "refund.created"   ? "initiated"
+                           : event.event === "refund.processed" ? "processed"
+                           : event.event === "refund.failed"    ? "failed"
+                                                                : "updated";
+          void updatePaymentAttemptRefund(
+            schoolId, refPmtId, refund.id, rfStatus,
+            refund.amount != null ? Number(refund.amount) : null,
+            now,
+            event.event === "refund.processed" ? now : null,
+            rfOutcome,
+          ).catch(err => console.warn("[webhook] updatePaymentAttemptRefund error:", err));
+        }
+
         console.log(`[razorpay webhook] ${event.event} fee #${rfFeeRecordId} refund ${refund.id ?? "?"}`);
 
       // ── payment.dispute.* ────────────────────────────────────────────────────
@@ -1905,6 +2042,55 @@ export function registerFeesRoutes(app: Express) {
     } catch (auditErr) {
       // Non-fatal — log but don't fail the response
       console.warn("[clear-failed-order] audit log write failed:", auditErr);
+    }
+
+    // Write to payment_attempts (non-fatal)
+    const attemptOutcome = isCancelled ? "cancelled" : "failed";
+    void upsertPaymentAttempt({
+      schoolId,
+      studentId:         studentId ?? null,
+      feeRecordId:       feeRecordId ?? null,
+      sessionId:         clientFeeSessionId,
+      outcome:           attemptOutcome,
+      razorpayPaymentId: razorpayPaymentId ?? null,
+      razorpayOrderId:   razorpayOrderId   ?? null,
+      amountPaise:       clientFeeAmount != null ? clientFeeAmount * 100 : null,
+      errorCode:         errorCode         ?? null,
+      errorDescription:  (req.body as any).errorDescription ?? null,
+      errorSource:       errorSource       ?? null,
+      errorStep:         errorStep         ?? null,
+      errorReason:       errorReason       ?? null,
+      webhookVerified:   false,
+      source:            "client",
+    }).catch(err => console.warn("[clear-failed-order] payment_attempts write failed:", err));
+
+    // If a Razorpay payment ID is present (client-side failure, not a voluntary
+    // dismiss), background-fetch from Razorpay API for card / error enrichment.
+    if (razorpayPaymentId && !isCancelled) {
+      void (async () => {
+        try {
+          const clientCreds = await resolveRazorpayCredentials(schoolId);
+          if (!clientCreds) return;
+          const { paymentData, orderData } = await fetchRazorpayData(razorpayPaymentId, razorpayOrderId ?? null, clientCreds);
+          if (paymentData) {
+            await upsertPaymentAttempt({
+              schoolId,
+              studentId:   studentId ?? null,
+              feeRecordId: feeRecordId ?? null,
+              sessionId:   clientFeeSessionId,
+              outcome:     "failed",
+              razorpayPaymentId,
+              razorpayOrderId:   razorpayOrderId ?? null,
+              source:      "client",
+              ...mapRazorpayPayment(paymentData),
+              razorpayOrderData: orderData,
+              apiSyncedAt: new Date(),
+            });
+          }
+        } catch (enrichErr) {
+          console.warn("[clear-failed-order] enrichment failed:", enrichErr);
+        }
+      })();
     }
 
     res.json({ ok: true });
@@ -3516,166 +3702,113 @@ td:last-child{font-weight:600;word-break:break-all;}
   // Session-scoped: when viewSessionId is set only attempts for that academic
   // session are returned (via fee_records.session_id or the attempt's own
   // session_id column written at INSERT time).
+  // ── Payment attempts: reads from the unified payment_attempts table ─────────
+  // Historical rows were back-filled from payment_records + fee_audit_log at
+  // startup.  All new attempts are written here by the webhook and
+  // clear-failed-order handlers.
   app.get("/api/student/fees/payment-attempts", async (req, res) => {
     if (!req.session?.studentId) return res.status(403).json({ message: "Student access required" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(403).json({ message: "Student not found" });
 
-    // Session filter: honour the session the student is currently viewing.
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-
-    // Build optional session WHERE fragments — inline sql`` so drizzle
-    // parameterises viewSessionId safely.
-    const paidSessionCond   = viewSessionId != null
-      ? sql`AND COALESCE(pr.session_id, fr.session_id) = ${viewSessionId}`
-      : sql``;
-    const failedSessionCond = viewSessionId != null
-      ? sql`AND COALESCE(al.session_id, fr.session_id) = ${viewSessionId}`
-      : sql``;
-    const orphanSessionCond = viewSessionId != null
-      ? sql`AND fr.session_id = ${viewSessionId}`
+    const sessionCond = viewSessionId != null
+      ? sql`AND COALESCE(pa.session_id, fr.session_id) = ${viewSessionId}`
       : sql``;
 
     try {
-      // Successful payments (from payment_records)
-      const paid = await db.execute(sql`
+      const rows = await db.execute(sql`
         SELECT
-          pr.id,
-          'paid'::text                                AS type,
-          FALSE                                       AS "isCancelled",
-          pr.fee_record_id                            AS "feeRecordId",
-          fr.fee_type                                 AS "feeType",
-          fr.fee_type                                 AS "feeName",
-          pr.amount,
-          pr.received_date                            AS "date",
-          pr.receipt_number                           AS "receiptNumber",
-          pr.payment_method                           AS "paymentMethod",
-          pr.payment_mode                             AS "paymentMode",
-          pr.card_last4                               AS "cardLast4",
-          pr.bank_name                                AS "bankName",
-          pr.vpa                                      AS "vpa",
-          pr.razorpay_payment_id                      AS "razorpayPaymentId",
-          pr.razorpay_order_id                        AS "razorpayOrderId",
-          NULL::text                                  AS "errorDescription",
-          NULL::text                                  AS "errorCode",
-          NULL::text                                  AS "errorSource",
-          NULL::text                                  AS "errorStep",
-          NULL::text                                  AS "errorReason",
-          pr.created_at                               AS "createdAt"
-        FROM payment_records pr
-        LEFT JOIN fee_records fr ON fr.id = pr.fee_record_id
-        WHERE pr.student_id = ${student.id}
-          AND pr.school_id  = ${student.schoolId}
-          ${paidSessionCond}
-        ORDER BY pr.created_at DESC
-        LIMIT 200
+          pa.id,
+
+          -- Backward-compat fields (existing display logic uses these)
+          CASE WHEN pa.outcome = 'captured' THEN 'paid' ELSE 'failed' END AS type,
+          (pa.outcome = 'cancelled')                                       AS "isCancelled",
+          pa.outcome,
+
+          -- Fee info
+          pa.fee_record_id                                                 AS "feeRecordId",
+          fr.fee_type                                                      AS "feeType",
+          fr.fee_type                                                      AS "feeName",
+
+          -- Amount: display rupees for existing logic; raw paise for breakdowns
+          COALESCE(pa.amount_paise, fr.amount * 100) / 100                AS amount,
+          pa.amount_paise                                                  AS "amountPaise",
+          pa.amount_captured_paise                                         AS "amountCapturedPaise",
+          pa.amount_refunded_paise                                         AS "amountRefundedPaise",
+          pa.razorpay_fee_paise                                            AS "razorpayFeePaise",
+          pa.razorpay_tax_paise                                            AS "razorpayTaxPaise",
+          COALESCE(pa.currency, 'INR')                                     AS currency,
+
+          -- Dates
+          pa.created_at                                                    AS "date",
+          COALESCE(pa.receipt_number, pr.receipt_number)                   AS "receiptNumber",
+
+          -- Payment method
+          pa.payment_method                                                AS "paymentMethod",
+          pa.payment_method                                                AS "paymentMode",
+          pa.card_last4                                                    AS "cardLast4",
+          pa.card_network                                                  AS "cardNetwork",
+          pa.card_type                                                     AS "cardType",
+          pa.card_issuer                                                   AS "cardIssuer",
+          pa.card_name                                                     AS "cardName",
+          pa.card_international                                            AS "cardInternational",
+          pa.bank_name                                                     AS "bankName",
+          pa.bank_rrn                                                      AS "bankRrn",
+          pa.bank_auth_code                                                AS "bankAuthCode",
+          pa.vpa,
+          pa.wallet,
+
+          -- Identifiers
+          pa.razorpay_payment_id                                           AS "razorpayPaymentId",
+          pa.razorpay_order_id                                             AS "razorpayOrderId",
+
+          -- Customer (payer_email and payer_contact are stored by the server;
+          -- client should mask them before display)
+          pa.payer_name                                                    AS "payerName",
+          pa.payer_email                                                   AS "payerEmail",
+          pa.payer_contact                                                 AS "payerContact",
+
+          -- Failure
+          pa.error_code                                                    AS "errorCode",
+          pa.error_description                                             AS "errorDescription",
+          pa.error_source                                                  AS "errorSource",
+          pa.error_step                                                    AS "errorStep",
+          pa.error_reason                                                  AS "errorReason",
+
+          -- Razorpay lifecycle timestamps (from API; returned as ISO strings)
+          pa.rzp_created_at                                                AS "rzpCreatedAt",
+          pa.rzp_authorized_at                                             AS "rzpAuthorizedAt",
+          pa.rzp_captured_at                                               AS "rzpCapturedAt",
+          pa.rzp_failed_at                                                 AS "rzpFailedAt",
+
+          -- Refund
+          pa.refund_id                                                     AS "refundId",
+          pa.refund_status                                                 AS "refundStatus",
+          pa.refund_amount_paise                                           AS "refundAmountPaise",
+          pa.refund_initiated_at                                           AS "refundInitiatedAt",
+          pa.refund_processed_at                                           AS "refundProcessedAt",
+
+          pa.api_synced_at                                                 AS "apiSyncedAt",
+          pa.created_at                                                    AS "createdAt"
+
+        FROM payment_attempts pa
+        LEFT JOIN fee_records fr     ON fr.id = pa.fee_record_id
+        -- Pull receipt_number from payment_records as a fallback for migrated rows
+        LEFT JOIN payment_records pr ON  pr.school_id          = pa.school_id
+                                     AND pr.fee_record_id      = pa.fee_record_id
+                                     AND pr.razorpay_payment_id = pa.razorpay_payment_id
+                                     AND pa.razorpay_payment_id IS NOT NULL
+
+        WHERE pa.school_id  = ${student.schoolId}
+          AND pa.student_id = ${student.id}
+          ${sessionCond}
+
+        ORDER BY pa.created_at DESC
+        LIMIT 400
       `);
 
-      // Failed and cancelled payment attempts (from fee_audit_log)
-      // action = 'payment_failed'    → real gateway failure (card declined, etc.)
-      // action = 'payment_cancelled' → student voluntarily closed checkout modal
-      // Match on student_id directly OR via entity_id → fee_records.student_id
-      // (webhook entries may have student_id = NULL when Razorpay notes were incomplete).
-      const failed = await db.execute(sql`
-        SELECT
-          al.id,
-          'failed'::text                              AS type,
-          (al.action = 'payment_cancelled')           AS "isCancelled",
-          al.entity_id::int                           AS "feeRecordId",
-          fr.fee_type                                 AS "feeType",
-          fr.fee_type                                 AS "feeName",
-          COALESCE(al.amount, fr.amount)              AS amount,
-          al.created_at                               AS "date",
-          NULL::text                                  AS "receiptNumber",
-          al.payment_method                           AS "paymentMethod",
-          NULL::text                                  AS "paymentMode",
-          NULL::text                                  AS "cardLast4",
-          NULL::text                                  AS "bankName",
-          NULL::text                                  AS "vpa",
-          al.razorpay_payment_id                      AS "razorpayPaymentId",
-          al.razorpay_order_id                        AS "razorpayOrderId",
-          al.description                              AS "errorDescription",
-          al.error_code                               AS "errorCode",
-          al.error_source                             AS "errorSource",
-          al.error_step                               AS "errorStep",
-          al.error_reason                             AS "errorReason",
-          al.created_at                               AS "createdAt"
-        FROM fee_audit_log al
-        LEFT JOIN fee_records fr ON fr.id = al.entity_id::int
-        WHERE al.school_id   = ${student.schoolId}
-          AND al.action      IN ('payment_failed', 'payment_cancelled')
-          AND al.entity_type = 'fee_record'
-          AND al.entity_id   IS NOT NULL
-          AND (
-            al.student_id = ${student.id}
-            OR fr.student_id = ${student.id}
-          )
-          ${failedSessionCond}
-        ORDER BY al.created_at DESC
-        LIMIT 200
-      `);
-
-      // Fallback: paid fee_records with NO matching payment_record.
-      // This catches the case where the webhook updated fee_records to Paid
-      // but the payment_records INSERT failed (e.g. missing DB column at the
-      // time). Without this, those payments silently vanish from History.
-      const orphanPaid = await db.execute(sql`
-        SELECT
-          fr.id                                       AS id,
-          'paid'::text                                AS type,
-          FALSE                                       AS "isCancelled",
-          fr.id                                       AS "feeRecordId",
-          fr.fee_type                                 AS "feeType",
-          fr.fee_type                                 AS "feeName",
-          fr.amount,
-          fr.paid_date                                AS "date",
-          fr.receipt_number                           AS "receiptNumber",
-          'Online'::text                              AS "paymentMethod",
-          NULL::text                                  AS "paymentMode",
-          NULL::text                                  AS "cardLast4",
-          NULL::text                                  AS "bankName",
-          NULL::text                                  AS "vpa",
-          NULL::text                                  AS "razorpayPaymentId",
-          NULL::text                                  AS "razorpayOrderId",
-          NULL::text                                  AS "errorDescription",
-          NULL::text                                  AS "errorCode",
-          NULL::text                                  AS "errorSource",
-          NULL::text                                  AS "errorStep",
-          NULL::text                                  AS "errorReason",
-          fr.paid_date                                AS "createdAt"
-        FROM fee_records fr
-        WHERE fr.student_id  = ${student.id}
-          AND fr.school_id   = ${student.schoolId}
-          AND fr.status      = 'Paid'
-          AND fr.receipt_number IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM payment_records pr
-            WHERE pr.fee_record_id = fr.id
-          )
-          ${orphanSessionCond}
-        ORDER BY fr.paid_date DESC
-        LIMIT 50
-      `);
-
-      // Warn when orphan rows are found — the transaction guard should prevent
-      // new orphans; any rows here indicate a pre-fix payment or a transaction
-      // failure that ops should investigate.
-      if (orphanPaid.rows.length > 0) {
-        console.warn(
-          `[payment-attempts] orphan fallback returned ${orphanPaid.rows.length} row(s) for student #${student.id} ` +
-          `— fee_records marked Paid with no matching payment_record. ` +
-          `Investigate fee IDs: ${orphanPaid.rows.map((r: any) => r.id).join(", ")}`
-        );
-      }
-
-      // Merge and sort by createdAt descending
-      const all = [
-        ...paid.rows,
-        ...failed.rows,
-        ...orphanPaid.rows,
-      ].sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-      res.json(all);
+      res.json(rows.rows);
     } catch (err: any) {
       console.error("[/api/student/fees/payment-attempts]", err);
       res.status(500).json({ message: "Failed to load payment history" });
