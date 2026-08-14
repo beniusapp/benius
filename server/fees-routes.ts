@@ -3840,7 +3840,24 @@ td:last-child{font-weight:600;word-break:break-all;}
           pa.refund_processed_at                                           AS "refundProcessedAt",
 
           pa.api_synced_at                                                 AS "apiSyncedAt",
-          pa.created_at                                                    AS "createdAt"
+          pa.created_at                                                    AS "createdAt",
+
+          -- JSONB-extracted enrichment (no extra DB columns needed)
+          pa.razorpay_payment_data->'card'->>'id'                           AS "cardId",
+          pa.razorpay_payment_data->>'fee_bearer'                           AS "feeBearer",
+          COALESCE(
+            pa.razorpay_order_data->>'description',
+            pa.razorpay_payment_data->>'description'
+          )                                                                  AS description,
+          pa.razorpay_payment_data->'acquirer_data'->>'bank_transaction_id' AS "bankTransactionId",
+          pa.razorpay_payment_data->>'arn'                                  AS "refundArn",
+          pa.razorpay_order_data->'notes'                                   AS "orderNotes",
+
+          -- Sequential attempt number per fee record (1 = oldest, n = newest)
+          (ROW_NUMBER() OVER (
+            PARTITION BY COALESCE(pa.fee_record_id, pa.id)
+            ORDER BY pa.created_at ASC
+          ))::integer                                                        AS "attemptNumber"
 
         FROM payment_attempts pa
         LEFT JOIN fee_records fr     ON fr.id = pa.fee_record_id
