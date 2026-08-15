@@ -97,6 +97,47 @@ const FEE_PAID = {
   paidDate: "2026-08-12T00:00:00Z",
 };
 
+// Minimal PaymentAttempt fixture — feeRecordId matches FEE_PAID.id (42)
+// so the History card renders as data-testid="card-fee-paid-42".
+const PAYMENT_ATTEMPT_PAID = {
+  id: 999,
+  type: "paid" as const,
+  isCancelled: false,
+  outcome: "captured" as const,
+  feeRecordId: FEE_PAID.id,       // 42 — drives the card-fee-paid-{id} testid
+  feeType: FEE_PAID.feeType,
+  feeName: FEE_PAID.feeName,
+  amount: FEE_PAID.amount,
+  amountPaise: FEE_PAID.amount * 100,
+  amountCapturedPaise: FEE_PAID.amount * 100,
+  amountRefundedPaise: null,
+  razorpayFeePaise: null,
+  razorpayTaxPaise: null,
+  currency: "INR",
+  date: FEE_PAID.paidDate,
+  receiptNumber: FEE_PAID.receiptNumber,
+  paymentMethod: null,
+  paymentMode: null,
+  cardLast4: null, cardNetwork: null, cardType: null, cardIssuer: null,
+  cardName: null, cardInternational: null, cardEmi: null,
+  bankName: null, bankRrn: null, bankAuthCode: null,
+  vpa: null, wallet: null,
+  razorpayPaymentId: "pay_test_000",
+  razorpayOrderId: "order_test_000",
+  payerName: null, payerEmail: null, payerContact: null,
+  errorCode: null, errorDescription: null,
+  errorSource: null, errorStep: null, errorReason: null,
+  rzpCreatedAt: null, rzpAuthorizedAt: null,
+  rzpCapturedAt: FEE_PAID.paidDate, rzpFailedAt: null,
+  refundId: null, refundStatus: null,
+  refundAmountPaise: null, refundInitiatedAt: null, refundProcessedAt: null,
+  webhookEvent: "payment.captured",
+  attemptNumber: 1,
+  failed_count: 0,
+  last_failed_error: null,
+  sessionId: null,
+};
+
 const SUMMARY = {
   previousArrears: 0,
   currentMonthCharges: 10000,
@@ -153,7 +194,10 @@ function Wrapper({
 }
 
 /** Build a fresh QueryClient and pre-load all caches used by <StudentFees />. */
-function buildQueryClient(initialFees: object[]): QueryClient {
+function buildQueryClient(
+  initialFees: object[],
+  initialAttempts: object[] = [],
+): QueryClient {
   const qc = new QueryClient({
     defaultOptions: {
       queries: {
@@ -171,6 +215,9 @@ function buildQueryClient(initialFees: object[]): QueryClient {
   qc.setQueryData(["/api/student/fees/summary"], SUMMARY);
   qc.setQueryData(["/api/student/fees/portal-info"], PORTAL_RAZORPAY_ON);
   qc.setQueryData(["/api/student/fees/notification-history"], []);
+  // Pre-load payment attempts so the History tab renders correctly without
+  // triggering a real network fetch (staleTime:Infinity keeps it fresh).
+  qc.setQueryData(["/api/student/fees/payment-attempts"], initialAttempts);
   return qc;
 }
 
@@ -339,16 +386,18 @@ describe("StudentFees — Paid status after Razorpay payment (no page refresh)",
   it("fee card flips from Due to Paid after payment — no page reload", async () => {
     const qc = buildQueryClient([FEE_DUE]);
 
-    // After verify resolves the component will call refetchFees(); we update
-    // the cache directly (as invalidateQueries + refetch would do in prod)
-    // so the component re-renders with Paid status.
+    // After verify resolves the component calls refreshFeesData() which
+    // invalidates fees AND payment-attempts; both re-fetch.  We use dynamic
+    // payloads so the refetch returns the correct post-payment data.
     let feesPayload: object[] = [FEE_DUE];
+    let attemptsPayload: object[] = [];
     fetchSpy.mockImplementation((url: string) => {
       // portal-info always refetches on mount (staleTime:0) — must return valid data.
       if (url === "/api/student/fees/portal-info") return makeOkJson(PORTAL_RAZORPAY_ON);
-      // Fees/summary may be refetched after refreshFeesData(); return dynamic payload.
+      // Fees/summary/attempts may be refetched after refreshFeesData(); dynamic.
       if (url === "/api/student/fees") return makeOkJson(feesPayload);
       if (url === "/api/student/fees/summary") return makeOkJson(SUMMARY);
+      if (url === "/api/student/fees/payment-attempts") return makeOkJson(attemptsPayload);
       if (url === "/api/payments/create-order") {
         return makeOkJson({
           orderId: "order_test_000",
@@ -358,8 +407,9 @@ describe("StudentFees — Paid status after Razorpay payment (no page refresh)",
         });
       }
       if (url === "/api/payments/verify") {
-        // Flip feesPayload so the ensuing refetch (from refreshFeesData) sees Paid.
+        // Flip both payloads so the ensuing refetches see Paid + the paid attempt.
         feesPayload = [FEE_PAID];
+        attemptsPayload = [PAYMENT_ATTEMPT_PAID];
         return makeOkJson({ ok: true, receiptNumber: "RCP-TEST-001" });
       }
       return Promise.resolve(new Response(null, { status: 404 }));
@@ -487,8 +537,9 @@ describe("Fee card shows correct Paid/Due status from server data", () => {
   });
 
   it("fee card with status Paid appears in the History tab", async () => {
-    // Pre-load cache with a single Paid fee record.
-    const qc = buildQueryClient([FEE_PAID]);
+    // Pre-load cache with a Paid fee record and its corresponding payment attempt
+    // so the History tab renders the card immediately without a network fetch.
+    const qc = buildQueryClient([FEE_PAID], [PAYMENT_ATTEMPT_PAID]);
 
     render(
       <Wrapper queryClient={qc}>
@@ -556,9 +607,12 @@ describe("Fee card shows correct Paid/Due status from server data", () => {
       expect(screen.getByTestId(`card-fee-${FEE_DUE.id}`)).toBeInTheDocument(),
     );
 
-    // Simulate what refreshFeesData does: update the cache.
+    // Simulate what refreshFeesData does: update both caches atomically.
+    // The component invalidates both fees AND payment-attempts on verify;
+    // we mirror that here so the History tab has data to render.
     await act(async () => {
       qc.setQueryData(["/api/student/fees"], [FEE_PAID]);
+      qc.setQueryData(["/api/student/fees/payment-attempts"], [PAYMENT_ATTEMPT_PAID]);
     });
 
     // Switch to History tab and confirm the paid card now renders.

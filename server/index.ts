@@ -763,6 +763,32 @@ app.use((req, res, next) => {
       WHERE invoice_number IS NOT NULL;
   `);
 
+  // ── payment_attempts: cancel-deduplication index ──────────────────────────
+  // Ensures that re-submitted cancellation events for the same Razorpay order
+  // (no payment_id yet) produce exactly one row.  The INSERT … ON CONFLICT DO
+  // NOTHING in upsertPaymentAttempt() relies on this index to be idempotent.
+  //
+  // Before creating the index, remove any pre-existing duplicate rows that were
+  // inserted while the index was absent (keeping the earliest row per group so
+  // no data is lost — the duplicate rows are identical in all meaningful fields).
+  await pool.query(`
+    DELETE FROM payment_attempts
+    WHERE id NOT IN (
+      SELECT MIN(id)
+      FROM   payment_attempts
+      WHERE  razorpay_payment_id IS NULL
+        AND  razorpay_order_id   IS NOT NULL
+      GROUP BY school_id, razorpay_order_id
+    )
+    AND razorpay_payment_id IS NULL
+    AND razorpay_order_id   IS NOT NULL;
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS pa_school_order_no_payment
+      ON payment_attempts (school_id, razorpay_order_id)
+      WHERE razorpay_payment_id IS NULL;
+  `);
+
   // ── Schema drift guard ────────────────────────────────────────────────────
   // Verifies that every column defined in shared/schema.ts actually exists in
   // the database AFTER all migration statements above have been applied.

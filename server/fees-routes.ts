@@ -193,39 +193,24 @@ export async function acquireRazorpayOrder(
       if (existingStatus === "attempted") {
         // A payment attempt has been submitted for this order.
         //
-        // Safety window: within the checkout timeout, a capture or webhook can
-        // still complete after the modal closes — block to prevent a duplicate.
+        // Safety rule: an "attempted" order ALWAYS blocks creation of a new order,
+        // regardless of whether the local checkout window has elapsed.
         //
-        // However once the application-side checkout deadline has passed AND no
-        // capture has been recorded in our system, the attempt is definitively
-        // abandoned. Razorpay will expire the order; we clear the lock early so
-        // the student can retry without waiting for Razorpay's own expiry job.
-        const rawExpiry = locked.razorpay_order_expires_at;
-        let isCheckoutWindowElapsed = false;
-        if (rawExpiry) {
-          isCheckoutWindowElapsed = new Date(rawExpiry as string).getTime() < Date.now();
-        } else if (typeof existingCreatedAt === "number") {
-          isCheckoutWindowElapsed = (Date.now() / 1000 - existingCreatedAt) > CHECKOUT_TIMEOUT_SECONDS;
-        }
-
-        if (!isCheckoutWindowElapsed) {
-          // Still within the safety window — block.
-          result = {
-            ok: false, status: 409, code: "PAYMENT_IN_PROGRESS",
-            message: "A payment was already submitted for this fee. If it was successful, the status will update automatically — please check back in a few minutes.",
-          };
-          return;
-        }
-        // Checkout window elapsed — clear the stale order and fall through to create a fresh one.
-        console.log(
-          `[razorpay create-order] Clearing stale attempted order ${locked.razorpay_order_id} ` +
-          `on fee #${feeRecordId} (checkout window elapsed)`
-        );
-        await tx.execute(sql`
-          UPDATE fee_records
-          SET razorpay_order_id = NULL, razorpay_order_expires_at = NULL
-          WHERE id = ${feeRecordId} AND school_id = ${schoolId}
-        `);
+        // Reason: Razorpay can capture a payment and deliver the webhook seconds
+        // to minutes after the client modal closes — well after the application-
+        // side checkout deadline.  The local deadline expiring is NOT proof that
+        // the payment failed.  Allowing a new order while the old one is still
+        // in "attempted" state risks a duplicate charge (both orders captured).
+        //
+        // Recovery path: once Razorpay transitions the order to a terminal state
+        // ("expired" or "paid") the webhook clears razorpay_order_id and the
+        // student can retry normally.  The student sees a clear status message
+        // in the meantime.
+        result = {
+          ok: false, status: 409, code: "PAYMENT_IN_PROGRESS",
+          message: "A payment was already submitted for this fee. If it was successful, the status will update automatically — please check back in a few minutes.",
+        };
+        return;
       }
 
       if (existingStatus === "created") {

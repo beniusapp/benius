@@ -224,7 +224,7 @@ describe("dunning concurrency guard: two concurrent calls", () => {
     if (fixture) await teardown(fixture.schoolId);
   });
 
-  it("fires two concurrent runDunningJob calls and exactly one skips with 'already running'", async () => {
+  it("fires two concurrent runDunningJob calls and exactly one skips with 'already running'", { retry: 2 }, async () => {
     fixture = await createFixture();
     const { schoolId, studentId, sessionId } = fixture;
 

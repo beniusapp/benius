@@ -207,7 +207,7 @@ describe("acquireRazorpayOrder: basic paths", () => {
     if (result.ok) return;
     expect(result.status).toBe(409);
     expect((result as any).code).toBe("PAYMENT_IN_PROGRESS");
-    expect(result.message).toMatch(/already in progress/i);
+    expect(result.message).toMatch(/payment window is already open/i);
   });
 
   it("returns 409 PAYMENT_IN_PROGRESS when existing order is 'attempted'", async () => {

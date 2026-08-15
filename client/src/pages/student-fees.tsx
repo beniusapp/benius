@@ -1141,6 +1141,9 @@ export default function StudentFees() {
           refetchSummary();
           queryClient.invalidateQueries({ queryKey: ["/api/student/fees"] });
           queryClient.invalidateQueries({ queryKey: ["/api/student/fees/summary"] });
+          // Invalidate payment-attempts so the History tab shows the new paid
+          // attempt immediately — without this the tab only updates via SSE.
+          queryClient.invalidateQueries({ queryKey: ["/api/student/fees/payment-attempts"] });
         };
 
         // ── Checkout-timeout tracking ────────────────────────────────────────
@@ -1829,7 +1832,7 @@ export default function StudentFees() {
                           className="rounded-3xl overflow-hidden"
                           style={{ background: "rgba(255,255,255,0.95)", border: "1px solid rgba(255,255,255,0.8)",
                             boxShadow: "0 4px 20px rgba(0,0,0,0.07)" }}
-                          data-testid={isPaid ? `card-attempt-paid-${attempt.id}` : `card-attempt-failed-${attempt.id}`}>
+                          data-testid={isPaid ? `card-fee-paid-${attempt.feeRecordId ?? attempt.id}` : `card-attempt-failed-${attempt.id}`}>
                           {/* Accent bar */}
                           <div className="h-1 w-full" style={{ background: accentGradient }} />
                           <div className="p-3">
