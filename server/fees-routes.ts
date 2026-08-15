@@ -2763,11 +2763,15 @@ export function registerFeesRoutes(app: Express) {
   app.get("/api/admin/fees/next-receipt", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
-    const prefix = String(req.query.prefix ?? "").toUpperCase();
-    if (!["AF", "OF"].includes(prefix)) {
-      return res.status(400).json({ message: "prefix must be AF or OF" });
+    // Accept "INV-" (invoice), "AF" (legacy fee records), "OF" (offline receipt).
+    // Raw prefix from query is case-sensitive to preserve the hyphen in "INV-".
+    const rawPrefix = String(req.query.prefix ?? "");
+    if (!["INV-", "AF", "OF"].includes(rawPrefix)) {
+      return res.status(400).json({ message: "prefix must be INV-, AF, or OF" });
     }
-    const preview = await storage.peekReceiptNumber(schoolId, prefix);
+    // INV- uses 4-digit padding; legacy prefixes use 2-digit
+    const padLength = rawPrefix === "INV-" ? 4 : 2;
+    const preview = await storage.peekReceiptNumber(schoolId, rawPrefix, padLength);
     res.json({ preview });
   });
 

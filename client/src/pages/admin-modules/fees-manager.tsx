@@ -1657,10 +1657,10 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
   // Preview next AF receipt number — peek only, no DB write
   const { data: afPreviewData } = useQuery<{ preview: string }>({
-    queryKey: ["/api/admin/fees/next-receipt", "AF", showForm],
+    queryKey: ["/api/admin/fees/next-receipt", "INV-", showForm],
     queryFn: async () => {
-      const r = await sessionFetch("/api/admin/fees/next-receipt?prefix=AF");
-      if (!r.ok) return { preview: "AF—" };
+      const r = await sessionFetch("/api/admin/fees/next-receipt?prefix=INV-");
+      if (!r.ok) return { preview: "INV-—" };
       return r.json();
     },
     enabled: showForm && !editing,
@@ -1897,7 +1897,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                 <Banknote className="w-4 h-4" /> Record Offline Payment
               </Button>
               <Button size="sm" onClick={openCreate} className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1">
-                <Plus className="w-4 h-4" /> Add Fee
+                <Plus className="w-4 h-4" /> Add Invoice
               </Button>
             </>
           )}
@@ -2490,14 +2490,14 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       <Dialog open={showForm} onOpenChange={v => { if (!v) { setShowForm(false); setEditing(null); setAddFeeSuccessId(null); } }}>
         <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-cyan-400">{editing ? "Edit Fee Record" : "Add Fee Record"}</DialogTitle>
+            <DialogTitle className="text-cyan-400">{editing ? "Edit Fee Record" : "Add Invoice"}</DialogTitle>
           </DialogHeader>
           {addFeeSuccessId !== null ? (
             <div className="space-y-4 py-2">
               <div className="p-4 rounded-xl bg-emerald-900/20 border border-emerald-700/40 text-center">
                 <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2" />
-                <p className="text-emerald-400 font-semibold text-lg">Fee Added</p>
-                <p className="text-white/60 text-sm mt-1">The fee record has been saved successfully.</p>
+                <p className="text-emerald-400 font-semibold text-lg">Invoice Created</p>
+                <p className="text-white/60 text-sm mt-1">The invoice has been saved successfully.</p>
               </div>
               <Button
                 className="w-full bg-white/10 hover:bg-white/20 text-white gap-2"
@@ -2513,7 +2513,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
           <>
           {!editing && (
             <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800/60 border border-white/10">
-              <span className="text-white/40 text-xs">Receipt No.</span>
+              <span className="text-white/40 text-xs">Invoice No.</span>
               <span className="font-mono text-sm text-cyan-300 font-semibold tracking-wider">{afPreview}</span>
               <span className="text-white/20 text-[10px] ml-auto">auto-assigned on save</span>
             </div>
