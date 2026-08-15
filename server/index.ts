@@ -839,6 +839,9 @@ app.use((req, res, next) => {
             // Key includes year-month so we don't skip a new month's invoice just because last month exists
             const key = `${enrollment.studentId}:${structure.feeType}:${dueDate.slice(0, 7)}`;
             if (existingSet.has(key)) { skipped++; continue; }
+            // Assign a permanent invoice number — stored in invoice_number, never in receipt_number.
+            // The INV- sequence is school-scoped, atomic, and never reused or reset.
+            const invoiceNumber = await storage.nextReceiptNumber(school.id, "INV-", 4);
             await storage.createFeeRecord({
               schoolId: school.id,
               studentId: enrollment.studentId,
@@ -848,6 +851,7 @@ app.use((req, res, next) => {
               dueDate,
               status: "Due",
               notes: `Auto-generated on ${now.toLocaleDateString("en-IN")} from fee structure: ${structure.name}`,
+              invoiceNumber,
             });
             created++;
           }

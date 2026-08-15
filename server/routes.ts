@@ -4348,10 +4348,12 @@ export async function registerRoutes(
     // so fall back to paidDate or today to satisfy the constraint.
     const today = new Date().toISOString().split("T")[0];
     const dueDateForDb = parsed.data.dueDate || parsed.data.paidDate || today;
-    // Auto-generate a non-reusable INV invoice number (sequence never resets on deletion).
+    // Auto-generate a permanent invoice number stored in invoice_number.
     // Format: INV-0001, INV-0002 … (4-digit zero-padded, per-school, never reset by session).
-    const invReceipt = await storage.nextReceiptNumber(schoolId, "INV-", 4);
-    const rec = await storage.createFeeRecord({ ...parsed.data, dueDate: dueDateForDb, schoolId, sessionId: activeSession?.id ?? null, createdBy: req.session.userId, receiptNumber: invReceipt });
+    // invoice_number is SEPARATE from receipt_number — it must NEVER be overwritten by payment.
+    // receipt_number is left as-is from parsed.data (admin-provided reference, or null for new invoices).
+    const invNumber = await storage.nextReceiptNumber(schoolId, "INV-", 4);
+    const rec = await storage.createFeeRecord({ ...parsed.data, dueDate: dueDateForDb, schoolId, sessionId: activeSession?.id ?? null, createdBy: req.session.userId, invoiceNumber: invNumber });
 
     // Auto-create a payment record so payment history is always populated for Paid records.
     if (parsed.data.status === "Paid") {
@@ -4374,7 +4376,7 @@ export async function registerRoutes(
       ? `${studentCheck.name} (${studentCheck.cls ?? ""}${studentCheck.section ? "-" + studentCheck.section : ""})`
       : `Student #${parsed.data.studentId}`;
     await appendFeeRecordAudit(req, schoolId, "create", "fee_record", rec.id,
-      `Added fee record #${rec.receiptNumber ?? rec.id}: ${parsed.data.feeType} ₹${parsed.data.amount} for ${createStuLabel} (${parsed.data.status})`,
+      `Added invoice ${rec.invoiceNumber ?? `#${rec.id}`}: ${parsed.data.feeType} ₹${parsed.data.amount} for ${createStuLabel} (${parsed.data.status})`,
       parsed.data.studentId);
     res.status(201).json(rec);
   });

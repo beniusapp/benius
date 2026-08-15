@@ -2589,6 +2589,9 @@ export function registerFeesRoutes(app: Express) {
         }
         continue;
       }
+      // Assign a permanent invoice number — stored in invoice_number, never in receipt_number.
+      // The INV- sequence is school-scoped, atomic, and never reused or reset.
+      const invoiceNumber = await storage.nextReceiptNumber(schoolId, "INV-", 4);
       await storage.createFeeRecord({
         schoolId,
         studentId: enrollment.studentId,
@@ -2599,6 +2602,7 @@ export function registerFeesRoutes(app: Express) {
         status: "Due",
         academicYear: activeSession.sessionName,
         notes: null,
+        invoiceNumber,
       });
       created++;
     }
@@ -2716,11 +2720,15 @@ export function registerFeesRoutes(app: Express) {
         }
         continue;
       }
+      // Assign a permanent invoice number — stored in invoice_number, never in receipt_number.
+      // The INV- sequence is school-scoped, atomic, and never reused or reset.
+      const invoiceNumber = await storage.nextReceiptNumber(schoolId, "INV-", 4);
       await storage.createFeeRecord({
         schoolId, studentId: enrollment.studentId, sessionId,
         feeType: structure.feeType, amount: structure.amount, dueDate, status: "Due",
         academicYear: invoiceSession?.sessionName ?? null,
         notes: null,
+        invoiceNumber,
       });
       created++;
     }
