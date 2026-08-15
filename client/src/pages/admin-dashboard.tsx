@@ -59,14 +59,26 @@ interface AdminProfileResponse {
   isInitialized: boolean;
   hasPin: boolean;
   logoUrl: string | null;
-  // School Information
-  schoolAddress: string | null;
+  // Contact & Location
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  state: string | null;
+  pinCode: string | null;
+  country: string | null;
   schoolPhone: string | null;
   schoolEmail: string | null;
   schoolWebsite: string | null;
+  // Academic Identity
   schoolBoard: string | null;
   schoolType: string | null;
+  affiliationNumber: string | null;
+  udiseCode: string | null;
   establishedYear: number | null;
+  // Legal & Tax
+  registrationNumber: string | null;
+  pan: string | null;
+  gstin: string | null;
 }
 
 interface SecurityAuditEntry {
@@ -157,14 +169,35 @@ const profileSchema = z.object({
   recoveryPhone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Only digits allowed").optional().or(z.literal("")),
 });
 
+const CUR_YEAR = new Date().getFullYear();
+
 const schoolInfoSchema = z.object({
-  schoolAddress:   z.string().max(300).optional().or(z.literal("")),
-  schoolPhone:     z.string().max(20).regex(/^[\d\s\-+()]*$/, "Invalid phone").optional().or(z.literal("")),
-  schoolEmail:     z.string().email("Valid email").optional().or(z.literal("")),
-  schoolWebsite:   z.string().url("Valid URL (include https://)").optional().or(z.literal("")),
-  schoolBoard:     z.string().max(100).optional().or(z.literal("")),
-  schoolType:      z.string().max(60).optional().or(z.literal("")),
-  establishedYear: z.string().regex(/^(\d{4})?$/, "4-digit year").optional().or(z.literal("")),
+  // Contact & Location
+  addressLine1:       z.string().min(1, "Address Line 1 is required").max(200),
+  addressLine2:       z.string().max(200).optional().or(z.literal("")),
+  city:               z.string().min(1, "City is required").max(100),
+  state:              z.string().min(1, "State is required").max(100),
+  pinCode:            z.string().min(1, "PIN code is required")
+                        .regex(/^[1-9][0-9]{5}$/, "Enter a valid 6-digit PIN code"),
+  country:            z.string().max(60).optional().or(z.literal("")),
+  schoolPhone:        z.string().min(1, "School phone is required")
+                        .regex(/^[\d\s+\-()/]{7,20}$/, "Enter a valid phone number"),
+  schoolEmail:        z.string().min(1, "School email is required")
+                        .email("Enter a valid email address"),
+  schoolWebsite:      z.string().url("Enter a valid URL starting with https://").optional().or(z.literal("")),
+  // Academic Identity
+  schoolBoard:        z.string().max(100).optional().or(z.literal("")),
+  schoolType:         z.string().max(60).optional().or(z.literal("")),
+  affiliationNumber:  z.string().max(50).optional().or(z.literal("")),
+  udiseCode:          z.string().regex(/^(\d{11})?$/, "UDISE code must be exactly 11 digits").optional().or(z.literal("")),
+  establishedYear:    z.string()
+                        .refine(v => !v || (/^\d{4}$/.test(v) && +v >= 1800 && +v <= CUR_YEAR),
+                          { message: `Enter a valid year between 1800 and ${CUR_YEAR}` })
+                        .optional().or(z.literal("")),
+  // Legal & Tax
+  registrationNumber: z.string().max(100).optional().or(z.literal("")),
+  pan:                z.string().regex(/^([A-Z]{5}[0-9]{4}[A-Z]{1})?$/, "Invalid PAN (e.g. AABCP1234C)").optional().or(z.literal("")),
+  gstin:              z.string().regex(/^([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})?$/, "Invalid GSTIN format").optional().or(z.literal("")),
 });
 
 function useCountUp(target: number, duration = 1100) {
@@ -509,30 +542,53 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
   const schoolInfoForm = useForm<z.infer<typeof schoolInfoSchema>>({
     resolver: zodResolver(schoolInfoSchema),
     defaultValues: {
-      schoolAddress: "", schoolPhone: "", schoolEmail: "",
-      schoolWebsite: "", schoolBoard: "", schoolType: "", establishedYear: "",
+      addressLine1: "", addressLine2: "", city: "", state: "",
+      pinCode: "", country: "India", schoolPhone: "", schoolEmail: "",
+      schoolWebsite: "", schoolBoard: "", schoolType: "",
+      affiliationNumber: "", udiseCode: "", establishedYear: "",
+      registrationNumber: "", pan: "", gstin: "",
     },
     values: {
-      schoolAddress:   profile?.schoolAddress   ?? "",
-      schoolPhone:     profile?.schoolPhone      ?? "",
-      schoolEmail:     profile?.schoolEmail      ?? "",
-      schoolWebsite:   profile?.schoolWebsite    ?? "",
-      schoolBoard:     profile?.schoolBoard      ?? "",
-      schoolType:      profile?.schoolType       ?? "",
-      establishedYear: profile?.establishedYear  != null ? String(profile.establishedYear) : "",
+      addressLine1:       profile?.addressLine1       ?? "",
+      addressLine2:       profile?.addressLine2       ?? "",
+      city:               profile?.city               ?? "",
+      state:              profile?.state              ?? "",
+      pinCode:            profile?.pinCode            ?? "",
+      country:            profile?.country            ?? "India",
+      schoolPhone:        profile?.schoolPhone        ?? "",
+      schoolEmail:        profile?.schoolEmail        ?? "",
+      schoolWebsite:      profile?.schoolWebsite      ?? "",
+      schoolBoard:        profile?.schoolBoard        ?? "",
+      schoolType:         profile?.schoolType         ?? "",
+      affiliationNumber:  profile?.affiliationNumber  ?? "",
+      udiseCode:          profile?.udiseCode          ?? "",
+      establishedYear:    profile?.establishedYear    != null ? String(profile.establishedYear) : "",
+      registrationNumber: profile?.registrationNumber ?? "",
+      pan:                profile?.pan               ?? "",
+      gstin:              profile?.gstin             ?? "",
     },
   });
 
   const schoolInfoMutation = useMutation({
     mutationFn: async (data: z.infer<typeof schoolInfoSchema>) => {
       const res = await apiRequest("PATCH", "/api/admin/school/info", {
-        address:         data.schoolAddress   || null,
-        phone:           data.schoolPhone     || null,
-        email:           data.schoolEmail     || null,
-        website:         data.schoolWebsite   || null,
-        board:           data.schoolBoard     || null,
-        schoolType:      data.schoolType      || null,
-        establishedYear: data.establishedYear ? Number(data.establishedYear) : null,
+        addressLine1:       data.addressLine1       || null,
+        addressLine2:       data.addressLine2       || null,
+        city:               data.city               || null,
+        state:              data.state              || null,
+        pinCode:            data.pinCode            || null,
+        country:            data.country            || "India",
+        phone:              data.schoolPhone        || null,
+        email:              data.schoolEmail        || null,
+        website:            data.schoolWebsite      || null,
+        board:              data.schoolBoard        || null,
+        schoolType:         data.schoolType         || null,
+        affiliationNumber:  data.affiliationNumber  || null,
+        udiseCode:          data.udiseCode          || null,
+        establishedYear:    data.establishedYear ? Number(data.establishedYear) : null,
+        registrationNumber: data.registrationNumber || null,
+        pan:                data.pan               || null,
+        gstin:              data.gstin             || null,
       });
       return res.json();
     },
@@ -710,97 +766,146 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
 
           {tab === "school" && (
             <Form {...schoolInfoForm}>
-              <form onSubmit={schoolInfoForm.handleSubmit(d => schoolInfoMutation.mutate(d))} className="space-y-4">
+              <form onSubmit={schoolInfoForm.handleSubmit(d => schoolInfoMutation.mutate(d))} className="space-y-5">
 
-                {/* Identity — read-only */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="p-3 rounded-lg bg-gray-50 border space-y-0.5">
-                    <p className="text-[10px] text-gray-400 uppercase tracking-wide">School Name</p>
-                    <p className="font-semibold text-gray-800 text-sm leading-snug">{me.schoolName}</p>
-                  </div>
-                  <div className="p-3 rounded-lg bg-gray-50 border space-y-0.5">
-                    <p className="text-[10px] text-gray-400 uppercase tracking-wide">School Code</p>
-                    <p className="font-bold text-gray-700 text-sm font-mono">{me.schoolCode}</p>
-                  </div>
-                </div>
+                {/* ── 1. SCHOOL IDENTITY ──────────────────────────────────── */}
+                <div className="space-y-3">
+                  <p className="text-[11px] font-bold text-gray-500 uppercase tracking-widest">School Identity</p>
 
-                {/* ── School Logo ────────────────────────────────────────── */}
-                <div className="p-3 rounded-lg bg-gray-50 border space-y-3">
-                  <p className="text-xs text-gray-500 font-medium">School Logo</p>
-                  <div className="flex items-center gap-4">
-                    <div className="w-16 h-16 rounded-xl border-2 border-dashed border-gray-200 bg-white flex items-center justify-center overflow-hidden flex-shrink-0">
-                      {profile?.logoUrl
-                        ? <img src={profile.logoUrl} alt="School logo" className="w-full h-full object-contain" />
-                        : <Building2 className="w-7 h-7 text-gray-300" />}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="p-3 rounded-lg bg-gray-50 border space-y-0.5">
+                      <p className="text-[10px] text-gray-400 uppercase tracking-wide">School Name</p>
+                      <p className="font-semibold text-gray-800 text-sm leading-snug">{me.schoolName}</p>
                     </div>
-                    <div className="flex-1 min-w-0 space-y-2">
-                      <p className="text-[11px] text-gray-400 leading-snug">
-                        PNG, JPG or WebP · max 5 MB<br />Recommended: 512 × 512 px
-                      </p>
-                      <div className="flex gap-2 flex-wrap">
-                        <button type="button" onClick={() => logoFileInputRef.current?.click()}
-                          disabled={logoUploading}
-                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-60">
-                          {logoUploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
-                          {profile?.logoUrl ? "Replace" : "Upload"}
-                        </button>
-                        {profile?.logoUrl && (
-                          <button type="button" onClick={handleLogoRemove}
-                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
-                            <Trash2 className="w-3 h-3" />Remove
+                    <div className="p-3 rounded-lg bg-gray-50 border space-y-0.5">
+                      <p className="text-[10px] text-gray-400 uppercase tracking-wide">School Code</p>
+                      <p className="font-bold text-gray-700 text-sm font-mono">{me.schoolCode}</p>
+                    </div>
+                  </div>
+
+                  {/* Logo */}
+                  <div className="p-3 rounded-lg bg-gray-50 border space-y-3">
+                    <p className="text-xs text-gray-500 font-medium">School Logo</p>
+                    <div className="flex items-center gap-4">
+                      <div className="w-16 h-16 rounded-xl border-2 border-dashed border-gray-200 bg-white flex items-center justify-center overflow-hidden flex-shrink-0">
+                        {profile?.logoUrl
+                          ? <img src={profile.logoUrl} alt="School logo" className="w-full h-full object-contain" />
+                          : <Building2 className="w-7 h-7 text-gray-300" />}
+                      </div>
+                      <div className="flex-1 min-w-0 space-y-2">
+                        <p className="text-[11px] text-gray-400 leading-snug">PNG, JPG or WebP · max 5 MB<br />Recommended: 512 × 512 px</p>
+                        <div className="flex gap-2 flex-wrap">
+                          <button type="button" onClick={() => logoFileInputRef.current?.click()} disabled={logoUploading}
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-60">
+                            {logoUploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                            {profile?.logoUrl ? "Replace" : "Upload"}
                           </button>
-                        )}
+                          {profile?.logoUrl && (
+                            <button type="button" onClick={handleLogoRemove}
+                              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
+                              <Trash2 className="w-3 h-3" />Remove
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
+                  <input ref={logoFileInputRef} type="file" accept="image/jpeg,image/jpg,image/png,image/webp"
+                    className="hidden" onChange={handleLogoFilePick} />
                 </div>
-                <input ref={logoFileInputRef} type="file" accept="image/jpeg,image/jpg,image/png,image/webp"
-                  className="hidden" onChange={handleLogoFilePick} />
 
-                {/* ── Editable school details ────────────────────────────── */}
+                <div className="border-t" />
+
+                {/* ── 2. CONTACT & LOCATION ───────────────────────────────── */}
                 <div className="space-y-3">
-                  <p className="text-xs font-bold text-gray-600 uppercase tracking-wide">Contact & Location</p>
+                  <p className="text-[11px] font-bold text-gray-500 uppercase tracking-widest">Contact & Location</p>
 
-                  <FormField control={schoolInfoForm.control} name="schoolAddress" render={({ field }) => (
+                  <FormField control={schoolInfoForm.control} name="addressLine1" render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-xs">Address</FormLabel>
+                      <FormLabel className="text-xs">Address Line 1 <span className="text-red-500">*</span></FormLabel>
                       <FormControl>
-                        <textarea rows={2} placeholder="Street, City, State – PIN"
-                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
-                          {...field} />
+                        <Input className="text-sm" placeholder="Building / Street / Area" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+
+                  <FormField control={schoolInfoForm.control} name="addressLine2" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">Address Line 2 <span className="text-gray-400 font-normal">(optional)</span></FormLabel>
+                      <FormControl>
+                        <Input className="text-sm" placeholder="Landmark / Locality" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )} />
 
                   <div className="grid grid-cols-2 gap-3">
-                    <FormField control={schoolInfoForm.control} name="schoolPhone" render={({ field }) => (
+                    <FormField control={schoolInfoForm.control} name="city" render={({ field }) => (
                       <FormItem>
-                        <FormLabel className="text-xs">School Phone</FormLabel>
-                        <FormControl>
-                          <div className="relative">
-                            <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-                            <Input className="pl-8 text-sm" placeholder="STD / mobile" {...field} />
-                          </div>
-                        </FormControl>
+                        <FormLabel className="text-xs">City <span className="text-red-500">*</span></FormLabel>
+                        <FormControl><Input className="text-sm" placeholder="e.g. Kolkata" {...field} /></FormControl>
                         <FormMessage />
                       </FormItem>
                     )} />
-                    <FormField control={schoolInfoForm.control} name="establishedYear" render={({ field }) => (
+                    <FormField control={schoolInfoForm.control} name="pinCode" render={({ field }) => (
                       <FormItem>
-                        <FormLabel className="text-xs">Est. Year</FormLabel>
+                        <FormLabel className="text-xs">PIN Code <span className="text-red-500">*</span></FormLabel>
                         <FormControl>
-                          <Input className="text-sm" placeholder="e.g. 1985" maxLength={4} inputMode="numeric"
-                            {...field} onChange={e => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 4))} />
+                          <Input className="text-sm" placeholder="6-digit PIN" inputMode="numeric" maxLength={6}
+                            {...field} onChange={e => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 6))} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )} />
                   </div>
 
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField control={schoolInfoForm.control} name="state" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">State <span className="text-red-500">*</span></FormLabel>
+                        <FormControl>
+                          <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" {...field}>
+                            <option value="">Select state…</option>
+                            {[
+                              "Andhra Pradesh","Arunachal Pradesh","Assam","Bihar","Chhattisgarh","Goa","Gujarat",
+                              "Haryana","Himachal Pradesh","Jharkhand","Karnataka","Kerala","Madhya Pradesh",
+                              "Maharashtra","Manipur","Meghalaya","Mizoram","Nagaland","Odisha","Punjab",
+                              "Rajasthan","Sikkim","Tamil Nadu","Telangana","Tripura","Uttar Pradesh",
+                              "Uttarakhand","West Bengal",
+                              "Andaman & Nicobar Islands","Chandigarh","Dadra & Nagar Haveli and Daman & Diu",
+                              "Delhi (NCT)","Jammu & Kashmir","Ladakh","Lakshadweep","Puducherry",
+                            ].map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={schoolInfoForm.control} name="country" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">Country</FormLabel>
+                        <FormControl><Input className="text-sm" placeholder="India" {...field} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                  </div>
+
+                  <FormField control={schoolInfoForm.control} name="schoolPhone" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">School Phone <span className="text-red-500">*</span></FormLabel>
+                      <FormControl>
+                        <div className="relative">
+                          <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                          <Input className="pl-8 text-sm" placeholder="STD or mobile number" {...field} />
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+
                   <FormField control={schoolInfoForm.control} name="schoolEmail" render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-xs">School Email</FormLabel>
+                      <FormLabel className="text-xs">Official School Email <span className="text-red-500">*</span></FormLabel>
                       <FormControl>
                         <div className="relative">
                           <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
@@ -813,7 +918,7 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
 
                   <FormField control={schoolInfoForm.control} name="schoolWebsite" render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-xs">Website</FormLabel>
+                      <FormLabel className="text-xs">Website <span className="text-gray-400 font-normal">(optional)</span></FormLabel>
                       <FormControl>
                         <Input className="text-sm" placeholder="https://www.school.edu.in" {...field} />
                       </FormControl>
@@ -822,18 +927,20 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
                   )} />
                 </div>
 
+                <div className="border-t" />
+
+                {/* ── 3. ACADEMIC IDENTITY ────────────────────────────────── */}
                 <div className="space-y-3">
-                  <p className="text-xs font-bold text-gray-600 uppercase tracking-wide">Academic Identity</p>
+                  <p className="text-[11px] font-bold text-gray-500 uppercase tracking-widest">Academic Identity</p>
 
                   <div className="grid grid-cols-2 gap-3">
                     <FormField control={schoolInfoForm.control} name="schoolBoard" render={({ field }) => (
                       <FormItem>
                         <FormLabel className="text-xs">Board / Affiliation</FormLabel>
                         <FormControl>
-                          <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                            {...field}>
+                          <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" {...field}>
                             <option value="">Select…</option>
-                            {["CBSE","ICSE","State Board","IB","IGCSE","NIOS","Other"].map(b => (
+                            {["CBSE","CISCE / ICSE","State Board","IB","Cambridge (IGCSE)","NIOS","Other"].map(b => (
                               <option key={b} value={b}>{b}</option>
                             ))}
                           </select>
@@ -845,13 +952,91 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
                       <FormItem>
                         <FormLabel className="text-xs">School Type</FormLabel>
                         <FormControl>
-                          <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                            {...field}>
+                          <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" {...field}>
                             <option value="">Select…</option>
                             {["Private Unaided","Private Aided","Government","Central Government","Missionary / Trust","Other"].map(t => (
                               <option key={t} value={t}>{t}</option>
                             ))}
                           </select>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                  </div>
+
+                  <FormField control={schoolInfoForm.control} name="affiliationNumber" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">
+                        Affiliation Number
+                        {schoolInfoForm.watch("schoolBoard") === "CBSE" && <span className="ml-1 text-[10px] text-blue-500">(CBSE: 7-digit number)</span>}
+                        {schoolInfoForm.watch("schoolBoard") === "CISCE / ICSE" && <span className="ml-1 text-[10px] text-blue-500">(CISCE index number)</span>}
+                        {!schoolInfoForm.watch("schoolBoard") && <span className="ml-1 text-gray-400 font-normal">(optional)</span>}
+                      </FormLabel>
+                      <FormControl>
+                        <Input className="text-sm" placeholder="Board affiliation / index number" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField control={schoolInfoForm.control} name="udiseCode" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">UDISE Code <span className="text-gray-400 font-normal">(11 digits)</span></FormLabel>
+                        <FormControl>
+                          <Input className="text-sm font-mono" placeholder="e.g. 19151234567" inputMode="numeric" maxLength={11}
+                            {...field} onChange={e => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 11))} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={schoolInfoForm.control} name="establishedYear" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">Est. Year</FormLabel>
+                        <FormControl>
+                          <Input className="text-sm" placeholder={`e.g. 1985`} inputMode="numeric" maxLength={4}
+                            {...field} onChange={e => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 4))} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                  </div>
+                </div>
+
+                <div className="border-t" />
+
+                {/* ── 4. LEGAL & TAX ──────────────────────────────────────── */}
+                <div className="space-y-3">
+                  <p className="text-[11px] font-bold text-gray-500 uppercase tracking-widest">Legal & Tax</p>
+                  <p className="text-[11px] text-gray-400">All fields in this section are optional.</p>
+
+                  <FormField control={schoolInfoForm.control} name="registrationNumber" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">School Registration Number</FormLabel>
+                      <FormControl>
+                        <Input className="text-sm font-mono" placeholder="Govt. registration / society number" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField control={schoolInfoForm.control} name="pan" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">PAN</FormLabel>
+                        <FormControl>
+                          <Input className="text-sm font-mono uppercase" placeholder="AABCP1234C" maxLength={10}
+                            {...field} onChange={e => field.onChange(e.target.value.toUpperCase().slice(0, 10))} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={schoolInfoForm.control} name="gstin" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">GSTIN</FormLabel>
+                        <FormControl>
+                          <Input className="text-sm font-mono uppercase" placeholder="27AABCP1234C1Z5" maxLength={15}
+                            {...field} onChange={e => field.onChange(e.target.value.toUpperCase().slice(0, 15))} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>

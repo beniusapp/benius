@@ -611,14 +611,26 @@ export async function registerRoutes(
       isInitialized: user.isInitialized,
       hasPin: !!user.pinHash,
       logoUrl: school?.logoUrl ?? null,
-      // School Information fields
-      schoolAddress: school?.address ?? null,
-      schoolPhone: school?.phone ?? null,
-      schoolEmail: school?.email ?? null,
-      schoolWebsite: school?.website ?? null,
-      schoolBoard: school?.board ?? null,
-      schoolType: school?.schoolType ?? null,
-      establishedYear: school?.establishedYear ?? null,
+      // School Information — Contact & Location
+      addressLine1:       school?.addressLine1       ?? null,
+      addressLine2:       school?.addressLine2       ?? null,
+      city:               school?.city               ?? null,
+      state:              school?.state              ?? null,
+      pinCode:            school?.pinCode            ?? null,
+      country:            school?.country            ?? "India",
+      schoolPhone:        school?.phone              ?? null,
+      schoolEmail:        school?.email              ?? null,
+      schoolWebsite:      school?.website            ?? null,
+      // School Information — Academic Identity
+      schoolBoard:        school?.board              ?? null,
+      schoolType:         school?.schoolType         ?? null,
+      affiliationNumber:  school?.affiliationNumber  ?? null,
+      udiseCode:          school?.udiseCode          ?? null,
+      establishedYear:    school?.establishedYear    ?? null,
+      // School Information — Legal & Tax
+      registrationNumber: school?.registrationNumber ?? null,
+      pan:                school?.pan                ?? null,
+      gstin:              school?.gstin              ?? null,
     });
   });
 
@@ -629,23 +641,46 @@ export async function registerRoutes(
     if (!req.session.schoolId)
       return res.status(403).json({ message: "No school context" });
 
-    const { address, phone, email, website, board, schoolType, establishedYear } = req.body;
+    const {
+      addressLine1, addressLine2, city, state, pinCode, country,
+      phone, email, website,
+      board, schoolType, affiliationNumber, udiseCode, establishedYear,
+      registrationNumber, pan, gstin,
+    } = req.body;
 
-    // Validate establishedYear if provided
-    if (establishedYear !== undefined && establishedYear !== null) {
+    // ── Server-side validation ─────────────────────────────────────────────
+    if (pinCode && !/^[1-9][0-9]{5}$/.test(pinCode))
+      return res.status(400).json({ message: "Invalid PIN code — must be 6 digits, not starting with 0" });
+    if (udiseCode && !/^\d{11}$/.test(udiseCode))
+      return res.status(400).json({ message: "UDISE code must be exactly 11 digits" });
+    if (pan && !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan))
+      return res.status(400).json({ message: "Invalid PAN format (e.g. AABCP1234C)" });
+    if (gstin && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(gstin))
+      return res.status(400).json({ message: "Invalid GSTIN format" });
+    if (establishedYear !== undefined && establishedYear !== null && establishedYear !== "") {
       const yr = Number(establishedYear);
       if (!Number.isInteger(yr) || yr < 1800 || yr > new Date().getFullYear())
-        return res.status(400).json({ message: "Invalid established year" });
+        return res.status(400).json({ message: "Established year must be between 1800 and the current year" });
     }
 
     await storage.updateSchoolInfo(req.session.schoolId, {
-      address:         address         ?? null,
-      phone:           phone           ?? null,
-      email:           email           ?? null,
-      website:         website         ?? null,
-      board:           board           ?? null,
-      schoolType:      schoolType      ?? null,
-      establishedYear: establishedYear ? Number(establishedYear) : null,
+      addressLine1:       addressLine1       || null,
+      addressLine2:       addressLine2       || null,
+      city:               city               || null,
+      state:              state              || null,
+      pinCode:            pinCode            || null,
+      country:            country            || "India",
+      phone:              phone              || null,
+      email:              email              || null,
+      website:            website            || null,
+      board:              board              || null,
+      schoolType:         schoolType         || null,
+      affiliationNumber:  affiliationNumber  || null,
+      udiseCode:          udiseCode          || null,
+      establishedYear:    establishedYear ? Number(establishedYear) : null,
+      registrationNumber: registrationNumber || null,
+      pan:                pan                || null,
+      gstin:              gstin              || null,
     });
     res.json({ message: "School information updated" });
   });

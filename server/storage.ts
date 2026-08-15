@@ -1401,13 +1401,23 @@ export class DatabaseStorage {
   }
 
   async updateSchoolInfo(schoolId: number, data: {
-    address?: string | null;
+    addressLine1?: string | null;
+    addressLine2?: string | null;
+    city?: string | null;
+    state?: string | null;
+    pinCode?: string | null;
+    country?: string | null;
     phone?: string | null;
     email?: string | null;
     website?: string | null;
     board?: string | null;
     schoolType?: string | null;
+    affiliationNumber?: string | null;
+    udiseCode?: string | null;
     establishedYear?: number | null;
+    registrationNumber?: string | null;
+    pan?: string | null;
+    gstin?: string | null;
   }): Promise<void> {
     await db.update(schools).set(data).where(eq(schools.id, schoolId));
   }

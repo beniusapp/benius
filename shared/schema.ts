@@ -9,14 +9,26 @@ export const schools = pgTable("schools", {
   code: varchar("code", { length: 20 }).notNull().unique(),
   logoUrl: text("logo_url"),
   logoUpdatedAt: timestamp("logo_updated_at"),
-  // School Information fields (editable by principal)
-  address: text("address"),
+  // ── Contact & Location (structured address) ──────────────────────────────
+  addressLine1: text("address_line1"),
+  addressLine2: text("address_line2"),
+  city: text("city"),
+  state: text("state"),
+  pinCode: varchar("pin_code", { length: 6 }),
+  country: text("country").default("India"),
   phone: varchar("phone", { length: 20 }),
   email: text("email"),
   website: text("website"),
+  // ── Academic Identity ────────────────────────────────────────────────────
   board: text("board"),
   schoolType: text("school_type"),
+  affiliationNumber: text("affiliation_number"),
+  udiseCode: text("udise_code"),
   establishedYear: integer("established_year"),
+  // ── Legal & Tax ──────────────────────────────────────────────────────────
+  registrationNumber: text("registration_number"),
+  pan: text("pan"),
+  gstin: text("gstin"),
 });
 
 export const users = pgTable("users", {

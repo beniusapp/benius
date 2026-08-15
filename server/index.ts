@@ -723,12 +723,23 @@ app.use((req, res, next) => {
     ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo_url TEXT;
     ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo_updated_at TIMESTAMPTZ;
     ALTER TABLE schools ADD COLUMN IF NOT EXISTS address TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS address_line1 TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS address_line2 TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS city TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS state TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS pin_code VARCHAR(6);
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS country TEXT DEFAULT 'India';
     ALTER TABLE schools ADD COLUMN IF NOT EXISTS phone VARCHAR(20);
     ALTER TABLE schools ADD COLUMN IF NOT EXISTS email TEXT;
     ALTER TABLE schools ADD COLUMN IF NOT EXISTS website TEXT;
     ALTER TABLE schools ADD COLUMN IF NOT EXISTS board TEXT;
     ALTER TABLE schools ADD COLUMN IF NOT EXISTS school_type TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS affiliation_number TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS udise_code TEXT;
     ALTER TABLE schools ADD COLUMN IF NOT EXISTS established_year INTEGER;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS registration_number TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS pan TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS gstin TEXT;
   `);
 
   // ── Schema drift guard ────────────────────────────────────────────────────
