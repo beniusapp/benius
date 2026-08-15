@@ -1471,30 +1471,22 @@ export function registerFeesRoutes(app: Express) {
         }
       } catch { /* best-effort cleanup */ }
 
-      // ── Move temp → permanent original file ────────────────────────────────
-      const origFilename = `sig-orig-${ts}${fileExt}`;
-      const origPath     = path.join(sigDir, origFilename);
+      // ── Move temp → permanent file (stored as-is — no processing) ────────────
+      const sigFilename = `sig-${ts}${fileExt}`;
+      const sigPath     = path.join(sigDir, sigFilename);
       try {
-        fs.renameSync(req.file.path, origPath);
+        fs.renameSync(req.file.path, sigPath);
       } catch {
         try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
         return res.status(500).json({ success: false, error: "Failed to save signature file" });
       }
-      const originalSignatureUrl = `/uploads/schools/${schoolId}/receipt-signature/${origFilename}`;
-
-      // ── Background removal → processed PNG ─────────────────────────────────
-      const procFilename = `sig-proc-${ts}.png`;
-      const procPath     = path.join(sigDir, procFilename);
-      const bgRemoved    = await removeSignatureBackground(origPath, procPath);
-      const processedSignatureUrl = bgRemoved
-        ? `/uploads/schools/${schoolId}/receipt-signature/${procFilename}`
-        : originalSignatureUrl; // fallback: use original if removal failed
+      const signatureUrl = `/uploads/schools/${schoolId}/receipt-signature/${sigFilename}`;
 
       // ── Persist metadata ────────────────────────────────────────────────────
       try {
         await storage.setSchoolMetadataRaw(schoolId, "fee_receipt_signature", {
-          originalSignatureUrl,
-          processedSignatureUrl,
+          originalSignatureUrl:  signatureUrl,
+          processedSignatureUrl: signatureUrl, // same — no server-side processing
           fileName:   req.file.originalname,
           mimeType:   fileMime,
           fileSize:   req.file.size,
@@ -1509,9 +1501,7 @@ export function registerFeesRoutes(app: Express) {
       res.set("Cache-Control", "no-store");
       return res.json({
         success: true,
-        originalSignatureUrl,
-        processedSignatureUrl,
-        feeReceiptSignatureUrl: processedSignatureUrl,
+        feeReceiptSignatureUrl: signatureUrl,
       });
     },
   );

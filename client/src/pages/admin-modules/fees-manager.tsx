@@ -4729,10 +4729,19 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
             </button>
           )}
 
-          {/* Helper text */}
-          <p className="text-white/25 text-[11px]">
-            Accepted: PNG, JPG, WEBP &bull; Max 2 MB &bull; Recommended: PNG with transparent background
-          </p>
+          {/* Requirements block */}
+          <div className="rounded-xl border border-white/8 bg-white/[0.03] px-4 py-3 space-y-1.5">
+            <p className="text-white/60 text-xs font-semibold tracking-wide uppercase">Signature Image Requirements</p>
+            <p className="text-white/50 text-xs leading-relaxed">
+              For a clean and professional appearance on student fee receipts, please upload your signature
+              with a <span className="text-white/75 font-medium">transparent background</span>. If your signature has a
+              white or coloured background, remove the background before uploading.
+            </p>
+            <p className="text-white/30 text-[11px] pt-0.5">
+              Accepted: PNG, JPG, WEBP &bull; Max 2 MB
+            </p>
+            <p className="text-purple-400/60 text-[11px]">Recommended: PNG with transparent background</p>
+          </div>
 
           {/* Info note */}
           <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-purple-900/15 border border-purple-700/20">
