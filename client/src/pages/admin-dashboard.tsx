@@ -196,8 +196,8 @@ const schoolInfoSchema = z.object({
                         .optional().or(z.literal("")),
   // Legal & Tax
   registrationNumber: z.string().max(100).optional().or(z.literal("")),
-  pan:                z.string().max(20).optional().or(z.literal("")),
-  gstin:              z.string().max(20).optional().or(z.literal("")),
+  pan:                z.string().optional(),
+  gstin:              z.string().optional(),
 });
 
 function useCountUp(target: number, duration = 1100) {
