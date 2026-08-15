@@ -9,6 +9,14 @@ export const schools = pgTable("schools", {
   code: varchar("code", { length: 20 }).notNull().unique(),
   logoUrl: text("logo_url"),
   logoUpdatedAt: timestamp("logo_updated_at"),
+  // School Information fields (editable by principal)
+  address: text("address"),
+  phone: varchar("phone", { length: 20 }),
+  email: text("email"),
+  website: text("website"),
+  board: text("board"),
+  schoolType: text("school_type"),
+  establishedYear: integer("established_year"),
 });
 
 export const users = pgTable("users", {

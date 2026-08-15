@@ -718,10 +718,17 @@ app.use((req, res, next) => {
     ON CONFLICT DO NOTHING
   `);
 
-  // ── School logo columns ────────────────────────────────────────────────────
+  // ── School columns ────────────────────────────────────────────────────────
   await pool.query(`
     ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo_url TEXT;
     ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo_updated_at TIMESTAMPTZ;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS address TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS phone VARCHAR(20);
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS email TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS website TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS board TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS school_type TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS established_year INTEGER;
   `);
 
   // ── Schema drift guard ────────────────────────────────────────────────────

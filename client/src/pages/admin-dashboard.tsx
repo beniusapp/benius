@@ -59,6 +59,14 @@ interface AdminProfileResponse {
   isInitialized: boolean;
   hasPin: boolean;
   logoUrl: string | null;
+  // School Information
+  schoolAddress: string | null;
+  schoolPhone: string | null;
+  schoolEmail: string | null;
+  schoolWebsite: string | null;
+  schoolBoard: string | null;
+  schoolType: string | null;
+  establishedYear: number | null;
 }
 
 interface SecurityAuditEntry {
@@ -147,6 +155,16 @@ const changePinSchema = z.object({
 const profileSchema = z.object({
   recoveryEmail: z.string().email("Valid email").optional().or(z.literal("")),
   recoveryPhone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Only digits allowed").optional().or(z.literal("")),
+});
+
+const schoolInfoSchema = z.object({
+  schoolAddress:   z.string().max(300).optional().or(z.literal("")),
+  schoolPhone:     z.string().max(20).regex(/^[\d\s\-+()]*$/, "Invalid phone").optional().or(z.literal("")),
+  schoolEmail:     z.string().email("Valid email").optional().or(z.literal("")),
+  schoolWebsite:   z.string().url("Valid URL (include https://)").optional().or(z.literal("")),
+  schoolBoard:     z.string().max(100).optional().or(z.literal("")),
+  schoolType:      z.string().max(60).optional().or(z.literal("")),
+  establishedYear: z.string().regex(/^(\d{4})?$/, "4-digit year").optional().or(z.literal("")),
 });
 
 function useCountUp(target: number, duration = 1100) {
@@ -419,7 +437,7 @@ function SchoolLogoCropper({
 
 function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => void }) {
   const { toast } = useToast();
-  const [tab, setTab] = useState<"info" | "password" | "pin" | "log">("info");
+  const [tab, setTab] = useState<"info" | "school" | "password" | "pin" | "log">("info");
   const [currentPin, setCurrentPin] = useState("");
   const [newPin, setNewPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
@@ -483,6 +501,43 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
     },
     onSuccess: () => {
       toast({ title: "Profile updated" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/profile"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const schoolInfoForm = useForm<z.infer<typeof schoolInfoSchema>>({
+    resolver: zodResolver(schoolInfoSchema),
+    defaultValues: {
+      schoolAddress: "", schoolPhone: "", schoolEmail: "",
+      schoolWebsite: "", schoolBoard: "", schoolType: "", establishedYear: "",
+    },
+    values: {
+      schoolAddress:   profile?.schoolAddress   ?? "",
+      schoolPhone:     profile?.schoolPhone      ?? "",
+      schoolEmail:     profile?.schoolEmail      ?? "",
+      schoolWebsite:   profile?.schoolWebsite    ?? "",
+      schoolBoard:     profile?.schoolBoard      ?? "",
+      schoolType:      profile?.schoolType       ?? "",
+      establishedYear: profile?.establishedYear  != null ? String(profile.establishedYear) : "",
+    },
+  });
+
+  const schoolInfoMutation = useMutation({
+    mutationFn: async (data: z.infer<typeof schoolInfoSchema>) => {
+      const res = await apiRequest("PATCH", "/api/admin/school/info", {
+        address:         data.schoolAddress   || null,
+        phone:           data.schoolPhone     || null,
+        email:           data.schoolEmail     || null,
+        website:         data.schoolWebsite   || null,
+        board:           data.schoolBoard     || null,
+        schoolType:      data.schoolType      || null,
+        establishedYear: data.establishedYear ? Number(data.establishedYear) : null,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "School information updated" });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/profile"] });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -575,12 +630,18 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
           </button>
         </div>
 
-        <div className="flex border-b bg-gray-50">
-          {(["info", "password", "pin", "log"] as const).map(t => (
-            <button key={t} onClick={() => setTab(t)}
-              data-testid={`profile-tab-${t}`}
-              className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${tab === t ? "border-b-2 border-blue-600 text-blue-600 bg-white" : "text-gray-500 hover:text-gray-700"}`}>
-              {t === "info" ? "Profile" : t === "password" ? "Password" : t === "pin" ? "PIN" : "Log"}
+        <div className="flex border-b bg-gray-50 overflow-x-auto">
+          {([
+            { key: "info",     label: "Profile"  },
+            { key: "school",   label: "School"   },
+            { key: "password", label: "Password" },
+            { key: "pin",      label: "PIN"      },
+            { key: "log",      label: "Log"      },
+          ] as const).map(({ key, label }) => (
+            <button key={key} onClick={() => setTab(key)}
+              data-testid={`profile-tab-${key}`}
+              className={`flex-shrink-0 flex-1 py-2.5 text-xs font-semibold transition-colors whitespace-nowrap ${tab === key ? "border-b-2 border-blue-600 text-blue-600 bg-white" : "text-gray-500 hover:text-gray-700"}`}>
+              {label}
             </button>
           ))}
         </div>
@@ -604,55 +665,6 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
                     <p className="font-semibold text-gray-800 text-sm">{profile.recoveryPhone}</p>
                   </div>
                 )}
-
-                {/* ── School Logo ─────────────────────────────────────────── */}
-                <div className="p-3 rounded-lg bg-gray-50 border space-y-3">
-                  <p className="text-xs text-gray-500 font-medium">School Logo</p>
-                  <div className="flex items-center gap-4">
-                    {/* Preview / Placeholder */}
-                    <div className="w-16 h-16 rounded-xl border-2 border-dashed border-gray-200 bg-white flex items-center justify-center overflow-hidden flex-shrink-0">
-                      {profile?.logoUrl ? (
-                        <img src={profile.logoUrl} alt="School logo"
-                          className="w-full h-full object-contain" />
-                      ) : (
-                        <Building2 className="w-7 h-7 text-gray-300" />
-                      )}
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex-1 min-w-0 space-y-2">
-                      <p className="text-[11px] text-gray-400 leading-snug">
-                        PNG, JPG or WebP · max 5 MB<br />
-                        Recommended: 512 × 512 px
-                      </p>
-                      <div className="flex gap-2 flex-wrap">
-                        <button
-                          type="button"
-                          onClick={() => logoFileInputRef.current?.click()}
-                          disabled={logoUploading}
-                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-60">
-                          {logoUploading
-                            ? <Loader2 className="w-3 h-3 animate-spin" />
-                            : <Upload className="w-3 h-3" />}
-                          {profile?.logoUrl ? "Replace" : "Upload"}
-                        </button>
-                        {profile?.logoUrl && (
-                          <button
-                            type="button"
-                            onClick={handleLogoRemove}
-                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
-                            <Trash2 className="w-3 h-3" />
-                            Remove
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Hidden file input */}
-                <input ref={logoFileInputRef} type="file" accept="image/jpeg,image/jpg,image/png,image/webp"
-                  className="hidden" onChange={handleLogoFilePick} />
 
                 <div className="p-3 rounded-lg bg-blue-50 border border-blue-100">
                   <div className="flex items-center gap-2 text-xs text-blue-700 font-medium mb-1">
@@ -691,6 +703,165 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
                 <Button type="submit" className="w-full" disabled={profileMutation.isPending} data-testid="button-save-profile">
                   {profileMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                   Save Changes
+                </Button>
+              </form>
+            </Form>
+          )}
+
+          {tab === "school" && (
+            <Form {...schoolInfoForm}>
+              <form onSubmit={schoolInfoForm.handleSubmit(d => schoolInfoMutation.mutate(d))} className="space-y-4">
+
+                {/* Identity — read-only */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-lg bg-gray-50 border space-y-0.5">
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide">School Name</p>
+                    <p className="font-semibold text-gray-800 text-sm leading-snug">{me.schoolName}</p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-gray-50 border space-y-0.5">
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide">School Code</p>
+                    <p className="font-bold text-gray-700 text-sm font-mono">{me.schoolCode}</p>
+                  </div>
+                </div>
+
+                {/* ── School Logo ────────────────────────────────────────── */}
+                <div className="p-3 rounded-lg bg-gray-50 border space-y-3">
+                  <p className="text-xs text-gray-500 font-medium">School Logo</p>
+                  <div className="flex items-center gap-4">
+                    <div className="w-16 h-16 rounded-xl border-2 border-dashed border-gray-200 bg-white flex items-center justify-center overflow-hidden flex-shrink-0">
+                      {profile?.logoUrl
+                        ? <img src={profile.logoUrl} alt="School logo" className="w-full h-full object-contain" />
+                        : <Building2 className="w-7 h-7 text-gray-300" />}
+                    </div>
+                    <div className="flex-1 min-w-0 space-y-2">
+                      <p className="text-[11px] text-gray-400 leading-snug">
+                        PNG, JPG or WebP · max 5 MB<br />Recommended: 512 × 512 px
+                      </p>
+                      <div className="flex gap-2 flex-wrap">
+                        <button type="button" onClick={() => logoFileInputRef.current?.click()}
+                          disabled={logoUploading}
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-60">
+                          {logoUploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                          {profile?.logoUrl ? "Replace" : "Upload"}
+                        </button>
+                        {profile?.logoUrl && (
+                          <button type="button" onClick={handleLogoRemove}
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
+                            <Trash2 className="w-3 h-3" />Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <input ref={logoFileInputRef} type="file" accept="image/jpeg,image/jpg,image/png,image/webp"
+                  className="hidden" onChange={handleLogoFilePick} />
+
+                {/* ── Editable school details ────────────────────────────── */}
+                <div className="space-y-3">
+                  <p className="text-xs font-bold text-gray-600 uppercase tracking-wide">Contact & Location</p>
+
+                  <FormField control={schoolInfoForm.control} name="schoolAddress" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">Address</FormLabel>
+                      <FormControl>
+                        <textarea rows={2} placeholder="Street, City, State – PIN"
+                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
+                          {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField control={schoolInfoForm.control} name="schoolPhone" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">School Phone</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                            <Input className="pl-8 text-sm" placeholder="STD / mobile" {...field} />
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={schoolInfoForm.control} name="establishedYear" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">Est. Year</FormLabel>
+                        <FormControl>
+                          <Input className="text-sm" placeholder="e.g. 1985" maxLength={4} inputMode="numeric"
+                            {...field} onChange={e => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 4))} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                  </div>
+
+                  <FormField control={schoolInfoForm.control} name="schoolEmail" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">School Email</FormLabel>
+                      <FormControl>
+                        <div className="relative">
+                          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                          <Input className="pl-8 text-sm" placeholder="office@school.edu.in" {...field} />
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+
+                  <FormField control={schoolInfoForm.control} name="schoolWebsite" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">Website</FormLabel>
+                      <FormControl>
+                        <Input className="text-sm" placeholder="https://www.school.edu.in" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                </div>
+
+                <div className="space-y-3">
+                  <p className="text-xs font-bold text-gray-600 uppercase tracking-wide">Academic Identity</p>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField control={schoolInfoForm.control} name="schoolBoard" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">Board / Affiliation</FormLabel>
+                        <FormControl>
+                          <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            {...field}>
+                            <option value="">Select…</option>
+                            {["CBSE","ICSE","State Board","IB","IGCSE","NIOS","Other"].map(b => (
+                              <option key={b} value={b}>{b}</option>
+                            ))}
+                          </select>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={schoolInfoForm.control} name="schoolType" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">School Type</FormLabel>
+                        <FormControl>
+                          <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            {...field}>
+                            <option value="">Select…</option>
+                            {["Private Unaided","Private Aided","Government","Central Government","Missionary / Trust","Other"].map(t => (
+                              <option key={t} value={t}>{t}</option>
+                            ))}
+                          </select>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                  </div>
+                </div>
+
+                <Button type="submit" className="w-full" disabled={schoolInfoMutation.isPending}>
+                  {schoolInfoMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                  Save School Information
                 </Button>
               </form>
             </Form>

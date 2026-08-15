@@ -611,7 +611,43 @@ export async function registerRoutes(
       isInitialized: user.isInitialized,
       hasPin: !!user.pinHash,
       logoUrl: school?.logoUrl ?? null,
+      // School Information fields
+      schoolAddress: school?.address ?? null,
+      schoolPhone: school?.phone ?? null,
+      schoolEmail: school?.email ?? null,
+      schoolWebsite: school?.website ?? null,
+      schoolBoard: school?.board ?? null,
+      schoolType: school?.schoolType ?? null,
+      establishedYear: school?.establishedYear ?? null,
     });
+  });
+
+  // ── School information update ─────────────────────────────────────────────
+  app.patch("/api/admin/school/info", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.schoolId)
+      return res.status(403).json({ message: "No school context" });
+
+    const { address, phone, email, website, board, schoolType, establishedYear } = req.body;
+
+    // Validate establishedYear if provided
+    if (establishedYear !== undefined && establishedYear !== null) {
+      const yr = Number(establishedYear);
+      if (!Number.isInteger(yr) || yr < 1800 || yr > new Date().getFullYear())
+        return res.status(400).json({ message: "Invalid established year" });
+    }
+
+    await storage.updateSchoolInfo(req.session.schoolId, {
+      address:         address         ?? null,
+      phone:           phone           ?? null,
+      email:           email           ?? null,
+      website:         website         ?? null,
+      board:           board           ?? null,
+      schoolType:      schoolType      ?? null,
+      establishedYear: establishedYear ? Number(establishedYear) : null,
+    });
+    res.json({ message: "School information updated" });
   });
 
   // ── School logo upload ────────────────────────────────────────────────────

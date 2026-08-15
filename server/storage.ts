@@ -1400,6 +1400,18 @@ export class DatabaseStorage {
     await db.update(schools).set({ logoUrl: null, logoUpdatedAt: new Date() }).where(eq(schools.id, schoolId));
   }
 
+  async updateSchoolInfo(schoolId: number, data: {
+    address?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    website?: string | null;
+    board?: string | null;
+    schoolType?: string | null;
+    establishedYear?: number | null;
+  }): Promise<void> {
+    await db.update(schools).set(data).where(eq(schools.id, schoolId));
+  }
+
   async addComplaintNote(data: InsertComplaintNote): Promise<ComplaintNote> {
     const [n] = await db.insert(complaintNotes).values(data).returning();
     return n;
