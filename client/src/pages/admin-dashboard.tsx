@@ -196,8 +196,8 @@ const schoolInfoSchema = z.object({
                         .optional().or(z.literal("")),
   // Legal & Tax
   registrationNumber: z.string().max(100).optional().or(z.literal("")),
-  pan:                z.string().regex(/^([A-Z]{5}[0-9]{4}[A-Z]{1})?$/, "Invalid PAN (e.g. AABCP1234C)").optional().or(z.literal("")),
-  gstin:              z.string().regex(/^([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})?$/, "Invalid GSTIN format").optional().or(z.literal("")),
+  pan:                z.string().max(20).optional().or(z.literal("")),
+  gstin:              z.string().max(20).optional().or(z.literal("")),
 });
 
 function useCountUp(target: number, duration = 1100) {
