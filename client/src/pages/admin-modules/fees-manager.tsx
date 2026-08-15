@@ -47,6 +47,7 @@ interface FeeRecordWithStudent {
   paidDate: string | null;
   status: string;
   receiptNumber: string | null;
+  invoiceNumber: string | null;
   notes: string | null;
   academicYear: string | null;
   createdAt: string;
@@ -1793,7 +1794,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       (r.student?.name ?? "").toLowerCase().includes(q) ||
       r.feeType.toLowerCase().includes(q) ||
       (r.student?.digitalStudentId ?? "").toLowerCase().includes(q) ||
-      (r.receiptNumber ?? "").toLowerCase().includes(q);
+      (r.receiptNumber ?? "").toLowerCase().includes(q) ||
+      (r.invoiceNumber ?? "").toLowerCase().includes(q);
     const statusMatch = statusFilter === "all"
       ? true
       : statusFilter === "offline"
@@ -1926,8 +1928,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   {selectedIds.size > 0 && canRecord && !isArchiveMode && (
                     <th className="px-3 py-3 w-8" />
                   )}
-                  {["Receipt No.","Student","DSID","Class","Section","Fee Name","Fee Type","Amount","Due Date","Status","Paid On","Acad. Year","Notes","Actions"].map((h, i) => (
-                    <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 7 ? "text-right" : i >= 13 ? "text-right" : i >= 8 ? "text-center" : "text-left"}`}>{h}</th>
+                  {["Invoice No.","Receipt No.","Student","DSID","Class","Section","Fee Name","Fee Type","Amount","Due Date","Status","Paid On","Acad. Year","Notes","Actions"].map((h, i) => (
+                    <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 8 ? "text-right" : i >= 14 ? "text-right" : i >= 9 ? "text-center" : "text-left"}`}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -1938,7 +1940,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   const isLoadingDetail = detailLoading === rec.id;
                   const activeSection = detailSection[rec.id] ?? 0;
                   const mainPayment = detail?.payment ?? null;
-                  const colSpan = 15 + (selectedIds.size > 0 && canRecord && !isArchiveMode ? 1 : 0);
+                  const colSpan = 16 + (selectedIds.size > 0 && canRecord && !isArchiveMode ? 1 : 0);
                   return (
                   <React.Fragment key={rec.id}>
                   <tr className={`border-b border-white/5 transition-colors ${selectedIds.has(rec.id) ? "bg-red-900/10" : isExpanded ? "bg-white/[0.04]" : "hover:bg-white/5"}`}
@@ -1968,7 +1970,13 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                         />
                       </td>
                     )}
-                    {/* Receipt */}
+                    {/* Invoice No. — permanent identifier (INV-xxxx), never overwritten by payment */}
+                    <td className="px-4 py-3 text-left">
+                      {rec.invoiceNumber
+                        ? <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 border border-violet-700/30 text-violet-300">{rec.invoiceNumber}</span>
+                        : <span className="text-white/20 text-xs">—</span>}
+                    </td>
+                    {/* Receipt No. — payment receipt (ON-xxxx / OF-xxxx), set after payment */}
                     <td className="px-4 py-3 text-left">
                       {rec.receiptNumber
                         ? <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 border border-cyan-700/30 text-cyan-300">{rec.receiptNumber}</span>
@@ -2082,7 +2090,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                               <Button size="icon" variant="ghost"
                                 onClick={() => window.open(`/api/admin/fees/${rec.id}/receipt`, "_blank")}
                                 className="h-7 w-7 text-white/40 hover:text-cyan-400"
-                                title={`Print receipt ${rec.receiptNumber ?? ""}`}>
+                                title={`Print receipt ${rec.invoiceNumber ?? rec.receiptNumber ?? ""}`}>
                                 <Printer className="w-3.5 h-3.5" />
                               </Button>
                             );
@@ -2224,6 +2232,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                                   <TxnDetailRow label="Late Fee" value={detail.feeRecord.lateFeeAmount > 0 ? <span className="text-amber-400">{fmt(detail.feeRecord.lateFeeAmount)}</span> : null} />
                                   <TxnDetailRow label="Total Charged" value={<span className="font-black">{fmt(detail.feeRecord.amount + detail.feeRecord.lateFeeAmount)}</span>} />
                                   <TxnDetailRow label="Total Received" value={<span className="font-black text-emerald-400">{fmt(detail.payments.reduce((s, p) => s + p.amount, 0))}</span>} />
+                                  <TxnDetailRow label="Invoice No." value={<span className="font-mono text-violet-300 text-xs">{rec.invoiceNumber ?? "—"}</span>} />
                                   <TxnDetailRow label="Receipt No." value={<span className="font-mono text-cyan-300 text-xs">{rec.receiptNumber ?? mainPayment?.receiptNumber ?? "—"}</span>} />
                                   {detail.payments.length > 1 && (
                                     <div className="mt-2 pt-2 border-t border-white/10">
