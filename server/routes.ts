@@ -4739,8 +4739,6 @@ export async function registerRoutes(
 
     // ── Build dynamic sections ────────────────────────────────────────────────
     const host     = `${req.protocol}://${req.get("host")}`;
-    const receiptUrl = `${host}/api/student/fees/${id}/receipt`;
-    const qrUrl    = `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(receiptUrl)}&size=100x100&margin=2&color=1e3a5f`;
 
     // Logo: absolute URL so it resolves inside the print iframe
     const logoSrc  = school?.logoUrl ? `${host}${school.logoUrl}` : null;
@@ -4850,9 +4848,7 @@ tfoot td:last-child{text-align:right;}
 .tax-note{font-size:9.5px;color:#64748b;font-style:italic;margin-top:6px;padding:0 24px 4px;}
 
 /* ── FOOTER ROW ── */
-.footer-row{display:flex;align-items:flex-end;justify-content:space-between;padding:16px 24px;border-top:1px solid #e2e8f0;}
-.qr-wrap{text-align:center;}
-.qr-lbl{font-size:8.5px;color:#94a3b8;margin-top:4px;}
+.footer-row{display:flex;align-items:flex-end;justify-content:flex-end;padding:16px 24px;border-top:1px solid #e2e8f0;}
 .sign-wrap{text-align:center;}
 .sign-space{height:36px;}
 .sign-line{width:150px;border-top:1.5px solid #475569;margin:0 auto 4px;}
@@ -4952,12 +4948,8 @@ tfoot td:last-child{text-align:right;}
     <div class="words-box"><strong>Amount in Words:</strong> ${esc(amountWords)}</div>
   </div>
 
-  <!-- ── FOOTER: QR + SIGNATORY ── -->
+  <!-- ── FOOTER: SIGNATORY ── -->
   <div class="footer-row">
-    <div class="qr-wrap">
-      <img src="${qrUrl}" width="100" height="100" alt="Verify Receipt" />
-      <p class="qr-lbl">Scan to verify</p>
-    </div>
     <div class="sign-wrap">
       ${feeReceiptSigUrl
         ? `<img src="${feeReceiptSigUrl}" alt="Authorized Signature" style="max-height:45px;max-width:160px;object-fit:contain;display:block;margin:0 auto 4px;" />`
