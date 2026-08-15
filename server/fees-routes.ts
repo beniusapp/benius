@@ -1026,6 +1026,10 @@ export function registerFeesRoutes(app: Express) {
       }
 
       const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+      // Assign a permanent invoice number — same contract as all other creation paths
+      // (monthly cron, auto-invoice trigger, bulk generate, single add-invoice endpoint).
+      // invoice_number must never be NULL for any new fee record.
+      const autoInvoiceNumber = await storage.nextReceiptNumber(schoolId, "INV-", 4);
       const autoFeeRecord = await storage.createFeeRecord({
         studentId: paymentData.studentId,
         schoolId,
@@ -1037,6 +1041,7 @@ export function registerFeesRoutes(app: Express) {
         academicYear: paymentData.academicYear ?? null,
         notes: paymentData.feeNotes ?? null,
         createdBy: req.session.userId,
+        invoiceNumber: autoInvoiceNumber,
       });
       paymentData.feeRecordId = autoFeeRecord.id;
     }

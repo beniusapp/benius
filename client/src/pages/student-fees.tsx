@@ -43,6 +43,7 @@ interface FeeRecord {
   paidDate: string | null;
   status: string;
   receiptNumber: string | null;
+  invoiceNumber: string | null;
   notes: string | null;
   academicYear: string | null;
   createdAt: string;
@@ -1667,6 +1668,12 @@ export default function StudentFees() {
                               </div>
                               <p className="font-extrabold text-slate-800 text-base leading-tight"
                                 data-testid={`text-fee-type-${rec.id}`}>{rec.feeName || rec.feeType}</p>
+                              {rec.invoiceNumber && (
+                                <p className="text-[11px] text-slate-400 mt-0.5 font-mono tracking-wide"
+                                  data-testid={`text-invoice-number-${rec.id}`}>
+                                  {rec.invoiceNumber}
+                                </p>
+                              )}
                               <div className="flex items-center gap-1.5 mt-1.5 text-xs text-slate-400">
                                 <CalendarDays className="w-3 h-3 flex-shrink-0" />
                                 Due {formatDate(rec.dueDate)}
@@ -1803,6 +1810,10 @@ export default function StudentFees() {
                       const isPaid   = attempt.type === "paid";
                       const isFailed = attempt.type === "failed";
                       const outcome  = classifyAttempt(attempt);
+                      // Resolve invoice number from the parent fee record (already loaded)
+                      const attemptInvoiceNo = attempt.feeRecordId
+                        ? feeRecords.find(r => r.id === attempt.feeRecordId)?.invoiceNumber ?? null
+                        : null;
                       const accentGradient =
                         outcome === "Paid"              ? "linear-gradient(90deg,#10b981,#34d399)" :
                         outcome === "Payment Cancelled" ? "linear-gradient(90deg,#a855f7,#c084fc)" :
@@ -1874,6 +1885,19 @@ export default function StudentFees() {
                                   {dateLineLabel} {formatDateTime(attempt.createdAt)}
                                 </div>
 
+                                {/* Invoice number (paid only — resolved from parent fee record) */}
+                                {isPaid && attemptInvoiceNo && (
+                                  <div className="flex items-center gap-1 mt-1.5">
+                                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg"
+                                      style={{ background: "linear-gradient(135deg,#f5f3ff,#ede9fe)", border: "1px solid #c4b5fd" }}>
+                                      <ReceiptText className="w-3 h-3 text-violet-500 flex-shrink-0" />
+                                      <span className="font-mono text-[11px] font-semibold tracking-widest text-violet-700"
+                                        data-testid={`text-attempt-invoice-${attempt.id}`}>
+                                        {attemptInvoiceNo}
+                                      </span>
+                                    </div>
+                                  </div>
+                                )}
                                 {/* Receipt row (paid only) */}
                                 {isPaid && attempt.receiptNumber && (
                                   <div className="flex items-center gap-1.5 mt-1.5"
