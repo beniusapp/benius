@@ -1392,6 +1392,14 @@ export class DatabaseStorage {
     await db.update(teachers).set({ profileImageUrl }).where(eq(teachers.id, teacherId));
   }
 
+  async updateSchoolLogo(schoolId: number, logoUrl: string): Promise<void> {
+    await db.update(schools).set({ logoUrl, logoUpdatedAt: new Date() }).where(eq(schools.id, schoolId));
+  }
+
+  async clearSchoolLogo(schoolId: number): Promise<void> {
+    await db.update(schools).set({ logoUrl: null, logoUpdatedAt: new Date() }).where(eq(schools.id, schoolId));
+  }
+
   async addComplaintNote(data: InsertComplaintNote): Promise<ComplaintNote> {
     const [n] = await db.insert(complaintNotes).values(data).returning();
     return n;

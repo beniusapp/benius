@@ -7,6 +7,8 @@ export const schools = pgTable("schools", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   code: varchar("code", { length: 20 }).notNull().unique(),
+  logoUrl: text("logo_url"),
+  logoUpdatedAt: timestamp("logo_updated_at"),
 });
 
 export const users = pgTable("users", {

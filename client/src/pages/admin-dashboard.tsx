@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
+import Cropper from "react-easy-crop";
+import type { Point, Area } from "react-easy-crop";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useRoute } from "wouter";
 import { useForm } from "react-hook-form";
@@ -11,7 +13,7 @@ import {
   TrendingUp, MessageSquare, CalendarDays, ChevronLeft, Loader2,
   ArrowRight, AlertTriangle, UserCircle2, X, KeyRound, Lock, Phone, Mail,
   CheckCircle2, ChevronDown, PanelLeftClose, PanelLeftOpen, Menu,
-  CalendarRange, Check,
+  CalendarRange, Check, Building2, Upload, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +58,7 @@ interface AdminProfileResponse {
   recoveryPhone: string | null;
   isInitialized: boolean;
   hasPin: boolean;
+  logoUrl: string | null;
 }
 
 interface SecurityAuditEntry {
@@ -315,12 +318,114 @@ function PinInput({ value, onChange, placeholder }: { value: string; onChange: (
   );
 }
 
+// ── Canvas helper: cut the cropped pixels out of the source image ─────────────
+async function getCroppedImg(imageSrc: string, pixelCrop: Area): Promise<Blob> {
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = imageSrc;
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width  = pixelCrop.width;
+  canvas.height = pixelCrop.height;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(image, pixelCrop.x, pixelCrop.y, pixelCrop.width, pixelCrop.height, 0, 0, pixelCrop.width, pixelCrop.height);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("Canvas toBlob failed")), "image/jpeg", 0.92);
+  });
+}
+
+// ── School logo crop modal ────────────────────────────────────────────────────
+function SchoolLogoCropper({
+  src, onCancel, onSave,
+}: { src: string; onCancel: () => void; onSave: (blob: Blob) => void }) {
+  const [crop, setCrop] = useState<Point>({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const onCropComplete = useCallback((_: Area, pxArea: Area) => {
+    setCroppedAreaPixels(pxArea);
+  }, []);
+
+  const handleSave = async () => {
+    if (!croppedAreaPixels) return;
+    setSaving(true);
+    try {
+      const blob = await getCroppedImg(src, croppedAreaPixels);
+      onSave(blob);
+    } catch {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4" onClick={onCancel}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="px-4 py-3 border-b flex items-center justify-between">
+          <p className="font-bold text-gray-800 text-sm">Crop School Logo</p>
+          <button onClick={onCancel} className="p-1 rounded-lg hover:bg-gray-100 transition-colors">
+            <X className="w-4 h-4 text-gray-500" />
+          </button>
+        </div>
+
+        {/* Crop area */}
+        <div className="relative bg-gray-900" style={{ height: 280 }}>
+          <Cropper
+            image={src}
+            crop={crop}
+            zoom={zoom}
+            aspect={1}
+            onCropChange={setCrop}
+            onZoomChange={setZoom}
+            onCropComplete={onCropComplete}
+            cropShape="rect"
+            showGrid={false}
+            style={{
+              containerStyle: { borderRadius: 0 },
+              cropAreaStyle: { border: "2px solid #3b82f6" },
+            }}
+          />
+        </div>
+
+        {/* Zoom slider */}
+        <div className="px-4 py-3 flex items-center gap-3">
+          <span className="text-xs text-gray-500 w-10 text-right">{zoom.toFixed(1)}×</span>
+          <input
+            type="range"
+            min={0.1} max={3} step={0.05}
+            value={zoom}
+            onChange={e => setZoom(Number(e.target.value))}
+            className="flex-1 accent-blue-600"
+          />
+        </div>
+
+        <div className="px-4 pb-4 flex gap-2">
+          <button onClick={onCancel}
+            className="flex-1 py-2 text-sm font-semibold rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors">
+            Cancel
+          </button>
+          <button onClick={handleSave} disabled={saving}
+            className="flex-1 py-2 text-sm font-semibold rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-1.5">
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+            {saving ? "Saving…" : "Crop & Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => void }) {
   const { toast } = useToast();
   const [tab, setTab] = useState<"info" | "password" | "pin" | "log">("info");
   const [currentPin, setCurrentPin] = useState("");
   const [newPin, setNewPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const logoFileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: profile } = useQuery<AdminProfileResponse>({
     queryKey: ["/api/admin/profile"],
@@ -383,6 +488,57 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  // ── Logo: pick file → validate → open cropper ──────────────────────────
+  const handleLogoFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    const ALLOWED = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    if (!ALLOWED.includes(file.type)) {
+      toast({ title: "Unsupported format", description: "Please choose a JPG, PNG, or WebP image.", variant: "destructive" });
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Maximum allowed size is 5 MB.", variant: "destructive" });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = ev => { if (ev.target?.result) setCropSrc(ev.target.result as string); };
+    reader.readAsDataURL(file);
+  };
+
+  // ── Logo: crop done → POST multipart ──────────────────────────────────
+  const handleCropSave = async (blob: Blob) => {
+    setLogoUploading(true);
+    setCropSrc(null);
+    try {
+      const form = new FormData();
+      form.append("file", blob, "logo.jpg");
+      const res = await fetch("/api/admin/school/logo", { method: "POST", body: form, credentials: "include" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Upload failed");
+      toast({ title: "Logo updated" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/profile"] });
+    } catch (err: any) {
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+    } finally {
+      setLogoUploading(false);
+    }
+  };
+
+  // ── Logo: remove ───────────────────────────────────────────────────────
+  const handleLogoRemove = async () => {
+    try {
+      const res = await fetch("/api/admin/school/logo", { method: "DELETE", credentials: "include" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Remove failed");
+      toast({ title: "Logo removed" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/profile"] });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  };
+
   const EVENT_LABELS: Record<string, string> = {
     login_success: "Login successful",
     login_failed: "Login attempt failed",
@@ -398,6 +554,7 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
   };
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
       <div className="w-full max-w-sm h-full bg-white shadow-2xl flex flex-col overflow-hidden text-gray-900" onClick={e => e.stopPropagation()}>
         <div className="border-b px-5 py-4 flex items-center justify-between bg-white">
@@ -445,6 +602,56 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
                     <p className="font-semibold text-gray-800 text-sm">{profile.recoveryPhone}</p>
                   </div>
                 )}
+
+                {/* ── School Logo ─────────────────────────────────────────── */}
+                <div className="p-3 rounded-lg bg-gray-50 border space-y-3">
+                  <p className="text-xs text-gray-500 font-medium">School Logo</p>
+                  <div className="flex items-center gap-4">
+                    {/* Preview / Placeholder */}
+                    <div className="w-16 h-16 rounded-xl border-2 border-dashed border-gray-200 bg-white flex items-center justify-center overflow-hidden flex-shrink-0">
+                      {profile?.logoUrl ? (
+                        <img src={profile.logoUrl} alt="School logo"
+                          className="w-full h-full object-contain" />
+                      ) : (
+                        <Building2 className="w-7 h-7 text-gray-300" />
+                      )}
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex-1 min-w-0 space-y-2">
+                      <p className="text-[11px] text-gray-400 leading-snug">
+                        PNG, JPG or WebP · max 5 MB<br />
+                        Recommended: 512 × 512 px
+                      </p>
+                      <div className="flex gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => logoFileInputRef.current?.click()}
+                          disabled={logoUploading}
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-60">
+                          {logoUploading
+                            ? <Loader2 className="w-3 h-3 animate-spin" />
+                            : <Upload className="w-3 h-3" />}
+                          {profile?.logoUrl ? "Replace" : "Upload"}
+                        </button>
+                        {profile?.logoUrl && (
+                          <button
+                            type="button"
+                            onClick={handleLogoRemove}
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
+                            <Trash2 className="w-3 h-3" />
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Hidden file input */}
+                <input ref={logoFileInputRef} type="file" accept="image/jpeg,image/jpg,image/png,image/webp"
+                  className="hidden" onChange={handleLogoFilePick} />
+
                 <div className="p-3 rounded-lg bg-blue-50 border border-blue-100">
                   <div className="flex items-center gap-2 text-xs text-blue-700 font-medium mb-1">
                     <CheckCircle2 className="w-3.5 h-3.5" />
@@ -576,6 +783,16 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
         </div>
       </div>
     </div>
+
+    {/* Cropper modal — rendered outside the panel slide so it covers full screen */}
+    {cropSrc && (
+      <SchoolLogoCropper
+        src={cropSrc}
+        onCancel={() => setCropSrc(null)}
+        onSave={handleCropSave}
+      />
+    )}
+    </>
   );
 }
 

@@ -52,6 +52,27 @@ declare module "express-session" {
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
+// School logo uploader — 5 MB cap, images only, temp staging in uploads/
+const schoolLogoUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      const dir = path.join(process.cwd(), "uploads");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
+      cb(null, unique + path.extname(file.originalname));
+    },
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Only JPG, PNG, or WebP images are allowed"));
+  },
+});
+
 const createSchoolBodySchema = z.object({
   name: z.string().min(2),
   code: z.string().min(2).max(20),
@@ -581,6 +602,7 @@ export async function registerRoutes(
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
     const user = await storage.getUserById(req.session.userId);
     if (!user) return res.status(404).json({ message: "User not found" });
+    const school = req.session.schoolId ? await storage.getSchool(req.session.schoolId) : undefined;
     res.json({
       id: user.id,
       email: user.email,
@@ -588,7 +610,95 @@ export async function registerRoutes(
       recoveryPhone: user.recoveryPhone,
       isInitialized: user.isInitialized,
       hasPin: !!user.pinHash,
+      logoUrl: school?.logoUrl ?? null,
     });
+  });
+
+  // ── School logo upload ────────────────────────────────────────────────────
+  // Auth runs FIRST (before multer writes anything to disk) to prevent
+  // anonymous clients from staging files in the public uploads/ directory.
+  app.post("/api/admin/school/logo", async (req: any, res: any) => {
+    // 1. Authenticate before touching the filesystem
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.schoolId)
+      return res.status(403).json({ message: "No school context" });
+
+    // 2. Run multer only for verified admins
+    await new Promise<void>((resolve, reject) => {
+      schoolLogoUpload.single("file")(req, res, (err: any) => {
+        if (err && err.code === "LIMIT_FILE_SIZE") {
+          res.status(400).json({ message: "File too large. Maximum size is 5 MB." });
+          return reject(null);
+        }
+        if (err) {
+          res.status(400).json({ message: err.message || "Upload error" });
+          return reject(null);
+        }
+        resolve();
+      });
+    }).catch(() => null);
+
+    // Early-exit if multer already sent a response
+    if (res.headersSent) return;
+
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+    // 3. Double-check MIME + extension server-side; clean up temp file on rejection
+    const ALLOWED_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    const ALLOWED_EXT  = [".jpg", ".jpeg", ".png", ".webp"];
+    const fileMime = req.file.mimetype?.toLowerCase() ?? "";
+    const fileExt  = path.extname(req.file.originalname).toLowerCase();
+    if (!ALLOWED_MIME.includes(fileMime) || !ALLOWED_EXT.includes(fileExt)) {
+      try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
+      return res.status(400).json({ message: "Only JPG, PNG, or WebP images are allowed" });
+    }
+
+    const schoolId = req.session.schoolId as number;
+
+    // 4. Remove previous logo file from disk if one existed
+    const existing = await storage.getSchool(schoolId);
+    if (existing?.logoUrl) {
+      const oldPath = path.join(process.cwd(), existing.logoUrl);
+      if (fs.existsSync(oldPath)) {
+        try { fs.unlinkSync(oldPath); } catch { /* best-effort */ }
+      }
+    }
+
+    // 5. Move temp file to permanent school-scoped directory
+    const schoolDir = path.join(process.cwd(), "uploads", "schools", String(schoolId));
+    if (!fs.existsSync(schoolDir)) fs.mkdirSync(schoolDir, { recursive: true });
+    const destFilename = `logo-${Date.now()}${fileExt}`;
+    const destPath = path.join(schoolDir, destFilename);
+    try {
+      fs.renameSync(req.file.path, destPath);
+    } catch {
+      try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
+      return res.status(500).json({ message: "Failed to save logo" });
+    }
+
+    const logoUrl = `/uploads/schools/${schoolId}/${destFilename}`;
+    await storage.updateSchoolLogo(schoolId, logoUrl);
+    res.json({ message: "Logo updated", logoUrl });
+  });
+
+  // ── School logo removal ────────────────────────────────────────────────────
+  app.delete("/api/admin/school/logo", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.schoolId)
+      return res.status(403).json({ message: "No school context" });
+
+    const schoolId = req.session.schoolId;
+    const school = await storage.getSchool(schoolId);
+    if (!school?.logoUrl) return res.json({ message: "No logo to remove" });
+
+    const filePath = path.join(process.cwd(), school.logoUrl);
+    if (fs.existsSync(filePath)) {
+      try { fs.unlinkSync(filePath); } catch { /* best-effort */ }
+    }
+    await storage.clearSchoolLogo(schoolId);
+    res.json({ message: "Logo removed" });
   });
 
   app.patch("/api/admin/profile", async (req, res) => {

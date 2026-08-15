@@ -718,6 +718,12 @@ app.use((req, res, next) => {
     ON CONFLICT DO NOTHING
   `);
 
+  // ── School logo columns ────────────────────────────────────────────────────
+  await pool.query(`
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo_url TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo_updated_at TIMESTAMPTZ;
+  `);
+
   // ── Schema drift guard ────────────────────────────────────────────────────
   // Verifies that every column defined in shared/schema.ts actually exists in
   // the database AFTER all migration statements above have been applied.
