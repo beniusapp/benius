@@ -4549,58 +4549,320 @@ export async function registerRoutes(
     const rec = records.find(r => r.id === id);
     if (!rec) return res.status(404).json({ message: "Fee record not found" });
     if (rec.status !== "Paid") return res.status(400).json({ message: "Receipt only available for paid records" });
-    const [school] = await db.select({ name: schools.name }).from(schools).where(eq(schools.id, student.schoolId));
-    const esc = (s: string | null | undefined) => (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-    const paidDateStr = rec.paidDate ? new Date(rec.paidDate).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" }) : "—";
-    const dueDateStr = new Date(rec.dueDate).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" });
-    const amountStr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(rec.amount);
-    const schoolName = esc(school?.name ?? "School");
-    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Fee Receipt</title>
+
+    // ── Fetch full tenant-scoped school profile ────────────────────────────────
+    const [school] = await db.select({
+      name: schools.name,
+      logoUrl: schools.logoUrl,
+      addressLine1: schools.addressLine1,
+      addressLine2: schools.addressLine2,
+      city: schools.city,
+      state: schools.state,
+      pinCode: schools.pinCode,
+      country: schools.country,
+      phone: schools.phone,
+      email: schools.email,
+      website: schools.website,
+      board: schools.board,
+      affiliationNumber: schools.affiliationNumber,
+      udiseCode: schools.udiseCode,
+      registrationNumber: schools.registrationNumber,
+      pan: schools.pan,
+      gstin: schools.gstin,
+    }).from(schools).where(eq(schools.id, student.schoolId));
+
+    // ── Fetch captured payment attempt for this fee record ────────────────────
+    const paRows = await db.execute(sql`
+      SELECT razorpay_payment_id, razorpay_order_id, bank_auth_code,
+             payment_method, card_network, card_last4, card_type, card_issuer,
+             bank_name, vpa, wallet, receipt_number, bank_rrn,
+             rzp_captured_at, created_at
+      FROM payment_attempts
+      WHERE fee_record_id = ${id}
+        AND school_id     = ${student.schoolId}
+        AND outcome       = 'captured'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `);
+    const pa = (paRows as any).rows?.[0] ?? null;
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    const esc = (s: string | null | undefined) =>
+      (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
+               .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+    function amountInWords(n: number): string {
+      const ones = ["","One","Two","Three","Four","Five","Six","Seven","Eight","Nine",
+        "Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen","Eighteen","Nineteen"];
+      const tens = ["","","Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"];
+      function cv(x: number): string {
+        if (x === 0) return "";
+        if (x < 20)  return ones[x];
+        if (x < 100) return tens[Math.floor(x/10)] + (x%10 ? " "+ones[x%10] : "");
+        if (x < 1e3) return ones[Math.floor(x/100)]+" Hundred"+(x%100?" "+cv(x%100):"");
+        if (x < 1e5) return cv(Math.floor(x/1e3))+" Thousand"+(x%1e3?" "+cv(x%1e3):"");
+        if (x < 1e7) return cv(Math.floor(x/1e5))+" Lakh"+(x%1e5?" "+cv(x%1e5):"");
+        return cv(Math.floor(x/1e7))+" Crore"+(x%1e7?" "+cv(x%1e7):"");
+      }
+      if (n <= 0) return "Zero Rupees Only";
+      const r = Math.floor(n), p = Math.round((n-r)*100);
+      return "Rupees "+cv(r).trim()+(p>0?" and "+cv(p).trim()+" Paise":"")+" Only";
+    }
+
+    const fmt = (n: number) =>
+      new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(n);
+
+    const fmtDt = (d: string | null | undefined) => {
+      if (!d) return "—";
+      const dt = new Date(String(d).replace(" ","T").replace(/([+-]\d{2})$/,"$1:00").replace(/Z?$/,"Z").replace("ZZ","Z"));
+      return isNaN(dt.getTime()) ? "—" : dt.toLocaleString("en-IN", {
+        day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit", hour12:true, timeZone:"Asia/Kolkata"
+      });
+    };
+
+    // ── Build dynamic sections ────────────────────────────────────────────────
+    const host     = `${req.protocol}://${req.get("host")}`;
+    const receiptUrl = `${host}/api/student/fees/${id}/receipt`;
+    const qrUrl    = `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(receiptUrl)}&size=100x100&margin=2&color=1e3a5f`;
+
+    // Logo: absolute URL so it resolves inside the print iframe
+    const logoSrc  = school?.logoUrl ? `${host}${school.logoUrl}` : null;
+
+    // Board/affiliation line — omit blank parts
+    const boardParts = [
+      school?.board               ? `Board: ${esc(school.board)}`                     : null,
+      school?.affiliationNumber   ? `Affiliation No: ${esc(school.affiliationNumber)}` : null,
+      school?.udiseCode           ? `UDISE: ${esc(school.udiseCode)}`                  : null,
+    ].filter(Boolean);
+    const boardLine = boardParts.join(" &nbsp;|&nbsp; ");
+
+    // Address line
+    const addrParts = [
+      school?.addressLine1,
+      school?.addressLine2,
+      school?.city,
+      school?.state ? (school.pinCode ? `${school.state} – ${school.pinCode}` : school.state) : school?.pinCode,
+      school?.country && school.country !== "India" ? school.country : null,
+    ].filter(Boolean).map(esc);
+    const addressLine = addrParts.join(", ");
+
+    // Contact line
+    const contactParts = [
+      school?.phone   ? `Ph: ${esc(school.phone)}`   : null,
+      school?.email   ? `Email: ${esc(school.email)}` : null,
+      school?.website ? `Web: ${esc(school.website)}` : null,
+    ].filter(Boolean);
+    const contactLine = contactParts.join(" &nbsp;|&nbsp; ");
+
+    // Legal / tax line
+    const legalParts = [
+      school?.gstin              ? `GSTIN: ${esc(school.gstin)}`                         : null,
+      school?.pan                ? `PAN: ${esc(school.pan)}`                              : null,
+      school?.registrationNumber ? `Reg No: ${esc(school.registrationNumber)}`            : null,
+    ].filter(Boolean);
+    const legalLine = legalParts.join(" &nbsp;|&nbsp; ");
+
+    // Payment method description
+    let methodDesc = pa?.payment_method ?? "—";
+    if (pa?.payment_method === "card") {
+      const parts = [pa.card_network, pa.card_last4 ? `•••• ${pa.card_last4}` : null].filter(Boolean);
+      if (parts.length) methodDesc = `Card (${parts.join(" ")})`;
+    } else if (pa?.payment_method === "upi" && pa.vpa) {
+      methodDesc = `UPI (${esc(pa.vpa)})`;
+    } else if (pa?.payment_method === "netbanking" && pa.bank_name) {
+      methodDesc = `Net Banking – ${esc(pa.bank_name)}`;
+    } else if (pa?.payment_method === "wallet" && pa.wallet) {
+      methodDesc = `Wallet (${esc(pa.wallet)})`;
+    }
+
+    const amountStr  = fmt(rec.amount);
+    const amountWords = amountInWords(rec.amount);
+    const paidTs     = fmtDt(rec.paidDate ?? pa?.rzp_captured_at);
+    const feeName    = esc((rec as any).feeName ?? rec.feeType);
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fee Receipt – ${esc(rec.receiptNumber ?? String(id))}</title>
 <style>
-  body{font-family:Arial,sans-serif;margin:0;padding:32px;color:#1e293b;background:#fff;}
-  .receipt{max-width:580px;margin:auto;border:2px solid #06b6d4;border-radius:12px;padding:32px;}
-  .header{text-align:center;border-bottom:2px solid #e2e8f0;padding-bottom:20px;margin-bottom:20px;}
-  .header h1{margin:0 0 4px;font-size:22px;color:#0891b2;}
-  .header p{margin:0;font-size:13px;color:#64748b;}
-  .badge{display:inline-block;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:20px;padding:4px 14px;font-weight:700;font-size:13px;margin-bottom:16px;}
-  table{width:100%;border-collapse:collapse;margin-top:8px;}
-  td{padding:9px 6px;font-size:14px;border-bottom:1px solid #f1f5f9;}
-  td:first-child{color:#64748b;width:45%;}
-  td:last-child{font-weight:600;}
-  .amount-row td:last-child{font-size:18px;font-weight:800;color:#0891b2;}
-  .footer{margin-top:24px;text-align:center;font-size:11px;color:#94a3b8;}
-  @media print{body{padding:0;}button{display:none;}}
-</style></head><body>
-<div class="receipt">
-  <div class="header">
-    <h1>${schoolName}</h1>
-    <p>Official Fee Payment Receipt</p>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:Arial,Helvetica,sans-serif;background:#f1f5f9;padding:24px;color:#1e293b;}
+.wrap{max-width:700px;margin:auto;background:#fff;border:2px solid #1e3a5f;border-radius:8px;overflow:hidden;}
+
+/* ── HEADER ── */
+.hdr{display:flex;gap:18px;align-items:flex-start;padding:20px 24px;border-bottom:1px solid #e2e8f0;}
+.logo-box{flex-shrink:0;width:64px;height:64px;border-radius:6px;overflow:hidden;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;background:#f8fafc;}
+.logo-box img{width:100%;height:100%;object-fit:contain;}
+.logo-init{font-size:24px;font-weight:900;color:#1e3a5f;}
+.school-info{flex:1;min-width:0;}
+.school-name{font-size:18px;font-weight:900;color:#1e3a5f;line-height:1.2;margin-bottom:5px;}
+.school-meta{font-size:10.5px;color:#64748b;line-height:1.7;}
+.school-legal{font-size:9.5px;color:#94a3b8;margin-top:3px;line-height:1.6;}
+
+/* ── TITLE BAR ── */
+.title-bar{background:#1e3a5f;color:#fff;text-align:center;padding:9px 16px;font-size:12px;font-weight:700;letter-spacing:1.5px;}
+
+/* ── STATUS ── */
+.status-row{text-align:center;padding:16px 24px 8px;}
+.badge-paid{display:inline-flex;align-items:center;gap:6px;background:#f0fdf4;color:#15803d;border:1.5px solid #86efac;border-radius:20px;padding:6px 20px;font-weight:800;font-size:13px;}
+.paid-ts{font-size:11px;color:#64748b;margin-top:5px;}
+
+/* ── 2-COL GRID ── */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px 24px;}
+.box{background:#f8fafc;border-radius:8px;padding:12px;border:1px solid #f1f5f9;}
+.box-title{font-size:9.5px;font-weight:800;color:#0891b2;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:9px;}
+.brow{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;gap:4px;}
+.bl{font-size:9.5px;color:#94a3b8;flex-shrink:0;}
+.bv{font-size:9.5px;color:#1e293b;font-weight:600;text-align:right;word-break:break-all;font-family:monospace;}
+
+/* ── TABLE ── */
+.tbl-wrap{padding:12px 24px 8px;}
+table{width:100%;border-collapse:collapse;font-size:11.5px;}
+thead th{background:#1e3a5f;color:#fff;padding:8px 10px;text-align:left;font-size:10.5px;font-weight:700;}
+thead th:last-child{text-align:right;}
+tbody td{padding:9px 10px;border-bottom:1px solid #f1f5f9;color:#334155;vertical-align:top;}
+tbody td:last-child{text-align:right;font-weight:600;}
+tfoot td{padding:10px 10px;background:#eff6ff;font-weight:800;color:#1e3a5f;font-size:13px;border-top:2px solid #1e3a5f;}
+tfoot td:last-child{text-align:right;}
+
+/* ── AMOUNT WORDS ── */
+.words-wrap{padding:4px 24px 12px;}
+.words-box{background:#f0f9ff;border-left:3px solid #0891b2;padding:8px 12px;border-radius:0 4px 4px 0;font-size:10.5px;color:#334155;}
+.tax-note{font-size:9.5px;color:#64748b;font-style:italic;margin-top:6px;padding:0 24px 4px;}
+
+/* ── FOOTER ROW ── */
+.footer-row{display:flex;align-items:flex-end;justify-content:space-between;padding:16px 24px;border-top:1px solid #e2e8f0;}
+.qr-wrap{text-align:center;}
+.qr-lbl{font-size:8.5px;color:#94a3b8;margin-top:4px;}
+.sign-wrap{text-align:center;}
+.sign-space{height:36px;}
+.sign-line{width:150px;border-top:1.5px solid #475569;margin:0 auto 4px;}
+.sign-lbl{font-size:10px;font-weight:700;color:#334155;}
+.sign-sub{font-size:9px;color:#94a3b8;margin-top:2px;}
+
+/* ── FOOTER NOTE ── */
+.fnote{padding:8px 24px 16px;text-align:center;font-size:9.5px;color:#94a3b8;border-top:1px solid #f1f5f9;line-height:1.6;}
+
+@media print{
+  body{background:#fff;padding:0;}
+  .wrap{border:1.5px solid #1e3a5f;box-shadow:none;}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ── HEADER ── -->
+  <div class="hdr">
+    <div class="logo-box">
+      ${logoSrc
+        ? `<img src="${logoSrc}" alt="School Logo" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" /><span class="logo-init" style="display:none;">${esc(school?.name?.[0] ?? "S")}</span>`
+        : `<span class="logo-init">${esc(school?.name?.[0] ?? "S")}</span>`}
+    </div>
+    <div class="school-info">
+      <p class="school-name">${esc(school?.name ?? "School")}</p>
+      <p class="school-meta">
+        ${boardLine   ? `${boardLine}<br>` : ""}
+        ${addressLine ? `${addressLine}<br>` : ""}
+        ${contactLine ? contactLine : ""}
+      </p>
+      ${legalLine ? `<p class="school-legal">${legalLine}</p>` : ""}
+    </div>
   </div>
-  <div style="text-align:center;margin-bottom:16px;">
-    <span class="badge">&#10003; PAID</span>
+
+  <!-- ── TITLE BAR ── -->
+  <div class="title-bar">OFFICIAL FEE PAYMENT RECEIPT</div>
+
+  <!-- ── STATUS BADGE ── -->
+  <div class="status-row">
+    <div class="badge-paid">&#10003;&nbsp; PAID</div>
+    <p class="paid-ts">${paidTs}</p>
   </div>
-  <table>
-    <tr><td>Receipt No.</td><td>${esc(rec.receiptNumber) || "—"}</td></tr>
-    <tr><td>Student Name</td><td>${esc(student?.name) || "—"}</td></tr>
-    <tr><td>Student ID</td><td>${esc(student?.digitalStudentId) || "—"}</td></tr>
-    ${(student as any)?.email ? `<tr><td>Student Email</td><td>${esc((student as any).email)}</td></tr>` : ""}
-    <tr><td>Class / Section</td><td>${esc(student?.class) || "—"} / ${esc(student?.section) || "—"}</td></tr>
-    <tr><td>Fee Type</td><td>${esc(rec.feeType)}</td></tr>
-    ${rec.academicYear ? `<tr><td>Academic Year</td><td>${esc(rec.academicYear)}</td></tr>` : ""}
-    <tr><td>Due Date</td><td>${esc(dueDateStr)}</td></tr>
-    <tr><td>Payment Date</td><td>${esc(paidDateStr)}</td></tr>
-    ${rec.notes ? `<tr><td>Notes</td><td>${esc(rec.notes)}</td></tr>` : ""}
-    <tr class="amount-row"><td>Amount Paid</td><td>${esc(amountStr)}</td></tr>
-  </table>
-  <div class="footer">
-    <p>This is a computer-generated receipt. No signature required.</p>
-    <p>&#169; ${new Date().getFullYear()} BENIUS &middot; ${schoolName}</p>
+
+  <!-- ── 2-COLUMN GRID ── -->
+  <div class="grid2">
+    <div class="box">
+      <p class="box-title">Student Details</p>
+      <div class="brow"><span class="bl">Name</span><span class="bv">${esc(student?.name ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Student ID</span><span class="bv">${esc(student?.digitalStudentId ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Class / Sec</span><span class="bv">${esc(student?.class ?? "—")} / ${esc(student?.section ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Session</span><span class="bv">${esc(rec.academicYear ?? "—")}</span></div>
+    </div>
+    <div class="box">
+      <p class="box-title">Payment Audit</p>
+      <div class="brow"><span class="bl">Receipt No.</span><span class="bv">${esc(rec.receiptNumber ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Payment ID</span><span class="bv" style="font-size:8.5px">${esc(pa?.razorpay_payment_id ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Order ID</span><span class="bv" style="font-size:8.5px">${esc(pa?.razorpay_order_id ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Auth Code</span><span class="bv">${esc(pa?.bank_auth_code ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Method</span><span class="bv">${esc(methodDesc)}</span></div>
+    </div>
   </div>
+
+  <!-- ── ITEMIZATION TABLE ── -->
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr>
+        <th>Description</th>
+        <th>Category</th>
+        <th>Session</th>
+        <th>Amount (₹)</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td>${feeName}</td>
+          <td>Tuition Fee (Eligible for Sec 80C Deduction)</td>
+          <td>${esc(rec.academicYear ?? "—")}</td>
+          <td>₹${amountStr}</td>
+        </tr>
+        <tr>
+          <td>Gateway Charges &amp; GST</td>
+          <td>Payment Processing</td>
+          <td>Instant</td>
+          <td>₹0.00</td>
+        </tr>
+      </tbody>
+      <tfoot><tr>
+        <td colspan="3"><strong>TOTAL AMOUNT PAID</strong></td>
+        <td>₹${amountStr}</td>
+      </tr></tfoot>
+    </table>
+  </div>
+
+  <!-- ── AMOUNT IN WORDS + 80C NOTE ── -->
+  <div class="words-wrap">
+    <div class="words-box"><strong>Amount in Words:</strong> ${esc(amountWords)}</div>
+  </div>
+  <p class="tax-note">Eligible for tax exemption under Section 80C of the Income Tax Act, 1961.</p>
+
+  <!-- ── FOOTER: QR + SIGNATORY ── -->
+  <div class="footer-row">
+    <div class="qr-wrap">
+      <img src="${qrUrl}" width="100" height="100" alt="Verify Receipt" />
+      <p class="qr-lbl">Scan to verify</p>
+    </div>
+    <div class="sign-wrap">
+      <div class="sign-space"></div>
+      <div class="sign-line"></div>
+      <p class="sign-lbl">Authorized Accounts Signatory</p>
+      <p class="sign-sub">${esc(school?.name ?? "School")}</p>
+    </div>
+  </div>
+
+  <!-- ── FOOTER NOTE ── -->
+  <div class="fnote">
+    This is an official computer-generated receipt issued by <strong>${esc(school?.name ?? "the school")}</strong>. No physical signature required.<br>
+    &copy; ${new Date().getFullYear()} BENIUS &middot; ${esc(school?.name ?? "School")}
+  </div>
+
 </div>
-<script>window.print();</script>
-</body></html>`;
+<script>setTimeout(()=>window.print(),600);</script>
+</body>
+</html>`;
+
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.setHeader("Content-Disposition", `inline; filename="receipt-${rec.id}.html"`);
+    res.setHeader("Content-Disposition", `inline; filename="receipt-${rec.receiptNumber ?? id}.html"`);
     res.send(html);
   });
 
