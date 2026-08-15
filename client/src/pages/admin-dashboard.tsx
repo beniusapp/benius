@@ -938,12 +938,7 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
                       <FormItem>
                         <FormLabel className="text-xs">Board / Affiliation</FormLabel>
                         <FormControl>
-                          <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" {...field}>
-                            <option value="">Select…</option>
-                            {["CBSE","CISCE / ICSE","State Board","IB","Cambridge (IGCSE)","NIOS","Other"].map(b => (
-                              <option key={b} value={b}>{b}</option>
-                            ))}
-                          </select>
+                          <Input className="text-sm" placeholder="e.g. CBSE, CISCE, West Bengal Board, IB, Cambridge, etc." {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
