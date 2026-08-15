@@ -1372,72 +1372,82 @@ export function registerFeesRoutes(app: Express) {
 
   // ── Fee Receipt Signature — Upload ───────────────────────────────────────
   // schoolId is always from the authenticated session — never from client body.
-  app.post("/api/admin/fees/external-portal/signature", async (req: any, res: any) => {
+  // ── Fee Receipt Signature — Upload ───────────────────────────────────────
+  // Auth middleware runs first (before multer touches the body).
+  // On success calls next(); on failure sends 401/403 and stops.
+  const sigAuthMiddleware = (req: any, res: any, next: any) => {
     if (!adminGuard(req, res)) return;
+    next();
+  };
 
-    // Run multer only for verified admins
-    await new Promise<void>((resolve, reject) => {
-      feeReceiptSigUpload.single("file")(req, res, (err: any) => {
-        if (err && err.code === "LIMIT_FILE_SIZE") {
-          res.status(400).json({ message: "File too large. Maximum size is 2 MB." });
-          return reject(null);
-        }
-        if (err) {
-          res.status(400).json({ message: err.message || "Upload error" });
-          return reject(null);
-        }
-        resolve();
-      });
-    }).catch(() => null);
-    if (res.headersSent) return;
-    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
-
-    // Double-check MIME + extension server-side
-    const ALLOWED_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
-    const ALLOWED_EXT  = [".jpg", ".jpeg", ".png", ".webp"];
-    const fileMime = req.file.mimetype?.toLowerCase() ?? "";
-    const fileExt  = path.extname(req.file.originalname).toLowerCase();
-    if (!ALLOWED_MIME.includes(fileMime) || !ALLOWED_EXT.includes(fileExt)) {
-      try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
-      return res.status(400).json({ message: "Only PNG, JPG, or WebP images are allowed" });
-    }
-
-    const schoolId = req.session.schoolId as number;
-
-    // Remove previous signature file if one exists
-    const existingMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
-    if (existingMeta?.fileUrl) {
-      const oldPath = path.join(process.cwd(), existingMeta.fileUrl);
-      if (fs.existsSync(oldPath)) {
-        try { fs.unlinkSync(oldPath); } catch { /* best-effort */ }
-      }
-    }
-
-    // Move temp file to tenant-scoped directory
-    const sigDir = path.join(process.cwd(), "uploads", "schools", String(schoolId), "receipt-signature");
-    if (!fs.existsSync(sigDir)) fs.mkdirSync(sigDir, { recursive: true });
-    const destFilename = `sig-${Date.now()}${fileExt}`;
-    const destPath = path.join(sigDir, destFilename);
-    try {
-      fs.renameSync(req.file.path, destPath);
-    } catch {
-      try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
-      return res.status(500).json({ message: "Failed to save signature" });
-    }
-
-    const fileUrl = `/uploads/schools/${schoolId}/receipt-signature/${destFilename}`;
-    await storage.setSchoolMetadataRaw(schoolId, "fee_receipt_signature", {
-      fileUrl,
-      fileName: req.file.originalname,
-      mimeType: fileMime,
-      fileSize: req.file.size,
-      uploadedAt: new Date().toISOString(),
-      updatedAt:  new Date().toISOString(),
+  // Multer middleware with inline error handling — passes control to next handler on success.
+  const sigMulterMiddleware = (req: any, res: any, next: any) => {
+    feeReceiptSigUpload.single("file")(req, res, (err: any) => {
+      if (err && err.code === "LIMIT_FILE_SIZE")
+        return res.status(400).json({ message: "File too large. Maximum size is 2 MB." });
+      if (err)
+        return res.status(400).json({ message: err.message || "Upload error" });
+      next();
     });
+  };
 
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ message: "Fee receipt signature updated", feeReceiptSignatureUrl: fileUrl });
-  });
+  app.post("/api/admin/fees/external-portal/signature",
+    sigAuthMiddleware,
+    sigMulterMiddleware,
+    async (req: any, res: any) => {
+      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+      // Double-check MIME + extension server-side
+      const ALLOWED_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+      const ALLOWED_EXT  = [".jpg", ".jpeg", ".png", ".webp"];
+      const fileMime = req.file.mimetype?.toLowerCase() ?? "";
+      const fileExt  = path.extname(req.file.originalname).toLowerCase();
+      if (!ALLOWED_MIME.includes(fileMime) || !ALLOWED_EXT.includes(fileExt)) {
+        try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
+        return res.status(400).json({ message: "Only PNG, JPG, or WebP images are allowed" });
+      }
+
+      const schoolId = req.session.schoolId as number;
+
+      // Remove previous signature file from disk if one exists
+      try {
+        const existingMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
+        if (existingMeta?.fileUrl) {
+          const oldPath = path.join(process.cwd(), existingMeta.fileUrl);
+          if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        }
+      } catch { /* best-effort old-file cleanup */ }
+
+      // Move temp file to tenant-scoped permanent directory
+      const sigDir = path.join(process.cwd(), "uploads", "schools", String(schoolId), "receipt-signature");
+      try { if (!fs.existsSync(sigDir)) fs.mkdirSync(sigDir, { recursive: true }); } catch { /* ignore */ }
+      const destFilename = `sig-${Date.now()}${fileExt}`;
+      const destPath = path.join(sigDir, destFilename);
+      try {
+        fs.renameSync(req.file.path, destPath);
+      } catch {
+        try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
+        return res.status(500).json({ message: "Failed to save signature file" });
+      }
+
+      const fileUrl = `/uploads/schools/${schoolId}/receipt-signature/${destFilename}`;
+      try {
+        await storage.setSchoolMetadataRaw(schoolId, "fee_receipt_signature", {
+          fileUrl,
+          fileName: req.file.originalname,
+          mimeType: fileMime,
+          fileSize: req.file.size,
+          uploadedAt: new Date().toISOString(),
+          updatedAt:  new Date().toISOString(),
+        });
+      } catch {
+        return res.status(500).json({ message: "Failed to save signature metadata" });
+      }
+
+      res.set("Cache-Control", "no-store");
+      return res.json({ message: "Fee receipt signature updated", feeReceiptSignatureUrl: fileUrl });
+    },
+  );
 
   // ── Fee Receipt Signature — Remove ────────────────────────────────────────
   app.delete("/api/admin/fees/external-portal/signature", async (req, res) => {
