@@ -1018,7 +1018,7 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
                   <div className="grid grid-cols-2 gap-3">
                     <FormField control={schoolInfoForm.control} name="pan" render={({ field }) => (
                       <FormItem>
-                        <FormLabel className="text-xs">PAN <span className="text-gray-400 font-normal">(optional)</span></FormLabel>
+                        <FormLabel className="text-xs">PAN</FormLabel>
                         <FormControl>
                           <Input className="text-sm font-mono uppercase" placeholder="AABCP1234C" maxLength={10}
                             {...field} onChange={e => field.onChange(e.target.value.toUpperCase().slice(0, 10))} />
@@ -1028,7 +1028,7 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
                     )} />
                     <FormField control={schoolInfoForm.control} name="gstin" render={({ field }) => (
                       <FormItem>
-                        <FormLabel className="text-xs">GSTIN <span className="text-gray-400 font-normal">(optional)</span></FormLabel>
+                        <FormLabel className="text-xs">GSTIN</FormLabel>
                         <FormControl>
                           <Input className="text-sm font-mono uppercase" placeholder="27AABCP1234C1Z5" maxLength={15}
                             {...field} onChange={e => field.onChange(e.target.value.toUpperCase().slice(0, 15))} />
