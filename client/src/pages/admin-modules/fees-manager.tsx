@@ -180,6 +180,7 @@ interface PaymentRecord {
   referenceNumber: string | null;
   cashierNotes: string | null;
   receiptNumber: string | null;
+  invoiceNumber?: string | null;
   // Razorpay metadata (populated for online payments)
   razorpayPaymentId?: string | null;
   razorpayOrderId?: string | null;
@@ -1016,21 +1017,22 @@ function PaymentHistoryModal({ open, onClose, feeRecord }: PaymentHistoryModalPr
       return;
     }
     const studentName = feeRecord!.student?.name ?? "student";
-    const headers = ["#", "Date", "Amount (INR)", "Method", "Reference No.", "Notes", "Receipt No."];
+    const headers = ["#", "Invoice No.", "Date", "Amount (INR)", "Method", "Reference No.", "Notes", "Receipt No."];
     const dataRows = filteredPayments.map((p, idx) => [
       idx + 1,
+      p.invoiceNumber ?? "—",
       fmtDate(p.receivedDate),
       p.amount,
       methodLabel[p.paymentMethod] ?? p.paymentMethod,
       p.referenceNumber ?? "",
       p.cashierNotes ?? "",
-      p.receiptNumber ?? `PAY-${p.id}`,
+      p.receiptNumber ?? "—",
     ]);
     // Summary footer rows
-    dataRows.push(["", "", "", "", "", "", ""]);
-    dataRows.push(["", "Filtered Total", filteredTotal, "", "", "", ""]);
+    dataRows.push(["", "", "", "", "", "", "", ""]);
+    dataRows.push(["", "", "Filtered Total", filteredTotal, "", "", "", ""]);
     if (isFiltered) {
-      dataRows.push(["", "Overall Total", feeRecord!.amount, "", "", "", ""]);
+      dataRows.push(["", "", "Overall Total", feeRecord!.amount, "", "", "", ""]);
     }
 
     const csvContent = [headers, ...dataRows]
@@ -1068,12 +1070,13 @@ function PaymentHistoryModal({ open, onClose, feeRecord }: PaymentHistoryModalPr
     const rows = filteredPayments.map((p, idx) => `
       <tr>
         <td>${idx + 1}</td>
+        <td class="inv">${esc(p.invoiceNumber ?? "—")}</td>
         <td>${esc(fmtDate(p.receivedDate))}</td>
         <td class="amount">₹${p.amount.toLocaleString("en-IN")}</td>
         <td>${esc(methodLabel[p.paymentMethod] ?? p.paymentMethod)}</td>
         <td>${esc(p.referenceNumber ?? "—")}</td>
         <td>${esc(p.cashierNotes ?? "—")}</td>
-        <td class="mono">${p.receiptNumber ?? `PAY-${p.id}`}</td>
+        <td class="mono">${esc(p.receiptNumber ?? "—")}</td>
       </tr>`).join("");
 
     const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
@@ -1089,6 +1092,7 @@ function PaymentHistoryModal({ open, onClose, feeRecord }: PaymentHistoryModalPr
   tr:nth-child(even) td{background:#f8fafc;}
   .amount{font-weight:700;}
   .mono{font-family:monospace;font-size:11px;color:#94a3b8;}
+  .inv{font-family:monospace;font-size:11px;color:#7c3aed;}
   .total-row td{border-top:2px solid #0891b2;font-weight:700;background:#f0f9ff;}
   .footer{margin-top:20px;font-size:11px;color:#94a3b8;text-align:center;}
   @media print{body{padding:0;}}
@@ -1101,11 +1105,11 @@ function PaymentHistoryModal({ open, onClose, feeRecord }: PaymentHistoryModalPr
 ${filterDesc ? `<div class="filter-badge">Filtered: ${esc(filterDesc)}</div>` : ""}
 <table>
   <thead><tr>
-    <th>#</th><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Notes</th><th>Receipt</th>
+    <th>#</th><th>Invoice No.</th><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Notes</th><th>Receipt No.</th>
   </tr></thead>
   <tbody>${rows}</tbody>
   <tfoot><tr class="total-row">
-    <td colspan="2">${isFiltered ? `Filtered Total (${filteredPayments.length} of ${payments.length})` : "Total"}</td>
+    <td colspan="3">${isFiltered ? `Filtered Total (${filteredPayments.length} of ${payments.length})` : "Total"}</td>
     <td class="amount">₹${filteredTotal.toLocaleString("en-IN")}</td>
     <td colspan="4"></td>
   </tr></tfoot>
@@ -1238,17 +1242,27 @@ ${filterDesc ? `<div class="filter-badge">Filtered: ${esc(filterDesc)}</div>` : 
                       </Button>
                     </div>
                   </div>
-                  {(p.referenceNumber || p.cashierNotes) && (
-                    <div className="mt-2 pt-2 border-t border-white/5 space-y-0.5">
-                      {p.referenceNumber && (
-                        <p className="text-white/40 text-xs">Ref: <span className="text-white/60 font-mono">{p.referenceNumber}</span></p>
-                      )}
-                      {p.cashierNotes && (
-                        <p className="text-white/40 text-xs">Note: <span className="text-white/60">{p.cashierNotes}</span></p>
-                      )}
+                  {/* Invoice No. + Receipt No. — always shown, visually separated */}
+                  <div className="mt-2 pt-2 border-t border-white/5 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-white/30 text-[10px] w-14 shrink-0">Invoice</span>
+                      <span className="font-mono text-[10px] tracking-wide text-violet-300">
+                        {p.invoiceNumber ?? "—"}
+                      </span>
                     </div>
-                  )}
-                  <p className="text-white/20 text-[10px] mt-1.5 font-mono">{p.receiptNumber ?? `PAY-${p.id}`}</p>
+                    <div className="flex items-center gap-2">
+                      <span className="text-white/30 text-[10px] w-14 shrink-0">Receipt</span>
+                      <span className="font-mono text-[10px] tracking-wide text-cyan-300">
+                        {p.receiptNumber ?? "—"}
+                      </span>
+                    </div>
+                    {p.referenceNumber && (
+                      <p className="text-white/40 text-xs">Ref: <span className="text-white/60 font-mono">{p.referenceNumber}</span></p>
+                    )}
+                    {p.cashierNotes && (
+                      <p className="text-white/40 text-xs">Note: <span className="text-white/60">{p.cashierNotes}</span></p>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

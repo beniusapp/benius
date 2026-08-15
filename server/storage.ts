@@ -4779,14 +4779,20 @@ export class DatabaseStorage {
     return rec;
   }
 
-  async getPaymentRecordsBySchool(schoolId: number, opts?: { studentId?: number; feeRecordId?: number; sessionId?: number | null }): Promise<PaymentRecord[]> {
+  async getPaymentRecordsBySchool(schoolId: number, opts?: { studentId?: number; feeRecordId?: number; sessionId?: number | null }) {
     const conditions: any[] = [eq(paymentRecords.schoolId, schoolId)];
     if (opts?.studentId) conditions.push(eq(paymentRecords.studentId, opts.studentId));
     if (opts?.feeRecordId !== undefined) conditions.push(eq(paymentRecords.feeRecordId, opts.feeRecordId));
     if (opts?.sessionId != null) conditions.push(eq(paymentRecords.sessionId, opts.sessionId!));
-    return db.select().from(paymentRecords)
+    // LEFT JOIN fee_records to resolve invoice_number without adding a column to payment_records.
+    // Orphan records (fee_record_id = NULL) or historical records (invoice_number = NULL) → invoiceNumber: null → shown as "—" in UI.
+    const rows = await db
+      .select()
+      .from(paymentRecords)
+      .leftJoin(feeRecords, eq(paymentRecords.feeRecordId, feeRecords.id))
       .where(and(...conditions))
       .orderBy(desc(paymentRecords.createdAt));
+    return rows.map(r => ({ ...r.payment_records, invoiceNumber: r.fee_records?.invoiceNumber ?? null }));
   }
 
   async getPaymentRecordByIdempotencyKey(key: string, schoolId?: number): Promise<PaymentRecord | null> {
