@@ -559,8 +559,10 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
       <div className="w-full max-w-sm h-full bg-white shadow-2xl flex flex-col overflow-hidden text-gray-900" onClick={e => e.stopPropagation()}>
         <div className="border-b px-5 py-4 flex items-center justify-between bg-white">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-              <UserCircle2 className="w-6 h-6 text-blue-600" />
+            <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center overflow-hidden flex-shrink-0">
+              {profile?.logoUrl
+                ? <img src={profile.logoUrl} alt="School logo" className="w-full h-full object-contain" />
+                : <UserCircle2 className="w-6 h-6 text-blue-600" />}
             </div>
             <div>
               <p className="font-bold text-gray-900 text-sm capitalize">{me.email.split("@")[0].replace(/[._]/g, " ")}</p>
