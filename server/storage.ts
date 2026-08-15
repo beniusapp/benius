@@ -4661,7 +4661,8 @@ export class DatabaseStorage {
       .orderBy(desc(feeRecords.createdAt));
   }
 
-  async updateFeeRecord(id: number, schoolId: number, data: Partial<InsertFeeRecord>): Promise<FeeRecord | undefined> {
+  // invoiceNumber is intentionally excluded: it is assigned once at creation and must never be overwritten.
+  async updateFeeRecord(id: number, schoolId: number, data: Omit<Partial<InsertFeeRecord>, "invoiceNumber">): Promise<FeeRecord | undefined> {
     const [rec] = await db.update(feeRecords)
       .set(data)
       .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)))

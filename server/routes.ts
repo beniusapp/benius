@@ -4401,7 +4401,9 @@ export async function registerRoutes(
       const today = new Date().toISOString().split("T")[0];
       patchData.dueDate = patchData.paidDate || today;
     }
-    const updated = await storage.updateFeeRecord(id, schoolId, patchData);
+    // patchData.dueDate was guaranteed non-null by the block above (lines 4400-4402),
+    // but Zod infers it as string|null|undefined while InsertFeeRecord expects string|undefined.
+    const updated = await storage.updateFeeRecord(id, schoolId, patchData as Omit<Parameters<typeof storage.updateFeeRecord>[2], never>);
     if (!updated) return res.status(404).json({ message: "Fee record not found" });
 
     // Resolve student name for a human-readable audit entry
