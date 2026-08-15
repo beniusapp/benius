@@ -625,6 +625,14 @@ export const feeRecords = pgTable("fee_records", {
   paidDate: date("paid_date"),
   status: varchar("status", { length: 20 }).notNull().default("Due"),
   receiptNumber: varchar("receipt_number", { length: 50 }),
+  // invoice_number is the permanent invoice identifier (INV-0001, INV-0002 …).
+  // It is assigned at invoice creation and MUST NEVER be overwritten by a payment.
+  // receipt_number holds the payment receipt (ON-xxxx / OF-xxxx) after payment.
+  // Uniqueness is enforced at the DB level via a partial unique index:
+  //   fee_records_school_invoice_uniq ON fee_records (school_id, invoice_number)
+  //   WHERE invoice_number IS NOT NULL
+  // NULL values (un-invoiced bulk records) are exempt from the constraint.
+  invoiceNumber: varchar("invoice_number", { length: 50 }),
   notes: text("notes"),
   lateFeeAmount: integer("late_fee_amount").notNull().default(0),
   academicYear: varchar("academic_year", { length: 20 }),

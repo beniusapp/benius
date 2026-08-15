@@ -747,6 +747,22 @@ app.use((req, res, next) => {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS signature_url TEXT;
   `);
 
+  // ── Permanent invoice number column ──────────────────────────────────────
+  // invoice_number is the immutable invoice identifier (INV-0001 …).
+  // It is assigned at invoice creation and must never be overwritten by payment.
+  // receipt_number continues to hold the ON/OF payment receipt after payment.
+  // Uniqueness is enforced per school via a partial unique index so that the
+  // many un-invoiced NULL rows (bulk-generated records) do not conflict.
+  await pool.query(`
+    ALTER TABLE fee_records
+      ADD COLUMN IF NOT EXISTS invoice_number VARCHAR(50);
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS fee_records_school_invoice_uniq
+      ON fee_records (school_id, invoice_number)
+      WHERE invoice_number IS NOT NULL;
+  `);
+
   // ── Schema drift guard ────────────────────────────────────────────────────
   // Verifies that every column defined in shared/schema.ts actually exists in
   // the database AFTER all migration statements above have been applied.
