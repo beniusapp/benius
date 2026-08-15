@@ -133,19 +133,20 @@ export async function acquireRazorpayOrder(
 ): Promise<AcquireOrderResult> {
   let result: AcquireOrderResult | null = null;
 
-  // Pre-load fee structures so we can compute the current late fee at order-creation time.
-  // Done before the transaction to avoid extending the row-lock duration.
-  const schoolStructures = await db
-    .select({ feeType: feeStructures.feeType, lateFeeConfig: feeStructures.lateFeeConfig })
-    .from(feeStructures)
-    .where(eq(feeStructures.schoolId, schoolId));
-  const lateFeeConfigMap = new Map<string, LateFeeConfig>();
-  for (const s of schoolStructures) {
-    const cfg = s.lateFeeConfig as LateFeeConfig | null;
-    if (cfg?.enabled) lateFeeConfigMap.set(s.feeType.trim().toLowerCase(), cfg);
-  }
-
   await db.transaction(async (tx) => {
+    // Load fee structures inside the transaction so a single DB connection
+    // is used for the whole acquire sequence.  A plain SELECT acquires no row
+    // locks and completes in milliseconds — lock-duration impact is negligible.
+    const schoolStructures = await tx
+      .select({ feeType: feeStructures.feeType, lateFeeConfig: feeStructures.lateFeeConfig })
+      .from(feeStructures)
+      .where(eq(feeStructures.schoolId, schoolId));
+    const lateFeeConfigMap = new Map<string, LateFeeConfig>();
+    for (const s of schoolStructures) {
+      const cfg = s.lateFeeConfig as LateFeeConfig | null;
+      if (cfg?.enabled) lateFeeConfigMap.set(s.feeType.trim().toLowerCase(), cfg);
+    }
+
     // Row-level write lock — concurrent requests for this fee block here.
     const lockedResult = await tx.execute(sql`
       SELECT id, status, amount, late_fee_amount, due_date, fee_type,
@@ -1078,22 +1079,22 @@ export function registerFeesRoutes(app: Express) {
       message: string; invoiceAmount: number; totalAlreadyPaid: number; newAmount: number;
     } | null = null;
 
-    // Pre-load fee structures for on-the-fly late fee calculation.
-    // Done before the transaction to minimise row-lock duration.
-    const offlineStructures = await db
-      .select({ feeType: feeStructures.feeType, lateFeeConfig: feeStructures.lateFeeConfig })
-      .from(feeStructures)
-      .where(eq(feeStructures.schoolId, schoolId));
-    const offlineLateFeeMap = new Map<string, LateFeeConfig>();
-    for (const s of offlineStructures) {
-      const cfg = s.lateFeeConfig as LateFeeConfig | null;
-      if (cfg?.enabled) offlineLateFeeMap.set(s.feeType.trim().toLowerCase(), cfg);
-    }
     // Closure variable — computed inside the FOR UPDATE transaction, read by the INSERT.
     let lateFeeForOfflineInsert = 0;
 
     await db.transaction(async (tx) => {
       if (paymentOnly.feeRecordId) {
+        // Load fee structures inside the transaction to reuse a single DB connection.
+        const offlineStructures = await tx
+          .select({ feeType: feeStructures.feeType, lateFeeConfig: feeStructures.lateFeeConfig })
+          .from(feeStructures)
+          .where(eq(feeStructures.schoolId, schoolId));
+        const offlineLateFeeMap = new Map<string, LateFeeConfig>();
+        for (const s of offlineStructures) {
+          const cfg = s.lateFeeConfig as LateFeeConfig | null;
+          if (cfg?.enabled) offlineLateFeeMap.set(s.feeType.trim().toLowerCase(), cfg);
+        }
+
         // Acquire a row-level write lock — concurrent requests will queue here.
         const lockResult = await tx.execute(
           sql`SELECT status, amount, due_date, fee_type FROM fee_records
