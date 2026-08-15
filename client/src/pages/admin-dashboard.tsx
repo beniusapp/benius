@@ -1311,6 +1311,18 @@ export default function AdminDashboard() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
+  // Tenant-scoped school profile — used by the header logo.
+  // Keyed by schoolId so each school gets its own cache slot; resolved server-side
+  // from req.session.schoolId, guaranteeing strict tenant isolation.
+  const { data: adminProfile } = useQuery<AdminProfileResponse>({
+    queryKey: ["/api/admin/profile"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/profile", { credentials: "include" });
+      return r.ok ? r.json() : null;
+    },
+    enabled: !!me,
+  });
+
   useEffect(() => {
     if (!isLoading && (isError || !me)) setLocation("/login");
   }, [isLoading, isError, me, setLocation]);
@@ -1638,9 +1650,9 @@ export default function AdminDashboard() {
                 }}
                 data-testid="div-navbar-initials"
               >
-                {profile?.logoUrl
+                {adminProfile?.logoUrl
                   ? <img
-                      src={profile.logoUrl}
+                      src={adminProfile.logoUrl}
                       alt="School logo"
                       className="w-full h-full object-contain"
                       onError={e => {
