@@ -4284,18 +4284,28 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     setShowSigConfirmRemove(false);
   };
 
+  // Safe JSON parse helper — never throws even if server returns HTML or empty body
+  const parseJsonResponse = async (res: Response): Promise<any> => {
+    const text = await res.text();
+    if (!text) return {};
+    try { return JSON.parse(text); } catch { return { error: text.slice(0, 120) }; }
+  };
+
   const handleSigSave = async () => {
     if (!selectedSigFile) return;
     setSigUploading(true);
     try {
       const form = new FormData();
       form.append("file", selectedSigFile, selectedSigFile.name);
-      const res = await fetch("/api/admin/fees/external-portal/signature", { method: "POST", body: form, credentials: "include" });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message || "Upload failed");
-      toast({ title: "Fee receipt signature updated successfully." });
+      const res = await fetch("/api/admin/fees/external-portal/signature", {
+        method: "POST", body: form, credentials: "include",
+      });
+      const json = await parseJsonResponse(res);
+      if (!res.ok) throw new Error(json.error || json.message || `Upload failed (${res.status})`);
+      toast({ title: "Signature saved successfully." });
       if (sigPreviewUrl) { URL.revokeObjectURL(sigPreviewUrl); setSigPreviewUrl(null); }
       setSelectedSigFile(null);
+      setSynced(false);   // force re-sync from server so preview shows processed version
       invalidate();
     } catch (err: any) {
       toast({ title: "Upload failed", description: err.message, variant: "destructive" });
@@ -4307,13 +4317,16 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const handleSigRemove = async () => {
     setSigRemoving(true);
     try {
-      const res = await fetch("/api/admin/fees/external-portal/signature", { method: "DELETE", credentials: "include" });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message || "Remove failed");
+      const res = await fetch("/api/admin/fees/external-portal/signature", {
+        method: "DELETE", credentials: "include",
+      });
+      const json = await parseJsonResponse(res);
+      if (!res.ok) throw new Error(json.error || json.message || `Remove failed (${res.status})`);
       toast({ title: "Signature removed." });
       setShowSigConfirmRemove(false);
       if (sigPreviewUrl) { URL.revokeObjectURL(sigPreviewUrl); setSigPreviewUrl(null); }
       setSelectedSigFile(null);
+      setSynced(false);
       invalidate();
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });

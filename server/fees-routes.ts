@@ -13,6 +13,48 @@ import { fetchRazorpayData, mapRazorpayPayment, upsertPaymentAttempt, updatePaym
 import multer from "multer";
 import path from "node:path";
 import fs from "node:fs";
+import sharp from "sharp";
+
+// ── Signature background removal ─────────────────────────────────────────────
+// Converts white/light-grey background to transparency.
+// Returns true on success, false if removal failed (caller uses original as fallback).
+async function removeSignatureBackground(inputPath: string, outputPath: string): Promise<boolean> {
+  try {
+    const { data, info } = await sharp(inputPath)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    // Pixels where ALL channels >= HARD → fully transparent (white/near-white background).
+    // Pixels in SOFT..HARD zone → proportionally faded (soft edge).
+    // All other pixels (ink) stay fully opaque.
+    const HARD = 215; // near-white threshold
+    const SOFT = 160; // soft-edge lower boundary
+
+    for (let i = 0; i < data.length; i += 4) {
+      const minCh = Math.min(data[i]!, data[i + 1]!, data[i + 2]!);
+      if (minCh >= HARD) {
+        data[i + 3] = 0; // fully transparent
+      } else if (minCh >= SOFT) {
+        // Linear fade: opaque at SOFT, transparent at HARD
+        data[i + 3] = Math.round(((HARD - minCh) / (HARD - SOFT)) * 255);
+      }
+      // else: keep existing alpha (fully opaque dark ink)
+    }
+
+    await sharp(data, {
+      raw: { width: info.width, height: info.height, channels: 4 },
+    })
+      .trim({ threshold: 10 })
+      .png({ compressionLevel: 7 })
+      .toFile(outputPath);
+
+    return true;
+  } catch (err) {
+    console.error("[sig-bg-remove] Failed:", err);
+    return false;
+  }
+}
 
 // ── Fee receipt signature uploader — 2 MB, images only, staged to temp ──────
 const feeReceiptSigUpload = multer({
@@ -1173,17 +1215,22 @@ export function registerFeesRoutes(app: Express) {
     // Key ID is not a secret — safe to show.  Secrets are always masked.
     const effectiveKeyId = settings?.razorpayKeyId ?? (creds ? (process.env.RAZORPAY_KEY_ID ?? null) : null);
 
-    // Include fee receipt signature URL (tenant-scoped via schoolMetadata)
+    // Include fee receipt signature URLs (tenant-scoped via schoolMetadata)
     const sigMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
+    // Best-display URL: processed (transparent) > original > legacy fileUrl
+    const feeReceiptSignatureUrl =
+      sigMeta?.processedSignatureUrl ??
+      sigMeta?.originalSignatureUrl  ??
+      sigMeta?.fileUrl               ?? null;
 
     res.json({
       ...base,
       razorpayMode: "live",
-      razorpayEnabled:         creds?.enabled ?? false,
-      razorpayKeyId:           effectiveKeyId,
-      razorpayKeySecret:       creds ? "••••••••" : null,
-      razorpayWebhookSecret:   creds?.webhookSecret ? "••••••••" : null,
-      feeReceiptSignatureUrl:  sigMeta?.fileUrl ?? null,
+      razorpayEnabled:             creds?.enabled ?? false,
+      razorpayKeyId:               effectiveKeyId,
+      razorpayKeySecret:           creds ? "••••••••" : null,
+      razorpayWebhookSecret:       creds?.webhookSecret ? "••••••••" : null,
+      feeReceiptSignatureUrl,
     });
   });
 
@@ -1395,7 +1442,9 @@ export function registerFeesRoutes(app: Express) {
     sigAuthMiddleware,
     sigMulterMiddleware,
     async (req: any, res: any) => {
-      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+      if (!req.file) {
+        return res.status(400).json({ success: false, error: "No file uploaded" });
+      }
 
       // Double-check MIME + extension server-side
       const ALLOWED_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
@@ -1404,48 +1453,66 @@ export function registerFeesRoutes(app: Express) {
       const fileExt  = path.extname(req.file.originalname).toLowerCase();
       if (!ALLOWED_MIME.includes(fileMime) || !ALLOWED_EXT.includes(fileExt)) {
         try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
-        return res.status(400).json({ message: "Only PNG, JPG, or WebP images are allowed" });
+        return res.status(400).json({ success: false, error: "Only PNG, JPG, or WebP images are allowed" });
       }
 
-      const schoolId = req.session.schoolId as number;
+      const schoolId    = req.session.schoolId as number;
+      const ts          = Date.now();
+      const sigDir      = path.join(process.cwd(), "uploads", "schools", String(schoolId), "receipt-signature");
+      try { fs.mkdirSync(sigDir, { recursive: true }); } catch { /* already exists */ }
 
-      // Remove previous signature file from disk if one exists
+      // ── Remove old files ────────────────────────────────────────────────────
       try {
-        const existingMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
-        if (existingMeta?.fileUrl) {
-          const oldPath = path.join(process.cwd(), existingMeta.fileUrl);
-          if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        const prev = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
+        for (const key of ["originalSignatureUrl", "processedSignatureUrl", "fileUrl"]) {
+          if (prev?.[key]) {
+            try { fs.unlinkSync(path.join(process.cwd(), prev[key])); } catch { /* best-effort */ }
+          }
         }
-      } catch { /* best-effort old-file cleanup */ }
+      } catch { /* best-effort cleanup */ }
 
-      // Move temp file to tenant-scoped permanent directory
-      const sigDir = path.join(process.cwd(), "uploads", "schools", String(schoolId), "receipt-signature");
-      try { if (!fs.existsSync(sigDir)) fs.mkdirSync(sigDir, { recursive: true }); } catch { /* ignore */ }
-      const destFilename = `sig-${Date.now()}${fileExt}`;
-      const destPath = path.join(sigDir, destFilename);
+      // ── Move temp → permanent original file ────────────────────────────────
+      const origFilename = `sig-orig-${ts}${fileExt}`;
+      const origPath     = path.join(sigDir, origFilename);
       try {
-        fs.renameSync(req.file.path, destPath);
+        fs.renameSync(req.file.path, origPath);
       } catch {
         try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
-        return res.status(500).json({ message: "Failed to save signature file" });
+        return res.status(500).json({ success: false, error: "Failed to save signature file" });
       }
+      const originalSignatureUrl = `/uploads/schools/${schoolId}/receipt-signature/${origFilename}`;
 
-      const fileUrl = `/uploads/schools/${schoolId}/receipt-signature/${destFilename}`;
+      // ── Background removal → processed PNG ─────────────────────────────────
+      const procFilename = `sig-proc-${ts}.png`;
+      const procPath     = path.join(sigDir, procFilename);
+      const bgRemoved    = await removeSignatureBackground(origPath, procPath);
+      const processedSignatureUrl = bgRemoved
+        ? `/uploads/schools/${schoolId}/receipt-signature/${procFilename}`
+        : originalSignatureUrl; // fallback: use original if removal failed
+
+      // ── Persist metadata ────────────────────────────────────────────────────
       try {
         await storage.setSchoolMetadataRaw(schoolId, "fee_receipt_signature", {
-          fileUrl,
-          fileName: req.file.originalname,
-          mimeType: fileMime,
-          fileSize: req.file.size,
+          originalSignatureUrl,
+          processedSignatureUrl,
+          fileName:   req.file.originalname,
+          mimeType:   fileMime,
+          fileSize:   req.file.size,
           uploadedAt: new Date().toISOString(),
           updatedAt:  new Date().toISOString(),
+          updatedBy:  req.session.userId,
         });
       } catch {
-        return res.status(500).json({ message: "Failed to save signature metadata" });
+        return res.status(500).json({ success: false, error: "Failed to save signature metadata" });
       }
 
       res.set("Cache-Control", "no-store");
-      return res.json({ message: "Fee receipt signature updated", feeReceiptSignatureUrl: fileUrl });
+      return res.json({
+        success: true,
+        originalSignatureUrl,
+        processedSignatureUrl,
+        feeReceiptSignatureUrl: processedSignatureUrl,
+      });
     },
   );
 
@@ -1454,16 +1521,19 @@ export function registerFeesRoutes(app: Express) {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId as number;
 
-    const existing = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
-    if (existing?.fileUrl) {
-      const filePath = path.join(process.cwd(), existing.fileUrl);
-      if (fs.existsSync(filePath)) {
-        try { fs.unlinkSync(filePath); } catch { /* best-effort */ }
+    try {
+      const existing = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
+      // Delete all stored files (original + processed + legacy fileUrl)
+      for (const key of ["originalSignatureUrl", "processedSignatureUrl", "fileUrl"]) {
+        if (existing?.[key]) {
+          try { fs.unlinkSync(path.join(process.cwd(), existing[key])); } catch { /* best-effort */ }
+        }
       }
-    }
+    } catch { /* best-effort */ }
+
     await storage.setSchoolMetadataRaw(schoolId, "fee_receipt_signature", null);
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ message: "Fee receipt signature removed" });
+    res.set("Cache-Control", "no-store");
+    res.json({ success: true, message: "Fee receipt signature removed" });
   });
 
   // ── Simulated test payment (no Razorpay keys required) ───────────────────

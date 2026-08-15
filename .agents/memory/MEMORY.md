@@ -14,3 +14,4 @@
 - [Fees & Payments Fintech Hub](fees-fintech-hub.md) — 4 new DB tables, fees-routes.ts registration pattern, idempotency key flow, high-value payment re-auth (≥₹10k), and 5-tab UI architecture.
 - [Razorpay Integration](razorpay-integration.md) — credential resolver (DB → env fallback), verify endpoint pattern, payment.failed webhook branch, student UI failure callback.
 - [Late Fee Engine](late-fee-engine.md) — server/late-fee-engine.ts; calculateLateFee() is pure, recalculateLateFees(schoolId) persists to DB; nightly cron calls it after overdue sweep; GET /api/admin/fees computes on-the-fly for freshness.
+- [Fee Receipt Signature](fee-receipt-signature.md) — per-tenant signature; middleware-array upload (NOT Promise-wrap); sharp bg-removal; both original+processed URLs stored; receipt uses processed ?? original ?? legacy fileUrl.

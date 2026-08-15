@@ -4663,7 +4663,9 @@ export async function registerRoutes(
 
     // ── Fetch fee receipt signature (tenant-scoped via schoolMetadata) ────────
     const sigMeta = await storage.getSchoolMetadataRaw(student.schoolId, "fee_receipt_signature") as any;
-    const feeReceiptSigUrl = sigMeta?.fileUrl ? `${req.protocol}://${req.get("host")}${sigMeta.fileUrl}` : null;
+    // Use best available URL: processed (transparent) > original > legacy fileUrl
+    const _sigRelUrl = sigMeta?.processedSignatureUrl ?? sigMeta?.originalSignatureUrl ?? sigMeta?.fileUrl ?? null;
+    const feeReceiptSigUrl = _sigRelUrl ? `${req.protocol}://${req.get("host")}${_sigRelUrl}` : null;
 
     // ── Fetch full tenant-scoped school profile ────────────────────────────────
     const [school] = await db.select({
