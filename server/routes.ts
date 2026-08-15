@@ -4812,7 +4812,7 @@ tfoot td:last-child{text-align:right;}
       <tbody>
         <tr>
           <td>${feeName}</td>
-          <td>Tuition Fee (Eligible for Sec 80C Deduction)</td>
+          <td>Tuition Fee</td>
           <td>${esc(rec.academicYear ?? "—")}</td>
           <td>₹${amountStr}</td>
         </tr>
@@ -4834,7 +4834,6 @@ tfoot td:last-child{text-align:right;}
   <div class="words-wrap">
     <div class="words-box"><strong>Amount in Words:</strong> ${esc(amountWords)}</div>
   </div>
-  <p class="tax-note">Eligible for tax exemption under Section 80C of the Income Tax Act, 1961.</p>
 
   <!-- ── FOOTER: QR + SIGNATORY ── -->
   <div class="footer-row">
