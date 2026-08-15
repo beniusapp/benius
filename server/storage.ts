@@ -4409,6 +4409,20 @@ export class DatabaseStorage {
     await db.update(users).set(data).where(eq(users.id, userId));
   }
 
+  // Signature is stored scoped to the user. schoolId is passed so the caller
+  // can enforce tenant isolation before updating — never trust a client-supplied ID.
+  async updateAdminSignature(userId: number, schoolId: number, signatureUrl: string): Promise<void> {
+    await db.update(users)
+      .set({ signatureUrl })
+      .where(and(eq(users.id, userId), eq(users.schoolId, schoolId)));
+  }
+
+  async clearAdminSignature(userId: number, schoolId: number): Promise<void> {
+    await db.update(users)
+      .set({ signatureUrl: null })
+      .where(and(eq(users.id, userId), eq(users.schoolId, schoolId)));
+  }
+
   async setAdminOtp(userId: number, otpCode: string, expiresAt: Date): Promise<void> {
     await db.update(users).set({ otpCode, otpExpiresAt: expiresAt }).where(eq(users.id, userId));
   }

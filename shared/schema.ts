@@ -46,6 +46,7 @@ export const users = pgTable("users", {
   otpExpiresAt: timestamp("otp_expires_at"),
   resetToken: text("reset_token"),
   resetTokenExpiresAt: timestamp("reset_token_expires_at"),
+  signatureUrl: text("signature_url"),
 });
 
 export const students = pgTable("students", {

@@ -73,6 +73,27 @@ const schoolLogoUpload = multer({
   },
 });
 
+// Principal signature uploader — 2 MB cap, images only, staged to temp then moved
+const signatureUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      const dir = path.join(process.cwd(), "uploads");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
+      cb(null, unique + path.extname(file.originalname));
+    },
+  }),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Only PNG, JPG, or WebP images are allowed for signatures"));
+  },
+});
+
 const createSchoolBodySchema = z.object({
   name: z.string().min(2),
   code: z.string().min(2).max(20),
@@ -631,6 +652,7 @@ export async function registerRoutes(
       registrationNumber: school?.registrationNumber ?? null,
       pan:                school?.pan                ?? null,
       gstin:              school?.gstin              ?? null,
+      signatureUrl:       (user as any).signatureUrl  ?? null,
     });
   });
 
@@ -747,6 +769,95 @@ export async function registerRoutes(
     const logoUrl = `/uploads/schools/${schoolId}/${destFilename}`;
     await storage.updateSchoolLogo(schoolId, logoUrl);
     res.json({ message: "Logo updated", logoUrl });
+  });
+
+  // ── Principal signature upload ────────────────────────────────────────────
+  // Auth runs FIRST. schoolId is always taken from the session — never from client.
+  app.post("/api/admin/profile/signature", async (req: any, res: any) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.schoolId)
+      return res.status(403).json({ message: "No school context" });
+
+    // Run multer only for verified admins
+    await new Promise<void>((resolve, reject) => {
+      signatureUpload.single("file")(req, res, (err: any) => {
+        if (err && err.code === "LIMIT_FILE_SIZE") {
+          res.status(400).json({ message: "File too large. Maximum size is 2 MB." });
+          return reject(null);
+        }
+        if (err) {
+          res.status(400).json({ message: err.message || "Upload error" });
+          return reject(null);
+        }
+        resolve();
+      });
+    }).catch(() => null);
+    if (res.headersSent) return;
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+    // Double-check MIME + extension server-side
+    const ALLOWED_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    const ALLOWED_EXT  = [".jpg", ".jpeg", ".png", ".webp"];
+    const fileMime = req.file.mimetype?.toLowerCase() ?? "";
+    const fileExt  = path.extname(req.file.originalname).toLowerCase();
+    if (!ALLOWED_MIME.includes(fileMime) || !ALLOWED_EXT.includes(fileExt)) {
+      try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
+      return res.status(400).json({ message: "Only PNG, JPG, or WebP images are allowed" });
+    }
+
+    const userId   = req.session.userId   as number;
+    const schoolId = req.session.schoolId as number;
+
+    // Remove previous signature file if one exists
+    const existingUser = await storage.getUserById(userId);
+    if ((existingUser as any)?.signatureUrl) {
+      const oldPath = path.join(process.cwd(), (existingUser as any).signatureUrl);
+      if (fs.existsSync(oldPath)) {
+        try { fs.unlinkSync(oldPath); } catch { /* best-effort */ }
+      }
+    }
+
+    // Move temp file to tenant + user-scoped directory
+    const sigDir = path.join(process.cwd(), "uploads", "schools", String(schoolId), "signatures", String(userId));
+    if (!fs.existsSync(sigDir)) fs.mkdirSync(sigDir, { recursive: true });
+    const destFilename = `sig-${Date.now()}${fileExt}`;
+    const destPath = path.join(sigDir, destFilename);
+    try {
+      fs.renameSync(req.file.path, destPath);
+    } catch {
+      try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
+      return res.status(500).json({ message: "Failed to save signature" });
+    }
+
+    const signatureUrl = `/uploads/schools/${schoolId}/signatures/${userId}/${destFilename}`;
+    await storage.updateAdminSignature(userId, schoolId, signatureUrl);
+    res.json({ message: "Signature saved", signatureUrl });
+  });
+
+  // ── Principal signature removal ────────────────────────────────────────────
+  app.delete("/api/admin/profile/signature", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.schoolId)
+      return res.status(403).json({ message: "No school context" });
+
+    const userId   = req.session.userId   as number;
+    const schoolId = req.session.schoolId as number;
+
+    const user = await storage.getUserById(userId);
+    // Verify this user belongs to this school before touching anything
+    if (!user || (user as any).schoolId !== schoolId)
+      return res.status(403).json({ message: "Access denied" });
+
+    if ((user as any).signatureUrl) {
+      const filePath = path.join(process.cwd(), (user as any).signatureUrl);
+      if (fs.existsSync(filePath)) {
+        try { fs.unlinkSync(filePath); } catch { /* best-effort */ }
+      }
+    }
+    await storage.clearAdminSignature(userId, schoolId);
+    res.json({ message: "Signature removed" });
   });
 
   // ── School logo removal ────────────────────────────────────────────────────

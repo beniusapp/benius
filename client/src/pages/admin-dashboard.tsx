@@ -59,6 +59,7 @@ interface AdminProfileResponse {
   isInitialized: boolean;
   hasPin: boolean;
   logoUrl: string | null;
+  signatureUrl: string | null;
   // Contact & Location
   addressLine1: string | null;
   addressLine2: string | null;
@@ -478,6 +479,14 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
   const [logoUploading, setLogoUploading] = useState(false);
   const logoFileInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Signature state ──────────────────────────────────────────────────────
+  const [selectedSigFile, setSelectedSigFile]       = useState<File | null>(null);
+  const [sigPreviewUrl, setSigPreviewUrl]           = useState<string | null>(null);
+  const [sigUploading, setSigUploading]             = useState(false);
+  const [sigRemoving, setSigRemoving]               = useState(false);
+  const [showSigConfirmRemove, setShowSigConfirmRemove] = useState(false);
+  const sigFileInputRef = useRef<HTMLInputElement>(null);
+
   const { data: profile } = useQuery<AdminProfileResponse>({
     queryKey: ["/api/admin/profile"],
     queryFn: async () => {
@@ -650,6 +659,66 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
     }
   };
 
+  // ── Signature: pick file (local preview only — no upload yet) ──────────
+  const handleSigFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const ALLOWED = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    if (!ALLOWED.includes(file.type)) {
+      toast({ title: "Unsupported format", description: "Please choose a PNG, JPG, or WebP image.", variant: "destructive" });
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Maximum allowed size is 2 MB.", variant: "destructive" });
+      return;
+    }
+    if (sigPreviewUrl) URL.revokeObjectURL(sigPreviewUrl);
+    setSigPreviewUrl(URL.createObjectURL(file));
+    setSelectedSigFile(file);
+    setShowSigConfirmRemove(false);
+  };
+
+  // ── Signature: upload staged file ──────────────────────────────────────
+  const handleSigSave = async () => {
+    if (!selectedSigFile) return;
+    setSigUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", selectedSigFile, selectedSigFile.name);
+      const res = await fetch("/api/admin/profile/signature", { method: "POST", body: form, credentials: "include" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Upload failed");
+      toast({ title: "Signature saved" });
+      if (sigPreviewUrl) { URL.revokeObjectURL(sigPreviewUrl); setSigPreviewUrl(null); }
+      setSelectedSigFile(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/profile"] });
+    } catch (err: any) {
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+    } finally {
+      setSigUploading(false);
+    }
+  };
+
+  // ── Signature: remove saved signature ──────────────────────────────────
+  const handleSigRemove = async () => {
+    setSigRemoving(true);
+    try {
+      const res = await fetch("/api/admin/profile/signature", { method: "DELETE", credentials: "include" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Remove failed");
+      toast({ title: "Signature removed" });
+      setShowSigConfirmRemove(false);
+      if (sigPreviewUrl) { URL.revokeObjectURL(sigPreviewUrl); setSigPreviewUrl(null); }
+      setSelectedSigFile(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/profile"] });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSigRemoving(false);
+    }
+  };
+
   const EVENT_LABELS: Record<string, string> = {
     login_success: "Login successful",
     login_failed: "Login attempt failed",
@@ -704,6 +773,7 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
           {tab === "info" && (
+            <>
             <Form {...profileForm}>
               <form onSubmit={profileForm.handleSubmit(d => profileMutation.mutate(d))} className="space-y-4">
                 <div className="p-3 rounded-lg bg-gray-50 border space-y-1">
@@ -762,6 +832,115 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
                 </Button>
               </form>
             </Form>
+
+            {/* ── DIGITAL SIGNATURE ──────────────────────────────────────── */}
+            <div className="border-t pt-5 space-y-3">
+              <p className="text-xs font-bold text-gray-600 uppercase tracking-wide">Digital Signature</p>
+
+              {/* Preview box */}
+              <div className="border-2 border-dashed border-gray-200 rounded-xl bg-gray-50 flex items-center justify-center overflow-hidden" style={{ minHeight: 100 }}>
+                {sigPreviewUrl ? (
+                  <img src={sigPreviewUrl} alt="Signature preview (unsaved)" className="max-h-24 max-w-full object-contain p-2" />
+                ) : profile?.signatureUrl ? (
+                  <img src={profile.signatureUrl} alt="Saved signature" className="max-h-24 max-w-full object-contain p-2" />
+                ) : (
+                  <p className="text-xs text-gray-400 italic py-6">No signature uploaded</p>
+                )}
+              </div>
+
+              {/* Pending file hint */}
+              {selectedSigFile && (
+                <p className="text-[11px] text-blue-600 font-medium">
+                  📎 {selectedSigFile.name} — click &ldquo;Save Changes&rdquo; to apply
+                </p>
+              )}
+
+              {/* Hidden file input */}
+              <input
+                ref={sigFileInputRef}
+                type="file"
+                accept=".png,.jpg,.jpeg,.webp"
+                className="hidden"
+                onChange={handleSigFilePick}
+              />
+
+              {/* Action buttons */}
+              <div className="flex gap-2 flex-wrap">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-xs"
+                  onClick={() => sigFileInputRef.current?.click()}
+                  disabled={sigUploading || sigRemoving}
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  {profile?.signatureUrl ? "Replace Signature" : "Upload Signature"}
+                </Button>
+
+                {(profile?.signatureUrl || sigPreviewUrl) && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="gap-1.5 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                    onClick={() => setShowSigConfirmRemove(true)}
+                    disabled={sigRemoving || sigUploading}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Remove
+                  </Button>
+                )}
+              </div>
+
+              {/* Hint */}
+              <p className="text-[10px] text-gray-400">
+                Accepted: PNG, JPG, WEBP &bull; Max 2 MB &bull; Recommended: PNG with transparent background
+              </p>
+
+              {/* Confirm removal */}
+              {showSigConfirmRemove && (
+                <div className="p-3 rounded-lg bg-red-50 border border-red-200 space-y-2">
+                  <p className="text-xs font-medium text-red-700">Remove saved signature permanently?</p>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="destructive"
+                      className="text-xs"
+                      onClick={handleSigRemove}
+                      disabled={sigRemoving}
+                    >
+                      {sigRemoving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                      Yes, Remove
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="text-xs"
+                      onClick={() => setShowSigConfirmRemove(false)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Save — only shown when a file is staged but not yet uploaded */}
+              {selectedSigFile && (
+                <Button
+                  type="button"
+                  className="w-full"
+                  onClick={handleSigSave}
+                  disabled={sigUploading}
+                >
+                  {sigUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                  Save Changes
+                </Button>
+              )}
+            </div>
+            </>
           )}
 
           {tab === "school" && (

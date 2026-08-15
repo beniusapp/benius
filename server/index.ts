@@ -742,6 +742,11 @@ app.use((req, res, next) => {
     ALTER TABLE schools ADD COLUMN IF NOT EXISTS gstin TEXT;
   `);
 
+  // ── Principal signature column ────────────────────────────────────────────
+  await pool.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS signature_url TEXT;
+  `);
+
   // ── Schema drift guard ────────────────────────────────────────────────────
   // Verifies that every column defined in shared/schema.ts actually exists in
   // the database AFTER all migration statements above have been applied.
