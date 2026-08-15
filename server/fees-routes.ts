@@ -2798,9 +2798,12 @@ export function registerFeesRoutes(app: Express) {
     if (!student) return res.status(404).json({ message: "Student not found" });
 
     let feeType: string | null = null;
+    let feeInvoiceNumber: string | null = null;
     if (payment.feeRecordId) {
       const recs = await storage.getFeeRecordsByStudent(payment.studentId, schoolId);
-      feeType = recs.find(r => r.id === payment.feeRecordId)?.feeType ?? null;
+      const feeRec = recs.find(r => r.id === payment.feeRecordId);
+      feeType = feeRec?.feeType ?? null;
+      feeInvoiceNumber = feeRec?.invoiceNumber ?? null;
     }
 
     const [school] = await db.select({ name: schools.name }).from(schools).where(eq(schools.id, schoolId));
@@ -2837,6 +2840,7 @@ export function registerFeesRoutes(app: Express) {
   <div class="header"><h1>${schoolName}</h1><p>Offline Payment Receipt</p></div>
   <div style="text-align:center;margin-bottom:16px;"><span class="badge">&#10003; PAYMENT RECEIVED</span></div>
   <table>
+    <tr><td>Invoice No.</td><td>${esc(feeInvoiceNumber ?? "—")}</td></tr>
     <tr><td>Receipt No.</td><td>${(payment as any).receiptNumber ?? `PAY-${payment.id}`}</td></tr>
     <tr><td>Student Name</td><td>${esc(student.name)}</td></tr>
     <tr><td>Student ID</td><td>${esc(student.digitalStudentId)}</td></tr>
@@ -3076,6 +3080,7 @@ td:last-child{font-weight:600;word-break:break-all;}
     <tr><td>Late Fee</td><td>${Number(feeRow.late_fee_amount ?? 0) > 0 ? fmtInr(Number(feeRow.late_fee_amount)) : "—"}</td></tr>
     <tr><td>Total Charged</td><td>${fmtInr(Number(feeRow.amount) + Number(feeRow.late_fee_amount ?? 0))}</td></tr>
     <tr><td>Total Received (${payRows.length} payment${payRows.length !== 1 ? "s" : ""})</td><td>${fmtInr(totalReceived)}</td></tr>
+    <tr><td>Invoice No.</td><td>${esc(feeRow.invoice_number ?? "—")}</td></tr>
     <tr><td>Receipt No.</td><td>${esc(feeRow.receipt_number ?? payRow?.receipt_number ?? "—")}</td></tr>
     <tr><td>Status</td><td>${esc(feeRow.status)}</td></tr>
     <tr><td>Due Date</td><td>${fmtDt(feeRow.due_date)}</td></tr>
@@ -3178,7 +3183,8 @@ td:last-child{font-weight:600;word-break:break-all;}
       : "—";
     const amountStr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(row.amount);
     const schoolName = esc(school?.name ?? "School");
-    const receiptNo = esc(row.receipt_number ?? `FEE-${row.id}`);
+    const invoiceNo = esc(row.invoice_number ?? "—");
+    const receiptNo = esc(row.receipt_number ?? "—");
 
     const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Fee Receipt</title>
 <style>
@@ -3200,6 +3206,7 @@ td:last-child{font-weight:600;word-break:break-all;}
   <div class="header"><h1>${schoolName}</h1><p>Fee Payment Receipt</p></div>
   <div style="text-align:center;margin-bottom:16px;"><span class="badge">&#10003; FEE RECORDED</span></div>
   <table>
+    <tr><td>Invoice No.</td><td>${invoiceNo}</td></tr>
     <tr><td>Receipt No.</td><td>${receiptNo}</td></tr>
     <tr><td>Student Name</td><td>${esc(row.student_name)}</td></tr>
     <tr><td>Student ID</td><td>${esc(row.digital_student_id)}</td></tr>

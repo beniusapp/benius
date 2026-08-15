@@ -4803,7 +4803,7 @@ export async function registerRoutes(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Fee Receipt – ${esc(rec.receiptNumber ?? String(id))}</title>
+<title>Fee Receipt – ${esc(rec.invoiceNumber ?? rec.receiptNumber ?? String(id))}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:Arial,Helvetica,sans-serif;background:#f1f5f9;padding:24px;color:#1e293b;}
@@ -4908,6 +4908,7 @@ tfoot td:last-child{text-align:right;}
     </div>
     <div class="box">
       <p class="box-title">Payment Audit</p>
+      <div class="brow"><span class="bl">Invoice No.</span><span class="bv">${esc(rec.invoiceNumber ?? "—")}</span></div>
       <div class="brow"><span class="bl">Receipt No.</span><span class="bv">${esc(rec.receiptNumber ?? "—")}</span></div>
       <div class="brow"><span class="bl">Payment ID</span><span class="bv" style="font-size:8.5px">${esc(pa?.razorpay_payment_id ?? "—")}</span></div>
       <div class="brow"><span class="bl">Order ID</span><span class="bv" style="font-size:8.5px">${esc(pa?.razorpay_order_id ?? "—")}</span></div>
@@ -4975,7 +4976,7 @@ tfoot td:last-child{text-align:right;}
 </html>`;
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.setHeader("Content-Disposition", `inline; filename="receipt-${rec.receiptNumber ?? id}.html"`);
+    res.setHeader("Content-Disposition", `inline; filename="receipt-${rec.invoiceNumber ?? rec.receiptNumber ?? id}.html"`);
     res.send(html);
   });
 
