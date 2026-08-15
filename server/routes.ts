@@ -4661,6 +4661,10 @@ export async function registerRoutes(
     if (!rec) return res.status(404).json({ message: "Fee record not found" });
     if (rec.status !== "Paid") return res.status(400).json({ message: "Receipt only available for paid records" });
 
+    // ── Fetch fee receipt signature (tenant-scoped via schoolMetadata) ────────
+    const sigMeta = await storage.getSchoolMetadataRaw(student.schoolId, "fee_receipt_signature") as any;
+    const feeReceiptSigUrl = sigMeta?.fileUrl ? `${req.protocol}://${req.get("host")}${sigMeta.fileUrl}` : null;
+
     // ── Fetch full tenant-scoped school profile ────────────────────────────────
     const [school] = await db.select({
       name: schools.name,
@@ -4953,7 +4957,9 @@ tfoot td:last-child{text-align:right;}
       <p class="qr-lbl">Scan to verify</p>
     </div>
     <div class="sign-wrap">
-      <div class="sign-space"></div>
+      ${feeReceiptSigUrl
+        ? `<img src="${feeReceiptSigUrl}" alt="Authorized Signature" style="max-height:45px;max-width:160px;object-fit:contain;display:block;margin:0 auto 4px;" />`
+        : `<div class="sign-space"></div>`}
       <div class="sign-line"></div>
       <p class="sign-lbl">Authorized Accounts Signatory</p>
       <p class="sign-sub">${esc(school?.name ?? "School")}</p>

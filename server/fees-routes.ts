@@ -10,6 +10,30 @@ import crypto from "crypto";
 import Razorpay from "razorpay";
 import { broadcastPaymentUpdate } from "./sse";
 import { fetchRazorpayData, mapRazorpayPayment, upsertPaymentAttempt, updatePaymentAttemptRefund } from "./rzp-enrichment";
+import multer from "multer";
+import path from "node:path";
+import fs from "node:fs";
+
+// ── Fee receipt signature uploader — 2 MB, images only, staged to temp ──────
+const feeReceiptSigUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      const dir = path.join(process.cwd(), "uploads");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
+      cb(null, unique + path.extname(file.originalname));
+    },
+  }),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Only PNG, JPG, or WebP images are allowed"));
+  },
+});
 
 // ── Exported for integration testing ─────────────────────────────────────────
 // acquireRazorpayOrder contains the atomic lock → check → create → persist
@@ -1149,13 +1173,17 @@ export function registerFeesRoutes(app: Express) {
     // Key ID is not a secret — safe to show.  Secrets are always masked.
     const effectiveKeyId = settings?.razorpayKeyId ?? (creds ? (process.env.RAZORPAY_KEY_ID ?? null) : null);
 
+    // Include fee receipt signature URL (tenant-scoped via schoolMetadata)
+    const sigMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
+
     res.json({
       ...base,
       razorpayMode: "live",
-      razorpayEnabled:       creds?.enabled ?? false,
-      razorpayKeyId:         effectiveKeyId,
-      razorpayKeySecret:     creds ? "••••••••" : null,
-      razorpayWebhookSecret: creds?.webhookSecret ? "••••••••" : null,
+      razorpayEnabled:         creds?.enabled ?? false,
+      razorpayKeyId:           effectiveKeyId,
+      razorpayKeySecret:       creds ? "••••••••" : null,
+      razorpayWebhookSecret:   creds?.webhookSecret ? "••••••••" : null,
+      feeReceiptSignatureUrl:  sigMeta?.fileUrl ?? null,
     });
   });
 
@@ -1340,6 +1368,92 @@ export function registerFeesRoutes(app: Express) {
       razorpayKeySecret:     updated.razorpayKeySecret     ? "••••••••" : null,
       razorpayWebhookSecret: updated.razorpayWebhookSecret ? "••••••••" : null,
     });
+  });
+
+  // ── Fee Receipt Signature — Upload ───────────────────────────────────────
+  // schoolId is always from the authenticated session — never from client body.
+  app.post("/api/admin/fees/external-portal/signature", async (req: any, res: any) => {
+    if (!adminGuard(req, res)) return;
+
+    // Run multer only for verified admins
+    await new Promise<void>((resolve, reject) => {
+      feeReceiptSigUpload.single("file")(req, res, (err: any) => {
+        if (err && err.code === "LIMIT_FILE_SIZE") {
+          res.status(400).json({ message: "File too large. Maximum size is 2 MB." });
+          return reject(null);
+        }
+        if (err) {
+          res.status(400).json({ message: err.message || "Upload error" });
+          return reject(null);
+        }
+        resolve();
+      });
+    }).catch(() => null);
+    if (res.headersSent) return;
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+    // Double-check MIME + extension server-side
+    const ALLOWED_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    const ALLOWED_EXT  = [".jpg", ".jpeg", ".png", ".webp"];
+    const fileMime = req.file.mimetype?.toLowerCase() ?? "";
+    const fileExt  = path.extname(req.file.originalname).toLowerCase();
+    if (!ALLOWED_MIME.includes(fileMime) || !ALLOWED_EXT.includes(fileExt)) {
+      try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
+      return res.status(400).json({ message: "Only PNG, JPG, or WebP images are allowed" });
+    }
+
+    const schoolId = req.session.schoolId as number;
+
+    // Remove previous signature file if one exists
+    const existingMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
+    if (existingMeta?.fileUrl) {
+      const oldPath = path.join(process.cwd(), existingMeta.fileUrl);
+      if (fs.existsSync(oldPath)) {
+        try { fs.unlinkSync(oldPath); } catch { /* best-effort */ }
+      }
+    }
+
+    // Move temp file to tenant-scoped directory
+    const sigDir = path.join(process.cwd(), "uploads", "schools", String(schoolId), "receipt-signature");
+    if (!fs.existsSync(sigDir)) fs.mkdirSync(sigDir, { recursive: true });
+    const destFilename = `sig-${Date.now()}${fileExt}`;
+    const destPath = path.join(sigDir, destFilename);
+    try {
+      fs.renameSync(req.file.path, destPath);
+    } catch {
+      try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
+      return res.status(500).json({ message: "Failed to save signature" });
+    }
+
+    const fileUrl = `/uploads/schools/${schoolId}/receipt-signature/${destFilename}`;
+    await storage.setSchoolMetadataRaw(schoolId, "fee_receipt_signature", {
+      fileUrl,
+      fileName: req.file.originalname,
+      mimeType: fileMime,
+      fileSize: req.file.size,
+      uploadedAt: new Date().toISOString(),
+      updatedAt:  new Date().toISOString(),
+    });
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ message: "Fee receipt signature updated", feeReceiptSignatureUrl: fileUrl });
+  });
+
+  // ── Fee Receipt Signature — Remove ────────────────────────────────────────
+  app.delete("/api/admin/fees/external-portal/signature", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId as number;
+
+    const existing = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
+    if (existing?.fileUrl) {
+      const filePath = path.join(process.cwd(), existing.fileUrl);
+      if (fs.existsSync(filePath)) {
+        try { fs.unlinkSync(filePath); } catch { /* best-effort */ }
+      }
+    }
+    await storage.setSchoolMetadataRaw(schoolId, "fee_receipt_signature", null);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ message: "Fee receipt signature removed" });
   });
 
   // ── Simulated test payment (no Razorpay keys required) ───────────────────

@@ -12,6 +12,7 @@ import {
   Receipt, DollarSign, TrendingUp, TrendingDown, Banknote, BookOpen, Bell, ExternalLink,
   Shield, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Lock, X, Printer, History, Download, FileText,
   MessageSquare, Mail, Send, Eye, EyeOff, Zap, Phone, BarChart2, Calendar, Users,
+  PenLine, Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -94,6 +95,7 @@ interface ExternalSettings {
   razorpayKeySecret: string | null;
   razorpayWebhookSecret: string | null;
   razorpayMode: string;
+  feeReceiptSignatureUrl: string | null;
 }
 
 interface NotifConfig {
@@ -4229,6 +4231,14 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
   const [synced, setSynced] = useState(false);
 
+  // ── Fee receipt signature state ────────────────────────────────────────────
+  const [selectedSigFile, setSelectedSigFile]           = useState<File | null>(null);
+  const [sigPreviewUrl, setSigPreviewUrl]               = useState<string | null>(null);
+  const [sigUploading, setSigUploading]                 = useState(false);
+  const [sigRemoving, setSigRemoving]                   = useState(false);
+  const [showSigConfirmRemove, setShowSigConfirmRemove] = useState(false);
+  const sigFileRef = React.useRef<HTMLInputElement>(null);
+
   const { data: settings, isLoading } = useQuery<ExternalSettings>({
     queryKey: ["/api/admin/fees/external-settings"],
     staleTime: 60_000,
@@ -4252,6 +4262,64 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/external-settings"] });
     queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
+  };
+
+  // ── Fee receipt signature handlers ────────────────────────────────────────
+  const handleSigFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const ALLOWED = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    if (!ALLOWED.includes(file.type)) {
+      toast({ title: "Unsupported format", description: "Please choose a PNG, JPG, or WebP image.", variant: "destructive" });
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Maximum allowed size is 2 MB.", variant: "destructive" });
+      return;
+    }
+    if (sigPreviewUrl) URL.revokeObjectURL(sigPreviewUrl);
+    setSigPreviewUrl(URL.createObjectURL(file));
+    setSelectedSigFile(file);
+    setShowSigConfirmRemove(false);
+  };
+
+  const handleSigSave = async () => {
+    if (!selectedSigFile) return;
+    setSigUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", selectedSigFile, selectedSigFile.name);
+      const res = await fetch("/api/admin/fees/external-portal/signature", { method: "POST", body: form, credentials: "include" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Upload failed");
+      toast({ title: "Fee receipt signature updated successfully." });
+      if (sigPreviewUrl) { URL.revokeObjectURL(sigPreviewUrl); setSigPreviewUrl(null); }
+      setSelectedSigFile(null);
+      invalidate();
+    } catch (err: any) {
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+    } finally {
+      setSigUploading(false);
+    }
+  };
+
+  const handleSigRemove = async () => {
+    setSigRemoving(true);
+    try {
+      const res = await fetch("/api/admin/fees/external-portal/signature", { method: "DELETE", credentials: "include" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Remove failed");
+      toast({ title: "Signature removed." });
+      setShowSigConfirmRemove(false);
+      if (sigPreviewUrl) { URL.revokeObjectURL(sigPreviewUrl); setSigPreviewUrl(null); }
+      setSelectedSigFile(null);
+      invalidate();
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSigRemoving(false);
+    }
   };
 
   // ── Razorpay save mutation (live mode only) ────────────────────────────────
@@ -4546,6 +4614,120 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
               {portalMut.isPending ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Saving…</> : "Save Portal Settings"}
             </Button>
           )}
+        </div>
+      </div>
+
+      {/* ══ SECTION 3 — Fee Receipt Signature ═══════════════════════════════════ */}
+      <div className="rounded-2xl border border-white/10 bg-[#1A2942] overflow-hidden">
+        <div className="px-5 py-4 border-b border-white/10 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+            style={{ background: "linear-gradient(135deg,#a855f7,#7c3aed)" }}>
+            <PenLine className="w-4 h-4 text-white" />
+          </div>
+          <div>
+            <p className="text-white font-bold">Fee Receipt Signature</p>
+            <p className="text-white/40 text-xs mt-0.5">Upload the authorized signature that will appear on student fee receipts.</p>
+          </div>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          {/* Hidden file input */}
+          <input
+            ref={sigFileRef}
+            type="file"
+            accept=".png,.jpg,.jpeg,.webp"
+            className="hidden"
+            onChange={handleSigFilePick}
+          />
+
+          {/* Preview / empty state */}
+          {(sigPreviewUrl || settings?.feeReceiptSignatureUrl) ? (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-white/10 bg-[#0F1E35] flex items-center justify-center overflow-hidden p-4" style={{ minHeight: 100 }}>
+                <img
+                  src={sigPreviewUrl ?? settings?.feeReceiptSignatureUrl ?? ""}
+                  alt="Fee receipt signature"
+                  className="max-h-20 max-w-full object-contain"
+                  style={{ imageRendering: "crisp-edges" }}
+                />
+              </div>
+              {selectedSigFile && (
+                <p className="text-xs text-purple-400 font-medium">
+                  📎 {selectedSigFile.name} — click &ldquo;Save Signature&rdquo; to apply
+                </p>
+              )}
+              <div className="flex gap-2 flex-wrap">
+                {!isArchiveMode && (
+                  <button type="button" onClick={() => sigFileRef.current?.click()}
+                    disabled={sigUploading || sigRemoving}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-white/15 text-white/70 hover:text-white hover:bg-white/5 transition-all disabled:opacity-40">
+                    <Upload className="w-3.5 h-3.5" /> Replace Signature
+                  </button>
+                )}
+                {!isArchiveMode && (settings?.feeReceiptSignatureUrl || sigPreviewUrl) && (
+                  <button type="button" onClick={() => setShowSigConfirmRemove(true)}
+                    disabled={sigRemoving || sigUploading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-red-700/30 text-red-400 hover:bg-red-900/20 transition-all disabled:opacity-40">
+                    <Trash2 className="w-3.5 h-3.5" /> Remove Signature
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            !isArchiveMode && (
+              <button type="button" onClick={() => sigFileRef.current?.click()}
+                disabled={sigUploading}
+                className="w-full border-2 border-dashed border-white/15 rounded-xl py-8 flex flex-col items-center gap-3 hover:border-purple-500/40 hover:bg-purple-900/10 transition-all group disabled:opacity-40">
+                <div className="w-10 h-10 rounded-xl bg-purple-900/30 border border-purple-500/25 flex items-center justify-center group-hover:bg-purple-900/50 transition-all">
+                  <Upload className="w-5 h-5 text-purple-400" />
+                </div>
+                <div className="text-center">
+                  <p className="text-white/70 text-sm font-semibold">Upload Authorized Signature</p>
+                  <p className="text-white/30 text-xs mt-1">Click to select a file</p>
+                </div>
+              </button>
+            )
+          )}
+
+          {/* Confirm removal inline dialog */}
+          {showSigConfirmRemove && (
+            <div className="p-3.5 rounded-xl border border-red-700/30 bg-red-900/10 space-y-2.5">
+              <p className="text-red-400 text-xs font-semibold">Remove the fee receipt signature permanently?</p>
+              <div className="flex gap-2">
+                <button type="button" onClick={handleSigRemove} disabled={sigRemoving}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-700/30 text-red-300 hover:bg-red-700/50 transition-all disabled:opacity-50">
+                  {sigRemoving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                  Yes, Remove
+                </button>
+                <button type="button" onClick={() => setShowSigConfirmRemove(false)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white/50 hover:text-white/80 transition-all">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Save staged file */}
+          {selectedSigFile && !isArchiveMode && (
+            <button type="button" onClick={handleSigSave} disabled={sigUploading}
+              className="w-full py-2.5 rounded-xl text-sm font-bold bg-purple-700 hover:bg-purple-600 text-white transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+              {sigUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              Save Signature
+            </button>
+          )}
+
+          {/* Helper text */}
+          <p className="text-white/25 text-[11px]">
+            Accepted: PNG, JPG, WEBP &bull; Max 2 MB &bull; Recommended: PNG with transparent background
+          </p>
+
+          {/* Info note */}
+          <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-purple-900/15 border border-purple-700/20">
+            <span className="text-purple-400 text-xs leading-none mt-0.5">ℹ️</span>
+            <p className="text-purple-300/70 text-xs leading-relaxed">
+              This signature will appear on the student fee receipt as the Authorized Accounts Signatory.
+            </p>
+          </div>
         </div>
       </div>
 
