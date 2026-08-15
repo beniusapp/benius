@@ -1631,14 +1631,31 @@ export default function AdminDashboard() {
               className="flex items-center gap-2"
             >
               <div
-                className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden"
                 style={{
                   background: "linear-gradient(135deg, rgba(99,102,241,0.35), rgba(6,182,212,0.35))",
                   border: "2px solid rgba(6,182,212,0.40)",
                 }}
                 data-testid="div-navbar-initials"
               >
-                <span className="text-[10px] font-bold text-teal-300">{adminInitials}</span>
+                {profile?.logoUrl
+                  ? <img
+                      src={profile.logoUrl}
+                      alt="School logo"
+                      className="w-full h-full object-contain"
+                      onError={e => {
+                        (e.currentTarget as HTMLImageElement).style.display = "none";
+                        const parent = e.currentTarget.parentElement;
+                        if (parent) {
+                          const span = document.createElement("span");
+                          span.className = "text-[10px] font-bold text-teal-300";
+                          span.textContent = adminInitials;
+                          parent.appendChild(span);
+                        }
+                      }}
+                    />
+                  : <span className="text-[10px] font-bold text-teal-300">{adminInitials}</span>
+                }
               </div>
               <div className="hidden sm:block text-right">
                 <p className="text-xs font-semibold text-white leading-none" data-testid="text-admin-email">
