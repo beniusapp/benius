@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { storage } from "./storage";
 import { db } from "./db";
-import { calculateLateFee, recalculateLateFees } from "./late-fee-engine";
+import { calculateLateFee, recalculateLateFees, DEFAULT_LATE_FEE_CONFIG, type LateFeeConfig } from "./late-fee-engine";
 import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings, feeStructures, dunningJobStatus } from "@shared/schema";
 import { and, eq, sql, desc, or } from "drizzle-orm";
 import { z } from "zod";
@@ -83,7 +83,7 @@ const feeReceiptSigUpload = multer({
 // Extracting it lets tests call the function directly with a mocked Razorpay
 // instance without standing up a full HTTP server.
 export type AcquireOrderResult =
-  | { ok: true;  orderId: string; amount: number }
+  | { ok: true;  orderId: string; amount: number; lateFeeAmount: number }
   | { ok: false; status: 409; code: "PAYMENT_IN_PROGRESS"; message: string }
   | { ok: false; status: 503; code: "ORDER_STATUS_UNKNOWN"; message: string }
   | { ok: false; status: 400 | 404; message: string };
@@ -133,10 +133,23 @@ export async function acquireRazorpayOrder(
 ): Promise<AcquireOrderResult> {
   let result: AcquireOrderResult | null = null;
 
+  // Pre-load fee structures so we can compute the current late fee at order-creation time.
+  // Done before the transaction to avoid extending the row-lock duration.
+  const schoolStructures = await db
+    .select({ feeType: feeStructures.feeType, lateFeeConfig: feeStructures.lateFeeConfig })
+    .from(feeStructures)
+    .where(eq(feeStructures.schoolId, schoolId));
+  const lateFeeConfigMap = new Map<string, LateFeeConfig>();
+  for (const s of schoolStructures) {
+    const cfg = s.lateFeeConfig as LateFeeConfig | null;
+    if (cfg?.enabled) lateFeeConfigMap.set(s.feeType.trim().toLowerCase(), cfg);
+  }
+
   await db.transaction(async (tx) => {
     // Row-level write lock — concurrent requests for this fee block here.
     const lockedResult = await tx.execute(sql`
-      SELECT id, status, amount, late_fee_amount, razorpay_order_id, razorpay_order_expires_at
+      SELECT id, status, amount, late_fee_amount, due_date, fee_type,
+             razorpay_order_id, razorpay_order_expires_at
       FROM fee_records
       WHERE id = ${feeRecordId} AND school_id = ${schoolId}
       FOR UPDATE
@@ -266,13 +279,28 @@ export async function acquireRazorpayOrder(
 
     // Create the order while holding the row lock.  Any concurrent request for
     // this fee is blocked here until this transaction commits.
-    const lateFeeForOrder = Number(locked.late_fee_amount ?? 0);
-    const amountPaise = Math.round((Number(locked.amount) + lateFeeForOrder) * 100);
+    //
+    // Compute the authoritative late fee at this exact moment — not the nightly-cached
+    // late_fee_amount stored on the row.  This guarantees the Razorpay order amount
+    // equals exactly what the student portal displays right now.
+    const lateFeeConfig = lateFeeConfigMap.get(
+      ((locked.fee_type as string) ?? "").trim().toLowerCase(),
+    ) ?? DEFAULT_LATE_FEE_CONFIG;
+    const currentLateFee = calculateLateFee(
+      lateFeeConfig,
+      (locked.due_date as string) ?? "",
+      locked.status as string,
+    );
+    const amountPaise = Math.round((Number(locked.amount) + currentLateFee) * 100);
     const order = await rzpOrders.create({
       amount: amountPaise,
       currency: "INR",
       receipt: `fee_${feeRecordId}`,
-      notes: { feeRecordId: String(feeRecordId), schoolId: String(schoolId) },
+      notes: {
+        feeRecordId:   String(feeRecordId),
+        schoolId:      String(schoolId),
+        lateFeeAmount: String(currentLateFee), // immutable snapshot — read back by the webhook
+      },
     });
 
     // Persist the order ID and checkout deadline inside the transaction so they
@@ -291,7 +319,7 @@ export async function acquireRazorpayOrder(
       console.error(`[razorpay create-order] persist: no row updated fee #${feeRecordId} school #${schoolId}`);
     }
 
-    result = { ok: true, orderId: order.id, amount: amountPaise };
+    result = { ok: true, orderId: order.id, amount: amountPaise, lateFeeAmount: currentLateFee };
   });
 
   return result!;
@@ -843,10 +871,11 @@ export function registerFeesRoutes(app: Express) {
         SELECT
           fr.id,
           fr.amount,
+          fr.late_fee_amount,
           fr.due_date,
           fr.session_id,
           COALESCE(p.total_paid, 0)::int AS amount_paid,
-          GREATEST(fr.amount - COALESCE(p.total_paid, 0), 0)::int AS balance
+          GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.total_paid, 0), 0)::int AS balance
         FROM fee_records fr
         LEFT JOIN (
           SELECT fee_record_id, SUM(amount)::int AS total_paid
@@ -857,12 +886,12 @@ export function registerFeesRoutes(app: Express) {
         WHERE fr.student_id = ${paymentData.studentId}
           AND fr.school_id  = ${schoolId}
           AND fr.status IN ('Due', 'Overdue', 'Partial')
-        HAVING GREATEST(fr.amount - COALESCE(p.total_paid, 0), 0) > 0
+        HAVING GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.total_paid, 0), 0) > 0
         ORDER BY fr.due_date ASC, fr.id ASC
       `);
 
       const invoices = unpaidRows.rows as Array<{
-        id: number; amount: number; due_date: string;
+        id: number; amount: number; late_fee_amount: number; due_date: string;
         session_id: number | null; amount_paid: number; balance: number;
       }>;
 
@@ -875,13 +904,13 @@ export function registerFeesRoutes(app: Express) {
       // balance can cover its full outstanding amount.  Invoices that cannot be
       // fully paid in this sweep are skipped — no Partial status is ever created.
       let remaining = paymentData.amount;
-      const plan: Array<{ invoiceId: number; allocation: number; sessionId: number | null }> = [];
+      const plan: Array<{ invoiceId: number; allocation: number; sessionId: number | null; lateFeeAmount: number }> = [];
       for (const inv of invoices) {
         if (remaining <= 0) break;
         const balance = Number(inv.balance);
         if (remaining < balance) continue; // cannot fully pay this invoice — skip
-        const allocation = balance; // always the full outstanding balance
-        plan.push({ invoiceId: inv.id, allocation, sessionId: inv.session_id });
+        const allocation = balance; // always the full outstanding balance (base + late fee)
+        plan.push({ invoiceId: inv.id, allocation, sessionId: inv.session_id, lateFeeAmount: Number(inv.late_fee_amount ?? 0) });
         remaining -= allocation;
       }
 
@@ -894,11 +923,12 @@ export function registerFeesRoutes(app: Express) {
 
           // Acquire row-level lock to prevent concurrent over-payment
           const lockedRow = await tx.execute(sql`
-            SELECT status, amount FROM fee_records
+            SELECT status, amount, late_fee_amount FROM fee_records
             WHERE id = ${step.invoiceId} AND school_id = ${schoolId}
             FOR UPDATE
           `);
           const invoiceAmount = Number((lockedRow.rows[0] as any)?.amount) || 0;
+          const invoiceLateFee = Number((lockedRow.rows[0] as any)?.late_fee_amount) || 0;
 
           // Sum already-paid (including any sibling steps in this same tx that committed before)
           const paidSoFar = await tx.execute(sql`
@@ -913,9 +943,9 @@ export function registerFeesRoutes(app: Express) {
           if (fifoLockedStatus === "Paid") continue;
 
           // Reject if this invoice cannot be fully paid — no Partial status allowed.
-          const balance = Math.max(0, invoiceAmount - alreadyPaid);
+          const balance = Math.max(0, invoiceAmount + invoiceLateFee - alreadyPaid);
           if (balance <= 0 || step.allocation < balance) continue;
-          const safeAllocation = balance; // always exact full payment
+          const safeAllocation = balance; // always exact full payment (base + late fee)
 
           await tx.execute(sql`
             INSERT INTO payment_records
@@ -929,7 +959,7 @@ export function registerFeesRoutes(app: Express) {
               ${safeAllocation},
               ${paymentData.cashierNotes ?? null},
               ${idempotencyKey ? `${idempotencyKey}-${step.invoiceId}` : null},
-              ${req.session.userId ?? null}, ${opReceipt}, 0
+              ${req.session.userId ?? null}, ${opReceipt}, ${step.lateFeeAmount}
             )
           `);
 
@@ -1048,15 +1078,31 @@ export function registerFeesRoutes(app: Express) {
       message: string; invoiceAmount: number; totalAlreadyPaid: number; newAmount: number;
     } | null = null;
 
+    // Pre-load fee structures for on-the-fly late fee calculation.
+    // Done before the transaction to minimise row-lock duration.
+    const offlineStructures = await db
+      .select({ feeType: feeStructures.feeType, lateFeeConfig: feeStructures.lateFeeConfig })
+      .from(feeStructures)
+      .where(eq(feeStructures.schoolId, schoolId));
+    const offlineLateFeeMap = new Map<string, LateFeeConfig>();
+    for (const s of offlineStructures) {
+      const cfg = s.lateFeeConfig as LateFeeConfig | null;
+      if (cfg?.enabled) offlineLateFeeMap.set(s.feeType.trim().toLowerCase(), cfg);
+    }
+    // Closure variable — computed inside the FOR UPDATE transaction, read by the INSERT.
+    let lateFeeForOfflineInsert = 0;
+
     await db.transaction(async (tx) => {
       if (paymentOnly.feeRecordId) {
         // Acquire a row-level write lock — concurrent requests will queue here.
         const lockResult = await tx.execute(
-          sql`SELECT status, amount FROM fee_records
+          sql`SELECT status, amount, due_date, fee_type FROM fee_records
               WHERE id = ${paymentOnly.feeRecordId} AND school_id = ${schoolId}
               FOR UPDATE`,
         );
-        const lockedFee = lockResult.rows[0] as { status: string; amount: number } | undefined;
+        const lockedFee = lockResult.rows[0] as {
+          status: string; amount: number; due_date: string; fee_type: string;
+        } | undefined;
 
         if (lockedFee) {
           // ── One-invoice = one-payment rule (primary guards, run under lock) ──────
@@ -1072,11 +1118,24 @@ export function registerFeesRoutes(app: Express) {
             return;
           }
 
-          // Guard 2: payment must equal the full invoice amount — no partial payments.
-          if (paymentOnly.amount !== Number(lockedFee.amount)) {
+          // Compute the current late fee using the live moment — same function used by the
+          // student portal and Razorpay order creation, so all three surfaces agree.
+          const offlineLFConfig = offlineLateFeeMap.get(
+            (lockedFee.fee_type ?? "").trim().toLowerCase(),
+          ) ?? DEFAULT_LATE_FEE_CONFIG;
+          const offlineLateFee = calculateLateFee(
+            offlineLFConfig, lockedFee.due_date ?? "", lockedFee.status,
+          );
+          const expectedTotal = Number(lockedFee.amount) + offlineLateFee;
+          lateFeeForOfflineInsert = offlineLateFee; // capture for the INSERT below
+
+          // Guard 2: payment must equal base + applicable late fee (no partial payments).
+          if (paymentOnly.amount !== expectedTotal) {
             overpaymentBlock = {
-              message: `Payment amount (₹${paymentOnly.amount.toLocaleString("en-IN")}) must equal the full invoice amount (₹${Number(lockedFee.amount).toLocaleString("en-IN")}). Partial payments are not accepted.`,
-              invoiceAmount: Number(lockedFee.amount),
+              message: offlineLateFee > 0
+                ? `Payment amount (₹${paymentOnly.amount.toLocaleString("en-IN")}) must equal the full invoice amount including late fee (₹${expectedTotal.toLocaleString("en-IN")} = ₹${Number(lockedFee.amount).toLocaleString("en-IN")} base + ₹${offlineLateFee.toLocaleString("en-IN")} late fee). Partial payments are not accepted.`
+                : `Payment amount (₹${paymentOnly.amount.toLocaleString("en-IN")}) must equal the full invoice amount (₹${Number(lockedFee.amount).toLocaleString("en-IN")}). Partial payments are not accepted.`,
+              invoiceAmount: expectedTotal,
               totalAlreadyPaid: 0,
               newAmount: paymentOnly.amount,
             };
@@ -1090,7 +1149,7 @@ export function registerFeesRoutes(app: Express) {
                 WHERE fee_record_id = ${paymentOnly.feeRecordId}`,
           );
           const totalAlreadyPaid = Number((sumResult.rows[0] as any)?.existing_paid) || 0;
-          const cap = Math.round(lockedFee.amount * OVERPAYMENT_FACTOR);
+          const cap = Math.round(expectedTotal * OVERPAYMENT_FACTOR);
 
           if (totalAlreadyPaid + paymentOnly.amount > cap) {
             overpaymentBlock = {
@@ -1140,7 +1199,7 @@ export function registerFeesRoutes(app: Express) {
               ${idempotencyKey ?? null},
               ${req.session.userId ?? null},
               ${opReceipt},
-              ${paymentData.lateFeePaid ?? 0}
+              ${paymentOnly.feeRecordId != null ? lateFeeForOfflineInsert : (paymentData.lateFeePaid ?? 0)}
             )
             RETURNING *`,
       );
@@ -1674,6 +1733,10 @@ export function registerFeesRoutes(app: Express) {
         const feeRecordId = notes.feeRecordId ? parseInt(notes.feeRecordId) : null;
         if (!feeRecordId) return res.status(400).json({ message: "feeRecordId missing from notes" });
 
+        // The late fee snapshot embedded in the order notes at creation time — immutable.
+        // This is the exact late fee the student was shown and Razorpay charged.
+        const lateFeeFromNotes = Math.round(Number(notes.lateFeeAmount ?? 0)) || 0;
+
         // Load the fee record
         const feeRec = (await db.execute(sql`SELECT * FROM fee_records WHERE id = ${feeRecordId} AND school_id = ${schoolId} LIMIT 1`)).rows[0] as any;
         if (!feeRec) return res.status(404).json({ message: "Fee record not found" });
@@ -1711,7 +1774,8 @@ export function registerFeesRoutes(app: Express) {
                 paymentMethod: "Online",
                 referenceNumber: payment.id,        // pay_XXXX
                 receivedDate: now.toISOString().slice(0, 10),
-                amount: Number(feeRec.amount),
+                amount: Number(feeRec.amount) + lateFeeFromNotes,
+                lateFeePaid: lateFeeFromNotes,
                 cashierNotes: `Razorpay payment ID: ${payment.id}`,
                 recordedBy: null,
                 receiptNumber,

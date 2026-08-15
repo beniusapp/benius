@@ -42,3 +42,17 @@ High-value payment re-auth: amounts ≥ ₹10 000 require a second PIN confirmat
 - Existing records with `invoice_number = NULL` (pre-Step 3) are left untouched.
 
 **Existing data (12 pre-Step 3 records):** all have `invoice_number = NULL`. 9 Paid with ON receipts, 3 Overdue with no numbers. Not backfilled.
+
+## Late Fee Production Fixes (Step 21)
+
+**Single source of truth:** `acquireRazorpayOrder` now calls `calculateLateFee()` on-the-fly at order creation instead of reading stale `fee_records.late_fee_amount`. Order `notes.lateFeeAmount` carries the immutable snapshot for the webhook.
+
+**Webhook reconciliation:** `payment.captured` reads `notes.lateFeeAmount`, stores `amount = base + lateFeeFromNotes` and `lateFeePaid = lateFeeFromNotes` in `payment_records`.
+
+**Offline single-invoice:** Guard 2 validates `paymentOnly.amount === base + currentLateFee` (not just base). Pre-loads fee structures before the transaction; `lateFeeForOfflineInsert` captured via closure for the INSERT.
+
+**FIFO balance:** SQL now uses `fr.amount + fr.late_fee_amount - paid` for balance and HAVING. The `late_fee_paid` in each FIFO payment INSERT is set to `step.lateFeeAmount`.
+
+**AcquireOrderResult** success shape now includes `lateFeeAmount: number`. Existing tests unaffected (no fee structure → `DEFAULT_LATE_FEE_CONFIG` → late fee = 0).
+
+**Test coverage:** `server/__tests__/late-fee-engine.test.ts` (27 pure unit tests, all pass in isolation); `server/__tests__/late-fee-integration.test.ts` (8 tests, 1 unit guard passes in isolation, 7 DB tests pass in full `npm test` suite — same as all other DB integration tests).
