@@ -653,10 +653,6 @@ export async function registerRoutes(
       return res.status(400).json({ message: "Invalid PIN code — must be 6 digits, not starting with 0" });
     if (udiseCode && !/^\d{11}$/.test(udiseCode))
       return res.status(400).json({ message: "UDISE code must be exactly 11 digits" });
-    if (pan && !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan))
-      return res.status(400).json({ message: "Invalid PAN format (e.g. AABCP1234C)" });
-    if (gstin && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(gstin))
-      return res.status(400).json({ message: "Invalid GSTIN format" });
     if (establishedYear !== undefined && establishedYear !== null && establishedYear !== "") {
       const yr = Number(establishedYear);
       if (!Number.isInteger(yr) || yr < 1800 || yr > new Date().getFullYear())
