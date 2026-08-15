@@ -1020,7 +1020,7 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
                       <FormItem>
                         <FormLabel className="text-xs">PAN</FormLabel>
                         <FormControl>
-                          <Input className="text-sm font-mono uppercase" placeholder="AABCP1234C" maxLength={10}
+                          <Input className="text-sm font-mono uppercase placeholder:text-gray-300" placeholder="e.g. AABCP1234C" maxLength={10}
                             {...field} onChange={e => field.onChange(e.target.value.toUpperCase().slice(0, 10))} />
                         </FormControl>
                         <FormMessage />
@@ -1030,7 +1030,7 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
                       <FormItem>
                         <FormLabel className="text-xs">GSTIN</FormLabel>
                         <FormControl>
-                          <Input className="text-sm font-mono uppercase" placeholder="27AABCP1234C1Z5" maxLength={15}
+                          <Input className="text-sm font-mono uppercase placeholder:text-gray-300" placeholder="e.g. 27AABCP1234C1Z5" maxLength={15}
                             {...field} onChange={e => field.onChange(e.target.value.toUpperCase().slice(0, 15))} />
                         </FormControl>
                         <FormMessage />
