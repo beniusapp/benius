@@ -885,12 +885,17 @@ export function registerFeesRoutes(app: Express) {
         return res.status(400).json({ message: "No unpaid invoices found for this student to allocate against." });
       }
 
-      // Build allocation plan (oldest-first)
+      // Build allocation plan (oldest-first).
+      // One-invoice = one-payment rule: only include an invoice when the remaining
+      // balance can cover its full outstanding amount.  Invoices that cannot be
+      // fully paid in this sweep are skipped — no Partial status is ever created.
       let remaining = paymentData.amount;
       const plan: Array<{ invoiceId: number; allocation: number; sessionId: number | null }> = [];
       for (const inv of invoices) {
         if (remaining <= 0) break;
-        const allocation = Math.min(remaining, Number(inv.balance));
+        const balance = Number(inv.balance);
+        if (remaining < balance) continue; // cannot fully pay this invoice — skip
+        const allocation = balance; // always the full outstanding balance
         plan.push({ invoiceId: inv.id, allocation, sessionId: inv.session_id });
         remaining -= allocation;
       }
@@ -904,7 +909,7 @@ export function registerFeesRoutes(app: Express) {
 
           // Acquire row-level lock to prevent concurrent over-payment
           const lockedRow = await tx.execute(sql`
-            SELECT amount FROM fee_records
+            SELECT status, amount FROM fee_records
             WHERE id = ${step.invoiceId} AND school_id = ${schoolId}
             FOR UPDATE
           `);
@@ -918,9 +923,14 @@ export function registerFeesRoutes(app: Express) {
           `);
           const alreadyPaid = Number((paidSoFar.rows[0] as any)?.total_paid) || 0;
 
-          // Safety cap — never exceed invoice amount in FIFO mode
-          const safeAllocation = Math.min(step.allocation, Math.max(0, invoiceAmount - alreadyPaid));
-          if (safeAllocation <= 0) continue;
+          // One-invoice = one-payment rule: skip if already Paid under lock.
+          const fifoLockedStatus = (lockedRow.rows[0] as any)?.status as string | undefined;
+          if (fifoLockedStatus === "Paid") continue;
+
+          // Reject if this invoice cannot be fully paid — no Partial status allowed.
+          const balance = Math.max(0, invoiceAmount - alreadyPaid);
+          if (balance <= 0 || step.allocation < balance) continue;
+          const safeAllocation = balance; // always exact full payment
 
           await tx.execute(sql`
             INSERT INTO payment_records
@@ -938,8 +948,7 @@ export function registerFeesRoutes(app: Express) {
             )
           `);
 
-          const newTotal = alreadyPaid + safeAllocation;
-          const newStatus = newTotal >= invoiceAmount ? "Paid" : "Partial";
+          const newStatus = "Paid"; // one-invoice = one-payment: Partial rejected above
           await tx.execute(sql`
             UPDATE fee_records
             SET status       = ${newStatus},
@@ -1053,13 +1062,38 @@ export function registerFeesRoutes(app: Express) {
       if (paymentOnly.feeRecordId) {
         // Acquire a row-level write lock — concurrent requests will queue here.
         const lockResult = await tx.execute(
-          sql`SELECT amount FROM fee_records
+          sql`SELECT status, amount FROM fee_records
               WHERE id = ${paymentOnly.feeRecordId} AND school_id = ${schoolId}
               FOR UPDATE`,
         );
-        const lockedFee = lockResult.rows[0] as { amount: number } | undefined;
+        const lockedFee = lockResult.rows[0] as { status: string; amount: number } | undefined;
 
         if (lockedFee) {
+          // ── One-invoice = one-payment rule (primary guards, run under lock) ──────
+
+          // Guard 1: invoice already Paid — no second payment, ever.
+          if (lockedFee.status === "Paid") {
+            overpaymentBlock = {
+              message: "This invoice has already been paid in full. No additional payments can be recorded against it.",
+              invoiceAmount: Number(lockedFee.amount),
+              totalAlreadyPaid: Number(lockedFee.amount),
+              newAmount: paymentOnly.amount,
+            };
+            return;
+          }
+
+          // Guard 2: payment must equal the full invoice amount — no partial payments.
+          if (paymentOnly.amount !== Number(lockedFee.amount)) {
+            overpaymentBlock = {
+              message: `Payment amount (₹${paymentOnly.amount.toLocaleString("en-IN")}) must equal the full invoice amount (₹${Number(lockedFee.amount).toLocaleString("en-IN")}). Partial payments are not accepted.`,
+              invoiceAmount: Number(lockedFee.amount),
+              totalAlreadyPaid: 0,
+              newAmount: paymentOnly.amount,
+            };
+            return;
+          }
+
+          // ── Safety cap — secondary guard for any accumulated prior payments ───────
           const sumResult = await tx.execute(
             sql`SELECT COALESCE(SUM(amount), 0)::int AS existing_paid
                 FROM payment_records
@@ -1070,12 +1104,12 @@ export function registerFeesRoutes(app: Express) {
 
           if (totalAlreadyPaid + paymentOnly.amount > cap) {
             overpaymentBlock = {
-              message: `This payment (₹${paymentOnly.amount.toLocaleString("en-IN")}) would bring the total collected to ₹${(totalAlreadyPaid + paymentOnly.amount).toLocaleString("en-IN")}, which exceeds ${configuredPercent}% of the invoice amount (₹${lockedFee.amount.toLocaleString("en-IN")}). Please verify the amount and try again.`,
-              invoiceAmount: lockedFee.amount,
+              message: `This payment (₹${paymentOnly.amount.toLocaleString("en-IN")}) would bring the total collected to ₹${(totalAlreadyPaid + paymentOnly.amount).toLocaleString("en-IN")}, which exceeds the invoice amount (₹${Number(lockedFee.amount).toLocaleString("en-IN")}).`,
+              invoiceAmount: Number(lockedFee.amount),
               totalAlreadyPaid,
               newAmount: paymentOnly.amount,
             };
-            return; // exit callback — transaction commits with no writes
+            return;
           }
         }
       }
@@ -1137,7 +1171,7 @@ export function registerFeesRoutes(app: Express) {
                 WHERE fee_record_id = ${paymentOnly.feeRecordId}`,
           );
           const totalPaid = Number((paidRow.rows[0] as any)?.total_paid) || 0;
-          const newStatus = totalPaid >= linkedFee.amount ? "Paid" : "Partial";
+          const newStatus = "Paid"; // one-invoice = one-payment: partial amount blocked above
           const notesPatch = _fn != null ? sql`, notes = ${_fn}` : sql``;
           await tx.execute(
             sql`UPDATE fee_records
