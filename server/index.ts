@@ -8,6 +8,7 @@ import { pool } from "./db";
 import { storage } from "./storage";
 import cron from "node-cron";
 import { recalculateLateFees } from "./late-fee-engine";
+import { computeFeePeriod } from "./fee-period";
 import { assertNoSchemaDrift } from "./schema-validator";
 import path from "path";
 
@@ -392,6 +393,9 @@ app.use((req, res, next) => {
     ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS auto_generate BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS auto_gen_due_day INTEGER;
     ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS last_invoices_generated_at TIMESTAMP;
+    ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS billing_timing VARCHAR(10) NOT NULL DEFAULT 'advance';
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS fee_period_start DATE;
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS fee_period_end DATE;
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS late_fee_paid INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES academic_sessions(id) ON DELETE SET NULL;
     ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS student_id INTEGER REFERENCES students(id) ON DELETE SET NULL;
@@ -858,13 +862,36 @@ app.use((req, res, next) => {
           const now = new Date();
           const dueDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(Math.min(dueDay, 28)).padStart(2, "0")}`;
 
-          const existingSet = new Set(existingRecords.map((r: any) => `${r.studentId}:${r.feeType}:${String(r.dueDate).slice(0, 7)}`));
+          // Compute the immutable fee period from frequency + billingTiming.
+          // Quarterly/annual: idempotency by period prevents duplicates within the same period
+          // even when the cron fires every month.
+          const period = computeFeePeriod(
+            (structure as any).frequency ?? "monthly",
+            (structure as any).billingTiming ?? "advance",
+            now,
+            activeSession,
+          );
+
+          // Dual idempotency: new period-key AND legacy due-date-month key (for pre-migration records).
+          const existingByPeriodStart = new Set(
+            existingRecords
+              .filter((r: any) => r.feePeriodStart)
+              .map((r: any) => `${r.studentId}:${r.feeType}:${String(r.feePeriodStart).slice(0, 10)}`)
+          );
+          const existingByDueMonth = new Set(
+            existingRecords
+              .filter((r: any) => !r.feePeriodStart)
+              .map((r: any) => `${r.studentId}:${r.feeType}:${String(r.dueDate).slice(0, 7)}`)
+          );
 
           let created = 0, skipped = 0;
           for (const enrollment of eligible) {
-            // Key includes year-month so we don't skip a new month's invoice just because last month exists
-            const key = `${enrollment.studentId}:${structure.feeType}:${dueDate.slice(0, 7)}`;
-            if (existingSet.has(key)) { skipped++; continue; }
+            const periodKey  = `${enrollment.studentId}:${structure.feeType}:${period.start}`;
+            const legacyKey  = `${enrollment.studentId}:${structure.feeType}:${dueDate.slice(0, 7)}`;
+            if (existingByPeriodStart.has(periodKey) || existingByDueMonth.has(legacyKey)) {
+              skipped++;
+              continue;
+            }
             // Assign a permanent invoice number — stored in invoice_number, never in receipt_number.
             // The INV- sequence is school-scoped, atomic, and never reused or reset.
             const invoiceNumber = await storage.nextReceiptNumber(school.id, "INV-", 4);
@@ -878,7 +905,9 @@ app.use((req, res, next) => {
               status: "Due",
               notes: `Auto-generated on ${now.toLocaleDateString("en-IN")} from fee structure: ${structure.name}`,
               invoiceNumber,
-            });
+              feePeriodStart: period.start,
+              feePeriodEnd: period.end,
+            } as any);
             created++;
           }
 

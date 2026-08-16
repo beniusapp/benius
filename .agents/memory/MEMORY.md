@@ -15,3 +15,4 @@
 - [Razorpay Integration](razorpay-integration.md) — credential resolver (DB → env fallback), verify endpoint pattern, payment.failed webhook branch, student UI failure callback.
 - [Late Fee Engine](late-fee-engine.md) — server/late-fee-engine.ts; calculateLateFee() is pure, recalculateLateFees(schoolId) persists to DB; nightly cron calls it after overdue sweep; GET /api/admin/fees computes on-the-fly for freshness.
 - [Fee Receipt Signature](fee-receipt-signature.md) — per-tenant signature; middleware-array upload (NOT Promise-wrap); sharp bg-removal; both original+processed URLs stored; receipt uses processed ?? original ?? legacy fileUrl.
+- [Fee Period & Billing Schedule](fee-period-billing.md) — feePeriodStart/feePeriodEnd on fee_records; billingTiming on fee_structures; computeFeePeriod+feePeriodLabel in server/fee-period.ts; dual idempotency key pattern for pre/post-migration records.

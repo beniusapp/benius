@@ -638,6 +638,10 @@ export const feeRecords = pgTable("fee_records", {
   academicYear: varchar("academic_year", { length: 20 }),
   razorpayOrderId: varchar("razorpay_order_id", { length: 100 }),
   razorpayOrderExpiresAt: timestamp("razorpay_order_expires_at"),
+  // Immutable billing period — set at invoice creation, never changed.
+  // Determines what period the invoice covers, independently of due date / generation date.
+  feePeriodStart: date("fee_period_start"),
+  feePeriodEnd: date("fee_period_end"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
 });
@@ -1010,6 +1014,10 @@ export const feeStructures = pgTable("fee_structures", {
   autoGenerate: boolean("auto_generate").notNull().default(false),
   autoGenDueDay: integer("auto_gen_due_day"),
   lastInvoicesGeneratedAt: timestamp("last_invoices_generated_at"),
+  // "advance" = invoice generated in the same period it covers
+  // "arrears" = invoice generated in the period AFTER the one it covers
+  // Ignored for annual / one-time fees.
+  billingTiming: varchar("billing_timing", { length: 10 }).notNull().default("advance"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
   lateFeeConfig: jsonb("late_fee_config").$type<LateFeeConfig>().default({ enabled: false, type: "NONE", grace_period_days: 0, flat_amount: 0, daily_rate: 0, max_cap: 0, tiered_slabs: [] }),

@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { type Server } from "http";
 import { storage } from "./storage";
+import { feePeriodLabel } from "./fee-period";
 import {
   insertSchoolSchema, attendanceRecords, studentProfiles, students, schools,
   teacherSelfAttendance, attendanceCorrectionRequests, facultyMappings,
@@ -4566,6 +4567,13 @@ export async function registerRoutes(
         ? calculateLateFee(cfg, r.dueDate, r.status, now)
         : ((r as any).lateFeeAmount ?? 0);
       const failedInfo = failedMap.get(r.id);
+      // Compute immutable fee-period display label from stored period dates.
+      // Falls back to academicYear for pre-migration records that have no period.
+      const periodLabel = feePeriodLabel(
+        (r as any).feePeriodStart,
+        (r as any).feePeriodEnd,
+        r.academicYear,
+      );
       return {
         ...r,
         feeName:           ftToName.get(r.feeType.trim().toLowerCase()) ?? r.feeType,
@@ -4579,6 +4587,8 @@ export async function registerRoutes(
         // already loaded above. accruedLateFee is reused; calculateLateFee() is
         // NOT called again. Payment logic is completely unaffected.
         lateFeeInfo:       buildLateFeeInfo(cfg ?? null, r.dueDate, r.status, now, accrued_late_fee),
+        // Immutable fee period label — "August 2026", "April–June 2026", "2025–26", etc.
+        feePeriodLabel:    periodLabel,
       };
     });
 
@@ -4946,6 +4956,16 @@ tfoot td:last-child{text-align:right;}
     </div>
     <div class="box">
       <p class="box-title">Payment Audit</p>
+      ${(() => {
+        const fpl = feePeriodLabel((rec as any).feePeriodStart, (rec as any).feePeriodEnd, rec.academicYear);
+        const periodDays = (rec as any).feePeriodStart && (rec as any).feePeriodEnd
+          ? Math.round((new Date((rec as any).feePeriodEnd + "T00:00:00").getTime() - new Date((rec as any).feePeriodStart + "T00:00:00").getTime()) / 86400000)
+          : 400;
+        const periodRowLabel = periodDays <= 31 ? "Fee Month" : periodDays <= 92 ? "Fee Period" : "Academic Session";
+        return (rec as any).feePeriodStart
+          ? `<div class="brow"><span class="bl">${periodRowLabel}</span><span class="bv">${esc(fpl)}</span></div>`
+          : "";
+      })()}
       <div class="brow"><span class="bl">Invoice No.</span><span class="bv">${esc(rec.invoiceNumber ?? "—")}</span></div>
       <div class="brow"><span class="bl">Receipt No.</span><span class="bv">${esc(rec.receiptNumber ?? "—")}</span></div>
       <div class="brow"><span class="bl">Payment ID</span><span class="bv" style="font-size:8.5px">${esc(pa?.razorpay_payment_id ?? "—")}</span></div>

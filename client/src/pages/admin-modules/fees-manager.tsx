@@ -61,6 +61,8 @@ interface FeeStructure {
   feeType: string;
   amount: number;
   frequency: string;
+  /** "advance" (default) | "arrears" — only used for monthly/quarterly */
+  billingTiming: string;
   applicableClasses: string[];
   concessionType: string;
   concessionPercent: number;
@@ -2715,6 +2717,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [feeType, setFeeType] = useState("");
   const [amount, setAmount] = useState("");
   const [frequency, setFrequency] = useState("annual");
+  const [billingTiming, setBillingTiming] = useState("advance");
   const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
   const [concType, setConcType] = useState("none");
   const [concPct, setConcPct] = useState("0");
@@ -2763,7 +2766,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
   function openCreate() {
     setEditing(null);
-    setName(""); setFeeType(""); setAmount(""); setFrequency("annual");
+    setName(""); setFeeType(""); setAmount(""); setFrequency("annual"); setBillingTiming("advance");
     setSelectedClasses([]); setConcType("none"); setConcPct("0"); setDueDay(""); setIsActive(true);
     setAutoGenerate(false); setAutoGenDueDay("");
     setBreakdown([]);
@@ -2775,6 +2778,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   function openEdit(s: FeeStructure) {
     setEditing(s);
     setName(s.name); setFeeType(s.feeType); setAmount(String(s.amount)); setFrequency(s.frequency);
+    setBillingTiming(s.billingTiming ?? "advance");
     setSelectedClasses([...s.applicableClasses]); setConcType(s.concessionType);
     setConcPct(String(s.concessionPercent));
     if (s.dueDayOfMonth) {
@@ -2810,6 +2814,8 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         .map(b => ({ name: b.name.trim(), purpose: b.purpose.trim(), amount: parseInt(b.amount) || 0 }));
       const payload = {
         name, feeType, amount: parseInt(amount), frequency,
+        // billingTiming only matters for monthly/quarterly; ignored for annual/one-time
+        billingTiming: (frequency === "monthly" || frequency === "quarterly") ? billingTiming : "advance",
         applicableClasses: selectedClasses,
         concessionType: concType, concessionPercent: parseInt(concPct) || 0,
         dueDayOfMonth: dueDay ? new Date(dueDay + "T00:00:00").getDate() : null, isActive,
@@ -2893,6 +2899,8 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   // ── Generate Invoices state ────────────────────────────────────────────────
   const [genTarget, setGenTarget] = useState<FeeStructure | null>(null);
   const [genSessionId, setGenSessionId] = useState("");
+  const [genFeePeriodStart, setGenFeePeriodStart] = useState("");
+  const [genFeePeriodEnd, setGenFeePeriodEnd] = useState("");
   const [genClasses, setGenClasses] = useState<string[]>([]);
   const [genDueDate, setGenDueDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [genResult, setGenResult] = useState<{ created: number; synced: number; skipped: number; voided: number; total: number } | null>(null);
@@ -2904,16 +2912,24 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
   const genMut = useMutation({
     mutationFn: async () => {
+      const freq = genTarget!.frequency;
+      const body: Record<string, unknown> = {
+        sessionId: parseInt(genSessionId),
+        // targetClasses is ignored by the backend — the structure's applicableClasses
+        // are the single source of truth. We omit it to keep the payload clean.
+        dueDate: genDueDate,
+      };
+      // Attach the admin-selected fee period for monthly/quarterly fees.
+      // Annual/one-time: the backend derives period from session dates automatically.
+      if ((freq === "monthly" || freq === "quarterly") && genFeePeriodStart && genFeePeriodEnd) {
+        body.feePeriodStart = genFeePeriodStart;
+        body.feePeriodEnd   = genFeePeriodEnd;
+      }
       const r = await fetch(`/api/admin/fees/structures/${genTarget!.id}/generate-invoices`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: parseInt(genSessionId),
-          // targetClasses is ignored by the backend — the structure's applicableClasses
-          // are the single source of truth. We omit it to keep the payload clean.
-          dueDate: genDueDate,
-        }),
+        body: JSON.stringify(body),
       });
       if (!r.ok) throw new Error((await r.json()).message ?? "Failed");
       return r.json() as Promise<{ created: number; synced: number; skipped: number; voided: number; total: number }>;
@@ -2936,12 +2952,47 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  /** Compute start/end for a calendar quarter by quarter-index (0=Q1 Jan-Mar) and year */
+  function quarterBounds(qi: number, year: number): { start: string; end: string } {
+    const sm = qi * 3;
+    const em = sm + 2;
+    const lastDay = new Date(year, em + 1, 0).getDate();
+    return {
+      start: `${year}-${String(sm + 1).padStart(2, "0")}-01`,
+      end:   `${year}-${String(em + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+    };
+  }
+
+  /** Build default fee period based on frequency + billingTiming, relative to today */
+  function defaultFeePeriod(freq: string, timing: string): { start: string; end: string } {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth(); // 0-indexed
+    if (freq === "monthly") {
+      const offset = timing === "arrears" ? -1 : 0;
+      const pd = new Date(y, m + offset, 1);
+      const py = pd.getFullYear(); const pm = pd.getMonth();
+      const last = new Date(py, pm + 1, 0).getDate();
+      return { start: `${py}-${String(pm + 1).padStart(2, "0")}-01`, end: `${py}-${String(pm + 1).padStart(2, "0")}-${String(last).padStart(2, "0")}` };
+    }
+    if (freq === "quarterly") {
+      let qi = Math.floor(m / 3); let qy = y;
+      if (timing === "arrears") { if (qi === 0) { qi = 3; qy = y - 1; } else { qi--; } }
+      return quarterBounds(qi, qy);
+    }
+    return { start: "", end: "" };
+  }
+
   function openGenInvoices(s: FeeStructure) {
     setGenTarget(s);
     setGenResult(null);
     setGenSessionId("");
     setGenClasses([...s.applicableClasses]);
     setGenDueDate(new Date().toISOString().split("T")[0]);
+    // Pre-select the correct fee period for monthly/quarterly
+    const dp = defaultFeePeriod(s.frequency, s.billingTiming ?? "advance");
+    setGenFeePeriodStart(dp.start);
+    setGenFeePeriodEnd(dp.end);
   }
 
   const FREQ: Record<string, string> = { monthly: "Monthly", quarterly: "Quarterly", annual: "Annual", "one-time": "One-Time" };
@@ -3071,12 +3122,32 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                     setAutoGenerate(false);
                     setAutoGenDueDay("");
                   }
+                  // Reset billingTiming to advance when switching to annual/one-time
+                  if (e.target.value !== "monthly" && e.target.value !== "quarterly") {
+                    setBillingTiming("advance");
+                  }
                 }}
                   className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
                   {Object.entries(FREQ).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
               </div>
             </div>
+            {/* Billing Timing — only relevant for monthly/quarterly */}
+            {(frequency === "monthly" || frequency === "quarterly") && (
+              <div>
+                <label className="text-xs text-white/60 mb-1 block">Billing Timing</label>
+                <select value={billingTiming} onChange={e => setBillingTiming(e.target.value)}
+                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
+                  <option value="advance">In Advance — invoice covers current {frequency === "quarterly" ? "quarter" : "month"}</option>
+                  <option value="arrears">In Arrears — invoice covers previous {frequency === "quarterly" ? "quarter" : "month"}</option>
+                </select>
+                <p className="text-white/30 text-[11px] mt-1">
+                  {billingTiming === "advance"
+                    ? `Invoice generated in August → Fee Period: August ${new Date().getFullYear()}`
+                    : `Invoice generated in September → Fee Period: August ${new Date().getFullYear()}`}
+                </p>
+              </div>
+            )}
             <div>
               <label className="text-xs text-white/60 mb-1.5 block">
                 Applicable Classes
@@ -3430,18 +3501,91 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
             <div className="space-y-4">
               <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-sm">
                 <p className="text-white font-semibold">{genTarget.name}</p>
-                <p className="text-white/50 text-xs">{genTarget.feeType} · {fmt(genTarget.amount)} / {FREQ[genTarget.frequency] ?? genTarget.frequency}</p>
+                <p className="text-white/50 text-xs">
+                  {genTarget.feeType} · {fmt(genTarget.amount)} / {FREQ[genTarget.frequency] ?? genTarget.frequency}
+                  {(genTarget.frequency === "monthly" || genTarget.frequency === "quarterly") && (
+                    <span className="ml-1 text-indigo-400">
+                      · {(genTarget.billingTiming ?? "advance") === "arrears" ? "In Arrears" : "In Advance"}
+                    </span>
+                  )}
+                </p>
               </div>
               <div>
                 <label className="text-xs text-white/60 mb-1 block">Academic Session</label>
-                <select value={genSessionId} onChange={e => setGenSessionId(e.target.value)}
+                <select value={genSessionId} onChange={e => {
+                  setGenSessionId(e.target.value);
+                  // For annual/one-time: derive period from session dates when session changes
+                  const freq = genTarget!.frequency;
+                  if (freq !== "monthly" && freq !== "quarterly" && e.target.value) {
+                    const sess = sessions.find((s: any) => String(s.id) === e.target.value);
+                    if (sess) {
+                      setGenFeePeriodStart(String((sess as any).startDate ?? "").slice(0, 10));
+                      setGenFeePeriodEnd(String((sess as any).endDate ?? "").slice(0, 10));
+                    }
+                  }
+                }}
                   className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
                   <option value="">Select session…</option>
                   {sessions.map(s => (
-                    <option key={s.id} value={s.id}>{s.sessionName}{s.isActive ? " (Active)" : ""}</option>
+                    <option key={s.id} value={s.id}>{s.sessionName}{(s as any).isActive ? " (Active)" : ""}</option>
                   ))}
                 </select>
               </div>
+              {/* Fee Period Picker — shown for monthly/quarterly; annual uses session dates */}
+              {(genTarget.frequency === "monthly" || genTarget.frequency === "quarterly") && (() => {
+                const freq  = genTarget.frequency;
+                const timing = genTarget.billingTiming ?? "advance";
+                const now = new Date();
+                const y = now.getFullYear();
+                const m = now.getMonth();
+
+                // Generate selectable period options: past 6 + current + next 2 (monthly); past 3 + current + next 1 (quarterly)
+                const options: Array<{ label: string; start: string; end: string }> = [];
+                if (freq === "monthly") {
+                  for (let offset = -6; offset <= 2; offset++) {
+                    const pd = new Date(y, m + offset, 1);
+                    const py = pd.getFullYear(); const pm = pd.getMonth();
+                    const last = new Date(py, pm + 1, 0).getDate();
+                    const start = `${py}-${String(pm + 1).padStart(2, "0")}-01`;
+                    const end   = `${py}-${String(pm + 1).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
+                    options.push({ label: pd.toLocaleDateString("en-IN", { month: "long", year: "numeric" }), start, end });
+                  }
+                } else {
+                  for (let offset = -3; offset <= 2; offset++) {
+                    let qi = Math.floor(m / 3) + offset; let qy = y;
+                    while (qi < 0) { qi += 4; qy--; } while (qi >= 4) { qi -= 4; qy++; }
+                    const b = quarterBounds(qi, qy);
+                    const sm2 = new Date(qy, qi * 3, 1);
+                    const em2 = new Date(qy, qi * 3 + 2, 1);
+                    options.push({ label: `${sm2.toLocaleDateString("en-IN", { month: "long" })}–${em2.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}`, ...b });
+                  }
+                }
+
+                const selectedVal = genFeePeriodStart;
+                return (
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">
+                      Fee Period
+                      <span className="ml-1.5 text-indigo-400/70">{timing === "arrears" ? "(covers previous period)" : "(covers current period)"}</span>
+                    </label>
+                    <select
+                      value={selectedVal}
+                      onChange={e => {
+                        const opt = options.find(o => o.start === e.target.value);
+                        if (opt) { setGenFeePeriodStart(opt.start); setGenFeePeriodEnd(opt.end); }
+                      }}
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
+                    >
+                      {options.map(o => (
+                        <option key={o.start} value={o.start}>{o.label}</option>
+                      ))}
+                    </select>
+                    <p className="text-indigo-400/60 text-[11px] mt-1">
+                      This period is stored permanently on each invoice — it identifies what period the fee covers.
+                    </p>
+                  </div>
+                );
+              })()}
               <div>
                 <label className="text-xs text-white/60 mb-1 block">Due Date for Generated Invoices</label>
                 <input type="date" value={genDueDate} onChange={e => setGenDueDate(e.target.value)}

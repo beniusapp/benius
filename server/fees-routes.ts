@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { storage } from "./storage";
 import { db } from "./db";
 import { calculateLateFee, recalculateLateFees, DEFAULT_LATE_FEE_CONFIG, type LateFeeConfig } from "./late-fee-engine";
+import { computeFeePeriod } from "./fee-period";
 import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings, feeStructures, dunningJobStatus } from "@shared/schema";
 import { and, eq, sql, desc, or } from "drizzle-orm";
 import { z } from "zod";
@@ -623,6 +624,10 @@ export function registerFeesRoutes(app: Express) {
     feeType: z.string().min(1).max(100),
     amount: z.number().int().positive(),
     frequency: z.enum(["monthly", "quarterly", "annual", "one-time"]),
+    // billingTiming only applies to monthly/quarterly fees:
+    //   "advance" = invoice generated in the period it covers (default)
+    //   "arrears" = invoice generated in the following period (charges for the prior period)
+    billingTiming: z.enum(["advance", "arrears"]).default("advance"),
     applicableClasses: z.array(z.string()).default([]),
     concessionType: z.enum(["none", "sibling", "merit", "other"]).default("none"),
     concessionPercent: z.number().int().min(0).max(100).default(0),
@@ -2676,14 +2681,32 @@ export function registerFeesRoutes(app: Express) {
     const now = new Date();
     const dueDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(Math.min(dueDay, 28)).padStart(2, "0")}`;
 
+    // Compute the immutable fee period from frequency + billingTiming.
+    const period = computeFeePeriod(
+      (structure as any).frequency ?? "monthly",
+      (structure as any).billingTiming ?? "advance",
+      now,
+      activeSession,
+    );
+
     const existingRecords = await storage.getFeeRecordsBySchool(schoolId, { sessionId: activeSession.id });
-    // Map: "studentId:feeType:YYYY-MM" → existing record (month-scoped for monthly fees)
-    const existingMap = new Map(existingRecords.map((r: any) => [`${r.studentId}:${r.feeType}:${String(r.dueDate).slice(0, 7)}`, r]));
+    // Dual idempotency: period-based (new records) AND due-date-month (pre-migration records).
+    const existingByPeriodStart = new Map(
+      existingRecords
+        .filter((r: any) => r.feePeriodStart)
+        .map((r: any) => [`${r.studentId}:${r.feeType}:${String(r.feePeriodStart).slice(0, 10)}`, r])
+    );
+    const existingByDueMonth = new Map(
+      existingRecords
+        .filter((r: any) => !r.feePeriodStart)
+        .map((r: any) => [`${r.studentId}:${r.feeType}:${String(r.dueDate).slice(0, 7)}`, r])
+    );
 
     let created = 0, synced = 0, skipped = 0;
     for (const enrollment of eligible) {
-      const key = `${enrollment.studentId}:${structure.feeType}:${dueDate.slice(0, 7)}`;
-      const existing = existingMap.get(key);
+      const periodKey = `${enrollment.studentId}:${structure.feeType}:${period.start}`;
+      const legacyKey = `${enrollment.studentId}:${structure.feeType}:${dueDate.slice(0, 7)}`;
+      const existing = existingByPeriodStart.get(periodKey) ?? existingByDueMonth.get(legacyKey);
       if (existing) {
         if (existing.status === "Due" || existing.status === "Overdue") {
           if (existing.amount !== structure.amount) {
@@ -2713,7 +2736,9 @@ export function registerFeesRoutes(app: Express) {
         academicYear: activeSession.sessionName,
         notes: null,
         invoiceNumber,
-      });
+        feePeriodStart: period.start,
+        feePeriodEnd: period.end,
+      } as any);
       created++;
     }
 
@@ -2781,10 +2806,14 @@ export function registerFeesRoutes(app: Express) {
       sessionId: z.number().int().positive(),
       targetClasses: z.array(z.string()).default([]),
       dueDate: z.string().min(1, "Due date required"),
+      // Immutable billing period for the invoices being generated.
+      // Required for monthly/quarterly; for annual/one-time the backend uses the session dates.
+      feePeriodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+      feePeriodEnd:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
     }).safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
 
-    const { sessionId, dueDate } = parsed.data;
+    const { sessionId, dueDate, feePeriodStart: bodyPeriodStart, feePeriodEnd: bodyPeriodEnd } = parsed.data;
     const structure = await storage.getFeeStructureById(structureId, schoolId);
     if (!structure) return res.status(404).json({ message: "Fee structure not found" });
     const invoiceSession = await storage.getAcademicSessionById(sessionId);
@@ -2805,14 +2834,41 @@ export function registerFeesRoutes(app: Express) {
       ? effectiveRoster.filter(e => applicableClasses.includes(e.className))
       : effectiveRoster;
 
+    // Determine the immutable fee period for this batch.
+    // Priority: explicit body params (monthly/quarterly admin pick) → session dates (annual/one-time).
+    const freq: string = (structure as any).frequency ?? "annual";
+    let periodStart: string;
+    let periodEnd:   string;
+    if (bodyPeriodStart && bodyPeriodEnd) {
+      // Admin explicitly selected a fee period in the UI (monthly/quarterly)
+      periodStart = bodyPeriodStart;
+      periodEnd   = bodyPeriodEnd;
+    } else {
+      // Annual/one-time: use academic session start/end as the period
+      periodStart = invoiceSession ? String(invoiceSession.startDate).slice(0, 10) : `${new Date().getFullYear()}-04-01`;
+      periodEnd   = invoiceSession ? String(invoiceSession.endDate).slice(0, 10)   : `${new Date().getFullYear() + 1}-03-31`;
+    }
+
     const existingRecords = await storage.getFeeRecordsBySchool(schoolId, { sessionId });
-    // Map: "studentId:feeType" → existing fee record (for syncing unpaid ones)
-    const existingMap = new Map(existingRecords.map(r => [`${r.studentId}:${r.feeType}`, r]));
+
+    // Period-based idempotency: one invoice per student × feeType × feePeriodStart.
+    // Falls back to legacy "studentId:feeType" key for pre-migration records (null feePeriodStart).
+    const existingByPeriodStart = new Map(
+      existingRecords
+        .filter((r: any) => r.feePeriodStart)
+        .map((r: any) => [`${r.studentId}:${r.feeType}:${String(r.feePeriodStart).slice(0, 10)}`, r])
+    );
+    const existingByType = new Map(
+      existingRecords
+        .filter((r: any) => !r.feePeriodStart)
+        .map((r: any) => [`${r.studentId}:${r.feeType}`, r])
+    );
 
     let created = 0, synced = 0, skipped = 0;
     for (const enrollment of filtered) {
-      const key = `${enrollment.studentId}:${structure.feeType}`;
-      const existing = existingMap.get(key);
+      const periodKey = `${enrollment.studentId}:${structure.feeType}:${periodStart}`;
+      const legacyKey = `${enrollment.studentId}:${structure.feeType}`;
+      const existing = existingByPeriodStart.get(periodKey) ?? existingByType.get(legacyKey);
       if (existing) {
         // Record exists — sync amount + dueDate if still unpaid, skip if already settled
         if (existing.status === "Due" || existing.status === "Overdue") {
@@ -2839,7 +2895,9 @@ export function registerFeesRoutes(app: Express) {
         academicYear: invoiceSession?.sessionName ?? null,
         notes: null,
         invoiceNumber,
-      });
+        feePeriodStart: periodStart,
+        feePeriodEnd:   periodEnd,
+      } as any);
       created++;
     }
 

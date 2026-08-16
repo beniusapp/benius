@@ -1852,6 +1852,12 @@ export default function StudentFees() {
                                   {rec.invoiceNumber}
                                 </p>
                               )}
+                              {(rec as any).feePeriodLabel && (rec as any).feePeriodLabel !== "—" && (rec as any).feePeriodLabel !== rec.academicYear && (
+                                <p className="text-[11px] text-indigo-400 font-medium mt-0.5"
+                                  data-testid={`text-fee-period-${rec.id}`}>
+                                  Fee Period: {(rec as any).feePeriodLabel}
+                                </p>
+                              )}
                               <div className="flex items-center gap-1.5 mt-1.5 text-xs text-slate-400">
                                 <CalendarDays className="w-3 h-3 flex-shrink-0" />
                                 Due {formatDate(rec.dueDate)}
