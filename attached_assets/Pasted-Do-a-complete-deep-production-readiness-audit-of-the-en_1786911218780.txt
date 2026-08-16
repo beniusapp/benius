@@ -1,0 +1,350 @@
+Do a complete, deep production-readiness audit of the entire Fee Reminder / Dunning system.
+
+IMPORTANT:
+
+- INSPECTION ONLY — do not change any code.
+- Do not make assumptions.
+- Trace the actual code, database schema, APIs, cron, frontend, provider integrations, templates, logs, tests and configuration.
+- I want to know whether the system is genuinely ready for production.
+- The final goal is: once I provide the required SMS, WhatsApp and Email provider credentials/IDs in the local environment, the reminder system should work automatically and reliably without requiring any further code changes.
+
+Current reminder stages are:
+
+- D-2 = 2 days before due date
+- D0 = due today
+- D+3 = 3 days overdue
+- D+7 = 7 days overdue
+- D+14 = 14 days overdue
+
+Audit EVERYTHING:
+
+1. COMPLETE END-TO-END FLOW
+   Trace the complete flow:
+   Invoice created → Due/Overdue → stage calculation → cron → school configuration → template → provider → message delivery → dunning_log → Recent Deliveries → student reminder history.
+
+Explain exactly what happens at every step.
+
+2. CRON / SCHEDULER
+   Verify:
+
+- Cron actually runs automatically.
+- Correct frequency.
+- Correct timezone.
+- Correct IST/Asia-Kolkata date calculation.
+- D-2, D0, D+3, D+7 and D+14 trigger on exactly the correct calendar date.
+- No duplicate cron execution.
+- Server restart behavior.
+- What happens if the server is temporarily unavailable.
+- What happens if cron execution fails.
+
+3. INVOICE ELIGIBILITY
+   Verify:
+
+- Only correct active-session invoices are processed.
+- Due/Overdue invoices are eligible.
+- Paid invoices NEVER receive reminders.
+- Waived invoices NEVER receive reminders.
+- Deleted/missing invoices are safely handled.
+- Multiple invoices for the same student are handled independently.
+- Different schools can never access/process each other's invoices.
+
+4. DEDUPLICATION
+   Verify that the system can NEVER accidentally send the same reminder twice for the same:
+
+invoice + channel + stage
+
+Example:
+D-2 SMS can send once.
+D-2 SMS cannot send twice.
+D0 SMS can still send once later.
+D+3 SMS can send once later.
+
+Check database-level and application-level protection against duplicate sends and concurrent cron executions.
+
+5. SMS
+   Trace the complete SMS integration.
+
+Verify exactly what is required from the SMS provider:
+
+- API key/auth key
+- sender ID
+- DLT requirements
+- template requirements
+- route/type
+- recipient phone formatting
+- Indian +91 handling
+- API response validation
+- timeout handling
+- provider errors
+- failed delivery logging
+- retry behavior
+
+Tell me whether entering the required credentials is the ONLY missing dependency.
+
+6. WHATSAPP
+   Trace the complete WhatsApp integration.
+
+Verify:
+
+- MSG91 integration
+- WhatsApp Business setup
+- Meta-approved template
+- template name
+- integrated number
+- template parameters
+- parameter ordering
+- D-2, D0, D+3, D+7, D+14 labels
+- recipient formatting
+- provider response validation
+- failures
+- retries
+- logging
+
+Verify that the application code is already ready and only provider configuration/credentials are required.
+
+7. EMAIL
+   Trace the complete Email integration.
+
+Verify both supported providers and determine exactly what is required for production:
+
+- API key
+- verified sender
+- sender email
+- sender name
+- domain authentication if required
+- recipient validation
+- subject
+- body
+- template variables
+- provider response handling
+- failures
+- retries
+- logging
+
+Confirm whether entering the required credentials/configuration is the only remaining dependency.
+
+8. MESSAGE CONTENT
+   Verify every variable:
+
+{student_name}
+{guardian_name}
+{fee_name}
+{amount}
+{due_date}
+
+Check:
+
+- correct database source
+- null handling
+- formatting
+- Indian date formatting
+- ₹ currency formatting
+- late fee handling
+- whether amount represents the actual amount payable
+
+IMPORTANT:
+Check whether reminder amount includes accrued late fee.
+
+If an invoice is ₹2,000 and current late fee is ₹100, determine whether the reminder says ₹2,100 or incorrectly says ₹2,000.
+
+9. TEMPLATES
+   Verify:
+
+- D-2
+- D0
+- D+3
+- D+7
+- D+14
+
+Check SMS, Email and WhatsApp template behavior.
+
+Verify Save Templates actually persists and reloads correctly.
+
+Verify a newly created school receives correct default templates.
+
+Verify one school's templates can NEVER affect another school's templates.
+
+10. MANUAL SEND REMINDER
+    Audit the admin "Send Reminder" function.
+
+Verify:
+
+- correct invoice
+- correct student
+- correct stage
+- correct channel
+- duplicate protection
+- paid invoice protection
+- logging
+- error handling
+
+Check whether manual sending can accidentally bypass automatic duplicate protection.
+
+11. RUN SIMULATION
+    Verify:
+
+- no real SMS is sent
+- no real WhatsApp is sent
+- no real Email is sent
+- correct stage calculation
+- correct amount
+- correct recipients
+- clear simulation status
+- simulation does not pollute actual delivery history incorrectly
+
+12. FAILURE HANDLING
+    For every provider, determine what happens if:
+
+- API is unavailable
+- timeout occurs
+- invalid credentials
+- invalid recipient
+- provider rejects template
+- provider rate limit
+- network error
+- malformed response
+- missing phone/email
+- missing provider configuration
+
+Verify that failures:
+
+- never crash the server
+- are logged
+- are visible to admin
+- do not create false "sent" records.
+
+13. RETRY SYSTEM
+    Determine whether failed messages are retried.
+
+If not, explain the risk.
+
+Determine whether a reliable retry mechanism is necessary for production.
+
+DO NOT implement anything yet.
+
+14. MISSED REMINDER / CATCH-UP
+    Verify what happens if:
+
+- server is down on D-2
+- server is down on D0
+- server is down on D+3
+- server is down on D+7
+- server is down on D+14
+
+Determine whether the reminder is lost permanently.
+
+Recommend the safest production behavior.
+
+15. TIMEZONE
+    Audit ALL date calculations, not just the main stage function.
+
+Search the entire project for:
+
+- new Date()
+- Date.now()
+- toISOString()
+- setHours()
+- UTC calculations
+- date comparisons
+
+Identify any place where timezone inconsistency could cause an incorrect reminder date.
+
+The application is for Indian schools, so all fee reminder calendar calculations must be reliably based on Asia/Kolkata.
+
+16. MULTI-TENANT SECURITY
+    Verify:
+
+- school_id filtering everywhere
+- provider credentials isolated per school
+- templates isolated per school
+- dunning logs isolated per school
+- students isolated per school
+- invoices isolated per school
+- no global provider credential accidentally used for another school.
+
+17. DATABASE / DATA INTEGRITY
+    Audit:
+
+- dunning_log
+- dunning_templates
+- notification_config
+- fee_records
+- students
+- academic_sessions
+
+Check:
+
+- foreign keys
+- unique constraints
+- indexes
+- race conditions
+- orphan records
+- historical data
+- deletion behavior.
+
+18. PROVIDER CONFIGURATION
+    Give me an exact checklist of EVERYTHING I need to provide/configure for:
+
+SMS
+WhatsApp
+Email
+
+Separate:
+A. Things already implemented in code
+B. Things I need to configure
+C. Things requiring external provider approval
+D. Things that may require code changes
+
+My goal is that after I provide the required provider credentials/IDs, the system should start working without further development.
+
+19. TESTING
+    Review the existing tests.
+
+Determine whether the tests sufficiently cover:
+
+- all five stages
+- exact dates
+- IST
+- duplicate protection
+- concurrent execution
+- multiple invoices
+- paid/waived protection
+- all three channels
+- provider failures
+- missing credentials
+- template interpolation
+- multi-tenancy
+- manual reminders
+- simulation
+- server restart
+- missed cron
+- retry behavior.
+
+Tell me exactly what tests are missing.
+
+20. FINAL VERDICT
+
+At the end give me a strict classification:
+
+🟢 PRODUCTION READY
+🟡 PRODUCTION READY AFTER CONFIGURATION
+🟠 CODE CHANGES REQUIRED
+🔴 ARCHITECTURAL PROBLEM
+
+Then provide:
+
+A. What is already 100% implemented
+B. What is only waiting for provider credentials/IDs
+C. What configuration I must provide
+D. What external provider approvals are required
+E. Every remaining bug/risk
+F. Every recommended improvement
+G. Every test that should be added
+H. Whether any code changes are required before I enter the provider credentials
+
+IMPORTANT:
+Do not change anything.
+Do not write code.
+Do not simply tell me what SHOULD happen.
+
+Tell me what the CURRENT CODE ACTUALLY DOES, based on direct inspection of the implementation.
