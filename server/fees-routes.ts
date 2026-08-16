@@ -784,16 +784,14 @@ export function registerFeesRoutes(app: Express) {
   // ── Offline Payment Records ───────────────────────────────────────────────
 
   const paymentBodySchema = z.object({
+    // Invoice-first: feeRecordId must reference an existing invoice.
+    // Required for normal payments; optional only when autoFifo=true (server auto-resolves invoices).
     feeRecordId: z.number().int().positive().optional().nullable(),
     studentId: z.number().int().positive(),
     // FIFO mode: when true and feeRecordId is null, funds are auto-allocated to the
-    // student's unpaid invoices oldest-first (due_date ASC) rather than freeform.
+    // student's unpaid invoices oldest-first (due_date ASC).
     autoFifo: z.boolean().default(false),
-    // Fee record fields — used to auto-create a fee record when feeRecordId is null and autoFifo is false
-    feeType: z.string().min(1).max(100).optional().nullable(),
-    dueDate: z.string().optional().nullable(),
-    feeStatus: z.enum(["Due","Paid","Partial","Overdue","Waived"]).optional().nullable(),
-    academicYear: z.string().max(20).optional().nullable(),
+    // feeNotes: optional notes written to the linked invoice during payment
     feeNotes: z.string().max(500).optional().nullable(),
     // Payment fields
     paymentMethod: z.enum(["Cash", "Cheque", "BankTransfer", "DemandDraft", "Online"]),
@@ -804,6 +802,60 @@ export function registerFeesRoutes(app: Express) {
     idempotencyKey: z.string().max(64).optional().nullable(),
     adminPassword: z.string().optional(),
     lateFeePaid: z.number().int().min(0).default(0),
+  });
+
+  // ── Unpaid Invoices for a Student (invoice-picker endpoint) ─────────────────
+  // Returns Due/Overdue fee_records for the specified student, with accrued late fee.
+  // Used by the "Record Offline Payment" modal to let the admin select which
+  // invoices they are collecting cash/cheque for.
+  app.get("/api/admin/fees/students/:studentId/unpaid-invoices", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId  = req.session.schoolId!;
+    const studentId = parseInt(req.params.studentId);
+    if (!studentId || isNaN(studentId)) return res.status(400).json({ message: "Invalid studentId" });
+
+    // Tenant guard: student must belong to this school
+    const [studentRow] = await db.select({ id: students.id })
+      .from(students)
+      .where(and(eq(students.id, studentId), eq(students.schoolId, schoolId)));
+    if (!studentRow) return res.status(404).json({ message: "Student not found" });
+
+    const rows = await db.execute(sql`
+      SELECT
+        fr.id,
+        fr.student_id       AS "studentId",
+        fr.fee_type         AS "feeType",
+        fr.amount,
+        fr.due_date         AS "dueDate",
+        fr.status,
+        fr.invoice_number   AS "invoiceNumber",
+        fr.fee_period_start AS "feePeriodStart",
+        fr.fee_period_end   AS "feePeriodEnd",
+        fr.late_fee_amount  AS "lateFeeAmount",
+        fr.academic_year    AS "academicYear"
+      FROM fee_records fr
+      WHERE fr.student_id = ${studentId}
+        AND fr.school_id  = ${schoolId}
+        AND fr.status IN ('Due', 'Overdue')
+      ORDER BY fr.due_date ASC, fr.id ASC
+    `);
+
+    // Compute accrued late fee for each invoice using the live late-fee engine
+    const allStructures = await storage.getFeeStructuresBySchool(schoolId);
+    const lateFeeMap    = new Map<string, LateFeeConfig>();
+    for (const s of allStructures) {
+      const cfg = s.lateFeeConfig as LateFeeConfig | undefined;
+      if (cfg?.enabled) lateFeeMap.set(s.feeType.trim().toLowerCase(), cfg);
+    }
+    const today = new Date().toISOString().slice(0, 10);
+
+    const invoices = (rows.rows as any[]).map(r => {
+      const cfg     = lateFeeMap.get((r.feeType ?? "").trim().toLowerCase());
+      const accrued = cfg ? calculateLateFee(cfg, r.dueDate ?? "", r.status, today) : 0;
+      return { ...r, accruedLateFee: accrued, totalDue: Number(r.amount) + accrued };
+    });
+
+    res.json(invoices);
   });
 
   app.get("/api/admin/fees/payments", async (req, res) => {
@@ -984,6 +1036,17 @@ export function registerFeesRoutes(app: Express) {
     }
     // ─────────────────────────────────────────────────────────────────────────
 
+    // ── Invoice-first enforcement ─────────────────────────────────────────────
+    // Offline payments must always be linked to an existing invoice (fee_record).
+    // The standalone "create invoice + payment in one step" path has been removed.
+    // Use "Add Invoice" to create a Due invoice first, then record payment here.
+    if (!paymentData.feeRecordId && !paymentData.autoFifo) {
+      return res.status(400).json({
+        message: "feeRecordId is required. Record Offline Payment must be linked to an existing invoice. Use 'Add Invoice' to create a Due invoice first.",
+      });
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     // Idempotency guard — scoped by school to prevent cross-tenant key collisions
     if (idempotencyKey) {
       const existing = await storage.getPaymentRecordByIdempotencyKey(idempotencyKey, schoolId);
@@ -1015,50 +1078,8 @@ export function registerFeesRoutes(app: Express) {
     //   OP sequence should treat non-consecutive numbers as normal.
     const opReceipt = await storage.nextReceiptNumber(schoolId, "OF");
 
-    // Auto-create a fee record when none is pre-linked but fee details were supplied
-    if (!paymentData.feeRecordId && paymentData.feeType) {
-      // Class-restriction guard: if a fee structure exists for this feeType and has
-      // applicableClasses, reject the payment if the student is not in those classes.
-      const allStructures = await storage.getFeeStructuresBySchool(schoolId);
-      const matchingStructure = allStructures.find(
-        s => s.feeType.trim().toLowerCase() === paymentData.feeType!.trim().toLowerCase(),
-      );
-      if (matchingStructure) {
-        const applicableClasses: string[] = (matchingStructure as any).applicableClasses ?? [];
-        if (applicableClasses.length > 0) {
-          const student = await storage.getStudentById(paymentData.studentId);
-          const studentClass = student?.class ?? "";
-          if (!applicableClasses.includes(studentClass)) {
-            return res.status(400).json({
-              message: `This fee type ("${paymentData.feeType}") is only applicable to classes: ${applicableClasses.join(", ")}. This student's class (${studentClass || "unknown"}) is not in the list.`,
-            });
-          }
-        }
-      }
-
-      const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-      // Assign a permanent invoice number — same contract as all other creation paths
-      // (monthly cron, auto-invoice trigger, bulk generate, single add-invoice endpoint).
-      // invoice_number must never be NULL for any new fee record.
-      const autoInvoiceNumber = await storage.nextReceiptNumber(schoolId, "INV-", 4);
-      const autoFeeRecord = await storage.createFeeRecord({
-        studentId: paymentData.studentId,
-        schoolId,
-        sessionId: viewSessionId,
-        feeType: paymentData.feeType,
-        amount: paymentData.amount,
-        dueDate: paymentData.dueDate ?? paymentData.receivedDate,
-        status: paymentData.feeStatus ?? "Due",
-        academicYear: paymentData.academicYear ?? null,
-        notes: paymentData.feeNotes ?? null,
-        createdBy: req.session.userId,
-        invoiceNumber: autoInvoiceNumber,
-      });
-      paymentData.feeRecordId = autoFeeRecord.id;
-    }
-
     // Destructure out fee-record-only fields before passing to createPaymentRecord
-    const { feeType: _ft, dueDate: _dd, feeStatus: _fs, academicYear: _ay, feeNotes: _fn, ...paymentOnly } = paymentData;
+    const { feeNotes: _fn, ...paymentOnly } = paymentData;
 
     // ── Atomic overpayment guard + payment insert (configurable soft cap) ─────
     // The entire check-then-insert runs inside one DB transaction with a

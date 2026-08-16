@@ -164,6 +164,22 @@ interface FeeSummary {
   offlinePaymentsCount: number;
 }
 
+interface UnpaidInvoice {
+  id: number;
+  studentId: number;
+  feeType: string;
+  amount: number;
+  dueDate: string;
+  status: string;
+  invoiceNumber: string | null;
+  feePeriodStart: string | null;
+  feePeriodEnd: string | null;
+  lateFeeAmount: number;
+  academicYear: string | null;
+  accruedLateFee: number;
+  totalDue: number;  // amount + accruedLateFee
+}
+
 interface PaymentRecord {
   id: number;
   feeRecordId: number | null;
@@ -317,34 +333,30 @@ function MetricBar({ viewSessionId }: { viewSessionId: number | null }) {
   );
 }
 
-// ─── Record Payment Modal ─────────────────────────────────────────────────────
+// ─── Record Payment Modal (Linked mode — always against an existing invoice) ──
 
 interface RecordPaymentModalProps {
   open: boolean;
   onClose: () => void;
-  feeRecord: FeeRecordWithStudent | null;
-  students: StudentItem[];
-  existingFeeRecords?: FeeRecordWithStudent[];
+  feeRecord: FeeRecordWithStudent;   // required — always a specific invoice
   onSuccess?: () => void;
 }
 
-function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRecords = [], onSuccess }: RecordPaymentModalProps) {
+function RecordPaymentModal({ open, onClose, feeRecord, onSuccess }: RecordPaymentModalProps) {
   const { toast } = useToast();
-  const [step, setStep] = useState<"form" | "duplicate_warn" | "confirm" | "done">("form");
+  const [step, setStep] = useState<"form" | "confirm" | "done">("form");
   const [lastPaymentId, setLastPaymentId] = useState<number | null>(null);
   const [pendingPayload, setPendingPayload] = useState<any>(null);
   const [adminPwd, setAdminPwd] = useState("");
   const [pwdError, setPwdError] = useState("");
-  const [duplicateRecord, setDuplicateRecord] = useState<FeeRecordWithStudent | null>(null);
   const [overpaymentError, setOverpaymentError] = useState<string | null>(null);
 
   const { selectedSession } = useSessionView();
 
-  // Fetch prior payments on this fee record so we can compute the remaining balance
+  // Prior payments — for remaining-balance warning
   const { data: priorPayments = [] } = useQuery<PaymentRecord[]>({
     queryKey: ["/api/admin/fees/payments", feeRecord?.id],
     queryFn: async () => {
-      if (!feeRecord) return [];
       const r = await sessionFetch(`/api/admin/fees/payments?feeRecordId=${feeRecord.id}`);
       if (!r.ok) return [];
       return r.json();
@@ -352,50 +364,16 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
     enabled: open && !!feeRecord,
     staleTime: 0,
   });
-
   const totalAlreadyPaid = priorPayments.reduce((sum, p) => sum + p.amount, 0);
-  const remainingBalance = feeRecord ? feeRecord.amount - totalAlreadyPaid : null;
+  const remainingBalance  = feeRecord.amount - totalAlreadyPaid;
 
   const [method, setMethod] = useState("Cash");
-  const [ref, setRef] = useState("");
-  const [date, setDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [ref,    setRef]    = useState("");
+  const [date,   setDate]   = useState(() => new Date().toISOString().split("T")[0]);
   const [amount, setAmount] = useState("");
-  const [notes, setNotes] = useState("");
-  const [sid, setSid] = useState("");
-  // Fee record fields (used when creating a standalone payment with no pre-linked fee record)
-  const [feeType, setFeeType] = useState("");
-  const [dueDate, setDueDate] = useState("");
-  const [feeStatus, setFeeStatus] = useState("Due");
-  const [academicYear, setAcademicYear] = useState("");
   const [feeNotes, setFeeNotes] = useState("");
-  // Student search state (used when no feeRecord is pre-linked)
-  const [paySearchCls, setPaySearchCls] = useState("");
-  const [paySearchQ, setPaySearchQ] = useState("");
-  const [paySearchResults, setPaySearchResults] = useState<StudentItem[] | null>(null);
-  const [paySelectedStudent, setPaySelectedStudent] = useState<StudentItem | null>(null);
-  // Idempotency key is generated once per modal open and reused across retries
   const [idempotencyKey, setIdempotencyKey] = useState("");
 
-  // School config — classes list for the student search filter
-  const { data: paySchoolConfig } = useQuery<{ classes: string[] }>({
-    queryKey: ["/api/admin/school-config"],
-    staleTime: 300_000,
-  });
-  const payClasses: string[] = paySchoolConfig?.classes ?? [];
-
-  // Fee structures — for "Fee Name" picker
-  const { data: payFeeStructures = [] } = useQuery<FeeStructure[]>({
-    queryKey: ["/api/admin/fees/structures"],
-    staleTime: 300_000,
-  });
-  const payActiveStructures = useMemo(() => {
-    const cls = paySelectedStudent?.class ?? null;
-    return payFeeStructures.filter(s =>
-      s.applicableClasses.length === 0 || (cls && s.applicableClasses.includes(cls))
-    );
-  }, [payFeeStructures, paySelectedStudent]);
-
-  // Preview next OP receipt number — peek only, no DB write
   const { data: opPreviewData } = useQuery<{ preview: string }>({
     queryKey: ["/api/admin/fees/next-receipt", "OF", open],
     queryFn: async () => {
@@ -408,49 +386,22 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
   });
   const opPreview = opPreviewData?.preview ?? "…";
 
-  // Sync amount + student when feeRecord changes; generate a fresh idempotency key
   useEffect(() => {
-    if (feeRecord) {
-      const fine = (feeRecord as any).accrued_late_fee ?? 0;
-      setAmount(String(feeRecord.amount + fine));
-      setSid(String(feeRecord.studentId));
-      setAcademicYear(feeRecord.academicYear ?? selectedSession?.sessionName ?? "");
-      setFeeNotes(feeRecord.notes ?? "");
-    } else {
-      setAmount("");
-      setSid("");
-      setAcademicYear(selectedSession?.sessionName ?? "");
-      setFeeNotes("");
-    }
+    if (!open) return;
+    const fine = (feeRecord as any).accrued_late_fee ?? 0;
+    setAmount(String(feeRecord.amount + fine));
+    setFeeNotes(feeRecord.notes ?? "");
     setStep("form");
-    setLastPaymentId(null);
-    setPendingPayload(null);
-    setAdminPwd("");
-    setPwdError("");
-    setMethod("Cash");
-    setRef("");
+    setLastPaymentId(null); setPendingPayload(null);
+    setAdminPwd(""); setPwdError("");
+    setMethod("Cash"); setRef("");
     setDate(new Date().toISOString().split("T")[0]);
-    setNotes("");
-    // Reset fee record fields
-    setFeeType("");
-    setDueDate("");
-    setFeeStatus("Due");
-    // Reset student search
-    setPaySearchCls("");
-    setPaySearchQ("");
-    setPaySearchResults(null);
-    setPaySelectedStudent(null);
-    // Reset duplicate warn state
-    setDuplicateRecord(null);
-    // Reset overpayment error
     setOverpaymentError(null);
-    // Fresh key per modal open — stable across retries within the same open session
     setIdempotencyKey(`idem-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   }, [feeRecord?.id, open]);
 
   const mut = useMutation({
     mutationFn: async (payload: any) => {
-      // Use sessionFetch so x-view-session-id is always injected (archive write guard)
       const r = await sessionFetch("/api/admin/fees/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -477,81 +428,25 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
       setStep("done");
     },
     onError: (e: any) => {
-      if (e.requiresConfirm) {
-        setPendingPayload(e.payload);
-        setStep("confirm");
-      } else if (e.overpaymentGuard) {
-        // Surface the overpayment error inline in the form instead of a fleeting toast.
-        // Also return to the form step in case this was triggered from the high-value
-        // confirm step — the inline banner only renders when step === "form".
-        setOverpaymentError(e.message);
-        setStep("form");
-      } else {
-        toast({ title: "Error", description: e.message, variant: "destructive" });
-      }
+      if (e.requiresConfirm) { setPendingPayload(e.payload); setStep("confirm"); }
+      else if (e.overpaymentGuard) { setOverpaymentError(e.message); setStep("form"); }
+      else toast({ title: "Error", description: e.message, variant: "destructive" });
     },
   });
 
   function buildPayload(overrides: Record<string, any> = {}) {
     return {
-      feeRecordId: feeRecord?.id ?? null,
-      studentId: feeRecord?.studentId ?? parseInt(sid),
-      feeType: feeRecord ? null : (feeType || null),
-      dueDate: feeRecord ? null : (dueDate || null),
-      feeStatus: feeRecord ? null : (feeStatus || null),
-      academicYear: feeRecord ? null : (academicYear || null),
-      feeNotes: feeNotes || null,
-      paymentMethod: method,
+      feeRecordId: feeRecord.id,
+      studentId:   feeRecord.studentId,
+      feeNotes:    feeNotes || null,
+      paymentMethod:   method,
       referenceNumber: ref || null,
-      receivedDate: date,
-      amount: parseInt(amount),
-      lateFeePaid: feeRecord ? ((feeRecord as any).accrued_late_fee ?? 0) : 0,
-      cashierNotes: notes || null,
-      idempotencyKey: idempotencyKey || null,
+      receivedDate:    date,
+      amount:          parseInt(amount),
+      lateFeePaid:     (feeRecord as any).accrued_late_fee ?? 0,
+      idempotencyKey:  idempotencyKey || null,
       ...overrides,
     };
-  }
-
-  function submit() {
-    // In standalone mode, check for an existing Due/Overdue/Partial fee record with the same student + fee type
-    if (!feeRecord && sid && feeType.trim()) {
-      const studentIdNum = parseInt(sid);
-      const normalizedType = feeType.trim().toLowerCase();
-      const dupe = existingFeeRecords.find(
-        r => r.studentId === studentIdNum &&
-          r.feeType.trim().toLowerCase() === normalizedType &&
-          r.status !== "Paid" && r.status !== "Waived",
-      );
-      if (dupe) {
-        setDuplicateRecord(dupe);
-        setStep("duplicate_warn");
-        return;
-      }
-    }
-    mut.mutate(buildPayload());
-  }
-
-  function submitLinkExisting() {
-    // Link the payment to the existing fee record instead of creating a new one
-    mut.mutate(buildPayload({
-      feeRecordId: duplicateRecord!.id,
-      studentId: duplicateRecord!.studentId,
-      feeType: null,
-      dueDate: null,
-      feeStatus: null,
-      academicYear: null,
-      feeNotes: null,
-    }));
-  }
-
-  function submitCreateAnyway() {
-    // Skip the duplicate check and create a fresh fee record
-    mut.mutate(buildPayload());
-  }
-
-  function submitConfirm() {
-    setPwdError("");
-    mut.mutate({ ...pendingPayload, adminPassword: adminPwd });
   }
 
   const amtNum = parseInt(amount) || 0;
@@ -562,175 +457,40 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-cyan-400">
             <Receipt className="w-5 h-5" />
-            {step === "confirm" ? "Confirm High-Value Payment"
-              : step === "duplicate_warn" ? "Existing Fee Record Found"
-              : "Record Offline Payment"}
+            {step === "confirm" ? "Confirm High-Value Payment" : "Record Offline Payment"}
           </DialogTitle>
         </DialogHeader>
 
         {step === "form" && (
           <div className="space-y-4">
-            {/* Read-only OP receipt preview */}
             <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800/60 border border-white/10">
               <span className="text-white/40 text-xs">Receipt No.</span>
               <span className="font-mono text-sm text-cyan-300 font-semibold tracking-wider">{opPreview}</span>
               <span className="text-white/20 text-[10px] ml-auto">auto-assigned on save</span>
             </div>
-            {feeRecord ? (
-              <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-sm space-y-1">
-                <p className="text-white font-semibold">{feeRecord.student?.name}</p>
-                <p className="text-white/50 text-xs">{feeRecord.feeType} · {feeRecord.student?.class}-{feeRecord.student?.section}</p>
-                {(feeRecord as any).accrued_late_fee > 0 ? (
-                  <div className="space-y-0.5 pt-1 border-t border-white/10">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-white/40">Base Amount</span>
-                      <span className="text-white/60">{fmt(feeRecord.amount)}</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-amber-400/80">Accrued Late Fine</span>
-                      <span className="text-amber-400 font-semibold">+{fmt((feeRecord as any).accrued_late_fee)}</span>
-                    </div>
-                    <div className="flex justify-between text-xs font-bold border-t border-white/10 pt-0.5 mt-0.5">
-                      <span className="text-white/70">Total Due</span>
-                      <span className="text-white">{fmt(feeRecord.amount + (feeRecord as any).accrued_late_fee)}</span>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-white/40 text-xs">Invoice: {fmt(feeRecord.amount)}</p>
-                )}
-              </div>
-            ) : (
-              <div>
-                <label className="text-xs text-white/60 mb-1 block">Student</label>
-                {paySelectedStudent ? (
-                  <div className="flex items-center gap-2 p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/40">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white text-sm font-medium truncate">{paySelectedStudent.name}</p>
-                      <p className="text-white/40 text-xs">{paySelectedStudent.digitalStudentId} · Class {paySelectedStudent.class}-{paySelectedStudent.section}</p>
-                    </div>
-                    <button type="button" onClick={() => { setPaySelectedStudent(null); setSid(""); setPaySearchResults(null); }}
-                      className="text-white/40 hover:text-red-400 transition-colors shrink-0 text-lg leading-none">✕</button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="flex gap-2">
-                      <select value={paySearchCls} onChange={e => setPaySearchCls(e.target.value)}
-                        className="bg-[#0A1628] border border-white/20 rounded-lg px-2 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 shrink-0">
-                        <option value="">All Classes</option>
-                        {payClasses.map(c => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                      <input value={paySearchQ} onChange={e => setPaySearchQ(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === "Enter") {
-                            const q = paySearchQ.toLowerCase().trim();
-                            setPaySearchResults(students.filter(s => {
-                              if (paySearchCls && s.class !== paySearchCls) return false;
-                              return !q || s.name.toLowerCase().includes(q) || (s.digitalStudentId ?? "").toLowerCase().includes(q);
-                            }));
-                          }
-                        }}
-                        placeholder="Name or Student ID…"
-                        className="flex-1 bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
-                      <button type="button"
-                        onClick={() => {
-                          const q = paySearchQ.toLowerCase().trim();
-                          setPaySearchResults(students.filter(s => {
-                            if (paySearchCls && s.class !== paySearchCls) return false;
-                            return !q || s.name.toLowerCase().includes(q) || (s.digitalStudentId ?? "").toLowerCase().includes(q);
-                          }));
-                        }}
-                        className="bg-cyan-600 hover:bg-cyan-500 text-white text-sm px-3 py-2 rounded-lg shrink-0 transition-colors">
-                        Search
-                      </button>
-                    </div>
-                    {paySearchResults !== null && (
-                      paySearchResults.length === 0
-                        ? <p className="text-white/40 text-xs px-1">No students found.</p>
-                        : <div className="max-h-36 overflow-y-auto rounded-lg border border-white/10 divide-y divide-white/5">
-                            {paySearchResults.map(s => (
-                              <button key={s.id} type="button"
-                                onClick={() => { setPaySelectedStudent(s); setSid(String(s.id)); setPaySearchResults(null); }}
-                                className="w-full text-left px-3 py-2 hover:bg-white/5 transition-colors">
-                                <p className="text-white text-sm">{s.name}</p>
-                                <p className="text-white/40 text-xs">{s.digitalStudentId} · Class {s.class}-{s.section}</p>
-                              </button>
-                            ))}
-                          </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
 
-            {/* ── Fee Details (only for standalone opens with no pre-linked fee record) ── */}
-            {!feeRecord && (
-              <>
-                <div className="pt-1 pb-0">
-                  <p className="text-xs font-semibold text-white/40 uppercase tracking-widest">Fee Details</p>
-                </div>
-
-                {/* Fee Name picker — auto-fills Fee Type & Amount */}
-                {payActiveStructures.length > 0 && (
-                  <div>
-                    <label className="text-xs text-white/60 mb-1 block">Fee Name</label>
-                    <select
-                      onChange={e => {
-                        const s = payActiveStructures.find(s => String(s.id) === e.target.value);
-                        if (s) { setFeeType(s.feeType); setAmount(String(s.amount)); }
-                      }}
-                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
-                      <option value="">— Select fee name —</option>
-                      {payActiveStructures.map(s => (
-                        <option key={s.id} value={s.id}>{s.name} · ₹{s.amount.toLocaleString("en-IN")}</option>
-                      ))}
-                    </select>
+            <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-sm space-y-1">
+              <p className="text-white font-semibold">{feeRecord.student?.name}</p>
+              <p className="text-white/50 text-xs">{feeRecord.feeType} · {feeRecord.student?.class}-{feeRecord.student?.section}</p>
+              {(feeRecord as any).accrued_late_fee > 0 ? (
+                <div className="space-y-0.5 pt-1 border-t border-white/10">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-white/40">Base Amount</span>
+                    <span className="text-white/60">{fmt(feeRecord.amount)}</span>
                   </div>
-                )}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-white/60 mb-1 block">Fee Type</label>
-                    <input value={feeType} onChange={e => setFeeType(e.target.value)}
-                      placeholder="Tuition, Transport…"
-                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                  <div className="flex justify-between text-xs">
+                    <span className="text-amber-400/80">Accrued Late Fine</span>
+                    <span className="text-amber-400 font-semibold">+{fmt((feeRecord as any).accrued_late_fee)}</span>
                   </div>
-                  <div>
-                    <label className="text-xs text-white/60 mb-1 block">Amount (₹)</label>
-                    <input type="number" value={amount} onChange={e => { setAmount(e.target.value); setOverpaymentError(null); }} min={1}
-                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
+                  <div className="flex justify-between text-xs font-bold border-t border-white/10 pt-0.5 mt-0.5">
+                    <span className="text-white/70">Total Due</span>
+                    <span className="text-white">{fmt(feeRecord.amount + (feeRecord as any).accrued_late_fee)}</span>
                   </div>
                 </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-white/60 mb-1 block">Status</label>
-                    <input value="Paid" readOnly
-                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-emerald-400 font-medium cursor-default" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-white/30 mb-1 block">Due Date <span className="font-normal">(not required)</span></label>
-                    <input type="date" disabled value=""
-                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white opacity-40 cursor-not-allowed [color-scheme:dark]" />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-white/60 mb-1 block">Academic Year</label>
-                    <input value={academicYear} readOnly
-                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/40 cursor-default" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-white/60 mb-1 block">Notes</label>
-                    <input value={feeNotes} onChange={e => setFeeNotes(e.target.value)} placeholder=""
-                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
-                  </div>
-                </div>
-
-                <div className="pt-1 pb-0">
-                  <p className="text-xs font-semibold text-white/40 uppercase tracking-widest">Payment Details</p>
-                </div>
-              </>
-            )}
+              ) : (
+                <p className="text-white/40 text-xs">Invoice: {fmt(feeRecord.amount)}</p>
+              )}
+            </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -742,50 +502,38 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
                 </select>
               </div>
               <div>
-                {/* Amount only shown here when pre-linked (feeRecord exists); standalone uses the fee-details block above */}
-                {feeRecord ? (
-                  <>
-                    <label className="text-xs text-white/60 mb-1 block">Amount (₹)</label>
-                    <input type="number" value={amount} onChange={e => { setAmount(e.target.value); setOverpaymentError(null); }} min={1}
-                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
-                  </>
-                ) : (
-                  <>
-                    <label className="text-xs text-white/60 mb-1 block">Received Date</label>
-                    <input type="date" value={date} onChange={e => setDate(e.target.value)}
-                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
-                  </>
-                )}
+                <label className="text-xs text-white/60 mb-1 block">Amount (₹)</label>
+                <input type="number" value={amount}
+                  onChange={e => { setAmount(e.target.value); setOverpaymentError(null); }} min={1}
+                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
               </div>
             </div>
 
-            {feeRecord && (
-              <>
-                <div>
-                  <label className="text-xs text-white/60 mb-1 block">Received Date</label>
-                  <input type="date" value={date} onChange={e => setDate(e.target.value)}
-                    className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-white/60 mb-1 block">Status</label>
-                    <input value="Paid" readOnly
-                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-emerald-400 font-medium cursor-default" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-white/60 mb-1 block">Academic Year</label>
-                    <input value={academicYear} readOnly
-                      className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/50 cursor-default" />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-xs text-white/60 mb-1 block">Notes</label>
-                  <input value={feeNotes} onChange={e => setFeeNotes(e.target.value)}
-                    placeholder="Optional note for this payment…"
-                    className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
-                </div>
-              </>
-            )}
+            <div>
+              <label className="text-xs text-white/60 mb-1 block">Received Date</label>
+              <input type="date" value={date} onChange={e => setDate(e.target.value)}
+                className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-white/60 mb-1 block">Status</label>
+                <input value="Paid" readOnly
+                  className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-emerald-400 font-medium cursor-default" />
+              </div>
+              <div>
+                <label className="text-xs text-white/60 mb-1 block">Academic Year</label>
+                <input value={feeRecord.academicYear ?? ""} readOnly
+                  className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/50 cursor-default" />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs text-white/60 mb-1 block">Notes</label>
+              <input value={feeNotes} onChange={e => setFeeNotes(e.target.value)}
+                placeholder="Optional note for this payment…"
+                className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+            </div>
 
             {method !== "Cash" && (
               <div>
@@ -801,12 +549,10 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
               </div>
             )}
 
-            {feeRecord && remainingBalance !== null && amtNum > remainingBalance && !overpaymentError && (
+            {remainingBalance !== null && amtNum > remainingBalance && !overpaymentError && (
               <div className="p-3 rounded-lg bg-yellow-900/20 border border-yellow-600/40 text-xs text-yellow-400 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>
-                  This payment of {fmt(amtNum)} exceeds the outstanding balance of {fmt(remainingBalance)} — the record will be marked <span className="font-semibold">Paid</span>.
-                </span>
+                <span>This payment of {fmt(amtNum)} exceeds the outstanding balance of {fmt(remainingBalance)} — the record will be marked <span className="font-semibold">Paid</span>.</span>
               </div>
             )}
 
@@ -819,68 +565,11 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
 
             <div className="flex gap-2 justify-end">
               <Button variant="ghost" onClick={onClose} className="text-white/60">Cancel</Button>
-              <Button onClick={submit}
-                disabled={mut.isPending || !amount || !date || (!feeRecord && !sid)}
+              <Button onClick={() => mut.mutate(buildPayload())}
+                disabled={mut.isPending || !amount || !date}
                 className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1">
                 {mut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Receipt className="w-4 h-4" />}
                 Record Payment
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {step === "duplicate_warn" && duplicateRecord && (
-          <div className="space-y-4">
-            <div className="p-3 rounded-lg bg-amber-900/20 border border-amber-700/40">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-amber-400 text-sm font-semibold">Duplicate Fee Type Detected</p>
-                  <p className="text-white/60 text-xs mt-1">
-                    This student already has an open <span className="text-white font-medium">{duplicateRecord.feeType}</span> fee record.
-                    Creating another will double-bill them in the ledger.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Existing record details */}
-            <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-sm space-y-1">
-              <p className="text-white/40 text-xs font-semibold uppercase tracking-widest mb-1.5">Existing Record</p>
-              <div className="flex justify-between">
-                <span className="text-white/50">Fee Type</span>
-                <span className="text-white font-medium">{duplicateRecord.feeType}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-white/50">Amount</span>
-                <span className="text-white font-medium">{fmt(duplicateRecord.amount)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-white/50">Status</span>
-                <StatusChip status={duplicateRecord.status} />
-              </div>
-              <div className="flex justify-between">
-                <span className="text-white/50">Due Date</span>
-                <span className="text-white/70">{fmtDate(duplicateRecord.dueDate)}</span>
-              </div>
-            </div>
-
-            <p className="text-white/50 text-xs">What would you like to do?</p>
-
-            <div className="flex flex-col gap-2">
-              <Button onClick={submitLinkExisting} disabled={mut.isPending}
-                className="bg-cyan-600 hover:bg-cyan-500 text-white gap-2 justify-start">
-                {mut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Receipt className="w-4 h-4" />}
-                Link payment to existing record
-              </Button>
-              <Button onClick={submitCreateAnyway} disabled={mut.isPending}
-                variant="outline"
-                className="border-white/20 text-white/70 hover:bg-white/10 gap-2 justify-start">
-                <Plus className="w-4 h-4" />
-                Create new record anyway
-              </Button>
-              <Button variant="ghost" onClick={() => setStep("form")} className="text-white/40 text-xs">
-                ← Back to form
               </Button>
             </div>
           </div>
@@ -900,7 +589,8 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
             </div>
             <div className="flex gap-2 justify-end">
               <Button variant="ghost" onClick={() => setStep("form")} className="text-white/60">Back</Button>
-              <Button onClick={submitConfirm} disabled={!adminPwd || mut.isPending}
+              <Button onClick={() => { setPwdError(""); mut.mutate({ ...pendingPayload, adminPassword: adminPwd }); }}
+                disabled={!adminPwd || mut.isPending}
                 className="bg-amber-600 hover:bg-amber-500 text-white gap-1">
                 {mut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
                 Confirm
@@ -917,16 +607,487 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
               <p className="text-white/60 text-sm mt-1">The payment has been logged successfully.</p>
             </div>
             {lastPaymentId && (
-              <Button
-                className="w-full bg-white/10 hover:bg-white/20 text-white gap-2"
-                onClick={() => window.open(`/api/admin/fees/payments/${lastPaymentId}/receipt`, "_blank")}
-              >
+              <Button className="w-full bg-white/10 hover:bg-white/20 text-white gap-2"
+                onClick={() => window.open(`/api/admin/fees/payments/${lastPaymentId}/receipt`, "_blank")}>
                 <Printer className="w-4 h-4" /> Print Receipt
               </Button>
             )}
-            <Button className="w-full bg-cyan-600 hover:bg-cyan-500 text-white" onClick={onClose}>
-              Done
-            </Button>
+            <Button className="w-full bg-cyan-600 hover:bg-cyan-500 text-white" onClick={onClose}>Done</Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Standalone Offline Payment Modal (Invoice-Picker) ────────────────────────
+// Admin selects a student → sees their unpaid invoices → picks one or more →
+// enters payment method/date → payments are created one per selected invoice.
+// No free-form fee-type or amount entry — amounts come exclusively from invoices.
+
+interface StandaloneOfflinePayModalProps {
+  open: boolean;
+  onClose: () => void;
+  students: StudentItem[];
+  onSuccess?: () => void;
+}
+
+function StandaloneOfflinePayModal({ open, onClose, students, onSuccess }: StandaloneOfflinePayModalProps) {
+  const { toast } = useToast();
+  type Step = "search" | "select" | "payment" | "confirm" | "done";
+  const [step, setStep] = useState<Step>("search");
+
+  // Student search
+  const [searchCls,     setSearchCls]     = useState("");
+  const [searchQ,       setSearchQ]       = useState("");
+  const [searchResults, setSearchResults] = useState<StudentItem[] | null>(null);
+  const [selStudent,    setSelStudent]    = useState<StudentItem | null>(null);
+
+  // Unpaid invoices for selected student
+  const [invoices,       setInvoices]       = useState<UnpaidInvoice[]>([]);
+  const [invoicesLoading,setInvoicesLoading] = useState(false);
+
+  // Selected invoice IDs (Set for O(1) lookup)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+  // Payment details
+  const [method,   setMethod]   = useState("Cash");
+  const [ref,      setRef]      = useState("");
+  const [date,     setDate]     = useState(() => new Date().toISOString().split("T")[0]);
+  const [notes,    setNotes]    = useState("");
+
+  // High-value confirm
+  const [adminPwd, setAdminPwd] = useState("");
+  const [pwdError, setPwdError] = useState("");
+
+  // Multi-submit state
+  const [submitting,   setSubmitting]   = useState(false);
+  const [submitError,  setSubmitError]  = useState<string | null>(null);
+  const [donePayments, setDonePayments] = useState<Array<{ id: number; receipt: string; feeType: string; amount: number }>>([]);
+
+  // Idempotency base key — one per modal open, suffixed per invoice
+  const [baseKey, setBaseKey] = useState("");
+
+  const { data: schoolConfig } = useQuery<{ classes: string[] }>({
+    queryKey: ["/api/admin/school-config"],
+    staleTime: 300_000,
+  });
+  const classes = schoolConfig?.classes ?? [];
+
+  // Reset on every open
+  useEffect(() => {
+    if (!open) return;
+    setStep("search");
+    setSearchCls(""); setSearchQ(""); setSearchResults(null); setSelStudent(null);
+    setInvoices([]); setInvoicesLoading(false);
+    setSelectedIds(new Set());
+    setMethod("Cash"); setRef(""); setDate(new Date().toISOString().split("T")[0]); setNotes("");
+    setAdminPwd(""); setPwdError("");
+    setSubmitting(false); setSubmitError(null); setDonePayments([]);
+    setBaseKey(`idem-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  }, [open]);
+
+  // Fetch unpaid invoices for a student
+  async function fetchInvoices(studentId: number) {
+    setInvoicesLoading(true);
+    try {
+      const r = await sessionFetch(`/api/admin/fees/students/${studentId}/unpaid-invoices`);
+      if (!r.ok) { toast({ title: "Error", description: "Failed to load invoices", variant: "destructive" }); return; }
+      const data: UnpaidInvoice[] = await r.json();
+      setInvoices(data);
+      // Pre-select all invoices by default
+      setSelectedIds(new Set(data.map(i => i.id)));
+      setStep("select");
+    } catch { toast({ title: "Error", description: "Network error", variant: "destructive" }); }
+    finally   { setInvoicesLoading(false); }
+  }
+
+  const selectedInvoices = invoices.filter(i => selectedIds.has(i.id));
+  const totalAmount      = selectedInvoices.reduce((s, i) => s + i.totalDue, 0);
+  const hasHighValue     = selectedInvoices.some(i => i.totalDue >= 10000);
+
+  function toggleInvoice(id: number) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  async function doSubmit(password?: string) {
+    setSubmitting(true);
+    setSubmitError(null);
+    const results: typeof donePayments = [];
+
+    for (const inv of selectedInvoices) {
+      const payload: Record<string, any> = {
+        feeRecordId:     inv.id,
+        studentId:       inv.studentId,
+        paymentMethod:   method,
+        referenceNumber: ref || null,
+        receivedDate:    date,
+        amount:          inv.totalDue,
+        lateFeePaid:     inv.accruedLateFee,
+        cashierNotes:    notes || null,
+        idempotencyKey:  `${baseKey}-${inv.id}`,
+      };
+      if (password) payload.adminPassword = password;
+
+      try {
+        const r    = await sessionFetch("/api/admin/fees/payments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body = await r.json();
+
+        if (!r.ok) {
+          if (body.requiresConfirm && !password) {
+            // Need admin password — go to confirm step
+            setSubmitting(false);
+            setStep("confirm");
+            return;
+          }
+          throw new Error(body.message ?? "Payment failed");
+        }
+
+        results.push({
+          id:      body.id,
+          receipt: body.receipt_number ?? "—",
+          feeType: inv.feeType,
+          amount:  inv.totalDue,
+        });
+      } catch (e: any) {
+        setSubmitError(e.message);
+        setSubmitting(false);
+        return;
+      }
+    }
+
+    // All invoices paid successfully
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/payments"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/failed-counts"] });
+    onSuccess?.();
+    setDonePayments(results);
+    setSubmitting(false);
+    setStep("done");
+  }
+
+  function searchStudents() {
+    const q = searchQ.toLowerCase().trim();
+    setSearchResults(students.filter(s => {
+      if (searchCls && s.class !== searchCls) return false;
+      return !q || s.name.toLowerCase().includes(q) || (s.digitalStudentId ?? "").toLowerCase().includes(q);
+    }));
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-cyan-400">
+            <Banknote className="w-5 h-5" />
+            {step === "confirm" ? "Confirm High-Value Payment"
+              : step === "done"    ? "Payments Recorded"
+              : "Record Offline Payment"}
+          </DialogTitle>
+        </DialogHeader>
+
+        {/* ── Step 1: Search student ──────────────────────────────────────────── */}
+        {step === "search" && (
+          <div className="space-y-4">
+            <p className="text-white/50 text-sm">Search for the student whose payment you are recording.</p>
+            <div>
+              <label className="text-xs text-white/60 mb-1 block">Student</label>
+              {selStudent ? (
+                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-cyan-500/10 border border-cyan-500/40">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white text-sm font-medium">{selStudent.name}</p>
+                    <p className="text-white/40 text-xs">{selStudent.digitalStudentId} · Class {selStudent.class}-{selStudent.section}</p>
+                  </div>
+                  <button type="button" onClick={() => { setSelStudent(null); setSearchResults(null); }}
+                    className="text-white/40 hover:text-red-400 shrink-0 text-lg leading-none">✕</button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <select value={searchCls} onChange={e => setSearchCls(e.target.value)}
+                      className="bg-[#0A1628] border border-white/20 rounded-lg px-2 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 shrink-0">
+                      <option value="">All Classes</option>
+                      {classes.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <input value={searchQ} onChange={e => setSearchQ(e.target.value)}
+                      onKeyDown={e => e.key === "Enter" && searchStudents()}
+                      placeholder="Name or Student ID…"
+                      className="flex-1 bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                    <button type="button" onClick={searchStudents}
+                      className="bg-cyan-600 hover:bg-cyan-500 text-white text-sm px-3 py-2 rounded-lg shrink-0">
+                      Search
+                    </button>
+                  </div>
+                  {searchResults !== null && (
+                    searchResults.length === 0
+                      ? <p className="text-white/40 text-xs px-1">No students found.</p>
+                      : <div className="max-h-40 overflow-y-auto rounded-lg border border-white/10 divide-y divide-white/5">
+                          {searchResults.map(s => (
+                            <button key={s.id} type="button"
+                              onClick={() => { setSelStudent(s); setSearchResults(null); }}
+                              className="w-full text-left px-3 py-2 hover:bg-white/5 transition-colors">
+                              <p className="text-white text-sm">{s.name}</p>
+                              <p className="text-white/40 text-xs">{s.digitalStudentId} · Class {s.class}-{s.section}</p>
+                            </button>
+                          ))}
+                        </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="ghost" onClick={onClose} className="text-white/60">Cancel</Button>
+              <Button
+                disabled={!selStudent || invoicesLoading}
+                onClick={() => fetchInvoices(selStudent!.id)}
+                className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1">
+                {invoicesLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                View Unpaid Invoices →
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Step 2: Select invoices ─────────────────────────────────────────── */}
+        {step === "select" && selStudent && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-white/5 border border-white/10">
+              <div className="flex-1 min-w-0">
+                <p className="text-white text-sm font-semibold">{selStudent.name}</p>
+                <p className="text-white/40 text-xs">{selStudent.digitalStudentId} · Class {selStudent.class}-{selStudent.section}</p>
+              </div>
+              <button type="button" onClick={() => { setSelStudent(null); setInvoices([]); setStep("search"); }}
+                className="text-white/40 hover:text-cyan-400 text-xs">← Change</button>
+            </div>
+
+            {invoices.length === 0 ? (
+              <div className="p-6 rounded-lg bg-white/5 border border-white/10 text-center">
+                <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto mb-2" />
+                <p className="text-white/60 text-sm">No unpaid invoices for this student.</p>
+                <p className="text-white/30 text-xs mt-1">All invoices are paid or there are no invoices yet.</p>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  {invoices.map(inv => {
+                    const checked = selectedIds.has(inv.id);
+                    return (
+                      <button key={inv.id} type="button" onClick={() => toggleInvoice(inv.id)}
+                        className={`w-full text-left p-3 rounded-lg border transition-all ${
+                          checked
+                            ? "bg-cyan-900/20 border-cyan-600/50"
+                            : "bg-white/3 border-white/10 hover:border-white/20"
+                        }`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start gap-2">
+                            <div className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                              checked ? "bg-cyan-500 border-cyan-500" : "border-white/30"
+                            }`}>
+                              {checked && <span className="text-white text-[10px] leading-none font-bold">✓</span>}
+                            </div>
+                            <div>
+                              <p className="text-white text-sm font-medium">{inv.feeType}</p>
+                              <p className="text-white/40 text-[11px]">
+                                {inv.invoiceNumber ?? "—"}
+                                {inv.feePeriodStart && inv.feePeriodEnd && (
+                                  <> · {inv.feePeriodStart.slice(0,7)} – {inv.feePeriodEnd.slice(0,7)}</>
+                                )}
+                              </p>
+                              <p className="text-white/30 text-[11px]">Due: {fmtDate(inv.dueDate)}</p>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            {inv.accruedLateFee > 0 ? (
+                              <>
+                                <p className="text-white text-sm font-semibold">{fmt(inv.totalDue)}</p>
+                                <p className="text-amber-400/70 text-[10px]">+{fmt(inv.accruedLateFee)} fine</p>
+                              </>
+                            ) : (
+                              <p className="text-white text-sm font-semibold">{fmt(inv.amount)}</p>
+                            )}
+                            <span className={`text-[10px] font-medium ${inv.status === "Overdue" ? "text-red-400" : "text-amber-400"}`}>
+                              {inv.status}
+                            </span>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Totals bar */}
+                <div className="p-3 rounded-lg bg-white/5 border border-white/10 flex items-center justify-between">
+                  <span className="text-white/50 text-sm">{selectedIds.size} invoice{selectedIds.size !== 1 ? "s" : ""} selected</span>
+                  <span className="text-white font-bold text-base">{fmt(totalAmount)}</span>
+                </div>
+              </>
+            )}
+
+            <div className="flex gap-2 justify-end">
+              <Button variant="ghost" onClick={() => setStep("search")} className="text-white/60">← Back</Button>
+              {invoices.length > 0 && (
+                <Button
+                  disabled={selectedIds.size === 0}
+                  onClick={() => setStep("payment")}
+                  className="bg-cyan-600 hover:bg-cyan-500 text-white">
+                  Payment Details →
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Step 3: Payment details ─────────────────────────────────────────── */}
+        {step === "payment" && (
+          <div className="space-y-4">
+            {/* Summary of selected invoices */}
+            <div className="p-3 rounded-lg bg-white/5 border border-white/10 space-y-1.5">
+              <p className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-1">Paying</p>
+              {selectedInvoices.map(inv => (
+                <div key={inv.id} className="flex justify-between text-sm">
+                  <span className="text-white/70">{inv.feeType}
+                    {inv.feePeriodStart && <span className="text-white/30 text-xs ml-1">({inv.feePeriodStart.slice(0,7)})</span>}
+                  </span>
+                  <span className="text-white font-medium">{fmt(inv.totalDue)}</span>
+                </div>
+              ))}
+              <div className="flex justify-between text-sm font-bold border-t border-white/10 pt-1.5 mt-1">
+                <span className="text-white/70">Total</span>
+                <span className="text-cyan-300">{fmt(totalAmount)}</span>
+              </div>
+              <p className="text-white/20 text-[10px] pt-0.5">Amount is fixed — determined by the selected invoices</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-white/60 mb-1 block">Method</label>
+                <select value={method} onChange={e => setMethod(e.target.value)}
+                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
+                  {["Cash","Cheque","BankTransfer","DemandDraft","Online"].map(m =>
+                    <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-white/60 mb-1 block">Received Date</label>
+                <input type="date" value={date} onChange={e => setDate(e.target.value)}
+                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
+              </div>
+            </div>
+
+            {method !== "Cash" && (
+              <div>
+                <label className="text-xs text-white/60 mb-1 block">Reference Number</label>
+                <input value={ref} onChange={e => setRef(e.target.value)} placeholder="Cheque / UTR / DD no."
+                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+              </div>
+            )}
+
+            <div>
+              <label className="text-xs text-white/60 mb-1 block">Notes <span className="text-white/30">(optional)</span></label>
+              <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Cheque collected, bank details, etc."
+                className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+            </div>
+
+            {hasHighValue && (
+              <div className="p-3 rounded-lg bg-amber-900/20 border border-amber-700/40 text-xs text-amber-400">
+                ⚠️ One or more invoices are ≥ ₹10,000 — admin password confirmation required.
+              </div>
+            )}
+
+            {submitError && (
+              <div className="p-3 rounded-lg bg-red-900/30 border border-red-600/50 text-xs text-red-400 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{submitError}</span>
+              </div>
+            )}
+
+            <div className="flex gap-2 justify-end">
+              <Button variant="ghost" onClick={() => setStep("select")} className="text-white/60">← Back</Button>
+              <Button
+                disabled={submitting || !date}
+                onClick={() => doSubmit()}
+                className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1">
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Receipt className="w-4 h-4" />}
+                Record {selectedInvoices.length > 1 ? `${selectedInvoices.length} Payments` : "Payment"}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Step 4: High-value confirm ──────────────────────────────────────── */}
+        {step === "confirm" && (
+          <div className="space-y-4">
+            <div className="p-3 rounded-lg bg-amber-900/20 border border-amber-700/40">
+              <p className="text-amber-400 text-sm font-semibold">High-Value Transaction</p>
+              <p className="text-white/60 text-xs mt-1">Re-authentication required for payments ≥ ₹10,000.</p>
+            </div>
+            <div>
+              <label className="text-xs text-white/60 mb-1 flex items-center gap-1 block"><Lock className="w-3 h-3" /> Admin Password</label>
+              <input type="password" value={adminPwd} onChange={e => { setAdminPwd(e.target.value); setPwdError(""); }} autoFocus
+                className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
+              {pwdError && <p className="text-red-400 text-xs mt-1">{pwdError}</p>}
+            </div>
+            {submitError && (
+              <div className="p-3 rounded-lg bg-red-900/30 border border-red-600/50 text-xs text-red-400">{submitError}</div>
+            )}
+            <div className="flex gap-2 justify-end">
+              <Button variant="ghost" onClick={() => setStep("payment")} className="text-white/60">Back</Button>
+              <Button
+                disabled={!adminPwd || submitting}
+                onClick={() => { setPwdError(""); doSubmit(adminPwd); }}
+                className="bg-amber-600 hover:bg-amber-500 text-white gap-1">
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+                Confirm
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Step 5: Done ────────────────────────────────────────────────────── */}
+        {step === "done" && (
+          <div className="space-y-4">
+            <div className="p-4 rounded-xl bg-emerald-900/20 border border-emerald-700/40 text-center">
+              <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2" />
+              <p className="text-emerald-400 font-semibold text-lg">
+                {donePayments.length === 1 ? "Payment Recorded" : `${donePayments.length} Payments Recorded`}
+              </p>
+            </div>
+
+            {/* Per-invoice receipt list */}
+            {donePayments.length > 0 && (
+              <div className="rounded-lg border border-white/10 overflow-hidden divide-y divide-white/5">
+                {donePayments.map((p, i) => (
+                  <div key={i} className="flex items-center justify-between px-3 py-2">
+                    <div>
+                      <p className="text-white text-sm">{p.feeType}</p>
+                      <p className="font-mono text-xs text-cyan-300">{p.receipt}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-white/60 text-sm">{fmt(p.amount)}</span>
+                      {p.id && (
+                        <button type="button"
+                          onClick={() => window.open(`/api/admin/fees/payments/${p.id}/receipt`, "_blank")}
+                          className="text-white/40 hover:text-cyan-400 transition-colors" title="Print receipt">
+                          <Printer className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <Button className="w-full bg-cyan-600 hover:bg-cyan-500 text-white" onClick={onClose}>Done</Button>
           </div>
         )}
       </DialogContent>
@@ -2413,8 +2574,10 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       </div>
 
       {/* Payment modals */}
-      <RecordPaymentModal open={showPay} onClose={() => { setShowPay(false); setPayTarget(null); }} feeRecord={payTarget} students={students} existingFeeRecords={feeRecords} />
-      <RecordPaymentModal open={showStandalonePay} onClose={() => setShowStandalonePay(false)} feeRecord={null} students={students} existingFeeRecords={feeRecords} />
+      {payTarget && (
+        <RecordPaymentModal open={showPay} onClose={() => { setShowPay(false); setPayTarget(null); }} feeRecord={payTarget} />
+      )}
+      <StandaloneOfflinePayModal open={showStandalonePay} onClose={() => setShowStandalonePay(false)} students={students} />
       <PaymentHistoryModal
         open={showPaymentsModal}
         onClose={() => { setShowPaymentsModal(false); setViewPaymentsRecord(null); }}
