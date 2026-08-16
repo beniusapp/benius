@@ -32,6 +32,31 @@ interface BreakdownItem {
   amount: number;
 }
 
+// ── Late Fee Policy transparency types ────────────────────────────────────────
+// Populated by the server — the frontend never independently calculates
+// the late-fee amount; it only renders the pre-computed display object.
+
+interface LateFeeInfoTieredSlab {
+  from_day: number;
+  to_day: number;
+  amount: number;
+}
+
+interface LateFeeInfo {
+  enabled:            boolean;
+  rule:               "NONE" | "FLAT" | "DAILY" | "TIERED";
+  daysOverdue:        number;
+  inGracePeriod:      boolean;
+  graceDaysRemaining: number;
+  currentLateFee:     number;
+  policyLine:         string;
+  statusMessage:      string | null;
+  gracePeriodMessage: string | null;
+  calculationLine:    string | null;
+  tieredSlabs:        LateFeeInfoTieredSlab[] | null;
+  activeSlabIndex:    number | null;
+}
+
 interface FeeRecord {
   id: number;
   studentId: number;
@@ -50,6 +75,7 @@ interface FeeRecord {
   breakdown: BreakdownItem[];
   failed_count?: number;
   last_failed_error?: string | null;
+  lateFeeInfo?: LateFeeInfo | null;
 }
 
 interface FeesSummary {
@@ -997,6 +1023,155 @@ function ChannelIcon({ channel }: { channel: string }) {
   return <Bell className="w-4 h-4" />;
 }
 
+// ── Late Fee Policy transparency panel ────────────────────────────────────────
+// Pure display component. Renders only when lateFeeInfo.enabled is true and
+// the invoice is not Paid or Waived. Never calculates any amounts — only
+// renders server-supplied strings and pre-computed values.
+
+function LateFeeInfoPanel({
+  info,
+  baseAmount,
+  status,
+}: {
+  info: LateFeeInfo | null | undefined;
+  baseAmount: number;
+  status: string;
+}) {
+  // Explicit status guard per architectural requirement — do not rely solely
+  // on currentLateFee === 0, because the policy may still be enabled even
+  // when no fee is yet accrued.
+  if (!info?.enabled) return null;
+  if (status === "Paid" || status === "Waived") return null;
+
+  const isOverdue  = !info.inGracePeriod && info.daysOverdue > 0 && info.currentLateFee > 0;
+  const isGrace    = info.inGracePeriod;
+
+  // Colour scheme: amber when overdue/grace, indigo when upcoming
+  const borderColor = (isOverdue || isGrace)
+    ? "rgba(245,158,11,0.28)"
+    : "rgba(99,102,241,0.18)";
+  const bgColor = (isOverdue || isGrace)
+    ? "rgba(255,251,235,0.85)"
+    : "rgba(238,242,255,0.75)";
+  const headerTextColor = (isOverdue || isGrace) ? "#92400e" : "#3730a3";
+  const bodyTextColor   = (isOverdue || isGrace) ? "#78350f" : "#3730a3";
+  const subtleColor     = (isOverdue || isGrace) ? "#b45309" : "#4338ca";
+
+  const headerLabel = isOverdue ? "Late Fee" : isGrace ? "Grace Period Active" : "Late Fee Policy";
+
+  return (
+    <div
+      className="mt-2.5 w-full rounded-xl overflow-hidden"
+      style={{ border: `1px solid ${borderColor}`, background: bgColor }}
+    >
+      {/* Header row */}
+      <div
+        className="px-2.5 py-1.5 flex items-center gap-1.5"
+        style={{ borderBottom: `1px solid ${borderColor}` }}
+      >
+        {isOverdue
+          ? <AlertTriangle className="w-3 h-3 flex-shrink-0" style={{ color: headerTextColor }} />
+          : isGrace
+          ? <Clock className="w-3 h-3 flex-shrink-0" style={{ color: headerTextColor }} />
+          : <Bell className="w-3 h-3 flex-shrink-0" style={{ color: headerTextColor }} />
+        }
+        <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: headerTextColor }}>
+          {headerLabel}
+        </p>
+      </div>
+
+      <div className="px-2.5 py-2 space-y-1.5">
+
+        {/* ── Grace period: full narrative replaces the normal display ── */}
+        {isGrace && info.gracePeriodMessage && (
+          <p className="text-xs leading-snug" style={{ color: bodyTextColor }}>
+            {info.gracePeriodMessage}
+          </p>
+        )}
+
+        {/* ── Not in grace: show the policy description ── */}
+        {!isGrace && (
+          <p className="text-xs leading-snug" style={{ color: bodyTextColor }}>
+            {info.policyLine}
+          </p>
+        )}
+
+        {/* ── Overdue: parent-friendly status message (primary) ── */}
+        {isOverdue && info.statusMessage && (
+          <p className="text-xs font-semibold leading-snug" style={{ color: bodyTextColor }}>
+            {info.statusMessage}
+          </p>
+        )}
+
+        {/* ── Overdue: technical calculation (secondary, smaller) ── */}
+        {isOverdue && info.calculationLine && (
+          <p
+            className="text-[11px] leading-snug font-mono"
+            style={{ color: subtleColor }}
+          >
+            {info.calculationLine}
+          </p>
+        )}
+
+        {/* ── Tiered schedule table ── */}
+        {info.rule === "TIERED" && info.tieredSlabs && info.tieredSlabs.length > 0 && (
+          <div className="rounded-lg overflow-hidden mt-1" style={{ border: `1px solid ${borderColor}` }}>
+            {info.tieredSlabs.map((slab, i) => {
+              const isActive = info.activeSlabIndex === i;
+              // Detect "pinned to last slab" scenario for the label
+              const isLastSlab = i === info.tieredSlabs!.length - 1;
+              const pinnedBeyond = isLastSlab && info.activeSlabIndex === i && info.daysOverdue > slab.to_day;
+              const label = pinnedBeyond
+                ? `Days ${slab.from_day}+`
+                : `Days ${slab.from_day}–${slab.to_day}`;
+              return (
+                <div
+                  key={i}
+                  className="flex items-center justify-between px-2 py-1 text-xs"
+                  style={{
+                    borderBottom: i < info.tieredSlabs!.length - 1 ? `1px solid ${borderColor}` : undefined,
+                    background:   isActive ? "rgba(245,158,11,0.13)" : "transparent",
+                    fontWeight:   isActive ? 700 : undefined,
+                    color:        isActive ? "#92400e" : "#78716c",
+                  }}
+                >
+                  <span>{isActive ? "▶ " : "    "}{label}</span>
+                  <span className="tabular-nums">{formatAmount(slab.amount)}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ── Breakdown row: base + late fee = total (shown when fee > 0) ── */}
+        {isOverdue && info.currentLateFee > 0 && (
+          <div
+            className="pt-1.5 mt-0.5 space-y-0.5"
+            style={{ borderTop: `1px solid ${borderColor}` }}
+          >
+            <div className="flex justify-between text-[11px]" style={{ color: subtleColor }}>
+              <span>Base fee</span>
+              <span className="tabular-nums">{formatAmount(baseAmount)}</span>
+            </div>
+            <div className="flex justify-between text-[11px] font-bold" style={{ color: subtleColor }}>
+              <span>Late fee</span>
+              <span className="tabular-nums">+{formatAmount(info.currentLateFee)}</span>
+            </div>
+            <div
+              className="flex justify-between text-xs font-black"
+              style={{ color: headerTextColor }}
+            >
+              <span>Total payable</span>
+              <span className="tabular-nums">{formatAmount(baseAmount + info.currentLateFee)}</span>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function StudentFees() {
@@ -1683,6 +1858,14 @@ export default function StudentFees() {
                               </div>
                               {rec.notes && (
                                 <p className="text-xs text-slate-400 mt-1 italic">{rec.notes}</p>
+                              )}
+                              {/* Late Fee Policy transparency panel — display-only, no payment logic */}
+                              {rec.status !== "Paid" && rec.status !== "Waived" && (
+                                <LateFeeInfoPanel
+                                  info={rec.lateFeeInfo}
+                                  baseAmount={rec.amount}
+                                  status={rec.status}
+                                />
                               )}
                               {/* Fee breakdown */}
                               {rec.breakdown?.length > 0 && (

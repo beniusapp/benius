@@ -21,6 +21,7 @@ import * as XLSX from "xlsx";
 import { registerTeacherRoutes } from "./teacher-routes";
 import { registerFeesRoutes } from "./fees-routes";
 import { calculateLateFee } from "./late-fee-engine";
+import { buildLateFeeInfo } from "./late-fee-display";
 import { addSSEClient, broadcastSessionActivated, broadcastSessionDeleted } from "./sse";
 import { db } from "./db";
 import { eq, and, sql, inArray, not } from "drizzle-orm";
@@ -4574,6 +4575,10 @@ export async function registerRoutes(
         total_due:         r.amount + accrued_late_fee,
         failed_count:      failedInfo?.count ?? 0,
         last_failed_error: failedInfo?.lastError ?? null,
+        // Display-oriented late-fee transparency object — built from the same cfg
+        // already loaded above. accruedLateFee is reused; calculateLateFee() is
+        // NOT called again. Payment logic is completely unaffected.
+        lateFeeInfo:       buildLateFeeInfo(cfg ?? null, r.dueDate, r.status, now, accrued_late_fee),
       };
     });
 
