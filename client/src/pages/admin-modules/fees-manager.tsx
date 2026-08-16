@@ -3051,18 +3051,17 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
   /**
    * Given a list of period options, pick the best default:
-   *  - the period whose start ≤ today ≤ end (current period), OR
-   *  - if today is before all periods → first option, OR
-   *  - if today is after all periods → last option.
+   *  - the period whose start ≤ today ≤ end (current month is inside the session), OR
+   *  - if today is outside the session (before OR after) → first option (first month of session).
    */
   function bestDefaultPeriod(options: PeriodOption[]): PeriodOption | null {
     if (!options.length) return null;
     const today = new Date().toISOString().slice(0, 10);
-    // Find period that contains today
+    // Return the period that contains today (current month is within the active session).
     const current = options.find(o => o.start <= today && o.end >= today);
     if (current) return current;
-    // Today before all → first; today after all → last
-    return today < options[0].start ? options[0] : options[options.length - 1];
+    // Current month is outside the session (before or after) → always default to first month.
+    return options[0];
   }
 
   /**

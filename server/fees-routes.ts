@@ -2751,26 +2751,16 @@ export function registerFeesRoutes(app: Express) {
       return res.status(400).json({ message: `Invalid fee component breakdown: ${snapErr.message}` });
     }
 
-    let created = 0, synced = 0, skipped = 0;
+    let created = 0, skipped = 0;
     for (const enrollment of filtered) {
       const periodKey = `${enrollment.studentId}:${structure.feeType}:${periodStart}`;
       const legacyKey = `${enrollment.studentId}:${structure.feeType}`;
       const existing = existingByPeriodStart.get(periodKey) ?? existingByType.get(legacyKey);
       if (existing) {
-        // Record exists — sync amount + dueDate if still unpaid, skip if already settled
-        if (existing.status === "Due" || existing.status === "Overdue") {
-          const needsSync = existing.amount !== structure.amount || existing.dueDate !== dueDate;
-          if (needsSync) {
-            await db.update(feeRecords)
-              .set({ amount: structure.amount, dueDate })
-              .where(and(eq(feeRecords.id, existing.id), eq(feeRecords.schoolId, schoolId)));
-            synced++;
-          } else {
-            skipped++;
-          }
-        } else {
-          skipped++; // Paid/Partial/Waived — never touch
-        }
+        // Invoice already exists for this student × feeType × period — skip completely.
+        // Existing invoices are immutable through Generate Invoices: amount, due date,
+        // and status are never updated regardless of changes to the fee structure.
+        skipped++;
         continue;
       }
       // Assign a permanent invoice number — stored in invoice_number, never in receipt_number.
@@ -2817,8 +2807,8 @@ export function registerFeesRoutes(app: Express) {
       .where(eq(feeStructures.id, structureId));
 
     await appendAudit(req, schoolId, "create", "fee_record", null,
-      `Generated invoices from "${structure.name}": ${created} created, ${synced} synced to ₹${structure.amount}, ${skipped} unchanged${voided > 0 ? `, ${voided} out-of-scope voided` : ""}`);
-    res.json({ created, synced, skipped, voided, total: filtered.length });
+      `Generated invoices from "${structure.name}": ${created} created, ${skipped} already existed (skipped)${voided > 0 ? `, ${voided} out-of-scope voided` : ""}`);
+    res.json({ created, synced: 0, skipped, voided, total: filtered.length });
   });
 
   // ── Receipt Number Preview (no-commit peek) ───────────────────────────────

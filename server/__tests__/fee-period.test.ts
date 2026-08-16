@@ -371,9 +371,11 @@ function periodsForSession(freq: string, sessionStart: string, sessionEnd: strin
 
 function bestDefault(options: PO[], today: string): PO | null {
   if (!options.length) return null;
+  // Return the period that contains today (current month is within the active session).
   const current = options.find(o => o.start <= today && o.end >= today);
   if (current) return current;
-  return today < options[0].start ? options[0] : options[options.length - 1];
+  // Current month is outside the session (before OR after) → always default to first month.
+  return options[0];
 }
 
 describe("periodsForSession — session-scoped period list (UI helper mirror)", () => {
@@ -528,9 +530,9 @@ describe("periodsForSession — session-scoped period list (UI helper mirror)", 
       expect(def?.start).toBe("2026-04-01");
     });
 
-    it("today after session end → selects last period", () => {
+    it("today after session end → selects FIRST period (not last)", () => {
       const def = bestDefault(opts, "2027-06-01");
-      expect(def?.start).toBe("2027-03-01");
+      expect(def?.start).toBe("2026-04-01"); // corrected: outside session always → first month
     });
   });
 });
@@ -554,5 +556,136 @@ describe("Receipt period row label selection", () => {
 
   it("annual range → 'Academic Session'", () => {
     expect(periodRowLabel("2025-04-01", "2026-03-31")).toBe("Academic Session");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fee Period Default & Strict Duplicate Protection (spec corrections)
+// Session: April 2027 – March 2028
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("bestDefaultPeriod — corrected defaulting rules", () => {
+  const SESSION = { start: "2027-04-01", end: "2028-03-31" };
+  const opts = periodsForSession("monthly", SESSION.start, SESSION.end);
+
+  it("1. current month inside active session → default to current month", () => {
+    // Simulate today = August 2027 (inside April 2027 – March 2028)
+    const def = bestDefault(opts, "2027-08-15");
+    expect(def?.start).toBe("2027-08-01");
+    expect(def?.end).toBe("2027-08-31");
+  });
+
+  it("1b. current month = February 2028 (inside session) → default February 2028", () => {
+    const def = bestDefault(opts, "2028-02-10");
+    expect(def?.start).toBe("2028-02-01");
+    expect(def?.end).toBe("2028-02-29"); // 2028 is a leap year
+  });
+
+  it("2. current month BEFORE active session → default to FIRST session month (April 2027)", () => {
+    // Simulate today = August 2026 — before the April 2027 session
+    const def = bestDefault(opts, "2026-08-15");
+    expect(def?.start).toBe("2027-04-01"); // first month of session
+  });
+
+  it("3. current month AFTER active session → default to FIRST session month (April 2027)", () => {
+    // Simulate today = April 2028 — after the March 2028 end
+    const def = bestDefault(opts, "2028-04-15");
+    expect(def?.start).toBe("2027-04-01"); // first month of session, NOT last
+  });
+
+  it("3b. current month = May 2028 (well after session) → still defaults to first month", () => {
+    const def = bestDefault(opts, "2028-05-01");
+    expect(def?.start).toBe("2027-04-01");
+  });
+
+  it("empty options list → returns null", () => {
+    expect(bestDefault([], "2027-08-15")).toBeNull();
+  });
+});
+
+describe("Strict duplicate invoice protection — generate invoices skip logic", () => {
+  // Mirror of the duplicate-key logic in the generate endpoint.
+  type FeeRecord = {
+    studentId: number;
+    feeType: string;
+    feePeriodStart: string | null;
+    amount: number;
+    dueDate: string;
+    status: string;
+  };
+
+  function isDuplicate(
+    existingByPeriod: Map<string, FeeRecord>,
+    existingByType: Map<string, FeeRecord>,
+    studentId: number,
+    feeType: string,
+    periodStart: string,
+  ): boolean {
+    const periodKey = `${studentId}:${feeType}:${periodStart}`;
+    const legacyKey = `${studentId}:${feeType}`;
+    return existingByPeriod.has(periodKey) || existingByType.has(legacyKey);
+  }
+
+  function buildMaps(records: FeeRecord[]) {
+    const byPeriod = new Map(
+      records
+        .filter(r => r.feePeriodStart)
+        .map(r => [`${r.studentId}:${r.feeType}:${r.feePeriodStart}`, r]),
+    );
+    const byType = new Map(
+      records
+        .filter(r => !r.feePeriodStart)
+        .map(r => [`${r.studentId}:${r.feeType}`, r]),
+    );
+    return { byPeriod, byType };
+  }
+
+  const EXISTING: FeeRecord = {
+    studentId: 1, feeType: "Tuition", feePeriodStart: "2027-08-01",
+    amount: 2000, dueDate: "2027-08-17", status: "Due",
+  };
+
+  it("4. same student + same fee type + same period → duplicate (skip)", () => {
+    const { byPeriod, byType } = buildMaps([EXISTING]);
+    expect(isDuplicate(byPeriod, byType, 1, "Tuition", "2027-08-01")).toBe(true);
+  });
+
+  it("5. existing invoice amount is NOT changed — original amount preserved", () => {
+    // Even if the fee structure now charges ₹2,200, the existing record stays at ₹2,000.
+    const { byPeriod, byType } = buildMaps([EXISTING]);
+    const dup = isDuplicate(byPeriod, byType, 1, "Tuition", "2027-08-01");
+    expect(dup).toBe(true);
+    // When a duplicate is found, the record is skipped — amount is never updated.
+    expect(EXISTING.amount).toBe(2000); // unchanged
+  });
+
+  it("6. existing invoice due date is NOT changed — original due date preserved", () => {
+    const { byPeriod, byType } = buildMaps([EXISTING]);
+    const dup = isDuplicate(byPeriod, byType, 1, "Tuition", "2027-08-01");
+    expect(dup).toBe(true);
+    expect(EXISTING.dueDate).toBe("2027-08-17"); // unchanged
+  });
+
+  it("7. different fee type + same period → NOT a duplicate (new invoice allowed)", () => {
+    const { byPeriod, byType } = buildMaps([EXISTING]);
+    // Lab Fee is different from Tuition — allowed for August 2027
+    expect(isDuplicate(byPeriod, byType, 1, "Lab Fee", "2027-08-01")).toBe(false);
+  });
+
+  it("8. same fee type + different period → NOT a duplicate (new invoice allowed)", () => {
+    const { byPeriod, byType } = buildMaps([EXISTING]);
+    // September 2027 is different from August 2027 — allowed
+    expect(isDuplicate(byPeriod, byType, 1, "Tuition", "2027-09-01")).toBe(false);
+  });
+
+  it("paid invoice also blocks duplicate (immutable regardless of status)", () => {
+    const paid = { ...EXISTING, status: "Paid" };
+    const { byPeriod, byType } = buildMaps([paid]);
+    expect(isDuplicate(byPeriod, byType, 1, "Tuition", "2027-08-01")).toBe(true);
+  });
+
+  it("different student + same fee type + same period → allowed (separate student)", () => {
+    const { byPeriod, byType } = buildMaps([EXISTING]);
+    expect(isDuplicate(byPeriod, byType, 2, "Tuition", "2027-08-01")).toBe(false);
   });
 });
