@@ -4723,13 +4723,16 @@ export async function registerRoutes(
     `);
     const pa = (paRows as any).rows?.[0] ?? null;
 
-    // ── Fetch payment_records row for canonical amounts ───────────────────────
-    // payment_records.amount       = base + late_fee_paid (actual total collected)
-    // payment_records.late_fee_paid = frozen late-fee snapshot from payment time
-    // This is the authoritative record of what was charged — NOT a recalculation.
+    // ── Fetch payment_records row for canonical amounts + offline detail ─────
+    // payment_records.amount        = base + late_fee_paid (actual total collected)
+    // payment_records.late_fee_paid = frozen at payment time — never recalculated
+    // payment_records.reference_number = cheque no. / UTR / DD no. for offline pmts
+    // payment_records.payer_name    = payer captured at payment time (may be null)
+    // payment_records.received_date = date admin recorded offline payment
     // One-invoice = one-payment rule guarantees at most one row per fee_record_id.
     const prRows = await db.execute(sql`
-      SELECT amount, late_fee_paid, payment_method
+      SELECT amount, late_fee_paid, payment_method,
+             reference_number, payer_name, received_date
       FROM payment_records
       WHERE fee_record_id = ${id}
         AND school_id     = ${student.schoolId}
@@ -4740,6 +4743,14 @@ export async function registerRoutes(
     const baseFee     = rec.amount;                           // fee_records.amount — always the original base
     const lateFeePaid = Number(pr?.late_fee_paid ?? 0);      // frozen at payment time; 0 when no late fee
     const totalPaid   = baseFee + lateFeePaid;               // actual amount collected from student
+
+    // Offline payment detail — sourced only from payment_records (never fabricated)
+    const referenceNo    = (pr?.reference_number as string | null) ?? null;
+    const payerNameStored = (pr?.payer_name       as string | null) ?? null;
+    const receivedDateRaw = (pr?.received_date     as string | null) ?? null;
+
+    // Online-only: bank RRN from payment_attempts (already selected in paRows query)
+    const bankRrn = (pa?.bank_rrn as string | null) ?? null;
 
     // ── Helpers ───────────────────────────────────────────────────────────────
     const esc = (s: string | null | undefined) =>
@@ -4767,11 +4778,26 @@ export async function registerRoutes(
     const fmt = (n: number) =>
       new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(n);
 
-    const fmtDt = (d: string | null | undefined) => {
+    const fmtDt = (d: string | Date | null | undefined): string => {
       if (!d) return "—";
       const dt = new Date(String(d).replace(" ","T").replace(/([+-]\d{2})$/,"$1:00").replace(/Z?$/,"Z").replace("ZZ","Z"));
       return isNaN(dt.getTime()) ? "—" : dt.toLocaleString("en-IN", {
         day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit", hour12:true, timeZone:"Asia/Kolkata"
+      });
+    };
+    // Date-only formatter (no time) — for invoice date, due date, received date.
+    // Plain YYYY-MM-DD strings (from DB DATE columns) must be handled separately
+    // because appending "Z" directly to a date-only string ("2026-08-20Z") is
+    // not valid ISO 8601 and produces NaN in V8. We append "T00:00:00Z" instead.
+    const fmtDate = (d: string | Date | null | undefined): string => {
+      if (!d) return "—";
+      const s = String(d);
+      const norm = /^\d{4}-\d{2}-\d{2}$/.test(s)
+        ? s + "T00:00:00Z"
+        : s.replace(" ","T").replace(/([+-]\d{2})$/,"$1:00").replace(/Z?$/,"Z").replace("ZZ","Z");
+      const dt = new Date(norm);
+      return isNaN(dt.getTime()) ? "—" : dt.toLocaleDateString("en-IN", {
+        day:"2-digit", month:"short", year:"numeric", timeZone:"Asia/Kolkata"
       });
     };
 
@@ -4815,36 +4841,95 @@ export async function registerRoutes(
     ].filter(Boolean);
     const legalLine = legalParts.join(" &nbsp;|&nbsp; ");
 
-    // Payment method description.
-    // For online (Razorpay) payments, payment_attempts has the gateway-level method
-    // ("card", "upi", "netbanking", "wallet") plus enrichment fields (card_network,
-    // card_last4, vpa, bank_name) → use pa first for the rich description.
-    // For offline payments (Cash, Cheque, BankTransfer, DemandDraft) there is no
-    // payment_attempts row, so pa = null. Fall back to payment_records.payment_method
-    // (already queried above in the pr block) with a human-readable label mapping.
+    // ── Payment method description ─────────────────────────────────────────────
+    // Priority: payment_attempts (Razorpay gateway details) → payment_records (offline)
     const prMethodRaw = (pr?.payment_method ?? "") as string;
     const offlineMethodLabel =
-      prMethodRaw === "BankTransfer" ? "Bank Transfer" :
-      prMethodRaw === "DemandDraft"  ? "Demand Draft"  :
+      prMethodRaw === "BankTransfer" ? "Bank Transfer"   :
+      prMethodRaw === "DemandDraft"  ? "Demand Draft"    :
+      prMethodRaw === "Online"       ? "Online Transfer" :
       prMethodRaw || "—";
-    let methodDesc = pa?.payment_method ?? offlineMethodLabel;
+    let methodDesc = pa ? (pa.payment_method as string || offlineMethodLabel) : offlineMethodLabel;
     if (pa?.payment_method === "card") {
       const parts = [pa.card_network, pa.card_last4 ? `•••• ${pa.card_last4}` : null].filter(Boolean);
-      if (parts.length) methodDesc = `Card (${parts.join(" ")})`;
-    } else if (pa?.payment_method === "upi" && pa.vpa) {
-      methodDesc = `UPI (${esc(pa.vpa)})`;
-    } else if (pa?.payment_method === "netbanking" && pa.bank_name) {
-      methodDesc = `Net Banking – ${esc(pa.bank_name)}`;
-    } else if (pa?.payment_method === "wallet" && pa.wallet) {
-      methodDesc = `Wallet (${esc(pa.wallet)})`;
+      methodDesc = parts.length ? `Card (${parts.join(" ")})` : "Card";
+    } else if (pa?.payment_method === "upi") {
+      methodDesc = pa.vpa ? `UPI (${esc(pa.vpa as string)})` : "UPI";
+    } else if (pa?.payment_method === "netbanking") {
+      methodDesc = pa.bank_name ? `Net Banking – ${esc(pa.bank_name as string)}` : "Net Banking";
+    } else if (pa?.payment_method === "wallet") {
+      methodDesc = pa.wallet ? `Wallet (${esc(pa.wallet as string)})` : "Wallet";
     }
 
-    // Use totalPaid (base + late fee) for all monetary display on the receipt.
-    // baseFee / lateFeePaid / totalPaid are computed above from payment_records.
+    // ── Receipt identity fields ────────────────────────────────────────────────
+    const invoiceDateFmt = fmtDate((rec as any).createdAt);   // fee_records.created_at
+    const dueDateFmt     = fmtDate(rec.dueDate);               // fee_records.due_date
+    const paidDateFmt    = fmtDate(rec.paidDate ?? (pa?.rzp_captured_at as string | null) ?? (receivedDateRaw));
+    const paidTs         = fmtDt(rec.paidDate ?? (pa?.rzp_captured_at as string | null));
+
+    // ── Fee period label ───────────────────────────────────────────────────────
+    // Already computed inline in the HTML; pull it out here for the table column.
+    const feePeriodStartVal = (rec as any).feePeriodStart as string | null;
+    const feePeriodEndVal   = (rec as any).feePeriodEnd   as string | null;
+    const feePeriodDays = feePeriodStartVal && feePeriodEndVal
+      ? Math.round((new Date(feePeriodEndVal + "T00:00:00").getTime() - new Date(feePeriodStartVal + "T00:00:00").getTime()) / 86400000)
+      : 400;
+    const periodRowLabel = feePeriodDays <= 31 ? "Fee Month" : feePeriodDays <= 92 ? "Fee Period" : "Academic Session";
+    const feePeriodLbl   = feePeriodLabel(feePeriodStartVal, feePeriodEndVal, rec.academicYear);
+    // Column shown in the fee table: period label if we have one, else academic year string
+    const tableSessionCol = feePeriodStartVal ? feePeriodLbl : (rec.academicYear ?? "—");
+
+    // ── Offline reference number label (context-sensitive) ─────────────────────
+    const offlineRefLabel =
+      prMethodRaw === "Cheque"      ? "Cheque No."     :
+      prMethodRaw === "BankTransfer" ? "UTR / Ref. No." :
+      prMethodRaw === "DemandDraft"  ? "DD Number"      :
+      prMethodRaw === "Cash"         ? null             : // cash has no reference
+      referenceNo                    ? "Reference No."  : null;
+
+    // ── Amounts ────────────────────────────────────────────────────────────────
     const amountStr   = fmt(totalPaid);
     const amountWords = amountInWords(totalPaid);
-    const paidTs     = fmtDt(rec.paidDate ?? pa?.rzp_captured_at);
-    const feeName    = esc((rec as any).feeName ?? rec.feeType);
+    const feeName     = esc((rec as any).feeName ?? rec.feeType);
+
+    // ── Payment detail rows (rendered in Payment Details box) ─────────────────
+    // These use ONLY stored canonical data — never inferred values.
+    type PRow = { label: string; value: string; mono?: boolean; small?: boolean };
+    const payDetailRows: PRow[] = [];
+    payDetailRows.push({ label: "Method", value: esc(methodDesc) });
+    if (pa) {
+      // Online (Razorpay) payment — use payment_attempts as primary source
+      payDetailRows.push({ label: "Payment ID",  value: esc(pa.razorpay_payment_id as string ?? "—"), mono: true, small: true });
+      payDetailRows.push({ label: "Order ID",    value: esc(pa.razorpay_order_id   as string ?? "—"), mono: true, small: true });
+      payDetailRows.push({ label: "Bank RRN",    value: esc(bankRrn ?? "—"), mono: true });
+      if (pa.payment_method === "upi") {
+        payDetailRows.push({ label: "UPI VPA",   value: esc(pa.vpa as string ?? "—") });
+      }
+      if (pa.payment_method === "card") {
+        const cardType = [pa.card_type, pa.card_network].filter(Boolean).join(" ");
+        payDetailRows.push({ label: "Card",      value: esc((cardType ? cardType + " " : "") + (pa.card_last4 ? `•••• ${pa.card_last4}` : "—")) });
+        if (pa.card_issuer) payDetailRows.push({ label: "Issuer", value: esc(pa.card_issuer as string) });
+      }
+      if (pa.payment_method === "netbanking") {
+        payDetailRows.push({ label: "Bank",      value: esc(pa.bank_name as string ?? "—") });
+      }
+      if (pa.payment_method === "wallet") {
+        payDetailRows.push({ label: "Wallet",    value: esc(pa.wallet as string ?? "—") });
+      }
+      if (pa.bank_auth_code) {
+        payDetailRows.push({ label: "Auth Code", value: esc(pa.bank_auth_code as string) });
+      }
+      payDetailRows.push({ label: "Payer Name",  value: esc(payerNameStored ?? "—") });
+    } else {
+      // Offline payment — use payment_records as primary source
+      if (offlineRefLabel && referenceNo) {
+        payDetailRows.push({ label: offlineRefLabel, value: esc(referenceNo), mono: true });
+      } else if (offlineRefLabel) {
+        payDetailRows.push({ label: offlineRefLabel, value: "—" });
+      }
+      payDetailRows.push({ label: "Received Date", value: esc(fmtDate(receivedDateRaw)) });
+      payDetailRows.push({ label: "Payer Name",    value: esc(payerNameStored ?? "—") });
+    }
 
     const html = `<!DOCTYPE html>
 <html lang="en">
@@ -4855,7 +4940,7 @@ export async function registerRoutes(
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:Arial,Helvetica,sans-serif;background:#f1f5f9;padding:24px;color:#1e293b;}
-.wrap{max-width:700px;margin:auto;background:#fff;border:2px solid #1e3a5f;border-radius:8px;overflow:hidden;}
+.wrap{max-width:720px;margin:auto;background:#fff;border:2px solid #1e3a5f;border-radius:8px;overflow:hidden;}
 
 /* ── HEADER ── */
 .hdr{display:flex;gap:18px;align-items:flex-start;padding:20px 24px;border-bottom:1px solid #e2e8f0;}
@@ -4870,18 +4955,25 @@ body{font-family:Arial,Helvetica,sans-serif;background:#f1f5f9;padding:24px;colo
 /* ── TITLE BAR ── */
 .title-bar{background:#1e3a5f;color:#fff;text-align:center;padding:9px 16px;font-size:12px;font-weight:700;letter-spacing:1.5px;}
 
-/* ── STATUS ── */
-.status-row{text-align:center;padding:16px 24px 8px;}
-.badge-paid{display:inline-flex;align-items:center;gap:6px;background:#f0fdf4;color:#15803d;border:1.5px solid #86efac;border-radius:20px;padding:6px 20px;font-weight:800;font-size:13px;}
-.paid-ts{font-size:11px;color:#64748b;margin-top:5px;}
+/* ── RECEIPT IDENTITY STRIP ── */
+.id-strip{background:#f8fafc;border-bottom:2px solid #e2e8f0;padding:12px 24px;}
+.id-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 16px;}
+.id-pair{display:flex;flex-direction:column;gap:2px;}
+.id-lbl{font-size:9px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;}
+.id-val{font-size:10.5px;color:#1e293b;font-weight:800;font-family:monospace;}
+.id-val.paid{color:#15803d;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:1px 8px;font-family:Arial,Helvetica,sans-serif;font-size:10px;display:inline-flex;align-items:center;gap:3px;width:fit-content;}
 
 /* ── 2-COL GRID ── */
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px 24px;}
 .box{background:#f8fafc;border-radius:8px;padding:12px;border:1px solid #f1f5f9;}
 .box-title{font-size:9.5px;font-weight:800;color:#0891b2;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:9px;}
 .brow{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;gap:4px;}
-.bl{font-size:9.5px;color:#94a3b8;flex-shrink:0;}
+.bl{font-size:9.5px;color:#94a3b8;flex-shrink:0;white-space:nowrap;}
 .bv{font-size:9.5px;color:#1e293b;font-weight:600;text-align:right;word-break:break-all;font-family:monospace;}
+.bv.plain{font-family:Arial,Helvetica,sans-serif;}
+
+/* ── FEE PERIOD HIGHLIGHT ── */
+.period-band{background:#eff6ff;border-left:3px solid #2563eb;padding:8px 24px;font-size:10.5px;color:#1e3a5f;font-weight:700;display:flex;align-items:center;gap:8px;}
 
 /* ── TABLE ── */
 .tbl-wrap{padding:12px 24px 8px;}
@@ -4896,7 +4988,6 @@ tfoot td:last-child{text-align:right;}
 /* ── AMOUNT WORDS ── */
 .words-wrap{padding:4px 24px 12px;}
 .words-box{background:#f0f9ff;border-left:3px solid #0891b2;padding:8px 12px;border-radius:0 4px 4px 0;font-size:10.5px;color:#334155;}
-.tax-note{font-size:9.5px;color:#64748b;font-style:italic;margin-top:6px;padding:0 24px 4px;}
 
 /* ── FOOTER ROW ── */
 .footer-row{display:flex;align-items:flex-end;justify-content:flex-end;padding:16px 24px;border-top:1px solid #e2e8f0;}
@@ -4909,6 +5000,16 @@ tfoot td:last-child{text-align:right;}
 /* ── FOOTER NOTE ── */
 .fnote{padding:8px 24px 16px;text-align:center;font-size:9.5px;color:#94a3b8;border-top:1px solid #f1f5f9;line-height:1.6;}
 
+/* ── DATA GAPS NOTE ── */
+.gap-note{font-size:8.5px;color:#cbd5e1;font-style:italic;margin-top:8px;padding:0 24px 4px;}
+
+@media (max-width:600px){
+  body{padding:8px;}
+  .id-grid{grid-template-columns:1fr 1fr;}
+  .grid2{grid-template-columns:1fr;}
+  .tbl-wrap{overflow-x:auto;}
+  table{min-width:400px;}
+}
 @media print{
   body{background:#fff;padding:0;}
   .wrap{border:1.5px solid #1e3a5f;box-shadow:none;}
@@ -4918,7 +5019,7 @@ tfoot td:last-child{text-align:right;}
 <body>
 <div class="wrap">
 
-  <!-- ── HEADER ── -->
+  <!-- ── SECTION A: SCHOOL HEADER ── -->
   <div class="hdr">
     <div class="logo-box">
       ${logoSrc
@@ -4939,85 +5040,110 @@ tfoot td:last-child{text-align:right;}
   <!-- ── TITLE BAR ── -->
   <div class="title-bar">OFFICIAL FEE PAYMENT RECEIPT</div>
 
-  <!-- ── STATUS BADGE ── -->
-  <div class="status-row">
-    <div class="badge-paid">&#10003;&nbsp; PAID</div>
-    <p class="paid-ts">${paidTs}</p>
+  <!-- ── SECTION B: RECEIPT IDENTITY STRIP ── -->
+  <!-- Sources: fee_records (receipt_number, invoice_number, created_at, due_date, paid_date) -->
+  <div class="id-strip">
+    <div class="id-grid">
+      <div class="id-pair">
+        <span class="id-lbl">Receipt No.</span>
+        <span class="id-val">${esc(rec.receiptNumber ?? "—")}</span>
+      </div>
+      <div class="id-pair">
+        <span class="id-lbl">Invoice No.</span>
+        <span class="id-val">${esc(rec.invoiceNumber ?? "—")}</span>
+      </div>
+      <div class="id-pair">
+        <span class="id-lbl">Status</span>
+        <span class="id-val paid">&#10003; PAID</span>
+      </div>
+      <div class="id-pair">
+        <span class="id-lbl">Invoice Date</span>
+        <span class="id-val" style="font-family:Arial">${esc(invoiceDateFmt)}</span>
+      </div>
+      <div class="id-pair">
+        <span class="id-lbl">Due Date</span>
+        <span class="id-val" style="font-family:Arial">${esc(dueDateFmt)}</span>
+      </div>
+      <div class="id-pair">
+        <span class="id-lbl">Payment Date</span>
+        <span class="id-val" style="font-family:Arial">${esc(paidDateFmt)}</span>
+      </div>
+    </div>
   </div>
 
-  <!-- ── 2-COLUMN GRID ── -->
+  <!-- ── FEE PERIOD BAND ── -->
+  <!-- Source: fee_records.fee_period_start / fee_period_end (immutable, set at invoice creation) -->
+  ${feePeriodStartVal
+    ? `<div class="period-band">&#128197;&nbsp; ${esc(periodRowLabel)}: <strong>${esc(feePeriodLbl)}</strong></div>`
+    : `<div class="period-band" style="color:#64748b;font-weight:600;border-left-color:#cbd5e1;">&#128197;&nbsp; Academic Session: <strong>${esc(rec.academicYear ?? "—")}</strong></div>`}
+
+  <!-- ── SECTION C: DETAILS GRID ── -->
   <div class="grid2">
+
+    <!-- Student Details — source: students table -->
     <div class="box">
       <p class="box-title">Student Details</p>
-      <div class="brow"><span class="bl">Name</span><span class="bv">${esc(student?.name ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Name</span><span class="bv plain">${esc(student?.name ?? "—")}</span></div>
       <div class="brow"><span class="bl">Student ID</span><span class="bv">${esc(student?.digitalStudentId ?? "—")}</span></div>
-      <div class="brow"><span class="bl">Class / Sec</span><span class="bv">${esc(student?.class ?? "—")} / ${esc(student?.section ?? "—")}</span></div>
-      <div class="brow"><span class="bl">Session</span><span class="bv">${esc(rec.academicYear ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Admission No.</span><span class="bv plain">—</span></div>
+      <div class="brow"><span class="bl">Roll No.</span><span class="bv">${esc(student?.rollNumber != null ? String(student.rollNumber) : "—")}</span></div>
+      <div class="brow"><span class="bl">Class / Sec</span><span class="bv plain">${esc(student?.class ?? "—")} / ${esc(student?.section ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Parent / Guardian</span><span class="bv plain">${esc(student?.guardianName ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Session</span><span class="bv plain">${esc(rec.academicYear ?? "—")}</span></div>
     </div>
+
+    <!-- Payment Details — source: payment_attempts (online) or payment_records (offline) -->
     <div class="box">
-      <p class="box-title">Payment Audit</p>
-      ${(() => {
-        const fpl = feePeriodLabel((rec as any).feePeriodStart, (rec as any).feePeriodEnd, rec.academicYear);
-        const periodDays = (rec as any).feePeriodStart && (rec as any).feePeriodEnd
-          ? Math.round((new Date((rec as any).feePeriodEnd + "T00:00:00").getTime() - new Date((rec as any).feePeriodStart + "T00:00:00").getTime()) / 86400000)
-          : 400;
-        const periodRowLabel = periodDays <= 31 ? "Fee Month" : periodDays <= 92 ? "Fee Period" : "Academic Session";
-        return (rec as any).feePeriodStart
-          ? `<div class="brow"><span class="bl">${periodRowLabel}</span><span class="bv">${esc(fpl)}</span></div>`
-          : "";
-      })()}
-      <div class="brow"><span class="bl">Invoice No.</span><span class="bv">${esc(rec.invoiceNumber ?? "—")}</span></div>
-      <div class="brow"><span class="bl">Receipt No.</span><span class="bv">${esc(rec.receiptNumber ?? "—")}</span></div>
-      <div class="brow"><span class="bl">Payment ID</span><span class="bv" style="font-size:8.5px">${esc(pa?.razorpay_payment_id ?? "—")}</span></div>
-      <div class="brow"><span class="bl">Order ID</span><span class="bv" style="font-size:8.5px">${esc(pa?.razorpay_order_id ?? "—")}</span></div>
-      <div class="brow"><span class="bl">Auth Code</span><span class="bv">${esc(pa?.bank_auth_code ?? "—")}</span></div>
-      <div class="brow"><span class="bl">Method</span><span class="bv">${esc(methodDesc)}</span></div>
+      <p class="box-title">Payment Details</p>
+      ${payDetailRows.map(r =>
+        `<div class="brow"><span class="bl">${r.label}</span><span class="bv${r.small ? '" style="font-size:8px' : r.mono === false ? ' plain' : ''}">${r.value}</span></div>`
+      ).join("\n      ")}
     </div>
   </div>
 
-  <!-- ── ITEMIZATION TABLE ── -->
+  <!-- ── SECTION D: FEE ITEMIZATION TABLE ── -->
+  <!-- Fee name: fee_records.feeType (mapped to display name) — NOT hardcoded           -->
+  <!-- Fee Period column: fee_period_start/end label — NOT derived from payment date    -->
+  <!-- Gateway Charges row removed — no charges are actually collected from students    -->
   <div class="tbl-wrap">
     <table>
       <thead><tr>
         <th>Description</th>
-        <th>Category</th>
-        <th>Session</th>
-        <th>Amount (₹)</th>
+        <th>Fee Period</th>
+        <th style="text-align:right">Amount (₹)</th>
       </tr></thead>
       <tbody>
         <tr>
           <td>${feeName}</td>
-          <td>Tuition Fee</td>
-          <td>${esc(rec.academicYear ?? "—")}</td>
+          <td>${esc(tableSessionCol)}</td>
           <td>₹${fmt(baseFee)}</td>
         </tr>
         ${lateFeePaid > 0 ? `
         <tr>
           <td>Late Fee / Penalty</td>
-          <td>Overdue Charge</td>
-          <td>—</td>
+          <td>${esc(tableSessionCol)}</td>
           <td>₹${fmt(lateFeePaid)}</td>
         </tr>` : ""}
-        <tr>
-          <td>Gateway Charges &amp; GST</td>
-          <td>Payment Processing</td>
-          <td>Instant</td>
-          <td>₹0.00</td>
-        </tr>
       </tbody>
       <tfoot><tr>
-        <td colspan="3"><strong>TOTAL AMOUNT PAID</strong></td>
+        <td colspan="2"><strong>TOTAL AMOUNT PAID</strong></td>
         <td>₹${amountStr}</td>
       </tr></tfoot>
     </table>
   </div>
 
-  <!-- ── AMOUNT IN WORDS + 80C NOTE ── -->
+  <!-- ── AMOUNT IN WORDS ── -->
   <div class="words-wrap">
     <div class="words-box"><strong>Amount in Words:</strong> ${esc(amountWords)}</div>
   </div>
 
-  <!-- ── FOOTER: SIGNATORY ── -->
+  <!-- ── DATA GAP NOTES (Phase 4 — not yet implemented) ── -->
+  <p class="gap-note">
+    Note: Concession/discount breakdown and fee component itemisation require an invoice-time snapshot
+    that is not yet stored — these will be added when the data model is extended.
+  </p>
+
+  <!-- ── AUTHORIZATION ── -->
   <div class="footer-row">
     <div class="sign-wrap">
       ${feeReceiptSigUrl
