@@ -2801,8 +2801,8 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [lateFeeEnabled, setLateFeeEnabled] = useState(false);
   const [lateFeeType, setLateFeeType] = useState<"NONE" | "FLAT" | "DAILY" | "TIERED">("NONE");
   const [lateFeeGraceDays, setLateFeeGraceDays] = useState("0");
-  const [lateFeeFlat, setLateFeeFlat] = useState("0");
-  const [lateFeeDailyRate, setLateFeeDailyRate] = useState("0");
+  const [lateFeeFlat, setLateFeeFlat] = useState("");
+  const [lateFeeDailyRate, setLateFeeDailyRate] = useState("");
   const [lateFeeCap, setLateFeeCap] = useState("0");
   const [lateFeeSlabs, setLateFeeSlabs] = useState<Array<{ from_day: string; to_day: string; amount: string }>>([]);
 
@@ -2840,7 +2840,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     setSelectedClasses([]); setDueDay("");
     setBreakdown([]);
     setLateFeeEnabled(false); setLateFeeType("FLAT"); setLateFeeGraceDays("0");
-    setLateFeeFlat("0"); setLateFeeDailyRate("0"); setLateFeeCap("0"); setLateFeeSlabs([]);
+    setLateFeeFlat(""); setLateFeeDailyRate(""); setLateFeeCap("0"); setLateFeeSlabs([]);
     setShowModal(true);
   }
 
@@ -3195,8 +3195,8 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-white/60 mb-1 block">Amount (₹)</label>
-                <input type="number" value={amount} onChange={e => setAmount(e.target.value)} min={1} placeholder="0"
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
+                <input type="number" value={amount} onChange={e => setAmount(e.target.value)} min={1} placeholder="Enter amount"
+                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-cyan-500" />
               </div>
               <div>
                 <label className="text-xs text-white/60 mb-1 block">Frequency</label>
@@ -3282,9 +3282,9 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                   {lateFeeType === "FLAT" && (
                     <div>
                       <label className="text-xs text-white/50 block mb-1">Penalty Amount (₹)</label>
-                      <input type="number" min={0} value={lateFeeFlat}
+                      <input type="number" min={0} value={lateFeeFlat} placeholder="Enter amount"
                         onChange={e => setLateFeeFlat(e.target.value)}
-                        className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500" />
+                        className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-amber-500" />
                     </div>
                   )}
 
@@ -3299,9 +3299,9 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                       </div>
                       <div>
                         <label className="text-xs text-white/50 block mb-1">Daily Rate (₹/day)</label>
-                        <input type="number" min={0} step="0.5" value={lateFeeDailyRate}
+                        <input type="number" min={0} step="0.5" value={lateFeeDailyRate} placeholder="Enter rate"
                           onChange={e => setLateFeeDailyRate(e.target.value)}
-                          className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500" />
+                          className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-amber-500" />
                       </div>
                     </div>
                   )}
