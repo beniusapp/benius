@@ -4892,6 +4892,15 @@ export async function registerRoutes(
     const amountWords = amountInWords(totalPaid);
     const feeName     = esc((rec as any).feeName ?? rec.feeType);
 
+    // ── Fee component snapshot ─────────────────────────────────────────────────
+    // Source: fee_records.breakdown_snapshot (JSONB, frozen at invoice creation).
+    // NEVER reads fee_structures.breakdown — that is live config and may have changed.
+    // Legacy / admin-direct invoices have breakdown_snapshot = [] → components section omitted.
+    const rawSnap = (rec as any).breakdownSnapshot;
+    const breakdownComponents: Array<{ name: string; purpose: string; amount: number }> =
+      Array.isArray(rawSnap) && rawSnap.length > 0 ? rawSnap : [];
+    const hasComponents = breakdownComponents.length > 0;
+
     // ── Payment detail rows (rendered in Payment Details box) ─────────────────
     // These use ONLY stored canonical data — never inferred values.
     type PRow = { label: string; value: string; mono?: boolean; small?: boolean };
@@ -4984,6 +4993,10 @@ tbody td{padding:9px 10px;border-bottom:1px solid #f1f5f9;color:#334155;vertical
 tbody td:last-child{text-align:right;font-weight:600;}
 tfoot td{padding:10px 10px;background:#eff6ff;font-weight:800;color:#1e3a5f;font-size:13px;border-top:2px solid #1e3a5f;}
 tfoot td:last-child{text-align:right;}
+
+/* ── NET FEE ROW (shown only when fee components are present) ── */
+.net-fee-row td{background:#eff6ff;font-weight:700;color:#1e3a5f;border-top:2px solid #bfdbfe;border-bottom:1px solid #bfdbfe;}
+.net-fee-row td:last-child{text-align:right;}
 
 /* ── AMOUNT WORDS ── */
 .words-wrap{padding:4px 24px 12px;}
@@ -5100,9 +5113,10 @@ tfoot td:last-child{text-align:right;}
   </div>
 
   <!-- ── SECTION D: FEE ITEMIZATION TABLE ── -->
-  <!-- Fee name: fee_records.feeType (mapped to display name) — NOT hardcoded           -->
-  <!-- Fee Period column: fee_period_start/end label — NOT derived from payment date    -->
-  <!-- Gateway Charges row removed — no charges are actually collected from students    -->
+  <!-- Fee name: fee_records.feeType (mapped to display name) — NOT hardcoded              -->
+  <!-- Fee Period column: fee_period_start/end label — NOT derived from payment date       -->
+  <!-- Components: fee_records.breakdown_snapshot (immutable) — NEVER fee_structures       -->
+  <!-- Gateway Charges row removed — no charges are actually collected from students       -->
   <div class="tbl-wrap">
     <table>
       <thead><tr>
@@ -5111,11 +5125,24 @@ tfoot td:last-child{text-align:right;}
         <th style="text-align:right">Amount (₹)</th>
       </tr></thead>
       <tbody>
+        ${hasComponents
+          ? /* Component rows: one per snapshot entry, then a Net Fee summary row */
+            breakdownComponents.map(c => `
+        <tr>
+          <td>${esc(c.name || "—")}</td>
+          <td>${esc(tableSessionCol)}</td>
+          <td>${typeof c.amount === "number" && isFinite(c.amount) ? `₹${fmt(c.amount)}` : "—"}</td>
+        </tr>`).join("") + `
+        <tr class="net-fee-row">
+          <td colspan="2">Net Fee</td>
+          <td>₹${fmt(baseFee)}</td>
+        </tr>`
+          : /* Legacy / empty-snapshot: existing single fee-type row */`
         <tr>
           <td>${feeName}</td>
           <td>${esc(tableSessionCol)}</td>
           <td>₹${fmt(baseFee)}</td>
-        </tr>
+        </tr>`}
         ${lateFeePaid > 0 ? `
         <tr>
           <td>Late Fee / Penalty</td>

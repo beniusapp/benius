@@ -1,0 +1,740 @@
+Step 3 — Receipt Rendering Only
+
+Step 1 and Step 2 are already complete and verified.
+
+Step 1 added the immutable "fee_records.breakdown_snapshot" JSONB column.
+
+Step 2 now writes the invoice-time fee component snapshot into "breakdown_snapshot" for structure-based invoice generation paths.
+
+Do not redo Step 1 or Step 2.
+
+This step is ONLY about reading the existing immutable snapshot and rendering it correctly on the student fee receipt.
+
+---
+
+IMPORTANT — STRICT RULES
+
+1. DO NOT modify the database schema.
+2. DO NOT create another migration.
+3. DO NOT modify invoice generation.
+4. DO NOT modify "buildBreakdownSnapshot()".
+5. DO NOT modify fee structure calculation.
+6. DO NOT modify concession logic.
+7. DO NOT modify fee-period calculation.
+8. DO NOT modify late-fee calculation.
+9. DO NOT modify payment processing.
+10. DO NOT modify Razorpay order creation.
+11. DO NOT modify Razorpay verification.
+12. DO NOT modify Razorpay webhook logic.
+13. DO NOT modify offline payment processing.
+14. DO NOT modify payment records.
+15. DO NOT reconstruct historical component data from "fee_structures".
+16. DO NOT query "fee_structures.breakdown" from the receipt.
+17. DO NOT backfill or alter existing invoices.
+18. DO NOT change authorization/security logic.
+19. DO NOT change student-facing fee-page payment logic.
+20. Do not invent any component.
+21. Do not calculate missing historical component values.
+22. If "breakdown_snapshot" is empty, the receipt must simply omit the component section.
+23. If a component field is missing/null, display "—"; never display "undefined", "null", "NaN", or an invented value.
+24. Use only the immutable "fee_records.breakdown_snapshot" as the historical component source.
+
+This is a receipt rendering task only.
+
+---
+
+1. Inspect the current receipt implementation first
+
+Before changing anything, inspect the current student receipt handler:
+
+"GET /api/student/fees/:id/receipt"
+
+Confirm the exact current receipt HTML structure and identify where the existing fee table is rendered.
+
+Do not modify anything until you understand the current implementation.
+
+---
+
+2. Use ONLY "fee_records.breakdown_snapshot"
+
+The component source must be:
+
+"fee_records.breakdown_snapshot"
+
+The receipt must NEVER read:
+
+"fee_structures.breakdown"
+
+for historical receipt rendering.
+
+The data flow must be:
+
+"fee_records.breakdown_snapshot"
+→ receipt handler
+→ component rows
+→ HTML receipt
+
+No live fee-structure lookup should be introduced.
+
+---
+
+3. Component snapshot structure
+
+The snapshot contains:
+
+[
+  {
+    name: string,
+    purpose: string,
+    amount: number
+  }
+]
+
+Example:
+
+[
+  {
+    name: "Tuition",
+    purpose: "Academic tuition fee",
+    amount: 2200
+  },
+  {
+    name: "Laboratory",
+    purpose: "Laboratory charges",
+    amount: 300
+  },
+  {
+    name: "Library",
+    purpose: "Library fee",
+    amount: 500
+  }
+]
+
+Render the actual stored values.
+
+Do not rename components to generic labels.
+
+Do not hardcode:
+
+- Tuition Fee
+- Laboratory Fee
+- Library Fee
+- Activity Fee
+- Transport Fee
+
+The "name" stored in the snapshot is authoritative.
+
+---
+
+4. Receipt fee table design
+
+The existing receipt currently contains the fee table.
+
+Extend it carefully without disturbing the existing payment/financial logic.
+
+For a receipt with a non-empty snapshot, render a clear component section such as:
+
+Fee Components
+
+Description              Fee Period              Amount
+Tuition                  August 2026             ₹2,200
+Laboratory               August 2026             ₹300
+Library                  August 2026             ₹500
+
+Net Fee                                           ₹3,000
+Late Fee / Penalty                                ₹60
+-------------------------------------------------------
+TOTAL AMOUNT PAID                                 ₹3,060
+
+Use the existing receipt's visual language, typography, spacing, borders, and responsive design.
+
+Do not redesign the entire receipt.
+
+---
+
+5. Fee period for components
+
+The fee period shown alongside components must come from the existing immutable invoice period:
+
+"fee_records.fee_period_start"
+
+"fee_records.fee_period_end"
+
+Use the existing "feePeriodLabel()" / fee-period formatting mechanism already used by the receipt.
+
+DO NOT derive the component period from:
+
+- payment date
+- invoice creation date
+- current date
+- fee structure
+- current billing configuration
+
+Example:
+
+Invoice generated: October 2026
+
+Stored fee period: August 1–31, 2026
+
+Receipt must show:
+
+"August 2026"
+
+---
+
+6. Component amount handling
+
+Display:
+
+"breakdown_snapshot[].amount"
+
+exactly as stored.
+
+Do not recalculate component amounts.
+
+Do not apply:
+
+- concession
+- late fee
+- GST
+- gateway charges
+- current fee structure changes
+
+to individual component amounts.
+
+The component amount is historical snapshot data.
+
+---
+
+7. IMPORTANT — Component total must NOT replace the authoritative invoice amount
+
+The authoritative base/net fee remains:
+
+"fee_records.amount"
+
+The authoritative late fee remains:
+
+"payment_records.late_fee_paid"
+
+The authoritative total remains the existing receipt calculation:
+
+"fee_records.amount + payment_records.late_fee_paid"
+
+Do NOT replace the invoice amount with:
+
+"SUM(breakdown_snapshot[].amount)"
+
+The component breakdown is informational historical detail.
+
+---
+
+8. Component sum mismatch
+
+Do NOT assume:
+
+"SUM(breakdown_snapshot[].amount) === fee_records.amount"
+
+The existing system intentionally allows a snapshot whose components may not exactly equal the invoice amount.
+
+If the component total differs from "fee_records.amount":
+
+- still display the stored components
+- still display "fee_records.amount" as the authoritative Net Fee
+- do NOT modify either value
+- do NOT invent a balancing component
+- do NOT hide the mismatch
+- do NOT block receipt generation
+- do NOT show an internal "data gap" or warning message to the student
+
+Do NOT add a misleading "Subtotal" based on component sum.
+
+The receipt must clearly distinguish:
+
+"Fee Components"
+
+from:
+
+"Net Fee"
+
+---
+
+9. Empty snapshot behavior
+
+If:
+
+breakdown_snapshot = []
+
+then:
+
+Do not display a component table.
+
+Do not display:
+
+- "No components available"
+- "Data gap"
+- "Not available"
+- "Not snapshotted"
+- "Phase 4"
+- "Phase 5"
+- "Component information unavailable"
+
+Simply retain the existing legacy fee-table behavior.
+
+This is especially important for:
+
+- pre-migration invoices
+- admin-direct invoices
+- offline auto-created invoices where no fee structure exists
+- invoices whose structure legitimately has an empty breakdown
+
+No historical reconstruction is allowed.
+
+---
+
+10. Missing component fields
+
+For each snapshot component:
+
+Missing "name"
+
+Display:
+
+"—"
+
+Do not invent a name.
+
+Missing "purpose"
+
+If the current Step 2 snapshot utility already normalizes missing purpose to an empty string, preserve that behavior.
+
+Do not invent a purpose.
+
+If the receipt actually displays the purpose field and the value is unavailable, display:
+
+"—"
+
+Missing/null "amount"
+
+Display:
+
+"—"
+
+Never display:
+
+- "undefined"
+- "null"
+- "NaN"
+
+Do not calculate a replacement amount.
+
+---
+
+11. Preserve existing fee table behavior
+
+Do NOT break the existing receipt behavior for:
+
+- fee type
+- fee period
+- base/net fee
+- late fee
+- total amount
+- amount in words
+
+The existing authoritative financial values must remain unchanged.
+
+For legacy invoices, the receipt should behave exactly as it does today.
+
+For snapshot-enabled invoices, add the historical component detail without changing the underlying financial calculation.
+
+---
+
+12. Late fee
+
+Keep the existing late-fee behavior exactly as it is.
+
+The receipt must continue using:
+
+"payment_records.late_fee_paid"
+
+The receipt must NOT call:
+
+"calculateLateFee()"
+
+The late fee must remain separate from component amounts.
+
+If:
+
+"late_fee_paid > 0"
+
+show the late-fee row.
+
+If:
+
+"late_fee_paid = 0"
+
+do not show the late-fee row.
+
+Do not modify late-fee logic.
+
+---
+
+13. Amount in words
+
+Do not change the existing amount-in-words implementation.
+
+It must continue to represent:
+
+"fee_records.amount + payment_records.late_fee_paid"
+
+not the component sum.
+
+Example:
+
+Components:
+
+₹2,200 + ₹300 + ₹500 = ₹3,000
+
+Late fee:
+
+₹60
+
+Total:
+
+₹3,060
+
+Amount in words:
+
+"Rupees Three Thousand and Sixty Only"
+
+---
+
+14. Historical immutability test
+
+This is mandatory.
+
+Create/inspect a test scenario where:
+
+At invoice creation:
+
+Net Fee = ₹3,000
+
+breakdown_snapshot:
+Tuition = ₹2,200
+Laboratory = ₹300
+Library = ₹500
+
+Later change the live fee structure to:
+
+Net Fee = ₹4,000
+
+Tuition = ₹2,500
+Laboratory = ₹300
+Library = ₹1,200
+
+Then open the original invoice receipt.
+
+The receipt MUST still show:
+
+Tuition       ₹2,200
+Laboratory    ₹300
+Library       ₹500
+Net Fee       ₹3,000
+
+It MUST NOT show:
+
+₹2,500
+₹300
+₹1,200
+₹4,000
+
+from the current fee structure.
+
+This test proves that the receipt is using the immutable snapshot.
+
+---
+
+15. Monthly / Quarterly / Annual verification
+
+Verify component rendering with:
+
+Monthly
+
+Stored:
+
+"2026-08-01 → 2026-08-31"
+
+Display:
+
+"August 2026"
+
+Quarterly
+
+Stored:
+
+"2026-04-01 → 2026-06-30"
+
+Display:
+
+"April–June 2026"
+
+Annual
+
+Stored academic year:
+
+"2026–27"
+
+Display the existing annual academic-session format.
+
+Do not introduce a new fee-period calculation.
+
+---
+
+16. Mobile responsiveness
+
+Verify the new component table on mobile.
+
+Requirements:
+
+- no horizontal page overflow
+- long component names wrap
+- long purposes wrap if displayed
+- amounts remain readable
+- no broken table layout
+- no clipped text
+- no component row pushes outside the receipt
+- existing mobile receipt remains intact
+
+Do not redesign unrelated receipt sections.
+
+---
+
+17. A4 / browser print / PDF
+
+Verify the component table in print/PDF.
+
+Check:
+
+- no clipping
+- no unnecessary blank page
+- table remains readable
+- amounts remain aligned
+- long component names wrap correctly
+- receipt remains professional
+- existing A4 layout remains intact
+
+Do not change print architecture unless a genuine regression is introduced by the component table.
+
+---
+
+18. Security / tenant isolation
+
+Do not introduce any new database lookup for components.
+
+The component data already belongs to the authenticated student's fee record.
+
+Continue using the existing:
+
+- authenticated student session
+- student ownership check
+- school/tenant scope
+- fee record scope
+
+A student must never be able to see another student's "breakdown_snapshot".
+
+Do not weaken any existing authorization.
+
+---
+
+19. Files allowed to change
+
+Keep the change as small as possible.
+
+Expected primary file:
+
+"server/routes.ts"
+
+Only change additional files if absolutely required for receipt rendering.
+
+Do NOT modify:
+
+- "shared/schema.ts"
+- database migrations
+- "server/invoice-snapshot.ts"
+- "server/index.ts"
+- invoice-generation logic
+- payment logic
+- Razorpay logic
+- offline payment logic
+- "server/storage.ts"
+- "server/late-fee-engine.ts"
+- "server/fee-period.ts"
+- student payment UI
+- authorization/session middleware
+
+If you believe another file must change, STOP and report why before changing it.
+
+---
+
+20. Do not implement concession
+
+This step is ONLY fee component rendering.
+
+Do NOT add:
+
+- Original Fee
+- Concession Amount
+- Discount
+- Concession Type
+- Concession Percentage
+
+Those are separate architecture decisions and are NOT part of Step 3.
+
+The receipt should continue using the existing "fee_records.amount" as the authoritative net/base fee.
+
+---
+
+21. Do not display internal implementation messages
+
+The student/parent must never see:
+
+- "Data gap"
+- "Not available in schema"
+- "Not snapshotted"
+- "Phase 4"
+- "Phase 5"
+- "Internal limitation"
+- "Snapshot missing"
+- "Cannot be reconstructed"
+
+If a snapshot is empty, simply omit the component section.
+
+---
+
+22. Tests
+
+Run the complete existing test suite.
+
+Do NOT modify existing tests just to make them pass.
+
+Add focused receipt-rendering tests only if required.
+
+Test at minimum:
+
+1. Non-empty breakdown renders components.
+2. Correct component names are preserved.
+3. Correct component amounts are preserved.
+4. Empty breakdown renders no component section.
+5. Legacy invoice remains unchanged.
+6. Component sum mismatch does not alter "fee_records.amount".
+7. Late fee remains separate.
+8. Total remains "fee_records.amount + late_fee_paid".
+9. Amount in words remains based on actual total.
+10. Historical structure changes do not alter receipt components.
+11. Missing/null component values render "—" where applicable.
+12. No live "fee_structures.breakdown" lookup occurs in receipt rendering.
+13. Existing authorization remains intact.
+14. Existing payment/Razorpay tests remain passing.
+
+---
+
+23. Before finishing
+
+Perform a repository search specifically confirming that the student receipt handler does NOT read:
+
+"fee_structures.breakdown"
+
+for historical receipt rendering.
+
+Also confirm that it reads:
+
+"fee_records.breakdown_snapshot"
+
+instead.
+
+---
+
+24. Final report
+
+After implementation, return ONLY a structured report with:
+
+A. Files Changed
+
+List every file changed and exactly why.
+
+B. Receipt Rendering
+
+Explain exactly how "breakdown_snapshot" is rendered.
+
+C. Legacy Invoice Behavior
+
+Confirm what happens when "breakdown_snapshot = []".
+
+D. Historical Immutability
+
+Confirm the receipt does not read current "fee_structures.breakdown".
+
+E. Financial Safety
+
+Confirm:
+
+- "fee_records.amount" unchanged
+- "payment_records.late_fee_paid" unchanged
+- total calculation unchanged
+- amount in words unchanged
+
+F. Security / Tenant Isolation
+
+Confirm no authorization or tenant-scope regression.
+
+G. UI / Print
+
+Report desktop, mobile, and A4/print results.
+
+H. Tests
+
+Report:
+
+- existing test count
+- new test count
+- total
+- passed
+- failed
+- warnings
+
+Do not claim tests passed unless they were actually executed.
+
+I. Scope Confirmation
+
+Explicitly confirm that the following were NOT changed:
+
+- database schema
+- invoice generation
+- payment processing
+- Razorpay
+- offline payment
+- concession logic
+- late-fee calculation
+- fee-period calculation
+- authorization
+
+J. STOP
+
+After Step 3 is complete, STOP.
+
+Do not automatically proceed to:
+
+- concession snapshot
+- school information snapshot
+- admin transaction-detail changes
+- further database changes
+- any other receipt enhancement
+
+Wait for my explicit approval for the next step.
+
+Most important rule:
+
+This step is strictly:
+
+"immutable breakdown_snapshot → receipt display"
+
+Nothing else.
