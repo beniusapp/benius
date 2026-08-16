@@ -4719,7 +4719,7 @@ export async function registerRoutes(
     // This is the authoritative record of what was charged — NOT a recalculation.
     // One-invoice = one-payment rule guarantees at most one row per fee_record_id.
     const prRows = await db.execute(sql`
-      SELECT amount, late_fee_paid
+      SELECT amount, late_fee_paid, payment_method
       FROM payment_records
       WHERE fee_record_id = ${id}
         AND school_id     = ${student.schoolId}
@@ -4744,10 +4744,10 @@ export async function registerRoutes(
         if (x === 0) return "";
         if (x < 20)  return ones[x];
         if (x < 100) return tens[Math.floor(x/10)] + (x%10 ? " "+ones[x%10] : "");
-        if (x < 1e3) return ones[Math.floor(x/100)]+" Hundred"+(x%100?" "+cv(x%100):"");
-        if (x < 1e5) return cv(Math.floor(x/1e3))+" Thousand"+(x%1e3?" "+cv(x%1e3):"");
-        if (x < 1e7) return cv(Math.floor(x/1e5))+" Lakh"+(x%1e5?" "+cv(x%1e5):"");
-        return cv(Math.floor(x/1e7))+" Crore"+(x%1e7?" "+cv(x%1e7):"");
+        if (x < 1e3) return ones[Math.floor(x/100)]+" Hundred"+(x%100?" and "+cv(x%100):"");
+        if (x < 1e5) return cv(Math.floor(x/1e3))+" Thousand"+(x%1e3?(x%1e3<100?" and ":" ")+cv(x%1e3):"");
+        if (x < 1e7) return cv(Math.floor(x/1e5))+" Lakh"+(x%1e5?(x%1e5<100?" and ":" ")+cv(x%1e5):"");
+        return cv(Math.floor(x/1e7))+" Crore"+(x%1e7?(x%1e7<100?" and ":" ")+cv(x%1e7):"");
       }
       if (n <= 0) return "Zero Rupees Only";
       const r = Math.floor(n), p = Math.round((n-r)*100);
@@ -4805,8 +4805,19 @@ export async function registerRoutes(
     ].filter(Boolean);
     const legalLine = legalParts.join(" &nbsp;|&nbsp; ");
 
-    // Payment method description
-    let methodDesc = pa?.payment_method ?? "—";
+    // Payment method description.
+    // For online (Razorpay) payments, payment_attempts has the gateway-level method
+    // ("card", "upi", "netbanking", "wallet") plus enrichment fields (card_network,
+    // card_last4, vpa, bank_name) → use pa first for the rich description.
+    // For offline payments (Cash, Cheque, BankTransfer, DemandDraft) there is no
+    // payment_attempts row, so pa = null. Fall back to payment_records.payment_method
+    // (already queried above in the pr block) with a human-readable label mapping.
+    const prMethodRaw = (pr?.payment_method ?? "") as string;
+    const offlineMethodLabel =
+      prMethodRaw === "BankTransfer" ? "Bank Transfer" :
+      prMethodRaw === "DemandDraft"  ? "Demand Draft"  :
+      prMethodRaw || "—";
+    let methodDesc = pa?.payment_method ?? offlineMethodLabel;
     if (pa?.payment_method === "card") {
       const parts = [pa.card_network, pa.card_last4 ? `•••• ${pa.card_last4}` : null].filter(Boolean);
       if (parts.length) methodDesc = `Card (${parts.join(" ")})`;
