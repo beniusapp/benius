@@ -642,6 +642,11 @@ export const feeRecords = pgTable("fee_records", {
   // Determines what period the invoice covers, independently of due date / generation date.
   feePeriodStart: date("fee_period_start"),
   feePeriodEnd: date("fee_period_end"),
+  // Immutable snapshot of fee components at invoice-creation time.
+  // Written once when the invoice is generated; never updated afterwards.
+  // Legacy and admin-direct invoices default to [] (empty — no component table shown on receipt).
+  // Shape matches fee_structures.breakdown exactly: { name, purpose, amount }.
+  breakdownSnapshot: jsonb("breakdown_snapshot").$type<Array<{ name: string; purpose: string; amount: number }>>().notNull().default([]),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
 });
