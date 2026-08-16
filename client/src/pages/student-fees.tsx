@@ -2343,7 +2343,7 @@ export default function StudentFees() {
                         : entry.channel === "whatsapp" ? "WhatsApp"
                         : entry.channel;
                       const stageColors: Record<string, string> = {
-                        D0: "#06b6d4", D7: "#f59e0b", D14: "#ef4444", D30: "#7c3aed",
+                        "D-2": "#8b5cf6", D0: "#06b6d4", D3: "#10b981", D7: "#f59e0b", D14: "#ef4444",
                       };
                       const stageColor = stageColors[entry.stage] ?? "#6366f1";
                       return (

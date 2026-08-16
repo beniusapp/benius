@@ -1,10 +1,14 @@
 /**
  * Dunning engine — sends fee-overdue notifications via SMS (MSG91),
- * WhatsApp (MSG91) and email (SendGrid/Mailtrap) at four stages:
- *   D0  — due today
+ * WhatsApp (MSG91) and email (SendGrid/Mailtrap) at five stages:
+ *   D-2 — 2 days BEFORE the invoice due date (early warning)
+ *   D0  — on the due date
+ *   D3  — 3 days overdue
  *   D7  — 7 days overdue
  *   D14 — 14 days overdue
- *   D30 — 30 days overdue
+ *
+ * All date arithmetic uses India Standard Time (IST / Asia/Kolkata = UTC+5:30)
+ * explicitly, regardless of the server's local timezone.
  *
  * The engine is idempotent: it reads dunning_log to skip any
  * (feeRecordId, channel, stage) triplet already sent successfully.
@@ -28,7 +32,7 @@ const DUNNING_LOCK_KEY = 7473328; // arbitrary constant — must not collide wit
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Stage = "D0" | "D7" | "D14" | "D30";
+type Stage = "D-2" | "D0" | "D3" | "D7" | "D14";
 type Channel = "sms" | "whatsapp" | "email";
 
 interface FeeForDunning {
@@ -65,24 +69,27 @@ export interface SimulationResult {
 // ─── Default message templates (with {variable} placeholders) ────────────────
 
 export const DEFAULT_SMS_TEMPLATES: Record<Stage, string> = {
-  D0:  `Dear {guardian_name}, {student_name}'s fee "{fee_name}" of Rs.{amount} is due today. Please pay promptly.`,
-  D7:  `Reminder: {student_name}'s fee "{fee_name}" of Rs.{amount} is 7 days overdue. Please clear it at the earliest.`,
-  D14: `2nd Notice: {student_name}'s fee "{fee_name}" of Rs.{amount} is 14 days overdue. Please contact admin immediately.`,
-  D30: `FINAL NOTICE: {student_name}'s fee "{fee_name}" of Rs.{amount} is 30 days overdue. Account may be flagged.`,
+  "D-2": `Dear {guardian_name}, this is a reminder that {student_name}'s fee "{fee_name}" of Rs.{amount} is due on {due_date}. Please pay before the due date.`,
+  D0:    `Dear {guardian_name}, {student_name}'s fee "{fee_name}" of Rs.{amount} is due today. Please pay promptly.`,
+  D3:    `Reminder: {student_name}'s fee "{fee_name}" of Rs.{amount} is 3 days overdue. Please clear it at the earliest.`,
+  D7:    `Reminder: {student_name}'s fee "{fee_name}" of Rs.{amount} is 7 days overdue. Please clear it immediately.`,
+  D14:   `FINAL NOTICE: {student_name}'s fee "{fee_name}" of Rs.{amount} is 14 days overdue. Please contact admin immediately.`,
 };
 
 export const DEFAULT_EMAIL_SUBJECTS: Record<Stage, string> = {
-  D0:  "Fee Due Today",
-  D7:  "Fee Reminder — 7 Days Overdue",
-  D14: "Second Notice — Fee 14 Days Overdue",
-  D30: "Final Notice — Fee 30 Days Overdue",
+  "D-2": "Upcoming Fee Due in 2 Days",
+  D0:    "Fee Due Today",
+  D3:    "Fee Reminder — 3 Days Overdue",
+  D7:    "Fee Reminder — 7 Days Overdue",
+  D14:   "Final Notice — Fee 14 Days Overdue",
 };
 
 export const DEFAULT_EMAIL_BODIES: Record<Stage, string> = {
-  D0:  `This is a reminder that {student_name}'s fee "{fee_name}" of ₹{amount} is due today. Please pay to avoid late penalties.`,
-  D7:  `{student_name}'s fee "{fee_name}" of ₹{amount} is 7 days overdue. Please clear the dues immediately.`,
-  D14: `This is a second notice. {student_name}'s fee "{fee_name}" of ₹{amount} is 14 days overdue. Please contact the school admin without further delay.`,
-  D30: `FINAL NOTICE: {student_name}'s fee "{fee_name}" of ₹{amount} is 30 days overdue. Failure to pay may result in account restrictions.`,
+  "D-2": `This is an advance reminder that {student_name}'s fee "{fee_name}" of ₹{amount} is due on {due_date}. Please ensure timely payment to avoid late fees.`,
+  D0:    `This is a reminder that {student_name}'s fee "{fee_name}" of ₹{amount} is due today. Please pay to avoid late penalties.`,
+  D3:    `{student_name}'s fee "{fee_name}" of ₹{amount} is 3 days overdue. Please clear the dues as soon as possible.`,
+  D7:    `{student_name}'s fee "{fee_name}" of ₹{amount} is 7 days overdue. Please clear the dues immediately.`,
+  D14:   `**FINAL NOTICE:** {student_name}'s fee "{fee_name}" of ₹{amount} is 14 days overdue. Please contact the school admin without further delay.`,
 };
 
 /** Replace {variable} placeholders with actual fee data. */
@@ -181,7 +188,11 @@ async function sendWhatsapp(
 ): Promise<void> {
   const mobile = phone.replace(/\D/g, "").replace(/^0/, "91").replace(/^(?!91)/, "91");
   const stageLabel: Record<Stage, string> = {
-    D0: "due today", D7: "7 days overdue", D14: "14 days overdue", D30: "30 days overdue",
+    "D-2": "due in 2 days",
+    D0:    "due today",
+    D3:    "3 days overdue",
+    D7:    "7 days overdue",
+    D14:   "14 days overdue",
   };
   const res = await fetch("https://api.msg91.com/api/v5/whatsapp/whatsapp-outbound-message/bulk/", {
     method: "POST",
@@ -258,45 +269,72 @@ async function sendEmail(
 
 // ─── Stage calculators ────────────────────────────────────────────────────────
 
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // UTC+5:30 in milliseconds
 
-/** Exact match — only returns a stage on the precise day. Used by the real cron job. */
-function getStage(dueDateStr: string): Stage | null {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const due = new Date(dueDateStr);
-  due.setHours(0, 0, 0, 0);
-  const days = Math.round((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
+/**
+ * Compute how many days have elapsed since the invoice due date,
+ * using India Standard Time (IST / Asia/Kolkata = UTC+5:30) for both
+ * "today" and the due date calendar date.
+ *
+ * Positive result  = overdue (past due date).
+ * Negative result  = not yet due.
+ * Zero             = due today in IST.
+ *
+ * This is exported so tests can validate IST boundary behaviour with
+ * vi.setSystemTime() without touching DB or network.
+ */
+export function daysSinceIST(dueDateStr: string): number {
+  // Shift now to IST, then read UTC year/month/day to get today's IST date.
+  const nowIST   = new Date(Date.now() + IST_OFFSET_MS);
+  const todayUTC = Date.UTC(nowIST.getUTCFullYear(), nowIST.getUTCMonth(), nowIST.getUTCDate());
+  // Parse "YYYY-MM-DD" as a calendar date (no timezone conversion needed;
+  // due dates are stored as plain calendar dates representing IST days).
+  const [y, m, d] = dueDateStr.split("-").map(Number);
+  const dueUTC    = Date.UTC(y, m - 1, d);
+  return Math.round((todayUTC - dueUTC) / (1000 * 60 * 60 * 24));
+}
+
+/**
+ * Exact match — only returns a stage on the precise calendar day in IST.
+ * Used by the real cron job.
+ * Exported so tests can verify each stage fires on the exact right day.
+ */
+export function getStage(dueDateStr: string): Stage | null {
+  const days = daysSinceIST(dueDateStr);
+  if (days === -2) return "D-2";
   if (days === 0)  return "D0";
+  if (days === 3)  return "D3";
   if (days === 7)  return "D7";
   if (days === 14) return "D14";
-  if (days === 30) return "D30";
   return null;
 }
 
-/** Manual-trigger match — like simulation but always returns a non-null stage. Used for admin-triggered reminders. */
-function getStageForManualTrigger(dueDateStr: string): Stage {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const due = new Date(dueDateStr);
-  due.setHours(0, 0, 0, 0);
-  const days = Math.round((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
-  if (days <= 0)  return "D0";
+/**
+ * Nearest-bucket match — always returns a non-null stage.
+ * Used for admin "Send Reminder" manual trigger.
+ * Exported so tests can verify bucket boundaries.
+ */
+export function getStageForManualTrigger(dueDateStr: string): Stage {
+  const days = daysSinceIST(dueDateStr);
+  if (days <= -2) return "D-2";
+  if (days <= 1)  return "D0";
+  if (days <= 5)  return "D3";
   if (days <= 10) return "D7";
-  if (days <= 22) return "D14";
-  return "D30";
+  return "D14";
 }
 
-/** Flexible match — assigns the nearest stage to ANY fee. Used only in simulation. */
-function getStageForSimulation(dueDateStr: string): Stage {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const due = new Date(dueDateStr);
-  due.setHours(0, 0, 0, 0);
-  const days = Math.round((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
-  if (days <= 0)  return "D0";
+/**
+ * Flexible match — assigns the nearest stage to ANY fee.
+ * Used only in simulation (same buckets as manual trigger).
+ * Exported so tests can verify simulation stage assignment.
+ */
+export function getStageForSimulation(dueDateStr: string): Stage {
+  const days = daysSinceIST(dueDateStr);
+  if (days <= -2) return "D-2";
+  if (days <= 1)  return "D0";
+  if (days <= 5)  return "D3";
   if (days <= 10) return "D7";
-  if (days <= 22) return "D14";
-  return "D30";
+  return "D14";
 }
 
 // ─── Fetch fee rows helper ────────────────────────────────────────────────────

@@ -1129,7 +1129,7 @@ export const dunningLog = pgTable("dunning_log", {
   schoolId: integer("school_id").notNull(),
   feeRecordId: integer("fee_record_id").notNull().references(() => feeRecords.id, { onDelete: "cascade" }),
   channel: text("channel").notNull(),    // 'sms' | 'whatsapp' | 'email'
-  stage: text("stage").notNull(),        // 'D0' | 'D7' | 'D14' | 'D30'
+  stage: text("stage").notNull(),        // 'D-2' | 'D0' | 'D3' | 'D7' | 'D14' (historical D30 rows preserved)
   sentAt: timestamp("sent_at").notNull().defaultNow(),
   status: text("status").notNull(),      // 'sent' | 'failed'
   errorMessage: text("error_message"),
@@ -1142,7 +1142,7 @@ export type DunningLog = typeof dunningLog.$inferSelect;
 export const dunningTemplates = pgTable("dunning_templates", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
-  stage: text("stage").notNull(),    // 'D0' | 'D7' | 'D14' | 'D30'
+  stage: text("stage").notNull(),    // 'D-2' | 'D0' | 'D3' | 'D7' | 'D14'
   channel: text("channel").notNull(), // 'sms' | 'email'
   bodyText: text("body_text").notNull(),
   subjectText: text("subject_text"), // email subject only
