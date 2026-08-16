@@ -3773,7 +3773,7 @@ td:last-child{font-weight:600;word-break:break-all;}
 
   // ── Admin: Dunning Templates PUT (upsert all) ────────────────────────────
   const dunningTemplateEntrySchema = z.object({
-    stage:       z.enum(["D-2", "D0", "D3", "D7", "D14"]),
+    stage:       z.enum(["D-2", "D+0", "D+3", "D+7", "D+14"]),
     channel:     z.enum(["sms", "email"]),
     bodyText:    z.string().min(1, "Template body cannot be empty"),
     subjectText: z.string().optional().nullable(),
@@ -3864,7 +3864,7 @@ td:last-child{font-weight:600;word-break:break-all;}
             feeName: "Tuition Fee",
             amount: 5000,
             dueDate: new Date().toISOString().split("T")[0],
-            stage: "D0",
+            stage: "D+0",
             message: testText,
           },
         };

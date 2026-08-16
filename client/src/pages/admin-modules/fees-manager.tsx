@@ -3859,7 +3859,7 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   // Template editor state — keyed "stage|channel"
   const [templateDraft, setTemplateDraft] = useState<Record<string, { bodyText: string; subjectText: string }>>({});
   const [templatesSynced, setTemplatesSynced] = useState(false);
-  const [activeTemplateStage, setActiveTemplateStage] = useState<string>("D0");
+  const [activeTemplateStage, setActiveTemplateStage] = useState<string>("D+0");
 
   const { data: cfg, isLoading } = useQuery<NotifConfig | null>({
     queryKey: ["/api/admin/fees/notification-config"],
@@ -3909,25 +3909,25 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
   // Default template texts shown before any school-specific override is saved
   const DEFAULT_SMS: Record<string, string> = {
-    "D-2": `Dear {guardian_name}, this is a reminder that {student_name}'s fee "{fee_name}" of Rs.{amount} is due on {due_date}. Please pay before the due date.`,
-    D0:    `Dear {guardian_name}, {student_name}'s fee "{fee_name}" of Rs.{amount} is due today. Please pay promptly.`,
-    D3:    `Reminder: {student_name}'s fee "{fee_name}" of Rs.{amount} is 3 days overdue. Please clear it at the earliest.`,
-    D7:    `Reminder: {student_name}'s fee "{fee_name}" of Rs.{amount} is 7 days overdue. Please clear it immediately.`,
-    D14:   `FINAL NOTICE: {student_name}'s fee "{fee_name}" of Rs.{amount} is 14 days overdue. Please contact admin immediately.`,
+    "D-2":  `Dear {guardian_name}, this is a reminder that {student_name}'s fee "{fee_name}" of Rs.{amount} is due on {due_date}. Please pay before the due date.`,
+    "D+0":  `Dear {guardian_name}, {student_name}'s fee "{fee_name}" of Rs.{amount} is due today. Please pay promptly.`,
+    "D+3":  `Reminder: {student_name}'s fee "{fee_name}" of Rs.{amount} is 3 days overdue. Please clear it at the earliest.`,
+    "D+7":  `Reminder: {student_name}'s fee "{fee_name}" of Rs.{amount} is 7 days overdue. Please clear it immediately.`,
+    "D+14": `FINAL NOTICE: {student_name}'s fee "{fee_name}" of Rs.{amount} is 14 days overdue. Please contact admin immediately.`,
   };
   const DEFAULT_EMAIL_SUBJECT: Record<string, string> = {
-    "D-2": "Upcoming Fee Due in 2 Days",
-    D0:    "Fee Due Today",
-    D3:    "Fee Reminder — 3 Days Overdue",
-    D7:    "Fee Reminder — 7 Days Overdue",
-    D14:   "Final Notice — Fee 14 Days Overdue",
+    "D-2":  "Upcoming Fee Due in 2 Days",
+    "D+0":  "Fee Due Today",
+    "D+3":  "Fee Reminder — 3 Days Overdue",
+    "D+7":  "Fee Reminder — 7 Days Overdue",
+    "D+14": "Final Notice — Fee 14 Days Overdue",
   };
   const DEFAULT_EMAIL_BODY: Record<string, string> = {
-    "D-2": `This is an advance reminder that {student_name}'s fee "{fee_name}" of ₹{amount} is due on {due_date}. Please ensure timely payment to avoid late fees.`,
-    D0:    `This is a reminder that {student_name}'s fee "{fee_name}" of ₹{amount} is due today. Please pay to avoid late penalties.`,
-    D3:    `{student_name}'s fee "{fee_name}" of ₹{amount} is 3 days overdue. Please clear the dues as soon as possible.`,
-    D7:    `{student_name}'s fee "{fee_name}" of ₹{amount} is 7 days overdue. Please clear the dues immediately.`,
-    D14:   `FINAL NOTICE: {student_name}'s fee "{fee_name}" of ₹{amount} is 14 days overdue. Please contact the school admin without further delay.`,
+    "D-2":  `This is an advance reminder that {student_name}'s fee "{fee_name}" of ₹{amount} is due on {due_date}. Please ensure timely payment to avoid late fees.`,
+    "D+0":  `This is a reminder that {student_name}'s fee "{fee_name}" of ₹{amount} is due today. Please pay to avoid late penalties.`,
+    "D+3":  `{student_name}'s fee "{fee_name}" of ₹{amount} is 3 days overdue. Please clear the dues as soon as possible.`,
+    "D+7":  `{student_name}'s fee "{fee_name}" of ₹{amount} is 7 days overdue. Please clear the dues immediately.`,
+    "D+14": `FINAL NOTICE: {student_name}'s fee "{fee_name}" of ₹{amount} is 14 days overdue. Please contact the school admin without further delay.`,
   };
 
   useEffect(() => {
@@ -3937,7 +3937,7 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     if (!templatesSynced && templatesLoaded) {
       const rows = savedTemplates ?? [];
       const draft: Record<string, { bodyText: string; subjectText: string }> = {};
-      for (const stage of ["D-2", "D0", "D3", "D7", "D14"]) {
+      for (const stage of ["D-2", "D+0", "D+3", "D+7", "D+14"]) {
         for (const channel of ["sms", "email"]) {
           const key = `${stage}|${channel}`;
           const saved = rows.find(t => t.stage === stage && t.channel === channel);
@@ -4022,7 +4022,7 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     email:     "bg-purple-900/40 text-purple-300 border-purple-700/40",
   };
   const STAGE_COLORS: Record<string, string> = {
-    "D-2": "text-violet-400", D0: "text-cyan-400", D3: "text-green-400", D7: "text-amber-400", D14: "text-orange-400",
+    "D-2": "text-violet-400", "D+0": "text-cyan-400", "D+3": "text-green-400", "D+7": "text-amber-400", "D+14": "text-orange-400",
   };
 
   if (isLoading) return <div className="flex items-center justify-center py-16 text-white/40"><Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading…</div>;
@@ -4247,7 +4247,7 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                           <tr key={i} className={`border-b border-white/5 ${i % 2 === 0 ? "" : "bg-white/[0.02]"}`}>
                             <td className="px-3 py-2 text-white/80">{e.studentName}</td>
                             <td className="px-3 py-2 text-white/60">{e.feeType} · ₹{e.amount}</td>
-                            <td className={`px-3 py-2 font-bold ${({"D-2":"text-violet-400",D0:"text-cyan-400",D3:"text-green-400",D7:"text-amber-400",D14:"text-orange-400"} as Record<string,string>)[e.stage] ?? "text-white/60"}`}>{e.stage}</td>
+                            <td className={`px-3 py-2 font-bold ${({"D-2":"text-violet-400","D+0":"text-cyan-400","D+3":"text-green-400","D+7":"text-amber-400","D+14":"text-orange-400"} as Record<string,string>)[e.stage] ?? "text-white/60"}`}>{e.stage}</td>
                             <td className="px-3 py-2 capitalize text-white/60">{e.channel}</td>
                             <td className="px-3 py-2">
                               {e.issue
@@ -4353,11 +4353,11 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         {/* Stage tabs */}
         <div className="flex gap-1 flex-wrap">
           {[
-            { key: "D-2", label: "D−2",  color: "text-violet-400", border: "border-violet-500/60" },
-            { key: "D0",  label: "D+0",  color: "text-cyan-400",   border: "border-cyan-500/60" },
-            { key: "D3",  label: "D+3",  color: "text-green-400",  border: "border-green-500/60" },
-            { key: "D7",  label: "D+7",  color: "text-amber-400",  border: "border-amber-500/60" },
-            { key: "D14", label: "D+14", color: "text-orange-400", border: "border-orange-500/60" },
+            { key: "D-2",  label: "D−2",  color: "text-violet-400", border: "border-violet-500/60" },
+            { key: "D+0",  label: "D+0",  color: "text-cyan-400",   border: "border-cyan-500/60" },
+            { key: "D+3",  label: "D+3",  color: "text-green-400",  border: "border-green-500/60" },
+            { key: "D+7",  label: "D+7",  color: "text-amber-400",  border: "border-amber-500/60" },
+            { key: "D+14", label: "D+14", color: "text-orange-400", border: "border-orange-500/60" },
           ].map(({ key, label, color, border }) => (
             <button key={key} onClick={() => setActiveTemplateStage(key)}
               className={`px-3 py-1 rounded text-xs font-bold border transition-colors ${activeTemplateStage === key ? `${color} ${border} bg-white/5` : "text-white/40 border-white/10 hover:text-white/70"}`}>
@@ -6405,11 +6405,11 @@ const NOTIF_CHANNEL_COLORS: Record<string, string> = {
 };
 
 const NOTIF_STAGE_COLORS: Record<string, string> = {
-  "D-2": "text-violet-400", D0: "text-cyan-400", D3: "text-green-400", D7: "text-amber-400", D14: "text-orange-400",
+  "D-2": "text-violet-400", "D+0": "text-cyan-400", "D+3": "text-green-400", "D+7": "text-amber-400", "D+14": "text-orange-400",
 };
 
 const NOTIF_STAGE_LABELS: Record<string, string> = {
-  "D-2": "2 days before due", D0: "Due today", D3: "3 days overdue", D7: "7 days overdue", D14: "14 days overdue",
+  "D-2": "2 days before due", "D+0": "Due today", "D+3": "3 days overdue", "D+7": "7 days overdue", "D+14": "14 days overdue",
 };
 
 interface NotificationHistoryModalProps {

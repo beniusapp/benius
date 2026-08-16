@@ -113,7 +113,7 @@ describe("dunning concurrency guard: advisory lock skip", () => {
       } catch {
         // already released or connection dropped
       }
-      lockHolder.end();
+      await lockHolder.end();
     }
     if (fixture) await teardown(fixture.schoolId);
   });

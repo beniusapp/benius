@@ -461,6 +461,22 @@ app.use((req, res, next) => {
       ON CONFLICT (id) DO NOTHING;
   `);
 
+  // ── Stage name normalisation (idempotent) ────────────────────────────────
+  // Rename old stage keys (D0, D3, D7, D14) to the canonical "+"-prefixed
+  // format (D+0, D+3, D+7, D+14) in both dunning_log and dunning_templates.
+  // Historical D30 rows are intentionally left untouched as audit history.
+  // Safe to run on every startup — only touches rows with the old names.
+  await pool.query(`
+    UPDATE dunning_log       SET stage = 'D+0'  WHERE stage = 'D0';
+    UPDATE dunning_log       SET stage = 'D+3'  WHERE stage = 'D3';
+    UPDATE dunning_log       SET stage = 'D+7'  WHERE stage = 'D7';
+    UPDATE dunning_log       SET stage = 'D+14' WHERE stage = 'D14';
+    UPDATE dunning_templates SET stage = 'D+0'  WHERE stage = 'D0';
+    UPDATE dunning_templates SET stage = 'D+3'  WHERE stage = 'D3';
+    UPDATE dunning_templates SET stage = 'D+7'  WHERE stage = 'D7';
+    UPDATE dunning_templates SET stage = 'D+14' WHERE stage = 'D14';
+  `);
+
   // ── Report email schedule table ──────────────────────────────────────────
   await pool.query(`
     CREATE TABLE IF NOT EXISTS report_email_schedule (
