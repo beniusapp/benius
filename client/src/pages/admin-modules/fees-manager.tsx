@@ -69,8 +69,6 @@ interface FeeStructure {
   concessionPercent: number;
   dueDayOfMonth: number | null;
   isActive: boolean;
-  autoGenerate: boolean;
-  autoGenDueDay: number | null;
   breakdown: Array<{ name: string; purpose: string; amount: number }>;
   lastInvoicesGeneratedAt: string | null;
   createdAt: string;
@@ -2725,8 +2723,6 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [concPct, setConcPct] = useState("0");
   const [dueDay, setDueDay] = useState("");
   const [isActive, setIsActive] = useState(true);
-  const [autoGenerate, setAutoGenerate] = useState(false);
-  const [autoGenDueDay, setAutoGenDueDay] = useState("");
   const [breakdown, setBreakdown] = useState<Array<{ name: string; purpose: string; amount: string }>>([]);
 
   // ── Late Fee state ────────────────────────────────────────────────────────
@@ -2770,7 +2766,6 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     setEditing(null);
     setName(""); setFeeType(""); setAmount(""); setOrigAmt(""); setFrequency("annual"); setBillingTiming("advance");
     setSelectedClasses([]); setConcType("none"); setConcPct("0"); setDueDay(""); setIsActive(true);
-    setAutoGenerate(false); setAutoGenDueDay("");
     setBreakdown([]);
     setLateFeeEnabled(false); setLateFeeType("FLAT"); setLateFeeGraceDays("0");
     setLateFeeFlat("0"); setLateFeeDailyRate("0"); setLateFeeCap("0"); setLateFeeSlabs([]);
@@ -2793,8 +2788,6 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       setDueDay(`${y}-${mo}-${d}`);
     } else { setDueDay(""); }
     setIsActive(s.isActive);
-    setAutoGenerate(!!(s as any).autoGenerate);
-    setAutoGenDueDay((s as any).autoGenDueDay ? String((s as any).autoGenDueDay) : "");
     setBreakdown(((s as any).breakdown ?? []).map((b: any) => ({
       name: b.name ?? "", purpose: b.purpose ?? "", amount: String(b.amount ?? ""),
     })));
@@ -2833,8 +2826,6 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         concessionType: concType, concessionPercent: parseInt(concPct) || 0,
         dueDayOfMonth: dueDay ? new Date(dueDay + "T00:00:00").getDate() : null, isActive,
         breakdown: parsedBreakdown,
-        autoGenerate: frequency === "monthly" ? autoGenerate : false,
-        autoGenDueDay: frequency === "monthly" && autoGenDueDay ? parseInt(autoGenDueDay) : null,
         lateFeeConfig: {
           enabled: lateFeeEnabled,
           type: lateFeeEnabled ? lateFeeType : "NONE",
@@ -2885,29 +2876,6 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  // Manually trigger the auto-invoice job for a single structure right now
-  const triggerAutoMut = useMutation({
-    mutationFn: async (structureId: number) => {
-      const r = await fetch(`/api/admin/fees/structures/${structureId}/auto-invoice/trigger`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-      });
-      if (!r.ok) throw new Error((await r.json()).message ?? "Failed");
-      return r.json() as Promise<{ created: number; synced: number; skipped: number; dueDate: string; session: string }>;
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/structures"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
-      const parts = [`${data.created} created`];
-      if ((data.synced ?? 0) > 0) parts.push(`${data.synced} updated to latest amount`);
-      if (data.skipped > 0) parts.push(`${data.skipped} unchanged`);
-      toast({ title: `✅ Auto-invoice run complete`, description: `${parts.join(", ")} (due ${data.dueDate})` });
-    },
-    onError: (e: Error) => toast({ title: "Auto-invoice failed", description: e.message, variant: "destructive" }),
-  });
 
   // ── Generate Invoices state ────────────────────────────────────────────────
   const [genTarget, setGenTarget] = useState<FeeStructure | null>(null);
@@ -3121,11 +3089,6 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                   <span className={`text-xs px-2 py-0.5 rounded-full border ${s.isActive ? "bg-emerald-900/30 text-emerald-400 border-emerald-700/30" : "bg-white/5 text-white/30 border-white/10"}`}>
                     {s.isActive ? "Active" : "Inactive"}
                   </span>
-                  {(s as any).autoGenerate && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-900/40 text-emerald-300 border border-emerald-700/30 font-bold flex items-center gap-1">
-                      ⚙ Auto
-                    </span>
-                  )}
                 </div>
               </div>
               <div className="flex items-baseline gap-1">
@@ -3157,17 +3120,6 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                     className="w-full text-cyan-400 hover:bg-cyan-900/30 text-xs h-7 gap-1 border border-cyan-700/30">
                     <Printer className="w-3 h-3" /> Generate Invoices
                   </Button>
-                  {(s as any).autoGenerate && (
-                    <Button size="sm" variant="ghost"
-                      onClick={() => triggerAutoMut.mutate(s.id)}
-                      disabled={triggerAutoMut.isPending && triggerAutoMut.variables === s.id}
-                      className="w-full text-emerald-400 hover:bg-emerald-900/30 text-xs h-7 gap-1 border border-emerald-700/30">
-                      {triggerAutoMut.isPending && triggerAutoMut.variables === s.id
-                        ? <Loader2 className="w-3 h-3 animate-spin" />
-                        : <span>⚙</span>}
-                      Run Auto-Invoice Now
-                    </Button>
-                  )}
                   <div className="flex gap-1">
                     <Button size="sm" variant="ghost" onClick={() => openEdit(s)} className="flex-1 text-white/50 hover:text-white text-xs h-7 gap-1">
                       <Pencil className="w-3 h-3" /> Edit
@@ -3229,10 +3181,6 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                 <label className="text-xs text-white/60 mb-1 block">Frequency</label>
                 <select value={frequency} onChange={e => {
                   setFrequency(e.target.value);
-                  if (e.target.value !== "monthly") {
-                    setAutoGenerate(false);
-                    setAutoGenDueDay("");
-                  }
                   // Reset billingTiming to advance when switching to annual/one-time
                   if (e.target.value !== "monthly" && e.target.value !== "quarterly") {
                     setBillingTiming("advance");
@@ -3512,62 +3460,6 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
               )}
             </div>
 
-            {/* ── Auto-Invoice Generation ─────────────────────────────── */}
-            {frequency !== "monthly" ? (
-              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-                <p className="text-xs text-white/40 text-center">
-                  {frequency === "one-time"
-                    ? "⚡ Auto-Generate is not available for One-Time fees — these are issued manually when needed."
-                    : `⚡ Auto-Generate is only available for Monthly fees. ${frequency === "quarterly" ? "Quarterly" : "Annual"} invoices should be generated manually so you control the exact billing cycle.`}
-                </p>
-              </div>
-            ) : (
-            <div className={`rounded-xl border p-4 space-y-3 transition-all ${autoGenerate ? "border-emerald-600/40 bg-emerald-900/10" : "border-white/10 bg-white/5"}`}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <Switch checked={autoGenerate} onCheckedChange={setAutoGenerate} />
-                  <div>
-                    <p className="text-sm font-semibold text-white/80">Auto-Generate Invoices</p>
-                    <p className="text-xs text-white/40 leading-tight">
-                      Automatically create invoices on the 1st of every month
-                    </p>
-                  </div>
-                </div>
-                {autoGenerate && (
-                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-900/40 text-emerald-400 border border-emerald-700/40 flex-shrink-0">
-                    AUTO ON
-                  </span>
-                )}
-              </div>
-              {autoGenerate && (
-                <div className="pt-1 border-t border-white/10 space-y-2">
-                  <label className="text-xs text-white/50 block">
-                    Invoice due day each month
-                  </label>
-                  <select
-                    value={autoGenDueDay}
-                    onChange={e => setAutoGenDueDay(e.target.value)}
-                    className="w-44 bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="">
-                      {dueDay
-                        ? `Same as Due Date (${new Date(dueDay + "T00:00:00").getDate()}th)`
-                        : "Default (10th of month)"}
-                    </option>
-                    {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
-                      <option key={d} value={String(d)}>
-                        {d}{d === 1 ? "st" : d === 2 ? "nd" : d === 3 ? "rd" : "th"} of every month
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[11px] text-emerald-400/70">
-                    🗓 Invoices will be auto-created on the 1st of each month for all enrolled students in the applicable classes.
-                    You can still generate manually anytime — both work independently.
-                  </p>
-                </div>
-              )}
-            </div>
-            )}
 
             <div className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/10">
               <Switch checked={isActive} onCheckedChange={setIsActive} />

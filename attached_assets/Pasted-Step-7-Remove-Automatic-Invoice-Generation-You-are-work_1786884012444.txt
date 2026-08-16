@@ -1,0 +1,245 @@
+Step 7 — Remove Automatic Invoice Generation
+
+You are working on a multi-tenant school ERP Fees & Payments module.
+
+The goal of this step is to completely remove the Automatic Invoice Generation feature and keep invoice generation manual and admin-controlled only.
+
+Important
+
+This is a scope-limited change.
+
+Before making changes, inspect the existing implementation and identify every place related specifically to automatic invoice generation.
+
+Do NOT change:
+
+- Manual invoice generation
+- Fee structure creation/editing
+- "fee_records.amount"
+- "breakdown_snapshot"
+- "concession_snapshot"
+- Original Fee / Net Fee logic
+- Payment processing
+- Razorpay order creation
+- Razorpay verification
+- Razorpay webhooks
+- Offline payments
+- Payment records
+- Receipts
+- Late-fee calculation
+- Fee-period calculation
+- Historical invoice data
+- Student portal
+- Admin transaction details
+- Authorization / tenant isolation
+
+1. Remove Automatic Invoice Generation
+
+Remove the automatic monthly invoice-generation mechanism, including:
+
+- Monthly invoice-generation cron/job
+- Automatic invoice generation based on "autoGenerate"
+- Automatic due-day invoice generation
+- Any scheduled process that creates invoices without an admin explicitly clicking Generate Invoices
+- Any backend automatic-invoice execution path that is used only by the Auto feature
+
+The system must NEVER automatically create a new invoice merely because a new month/session has started.
+
+Invoice creation must happen only after an authorized admin explicitly chooses Generate Invoices.
+
+2. Remove Auto UI
+
+From the Fee Structures UI, remove all Auto-related UI.
+
+For example, remove:
+
+- "Auto" badge
+- "Run Auto-Invoice Now"
+- Any Auto Generate toggle
+- Any Auto Generate checkbox
+- Any Auto Due Day field
+- Any explanatory text related to automatic invoice generation
+
+The fee structure card should simply show:
+
+Generate Invoices
+
+Do not redesign the entire Fee Structures page.
+
+Keep the existing design and styling as much as possible.
+
+3. Manual Generation Must Remain Unchanged
+
+The existing manual:
+
+Generate Invoices
+
+button must continue to work exactly as it does now.
+
+When the admin clicks it:
+
+1. Validate the fee structure.
+2. Determine the applicable students.
+3. Create the invoice.
+4. Store "fee_records.amount" as the authoritative invoice amount.
+5. Store the existing immutable "breakdown_snapshot".
+6. Store the existing immutable "concession_snapshot".
+7. Preserve the existing fee-period logic.
+8. Prevent duplicate invoices using the existing safeguards.
+
+Do not rewrite or unnecessarily refactor this logic.
+
+4. Existing Auto Database Fields
+
+First inspect whether fields such as:
+
+- "autoGenerate"
+- "auto_generate"
+- "autoGenDueDay"
+- "auto_gen_due_day"
+
+or equivalent fields exist in the database/schema.
+
+Do NOT immediately delete these columns.
+
+If they are no longer used after this change, leave the database columns in place for backward compatibility unless there is a strong technical reason to remove them.
+
+The primary objective is to remove the feature from the application behavior and UI, not to perform an unnecessary destructive database migration.
+
+5. Remove Dead Backend Routes
+
+Identify backend routes that exist exclusively to support automatic invoice generation, such as:
+
+- Auto-invoice trigger endpoints
+- Auto-invoice execution helpers
+- Auto-generation-only service functions
+
+Remove them only if they are truly unused after removing the automatic generation system.
+
+Do NOT remove the normal manual invoice-generation endpoint.
+
+6. Historical Data Safety
+
+Do not modify existing invoices.
+
+Do not:
+
+- regenerate invoices
+- update existing "fee_records"
+- change invoice amounts
+- change payment records
+- change receipts
+- change "breakdown_snapshot"
+- change "concession_snapshot"
+- backfill anything
+
+Existing invoices must remain exactly as they are.
+
+7. Multi-Tenant Safety
+
+Preserve all existing:
+
+- "schoolId" checks
+- admin authorization
+- session checks
+- tenant isolation
+- student-school relationships
+
+Do not introduce any new cross-school queries.
+
+8. Testing
+
+Before finishing:
+
+1. Search the entire repository for automatic invoice-generation references.
+2. Confirm there is no remaining scheduled process that automatically creates invoices.
+3. Confirm the Auto UI is removed.
+4. Confirm the manual Generate Invoices flow still works.
+5. Confirm existing payment and receipt functionality is untouched.
+6. Run the complete existing test suite.
+7. Add focused tests only where necessary for this change.
+
+9. Success Criteria
+
+The final system should work like this:
+
+Admin creates/updates Fee Structure
+
+↓
+
+Admin reviews the fees
+
+↓
+
+Admin clicks "Generate Invoices"
+
+↓
+
+Invoices are created
+
+↓
+
+Invoices become immutable financial snapshots
+
+There should be no automatic invoice creation in the background.
+
+10. Final Report
+
+After implementation, provide a concise report containing:
+
+A. Files Changed
+
+List every changed file and why.
+
+B. Automatic Generation Removed
+
+List every automatic-generation mechanism removed.
+
+C. UI Changes
+
+List every Auto-related UI element removed.
+
+D. Manual Generation
+
+Confirm that manual Generate Invoices remains functional.
+
+E. Historical Safety
+
+Confirm that no existing invoices, payments, receipts, snapshots, or financial records were modified.
+
+F. Database
+
+Confirm whether any database columns/migrations were changed. Prefer leaving old Auto-related columns untouched if they are no longer used.
+
+G. Tests
+
+Report:
+
+- Existing tests before
+- New tests
+- Total tests
+- Passed
+- Failed
+- Warnings
+
+H. Scope Confirmation
+
+Explicitly confirm that the following were NOT changed:
+
+- Payment processing
+- Razorpay
+- Webhooks
+- Offline payments
+- Receipts
+- Fee amounts
+- Breakdown snapshots
+- Concession snapshots
+- Late fees
+- Fee periods
+- Historical invoices
+- Student portal
+- Authorization
+- Tenant isolation
+
+STEP 7 IS COMPLETE ONLY WHEN AUTOMATIC INVOICE GENERATION IS FULLY REMOVED AND MANUAL INVOICE GENERATION CONTINUES TO WORK EXACTLY AS BEFORE.
+
+Do not proceed to any additional feature or architectural change after completing Step 7.
