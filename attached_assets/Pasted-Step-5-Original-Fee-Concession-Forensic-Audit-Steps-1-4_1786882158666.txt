@@ -1,0 +1,533 @@
+Step 5 — Original Fee & Concession Forensic Audit
+
+Steps 1–4 are complete and verified.
+
+We are now starting Step 5 ONLY.
+
+The purpose of this step is to understand exactly how Original Fee, Concession/Discount, and Net Fee currently work in the application before making any schema or business-logic changes.
+
+CRITICAL RULE
+
+THIS IS A READ-ONLY FORENSIC AUDIT.
+
+Do NOT modify any files.
+
+Do NOT modify the database.
+
+Do NOT create a migration.
+
+Do NOT add columns.
+
+Do NOT change invoice generation.
+
+Do NOT change fee calculation.
+
+Do NOT change fee structure behavior.
+
+Do NOT change the admin UI.
+
+Do NOT change the student receipt.
+
+Do NOT change payment processing.
+
+Do NOT change Razorpay.
+
+Do NOT change offline payments.
+
+Do NOT change late-fee calculation.
+
+Do NOT change fee-period calculation.
+
+Do NOT change authorization.
+
+Do NOT change existing tests.
+
+Do NOT "fix" anything discovered during the audit.
+
+If you find a problem, document it only.
+
+---
+
+1. Trace the current fee amount from beginning to end
+
+Trace the complete lifecycle:
+
+Fee Structure
+      ↓
+Fee Structure amount
+      ↓
+Invoice Generation
+      ↓
+fee_records.amount
+      ↓
+Payment
+      ↓
+payment_records.amount
+      ↓
+Student Receipt
+      ↓
+Admin Transaction Detail
+
+Determine exactly what each amount means.
+
+Specifically answer:
+
+- Is "fee_structures.amount" gross/original fee or net fee?
+- Is any concession actually calculated anywhere?
+- Is "concession_percent" used in arithmetic?
+- Is "concession_type" used in arithmetic?
+- Is any discount amount calculated?
+- Is "fee_records.amount" gross, discounted/net, or simply an admin-entered amount?
+- Is "payment_records.amount" equal to the invoice amount plus late fee?
+- Is there any other place where an original fee or discount is stored?
+
+Show the exact source file and relevant code location for every finding.
+
+---
+
+2. Audit all fee structure fields
+
+Inspect the complete fee structure definition and all code that reads/writes:
+
+amount
+concessionType
+concessionPercent
+concession_type
+concession_percent
+
+Determine whether these fields are:
+
+1. Actual calculation inputs
+2. Display-only metadata
+3. Partially used
+4. Unused
+
+Do not assume anything from field names.
+
+Verify from actual code.
+
+---
+
+3. Audit the Admin Fee Structure UI
+
+Find where administrators create/edit fee structures.
+
+Determine exactly what the admin currently enters.
+
+For example:
+
+Fee Name
+Fee Type
+Amount
+Concession Type
+Concession %
+Breakdown
+Frequency
+...
+
+Determine whether the UI currently asks for:
+
+Original/Gross Fee
+
+and separately:
+
+Net Fee
+
+If it does not, explicitly state that.
+
+Determine what the admin believes/appears to be entering into "amount".
+
+Do not change the UI.
+
+---
+
+4. Audit all invoice creation paths
+
+Previously we identified five invoice creation paths.
+
+Re-confirm all five:
+
+Path 1
+
+Monthly auto-invoice cron
+
+Path 2
+
+Auto-trigger invoice generation
+
+Path 3
+
+Manual bulk invoice generation
+
+Path 4
+
+Offline payment auto-create invoice
+
+Path 5
+
+Admin single-invoice creation
+
+For EACH path document:
+
+Path| Amount Source| Fee Structure Available?| Concession Read?| Concession Applied?| Original Fee Stored?| Net Fee Stored?
+
+Do not change any of them.
+
+---
+
+5. Search repository-wide for concession calculations
+
+Search the entire repository for all logic involving:
+
+concession
+discount
+discountPercent
+concessionPercent
+concessionType
+originalAmount
+grossAmount
+netAmount
+
+Also search for mathematical operations involving those values.
+
+We need to know whether there is already hidden concession logic somewhere.
+
+Do NOT rely only on the previously inspected invoice-generation paths.
+
+---
+
+6. Determine whether Original Fee actually exists
+
+This is the most important question.
+
+Find out whether the application currently has ANY authoritative value representing:
+
+Original Fee / Gross Fee
+
+before concession.
+
+Search:
+
+- database schema
+- fee structures
+- fee records
+- student fee assignments
+- payment records
+- invoice generation
+- admin UI
+- API payloads
+- storage layer
+- calculations
+- frontend state
+
+If no authoritative original fee exists, clearly state:
+
+Original Fee does not currently exist as a stored financial value.
+
+Do NOT derive it from the current fee structure.
+
+---
+
+7. Determine whether concession amount exists
+
+Find out whether the system stores:
+
+Concession Amount
+
+anywhere.
+
+If only:
+
+concessionPercent
+
+exists, determine whether the percentage is actually applied mathematically.
+
+For example, verify whether code does anything equivalent to:
+
+discount = originalFee × concessionPercent / 100
+
+Do not calculate this yourself unless the application already does it.
+
+---
+
+8. Identify the actual business semantics
+
+Based on the code, determine which model the current system actually follows.
+
+Model A
+
+Original Fee
+      ↓
+Concession
+      ↓
+Net Fee
+
+OR
+
+Model B
+
+Admin directly enters final/net fee
+      ↓
+No actual concession calculation
+
+OR another model if the repository proves something different.
+
+Do not choose based on what you think is better.
+
+Report what the existing application actually does.
+
+---
+
+9. Historical safety audit
+
+Determine whether changing:
+
+fee_structures.amount
+fee_structures.concessionType
+fee_structures.concessionPercent
+
+after an invoice is generated could change the information displayed for that historical invoice.
+
+Specifically determine whether an old invoice has a frozen copy of:
+
+Original Fee
+Concession Type
+Concession %
+Concession Amount
+Net Fee
+
+Do NOT create snapshots in this step.
+
+Only report what exists today.
+
+---
+
+10. Receipt audit
+
+Inspect the current receipt after Steps 1–4.
+
+Determine exactly what it currently displays regarding:
+
+- Base/Net Fee
+- Original Fee
+- Concession
+- Discount
+- Fee Components
+- Late Fee
+- Total Paid
+
+Confirm that the receipt does NOT read live "fee_structures" data for historical financial information.
+
+Do not modify the receipt.
+
+---
+
+11. Admin transaction-detail audit
+
+Inspect the Admin Transaction Detail endpoint after Step 4.
+
+Determine what it currently exposes for:
+
+- amount
+- original fee
+- concession
+- concession percentage
+- concession amount
+- breakdown
+
+Do not change the endpoint.
+
+---
+
+12. Financial invariants
+
+Document which of these are currently guaranteed by code:
+
+fee_records.amount = actual invoice/net amount
+
+payment_records.amount = amount actually collected
+
+payment_records.amount =
+fee_records.amount + late_fee_paid
+
+Also determine whether this is currently guaranteed:
+
+Original Fee - Concession Amount = Net Fee
+
+If it is NOT guaranteed, explicitly say so.
+
+---
+
+13. Identify the correct architecture options
+
+After the forensic audit, present the possible future architectures.
+
+At minimum evaluate:
+
+Option A — Descriptive Concession Snapshot
+
+Store only:
+
+concession_type
+concession_percent
+
+at invoice creation.
+
+No original fee or concession amount is invented.
+
+Receipt could say:
+
+Concession: Merit (10%)
+
+but cannot safely show:
+
+Original Fee: ₹3,500
+Discount: ₹350
+
+unless those values actually exist.
+
+Option B — Full Gross/Net Model
+
+Redesign fee structure so:
+
+Original/Gross Fee
+        ↓
+Concession
+        ↓
+Net Fee
+
+Then snapshot:
+
+original_amount
+concession_amount
+concession_type
+concession_percent
+amount = net fee
+
+Explain what existing behavior/UI would have to change.
+
+Option C — Another architecture
+
+If the repository reveals a better existing pattern, document it.
+
+Do NOT implement any option.
+
+---
+
+14. Legacy invoice strategy
+
+Determine how existing invoices would behave if concession snapshots are introduced later.
+
+The rule must be:
+
+NEVER fabricate historical values.
+
+If historical original fee/concession information does not exist, it must remain unavailable.
+
+Do not propose backfilling from the current fee structure as if it were historical truth.
+
+---
+
+15. Required final report
+
+Return a forensic report with exactly these sections:
+
+A. Current Fee Amount Semantics
+
+Clearly explain what "fee_structures.amount" actually means today.
+
+B. Concession Logic
+
+Explain whether concession is actually calculated or merely stored as metadata.
+
+C. Original Fee
+
+State whether an authoritative original/gross fee exists.
+
+D. Concession Amount
+
+State whether an authoritative concession amount exists.
+
+E. All Five Invoice Paths
+
+Provide the requested table.
+
+F. Admin UI
+
+Explain what the administrator currently enters.
+
+G. Historical Immutability
+
+Explain what is and isn't historically frozen.
+
+H. Student Receipt
+
+Explain what it currently displays.
+
+I. Admin Transaction Detail
+
+Explain what it currently exposes.
+
+J. Financial Invariants
+
+List the invariants that are actually guaranteed.
+
+K. Architecture Options
+
+Compare Option A vs Option B and any other valid option discovered.
+
+L. Recommendation
+
+Give a technical recommendation, but DO NOT implement it.
+
+Clearly identify which decision requires product/business approval.
+
+M. Files Changed
+
+This must say:
+
+No files changed.
+
+N. Database Changes
+
+This must say:
+
+No database changes.
+
+O. Tests
+
+You may run existing tests for verification, but do not modify them.
+
+Report the actual result.
+
+---
+
+FINAL STOP CONDITION
+
+After producing the forensic report:
+
+STOP.
+
+Do not implement Option A.
+
+Do not implement Option B.
+
+Do not add schema columns.
+
+Do not create migrations.
+
+Do not change fee calculations.
+
+Do not change the admin UI.
+
+Do not change receipts.
+
+Do not change payment logic.
+
+Wait for my explicit approval and architecture decision before proceeding.
+
+The purpose of Step 5 is only to answer:
+
+«"What does Original Fee and Concession actually mean in our current system, and what is the safest architecture to support them historically?"»
+
+No code changes.
