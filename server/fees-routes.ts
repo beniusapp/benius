@@ -3,6 +3,7 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { calculateLateFee, recalculateLateFees, DEFAULT_LATE_FEE_CONFIG, type LateFeeConfig } from "./late-fee-engine";
 import { computeFeePeriod } from "./fee-period";
+import { buildBreakdownSnapshot, warnOnSumMismatch } from "./invoice-snapshot";
 import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings, feeStructures, dunningJobStatus } from "@shared/schema";
 import { and, eq, sql, desc, or } from "drizzle-orm";
 import { z } from "zod";
@@ -2702,6 +2703,16 @@ export function registerFeesRoutes(app: Express) {
         .map((r: any) => [`${r.studentId}:${r.feeType}:${String(r.dueDate).slice(0, 7)}`, r])
     );
 
+    // Build the immutable component snapshot once for this structure before the student loop.
+    // Throws on invalid component data (empty name, negative/non-finite amount) — return 400.
+    let breakdownSnap: Array<{ name: string; purpose: string; amount: number }>;
+    try {
+      breakdownSnap = buildBreakdownSnapshot((structure as any).breakdown);
+      warnOnSumMismatch(breakdownSnap, structure.amount, `structure "${structure.name}"`);
+    } catch (snapErr: any) {
+      return res.status(400).json({ message: `Invalid fee component breakdown: ${snapErr.message}` });
+    }
+
     let created = 0, synced = 0, skipped = 0;
     for (const enrollment of eligible) {
       const periodKey = `${enrollment.studentId}:${structure.feeType}:${period.start}`;
@@ -2738,6 +2749,7 @@ export function registerFeesRoutes(app: Express) {
         invoiceNumber,
         feePeriodStart: period.start,
         feePeriodEnd: period.end,
+        breakdownSnapshot: breakdownSnap,
       } as any);
       created++;
     }
@@ -2864,6 +2876,16 @@ export function registerFeesRoutes(app: Express) {
         .map((r: any) => [`${r.studentId}:${r.feeType}`, r])
     );
 
+    // Build the immutable component snapshot once for this structure before the student loop.
+    // Throws on invalid component data (empty name, negative/non-finite amount) — return 400.
+    let breakdownSnap2: Array<{ name: string; purpose: string; amount: number }>;
+    try {
+      breakdownSnap2 = buildBreakdownSnapshot((structure as any).breakdown);
+      warnOnSumMismatch(breakdownSnap2, structure.amount, `structure "${structure.name}"`);
+    } catch (snapErr: any) {
+      return res.status(400).json({ message: `Invalid fee component breakdown: ${snapErr.message}` });
+    }
+
     let created = 0, synced = 0, skipped = 0;
     for (const enrollment of filtered) {
       const periodKey = `${enrollment.studentId}:${structure.feeType}:${periodStart}`;
@@ -2897,6 +2919,7 @@ export function registerFeesRoutes(app: Express) {
         invoiceNumber,
         feePeriodStart: periodStart,
         feePeriodEnd:   periodEnd,
+        breakdownSnapshot: breakdownSnap2,
       } as any);
       created++;
     }

@@ -9,6 +9,7 @@ import { storage } from "./storage";
 import cron from "node-cron";
 import { recalculateLateFees } from "./late-fee-engine";
 import { computeFeePeriod } from "./fee-period";
+import { buildBreakdownSnapshot, warnOnSumMismatch } from "./invoice-snapshot";
 import { assertNoSchemaDrift } from "./schema-validator";
 import path from "path";
 
@@ -884,6 +885,21 @@ app.use((req, res, next) => {
               .map((r: any) => `${r.studentId}:${r.feeType}:${String(r.dueDate).slice(0, 7)}`)
           );
 
+          // Build the immutable component snapshot once for this structure.
+          // If the breakdown contains invalid data (empty name, negative/non-finite amount),
+          // skip this structure entirely and log — do not create malformed invoices.
+          let breakdownSnap: Array<{ name: string; purpose: string; amount: number }>;
+          try {
+            breakdownSnap = buildBreakdownSnapshot((structure as any).breakdown);
+            warnOnSumMismatch(breakdownSnap, structure.amount, `structure "${structure.name}"`);
+          } catch (snapErr) {
+            log(
+              `School ${school.id} | "${structure.name}": skipped — invalid breakdown: ${String(snapErr)}`,
+              "cron",
+            );
+            continue;
+          }
+
           let created = 0, skipped = 0;
           for (const enrollment of eligible) {
             const periodKey  = `${enrollment.studentId}:${structure.feeType}:${period.start}`;
@@ -907,6 +923,7 @@ app.use((req, res, next) => {
               invoiceNumber,
               feePeriodStart: period.start,
               feePeriodEnd: period.end,
+              breakdownSnapshot: breakdownSnap,
             } as any);
             created++;
           }
