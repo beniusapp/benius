@@ -392,7 +392,7 @@ app.use((req, res, next) => {
     ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS auto_generate BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS auto_gen_due_day INTEGER;
     ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS last_invoices_generated_at TIMESTAMP;
-    ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS billing_timing VARCHAR(10) NOT NULL DEFAULT 'advance';
+    -- billing_timing removed from fee_structures (Step: Remove Billing Timing)
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS fee_period_start DATE;
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS fee_period_end DATE;
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS late_fee_paid INTEGER NOT NULL DEFAULT 0;

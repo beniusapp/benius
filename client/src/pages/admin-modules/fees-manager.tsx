@@ -61,11 +61,8 @@ interface FeeStructure {
   feeType: string;
   amount: number;
   frequency: string;
-  /** "advance" (default) | "arrears" — only used for monthly/quarterly */
-  billingTiming: string;
   applicableClasses: string[];
   dueDayOfMonth: number | null;
-  isActive: boolean;
   breakdown: Array<{ name: string; purpose: string; amount: number }>;
   lastInvoicesGeneratedAt: string | null;
   createdAt: string;
@@ -394,7 +391,7 @@ function RecordPaymentModal({ open, onClose, feeRecord, students, existingFeeRec
   const payActiveStructures = useMemo(() => {
     const cls = paySelectedStudent?.class ?? null;
     return payFeeStructures.filter(s =>
-      s.isActive && (s.applicableClasses.length === 0 || (cls && s.applicableClasses.includes(cls)))
+      s.applicableClasses.length === 0 || (cls && s.applicableClasses.includes(cls))
     );
   }, [payFeeStructures, paySelectedStudent]);
 
@@ -1554,7 +1551,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     queryKey: ["/api/admin/fees/structures"],
     staleTime: 300_000,
   });
-  const activeStructures = useMemo(() => feeStructures.filter(s => s.isActive), [feeStructures]);
+  const activeStructures = useMemo(() => feeStructures, [feeStructures]);
   // Structures filtered to the currently selected student's class (or all if no student / no class restriction)
   const structuresForStudent = useMemo(() => {
     const cls = selectedStudent?.class ?? null;
@@ -2796,10 +2793,8 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [feeType, setFeeType] = useState("");
   const [amount, setAmount] = useState("");
   const [frequency, setFrequency] = useState("annual");
-  const [billingTiming, setBillingTiming] = useState("advance");
   const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
   const [dueDay, setDueDay] = useState("");
-  const [isActive, setIsActive] = useState(true);
   const [breakdown, setBreakdown] = useState<Array<{ name: string; purpose: string; amount: string }>>([]);
 
   // ── Late Fee state ────────────────────────────────────────────────────────
@@ -2841,8 +2836,8 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
   function openCreate() {
     setEditing(null);
-    setName(""); setFeeType(""); setAmount(""); setFrequency("annual"); setBillingTiming("advance");
-    setSelectedClasses([]); setDueDay(""); setIsActive(true);
+    setName(""); setFeeType(""); setAmount(""); setFrequency("annual");
+    setSelectedClasses([]); setDueDay("");
     setBreakdown([]);
     setLateFeeEnabled(false); setLateFeeType("FLAT"); setLateFeeGraceDays("0");
     setLateFeeFlat("0"); setLateFeeDailyRate("0"); setLateFeeCap("0"); setLateFeeSlabs([]);
@@ -2853,7 +2848,6 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     setEditing(s);
     setName(s.name); setFeeType(s.feeType); setAmount(String(s.amount));
     setFrequency(s.frequency);
-    setBillingTiming(s.billingTiming ?? "advance");
     setSelectedClasses([...s.applicableClasses]);
     if (s.dueDayOfMonth) {
       const now = new Date();
@@ -2862,7 +2856,6 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       const d = String(Math.min(s.dueDayOfMonth, 28)).padStart(2, "0");
       setDueDay(`${y}-${mo}-${d}`);
     } else { setDueDay(""); }
-    setIsActive(s.isActive);
     setBreakdown(((s as any).breakdown ?? []).map((b: any) => ({
       name: b.name ?? "", purpose: b.purpose ?? "", amount: String(b.amount ?? ""),
     })));
@@ -2887,10 +2880,8 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       const payload = {
         name, feeType, amount: parseInt(amount),
         frequency,
-        // billingTiming only matters for monthly/quarterly; ignored for annual/one-time
-        billingTiming: (frequency === "monthly" || frequency === "quarterly") ? billingTiming : "advance",
         applicableClasses: selectedClasses,
-        dueDayOfMonth: dueDay ? new Date(dueDay + "T00:00:00").getDate() : null, isActive,
+        dueDayOfMonth: dueDay ? new Date(dueDay + "T00:00:00").getDate() : null,
         breakdown: parsedBreakdown,
         lateFeeConfig: {
           enabled: lateFeeEnabled,
@@ -2945,11 +2936,9 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
   // ── Generate Invoices state ────────────────────────────────────────────────
   const [genTarget, setGenTarget] = useState<FeeStructure | null>(null);
-  const [genSessionId, setGenSessionId] = useState("");
   const [genFeePeriodStart, setGenFeePeriodStart] = useState("");
   const [genFeePeriodEnd, setGenFeePeriodEnd] = useState("");
   const [genClasses, setGenClasses] = useState<string[]>([]);
-  const [genDueDate, setGenDueDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [genResult, setGenResult] = useState<{ created: number; synced: number; skipped: number; voided: number; total: number } | null>(null);
 
   const { data: sessions = [] } = useQuery<AcademicSession[]>({
@@ -2960,14 +2949,9 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const genMut = useMutation({
     mutationFn: async () => {
       const freq = genTarget!.frequency;
-      const body: Record<string, unknown> = {
-        sessionId: parseInt(genSessionId),
-        // targetClasses is ignored by the backend — the structure's applicableClasses
-        // are the single source of truth. We omit it to keep the payload clean.
-        dueDate: genDueDate,
-      };
+      const body: Record<string, unknown> = {};
       // Attach the admin-selected fee period for monthly/quarterly fees.
-      // Annual/one-time: the backend derives period from session dates automatically.
+      // Annual/one-time and the academic session are both resolved server-side automatically.
       if ((freq === "monthly" || freq === "quarterly") && genFeePeriodStart && genFeePeriodEnd) {
         body.feePeriodStart = genFeePeriodStart;
         body.feePeriodEnd   = genFeePeriodEnd;
@@ -3105,14 +3089,11 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     setGenTarget(s);
     setGenResult(null);
     setGenClasses([...s.applicableClasses]);
-    setGenDueDate(new Date().toISOString().split("T")[0]);
 
-    // Pre-select the active session (if one exists) and derive default period
+    // Auto-apply the active session's periods — the session is always fixed server-side.
     const activeSess = sessions.find((x: any) => x.isActive) as any;
     if (activeSess) {
-      const sid = String(activeSess.id);
-      setGenSessionId(sid);
-      applySessionPeriods(sid, s.frequency);
+      applySessionPeriods(String(activeSess.id), s.frequency);
     } else {
       setGenSessionId("");
       setGenFeePeriodStart("");
@@ -3145,17 +3126,15 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {structures.map(s => (
-            <div key={s.id} className={`rounded-xl border p-4 space-y-3 ${s.isActive ? "border-cyan-700/40 bg-cyan-900/10" : "border-white/10 bg-white/5 opacity-60"}`}>
+            <div key={s.id} className="rounded-xl border p-4 space-y-3 border-cyan-700/40 bg-cyan-900/10">
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <h3 className="text-white font-semibold leading-tight">{s.name}</h3>
                   <p className="text-white/50 text-xs">{s.feeType}</p>
                 </div>
-                <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                  <span className={`text-xs px-2 py-0.5 rounded-full border ${s.isActive ? "bg-emerald-900/30 text-emerald-400 border-emerald-700/30" : "bg-white/5 text-white/30 border-white/10"}`}>
-                    {s.isActive ? "Active" : "Inactive"}
-                  </span>
-                </div>
+                <span className="text-xs px-2 py-0.5 rounded-full border bg-emerald-900/30 text-emerald-400 border-emerald-700/30 flex-shrink-0">
+                  Active
+                </span>
               </div>
               <div className="flex items-baseline gap-1">
                 <span className="text-xl font-bold text-white">{fmt(s.amount)}</span>
@@ -3222,34 +3201,12 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
               </div>
               <div>
                 <label className="text-xs text-white/60 mb-1 block">Frequency</label>
-                <select value={frequency} onChange={e => {
-                  setFrequency(e.target.value);
-                  // Reset billingTiming to advance when switching to annual/one-time
-                  if (e.target.value !== "monthly" && e.target.value !== "quarterly") {
-                    setBillingTiming("advance");
-                  }
-                }}
+                <select value={frequency} onChange={e => setFrequency(e.target.value)}
                   className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
                   {Object.entries(FREQ).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
               </div>
             </div>
-            {/* Billing Timing — only relevant for monthly/quarterly */}
-            {(frequency === "monthly" || frequency === "quarterly") && (
-              <div>
-                <label className="text-xs text-white/60 mb-1 block">Billing Timing</label>
-                <select value={billingTiming} onChange={e => setBillingTiming(e.target.value)}
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
-                  <option value="advance">In Advance — invoice covers current {frequency === "quarterly" ? "quarter" : "month"}</option>
-                  <option value="arrears">In Arrears — invoice covers previous {frequency === "quarterly" ? "quarter" : "month"}</option>
-                </select>
-                <p className="text-white/30 text-[11px] mt-1">
-                  {billingTiming === "advance"
-                    ? `Invoice generated in August → Fee Period: August ${new Date().getFullYear()}`
-                    : `Invoice generated in September → Fee Period: August ${new Date().getFullYear()}`}
-                </p>
-              </div>
-            )}
             <div>
               <label className="text-xs text-white/60 mb-1.5 block">
                 Applicable Classes
@@ -3490,10 +3447,6 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
             </div>
 
 
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/10">
-              <Switch checked={isActive} onCheckedChange={setIsActive} />
-              <label className="text-sm text-white/70">Active — visible in fee reports</label>
-            </div>
             <div className="flex gap-2 justify-end pt-1">
               <Button variant="ghost" onClick={() => setShowModal(false)} className="text-white/60">Cancel</Button>
               <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !name || !feeType || !amount || breakdownMismatch}
@@ -3529,69 +3482,66 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
               <Printer className="w-5 h-5" /> Generate Invoices
             </DialogTitle>
           </DialogHeader>
-          {genTarget && !genResult && (
+          {genTarget && !genResult && (() => {
+            // Active session is always the source of truth — resolved server-side too.
+            const activeSess = sessions.find((x: any) => x.isActive) as any;
+            const freq = genTarget.frequency;
+
+            // Build period options from the active session's date range.
+            const periodOptions: PeriodOption[] = activeSess
+              ? periodsForSession(freq, String(activeSess.startDate ?? "").slice(0, 10), String(activeSess.endDate ?? "").slice(0, 10))
+              : [];
+
+            // Generate button is disabled when: no active session found, or (monthly/quarterly with no period picked).
+            const needsPeriod = freq === "monthly" || freq === "quarterly";
+            const canGenerate = !!activeSess && (!needsPeriod || !!genFeePeriodStart);
+
+            return (
             <div className="space-y-4">
               <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-sm">
                 <p className="text-white font-semibold">{genTarget.name}</p>
                 <p className="text-white/50 text-xs">
                   {genTarget.feeType} · {fmt(genTarget.amount)} / {FREQ[genTarget.frequency] ?? genTarget.frequency}
-                  {(genTarget.frequency === "monthly" || genTarget.frequency === "quarterly") && (
-                    <span className="ml-1 text-indigo-400">
-                      · {(genTarget.billingTiming ?? "advance") === "arrears" ? "In Arrears" : "In Advance"}
-                    </span>
-                  )}
                 </p>
               </div>
+
+              {/* Academic Session — read-only, always the active session */}
               <div>
                 <label className="text-xs text-white/60 mb-1 block">Academic Session</label>
-                <select value={genSessionId} onChange={e => {
-                  setGenSessionId(e.target.value);
-                  if (e.target.value) applySessionPeriods(e.target.value, genTarget!.frequency);
-                  else { setGenFeePeriodStart(""); setGenFeePeriodEnd(""); }
-                }}
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
-                  <option value="">Select session…</option>
-                  {sessions.map(s => (
-                    <option key={s.id} value={s.id}>{(s as any).sessionName}{(s as any).isActive ? " (Active)" : ""}</option>
-                  ))}
-                </select>
+                {activeSess ? (
+                  <div className="px-3 py-2 rounded-lg bg-[#0A1628] border border-white/10 text-sm text-white/80 flex items-center justify-between">
+                    <span>{(activeSess as any).sessionName} (Active)</span>
+                    <span className="text-[10px] text-white/30 ml-2">auto-selected</span>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-lg bg-red-900/20 border border-red-700/30 text-xs text-red-400">
+                    No active academic session found. Please activate a session first.
+                  </div>
+                )}
               </div>
 
-              {/* Fee Period Picker — session-scoped, all months/quarters within the session */}
-              {(genTarget.frequency === "monthly" || genTarget.frequency === "quarterly") && (() => {
-                const freq   = genTarget.frequency;
-                const timing = genTarget.billingTiming ?? "advance";
-
-                // Build options from the selected session's date range
-                const sess = sessions.find((s: any) => String(s.id) === genSessionId) as any;
-                const options: PeriodOption[] = sess
-                  ? periodsForSession(freq, String(sess.startDate ?? "").slice(0, 10), String(sess.endDate ?? "").slice(0, 10))
-                  : [];
-
-                if (!genSessionId) {
-                  return (
-                    <div className="p-3 rounded-lg bg-amber-900/15 border border-amber-700/30 text-xs text-amber-400/80">
-                      Select an academic session above to see available fee periods.
+              {/* Fee Period Picker — session-scoped, all months/quarters within the active session */}
+              {needsPeriod && (
+                <div>
+                  <label className="text-xs text-white/60 mb-1 block">
+                    Fee Period
+                    <span className="ml-1.5 text-white/30">— all {freq === "monthly" ? "months" : "quarters"} in this session</span>
+                  </label>
+                  {!activeSess ? (
+                    <div className="p-2 rounded-lg bg-amber-900/15 border border-amber-700/30 text-xs text-amber-400/80">
+                      Activate an academic session to see available fee periods.
                     </div>
-                  );
-                }
-
-                return (
-                  <div>
-                    <label className="text-xs text-white/60 mb-1 block">
-                      Fee Period
-                      <span className="ml-1.5 text-white/30">— all {freq === "monthly" ? "months" : "quarters"} in this session</span>
-                    </label>
+                  ) : (
                     <select
                       value={genFeePeriodStart}
                       onChange={e => {
-                        const opt = options.find(o => o.start === e.target.value);
+                        const opt = periodOptions.find(o => o.start === e.target.value);
                         if (opt) { setGenFeePeriodStart(opt.start); setGenFeePeriodEnd(opt.end); }
                       }}
                       className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
                     >
-                      {options.length === 0 && <option value="">No periods available</option>}
-                      {options.map(o => {
+                      {periodOptions.length === 0 && <option value="">No periods available</option>}
+                      {periodOptions.map(o => {
                         const today = new Date().toISOString().slice(0, 10);
                         const isCurrent = o.start <= today && o.end >= today;
                         const isPast    = o.end < today;
@@ -3602,17 +3552,13 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                         );
                       })}
                     </select>
-                    <p className="text-indigo-400/60 text-[11px] mt-1">
-                      This period is stored permanently on each invoice. You can backfill any missed period.
-                    </p>
-                  </div>
-                );
-              })()}
-              <div>
-                <label className="text-xs text-white/60 mb-1 block">Due Date for Generated Invoices</label>
-                <input type="date" value={genDueDate} onChange={e => setGenDueDate(e.target.value)}
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
-              </div>
+                  )}
+                  <p className="text-indigo-400/60 text-[11px] mt-1">
+                    This period is stored permanently on each invoice. You can backfill any missed period.
+                  </p>
+                </div>
+              )}
+
               {genTarget.applicableClasses.length > 0 ? (
                 <div className="p-3 rounded-lg bg-cyan-900/15 border border-cyan-700/30 space-y-1.5">
                   <p className="text-xs font-semibold text-cyan-400 flex items-center gap-1.5">
@@ -3639,11 +3585,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                 <Button variant="ghost" onClick={() => setGenTarget(null)} className="text-white/60">Cancel</Button>
                 <Button
                   onClick={() => genMut.mutate()}
-                  disabled={
-                    genMut.isPending || !genSessionId || !genDueDate ||
-                    // Monthly/quarterly: must have a period selected
-                    ((genTarget?.frequency === "monthly" || genTarget?.frequency === "quarterly") && !genFeePeriodStart)
-                  }
+                  disabled={genMut.isPending || !canGenerate}
                   className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1"
                 >
                   {genMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
@@ -3651,7 +3593,8 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                 </Button>
               </div>
             </div>
-          )}
+          );
+          })()}
           {genResult && (
             <div className="space-y-4">
               <div className="p-4 rounded-xl bg-emerald-900/20 border border-emerald-700/40 space-y-3">

@@ -2,7 +2,6 @@ import type { Express } from "express";
 import { storage } from "./storage";
 import { db } from "./db";
 import { calculateLateFee, recalculateLateFees, DEFAULT_LATE_FEE_CONFIG, type LateFeeConfig } from "./late-fee-engine";
-import { computeFeePeriod } from "./fee-period";
 import { buildBreakdownSnapshot, warnOnSumMismatch } from "./invoice-snapshot";
 import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings, feeStructures, dunningJobStatus } from "@shared/schema";
 import { and, eq, sql, desc, or } from "drizzle-orm";
@@ -625,13 +624,8 @@ export function registerFeesRoutes(app: Express) {
     feeType: z.string().min(1).max(100),
     amount: z.number().int().positive(),
     frequency: z.enum(["monthly", "quarterly", "annual", "one-time"]),
-    // billingTiming only applies to monthly/quarterly fees:
-    //   "advance" = invoice generated in the period it covers (default)
-    //   "arrears" = invoice generated in the following period (charges for the prior period)
-    billingTiming: z.enum(["advance", "arrears"]).default("advance"),
     applicableClasses: z.array(z.string()).default([]),
     dueDayOfMonth: z.number().int().min(1).max(31).optional().nullable(),
-    isActive: z.boolean().default(true),
     breakdown: z.array(breakdownItemSchema).default([]),
     lateFeeConfig: lateFeeConfigSchema.optional(),
   });
@@ -1027,8 +1021,7 @@ export function registerFeesRoutes(app: Express) {
       // applicableClasses, reject the payment if the student is not in those classes.
       const allStructures = await storage.getFeeStructuresBySchool(schoolId);
       const matchingStructure = allStructures.find(
-        s => s.feeType.trim().toLowerCase() === paymentData.feeType!.trim().toLowerCase()
-          && (s as any).isActive !== false,
+        s => s.feeType.trim().toLowerCase() === paymentData.feeType!.trim().toLowerCase(),
       );
       if (matchingStructure) {
         const applicableClasses: string[] = (matchingStructure as any).applicableClasses ?? [];
@@ -2664,20 +2657,20 @@ export function registerFeesRoutes(app: Express) {
     const schoolId = req.session.schoolId!;
 
     const parsed = z.object({
-      sessionId: z.number().int().positive(),
-      targetClasses: z.array(z.string()).default([]),
-      dueDate: z.string().min(1, "Due date required"),
-      // Immutable billing period for the invoices being generated.
-      // Required for monthly/quarterly; for annual/one-time the backend uses the session dates.
+      // feePeriodStart/feePeriodEnd: required for monthly/quarterly fees (admin picks the month).
+      // For annual/one-time the backend uses the active session dates automatically.
       feePeriodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
       feePeriodEnd:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
     }).safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
 
-    const { sessionId, dueDate, feePeriodStart: bodyPeriodStart, feePeriodEnd: bodyPeriodEnd } = parsed.data;
+    const { feePeriodStart: bodyPeriodStart, feePeriodEnd: bodyPeriodEnd } = parsed.data;
     const structure = await storage.getFeeStructureById(structureId, schoolId);
     if (!structure) return res.status(404).json({ message: "Fee structure not found" });
-    const invoiceSession = await storage.getAcademicSessionById(sessionId);
+    // Academic session is always the currently active session — the client cannot override this.
+    const invoiceSession = await storage.getActiveSession(schoolId);
+    if (!invoiceSession) return res.status(400).json({ message: "No active academic session found. Please activate a session first." });
+    const sessionId = invoiceSession.id;
 
     // The Student Registry is global and session-independent — a student's class/section
     // is always current in the registry regardless of how many sessions exist.
@@ -2701,13 +2694,36 @@ export function registerFeesRoutes(app: Express) {
     let periodStart: string;
     let periodEnd:   string;
     if (bodyPeriodStart && bodyPeriodEnd) {
-      // Admin explicitly selected a fee period in the UI (monthly/quarterly)
+      // Admin explicitly selected a fee period in the UI (monthly/quarterly).
+      // Validate that the selected period falls within the active session.
+      const sessStart = String(invoiceSession.startDate).slice(0, 10);
+      const sessEnd   = String(invoiceSession.endDate).slice(0, 10);
+      if (bodyPeriodStart < sessStart || bodyPeriodEnd > sessEnd) {
+        return res.status(400).json({ message: "The selected fee period is outside the active academic session." });
+      }
       periodStart = bodyPeriodStart;
       periodEnd   = bodyPeriodEnd;
     } else {
-      // Annual/one-time: use academic session start/end as the period
-      periodStart = invoiceSession ? String(invoiceSession.startDate).slice(0, 10) : `${new Date().getFullYear()}-04-01`;
-      periodEnd   = invoiceSession ? String(invoiceSession.endDate).slice(0, 10)   : `${new Date().getFullYear() + 1}-03-31`;
+      // Annual/one-time: use academic session start/end as the period.
+      periodStart = String(invoiceSession.startDate).slice(0, 10);
+      periodEnd   = String(invoiceSession.endDate).slice(0, 10);
+    }
+
+    // Compute the invoice due date from the fee structure's dueDayOfMonth + the period's month.
+    // For monthly/quarterly fees, the due date falls within the fee period month.
+    // For annual/one-time, the due date falls within the session's start month.
+    const dueDayOfMonth: number | null = (structure as any).dueDayOfMonth ?? null;
+    let dueDate: string;
+    if (dueDayOfMonth) {
+      const refDate = new Date(periodStart + "T00:00:00");
+      const y = refDate.getFullYear();
+      const m = refDate.getMonth();
+      const lastDay = new Date(y, m + 1, 0).getDate();
+      const d = Math.min(dueDayOfMonth, lastDay);
+      dueDate = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    } else {
+      // No due day configured on the structure — fall back to the last day of the fee period.
+      dueDate = periodEnd;
     }
 
     const existingRecords = await storage.getFeeRecordsBySchool(schoolId, { sessionId });

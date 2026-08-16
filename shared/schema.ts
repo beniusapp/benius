@@ -1012,15 +1012,10 @@ export const feeStructures = pgTable("fee_structures", {
   frequency: varchar("frequency", { length: 20 }).notNull().default("annual"),
   applicableClasses: text("applicable_classes").array().notNull().default([]),
   dueDayOfMonth: integer("due_day_of_month"),
-  isActive: boolean("is_active").notNull().default(true),
   breakdown: jsonb("breakdown").$type<Array<{ name: string; purpose: string; amount: number }>>().notNull().default([]),
   autoGenerate: boolean("auto_generate").notNull().default(false),
   autoGenDueDay: integer("auto_gen_due_day"),
   lastInvoicesGeneratedAt: timestamp("last_invoices_generated_at"),
-  // "advance" = invoice generated in the same period it covers
-  // "arrears" = invoice generated in the period AFTER the one it covers
-  // Ignored for annual / one-time fees.
-  billingTiming: varchar("billing_timing", { length: 10 }).notNull().default("advance"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
   lateFeeConfig: jsonb("late_fee_config").$type<LateFeeConfig>().default({ enabled: false, type: "NONE", grace_period_days: 0, flat_amount: 0, daily_rate: 0, max_cap: 0, tiered_slabs: [] }),

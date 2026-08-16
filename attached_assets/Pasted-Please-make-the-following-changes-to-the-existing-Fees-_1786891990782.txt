@@ -1,0 +1,460 @@
+Please make the following changes to the existing Fees & Payments module.
+
+First, inspect the current implementation and then make the changes cleanly. Do not change unrelated payment, Razorpay, receipt, webhook, invoice-history, or student-portal functionality.
+
+1. Completely Remove Billing Timing
+
+Remove the Billing Timing field from the Fee Structure completely.
+
+Currently it shows:
+
+- In Advance — invoice covers current month
+- In Arrears — invoice covers previous month
+
+This concept is no longer required because invoice generation is now completely manual and the Fee Period determines which month the invoice belongs to.
+
+Remove Billing Timing from:
+
+- Fee Structure create modal
+- Fee Structure edit modal
+- React state
+- TypeScript interfaces
+- Form validation
+- API payloads
+- Backend schemas
+- Fee Structure display/card
+- Generate Invoice modal
+- Invoice-generation logic
+- Any helper functions that exist only for billing timing
+- Any "In Advance" / "In Arrears" display
+
+If there is a dedicated database column that exists only for Billing Timing, remove it as well after confirming it is no longer referenced anywhere.
+
+Do NOT create a replacement for Billing Timing.
+
+The new system should use Fee Period as the source of truth for which month an invoice belongs to.
+
+---
+
+2. Remove the Active / Visible Toggle
+
+The Fee Structure currently has:
+
+Active — visible in fee reports
+
+with a toggle.
+
+Remove this toggle completely.
+
+A Fee Structure should automatically be considered active/visible when it exists.
+
+There should be no manual Active/Inactive switch.
+
+Remove:
+
+- Toggle UI
+- Related React state
+- Related form field
+- Related API payload field if it exists only for this toggle
+- Any obsolete UI text
+
+Ensure that Fee Structures are always visible in Fee Reports.
+
+Do not accidentally hide existing structures because the toggle was removed.
+
+---
+
+3. Remove "In Advance" from Fee Structure Card
+
+Currently the card displays something like:
+
+₹2,000 / Monthly · In Advance
+
+After this change it must display only:
+
+₹2,000 / Monthly
+
+There must be no Billing Timing information anywhere.
+
+---
+
+4. Generate Invoice — Academic Session Must Be Fixed
+
+In the Generate Invoices modal there is currently an Academic Session dropdown.
+
+Remove the dropdown.
+
+The system must automatically use the currently active academic session.
+
+Display it as read-only information, for example:
+
+Academic Session
+"2027–2028 (Active)"
+
+The admin must not be able to change the academic session from the Generate Invoices modal.
+
+The backend must also use/validate the currently active academic session rather than trusting a session supplied by the client.
+
+---
+
+5. Fee Period Is the Source of Truth
+
+Keep Fee Period.
+
+This is now the important field that determines which month the invoice belongs to.
+
+For an academic session:
+
+2027–2028
+
+the available Fee Periods must be:
+
+- April 2027
+- May 2027
+- June 2027
+- July 2027
+- August 2027
+- September 2027
+- October 2027
+- November 2027
+- December 2027
+- January 2028
+- February 2028
+- March 2028
+
+Do not show months outside the active academic session.
+
+The selected Fee Period must be stored on every generated invoice using the existing fee-period fields.
+
+---
+
+6. Default Fee Period
+
+The Fee Period should automatically default to the current month, provided that the current month belongs to the active academic session.
+
+Example:
+
+Active Academic Session:
+
+"April 2027 – March 2028"
+
+If the current month is:
+
+"August 2027"
+
+then default Fee Period to:
+
+"August 2027"
+
+If the current month is:
+
+"February 2028"
+
+then default Fee Period to:
+
+"February 2028"
+
+If the current month is outside the active academic session, safely default to the first month of the active academic session.
+
+Example:
+
+Active Session = April 2027–March 2028
+Current Month = August 2026
+
+August 2026 is outside the active session.
+
+Therefore default to:
+
+"April 2027"
+
+Do not allow an invoice to be generated for a Fee Period outside the active academic session.
+
+---
+
+7. Remove Due Date from Generate Invoices Modal
+
+The Generate Invoices modal currently contains:
+
+Due Date for Generated Invoices
+
+Remove this field completely.
+
+The admin should NOT select the Due Date twice.
+
+The Fee Structure already has a Due Date.
+
+Therefore:
+
+Fee Structure Due Date = Source of Truth
+
+When invoices are generated, automatically calculate/store the invoice due date from the Fee Structure's configured Due Date.
+
+Example:
+
+Fee Structure:
+
+- Amount: ₹2,000
+- Frequency: Monthly
+- Due Day: 17th
+
+When generating:
+
+August 2027
+
+the generated invoices should automatically have:
+
+Due Date: 17 August 2027
+
+When generating:
+
+September 2027
+
+the generated invoices should automatically have:
+
+Due Date: 17 September 2027
+
+The admin should never have to enter the due date again during invoice generation.
+
+Preserve the existing correct due-date and late-fee calculation logic.
+
+---
+
+8. Final Generate Invoices Modal
+
+After these changes, the modal should be simple.
+
+It should contain approximately:
+
+Generate Invoices
+
+Fee Structure
+
+Monthly fees payment
+Tuition Fee · ₹2,000 / Monthly
+
+Academic Session
+
+2027–2028 (Active)
+
+Read-only. No dropdown.
+
+Fee Period
+
+August 2027
+
+Dropdown containing only months from the active academic session.
+
+Applicable Classes
+
+Show the classes configured in the Fee Structure.
+
+Read-only information.
+
+Then:
+
+Cancel | Generate
+
+Remove all unnecessary fields.
+
+The Generate Invoice modal must NOT contain:
+
+- Billing Timing
+- In Advance
+- In Arrears
+- Academic Session dropdown
+- Due Date selector
+- Active/Visible toggle
+
+---
+
+9. Fee Structure Create Modal
+
+The Fee Structure creation form should also be simplified.
+
+Keep the necessary fields such as:
+
+- Name
+- Fee Type
+- Amount
+- Frequency
+- Applicable Classes
+- Due Date
+- Late Fee & Penalty
+- Fee Breakdown / Components
+
+Remove:
+
+- Billing Timing
+- Active / Visible toggle
+- Any other fields that exist only because of Billing Timing or manual activation
+
+A newly created Fee Structure should automatically be active/visible.
+
+---
+
+10. Invoice Generation Rules
+
+When the admin clicks Generate Invoices:
+
+The system should use:
+
+Active Academic Session
++
+Selected Fee Period
++
+Fee Structure
++
+Applicable Students
+
+and generate the invoices.
+
+Each generated invoice must automatically receive:
+
+- Student
+- Fee Structure / Fee Type
+- Amount
+- Academic Session
+- Selected Fee Period
+- Due Date derived from Fee Structure
+- Breakdown Snapshot
+- Invoice Number
+- Existing required invoice metadata
+
+Do not ask the admin for information that is already available from the Fee Structure or active Academic Session.
+
+---
+
+11. Duplicate Invoice Protection
+
+Do NOT remove or weaken existing duplicate protection.
+
+The existing rule must continue:
+
+Same student + same fee type + same fee period
+→ prevent duplicate invoice.
+
+Same student + different fee type + same fee period
+→ allow separate invoice.
+
+Same student + same fee type + different fee period
+→ allow separate invoice.
+
+Example:
+
+Student A already has:
+
+Tuition Fee — August 2027 — ₹2,000
+
+The admin can still create:
+
+Lab Fee — August 2027 — ₹200
+
+because it is a different fee type.
+
+These must remain separate invoices.
+
+---
+
+12. Important: Do Not Erase Historical Invoices or Payments
+
+Do NOT delete, modify, or recreate existing:
+
+- fee_records
+- invoices
+- payment_records
+- payment_attempts
+- receipts
+- Razorpay transactions
+- webhook records
+- historical payment statuses
+
+Removing an obsolete Fee Structure configuration field must not affect existing invoices or payments.
+
+If the old Billing Timing database column is completely obsolete and has no remaining application dependency, it may be removed.
+
+But absolutely do not delete historical invoice/payment records.
+
+---
+
+13. Do Not Change These Systems
+
+Leave these untouched unless a direct change is absolutely required by the above requirements:
+
+- Razorpay order creation
+- Razorpay payment verification
+- Razorpay webhooks
+- Online payments
+- Offline payments
+- Payment attempts
+- Payment history
+- Receipts
+- Student portal
+- Late Fee / Penalty calculation
+- Fee Breakdown / Components
+- Existing invoice records
+- Existing duplicate prevention
+- Tenant isolation
+- Authorization
+- Academic session architecture
+
+---
+
+14. Before Coding
+
+First inspect the existing code and identify:
+
+1. Where Billing Timing is stored and used.
+2. Where "In Advance" is displayed.
+3. Where the Active/Visible toggle is stored and used.
+4. Where the Generate Invoice Academic Session dropdown gets its value.
+5. Where the Generate Invoice Fee Period is calculated/defaulted.
+6. Where the Generate Invoice Due Date is currently selected.
+7. Where the Fee Structure Due Date is converted into the generated invoice Due Date.
+8. Whether any existing tests depend on these removed fields.
+
+Then implement the smallest clean solution.
+
+Do not create duplicate logic.
+
+---
+
+15. Testing
+
+After implementation, run the complete test suite.
+
+Verify at minimum:
+
+- Billing Timing is completely gone.
+- "In Advance" is completely gone.
+- "In Arrears" is completely gone.
+- Active/Visible toggle is gone.
+- Fee Structures remain visible in Fee Reports.
+- Academic Session is automatically the active session.
+- Academic Session cannot be changed from Generate Invoices.
+- Fee Period contains only months from the active academic session.
+- Fee Period defaults correctly.
+- Due Date selector is removed from Generate Invoices.
+- Generated invoice Due Date comes from the Fee Structure.
+- Different fee types can be generated for the same student and same month.
+- Duplicate same-fee-type/same-period invoices remain blocked.
+- Existing payment functionality is unaffected.
+- Existing invoice/payment history remains untouched.
+
+Finally provide a report containing:
+
+- Files changed
+- Fields removed
+- UI elements removed
+- Backend changes
+- Database changes
+- Tests added/updated
+- Total tests
+- Passed
+- Failed
+- Warnings
+
+The final simplified flow must be:
+
+Create Fee Structure → Select Fee Period → Generate Invoices
+
+The Academic Session is automatically fixed to the active session, the Fee Period determines the invoice month, and the Due Date is automatically inherited from the Fee Structure.
