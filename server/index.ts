@@ -9,7 +9,7 @@ import { storage } from "./storage";
 import cron from "node-cron";
 import { recalculateLateFees } from "./late-fee-engine";
 import { computeFeePeriod } from "./fee-period";
-import { buildBreakdownSnapshot, warnOnSumMismatch } from "./invoice-snapshot";
+import { buildBreakdownSnapshot, buildConcessionSnapshot, warnOnSumMismatch } from "./invoice-snapshot";
 import { assertNoSchemaDrift } from "./schema-validator";
 import path from "path";
 
@@ -889,12 +889,19 @@ app.use((req, res, next) => {
           // If the breakdown contains invalid data (empty name, negative/non-finite amount),
           // skip this structure entirely and log — do not create malformed invoices.
           let breakdownSnap: Array<{ name: string; purpose: string; amount: number }>;
+          let concessionSnap: Record<string, unknown>;
           try {
             breakdownSnap = buildBreakdownSnapshot((structure as any).breakdown);
             warnOnSumMismatch(breakdownSnap, structure.amount, `structure "${structure.name}"`);
+            concessionSnap = buildConcessionSnapshot({
+              originalAmount: (structure as any).originalAmount ?? null,
+              amount: structure.amount,
+              concessionType: (structure as any).concessionType ?? null,
+              concessionPercent: (structure as any).concessionPercent ?? null,
+            });
           } catch (snapErr) {
             log(
-              `School ${school.id} | "${structure.name}": skipped — invalid breakdown: ${String(snapErr)}`,
+              `School ${school.id} | "${structure.name}": skipped — invalid snapshot: ${String(snapErr)}`,
               "cron",
             );
             continue;
@@ -924,6 +931,7 @@ app.use((req, res, next) => {
               feePeriodStart: period.start,
               feePeriodEnd: period.end,
               breakdownSnapshot: breakdownSnap,
+              concessionSnapshot: concessionSnap,
             } as any);
             created++;
           }

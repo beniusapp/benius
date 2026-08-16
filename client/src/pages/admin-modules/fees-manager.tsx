@@ -55,6 +55,7 @@ interface FeeRecordWithStudent {
 }
 
 interface FeeStructure {
+  originalAmount?: number | null;
   id: number;
   schoolId: number;
   name: string;
@@ -2711,6 +2712,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const { toast } = useToast();
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<FeeStructure | null>(null);
+  const [origAmt, setOrigAmt] = useState("");
   const [delId, setDelId] = useState<number | null>(null);
 
   const [name, setName] = useState("");
@@ -2766,7 +2768,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
   function openCreate() {
     setEditing(null);
-    setName(""); setFeeType(""); setAmount(""); setFrequency("annual"); setBillingTiming("advance");
+    setName(""); setFeeType(""); setAmount(""); setOrigAmt(""); setFrequency("annual"); setBillingTiming("advance");
     setSelectedClasses([]); setConcType("none"); setConcPct("0"); setDueDay(""); setIsActive(true);
     setAutoGenerate(false); setAutoGenDueDay("");
     setBreakdown([]);
@@ -2777,7 +2779,9 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
   function openEdit(s: FeeStructure) {
     setEditing(s);
-    setName(s.name); setFeeType(s.feeType); setAmount(String(s.amount)); setFrequency(s.frequency);
+    setName(s.name); setFeeType(s.feeType); setAmount(String(s.amount));
+    setOrigAmt(s.originalAmount != null ? String(s.originalAmount) : "");
+    setFrequency(s.frequency);
     setBillingTiming(s.billingTiming ?? "advance");
     setSelectedClasses([...s.applicableClasses]); setConcType(s.concessionType);
     setConcPct(String(s.concessionPercent));
@@ -2812,8 +2816,17 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       const parsedBreakdown = breakdown
         .filter(b => b.name.trim())
         .map(b => ({ name: b.name.trim(), purpose: b.purpose.trim(), amount: parseInt(b.amount) || 0 }));
+      // UI validation: originalAmount (when provided) must be >= net amount
+      const parsedOrigAmt = origAmt.trim() ? parseInt(origAmt) : null;
+      const parsedAmt = parseInt(amount);
+      if (parsedOrigAmt != null && Number.isFinite(parsedOrigAmt) && Number.isFinite(parsedAmt) && parsedOrigAmt < parsedAmt) {
+        throw new Error(`Original Fee (₹${parsedOrigAmt}) cannot be less than the net Amount (₹${parsedAmt}).`);
+      }
       const payload = {
-        name, feeType, amount: parseInt(amount), frequency,
+        name, feeType, amount: parsedAmt,
+        // Optional original/gross fee before concession. null = not provided.
+        originalAmount: (parsedOrigAmt != null && Number.isFinite(parsedOrigAmt) && parsedOrigAmt > 0) ? parsedOrigAmt : null,
+        frequency,
         // billingTiming only matters for monthly/quarterly; ignored for annual/one-time
         billingTiming: (frequency === "monthly" || frequency === "quarterly") ? billingTiming : "advance",
         applicableClasses: selectedClasses,
@@ -3188,9 +3201,29 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-white/60 mb-1 block">Amount (₹)</label>
+                <label className="text-xs text-white/60 mb-1 block">Amount (₹) <span className="text-white/30">(Net / Final)</span></label>
                 <input type="number" value={amount} onChange={e => setAmount(e.target.value)} min={1} placeholder="0"
                   className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
+              </div>
+              <div>
+                <label className="text-xs text-white/60 mb-1 block">
+                  Original Fee (₹) <span className="text-white/30">— Optional</span>
+                </label>
+                <input
+                  type="number" value={origAmt} onChange={e => setOrigAmt(e.target.value)} min={1} placeholder="Enter if concession applies"
+                  className={`w-full bg-[#0A1628] border rounded-lg px-3 py-2 text-sm text-white focus:outline-none placeholder:text-white/20 ${
+                    origAmt && parseInt(origAmt) < parseInt(amount || "0")
+                      ? "border-red-500/70 focus:border-red-500"
+                      : "border-white/20 focus:border-cyan-500"
+                  }`}
+                />
+                {origAmt && parseInt(origAmt) > 0 && parseInt(origAmt) < parseInt(amount || "0") ? (
+                  <p className="text-red-400 text-xs mt-1">Original Fee must be ≥ net Amount (₹{amount})</p>
+                ) : origAmt && parseInt(origAmt) > 0 ? (
+                  <p className="text-white/30 text-xs mt-1">Concession: ₹{parseInt(origAmt) - (parseInt(amount) || 0)}</p>
+                ) : (
+                  <p className="text-white/25 text-xs mt-1">Fee before concession, if applicable</p>
+                )}
               </div>
               <div>
                 <label className="text-xs text-white/60 mb-1 block">Frequency</label>

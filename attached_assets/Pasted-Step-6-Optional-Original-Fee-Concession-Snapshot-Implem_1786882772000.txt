@@ -1,0 +1,638 @@
+Step 6 — Optional Original Fee & Concession Snapshot
+
+Implement Step 6 only based on the completed Steps 1–5.
+
+Objective
+
+Add an optional Original Fee to fee structures so that future invoices can historically record:
+
+- Original Fee
+- Concession Type
+- Concession %
+- Concession Amount
+- Net Fee
+
+while keeping the existing "fee_structures.amount" meaning unchanged.
+
+CRITICAL RULE
+
+"fee_structures.amount" currently means the final/net amount charged to the student.
+
+DO NOT change this meaning.
+
+Do NOT redesign the existing fee calculation system.
+
+Do NOT automatically calculate the net fee from the concession percentage.
+
+Do NOT modify existing fee amounts.
+
+---
+
+1. Add "original_amount" to "fee_structures"
+
+Add an optional nullable integer column:
+
+original_amount INTEGER NULL
+
+Meaning:
+
+«Original/gross fee before concession, if the school chooses to provide it.»
+
+Examples:
+
+No concession / no original fee
+
+amount = 5000
+original_amount = NULL
+
+With concession
+
+original_amount = 3500
+amount = 3150
+concessionType = merit
+concessionPercent = 10
+
+The system must NOT assume that "original_amount" exists for every fee structure.
+
+---
+
+2. Add concession snapshot to "fee_records"
+
+Add a new JSONB column:
+
+concession_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb
+
+This is a historical invoice-time snapshot.
+
+Recommended shape:
+
+{
+  "original_amount": 3500,
+  "concession_amount": 350,
+  "concession_type": "merit",
+  "concession_percent": 10
+}
+
+If no valid original fee/concession snapshot exists:
+
+{}
+
+Important
+
+The snapshot must be written once when the invoice is created and must never depend on the current "fee_structures" value when the receipt is later opened.
+
+---
+
+3. Snapshot calculation rules
+
+Create/update the invoice snapshot utility so it handles the following.
+
+Case A — "original_amount" is not provided
+
+Example:
+
+original_amount = NULL
+amount = 5000
+concessionType = none
+concessionPercent = 0
+
+Store:
+
+{}
+
+Do NOT fabricate an original amount.
+
+Case B — Original amount is provided
+
+Example:
+
+original_amount = 3500
+amount = 3150
+concessionType = merit
+concessionPercent = 10
+
+Calculate:
+
+concession_amount = original_amount - amount
+
+Result:
+
+{
+  "original_amount": 3500,
+  "concession_amount": 350,
+  "concession_type": "merit",
+  "concession_percent": 10
+}
+
+Case C — No actual concession
+
+If:
+
+original_amount = amount
+
+then:
+
+concession_amount = 0
+
+Do not display a ₹0 concession on the receipt.
+
+The snapshot may still preserve the original amount and concession metadata.
+
+---
+
+4. Validation rules
+
+When "original_amount" is provided:
+
+Block the invoice if:
+
+original_amount <= 0
+
+or:
+
+amount > original_amount
+
+or either amount is not a finite integer.
+
+The following must always be true:
+
+original_amount - concession_amount = amount
+
+Do NOT silently correct invalid values.
+
+Do NOT modify "fee_records.amount".
+
+Do NOT automatically change the admin-entered net amount.
+
+Important
+
+Do NOT require "original_amount" for existing or normal fee structures.
+
+It is optional.
+
+---
+
+5. Update the admin Fee Structure UI
+
+Modify the existing fee structure create/edit form.
+
+Keep the existing field:
+
+Amount (₹)
+
+and keep its current meaning:
+
+«Final / Net Amount charged to the student.»
+
+Add a new optional field:
+
+Original Fee (₹) — Optional
+
+Helper text:
+
+«Enter the fee amount before concession, if applicable.»
+
+Example:
+
+Original Fee: ₹3,500
+Amount: ₹3,150
+Concession Type: Merit
+Concession: 10%
+
+Do NOT rename the existing Amount field to Original Fee.
+
+Do NOT make Amount read-only.
+
+Do NOT automatically calculate Amount from Original Fee.
+
+The admin remains responsible for entering the final/net amount.
+
+---
+
+6. UI validation
+
+If Original Fee is entered:
+
+Original Fee >= Amount
+
+If:
+
+Original Fee < Amount
+
+show a clear validation error and prevent saving.
+
+If Original Fee is empty:
+
+- allow saving
+- preserve current behavior
+- no concession snapshot should be created
+
+Do not force schools to enter an Original Fee.
+
+---
+
+7. Update invoice-generation paths
+
+Update only the three structure-based invoice generation paths:
+
+1. Monthly auto-invoice cron
+2. Auto-trigger invoice generation
+3. Manual/bulk invoice generation
+
+At invoice creation, read:
+
+structure.original_amount
+structure.concessionType
+structure.concessionPercent
+structure.amount
+
+and create the immutable "concession_snapshot".
+
+Admin-direct invoice paths
+
+For:
+
+- Offline payment auto-create invoice
+- Admin single-invoice creation
+
+there is no fee structure lookup.
+
+Therefore:
+
+concession_snapshot = {}
+
+Do NOT add a fee-structure lookup just to create this snapshot.
+
+---
+
+8. Historical immutability
+
+This is mandatory.
+
+Suppose at invoice creation:
+
+Original Fee = ₹3,500
+Concession = Merit 10%
+Net Fee = ₹3,150
+
+Snapshot:
+
+{
+  "original_amount": 3500,
+  "concession_amount": 350,
+  "concession_type": "merit",
+  "concession_percent": 10
+}
+
+Later the admin changes the fee structure to:
+
+Original Fee = ₹4,000
+Concession = Merit 20%
+Amount = ₹3,200
+
+The old invoice MUST continue showing:
+
+Original Fee: ₹3,500
+Concession: ₹350
+Net Fee: ₹3,150
+
+It MUST NOT show the new values.
+
+The receipt must NEVER query "fee_structures" for historical concession information.
+
+---
+
+9. Update student receipt
+
+Extend the existing Step 3 receipt rendering.
+
+When "concession_snapshot" contains a valid original amount:
+
+Original Fee       ₹3,500
+Concession (Merit 10%)   −₹350
+Net Fee            ₹3,150
+
+Then:
+
+Late Fee / Penalty ₹60
+TOTAL AMOUNT PAID ₹3,210
+
+Use:
+
+fee_records.amount
+
+as the authoritative Net Fee.
+
+Use:
+
+payment_records.late_fee_paid
+
+for the late fee.
+
+Total remains:
+
+fee_records.amount + late_fee_paid
+
+Do NOT use the component breakdown to calculate the total.
+
+---
+
+10. Receipt conditions
+
+Snapshot = "{}"
+
+Keep the existing receipt behavior.
+
+Show:
+
+Fee / Components
+Net Fee
+Late Fee if applicable
+Total Paid
+
+Do not show:
+
+- Original Fee
+- Concession
+- ₹0 concession
+
+Snapshot contains original amount
+
+Show:
+
+Original Fee
+Concession
+Net Fee
+
+Zero concession
+
+If:
+
+concession_amount = 0
+
+do not display a concession row.
+
+---
+
+11. Admin transaction-detail endpoint
+
+Update:
+
+GET /api/admin/fees/:id/transaction-detail
+
+to expose the immutable concession snapshot.
+
+Add:
+
+"concessionSnapshot": {
+  "original_amount": 3500,
+  "concession_amount": 350,
+  "concession_type": "merit",
+  "concession_percent": 10
+}
+
+If unavailable:
+
+"concessionSnapshot": {}
+
+Do NOT rename or remove the existing "breakdown" response field.
+
+Do NOT change existing payment information.
+
+---
+
+12. Legacy invoices
+
+Absolutely NO backfill.
+
+Existing invoices must remain:
+
+concession_snapshot = {}
+
+Do NOT reconstruct historical concessions from the current fee structure.
+
+Do NOT assume:
+
+original_amount = current fee_structures.amount
+
+That would fabricate historical data.
+
+---
+
+13. Database migration
+
+Add only the required columns:
+
+"fee_structures"
+
+original_amount INTEGER NULL
+
+"fee_records"
+
+concession_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb
+
+Migration must be additive and safe.
+
+Existing rows must remain valid.
+
+Do not modify existing financial data.
+
+---
+
+14. Files that may change
+
+Expected scope:
+
+shared/schema.ts
+DB migration
+server/invoice-snapshot.ts
+server/index.ts
+server/fees-routes.ts
+server/routes.ts
+client/src/pages/admin-modules/fees-manager.tsx
+
+Add focused tests as required.
+
+Do not modify unrelated files.
+
+---
+
+15. Files / systems that MUST NOT change
+
+Do NOT modify:
+
+- Razorpay order creation
+- Razorpay verification
+- Razorpay webhook
+- Payment processing
+- payment_records creation logic
+- payment_attempts
+- late-fee calculation
+- fee-period calculation
+- receipt number generation
+- authorization/session middleware
+- student payment UI
+- existing "fee_records.amount" semantics
+
+---
+
+16. Required tests
+
+Add tests for at least:
+
+Test A
+
+No original amount:
+
+amount = 5000
+original_amount = null
+
+Expected:
+
+{}
+
+Test B
+
+Original + concession:
+
+original = 3500
+amount = 3150
+type = merit
+percent = 10
+
+Expected concession:
+
+350
+
+Test C
+
+Original equals net:
+
+original = 5000
+amount = 5000
+
+Expected:
+
+concession_amount = 0
+
+Receipt must not show a ₹0 concession row.
+
+Test D
+
+Original less than net
+
+original = 3000
+amount = 3500
+
+Expected: invoice/structure validation fails.
+
+Test E
+
+Negative original amount
+
+Expected: validation fails.
+
+Test F
+
+Legacy invoice
+
+Expected:
+
+{}
+
+and no concession displayed.
+
+Test G
+
+Historical immutability
+
+Create invoice with:
+
+3500 / 350 / merit / 10%
+
+Change the current structure to:
+
+4000 / 800 / merit / 20%
+
+Receipt must still show:
+
+3500 / 350 / merit / 10%
+
+Test H
+
+Admin-direct invoice
+
+Expected:
+
+{}
+
+Test I
+
+Multi-tenant isolation
+
+School A's concession snapshot must never appear for School B.
+
+---
+
+17. Financial safety requirements
+
+These values must remain unchanged:
+
+fee_records.amount
+payment_records.amount
+payment_records.late_fee_paid
+TOTAL AMOUNT PAID
+
+The new concession feature is purely a historical snapshot/display feature.
+
+Do not introduce any new payment calculation.
+
+---
+
+18. Final verification
+
+Before completing Step 6:
+
+1. Run the complete existing test suite.
+2. Confirm all previous tests still pass.
+3. Run all new Step 6 tests.
+4. Verify database columns.
+5. Create a test fee structure with Original Fee.
+6. Generate a test invoice.
+7. Verify "concession_snapshot".
+8. Open the receipt.
+9. Verify Original Fee, Concession and Net Fee.
+10. Change the fee structure.
+11. Re-open the old receipt.
+12. Confirm the old receipt still shows the original snapshot.
+13. Verify legacy invoices remain unchanged.
+
+STRICT SCOPE
+
+This is Step 6 only.
+
+Do not implement unrelated improvements.
+
+Do not redesign the fee system.
+
+Do not change the meaning of "fee_structures.amount".
+
+Do not introduce automatic concession calculation from percentage.
+
+Do not backfill historical invoices.
+
+Do not modify Razorpay/payment logic.
+
+At the end, provide a report containing:
+
+- Files changed
+- Database changes
+- UI changes
+- Invoice paths updated
+- Snapshot behavior
+- Receipt behavior
+- Historical immutability verification
+- Tests passed/failed
+- Confirmation that payment/Razorpay logic was untouched
+
+Stop after Step 6 and wait for explicit approval before making any further architectural changes.

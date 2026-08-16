@@ -1,14 +1,95 @@
 /**
  * invoice-snapshot.ts
  *
- * Pure utility for building an immutable fee-component snapshot at invoice
- * creation time.  The snapshot is written once into fee_records.breakdown_snapshot
- * and must never be updated afterwards.
+ * Pure utility for building immutable invoice snapshots at invoice-creation time.
  *
- * This module has NO side-effects on fee structures, payment records, or
- * any other part of the system.  It only validates and deep-copies component
- * data from a fee_structures.breakdown value.
+ * buildBreakdownSnapshot — validates and deep-copies fee_structures.breakdown
+ *   into fee_records.breakdown_snapshot.
+ *
+ * buildConcessionSnapshot — validates original-fee / concession data from
+ *   fee_structures into fee_records.concession_snapshot.
+ *
+ * Both snapshots are written exactly once when an invoice is created and must
+ * never be updated afterwards.  This module has NO side-effects on fee
+ * structures, payment records, or any other part of the system.
  */
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Concession Snapshot
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ConcessionSnapshotData = {
+  original_amount: number;
+  concession_amount: number;
+  concession_type: string;
+  concession_percent: number;
+};
+
+/** Empty snapshot — no concession configured or admin-direct invoice. */
+export type ConcessionSnapshot = ConcessionSnapshotData | Record<string, never>;
+
+/**
+ * Builds an immutable concession snapshot for fee_records.concession_snapshot.
+ *
+ * Case A — original_amount is null/undefined → returns {}
+ *   The fee structure has no original fee.  Do not fabricate anything.
+ *
+ * Case B — original_amount is provided and valid → returns full snapshot
+ *   concession_amount = original_amount − amount (may be 0 if equal)
+ *
+ * HARD FAILURES (throws — blocks invoice creation):
+ *   - original_amount provided but not a positive finite integer
+ *   - amount is not a positive finite integer
+ *   - original_amount < amount (net fee cannot exceed gross fee)
+ *
+ * @param params.originalAmount  fee_structures.original_amount (may be null)
+ * @param params.amount          fee_structures.amount (authoritative net fee)
+ * @param params.concessionType  fee_structures.concessionType (e.g. "merit")
+ * @param params.concessionPercent  fee_structures.concessionPercent (0–100)
+ */
+export function buildConcessionSnapshot(params: {
+  originalAmount: number | null | undefined;
+  amount: number;
+  concessionType?: string | null;
+  concessionPercent?: number | null;
+}): ConcessionSnapshot {
+  const { originalAmount, amount, concessionType, concessionPercent } = params;
+
+  // Case A: no original amount → empty snapshot; never fabricate
+  if (originalAmount == null) return {};
+
+  // Validation — hard failure when original_amount is provided but invalid
+  if (!Number.isFinite(originalAmount) || originalAmount <= 0 || !Number.isInteger(originalAmount)) {
+    throw new Error(
+      `original_amount must be a positive finite integer (got ${originalAmount}).`,
+    );
+  }
+  if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(amount)) {
+    throw new Error(
+      `amount must be a positive finite integer (got ${amount}).`,
+    );
+  }
+  if (originalAmount < amount) {
+    throw new Error(
+      `original_amount (${originalAmount}) cannot be less than the net fee amount (${amount}). ` +
+        `The net fee cannot exceed the gross/original fee.`,
+    );
+  }
+
+  const concession_amount = originalAmount - amount;
+
+  return {
+    original_amount: originalAmount,
+    concession_amount,
+    concession_type: (typeof concessionType === "string" && concessionType) ? concessionType : "none",
+    concession_percent: (typeof concessionPercent === "number" && Number.isFinite(concessionPercent))
+      ? concessionPercent : 0,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Breakdown Snapshot
+// ─────────────────────────────────────────────────────────────────────────────
 
 export type BreakdownComponent = {
   name: string;

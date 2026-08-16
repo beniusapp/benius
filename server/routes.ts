@@ -4901,6 +4901,37 @@ export async function registerRoutes(
       Array.isArray(rawSnap) && rawSnap.length > 0 ? rawSnap : [];
     const hasComponents = breakdownComponents.length > 0;
 
+    // ── Concession snapshot ────────────────────────────────────────────────────
+    // Source: fee_records.concession_snapshot (JSONB, frozen at invoice creation).
+    // NEVER reads fee_structures for historical concession info.
+    // Legacy / admin-direct invoices have concession_snapshot = {} → no concession section.
+    const rawConcSnap = (rec as any).concessionSnapshot ?? {};
+    const concOriginalAmount: number | null =
+      typeof rawConcSnap.original_amount === "number" &&
+      Number.isFinite(rawConcSnap.original_amount) &&
+      rawConcSnap.original_amount > 0
+        ? rawConcSnap.original_amount : null;
+    const concConcessionAmount: number =
+      typeof rawConcSnap.concession_amount === "number" &&
+      Number.isFinite(rawConcSnap.concession_amount)
+        ? rawConcSnap.concession_amount : 0;
+    const concTypeName: string = typeof rawConcSnap.concession_type === "string"
+      ? rawConcSnap.concession_type : "none";
+    const concPercent: number = typeof rawConcSnap.concession_percent === "number"
+      ? rawConcSnap.concession_percent : 0;
+    const hasConcession = concOriginalAmount !== null;
+    // Only show a concession row when the monetary discount is actually > 0
+    const showConcessionRow = hasConcession && concConcessionAmount > 0;
+    // Label: "Concession (Merit 10%)" — include type and percent when meaningful
+    const concRowLabel = (() => {
+      if (!showConcessionRow) return "";
+      const typePart = concTypeName !== "none"
+        ? concTypeName.charAt(0).toUpperCase() + concTypeName.slice(1) : "";
+      const pctPart  = concPercent > 0 ? `${concPercent}%` : "";
+      const detail   = [typePart, pctPart].filter(Boolean).join(" ");
+      return detail ? `Concession (${detail})` : "Concession";
+    })();
+
     // ── Payment detail rows (rendered in Payment Details box) ─────────────────
     // These use ONLY stored canonical data — never inferred values.
     type PRow = { label: string; value: string; mono?: boolean; small?: boolean };
@@ -4997,6 +5028,12 @@ tfoot td:last-child{text-align:right;}
 /* ── NET FEE ROW (shown only when fee components are present) ── */
 .net-fee-row td{background:#eff6ff;font-weight:700;color:#1e3a5f;border-top:2px solid #bfdbfe;border-bottom:1px solid #bfdbfe;}
 .net-fee-row td:last-child{text-align:right;}
+
+/* ── ORIGINAL FEE + CONCESSION ROWS ── */
+.orig-fee-row td{background:#f8fafc;font-weight:600;color:#334155;border-top:1px solid #e2e8f0;}
+.orig-fee-row td:last-child{text-align:right;}
+.conc-row td{background:#fefce8;color:#92400e;font-style:italic;}
+.conc-row td:last-child{text-align:right;color:#b45309;font-weight:600;}
 
 /* ── AMOUNT WORDS ── */
 .words-wrap{padding:4px 24px 12px;}
@@ -5113,10 +5150,11 @@ tfoot td:last-child{text-align:right;}
   </div>
 
   <!-- ── SECTION D: FEE ITEMIZATION TABLE ── -->
-  <!-- Fee name: fee_records.feeType (mapped to display name) — NOT hardcoded              -->
-  <!-- Fee Period column: fee_period_start/end label — NOT derived from payment date       -->
-  <!-- Components: fee_records.breakdown_snapshot (immutable) — NEVER fee_structures       -->
-  <!-- Gateway Charges row removed — no charges are actually collected from students       -->
+  <!-- Fee name: fee_records.feeType (mapped to display name) — NOT hardcoded                   -->
+  <!-- Fee Period column: fee_period_start/end label — NOT derived from payment date             -->
+  <!-- Components: fee_records.breakdown_snapshot (immutable) — NEVER fee_structures             -->
+  <!-- Concession: fee_records.concession_snapshot (immutable) — NEVER fee_structures            -->
+  <!-- Gateway Charges row removed — no charges are actually collected from students             -->
   <div class="tbl-wrap">
     <table>
       <thead><tr>
@@ -5126,18 +5164,48 @@ tfoot td:last-child{text-align:right;}
       </tr></thead>
       <tbody>
         ${hasComponents
-          ? /* Component rows: one per snapshot entry, then a Net Fee summary row */
+          ? /* ── Components path ─────────────────────────────────────────────────
+               Component rows from breakdown_snapshot, then optional concession rows,
+               then the authoritative Net Fee row (fee_records.amount).          */
             breakdownComponents.map(c => `
         <tr>
           <td>${esc(c.name || "—")}</td>
           <td>${esc(tableSessionCol)}</td>
           <td>${typeof c.amount === "number" && isFinite(c.amount) ? `₹${fmt(c.amount)}` : "—"}</td>
-        </tr>`).join("") + `
+        </tr>`).join("") +
+            (hasConcession ? `
+        <tr class="orig-fee-row">
+          <td colspan="2">Original Fee</td>
+          <td>₹${fmt(concOriginalAmount!)}</td>
+        </tr>` : "") +
+            (showConcessionRow ? `
+        <tr class="conc-row">
+          <td colspan="2">${esc(concRowLabel)}</td>
+          <td>−₹${fmt(concConcessionAmount)}</td>
+        </tr>` : "") + `
         <tr class="net-fee-row">
           <td colspan="2">Net Fee</td>
           <td>₹${fmt(baseFee)}</td>
         </tr>`
-          : /* Legacy / empty-snapshot: existing single fee-type row */`
+          : hasConcession
+          ? /* ── Concession-only path ─────────────────────────────────────────────
+               No components. Show Original Fee → Concession → Net Fee.          */`
+        <tr class="orig-fee-row">
+          <td>Original Fee</td>
+          <td>${esc(tableSessionCol)}</td>
+          <td>₹${fmt(concOriginalAmount!)}</td>
+        </tr>` +
+            (showConcessionRow ? `
+        <tr class="conc-row">
+          <td colspan="2">${esc(concRowLabel)}</td>
+          <td>−₹${fmt(concConcessionAmount)}</td>
+        </tr>` : "") + `
+        <tr class="net-fee-row">
+          <td colspan="2">Net Fee</td>
+          <td>₹${fmt(baseFee)}</td>
+        </tr>`
+          : /* ── Legacy path ──────────────────────────────────────────────────────
+               No components, no concession. Keep existing single fee-type row.  */`
         <tr>
           <td>${feeName}</td>
           <td>${esc(tableSessionCol)}</td>
