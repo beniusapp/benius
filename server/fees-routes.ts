@@ -3126,7 +3126,11 @@ export function registerFeesRoutes(app: Express) {
           status: feeRow.status,
           academicYear: feeRow.academic_year ?? null,
           notes: feeRow.notes ?? null,
-          breakdown: (() => { try { return JSON.parse(feeRow.breakdown ?? "[]"); } catch { return []; } })(),
+          // Source: fee_records.breakdown_snapshot (JSONB, immutable, frozen at invoice creation).
+          // NEVER reads fee_structures.breakdown — that is live config and may have changed.
+          // The pg driver returns JSONB columns as parsed JS values; no JSON.parse needed.
+          // Defensive fallback: return [] for null/undefined/non-array (pre-migration rows are []).
+          breakdown: Array.isArray(feeRow.breakdown_snapshot) ? feeRow.breakdown_snapshot : [],
         },
         payments: payRows.map(mapPayment),
         payment: payRows.length > 0 ? mapPayment(payRows[0]) : null,

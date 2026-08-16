@@ -1,0 +1,554 @@
+Step 4 — Admin Transaction Detail Snapshot Source Cleanup
+
+Steps 1, 2, and 3 are already complete and verified.
+
+- Step 1: "fee_records.breakdown_snapshot" schema added.
+- Step 2: Immutable component snapshots are written at invoice creation.
+- Step 3: Student receipt reads and renders "breakdown_snapshot".
+
+Now perform Step 4 ONLY.
+
+This step is a very small cleanup to the existing Admin Transaction Detail endpoint identified during the forensic audit.
+
+---
+
+IMPORTANT — STRICT SCOPE RULES
+
+1. Do NOT modify the database schema.
+2. Do NOT create a migration.
+3. Do NOT modify invoice generation.
+4. Do NOT modify "buildBreakdownSnapshot()".
+5. Do NOT modify receipt rendering.
+6. Do NOT modify student receipt HTML/CSS.
+7. Do NOT modify payment processing.
+8. Do NOT modify Razorpay order creation.
+9. Do NOT modify Razorpay verification.
+10. Do NOT modify Razorpay webhook logic.
+11. Do NOT modify offline payment processing.
+12. Do NOT modify "payment_records".
+13. Do NOT modify "payment_attempts".
+14. Do NOT modify concession logic.
+15. Do NOT modify fee-period calculation.
+16. Do NOT modify late-fee calculation.
+17. Do NOT modify authorization/session middleware.
+18. Do NOT reconstruct historical data from "fee_structures".
+19. Do NOT add any new database query unless absolutely required.
+20. Do NOT backfill existing invoices.
+21. Do NOT change the meaning of any financial amount.
+22. Do NOT make any unrelated cleanup/refactoring.
+
+This is ONLY an Admin Transaction Detail data-source correction.
+
+---
+
+1. Inspect the existing endpoint first
+
+Locate the existing endpoint:
+
+"GET /api/admin/fees/:id/transaction-detail"
+
+The forensic audit identified it around:
+
+"server/fees-routes.ts:3044"
+
+Before editing, inspect the complete endpoint and confirm the current implementation.
+
+The existing code was reported to contain logic equivalent to:
+
+breakdown: (() => {
+  try {
+    return JSON.parse(feeRow.breakdown ?? "[]");
+  } catch {
+    return [];
+  }
+})()
+
+This is incorrect because "fee_records" does NOT contain a "breakdown" column.
+
+The actual immutable column is:
+
+fee_records.breakdown_snapshot
+
+---
+
+2. Correct the data source
+
+Change ONLY the admin transaction-detail response so that its "breakdown" field is sourced from:
+
+feeRow.breakdown_snapshot
+
+It must NOT read:
+
+feeRow.breakdown
+
+It must NOT query:
+
+fee_structures.breakdown
+
+The endpoint must return the actual immutable invoice-time snapshot.
+
+---
+
+3. Preserve the API response contract
+
+Before changing anything, inspect how the endpoint currently structures its response.
+
+Do NOT unnecessarily rename existing response properties.
+
+If the endpoint currently returns:
+
+{
+  "breakdown": [...]
+}
+
+keep the response property named:
+
+breakdown
+
+Only correct its underlying source.
+
+The intended mapping is:
+
+fee_records.breakdown_snapshot
+        ↓
+feeRow.breakdown_snapshot
+        ↓
+API response.breakdown
+
+---
+
+4. Handle the snapshot safely
+
+The database column is:
+
+breakdown_snapshot JSONB NOT NULL DEFAULT '[]'
+
+Therefore, normal records should already contain an array.
+
+However, the endpoint must remain defensive.
+
+If the value is:
+
+- "[]" → return "[]"
+- valid array → return the stored array
+- null/undefined → return "[]"
+- malformed/unexpected value → safely return "[]"
+
+Do NOT reconstruct the value from another source.
+
+Do NOT fall back to:
+
+fee_structures.breakdown
+
+The correct fallback is simply:
+
+[]
+
+---
+
+5. Do NOT change historical records
+
+This endpoint is read-only.
+
+Do not:
+
+- UPDATE "fee_records"
+- INSERT anything
+- backfill snapshots
+- copy current fee structure components
+- repair old invoices automatically
+
+For a pre-migration invoice:
+
+breakdown_snapshot = []
+
+The endpoint must return:
+
+{
+  "breakdown": []
+}
+
+That is correct.
+
+---
+
+6. Preserve multi-tenant security
+
+The existing endpoint must continue enforcing its current school/tenant scope.
+
+The forensic audit previously confirmed that the query uses the equivalent of:
+
+WHERE fr.id = ${feeRecordId}
+  AND fr.school_id = ${schoolId}
+
+Do NOT weaken or remove this condition.
+
+Do NOT introduce a query that can access another school's fee structure.
+
+The endpoint must continue to ensure:
+
+Authenticated admin
+        ↓
+Correct school/tenant
+        ↓
+Correct fee_record
+        ↓
+fee_records.breakdown_snapshot
+
+No cross-tenant data must be possible.
+
+---
+
+7. Do NOT add a fee_structures lookup
+
+This is extremely important.
+
+The endpoint must NOT do:
+
+fee_records
+   ↓
+fee_structures
+   ↓
+breakdown
+
+The whole purpose of the Step 1–3 architecture is historical immutability.
+
+The correct architecture is:
+
+fee_records
+   ↓
+breakdown_snapshot
+
+The invoice snapshot is the authoritative historical component source.
+
+---
+
+8. Verify the existing "fee_name" issue separately
+
+The forensic audit also identified that the endpoint references:
+
+feeRow.fee_name
+
+even though "fee_records" does not contain a "fee_name" column.
+
+Before changing this:
+
+Inspect the actual current endpoint and response contract.
+
+If it currently has a fallback equivalent to:
+
+feeRow.fee_name ?? feeRow.fee_type
+
+and this is functioning only because "fee_name" is absent, do NOT perform unrelated refactoring.
+
+Only change it if absolutely necessary to preserve the correct existing response.
+
+The primary objective of Step 4 is:
+
+feeRow.breakdown
+
+→
+
+feeRow.breakdown_snapshot
+
+Do not expand the scope.
+
+---
+
+9. Financial values must remain untouched
+
+Do NOT change any of these:
+
+- "feeRow.amount"
+- "payment_records.amount"
+- "payment_records.late_fee_paid"
+- total amount
+- payment method
+- payment reference
+- invoice number
+- receipt number
+- fee period
+- due date
+- payment date
+
+Step 4 is only about the admin transaction-detail component snapshot.
+
+---
+
+10. Student receipt must remain untouched
+
+Do NOT modify the Step 3 receipt implementation.
+
+The student receipt already correctly uses:
+
+fee_records.breakdown_snapshot
+
+Do not duplicate or redesign that logic.
+
+Do not modify:
+
+"server/routes.ts"
+
+unless an unexpected dependency makes it absolutely unavoidable.
+
+Expected primary file:
+
+server/fees-routes.ts
+
+---
+
+11. Tests
+
+First inspect the existing test suite for:
+
+/api/admin/fees/:id/transaction-detail
+
+and any existing transaction-detail tests.
+
+Do NOT modify existing tests merely to make them pass.
+
+Add focused tests only if necessary.
+
+At minimum verify:
+
+Test A — Snapshot exists
+
+Given:
+
+[
+  {
+    "name": "Tuition",
+    "purpose": "Academic tuition",
+    "amount": 2200
+  },
+  {
+    "name": "Laboratory",
+    "purpose": "Laboratory charges",
+    "amount": 300
+  }
+]
+
+The endpoint returns exactly those stored components.
+
+Test B — Empty snapshot
+
+Given:
+
+[]
+
+The endpoint returns:
+
+{
+  "breakdown": []
+}
+
+Test C — Historical immutability
+
+Given an invoice snapshot:
+
+Tuition = ₹2,200
+Laboratory = ₹300
+Library = ₹500
+
+and a later/current fee structure containing different values:
+
+Tuition = ₹2,500
+Laboratory = ₹300
+Library = ₹1,200
+
+The endpoint MUST return:
+
+₹2,200
+₹300
+₹500
+
+It must never return the current fee structure values.
+
+Test D — Legacy invoice
+
+For:
+
+breakdown_snapshot = []
+
+the endpoint must not attempt to reconstruct components.
+
+Test E — Tenant isolation
+
+School A's transaction detail must never return School B's snapshot.
+
+---
+
+12. Repository verification
+
+After the change, search the admin transaction-detail implementation and confirm that it no longer reads:
+
+feeRow.breakdown
+
+for the component response.
+
+Confirm it reads:
+
+feeRow.breakdown_snapshot
+
+Also confirm there is no new:
+
+fee_structures.breakdown
+
+lookup introduced.
+
+---
+
+13. Run tests
+
+Run the complete existing test suite.
+
+Do NOT modify production code or existing tests just to make tests pass.
+
+Report actual results:
+
+- Existing tests
+- New tests
+- Total tests
+- Passed
+- Failed
+- Warnings
+
+Do not claim success unless tests were actually executed.
+
+---
+
+14. Final verification
+
+Confirm the following:
+
+Data source
+
+fee_records.breakdown_snapshot
+
+API response
+
+response.breakdown
+
+Empty snapshot
+
+[]
+
+Historical source
+
+Never:
+
+fee_structures.breakdown
+
+Existing invoice data
+
+No backfill.
+
+Financial logic
+
+Unchanged.
+
+Student receipt
+
+Unchanged.
+
+Payment systems
+
+Unchanged.
+
+Tenant isolation
+
+Unchanged and preserved.
+
+---
+
+15. Final report format
+
+Return a structured report with exactly these sections:
+
+A. Files Changed
+
+List every file changed and why.
+
+B. Endpoint Changed
+
+State the exact endpoint modified.
+
+C. Data Source
+
+Clearly show:
+
+Before:
+feeRow.breakdown
+
+After:
+feeRow.breakdown_snapshot
+
+if that is what the actual implementation confirms.
+
+D. API Behavior
+
+Explain behavior for:
+
+- populated snapshot
+- empty snapshot
+- missing/null snapshot
+- legacy invoice
+
+E. Historical Immutability
+
+Confirm whether the endpoint uses only the immutable snapshot and does not read current fee structure data.
+
+F. Security / Tenant Isolation
+
+Confirm existing school/tenant authorization remains intact.
+
+G. Financial Safety
+
+Confirm no financial calculation or payment logic changed.
+
+H. Tests
+
+Report actual test counts and results.
+
+I. Scope Confirmation
+
+Explicitly confirm these were NOT changed:
+
+- database schema
+- database migration
+- invoice generation
+- payment processing
+- Razorpay
+- offline payment
+- student receipt
+- concession
+- fee-period calculation
+- late-fee calculation
+- authorization
+
+J. STOP
+
+After Step 4 is complete, STOP.
+
+Do not automatically implement:
+
+- concession snapshots
+- original fee snapshots
+- school information snapshots
+- GSTIN/PAN snapshots
+- additional receipt redesign
+- any further schema changes
+
+Wait for my explicit approval.
+
+Most important rule:
+
+Step 4 is ONLY:
+
+Admin Transaction Detail
+        ↓
+read immutable fee_records.breakdown_snapshot
+        ↓
+return it as the existing breakdown API field
+
+Nothing else.
