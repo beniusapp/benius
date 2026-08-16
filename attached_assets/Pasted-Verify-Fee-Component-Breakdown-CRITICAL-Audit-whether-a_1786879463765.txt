@@ -1,0 +1,52 @@
+Verify Fee Component Breakdown — CRITICAL
+Audit whether a fee invoice can accurately preserve its individual fee components at the exact moment the invoice is generated.
+Examples:
+Component
+Amount
+Tuition
+₹2,200
+Laboratory
+₹300
+Library
+₹500
+Base Fee
+₹3,000
+The receipt should eventually be capable of showing the actual invoice-time component breakdown where such components exist.
+CRITICAL HISTORICAL DATA RULE
+Do NOT read the current fee_structures.breakdown and assume it represents the historical invoice.
+First determine whether the component breakdown is snapshotted into the invoice/fee_record at invoice-generation time.
+Trace:
+Fee Structure Breakdown → Invoice Generation → fee_records → Payment → Receipt
+Determine:
+Where the component breakdown originates.
+Whether it is copied/snapshotted when the invoice is generated.
+Which database column stores the snapshot.
+Whether the snapshot is immutable.
+Whether the receipt currently reads the snapshot.
+Whether changing the fee structure later can alter the historical component breakdown.
+Whether the component amounts add up exactly to the invoice's base fee.
+Example historical test:
+At invoice generation:
+Tuition = ₹2,200
+Laboratory = ₹300
+Library = ₹500
+Base Fee = ₹3,000
+Later, the administrator changes the fee structure to:
+Tuition = ₹2,500
+Laboratory = ₹300
+Library = ₹200
+The old paid receipt must still represent:
+Tuition = ₹2,200
+Laboratory = ₹300
+Library = ₹500
+It must NEVER display the newly changed fee structure for the old invoice.
+If no invoice-time component snapshot currently exists, report:
+DATA MODEL GAP — Fee component breakdown is not historically snapshotted.
+In that situation:
+Do NOT display the current fee-structure components on historical receipts.
+Do NOT reconstruct the historical components.
+Do NOT guess the component amounts.
+Do NOT modify the schema.
+Do NOT modify invoice generation.
+Do NOT implement anything.
+Simply report what would be required to safely support historical component breakdowns in the future.
