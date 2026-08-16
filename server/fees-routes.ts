@@ -2439,6 +2439,26 @@ export function registerFeesRoutes(app: Express) {
         return res.json({ ok: true, idempotent: true, receiptNumber: feeRec.receipt_number });
       }
 
+      // Read the frozen late-fee snapshot from the Razorpay order notes — the
+      // identical source the webhook handler reads via notes.lateFeeAmount (line ~1739).
+      // This ensures payment_records stores the same amounts whether the webhook or
+      // the client-verify path commits first.
+      // Fail-safe: if the fetch throws (Razorpay unavailable, network error), we
+      // catch and default to 0.  The payment still commits correctly; only
+      // late_fee_paid = 0 is recorded, which matches the pre-fix behaviour and does
+      // not affect the payment amount itself.
+      let lateFeeFromOrder = 0;
+      try {
+        const rzpOrderClient = new Razorpay({ key_id: creds.keyId, key_secret: creds.keySecret });
+        const rzpOrderData = await (rzpOrderClient.orders as any).fetch(razorpay_order_id);
+        lateFeeFromOrder = Math.round(Number(rzpOrderData?.notes?.lateFeeAmount ?? 0)) || 0;
+      } catch (orderNotesErr) {
+        console.warn(
+          `[razorpay verify] order notes fetch failed for ${razorpay_order_id} — ` +
+          `late_fee_paid will be recorded as 0. Error: ${(orderNotesErr as any)?.message ?? orderNotesErr}`,
+        );
+      }
+
       // Mark Paid — wrap UPDATE + INSERT in a single transaction so a crash or
       // INSERT failure (schema mismatch, constraint violation, transient DB error)
       // can never leave fee_records stamped Paid without a matching payment_records
@@ -2470,7 +2490,8 @@ export function registerFeesRoutes(app: Express) {
               paymentMethod: "Online",
               referenceNumber: razorpay_payment_id,
               receivedDate: now.toISOString().slice(0, 10),
-              amount: Number(feeRec.amount),
+              amount: Number(feeRec.amount) + lateFeeFromOrder,
+              lateFeePaid: lateFeeFromOrder,
               cashierNotes: `Razorpay payment ID: ${razorpay_payment_id} (client-verified)`,
               recordedBy: null,
               receiptNumber,

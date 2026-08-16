@@ -4713,6 +4713,24 @@ export async function registerRoutes(
     `);
     const pa = (paRows as any).rows?.[0] ?? null;
 
+    // ── Fetch payment_records row for canonical amounts ───────────────────────
+    // payment_records.amount       = base + late_fee_paid (actual total collected)
+    // payment_records.late_fee_paid = frozen late-fee snapshot from payment time
+    // This is the authoritative record of what was charged — NOT a recalculation.
+    // One-invoice = one-payment rule guarantees at most one row per fee_record_id.
+    const prRows = await db.execute(sql`
+      SELECT amount, late_fee_paid
+      FROM payment_records
+      WHERE fee_record_id = ${id}
+        AND school_id     = ${student.schoolId}
+      ORDER BY id DESC
+      LIMIT 1
+    `);
+    const pr = (prRows as any).rows?.[0] ?? null;
+    const baseFee     = rec.amount;                           // fee_records.amount — always the original base
+    const lateFeePaid = Number(pr?.late_fee_paid ?? 0);      // frozen at payment time; 0 when no late fee
+    const totalPaid   = baseFee + lateFeePaid;               // actual amount collected from student
+
     // ── Helpers ───────────────────────────────────────────────────────────────
     const esc = (s: string | null | undefined) =>
       (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
@@ -4800,8 +4818,10 @@ export async function registerRoutes(
       methodDesc = `Wallet (${esc(pa.wallet)})`;
     }
 
-    const amountStr  = fmt(rec.amount);
-    const amountWords = amountInWords(rec.amount);
+    // Use totalPaid (base + late fee) for all monetary display on the receipt.
+    // baseFee / lateFeePaid / totalPaid are computed above from payment_records.
+    const amountStr   = fmt(totalPaid);
+    const amountWords = amountInWords(totalPaid);
     const paidTs     = fmtDt(rec.paidDate ?? pa?.rzp_captured_at);
     const feeName    = esc((rec as any).feeName ?? rec.feeType);
 
@@ -4938,8 +4958,15 @@ tfoot td:last-child{text-align:right;}
           <td>${feeName}</td>
           <td>Tuition Fee</td>
           <td>${esc(rec.academicYear ?? "—")}</td>
-          <td>₹${amountStr}</td>
+          <td>₹${fmt(baseFee)}</td>
         </tr>
+        ${lateFeePaid > 0 ? `
+        <tr>
+          <td>Late Fee / Penalty</td>
+          <td>Overdue Charge</td>
+          <td>—</td>
+          <td>₹${fmt(lateFeePaid)}</td>
+        </tr>` : ""}
         <tr>
           <td>Gateway Charges &amp; GST</td>
           <td>Payment Processing</td>
