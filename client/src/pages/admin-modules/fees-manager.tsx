@@ -2963,36 +2963,114 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     };
   }
 
-  /** Build default fee period based on frequency + billingTiming, relative to today */
-  function defaultFeePeriod(freq: string, timing: string): { start: string; end: string } {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = now.getMonth(); // 0-indexed
+  type PeriodOption = { label: string; start: string; end: string };
+
+  /**
+   * Generate all valid fee periods within a session date range.
+   * Monthly → every month from sessionStart to sessionEnd (inclusive).
+   * Quarterly → every calendar quarter that overlaps with the session.
+   * Annual/one-time → single entry covering the full session.
+   * Returns options chronologically oldest-first.
+   */
+  function periodsForSession(freq: string, sessionStart: string, sessionEnd: string): PeriodOption[] {
+    const options: PeriodOption[] = [];
+    if (!sessionStart || !sessionEnd) return options;
+
+    const sDate = new Date(sessionStart + "T00:00:00");
+    const eDate = new Date(sessionEnd + "T00:00:00");
+
     if (freq === "monthly") {
-      const offset = timing === "arrears" ? -1 : 0;
-      const pd = new Date(y, m + offset, 1);
-      const py = pd.getFullYear(); const pm = pd.getMonth();
-      const last = new Date(py, pm + 1, 0).getDate();
-      return { start: `${py}-${String(pm + 1).padStart(2, "0")}-01`, end: `${py}-${String(pm + 1).padStart(2, "0")}-${String(last).padStart(2, "0")}` };
+      // Walk month by month from sDate to eDate
+      let cur = new Date(sDate.getFullYear(), sDate.getMonth(), 1);
+      const limit = new Date(eDate.getFullYear(), eDate.getMonth(), 1);
+      while (cur <= limit) {
+        const py = cur.getFullYear(); const pm = cur.getMonth();
+        const last = new Date(py, pm + 1, 0).getDate();
+        const start = `${py}-${String(pm + 1).padStart(2, "0")}-01`;
+        const end   = `${py}-${String(pm + 1).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
+        const label = cur.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+        options.push({ label, start, end });
+        cur = new Date(py, pm + 1, 1);
+      }
+    } else if (freq === "quarterly") {
+      // Walk quarter by quarter — each quarter whose START is ≤ session end
+      const startQI = Math.floor(sDate.getMonth() / 3);
+      let cur = new Date(sDate.getFullYear(), startQI * 3, 1);
+      while (cur <= eDate) {
+        const qy = cur.getFullYear();
+        const qi = Math.floor(cur.getMonth() / 3);
+        const b = quarterBounds(qi, qy);
+        const sm2 = new Date(qy, qi * 3, 1);
+        const em2 = new Date(qy, qi * 3 + 2, 1);
+        const label = `${sm2.toLocaleDateString("en-IN", { month: "long" })}–${em2.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}`;
+        options.push({ label, ...b });
+        cur = new Date(qy, (qi + 1) * 3, 1);
+      }
+    } else {
+      // Annual / one-time — single period = full session
+      options.push({
+        label: `${sDate.toLocaleDateString("en-IN", { month: "short", year: "numeric" })} – ${eDate.toLocaleDateString("en-IN", { month: "short", year: "numeric" })}`,
+        start: sessionStart.slice(0, 10),
+        end:   sessionEnd.slice(0, 10),
+      });
     }
-    if (freq === "quarterly") {
-      let qi = Math.floor(m / 3); let qy = y;
-      if (timing === "arrears") { if (qi === 0) { qi = 3; qy = y - 1; } else { qi--; } }
-      return quarterBounds(qi, qy);
+
+    return options;
+  }
+
+  /**
+   * Given a list of period options, pick the best default:
+   *  - the period whose start ≤ today ≤ end (current period), OR
+   *  - if today is before all periods → first option, OR
+   *  - if today is after all periods → last option.
+   */
+  function bestDefaultPeriod(options: PeriodOption[]): PeriodOption | null {
+    if (!options.length) return null;
+    const today = new Date().toISOString().slice(0, 10);
+    // Find period that contains today
+    const current = options.find(o => o.start <= today && o.end >= today);
+    if (current) return current;
+    // Today before all → first; today after all → last
+    return today < options[0].start ? options[0] : options[options.length - 1];
+  }
+
+  /**
+   * When a session is chosen in the Generate modal, compute period options
+   * for the structure's frequency and pre-select the best default period.
+   */
+  function applySessionPeriods(sessionIdStr: string, freq: string) {
+    const sess = sessions.find((s: any) => String(s.id) === sessionIdStr) as any;
+    if (!sess) return;
+    const start = String(sess.startDate ?? "").slice(0, 10);
+    const end   = String(sess.endDate   ?? "").slice(0, 10);
+    if (freq !== "monthly" && freq !== "quarterly") {
+      // Annual/one-time: period = session dates directly
+      setGenFeePeriodStart(start);
+      setGenFeePeriodEnd(end);
+    } else {
+      const opts = periodsForSession(freq, start, end);
+      const best = bestDefaultPeriod(opts);
+      if (best) { setGenFeePeriodStart(best.start); setGenFeePeriodEnd(best.end); }
     }
-    return { start: "", end: "" };
   }
 
   function openGenInvoices(s: FeeStructure) {
     setGenTarget(s);
     setGenResult(null);
-    setGenSessionId("");
     setGenClasses([...s.applicableClasses]);
     setGenDueDate(new Date().toISOString().split("T")[0]);
-    // Pre-select the correct fee period for monthly/quarterly
-    const dp = defaultFeePeriod(s.frequency, s.billingTiming ?? "advance");
-    setGenFeePeriodStart(dp.start);
-    setGenFeePeriodEnd(dp.end);
+
+    // Pre-select the active session (if one exists) and derive default period
+    const activeSess = sessions.find((x: any) => x.isActive) as any;
+    if (activeSess) {
+      const sid = String(activeSess.id);
+      setGenSessionId(sid);
+      applySessionPeriods(sid, s.frequency);
+    } else {
+      setGenSessionId("");
+      setGenFeePeriodStart("");
+      setGenFeePeriodEnd("");
+    }
   }
 
   const FREQ: Record<string, string> = { monthly: "Monthly", quarterly: "Quarterly", annual: "Annual", "one-time": "One-Time" };
@@ -3514,74 +3592,64 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                 <label className="text-xs text-white/60 mb-1 block">Academic Session</label>
                 <select value={genSessionId} onChange={e => {
                   setGenSessionId(e.target.value);
-                  // For annual/one-time: derive period from session dates when session changes
-                  const freq = genTarget!.frequency;
-                  if (freq !== "monthly" && freq !== "quarterly" && e.target.value) {
-                    const sess = sessions.find((s: any) => String(s.id) === e.target.value);
-                    if (sess) {
-                      setGenFeePeriodStart(String((sess as any).startDate ?? "").slice(0, 10));
-                      setGenFeePeriodEnd(String((sess as any).endDate ?? "").slice(0, 10));
-                    }
-                  }
+                  if (e.target.value) applySessionPeriods(e.target.value, genTarget!.frequency);
+                  else { setGenFeePeriodStart(""); setGenFeePeriodEnd(""); }
                 }}
                   className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
                   <option value="">Select session…</option>
                   {sessions.map(s => (
-                    <option key={s.id} value={s.id}>{s.sessionName}{(s as any).isActive ? " (Active)" : ""}</option>
+                    <option key={s.id} value={s.id}>{(s as any).sessionName}{(s as any).isActive ? " (Active)" : ""}</option>
                   ))}
                 </select>
               </div>
-              {/* Fee Period Picker — shown for monthly/quarterly; annual uses session dates */}
-              {(genTarget.frequency === "monthly" || genTarget.frequency === "quarterly") && (() => {
-                const freq  = genTarget.frequency;
-                const timing = genTarget.billingTiming ?? "advance";
-                const now = new Date();
-                const y = now.getFullYear();
-                const m = now.getMonth();
 
-                // Generate selectable period options: past 6 + current + next 2 (monthly); past 3 + current + next 1 (quarterly)
-                const options: Array<{ label: string; start: string; end: string }> = [];
-                if (freq === "monthly") {
-                  for (let offset = -6; offset <= 2; offset++) {
-                    const pd = new Date(y, m + offset, 1);
-                    const py = pd.getFullYear(); const pm = pd.getMonth();
-                    const last = new Date(py, pm + 1, 0).getDate();
-                    const start = `${py}-${String(pm + 1).padStart(2, "0")}-01`;
-                    const end   = `${py}-${String(pm + 1).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
-                    options.push({ label: pd.toLocaleDateString("en-IN", { month: "long", year: "numeric" }), start, end });
-                  }
-                } else {
-                  for (let offset = -3; offset <= 2; offset++) {
-                    let qi = Math.floor(m / 3) + offset; let qy = y;
-                    while (qi < 0) { qi += 4; qy--; } while (qi >= 4) { qi -= 4; qy++; }
-                    const b = quarterBounds(qi, qy);
-                    const sm2 = new Date(qy, qi * 3, 1);
-                    const em2 = new Date(qy, qi * 3 + 2, 1);
-                    options.push({ label: `${sm2.toLocaleDateString("en-IN", { month: "long" })}–${em2.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}`, ...b });
-                  }
+              {/* Fee Period Picker — session-scoped, all months/quarters within the session */}
+              {(genTarget.frequency === "monthly" || genTarget.frequency === "quarterly") && (() => {
+                const freq   = genTarget.frequency;
+                const timing = genTarget.billingTiming ?? "advance";
+
+                // Build options from the selected session's date range
+                const sess = sessions.find((s: any) => String(s.id) === genSessionId) as any;
+                const options: PeriodOption[] = sess
+                  ? periodsForSession(freq, String(sess.startDate ?? "").slice(0, 10), String(sess.endDate ?? "").slice(0, 10))
+                  : [];
+
+                if (!genSessionId) {
+                  return (
+                    <div className="p-3 rounded-lg bg-amber-900/15 border border-amber-700/30 text-xs text-amber-400/80">
+                      Select an academic session above to see available fee periods.
+                    </div>
+                  );
                 }
 
-                const selectedVal = genFeePeriodStart;
                 return (
                   <div>
                     <label className="text-xs text-white/60 mb-1 block">
                       Fee Period
-                      <span className="ml-1.5 text-indigo-400/70">{timing === "arrears" ? "(covers previous period)" : "(covers current period)"}</span>
+                      <span className="ml-1.5 text-white/30">— all {freq === "monthly" ? "months" : "quarters"} in this session</span>
                     </label>
                     <select
-                      value={selectedVal}
+                      value={genFeePeriodStart}
                       onChange={e => {
                         const opt = options.find(o => o.start === e.target.value);
                         if (opt) { setGenFeePeriodStart(opt.start); setGenFeePeriodEnd(opt.end); }
                       }}
                       className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
                     >
-                      {options.map(o => (
-                        <option key={o.start} value={o.start}>{o.label}</option>
-                      ))}
+                      {options.length === 0 && <option value="">No periods available</option>}
+                      {options.map(o => {
+                        const today = new Date().toISOString().slice(0, 10);
+                        const isCurrent = o.start <= today && o.end >= today;
+                        const isPast    = o.end < today;
+                        return (
+                          <option key={o.start} value={o.start}>
+                            {o.label}{isCurrent ? " ← current" : isPast ? " (past)" : ""}
+                          </option>
+                        );
+                      })}
                     </select>
                     <p className="text-indigo-400/60 text-[11px] mt-1">
-                      This period is stored permanently on each invoice — it identifies what period the fee covers.
+                      This period is stored permanently on each invoice. You can backfill any missed period.
                     </p>
                   </div>
                 );
@@ -3617,7 +3685,11 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                 <Button variant="ghost" onClick={() => setGenTarget(null)} className="text-white/60">Cancel</Button>
                 <Button
                   onClick={() => genMut.mutate()}
-                  disabled={genMut.isPending || !genSessionId || !genDueDate}
+                  disabled={
+                    genMut.isPending || !genSessionId || !genDueDate ||
+                    // Monthly/quarterly: must have a period selected
+                    ((genTarget?.frequency === "monthly" || genTarget?.frequency === "quarterly") && !genFeePeriodStart)
+                  }
                   className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1"
                 >
                   {genMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}

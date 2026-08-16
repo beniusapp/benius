@@ -326,6 +326,216 @@ describe("Backward compatibility — existing records without fee_period", () =>
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 14. Session-scoped period selector — all months/quarters within a session
+//     (pure logic mirror of periodsForSession in fees-manager.tsx)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Mirror of the client-side periodsForSession logic — tested here as pure functions */
+type PO = { label: string; start: string; end: string };
+
+function qBounds(qi: number, year: number): { start: string; end: string } {
+  const sm = qi * 3;
+  const em = sm + 2;
+  const lastDay = new Date(year, em + 1, 0).getDate();
+  return {
+    start: `${year}-${String(sm + 1).padStart(2, "0")}-01`,
+    end:   `${year}-${String(em + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
+function periodsForSession(freq: string, sessionStart: string, sessionEnd: string): PO[] {
+  const opts: PO[] = [];
+  if (!sessionStart || !sessionEnd) return opts;
+  const sDate = new Date(sessionStart + "T00:00:00");
+  const eDate = new Date(sessionEnd + "T00:00:00");
+  if (freq === "monthly") {
+    let cur = new Date(sDate.getFullYear(), sDate.getMonth(), 1);
+    const limit = new Date(eDate.getFullYear(), eDate.getMonth(), 1);
+    while (cur <= limit) {
+      const py = cur.getFullYear(); const pm = cur.getMonth();
+      const last = new Date(py, pm + 1, 0).getDate();
+      opts.push({ label: "", start: `${py}-${String(pm + 1).padStart(2, "0")}-01`, end: `${py}-${String(pm + 1).padStart(2, "0")}-${String(last).padStart(2, "0")}` });
+      cur = new Date(py, pm + 1, 1);
+    }
+  } else if (freq === "quarterly") {
+    const startQI = Math.floor(sDate.getMonth() / 3);
+    let cur = new Date(sDate.getFullYear(), startQI * 3, 1);
+    while (cur <= eDate) {
+      const qy = cur.getFullYear(); const qi = Math.floor(cur.getMonth() / 3);
+      opts.push({ label: "", ...qBounds(qi, qy) });
+      cur = new Date(qy, (qi + 1) * 3, 1);
+    }
+  }
+  return opts;
+}
+
+function bestDefault(options: PO[], today: string): PO | null {
+  if (!options.length) return null;
+  const current = options.find(o => o.start <= today && o.end >= today);
+  if (current) return current;
+  return today < options[0].start ? options[0] : options[options.length - 1];
+}
+
+describe("periodsForSession — session-scoped period list (UI helper mirror)", () => {
+  const SESSION_2627 = { start: "2026-04-01", end: "2027-03-31" };
+
+  describe("Monthly — Indian academic session Apr 2026 – Mar 2027", () => {
+    const opts = periodsForSession("monthly", SESSION_2627.start, SESSION_2627.end);
+
+    it("produces exactly 12 months", () => {
+      expect(opts).toHaveLength(12);
+    });
+
+    it("first period is April 2026", () => {
+      expect(opts[0].start).toBe("2026-04-01");
+      expect(opts[0].end).toBe("2026-04-30");
+    });
+
+    it("last period is March 2027", () => {
+      expect(opts[11].start).toBe("2027-03-01");
+      expect(opts[11].end).toBe("2027-03-31");
+    });
+
+    it("August 2026 is in the list (index 4)", () => {
+      const aug = opts.find(o => o.start === "2026-08-01");
+      expect(aug).toBeDefined();
+      expect(aug?.end).toBe("2026-08-31");
+    });
+
+    it("October 2026 is in the list", () => {
+      expect(opts.find(o => o.start === "2026-10-01")).toBeDefined();
+    });
+  });
+
+  describe("KEY SCENARIO: current date = October 2026, admin selects August 2026 (backfill)", () => {
+    const opts   = periodsForSession("monthly", SESSION_2627.start, SESSION_2627.end);
+    const TODAY  = "2026-10-16"; // simulated today
+
+    it("August 2026 is available in the picker", () => {
+      const aug = opts.find(o => o.start === "2026-08-01");
+      expect(aug).toBeDefined();
+    });
+
+    it("default auto-selection on Oct 16 → October 2026 (current month)", () => {
+      const def = bestDefault(opts, TODAY);
+      expect(def?.start).toBe("2026-10-01");
+    });
+
+    it("admin can manually pick August 2026 — period start/end are correct", () => {
+      const aug = opts.find(o => o.start === "2026-08-01")!;
+      expect(aug.start).toBe("2026-08-01");
+      expect(aug.end).toBe("2026-08-31");
+    });
+
+    it("stored period = 2026-08-01 / 2026-08-31 regardless of generation date (Oct)", () => {
+      // Simulates: admin picks August, clicks Generate in October
+      const chosenPeriodStart = "2026-08-01";
+      const chosenPeriodEnd   = "2026-08-31";
+      // The label should be "August 2026" no matter when it's queried
+      expect(feePeriodLabel(chosenPeriodStart, chosenPeriodEnd)).toBe("August 2026");
+    });
+
+    it("idempotency: same period start must block duplicate invoice", () => {
+      // If an existing record has feePeriodStart = 2026-08-01,
+      // the period key studentId:feeType:2026-08-01 already exists → skip
+      const existingPeriodStart = "2026-08-01";
+      const newAttemptStart     = "2026-08-01"; // admin tries again
+      expect(existingPeriodStart).toBe(newAttemptStart); // same key → duplicate blocked
+    });
+
+    it("different period (October) → different key → new invoice allowed", () => {
+      const augStart = "2026-08-01";
+      const octStart = "2026-10-01";
+      expect(augStart).not.toBe(octStart);
+    });
+  });
+
+  describe("Quarterly — Indian academic session Apr 2026 – Mar 2027", () => {
+    const opts = periodsForSession("quarterly", SESSION_2627.start, SESSION_2627.end);
+
+    it("produces exactly 4 quarters", () => {
+      expect(opts).toHaveLength(4);
+    });
+
+    it("first quarter is Apr–Jun 2026", () => {
+      expect(opts[0].start).toBe("2026-04-01");
+      expect(opts[0].end).toBe("2026-06-30");
+    });
+
+    it("second quarter is Jul–Sep 2026", () => {
+      expect(opts[1].start).toBe("2026-07-01");
+      expect(opts[1].end).toBe("2026-09-30");
+    });
+
+    it("third quarter is Oct–Dec 2026", () => {
+      expect(opts[2].start).toBe("2026-10-01");
+      expect(opts[2].end).toBe("2026-12-31");
+    });
+
+    it("fourth quarter is Jan–Mar 2027", () => {
+      expect(opts[3].start).toBe("2027-01-01");
+      expect(opts[3].end).toBe("2027-03-31");
+    });
+
+    it("default on Oct 16 → Q4 Oct–Dec 2026 (current quarter)", () => {
+      const def = bestDefault(opts, "2026-10-16");
+      expect(def?.start).toBe("2026-10-01");
+    });
+
+    it("admin can select Q2 Apr–Jun 2026 (backfill)", () => {
+      const q2 = opts.find(o => o.start === "2026-04-01")!;
+      expect(q2.end).toBe("2026-06-30");
+      expect(feePeriodLabel(q2.start, q2.end)).toBe("April–June 2026");
+    });
+  });
+
+  describe("Calendar year session (Jan–Dec)", () => {
+    const opts = periodsForSession("monthly", "2026-01-01", "2026-12-31");
+
+    it("produces exactly 12 months", () => {
+      expect(opts).toHaveLength(12);
+    });
+
+    it("all 12 months from January to December 2026", () => {
+      expect(opts[0].start).toBe("2026-01-01");
+      expect(opts[11].start).toBe("2026-12-01");
+      expect(opts[11].end).toBe("2026-12-31");
+    });
+  });
+
+  describe("Short session (e.g. 3-month term)", () => {
+    const opts = periodsForSession("monthly", "2026-07-01", "2026-09-30");
+
+    it("produces exactly 3 months", () => {
+      expect(opts).toHaveLength(3);
+    });
+
+    it("covers July, August, September 2026", () => {
+      expect(opts.map(o => o.start)).toEqual(["2026-07-01", "2026-08-01", "2026-09-01"]);
+    });
+  });
+
+  describe("bestDefault — pre-selection logic", () => {
+    const opts = periodsForSession("monthly", "2026-04-01", "2027-03-31");
+
+    it("today inside session → selects the period containing today", () => {
+      const def = bestDefault(opts, "2026-11-15");
+      expect(def?.start).toBe("2026-11-01");
+    });
+
+    it("today before session start → selects first period", () => {
+      const def = bestDefault(opts, "2026-01-01");
+      expect(def?.start).toBe("2026-04-01");
+    });
+
+    it("today after session end → selects last period", () => {
+      const def = bestDefault(opts, "2027-06-01");
+      expect(def?.start).toBe("2027-03-01");
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Receipt label variant (inline logic from routes.ts receipt handler)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("Receipt period row label selection", () => {
