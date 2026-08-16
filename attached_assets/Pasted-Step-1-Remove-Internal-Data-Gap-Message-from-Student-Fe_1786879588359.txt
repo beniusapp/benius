@@ -1,0 +1,219 @@
+Step 1 — Remove Internal Data-Gap Message from Student Fee Receipt
+
+We have completed a forensic audit of the current Student Fee Receipt.
+
+I want you to perform ONLY this single corrective change.
+
+OBJECTIVE
+
+Remove the internal development/data-gap message that is currently visible on the official student/parent receipt.
+
+The receipt must look like a complete official financial document and must never expose internal implementation notes, development phases, schema limitations, or audit messages to students/parents.
+
+---
+
+IMPORTANT — STRICT SCOPE
+
+Before changing anything:
+
+1. Inspect the current receipt-generation code.
+2. Locate the exact internal data-gap message identified in the audit.
+3. Confirm that it is part of the receipt HTML rendered to the student.
+4. Make the smallest possible change to remove it.
+
+The message identified by the audit is:
+
+«"Note: Concession/discount breakdown and fee component itemisation require an invoice-time snapshot that is not yet stored — these will be added when the data model is extended."»
+
+It is currently associated with:
+
+<p class="gap-note">
+
+and the surrounding internal comment:
+
+<!-- ── DATA GAP NOTES (Phase 4 — not yet implemented) ── -->
+
+---
+
+WHAT TO CHANGE
+
+Remove the visible "<p class="gap-note">...</p>" from the receipt HTML.
+
+You may also remove the associated ".gap-note" CSS if it becomes unused.
+
+You may remove the internal HTML comment as well.
+
+Preferred result
+
+The official receipt should contain no visible or printable reference to:
+
+- Data gap
+- Phase 4
+- Not yet implemented
+- Schema limitation
+- Invoice-time snapshot limitation
+- Concession implementation limitation
+- Fee component implementation limitation
+- Development notes
+- Audit notes
+
+---
+
+VERY IMPORTANT — DO NOT CHANGE ANYTHING ELSE
+
+Do NOT:
+
+- modify database schema
+- add migrations
+- modify "fee_records"
+- modify "fee_structures"
+- modify "payment_records"
+- modify "payment_attempts"
+- modify Razorpay processing
+- modify Razorpay webhook
+- modify Razorpay payment verification
+- modify offline payment processing
+- modify invoice generation
+- modify fee-period calculation
+- modify late-fee calculation
+- modify receipt numbering
+- modify student authorization
+- modify school/tenant authorization
+- add fee component breakdown
+- add concession/discount calculation
+- add original fee/concession fields
+- add school-information snapshots
+- add QR verification
+- change receipt calculations
+- change receipt data sources
+- change receipt layout
+- change receipt styling except removing unused CSS related specifically to the deleted gap note
+- fabricate any missing information
+
+This is NOT the implementation of concession/discount snapshots or fee-component snapshots.
+
+Those are separate future architecture tasks.
+
+---
+
+DATA INTEGRITY RULE
+
+Do not add any replacement text.
+
+If concession/discount data is not historically available, continue to behave exactly as the current system does.
+
+If fee-component snapshot data is not historically available, continue to behave exactly as the current system does.
+
+Do not attempt to reconstruct either from the current fee structure.
+
+The only purpose of this task is to remove the internal implementation note from the customer-facing receipt.
+
+---
+
+VERIFICATION
+
+After the change:
+
+1. Run the existing test suite
+
+Do not modify existing tests merely to make them pass.
+
+Report:
+
+- total tests
+- passed
+- failed
+- warnings
+
+The previous baseline was:
+
+384 / 384 passing
+
+The expected result is that all existing tests continue to pass.
+
+2. Inspect the generated receipt
+
+Verify that the receipt no longer contains:
+
+«Data gap»
+
+«Phase 4»
+
+«not yet implemented»
+
+«schema limitation»
+
+«invoice-time snapshot»
+
+«will be added»
+
+or any other internal development/audit message.
+
+3. Verify the receipt still contains all existing sections
+
+Do not accidentally remove anything else:
+
+- School header
+- Official Fee Payment Receipt title
+- Receipt number
+- Invoice number
+- Invoice date
+- Due date
+- Payment date
+- PAID status
+- Student details
+- Fee period
+- Fee table
+- Late fee where applicable
+- Total amount
+- Amount in words
+- Payment information
+- Authorization/signature
+- Computer-generated receipt disclaimer
+
+4. Verify both payment paths
+
+Check that the removal does not affect:
+
+- Online payment receipt
+- Offline payment receipt
+
+5. Verify print/PDF
+
+Open/print the receipt and confirm the internal message is completely absent from the printed/PDF version.
+
+---
+
+FINAL REPORT
+
+After completing the change, report:
+
+Files changed
+
+List the exact files changed.
+
+Exact change
+
+Explain precisely what was removed.
+
+Files NOT changed
+
+Confirm that payment, invoice, fee-period, database, Razorpay, offline payment, and authorization systems were untouched.
+
+Tests
+
+Report the exact test result.
+
+Visual verification
+
+Confirm that the official receipt no longer exposes any internal development/data-gap message.
+
+Scope confirmation
+
+Explicitly state:
+
+"Only the internal customer-facing data-gap message was removed. No financial logic, payment logic, database schema, invoice generation, fee-period calculation, or authorization logic was changed."
+
+Do not make any additional improvements during this task.
+
+Wait for my explicit approval before making any further receipt changes.

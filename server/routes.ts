@@ -5000,8 +5000,6 @@ tfoot td:last-child{text-align:right;}
 /* ── FOOTER NOTE ── */
 .fnote{padding:8px 24px 16px;text-align:center;font-size:9.5px;color:#94a3b8;border-top:1px solid #f1f5f9;line-height:1.6;}
 
-/* ── DATA GAPS NOTE ── */
-.gap-note{font-size:8.5px;color:#cbd5e1;font-style:italic;margin-top:8px;padding:0 24px 4px;}
 
 @media (max-width:600px){
   body{padding:8px;}
@@ -5136,12 +5134,6 @@ tfoot td:last-child{text-align:right;}
   <div class="words-wrap">
     <div class="words-box"><strong>Amount in Words:</strong> ${esc(amountWords)}</div>
   </div>
-
-  <!-- ── DATA GAP NOTES (Phase 4 — not yet implemented) ── -->
-  <p class="gap-note">
-    Note: Concession/discount breakdown and fee component itemisation require an invoice-time snapshot
-    that is not yet stored — these will be added when the data model is extended.
-  </p>
 
   <!-- ── AUTHORIZATION ── -->
   <div class="footer-row">
