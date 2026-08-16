@@ -3,7 +3,7 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { calculateLateFee, recalculateLateFees, DEFAULT_LATE_FEE_CONFIG, type LateFeeConfig } from "./late-fee-engine";
 import { computeFeePeriod } from "./fee-period";
-import { buildBreakdownSnapshot, buildConcessionSnapshot, warnOnSumMismatch } from "./invoice-snapshot";
+import { buildBreakdownSnapshot, warnOnSumMismatch } from "./invoice-snapshot";
 import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings, feeStructures, dunningJobStatus } from "@shared/schema";
 import { and, eq, sql, desc, or } from "drizzle-orm";
 import { z } from "zod";
@@ -624,30 +624,16 @@ export function registerFeesRoutes(app: Express) {
     name: z.string().min(1).max(100),
     feeType: z.string().min(1).max(100),
     amount: z.number().int().positive(),
-    // Optional original/gross fee before concession.
-    // When provided must be >= amount; concession_amount is derived as original_amount - amount.
-    originalAmount: z.number().int().positive().optional().nullable(),
     frequency: z.enum(["monthly", "quarterly", "annual", "one-time"]),
     // billingTiming only applies to monthly/quarterly fees:
     //   "advance" = invoice generated in the period it covers (default)
     //   "arrears" = invoice generated in the following period (charges for the prior period)
     billingTiming: z.enum(["advance", "arrears"]).default("advance"),
     applicableClasses: z.array(z.string()).default([]),
-    concessionType: z.enum(["none", "sibling", "merit", "other"]).default("none"),
-    concessionPercent: z.number().int().min(0).max(100).default(0),
     dueDayOfMonth: z.number().int().min(1).max(31).optional().nullable(),
     isActive: z.boolean().default(true),
     breakdown: z.array(breakdownItemSchema).default([]),
     lateFeeConfig: lateFeeConfigSchema.optional(),
-  }).superRefine((val, ctx) => {
-    // Cross-field validation: original_amount (when provided) must be >= amount
-    if (val.originalAmount != null && val.originalAmount < val.amount) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["originalAmount"],
-        message: `Original Fee (₹${val.originalAmount}) cannot be less than the net Amount (₹${val.amount}).`,
-      });
-    }
   });
 
   app.get("/api/admin/fees/structures", async (req, res) => {
@@ -2739,21 +2725,14 @@ export function registerFeesRoutes(app: Express) {
         .map((r: any) => [`${r.studentId}:${r.feeType}`, r])
     );
 
-    // Build the immutable component and concession snapshots once for this structure.
-    // Throws on invalid data (empty name, negative/non-finite amount, originalAmount < amount) — return 400.
+    // Build the immutable breakdown snapshot once for this structure before the student loop.
+    // Throws on invalid component data (empty name, negative/non-finite amount) — return 400.
     let breakdownSnap2: Array<{ name: string; purpose: string; amount: number }>;
-    let concessionSnap2: Record<string, unknown>;
     try {
       breakdownSnap2 = buildBreakdownSnapshot((structure as any).breakdown);
       warnOnSumMismatch(breakdownSnap2, structure.amount, `structure "${structure.name}"`);
-      concessionSnap2 = buildConcessionSnapshot({
-        originalAmount: (structure as any).originalAmount ?? null,
-        amount: structure.amount,
-        concessionType: (structure as any).concessionType ?? null,
-        concessionPercent: (structure as any).concessionPercent ?? null,
-      });
     } catch (snapErr: any) {
-      return res.status(400).json({ message: `Invalid fee structure snapshot: ${snapErr.message}` });
+      return res.status(400).json({ message: `Invalid fee component breakdown: ${snapErr.message}` });
     }
 
     let created = 0, synced = 0, skipped = 0;
@@ -2790,7 +2769,6 @@ export function registerFeesRoutes(app: Express) {
         feePeriodStart: periodStart,
         feePeriodEnd:   periodEnd,
         breakdownSnapshot: breakdownSnap2,
-        concessionSnapshot: concessionSnap2,
       } as any);
       created++;
     }
@@ -3002,11 +2980,6 @@ export function registerFeesRoutes(app: Express) {
           // The pg driver returns JSONB columns as parsed JS values; no JSON.parse needed.
           // Defensive fallback: return [] for null/undefined/non-array (pre-migration rows are []).
           breakdown: Array.isArray(feeRow.breakdown_snapshot) ? feeRow.breakdown_snapshot : [],
-          // Source: fee_records.concession_snapshot (JSONB, immutable, frozen at invoice creation).
-          // NEVER reads fee_structures for historical concession info.
-          // Defensive fallback: {} for null/undefined/non-object (legacy/admin-direct rows).
-          concessionSnapshot: (feeRow.concession_snapshot && typeof feeRow.concession_snapshot === "object" && !Array.isArray(feeRow.concession_snapshot))
-            ? feeRow.concession_snapshot : {},
         },
         payments: payRows.map(mapPayment),
         payment: payRows.length > 0 ? mapPayment(payRows[0]) : null,

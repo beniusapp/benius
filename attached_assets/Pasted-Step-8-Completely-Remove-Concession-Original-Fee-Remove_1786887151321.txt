@@ -1,0 +1,60 @@
+Step 8 — Completely Remove Concession & Original Fee
+Remove the entire concession/original-fee functionality from the application.
+Remove from Fee Structure
+Remove Original Fee (₹) — Optional field.
+Remove Concession Type.
+Remove Concession %.
+Remove all concession-related validation.
+Keep only the normal Amount (₹), which remains the final amount charged.
+Remove from Invoice Generation
+Remove concessionSnapshot creation and storage.
+Do not calculate any concession amount.
+Do not calculate original/gross fee.
+Invoice amount must continue to be fee_structures.amount.
+Keep breakdown_snapshot exactly as it currently works.
+Remove from Receipt
+Remove Original Fee row.
+Remove Concession row.
+Remove all concession-related receipt logic and CSS.
+Receipt should simply show:
+Fee components, if breakdown_snapshot exists
+Net/Final Fee (fee_records.amount)
+Late Fee/Penalty, if applicable
+Total Amount Paid
+Remove from Admin Transaction Detail
+Do not return concessionSnapshot.
+Remove all concession-related response logic.
+Keep the existing breakdown field from breakdown_snapshot.
+Database
+Remove the newly introduced concession_snapshot and original_amount columns only if doing so is safe for the existing database and no remaining code depends on them.
+Before dropping anything, search the entire codebase for:
+concessionSnapshot
+concession_snapshot
+originalAmount
+original_amount
+concessionType
+concession_type
+concessionPercent
+concession_percent
+concession_amount
+buildConcessionSnapshot
+Remove all application references.
+Important: Do NOT modify:
+fee_records.amount
+fee_structures.amount
+breakdown_snapshot
+fee component logic
+fee-period calculation
+late-fee calculation
+payment processing
+Razorpay
+offline payments
+invoice generation
+duplicate prevention
+receipts other than removing concession/original-fee display
+authorization or tenant isolation
+Final desired model:
+Fee Structure → Amount (final fee) → Generate Invoice → fee_records.amount
+No gross fee, no concession calculation, no concession snapshot, and no concession-related UI.
+Run the full test suite after the change. Do not proceed with any unrelated refactoring.
+One important point: don't remove breakdown / fee components. Those are separate from concession and are useful for showing something like Tuition ₹2,500 + Library ₹500 = ₹3,000 on the receipt.

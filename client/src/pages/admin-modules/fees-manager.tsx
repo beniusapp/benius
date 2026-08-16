@@ -55,7 +55,6 @@ interface FeeRecordWithStudent {
 }
 
 interface FeeStructure {
-  originalAmount?: number | null;
   id: number;
   schoolId: number;
   name: string;
@@ -65,8 +64,6 @@ interface FeeStructure {
   /** "advance" (default) | "arrears" — only used for monthly/quarterly */
   billingTiming: string;
   applicableClasses: string[];
-  concessionType: string;
-  concessionPercent: number;
   dueDayOfMonth: number | null;
   isActive: boolean;
   breakdown: Array<{ name: string; purpose: string; amount: number }>;
@@ -2710,7 +2707,6 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const { toast } = useToast();
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<FeeStructure | null>(null);
-  const [origAmt, setOrigAmt] = useState("");
   const [delId, setDelId] = useState<number | null>(null);
 
   const [name, setName] = useState("");
@@ -2719,8 +2715,6 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [frequency, setFrequency] = useState("annual");
   const [billingTiming, setBillingTiming] = useState("advance");
   const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
-  const [concType, setConcType] = useState("none");
-  const [concPct, setConcPct] = useState("0");
   const [dueDay, setDueDay] = useState("");
   const [isActive, setIsActive] = useState(true);
   const [breakdown, setBreakdown] = useState<Array<{ name: string; purpose: string; amount: string }>>([]);
@@ -2764,8 +2758,8 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
   function openCreate() {
     setEditing(null);
-    setName(""); setFeeType(""); setAmount(""); setOrigAmt(""); setFrequency("annual"); setBillingTiming("advance");
-    setSelectedClasses([]); setConcType("none"); setConcPct("0"); setDueDay(""); setIsActive(true);
+    setName(""); setFeeType(""); setAmount(""); setFrequency("annual"); setBillingTiming("advance");
+    setSelectedClasses([]); setDueDay(""); setIsActive(true);
     setBreakdown([]);
     setLateFeeEnabled(false); setLateFeeType("FLAT"); setLateFeeGraceDays("0");
     setLateFeeFlat("0"); setLateFeeDailyRate("0"); setLateFeeCap("0"); setLateFeeSlabs([]);
@@ -2775,11 +2769,9 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   function openEdit(s: FeeStructure) {
     setEditing(s);
     setName(s.name); setFeeType(s.feeType); setAmount(String(s.amount));
-    setOrigAmt(s.originalAmount != null ? String(s.originalAmount) : "");
     setFrequency(s.frequency);
     setBillingTiming(s.billingTiming ?? "advance");
-    setSelectedClasses([...s.applicableClasses]); setConcType(s.concessionType);
-    setConcPct(String(s.concessionPercent));
+    setSelectedClasses([...s.applicableClasses]);
     if (s.dueDayOfMonth) {
       const now = new Date();
       const y = now.getFullYear();
@@ -2809,21 +2801,12 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       const parsedBreakdown = breakdown
         .filter(b => b.name.trim())
         .map(b => ({ name: b.name.trim(), purpose: b.purpose.trim(), amount: parseInt(b.amount) || 0 }));
-      // UI validation: originalAmount (when provided) must be >= net amount
-      const parsedOrigAmt = origAmt.trim() ? parseInt(origAmt) : null;
-      const parsedAmt = parseInt(amount);
-      if (parsedOrigAmt != null && Number.isFinite(parsedOrigAmt) && Number.isFinite(parsedAmt) && parsedOrigAmt < parsedAmt) {
-        throw new Error(`Original Fee (₹${parsedOrigAmt}) cannot be less than the net Amount (₹${parsedAmt}).`);
-      }
       const payload = {
-        name, feeType, amount: parsedAmt,
-        // Optional original/gross fee before concession. null = not provided.
-        originalAmount: (parsedOrigAmt != null && Number.isFinite(parsedOrigAmt) && parsedOrigAmt > 0) ? parsedOrigAmt : null,
+        name, feeType, amount: parseInt(amount),
         frequency,
         // billingTiming only matters for monthly/quarterly; ignored for annual/one-time
         billingTiming: (frequency === "monthly" || frequency === "quarterly") ? billingTiming : "advance",
         applicableClasses: selectedClasses,
-        concessionType: concType, concessionPercent: parseInt(concPct) || 0,
         dueDayOfMonth: dueDay ? new Date(dueDay + "T00:00:00").getDate() : null, isActive,
         breakdown: parsedBreakdown,
         lateFeeConfig: {
@@ -3099,9 +3082,6 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                 {s.applicableClasses.length > 0 && (
                   <div><p className="text-white/40 mb-0.5">Classes</p><p className="text-white/70 truncate">{s.applicableClasses.join(", ")}</p></div>
                 )}
-                {s.concessionType !== "none" && (
-                  <div><p className="text-white/40 mb-0.5">Concession</p><p className="text-white/70">{CONC[s.concessionType]} {s.concessionPercent}%</p></div>
-                )}
                 {s.dueDayOfMonth != null && (
                   <div><p className="text-white/40 mb-0.5">Due Day</p><p className="text-white/70">{s.dueDayOfMonth}<sup>th</sup></p></div>
                 )}
@@ -3153,29 +3133,9 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-white/60 mb-1 block">Amount (₹) <span className="text-white/30">(Net / Final)</span></label>
+                <label className="text-xs text-white/60 mb-1 block">Amount (₹)</label>
                 <input type="number" value={amount} onChange={e => setAmount(e.target.value)} min={1} placeholder="0"
                   className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
-              </div>
-              <div>
-                <label className="text-xs text-white/60 mb-1 block">
-                  Original Fee (₹) <span className="text-white/30">— Optional</span>
-                </label>
-                <input
-                  type="number" value={origAmt} onChange={e => setOrigAmt(e.target.value)} min={1} placeholder="Enter if concession applies"
-                  className={`w-full bg-[#0A1628] border rounded-lg px-3 py-2 text-sm text-white focus:outline-none placeholder:text-white/20 ${
-                    origAmt && parseInt(origAmt) < parseInt(amount || "0")
-                      ? "border-red-500/70 focus:border-red-500"
-                      : "border-white/20 focus:border-cyan-500"
-                  }`}
-                />
-                {origAmt && parseInt(origAmt) > 0 && parseInt(origAmt) < parseInt(amount || "0") ? (
-                  <p className="text-red-400 text-xs mt-1">Original Fee must be ≥ net Amount (₹{amount})</p>
-                ) : origAmt && parseInt(origAmt) > 0 ? (
-                  <p className="text-white/30 text-xs mt-1">Concession: ₹{parseInt(origAmt) - (parseInt(amount) || 0)}</p>
-                ) : (
-                  <p className="text-white/25 text-xs mt-1">Fee before concession, if applicable</p>
-                )}
               </div>
               <div>
                 <label className="text-xs text-white/60 mb-1 block">Frequency</label>
@@ -3234,21 +3194,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                 </div>
               )}
             </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="text-xs text-white/60 mb-1 block">Concession</label>
-                <select value={concType} onChange={e => setConcType(e.target.value)}
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
-                  {Object.entries(CONC).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                </select>
-              </div>
-              {concType !== "none" && (
-                <div>
-                  <label className="text-xs text-white/60 mb-1 block">Percent %</label>
-                  <input type="number" value={concPct} onChange={e => setConcPct(e.target.value)} min={0} max={100}
-                    className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
-                </div>
-              )}
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-white/60 mb-1 block">Due Date</label>
                 <input type="date" value={dueDay} onChange={e => setDueDay(e.target.value)}

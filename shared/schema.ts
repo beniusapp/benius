@@ -647,11 +647,6 @@ export const feeRecords = pgTable("fee_records", {
   // Legacy and admin-direct invoices default to [] (empty — no component table shown on receipt).
   // Shape matches fee_structures.breakdown exactly: { name, purpose, amount }.
   breakdownSnapshot: jsonb("breakdown_snapshot").$type<Array<{ name: string; purpose: string; amount: number }>>().notNull().default([]),
-  // Immutable concession snapshot at invoice-creation time.
-  // Written once when the invoice is generated from a fee structure that has original_amount set.
-  // Legacy / admin-direct / no-concession invoices default to {} (no concession section shown).
-  // Shape: { original_amount, concession_amount, concession_type, concession_percent } | {}
-  concessionSnapshot: jsonb("concession_snapshot").$type<Record<string, unknown>>().notNull().default({}),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
 });
@@ -1014,14 +1009,8 @@ export const feeStructures = pgTable("fee_structures", {
   name: varchar("name", { length: 100 }).notNull(),
   feeType: varchar("fee_type", { length: 100 }).notNull(),
   amount: integer("amount").notNull(),
-  // Optional original/gross fee before concession.  NULL means no concession is configured.
-  // fee_structures.amount always retains its meaning as the final/net fee charged to the student.
-  // When provided: original_amount >= amount; concession_amount = original_amount - amount.
-  originalAmount: integer("original_amount"),
   frequency: varchar("frequency", { length: 20 }).notNull().default("annual"),
   applicableClasses: text("applicable_classes").array().notNull().default([]),
-  concessionType: varchar("concession_type", { length: 20 }).notNull().default("none"),
-  concessionPercent: integer("concession_percent").notNull().default(0),
   dueDayOfMonth: integer("due_day_of_month"),
   isActive: boolean("is_active").notNull().default(true),
   breakdown: jsonb("breakdown").$type<Array<{ name: string; purpose: string; amount: number }>>().notNull().default([]),
