@@ -1318,6 +1318,10 @@ const feeFormSchema = z.object({
   receiptNumber: z.string().optional(),
   notes: z.string().optional(),
   academicYear: z.string().optional(),
+  // Fee period: required when creating a new invoice (create mode), optional in edit mode.
+  // Stored as ISO date strings (YYYY-MM-DD) matching fee_records.fee_period_start/end.
+  feePeriodStart: z.string().optional(),
+  feePeriodEnd: z.string().optional(),
 }).superRefine((val, ctx) => {
   const noDeadlineNeeded = val.status === "Paid" || val.status === "Waived";
   if (!noDeadlineNeeded && !val.dueDate) {
@@ -1325,6 +1329,22 @@ const feeFormSchema = z.object({
   }
 });
 type FeeFormValues = z.infer<typeof feeFormSchema>;
+
+/** Client-side mirror of server/fee-period.ts feePeriodLabel — used for period preview in the form. */
+function clientFeePeriodLabel(start: string, end: string): string {
+  if (!start || !end) return "";
+  const s = new Date(start + "T00:00:00");
+  const e = new Date(end   + "T00:00:00");
+  const days = Math.round((e.getTime() - s.getTime()) / 86400000);
+  if (days <= 31)
+    return s.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+  if (days <= 92) {
+    const startLabel = s.toLocaleDateString("en-IN", { month: "long" });
+    const endLabel   = e.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+    return `${startLabel}–${endLabel}`;
+  }
+  return `${s.getFullYear()}–${String(s.getFullYear() + 1).slice(2)}`;
+}
 
 // ─── Ledger Tab ───────────────────────────────────────────────────────────────
 
@@ -1683,10 +1703,13 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
   const form = useForm<FeeFormValues>({
     resolver: zodResolver(feeFormSchema),
-    defaultValues: { studentId: "", feeType: "", amount: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: "" },
+    defaultValues: { studentId: "", feeType: "", amount: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: "", feePeriodStart: "", feePeriodEnd: "" },
   });
   const watchStatus = form.watch("status");
   const dueDateNotNeeded = watchStatus === "Paid" || watchStatus === "Waived";
+  const watchPeriodStart = form.watch("feePeriodStart") ?? "";
+  const watchPeriodEnd   = form.watch("feePeriodEnd")   ?? "";
+  const feePeriodPreview = clientFeePeriodLabel(watchPeriodStart, watchPeriodEnd);
 
   // Auto-clear due date when status makes it irrelevant
   useEffect(() => {
@@ -1695,11 +1718,22 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
   const createMut = useMutation({
     mutationFn: async (data: FeeFormValues) => {
+      if (!data.feePeriodStart || !data.feePeriodEnd) throw new Error("Fee period is required");
       const res = await apiRequest("POST", "/api/admin/fees", {
-        studentId: Number(data.studentId), feeType: data.feeType, amount: Number(data.amount),
-        dueDate: data.dueDate, status: data.status, paidDate: data.paidDate || null,
-        receiptNumber: data.receiptNumber || null, notes: data.notes || null, academicYear: data.academicYear || null,
+        studentId: Number(data.studentId),
+        feeType: data.feeType,
+        amount: Number(data.amount),
+        dueDate: data.dueDate,
+        feePeriodStart: data.feePeriodStart,
+        feePeriodEnd:   data.feePeriodEnd,
+        notes: data.notes || null,
+        academicYear: data.academicYear || null,
+        // status is NOT sent — server always creates new invoices as "Due"
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message ?? "Failed to create invoice");
+      }
       return res.json();
     },
     onSuccess: (rec: any) => {
@@ -1831,14 +1865,19 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
   function openCreate() {
     setEditing(null);
-    form.reset({ studentId: "", feeType: "", amount: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: selectedSession?.sessionName ?? "" });
+    form.reset({ studentId: "", feeType: "", amount: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: selectedSession?.sessionName ?? "", feePeriodStart: "", feePeriodEnd: "" });
     setSelectedStudent(null); setStudentSearchCls(""); setStudentSearchQ(""); setStudentResults(null);
     setShowForm(true);
   }
 
   function openEdit(rec: FeeRecordWithStudent) {
     setEditing(rec);
-    form.reset({ studentId: String(rec.studentId), feeType: rec.feeType, amount: String(rec.amount), dueDate: rec.dueDate, status: rec.status as any, paidDate: rec.paidDate ?? "", receiptNumber: rec.receiptNumber ?? "", notes: rec.notes ?? "", academicYear: rec.academicYear ?? "" });
+    form.reset({
+      studentId: String(rec.studentId), feeType: rec.feeType, amount: String(rec.amount),
+      dueDate: rec.dueDate, status: rec.status as any, paidDate: rec.paidDate ?? "",
+      receiptNumber: rec.receiptNumber ?? "", notes: rec.notes ?? "", academicYear: rec.academicYear ?? "",
+      feePeriodStart: (rec as any).feePeriodStart ?? "", feePeriodEnd: (rec as any).feePeriodEnd ?? "",
+    });
     setSelectedStudent(students.find(s => s.id === rec.studentId) ?? null);
     setStudentSearchCls(""); setStudentSearchQ(""); setStudentResults(null);
     setShowForm(true);
@@ -2632,23 +2671,67 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   </FormItem>
                 )} />
               </div>
+              {/* Fee Period — shown only for new invoices; not editable in edit flow */}
+              {!editing && (
+                <div>
+                  <label className="text-sm font-medium text-white/70 block mb-1.5">
+                    Fee Period <span className="text-red-400">*</span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField control={form.control} name="feePeriodStart" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-white/50 text-xs">Start</FormLabel>
+                        <FormControl>
+                          <Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" />
+                        </FormControl>
+                        <FormMessage className="text-red-400" />
+                      </FormItem>
+                    )} />
+                    <FormField control={form.control} name="feePeriodEnd" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-white/50 text-xs">End</FormLabel>
+                        <FormControl>
+                          <Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" />
+                        </FormControl>
+                        <FormMessage className="text-red-400" />
+                      </FormItem>
+                    )} />
+                  </div>
+                  {feePeriodPreview && (
+                    <p className="mt-1.5 text-xs text-cyan-400/80 flex items-center gap-1">
+                      <span className="text-white/30">→</span> {feePeriodPreview}
+                    </p>
+                  )}
+                </div>
+              )}
+              {/* Status — only shown when editing; new invoices always start as "Due" */}
               <div className="grid grid-cols-2 gap-3">
-                <FormField control={form.control} name="status" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-white/70">Status</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger className="bg-[#0A1628] border-white/20 text-white"><SelectValue /></SelectTrigger>
-                      </FormControl>
-                      <SelectContent className="bg-[#1A2942] border-white/10">
-                        {["Due","Paid","Overdue","Partial","Waived"].map(s => (
-                          <SelectItem key={s} value={s} className="text-white focus:bg-white/10">{s}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage className="text-red-400" />
-                  </FormItem>
-                )} />
+                {editing ? (
+                  <FormField control={form.control} name="status" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-white/70">Status</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger className="bg-[#0A1628] border-white/20 text-white"><SelectValue /></SelectTrigger>
+                        </FormControl>
+                        <SelectContent className="bg-[#1A2942] border-white/10">
+                          {["Due","Paid","Overdue","Partial","Waived"].map(s => (
+                            <SelectItem key={s} value={s} className="text-white focus:bg-white/10">{s}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage className="text-red-400" />
+                    </FormItem>
+                  )} />
+                ) : (
+                  <div>
+                    <label className="text-sm font-medium text-white/70 block mb-1.5">Status</label>
+                    <div className="px-3 py-2 rounded-lg bg-emerald-900/20 border border-emerald-700/40 text-emerald-400 text-sm font-medium">
+                      Due
+                    </div>
+                    <p className="text-white/30 text-xs mt-1">Set automatically</p>
+                  </div>
+                )}
                 <FormField control={form.control} name="dueDate" render={({ field }) => (
                   <FormItem>
                     <FormLabel className={dueDateNotNeeded ? "text-white/30" : "text-white/70"}>
@@ -2662,11 +2745,11 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   </FormItem>
                 )} />
               </div>
-              {(watchStatus === "Paid" || watchStatus === "Partial") && (
+              {editing && (watchStatus === "Paid" || watchStatus === "Partial") && (
                 <FormField control={form.control} name="paidDate" render={({ field }) => (
                   <FormItem>
                     <FormLabel className="text-white/70">Paid Date</FormLabel>
-                    <FormControl><Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white" /></FormControl>
+                    <FormControl><Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" /></FormControl>
                   </FormItem>
                 )} />
               )}
@@ -2688,7 +2771,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                 <Button type="button" variant="ghost" onClick={() => { setShowForm(false); setEditing(null); }} className="text-white/60">Cancel</Button>
                 <Button type="submit" disabled={createMut.isPending || updateMut.isPending} className="bg-cyan-600 hover:bg-cyan-500 text-white">
                   {(createMut.isPending || updateMut.isPending) && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
-                  {editing ? "Save Changes" : "Create Record"}
+                  {editing ? "Save Changes" : "Create Invoice"}
                 </Button>
               </div>
             </form>
