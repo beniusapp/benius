@@ -2159,11 +2159,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                           }
                           return null;
                         })()}
-                        {canRecord && !isArchiveMode && (
-                          <Button size="icon" variant="ghost" onClick={() => openEdit(rec)} className="h-7 w-7 text-white/40 hover:text-white">
-                            <Pencil className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
                       </div>
                     </td>
                   </tr>
