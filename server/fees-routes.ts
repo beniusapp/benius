@@ -800,7 +800,6 @@ export function registerFeesRoutes(app: Express) {
     amount: z.number().int().positive(),
     cashierNotes: z.string().max(500).optional().nullable(),
     idempotencyKey: z.string().max(64).optional().nullable(),
-    adminPassword: z.string().optional(),
     lateFeePaid: z.number().int().min(0).default(0),
   });
 
@@ -879,19 +878,7 @@ export function registerFeesRoutes(app: Express) {
     const parsed = paymentBodySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
 
-    const { adminPassword, idempotencyKey, ...paymentData } = parsed.data;
-
-    // High-value re-auth (>= ₹10,000)
-    if (paymentData.amount >= 10000) {
-      if (!adminPassword) {
-        return res.status(402).json({ message: "High-value payment requires admin password confirmation", requiresConfirm: true });
-      }
-      const [user] = await db.select({ passwordHash: users.passwordHash }).from(users)
-        .where(eq(users.id, req.session.userId!));
-      if (!user?.passwordHash || !(await bcrypt.compare(adminPassword, user.passwordHash))) {
-        return res.status(403).json({ message: "Incorrect admin password" });
-      }
-    }
+    const { idempotencyKey, ...paymentData } = parsed.data;
 
     // Tenant ownership: verify studentId belongs to this school
     const [studentCheck] = await db.select({ id: students.id })

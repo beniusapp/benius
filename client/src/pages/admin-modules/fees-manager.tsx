@@ -328,11 +328,8 @@ interface RecordPaymentModalProps {
 
 function RecordPaymentModal({ open, onClose, feeRecord, onSuccess }: RecordPaymentModalProps) {
   const { toast } = useToast();
-  const [step, setStep] = useState<"form" | "confirm" | "done">("form");
+  const [step, setStep] = useState<"form" | "done">("form");
   const [lastPaymentId, setLastPaymentId] = useState<number | null>(null);
-  const [pendingPayload, setPendingPayload] = useState<any>(null);
-  const [adminPwd, setAdminPwd] = useState("");
-  const [pwdError, setPwdError] = useState("");
   const [overpaymentError, setOverpaymentError] = useState<string | null>(null);
 
   const { selectedSession } = useSessionView();
@@ -376,8 +373,7 @@ function RecordPaymentModal({ open, onClose, feeRecord, onSuccess }: RecordPayme
     setAmount(String(feeRecord.amount + fine));
     setFeeNotes(feeRecord.notes ?? "");
     setStep("form");
-    setLastPaymentId(null); setPendingPayload(null);
-    setAdminPwd(""); setPwdError("");
+    setLastPaymentId(null);
     setMethod("Cash"); setRef("");
     setDate(new Date().toISOString().split("T")[0]);
     setOverpaymentError(null);
@@ -394,9 +390,7 @@ function RecordPaymentModal({ open, onClose, feeRecord, onSuccess }: RecordPayme
       const body = await r.json();
       if (!r.ok) {
         const err: any = new Error(body.message ?? "Failed");
-        err.requiresConfirm = body.requiresConfirm;
         err.overpaymentGuard = body.overpaymentGuard;
-        err.payload = payload;
         throw err;
       }
       return body;
@@ -412,8 +406,7 @@ function RecordPaymentModal({ open, onClose, feeRecord, onSuccess }: RecordPayme
       setStep("done");
     },
     onError: (e: any) => {
-      if (e.requiresConfirm) { setPendingPayload(e.payload); setStep("confirm"); }
-      else if (e.overpaymentGuard) { setOverpaymentError(e.message); setStep("form"); }
+      if (e.overpaymentGuard) { setOverpaymentError(e.message); setStep("form"); }
       else toast({ title: "Error", description: e.message, variant: "destructive" });
     },
   });
@@ -441,7 +434,7 @@ function RecordPaymentModal({ open, onClose, feeRecord, onSuccess }: RecordPayme
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-cyan-400">
             <Receipt className="w-5 h-5" />
-            {step === "confirm" ? "Confirm High-Value Payment" : "Record Offline Payment"}
+            Record Offline Payment
           </DialogTitle>
         </DialogHeader>
 
@@ -527,12 +520,6 @@ function RecordPaymentModal({ open, onClose, feeRecord, onSuccess }: RecordPayme
               </div>
             )}
 
-            {amtNum >= 10000 && (
-              <div className="p-3 rounded-lg bg-amber-900/20 border border-amber-700/40 text-xs text-amber-400">
-                ⚠️ Payments ≥ ₹10,000 require admin password confirmation in the next step.
-              </div>
-            )}
-
             {remainingBalance !== null && amtNum > remainingBalance && !overpaymentError && (
               <div className="p-3 rounded-lg bg-yellow-900/20 border border-yellow-600/40 text-xs text-yellow-400 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -554,30 +541,6 @@ function RecordPaymentModal({ open, onClose, feeRecord, onSuccess }: RecordPayme
                 className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1">
                 {mut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Receipt className="w-4 h-4" />}
                 Record Payment
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {step === "confirm" && (
-          <div className="space-y-4">
-            <div className="p-3 rounded-lg bg-amber-900/20 border border-amber-700/40">
-              <p className="text-amber-400 text-sm font-semibold">High-Value Transaction</p>
-              <p className="text-white/60 text-xs mt-1">Re-authentication required for {fmt(amtNum)} payment.</p>
-            </div>
-            <div>
-              <label className="text-xs text-white/60 mb-1 flex items-center gap-1 block"><Lock className="w-3 h-3" /> Admin Password</label>
-              <input type="password" value={adminPwd} onChange={e => { setAdminPwd(e.target.value); setPwdError(""); }} autoFocus
-                className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
-              {pwdError && <p className="text-red-400 text-xs mt-1">{pwdError}</p>}
-            </div>
-            <div className="flex gap-2 justify-end">
-              <Button variant="ghost" onClick={() => setStep("form")} className="text-white/60">Back</Button>
-              <Button onClick={() => { setPwdError(""); mut.mutate({ ...pendingPayload, adminPassword: adminPwd }); }}
-                disabled={!adminPwd || mut.isPending}
-                className="bg-amber-600 hover:bg-amber-500 text-white gap-1">
-                {mut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
-                Confirm
               </Button>
             </div>
           </div>
@@ -618,7 +581,7 @@ interface StandaloneOfflinePayModalProps {
 
 function StandaloneOfflinePayModal({ open, onClose, students, onSuccess }: StandaloneOfflinePayModalProps) {
   const { toast } = useToast();
-  type Step = "search" | "select" | "payment" | "confirm" | "done";
+  type Step = "search" | "select" | "payment" | "done";
   const [step, setStep] = useState<Step>("search");
 
   // Student search
@@ -639,10 +602,6 @@ function StandaloneOfflinePayModal({ open, onClose, students, onSuccess }: Stand
   const [ref,      setRef]      = useState("");
   const [date,     setDate]     = useState(() => new Date().toISOString().split("T")[0]);
   const [notes,    setNotes]    = useState("");
-
-  // High-value confirm
-  const [adminPwd, setAdminPwd] = useState("");
-  const [pwdError, setPwdError] = useState("");
 
   // Multi-submit state
   const [submitting,   setSubmitting]   = useState(false);
@@ -666,7 +625,6 @@ function StandaloneOfflinePayModal({ open, onClose, students, onSuccess }: Stand
     setInvoices([]); setInvoicesLoading(false);
     setSelectedIds(new Set());
     setMethod("Cash"); setRef(""); setDate(new Date().toISOString().split("T")[0]); setNotes("");
-    setAdminPwd(""); setPwdError("");
     setSubmitting(false); setSubmitError(null); setDonePayments([]);
     setBaseKey(`idem-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   }, [open]);
@@ -688,7 +646,6 @@ function StandaloneOfflinePayModal({ open, onClose, students, onSuccess }: Stand
 
   const selectedInvoices = invoices.filter(i => selectedIds.has(i.id));
   const totalAmount      = selectedInvoices.reduce((s, i) => s + i.totalDue, 0);
-  const hasHighValue     = selectedInvoices.some(i => i.totalDue >= 10000);
 
   function toggleInvoice(id: number) {
     setSelectedIds(prev => {
@@ -698,7 +655,7 @@ function StandaloneOfflinePayModal({ open, onClose, students, onSuccess }: Stand
     });
   }
 
-  async function doSubmit(password?: string) {
+  async function doSubmit() {
     setSubmitting(true);
     setSubmitError(null);
     const results: typeof donePayments = [];
@@ -715,7 +672,6 @@ function StandaloneOfflinePayModal({ open, onClose, students, onSuccess }: Stand
         cashierNotes:    notes || null,
         idempotencyKey:  `${baseKey}-${inv.id}`,
       };
-      if (password) payload.adminPassword = password;
 
       try {
         const r    = await sessionFetch("/api/admin/fees/payments", {
@@ -726,12 +682,6 @@ function StandaloneOfflinePayModal({ open, onClose, students, onSuccess }: Stand
         const body = await r.json();
 
         if (!r.ok) {
-          if (body.requiresConfirm && !password) {
-            // Need admin password — go to confirm step
-            setSubmitting(false);
-            setStep("confirm");
-            return;
-          }
           throw new Error(body.message ?? "Payment failed");
         }
 
@@ -774,9 +724,7 @@ function StandaloneOfflinePayModal({ open, onClose, students, onSuccess }: Stand
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-cyan-400">
             <Banknote className="w-5 h-5" />
-            {step === "confirm" ? "Confirm High-Value Payment"
-              : step === "done"    ? "Payments Recorded"
-              : "Record Offline Payment"}
+            {step === "done" ? "Payments Recorded" : "Record Offline Payment"}
           </DialogTitle>
         </DialogHeader>
 
@@ -982,12 +930,6 @@ function StandaloneOfflinePayModal({ open, onClose, students, onSuccess }: Stand
                 className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
             </div>
 
-            {hasHighValue && (
-              <div className="p-3 rounded-lg bg-amber-900/20 border border-amber-700/40 text-xs text-amber-400">
-                ⚠️ One or more invoices are ≥ ₹10,000 — admin password confirmation required.
-              </div>
-            )}
-
             {submitError && (
               <div className="p-3 rounded-lg bg-red-900/30 border border-red-600/50 text-xs text-red-400 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -1008,36 +950,7 @@ function StandaloneOfflinePayModal({ open, onClose, students, onSuccess }: Stand
           </div>
         )}
 
-        {/* ── Step 4: High-value confirm ──────────────────────────────────────── */}
-        {step === "confirm" && (
-          <div className="space-y-4">
-            <div className="p-3 rounded-lg bg-amber-900/20 border border-amber-700/40">
-              <p className="text-amber-400 text-sm font-semibold">High-Value Transaction</p>
-              <p className="text-white/60 text-xs mt-1">Re-authentication required for payments ≥ ₹10,000.</p>
-            </div>
-            <div>
-              <label className="text-xs text-white/60 mb-1 flex items-center gap-1 block"><Lock className="w-3 h-3" /> Admin Password</label>
-              <input type="password" value={adminPwd} onChange={e => { setAdminPwd(e.target.value); setPwdError(""); }} autoFocus
-                className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
-              {pwdError && <p className="text-red-400 text-xs mt-1">{pwdError}</p>}
-            </div>
-            {submitError && (
-              <div className="p-3 rounded-lg bg-red-900/30 border border-red-600/50 text-xs text-red-400">{submitError}</div>
-            )}
-            <div className="flex gap-2 justify-end">
-              <Button variant="ghost" onClick={() => setStep("payment")} className="text-white/60">Back</Button>
-              <Button
-                disabled={!adminPwd || submitting}
-                onClick={() => { setPwdError(""); doSubmit(adminPwd); }}
-                className="bg-amber-600 hover:bg-amber-500 text-white gap-1">
-                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
-                Confirm
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* ── Step 5: Done ────────────────────────────────────────────────────── */}
+        {/* ── Step 4: Done ────────────────────────────────────────────────────── */}
         {step === "done" && (
           <div className="space-y-4">
             <div className="p-4 rounded-xl bg-emerald-900/20 border border-emerald-700/40 text-center">
