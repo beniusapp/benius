@@ -1,0 +1,186 @@
+Update the Fee Reminder / Dunning System UI based on the existing production-ready implementation.
+
+Objective
+
+Remove the “Run Simulation” button from the normal school-admin-facing Fees & Payments → Reminders page.
+
+The automatic dunning system must continue working exactly as it does now. This is a UI-only change. Do not break, remove, or modify the underlying simulation functionality, automated cron, reminder engine, provider integrations, or tests.
+
+Required Changes
+
+1. Remove the “Run Simulation” button
+   
+   - Remove the visible "Run Simulation" button/action from the admin Reminders page.
+   - The admin should only see the normal production configuration controls.
+   - Do not show the Simulation Results modal to normal admins because there will no longer be a UI action that opens it.
+
+2. DO NOT delete the simulation backend
+   
+   - Keep all existing simulation functions/API endpoints.
+   - Keep the "simulated" dunning-log status.
+   - Keep all simulation-related tests.
+   - Do not modify simulation logic.
+   - Simulation may remain available internally for developer/QA testing.
+
+3. DO NOT modify the automatic reminder engine
+   The following must remain completely unchanged:
+   
+   - Hourly cron: "5 * * * *"
+   - Startup dunning execution
+   - IST calendar-date calculation
+   - Stages:
+     - "D-2"
+     - "D+0"
+     - "D+3"
+     - "D+7"
+     - "D+14"
+   - 2-day catch-up
+   - "feeRecordId + channel + stage" deduplication
+   - Paid/Waived final status re-check
+   - Deleted-invoice protection
+   - Multi-tenant "schoolId" isolation
+   - Provider timeout
+   - Retry mechanism
+   - SMS/WhatsApp/Email validation
+   - Late-fee-inclusive amount calculation
+   - INR/date formatting
+   - D30 historical preservation / never generating new D30
+
+4. Improve the admin-facing explanation
+
+Replace the simulation-oriented UI messaging with a clear production message explaining that reminders are automatic.
+
+For example:
+
+Automatic Reminder System
+
+«Reminders are processed automatically every hour based on the configured schedule. No manual action is required.»
+
+The wording can be adjusted to match the existing UI design, but it must clearly communicate that the admin does not need to manually run anything.
+
+5. Improve “Last run” wording
+
+If the existing UI displays something like:
+
+«Last run: 17 Aug 2026, 06:23 pm»
+
+Change the label to something clearer, such as:
+
+«Last automatic check: 17 Aug 2026, 6:23 PM IST»
+
+If the backend already provides the timestamp, use that existing value. Do not invent a timestamp.
+
+If practical with the existing data, also show:
+
+«Automatic checks run every hour.»
+
+Do not add a fake “next run” time unless the application already has a reliable source for calculating/displaying it.
+
+6. Keep the existing provider configuration UI
+
+The admin should still be able to configure:
+
+- SMS via MSG91
+- WhatsApp via MSG91
+- Email
+- Enable/disable each provider
+- Save Settings
+- Message templates
+
+Do not remove or redesign these unnecessarily.
+
+7. Keep Recent Deliveries
+
+The existing Recent Deliveries section should remain.
+
+It should continue showing actual automatic reminder activity, including:
+
+- Student
+- Invoice
+- Channel
+- Stage
+- Recipient
+- Timestamp
+- Status
+- Failure reason where applicable
+
+Simulation records should not be presented as actual successful deliveries.
+
+Important Product Rule
+
+The production admin must never need to click a button to trigger the normal reminder process.
+
+The intended workflow is:
+
+Admin configures provider credentials
+↓
+Admin enables the desired channels
+↓
+Admin clicks Save Settings
+↓
+The system automatically processes reminders
+↓
+Hourly cron checks eligible invoices
+↓
+Correct stage is determined using IST
+↓
+Catch-up handles eligible missed reminders
+↓
+Payment status is re-checked
+↓
+Provider notification is sent
+↓
+Delivery is logged
+
+Do Not Make These Changes
+
+Do NOT:
+
+- remove the simulation backend
+- remove simulation tests
+- remove "simulated" status
+- remove cron execution
+- add a manual “Run Reminders” button
+- add a manual trigger requirement
+- change reminder stages
+- change catch-up behavior
+- change provider logic
+- change database schema unnecessarily
+- change payment logic
+- change invoice logic
+- change multi-tenant isolation
+- weaken any existing production safeguards
+
+Testing
+
+After making the UI change:
+
+1. Run the complete existing test suite:
+   "npx vitest run"
+
+2. Confirm all existing tests still pass.
+
+3. Verify that:
+   
+   - "Run Simulation" is no longer visible in the normal admin UI.
+   - Provider configuration still works.
+   - Save Settings still works.
+   - Recent Deliveries still works.
+   - Automatic cron configuration remains unchanged.
+   - Simulation backend/API still exists.
+   - Simulation tests still exist and pass.
+
+4. Search the relevant frontend code to ensure there is no remaining visible production-admin action that triggers simulation.
+
+Final Response
+
+After implementation, report:
+
+- exact files changed
+- what UI was removed
+- confirmation that simulation backend was preserved
+- confirmation that automatic dunning was not changed
+- test files/tests passed
+- any remaining issue, if any
+
+This is intended to be a small production UI cleanup, not a rewrite of the dunning system.

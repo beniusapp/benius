@@ -127,22 +127,6 @@ interface DunningTemplateRow {
   subjectText: string | null;
 }
 
-interface SimResult {
-  totalFees: number;
-  entriesLogged: number;
-  byChannel: Record<string, { would_send: number; missing_contact: number }>;
-  entries: Array<{
-    studentName: string;
-    feeType: string;
-    amount: number;
-    dueDate: string;
-    stage: string;
-    channel: string;
-    recipient: string | null;
-    issue: string | null;
-  }>;
-}
-
 interface DunningJobStatusData {
   isRunning: boolean;
   startedAt: string | null;
@@ -3852,10 +3836,6 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [testRecipient,setTestRecipient]= useState("");
   const [testOpen,     setTestOpen]     = useState(false);
 
-  // Simulation state
-  const [simResult, setSimResult] = useState<SimResult | null>(null);
-  const [simOpen,   setSimOpen]   = useState(false);
-
   // Template editor state — keyed "stage|channel"
   const [templateDraft, setTemplateDraft] = useState<Record<string, { bodyText: string; subjectText: string }>>({});
   const [templatesSynced, setTemplatesSynced] = useState(false);
@@ -3993,16 +3973,6 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     onError: (e: Error) => toast({ title: "Test failed", description: e.message, variant: "destructive" }),
   });
 
-  const simulateMut = useMutation({
-    mutationFn: (): Promise<SimResult> => apiRequest("POST", "/api/admin/fees/dunning-simulate", {}).then(r => r.json()),
-    onSuccess: (data: SimResult) => {
-      setSimResult(data);
-      setSimOpen(true);
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/dunning-log"] });
-    },
-    onError: (e: Error) => toast({ title: "Simulation failed", description: e.message, variant: "destructive" }),
-  });
-
   const DUNNING_ROWS = [
     { day: "D-2",  label: "2 Days Before Due",  note: "Early warning — remind parent before the due date.", icon: "📬" },
     { day: "D+0",  label: "On Due Date",         note: "Notify parent/guardian of the fee amount now due.", icon: "📅" },
@@ -4035,8 +4005,8 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       {/* ── Section header ── */}
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-white font-semibold">Notification Providers</p>
-          <p className="text-white/40 text-xs mt-0.5">Enable SMS, WhatsApp, and email to automatically remind parents at each overdue stage.</p>
+          <p className="text-white font-semibold">Automatic Reminder System</p>
+          <p className="text-white/40 text-xs mt-0.5">Reminders are processed automatically every hour based on the configured schedule. No manual action is required.</p>
         </div>
         {anyEnabled && (
           <span className="flex items-center gap-1 text-xs text-emerald-400 bg-emerald-900/20 border border-emerald-700/30 px-2.5 py-1 rounded-full">
@@ -4058,16 +4028,17 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
           }
           <span className="font-medium">
             {jobRunning
-              ? "Job running…"
+              ? "Automatic check running…"
               : jobStatus?.lastCompletedAt
-                ? `Last run: ${fmtDateTime(jobStatus.lastCompletedAt)}`
-                : "Job has not run yet"
+                ? `Last automatic check: ${fmtDateTime(jobStatus.lastCompletedAt)} IST`
+                : "Automatic check has not run yet"
             }
           </span>
         </div>
-        {jobRunning && jobStatus?.startedAt && (
-          <span className="text-amber-400/70">Started {fmtDateTime(jobStatus.startedAt)}</span>
-        )}
+        {jobRunning
+          ? jobStatus?.startedAt && <span className="text-amber-400/70">Started {fmtDateTime(jobStatus.startedAt)}</span>
+          : <span className="text-white/30">Checks run every hour</span>
+        }
       </div>
 
       {/* ── SMS Card ── */}
@@ -4162,7 +4133,7 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         )}
       </div>
 
-      {/* ── Save + Test + Simulate ── */}
+      {/* ── Save + Test ── */}
       {!isArchiveMode && (
         <div className="flex items-center gap-3 flex-wrap">
           <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending}
@@ -4176,99 +4147,8 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
               <Send className="w-4 h-4 mr-1" /> Test Send
             </Button>
           )}
-          <Button variant="outline" onClick={() => simulateMut.mutate()} disabled={simulateMut.isPending || jobRunning}
-            title={jobRunning ? "Dunning job is currently running — please wait" : undefined}
-            className="border-amber-700/40 text-amber-400 hover:bg-amber-900/20 disabled:opacity-50 disabled:cursor-not-allowed">
-            {simulateMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Zap className="w-4 h-4 mr-1" />}
-            {jobRunning ? "Job Running…" : "Run Simulation"}
-          </Button>
         </div>
       )}
-
-      {/* ── Simulation Results Dialog ── */}
-      <Dialog open={simOpen} onOpenChange={setSimOpen}>
-        <DialogContent className="bg-[#0f1923] border border-white/10 text-white max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Zap className="w-5 h-5 text-amber-400" /> Simulation Results
-            </DialogTitle>
-          </DialogHeader>
-          {simResult && (
-            <div className="space-y-4 pt-2">
-              {/* Summary banner */}
-              <div className="p-3 rounded-lg bg-amber-900/20 border border-amber-700/30">
-                <p className="text-amber-300 text-xs">
-                  <span className="font-semibold">Dry-run complete.</span> No real messages were sent.
-                  The system scanned <span className="font-semibold">{simResult.totalFees}</span> fee record(s) across all statuses
-                  and logged <span className="font-semibold">{simResult.entriesLogged}</span> simulated entries to the delivery log.
-                </p>
-              </div>
-
-              {/* Per-channel stats */}
-              <div className="grid grid-cols-3 gap-3">
-                {(["sms", "whatsapp", "email"] as const).map(ch => {
-                  const stats = simResult.byChannel[ch] ?? { would_send: 0, missing_contact: 0 };
-                  const colors: Record<string, string> = {
-                    sms: "border-blue-700/30 bg-blue-900/10", whatsapp: "border-green-700/30 bg-green-900/10", email: "border-purple-700/30 bg-purple-900/10",
-                  };
-                  const icons: Record<string, React.ReactNode> = {
-                    sms: <MessageSquare className="w-4 h-4 text-blue-400" />, whatsapp: <Phone className="w-4 h-4 text-green-400" />, email: <Mail className="w-4 h-4 text-purple-400" />,
-                  };
-                  return (
-                    <div key={ch} className={`p-3 rounded-xl border ${colors[ch]}`}>
-                      <div className="flex items-center gap-1.5 mb-2">{icons[ch]}<span className="text-white/60 text-xs capitalize">{ch}</span></div>
-                      <p className="text-white font-bold text-lg">{stats.would_send}</p>
-                      <p className="text-white/40 text-xs">would send</p>
-                      {stats.missing_contact > 0 && (
-                        <p className="text-amber-400 text-xs mt-1 flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" /> {stats.missing_contact} missing
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Entry table */}
-              {simResult.entries.length > 0 && (
-                <div>
-                  <p className="text-white/50 text-xs mb-2 font-medium">What would be sent:</p>
-                  <div className="rounded-xl border border-white/10 overflow-hidden">
-                    <table className="w-full text-xs">
-                      <thead><tr className="border-b border-white/10 bg-white/5">
-                        <th className="px-3 py-2 text-left text-white/50 font-medium">Student</th>
-                        <th className="px-3 py-2 text-left text-white/50 font-medium">Fee</th>
-                        <th className="px-3 py-2 text-left text-white/50 font-medium">Stage</th>
-                        <th className="px-3 py-2 text-left text-white/50 font-medium">Channel</th>
-                        <th className="px-3 py-2 text-left text-white/50 font-medium">To</th>
-                      </tr></thead>
-                      <tbody>
-                        {simResult.entries.map((e, i) => (
-                          <tr key={i} className={`border-b border-white/5 ${i % 2 === 0 ? "" : "bg-white/[0.02]"}`}>
-                            <td className="px-3 py-2 text-white/80">{e.studentName}</td>
-                            <td className="px-3 py-2 text-white/60">{e.feeType} · ₹{e.amount}</td>
-                            <td className={`px-3 py-2 font-bold ${({"D-2":"text-violet-400","D+0":"text-cyan-400","D+3":"text-green-400","D+7":"text-amber-400","D+14":"text-orange-400"} as Record<string,string>)[e.stage] ?? "text-white/60"}`}>{e.stage}</td>
-                            <td className="px-3 py-2 capitalize text-white/60">{e.channel}</td>
-                            <td className="px-3 py-2">
-                              {e.issue
-                                ? <span className="text-amber-400 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{e.issue}</span>
-                                : <span className="text-emerald-400 truncate block max-w-[120px]">{e.recipient}</span>}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              <Button className="w-full bg-white/10 hover:bg-white/20 text-white" onClick={() => setSimOpen(false)}>
-                Close
-              </Button>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
 
       {/* ── Test Dialog ── */}
       <Dialog open={testOpen} onOpenChange={setTestOpen}>
