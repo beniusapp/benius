@@ -13,7 +13,6 @@ import {
   Shield, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Lock, X, Printer, History, Download, FileText,
   MessageSquare, Mail, Send, Eye, EyeOff, Zap, Phone, BarChart2, Calendar, Users,
   PenLine, Upload,
-  Layers, BellRing, Globe, BarChart3, Hourglass, Tag, PlusCircle, Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -438,7 +437,7 @@ function RecordPaymentModal({ open, onClose, feeRecord, onSuccess }: RecordPayme
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
-      <DialogContent className="bg-slate-900 border border-slate-800 rounded-3xl text-white max-w-md">
+      <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-cyan-400">
             <Receipt className="w-5 h-5" />
@@ -771,7 +770,7 @@ function StandaloneOfflinePayModal({ open, onClose, students, onSuccess }: Stand
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
-      <DialogContent className="bg-slate-900 border border-slate-800 rounded-3xl text-white max-w-lg">
+      <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-cyan-400">
             <Banknote className="w-5 h-5" />
@@ -1268,7 +1267,7 @@ ${filterDesc ? `<div class="filter-badge">Filtered: ${esc(filterDesc)}</div>` : 
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
-      <DialogContent className="bg-slate-900 border border-slate-800 rounded-3xl text-white max-w-lg max-h-[80vh] flex flex-col">
+      <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-lg max-h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-cyan-400">
             <History className="w-5 h-5" />
@@ -1552,7 +1551,7 @@ function ExportLedgerDialog({ open, onClose, availableClasses, availableFeeTypes
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
-      <DialogContent className="bg-slate-900 border border-slate-800 rounded-3xl text-white max-w-md">
+      <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-400">
             <Download className="w-5 h-5" />
@@ -2038,26 +2037,26 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         <div className="relative flex-1 min-w-48">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name, ID, fee type or receipt no…"
-            className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-cyan-500" />
+            className="w-full bg-[#1A2942] border border-white/10 rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-cyan-500" />
         </div>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-28">
+          className="bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-28">
           <option value="all">All Status</option>
           {["Due","Paid","Overdue","Partial","Waived"].map(s => <option key={s} value={s}>{s}</option>)}
           <option value="offline">Offline Payment</option>
         </select>
         <select value={classFilter} onChange={e => setClassFilter(e.target.value)}
-          className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-28">
+          className="bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-28">
           <option value="all">All Classes</option>
           {classes.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
         <select value={feeNameFilter} onChange={e => setFeeNameFilter(e.target.value)}
-          className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-32">
+          className="bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-32">
           <option value="all">All Fee Names</option>
           {allFeeNames.map(n => <option key={n} value={n}>{n}</option>)}
         </select>
         <select value={feeTypeFilter} onChange={e => setFeeTypeFilter(e.target.value)}
-          className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-32">
+          className="bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-32">
           <option value="all">All Fee Types</option>
           {allFeeTypes.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
@@ -2088,13 +2087,12 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
           </Button>
           {canRecord && !isArchiveMode && (
             <>
-              <Button size="sm" onClick={() => setShowStandalonePay(true)}
-                className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-semibold rounded-xl px-4 py-2 transition-all gap-1.5 h-auto">
+              <Button size="sm" variant="outline" onClick={() => setShowStandalonePay(true)}
+                className="border-cyan-700 text-cyan-400 hover:bg-cyan-900/30 gap-1">
                 <Banknote className="w-4 h-4" /> Record Offline Payment
               </Button>
-              <Button size="sm" onClick={openCreate}
-                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold rounded-xl px-4 py-2 shadow-lg shadow-indigo-500/25 transition-all active:scale-95 gap-1.5 h-auto">
-                <PlusCircle className="w-4 h-4" /> Add Invoice
+              <Button size="sm" onClick={openCreate} className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1">
+                <Plus className="w-4 h-4" /> Add Invoice
               </Button>
             </>
           )}
@@ -2112,11 +2110,11 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
           <p className="text-sm">No fee records match your filters.</p>
         </div>
       ) : (
-        <div className="rounded-2xl border border-slate-800 overflow-hidden shadow-2xl bg-slate-900/90">
+        <div className="rounded-xl border border-white/10 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-slate-950/80 border-b border-slate-800">
+                <tr className="border-b border-white/10 bg-white/5">
                   {/* Expand chevron */}
                   <th className="px-2 py-3 w-8" />
                   {/* Checkbox column header — only visible when rows are selected */}
@@ -2124,7 +2122,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     <th className="px-3 py-3 w-8" />
                   )}
                   {["Invoice No.","Receipt No.","Student","DSID","Class","Section","Fee Name","Fee Type","Amount","Due Date","Status","Paid On","Acad. Year","Notes","Actions"].map((h, i) => (
-                    <th key={h} className={`px-4 py-3 text-slate-400 font-bold text-xs uppercase tracking-wider ${i === 8 ? "text-right" : i >= 14 ? "text-right" : i >= 9 ? "text-center" : "text-left"}`}>{h}</th>
+                    <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 8 ? "text-right" : i >= 14 ? "text-right" : i >= 9 ? "text-center" : "text-left"}`}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -2585,7 +2583,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
       {/* Bulk delete confirmation — requires principal password */}
       <Dialog open={showBulkDelete} onOpenChange={v => { if (!v) { setShowBulkDelete(false); setBulkPassword(""); } }}>
-        <DialogContent className="bg-slate-900 border border-slate-800 rounded-3xl text-white max-w-sm">
+        <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-red-400 flex items-center gap-2">
               <Trash2 className="w-4 h-4" /> Delete {selectedIds.size} Record{selectedIds.size !== 1 ? "s" : ""}
@@ -2635,7 +2633,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
       {/* Delete confirmation */}
       <Dialog open={confirmDeleteId !== null} onOpenChange={v => { if (!v) { setConfirmDeleteId(null); setDeletePassword(""); setDeletePasswordVisible(false); } }}>
-        <DialogContent className="bg-slate-900 border border-slate-800 rounded-3xl text-white max-w-sm">
+        <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-red-400 flex items-center gap-2">
               <Trash2 className="w-4 h-4" /> Delete Fee Record
@@ -2694,7 +2692,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
       {/* Add / Edit Dialog */}
       <Dialog open={showForm} onOpenChange={v => { if (!v) { setShowForm(false); setEditing(null); setAddFeeSuccessId(null); } }}>
-        <DialogContent className="bg-slate-900 border border-slate-800 rounded-3xl text-white max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-cyan-400">{editing ? "Edit Fee Record" : "Add Invoice"}</DialogTitle>
           </DialogHeader>
@@ -2860,7 +2858,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                         <FormControl>
                           <SelectTrigger className="bg-[#0A1628] border-white/20 text-white"><SelectValue /></SelectTrigger>
                         </FormControl>
-                        <SelectContent className="bg-slate-900 border-slate-800">
+                        <SelectContent className="bg-[#1A2942] border-white/10">
                           {["Due","Paid","Overdue","Partial","Waived"].map(s => (
                             <SelectItem key={s} value={s} className="text-white focus:bg-white/10">{s}</SelectItem>
                           ))}
@@ -3256,9 +3254,8 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       <div className="flex items-center justify-between">
         <p className="text-white/40 text-sm">{structures.length} structure{structures.length !== 1 ? "s" : ""} defined</p>
         {!isArchiveMode && (
-          <Button size="sm" onClick={openCreate}
-            className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold rounded-xl px-4 py-2 shadow-lg shadow-indigo-500/25 transition-all active:scale-95 gap-1.5 h-auto">
-            <PlusCircle className="w-4 h-4" /> Add Structure
+          <Button size="sm" onClick={openCreate} className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1">
+            <Plus className="w-4 h-4" /> Add Structure
           </Button>
         )}
       </div>
@@ -3274,21 +3271,18 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {structures.map(s => (
-            <div key={s.id} className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-3 shadow-xl transition-all duration-300 hover:-translate-y-1 hover:shadow-cyan-500/10 hover:border-cyan-500/30">
+            <div key={s.id} className="rounded-xl border p-4 space-y-3 border-cyan-700/40 bg-cyan-900/10">
               <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                  <div className="min-w-0">
-                    <h3 className="text-white font-semibold leading-tight">{s.name}</h3>
-                    <p className="text-white/50 text-xs">{s.feeType}</p>
-                  </div>
+                <div>
+                  <h3 className="text-white font-semibold leading-tight">{s.name}</h3>
+                  <p className="text-white/50 text-xs">{s.feeType}</p>
                 </div>
-                <span className="text-xs px-2.5 py-1 rounded-lg border bg-emerald-500/10 text-emerald-400 border-emerald-500/20 flex-shrink-0 font-semibold">
+                <span className="text-xs px-2 py-0.5 rounded-full border bg-emerald-900/30 text-emerald-400 border-emerald-700/30 flex-shrink-0">
                   Active
                 </span>
               </div>
               <div className="flex items-baseline gap-1">
-                <span className="text-3xl font-black text-cyan-400 hover:text-cyan-300 transition-colors">{fmt(s.amount)}</span>
+                <span className="text-xl font-bold text-white">{fmt(s.amount)}</span>
                 <span className="text-white/40 text-xs">/ {FREQ[s.frequency] ?? s.frequency}</span>
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs">
@@ -3330,7 +3324,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
       {/* Add / Edit Modal */}
       <Dialog open={showModal} onOpenChange={v => { if (!v) setShowModal(false); }}>
-        <DialogContent className="bg-slate-900 border border-slate-800 rounded-3xl text-white max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-cyan-400">{editing ? "Edit Fee Structure" : "New Fee Structure"}</DialogTitle>
           </DialogHeader>
@@ -3612,7 +3606,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
       {/* Delete confirm */}
       <Dialog open={delId !== null} onOpenChange={v => { if (!v) setDelId(null); }}>
-        <DialogContent className="bg-slate-900 border border-slate-800 rounded-3xl text-white max-w-sm">
+        <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-sm">
           <DialogHeader><DialogTitle className="text-red-400">Delete Fee Structure</DialogTitle></DialogHeader>
           <p className="text-white/60 text-sm">This structure will be permanently deleted. Existing fee records are not affected.</p>
           <div className="flex gap-2 justify-end mt-2">
@@ -3627,7 +3621,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
       {/* Generate Invoices Dialog */}
       <Dialog open={genTarget !== null} onOpenChange={v => { if (!v) { setGenTarget(null); setGenResult(null); } }}>
-        <DialogContent className="bg-slate-900 border border-slate-800 rounded-3xl text-white max-w-md">
+        <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-md">
           <DialogHeader>
             <DialogTitle className="text-cyan-400 flex items-center gap-2">
               <Printer className="w-5 h-5" /> Generate Invoices
@@ -4728,7 +4722,7 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       </div>
 
       {/* ══ SECTION 2 — External Portal Link ══════════════════════════════════ */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/90 shadow-2xl overflow-hidden">
+      <div className="rounded-2xl border border-white/10 bg-[#1A2942] overflow-hidden">
         {/* Section header */}
         <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -4819,7 +4813,7 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       </div>
 
       {/* ══ SECTION 3 — Fee Receipt Signature ═══════════════════════════════════ */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/90 shadow-2xl overflow-hidden">
+      <div className="rounded-2xl border border-white/10 bg-[#1A2942] overflow-hidden">
         <div className="px-5 py-4 border-b border-white/10 flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
             style={{ background: "linear-gradient(135deg,#a855f7,#7c3aed)" }}>
@@ -5164,13 +5158,13 @@ function AuditTab() {
           <p className="text-sm">{hasFilter ? "No entries match the selected date range." : "No audit entries yet. Actions in this module will appear here."}</p>
         </div>
       ) : (
-        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden">
+        <div className="rounded-xl border border-white/10 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-slate-950/80 border-b border-slate-800">
+                <tr className="border-b border-white/10 bg-white/5">
                   {["Timestamp","Actor","Action","Description","IP"].map(h => (
-                    <th key={h} className="text-left px-4 py-3 text-slate-400 font-bold text-xs uppercase tracking-wider">{h}</th>
+                    <th key={h} className="text-left px-4 py-3 text-white/50 font-medium text-xs">{h}</th>
                   ))}
                   <th className="px-2 py-3 w-6" />
                 </tr>
@@ -5907,12 +5901,12 @@ ${categories.length > 0 ? `
   const s = raw?.summary ?? {};
 
   const execCards = [
-    { label: "Gross Billed Demand",      value: fmt(s.grossBilled ?? 0),        Icon: DollarSign,    glow: "from-cyan-500/20 to-transparent",    ic: "text-cyan-400 bg-cyan-500/10"    },
-    { label: "Net Collected Revenue",    value: fmt(s.netCollected ?? 0),       Icon: CheckCircle2,  glow: "from-emerald-500/20 to-transparent", ic: "text-emerald-400 bg-emerald-500/10"},
-    { label: "Outstanding Deficit",      value: fmt(s.outstanding ?? 0),        Icon: AlertTriangle, glow: "from-rose-500/20 to-transparent",    ic: "text-rose-400 bg-rose-500/10"    },
-    { label: "Collection Efficiency",    value: `${s.collectionRate ?? 0}%`,    Icon: Zap,           glow: "from-blue-500/20 to-transparent",    ic: "text-blue-400 bg-blue-500/10"    },
-    { label: "Discounts & Concessions",  value: fmt(s.totalDiscounts ?? 0),     Icon: Tag,           glow: "from-purple-500/20 to-transparent",  ic: "text-purple-400 bg-purple-500/10"},
-    { label: "Late Penalties Collected", value: fmt(s.totalLatePenalties ?? 0), Icon: Clock,         glow: "from-amber-500/20 to-transparent",   ic: "text-amber-400 bg-amber-500/10"  },
+    { label: "Gross Billed Demand",      value: fmt(s.grossBilled ?? 0),        Icon: FileText,     ib: "border-white/10 bg-white/5",              ic: "text-white/50"    },
+    { label: "Net Collected Revenue",    value: fmt(s.netCollected ?? 0),       Icon: DollarSign,   ib: "border-[#D4AF37]/30 bg-[#D4AF37]/5",      ic: "text-[#D4AF37]"  },
+    { label: "Outstanding Deficit",      value: fmt(s.outstanding ?? 0),        Icon: TrendingDown, ib: "border-red-500/30 bg-red-500/5",           ic: "text-red-400"    },
+    { label: "Collection Efficiency",    value: `${s.collectionRate ?? 0}%`,    Icon: TrendingUp,   ib: "border-emerald-500/30 bg-emerald-500/5",   ic: "text-emerald-400"},
+    { label: "Discounts & Concessions",  value: fmt(s.totalDiscounts ?? 0),     Icon: Banknote,     ib: "border-purple-500/30 bg-purple-500/5",     ic: "text-purple-400" },
+    { label: "Late Penalties Collected", value: fmt(s.totalLatePenalties ?? 0), Icon: AlertTriangle,ib: "border-amber-500/30 bg-amber-500/5",       ic: "text-amber-400"  },
   ];
 
   return (
@@ -5945,30 +5939,24 @@ ${categories.length > 0 ? `
       </div>
 
       {/* ── Executive Summary Cards ──────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-        {execCards.map(({ label, value, Icon, glow, ic }) => (
-          <div key={label} className="bg-slate-900/80 backdrop-blur-xl rounded-2xl p-5 border border-slate-800 hover:border-slate-700/80 transition-all duration-300 shadow-xl relative overflow-hidden group hover:-translate-y-1">
-            <div className={`absolute top-0 left-0 w-32 h-32 bg-gradient-to-br ${glow} rounded-full -translate-x-8 -translate-y-8 pointer-events-none`} />
-            <div className="relative z-10 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 leading-tight">{label}</p>
-                <p className="text-2xl font-extrabold text-white tracking-tight tabular-nums truncate">{value}</p>
-              </div>
-              <div className={`p-2 rounded-lg flex-shrink-0 ${ic}`}><Icon className="w-5 h-5" /></div>
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+        {execCards.map(({ label, value, Icon, ib, ic }) => (
+          <div key={label} className={`rounded-xl border ${ib} p-4 flex items-center gap-3`}>
+            <div className={`p-2 rounded-lg bg-white/5 ${ic} flex-shrink-0`}><Icon className="w-5 h-5" /></div>
+            <div className="min-w-0">
+              <p className="text-white/50 text-xs mb-0.5 leading-tight">{label}</p>
+              <p className="text-white font-bold text-lg leading-none tabular-nums truncate">{value}</p>
             </div>
           </div>
         ))}
       </div>
 
       {/* ── Revenue Collection Trend ─────────────────────────────────── */}
-      <div className="bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-slate-800/90 p-6 space-y-4 shadow-2xl">
+      <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <BarChart3 className="w-5 h-5 text-cyan-400 flex-shrink-0" />
-            <div>
-              <h3 className="text-white font-semibold text-sm">Revenue Collection Trend</h3>
-              <p className="text-white/40 text-xs">Billed demand vs collected revenue by period</p>
-            </div>
+          <div>
+            <h3 className="text-white font-semibold text-sm">Revenue Collection Trend</h3>
+            <p className="text-white/40 text-xs">Billed demand vs collected revenue by period</p>
           </div>
           <div className="flex gap-0.5 p-0.5 bg-black/20 rounded-lg border border-white/10">
             {(["monthly", "quarterly", "ytd"] as const).map(p => (
@@ -6006,11 +5994,8 @@ ${categories.length > 0 ? `
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
         {/* Class-Wise */}
-        <div className="bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-slate-800/90 p-5 space-y-3 shadow-2xl">
-          <div className="flex items-center gap-2">
-            <Users className="w-5 h-5 text-indigo-400 flex-shrink-0" />
-            <h3 className="text-white font-semibold text-sm">Class-Wise Breakdown</h3>
-          </div>
+        <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5 space-y-3">
+          <h3 className="text-white font-semibold text-sm">Class-Wise Breakdown</h3>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -6064,11 +6049,8 @@ ${categories.length > 0 ? `
         </div>
 
         {/* Payment Channel Pie */}
-        <div className="bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-slate-800/90 p-5 space-y-3 shadow-2xl">
-          <div className="flex items-center gap-2">
-            <CreditCard className="w-5 h-5 text-emerald-400 flex-shrink-0" />
-            <h3 className="text-white font-semibold text-sm">Payment Channel Split</h3>
-          </div>
+        <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5 space-y-3">
+          <h3 className="text-white font-semibold text-sm">Payment Channel Split</h3>
           {channelData.length === 0 ? (
             <div className="h-52 flex items-center justify-center text-white/25 text-sm">No payment data yet</div>
           ) : (
@@ -6105,11 +6087,8 @@ ${categories.length > 0 ? `
       </div>
 
       {/* ── Fee Category Breakdown (horizontal bars) ─────────────────── */}
-      <div className="bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-slate-800/90 p-6 space-y-4 shadow-2xl">
-        <div className="flex items-center gap-2">
-          <Receipt className="w-5 h-5 text-emerald-400 flex-shrink-0" />
-          <h3 className="text-white font-semibold text-sm">Fee Category Breakdown</h3>
-        </div>
+      <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5 space-y-4">
+        <h3 className="text-white font-semibold text-sm">Fee Category Breakdown</h3>
         {feeCategories.length === 0 ? (
           <div className="h-40 flex items-center justify-center text-white/25 text-sm">No fee category data</div>
         ) : (
@@ -6132,13 +6111,10 @@ ${categories.length > 0 ? `
       </div>
 
       {/* ── AR Aging Analysis ────────────────────────────────────────── */}
-      <div className="bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-slate-800/90 p-6 space-y-4 shadow-2xl">
-        <div className="flex items-center gap-2">
-          <Hourglass className="w-5 h-5 text-amber-400 flex-shrink-0" />
-          <div>
-            <h3 className="text-white font-semibold text-sm">Accounts Receivable Aging</h3>
-            <p className="text-white/40 text-xs">Outstanding balance by days overdue — click any bucket to see which students are responsible</p>
-          </div>
+      <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5 space-y-4">
+        <div>
+          <h3 className="text-white font-semibold text-sm">Accounts Receivable Aging</h3>
+          <p className="text-white/40 text-xs">Outstanding balance by days overdue — click any bucket to see which students are responsible</p>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {agingData.map(bucket => (
@@ -6202,40 +6178,21 @@ ${categories.length > 0 ? `
 
 type Tab = "ledger" | "structures" | "reminders" | "external" | "audit" | "analytics";
 
-const TABS: { id: Tab; slug: string; label: string; Icon: React.ComponentType<{ className?: string }>; iconColor: string }[] = [
-  { id: "analytics",  slug: "financial-analytics",    label: "Financial Analytics",   Icon: TrendingUp, iconColor: "text-cyan-400"   },
-  { id: "structures", slug: "fee-structures",          label: "Fee Structures",        Icon: Layers,     iconColor: "text-indigo-400" },
-  { id: "ledger",     slug: "ledger-and-transactions", label: "Ledger & Transactions", Icon: Receipt,    iconColor: "text-emerald-400"},
-  { id: "reminders",  slug: "reminders",               label: "Reminders",             Icon: BellRing,   iconColor: "text-amber-400"  },
-  { id: "external",   slug: "external-portal",         label: "External Portal",       Icon: Globe,      iconColor: "text-violet-400" },
-  { id: "audit",      slug: "audit-log",               label: "Audit Log",             Icon: History,    iconColor: "text-rose-400"   },
+const TABS: { id: Tab; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: "analytics",  label: "Financial Analytics",   Icon: BarChart2     },
+  { id: "structures", label: "Fee Structures",        Icon: BookOpen      },
+  { id: "ledger",     label: "Ledger & Transactions", Icon: Receipt       },
+  { id: "reminders",  label: "Reminders",             Icon: Bell          },
+  { id: "external",   label: "External Portal",       Icon: ExternalLink  },
+  { id: "audit",      label: "Audit Log",             Icon: Shield        },
 ];
 
-export default function FeesManager({ schoolId, allowedSubs, initialTab, onNavigateTab }: {
-  schoolId: number; allowedSubs?: string[]; initialTab?: string; onNavigateTab?: (tab: string) => void;
-}) {
+export default function FeesManager({ schoolId, allowedSubs }: { schoolId: number; allowedSubs?: string[] }) {
   const canRecord = allowedSubs === undefined || allowedSubs.includes("record");
   const canExport  = allowedSubs === undefined || allowedSubs.includes("export");
   const { isArchiveMode, selectedSession } = useSessionView();
   const viewSessionId = selectedSession?.id ?? null;
-
-  // Map URL slugs → internal tab IDs
-  const slugToTab: Record<string, Tab> = {
-    "financial-analytics": "analytics", "fee-structures": "structures",
-    "ledger-and-transactions": "ledger", "reminders": "reminders",
-    "external-portal": "external", "audit-log": "audit",
-  };
-  const [activeTab, setActiveTab] = useState<Tab>(() => {
-    if (initialTab && slugToTab[initialTab]) return slugToTab[initialTab];
-    return "ledger";
-  });
-
-  const handleTabChange = useCallback((id: Tab) => {
-    setActiveTab(id);
-    const t = TABS.find(x => x.id === id);
-    if (t && onNavigateTab) onNavigateTab(t.slug);
-  }, [onNavigateTab]);
-
+  const [activeTab, setActiveTab] = useState<Tab>("ledger");
   const queryClient = useQueryClient();
 
   // ── Real-time sync: listen for Razorpay webhook payment-update events ──────
@@ -6296,23 +6253,17 @@ export default function FeesManager({ schoolId, allowedSubs, initialTab, onNavig
       </div>
 
       {/* Tab nav */}
-      <div className="bg-slate-900/60 backdrop-blur-md p-1.5 rounded-2xl border border-slate-800/80 overflow-x-auto">
-        <div className="flex flex-nowrap gap-2 min-w-max sm:min-w-0 sm:flex-wrap">
-          {TABS.map(({ id, slug: _slug, label, Icon, iconColor }) => {
-            const active = activeTab === id;
-            return (
-              <button key={id} onClick={() => handleTabChange(id)}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-sm whitespace-nowrap transition-all flex-shrink-0 ${
-                  active
-                    ? "bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-500/25 font-bold"
-                    : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/60 font-medium"
-                }`}>
-                <Icon className={`w-4 h-4 ${active ? "" : iconColor}`} />
-                {label}
-              </button>
-            );
-          })}
-        </div>
+      <div className="flex gap-1 p-1 bg-[#1A2942] rounded-xl border border-white/10 overflow-x-auto">
+        {TABS.map(({ id, label, Icon }) => {
+          const active = activeTab === id;
+          return (
+            <button key={id} onClick={() => setActiveTab(id)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 ${active ? "bg-cyan-600 text-white shadow-sm" : "text-white/50 hover:text-white hover:bg-white/5"}`}>
+              <Icon className="w-4 h-4" />
+              {label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Content */}
@@ -6377,7 +6328,7 @@ function NotificationHistoryModal({ open, onClose, studentId, studentName }: Not
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
-      <DialogContent className="bg-slate-900 border border-slate-800 rounded-3xl text-white max-w-2xl max-h-[80vh] flex flex-col">
+      <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-2xl max-h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-violet-400">
             <Bell className="w-5 h-5" />

@@ -1441,7 +1441,6 @@ export default function AdminDashboard() {
   const [matchedComplaintSub, complaintSubParams]   = useRoute("/admin-dashboard/complaint-hub/:tab");
   const [matchedAnalyticsSub, analyticsSubParams]   = useRoute("/admin-dashboard/analytics/:tab");
   const [matchedIdCardSub,    idCardSubParams]       = useRoute("/admin-dashboard/id-card-gen/:tab");
-  const [matchedFeesSub,     feesSubParams]         = useRoute("/admin-dashboard/fees-manager/:tab");
 
   const activeModule: ActiveModule =
       matchedSetupSub     ? "school-setup"
@@ -1729,7 +1728,7 @@ export default function AdminDashboard() {
       case "id-card-gen":       return <IdCardGen schoolId={me.schoolId} schoolName={me.schoolName} classes={meta.classes} sections={meta.sections} initialTab={idCardSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/id-card-gen/${t}`)} allowedSubs={getSubsFor("id-card-gen")} />;
       case "assets":            return <AssetsInventory schoolId={me.schoolId} allowedSubs={getSubsFor("assets")} />;
       case "school-calendar":   return <SchoolCalendar allowedSubs={getSubsFor("school-calendar")} />;
-      case "fees-manager":      return <FeesManager schoolId={me.schoolId} allowedSubs={getSubsFor("fees-manager")} initialTab={feesSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/fees-manager/${t}`)} />;
+      case "fees-manager":      return <FeesManager schoolId={me.schoolId} allowedSubs={getSubsFor("fees-manager")} />;
       case "removed-teacher-history": return <RemovedTeacherHistory schoolId={me.schoolId} onBack={() => goToModule("teacher-registry")} />;
       default: return null;
     }

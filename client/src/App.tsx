@@ -75,7 +75,6 @@ function Router() {
         <Route path="/admin-dashboard/complaint-hub/:tab" component={AdminDashboard} />
         <Route path="/admin-dashboard/analytics/:tab" component={AdminDashboard} />
         <Route path="/admin-dashboard/id-card-gen/:tab" component={AdminDashboard} />
-        <Route path="/admin-dashboard/fees-manager/:tab" component={AdminDashboard} />
         <Route path="/admin-dashboard/:module" component={AdminDashboard} />
         <Route path="/register" component={Register} />
         <Route path="/student-login" component={StudentLogin} />

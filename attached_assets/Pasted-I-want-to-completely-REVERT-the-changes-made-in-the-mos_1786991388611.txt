@@ -1,0 +1,291 @@
+I want to completely REVERT the changes made in the most recent Fees & Payments UI modernization/routing task.
+
+I DO NOT NEED THESE CHANGES.
+
+Restore the Fees & Payments module to exactly the state it was in BEFORE this task started.
+
+IMPORTANT — SAFE REVERT ONLY
+
+Do NOT make any new improvements.
+
+Do NOT refactor anything.
+
+Do NOT redesign anything.
+
+Do NOT modify backend functionality.
+
+Do NOT modify database logic.
+
+Do NOT modify payment logic.
+
+Do NOT modify invoice logic.
+
+Do NOT modify reminder/dunning logic.
+
+Do NOT modify notification logic.
+
+Do NOT modify PDF generation.
+
+Do NOT modify authentication or permissions.
+
+Do NOT modify unrelated modules.
+
+The goal is ONLY to undo the changes introduced by the most recent Fees & Payments UI modernization and routing task.
+
+---
+
+1. REVERT UI CHANGES
+
+Restore the previous Fees & Payments UI.
+
+Undo all visual changes introduced by the recent redesign, including:
+
+- Dark box-card redesign
+- Glassmorphism tab navigation
+- Gradient active tabs
+- New card shadows
+- Hover lift effects
+- Radial glow effects
+- New metric card styling
+- New analytics card styling
+- New Fee Structure card styling
+- New Ledger table styling
+- New Audit Log styling
+- New modal styling
+- New filter input styling
+- External Portal visual changes
+- New button styling
+- Any other Tailwind/CSS/layout changes introduced by this task
+
+Restore the original styling and layout exactly as much as possible.
+
+---
+
+2. REMOVE THE NEW LUCIDE ICON CHANGES
+
+Undo the Lucide icon additions that were introduced specifically for this task.
+
+Remove imports that were added only for the redesign, such as:
+
+- Layers
+- BellRing
+- Globe
+- BarChart3
+- Hourglass
+- Tag
+- PlusCircle
+- Sparkles
+
+Also revert any other newly added icon usage from this task.
+
+IMPORTANT:
+
+If an icon was already used before this task for existing functionality, KEEP IT.
+
+Only remove/revert icons introduced by this redesign.
+
+---
+
+3. REVERT TAB NAVIGATION CHANGES
+
+The previous Fees & Payments tab navigation must be restored.
+
+Remove the newly introduced:
+
+- "slug"
+- "iconColor"
+- URL-driven tab changes
+- New tab navigation styling
+- New tab icon rendering
+
+Restore the previous tab navigation implementation and behavior.
+
+The existing tab functionality before this task must remain exactly as it was.
+
+---
+
+4. REVERT ROUTING CHANGES
+
+The recent task introduced:
+
+"/admin-dashboard/fees-manager/:tab"
+
+and changes involving:
+
+- "App.tsx"
+- "admin-dashboard.tsx"
+- "FeesManager"
+- "initialTab"
+- "onNavigateTab"
+- "useRoute"
+- "slugToTab"
+- "handleTabChange" URL synchronization
+
+REVERT THESE ROUTING CHANGES.
+
+Restore the exact routing architecture that existed BEFORE this task.
+
+Do NOT implement the previously requested "/dashboard/fees-and-payments/..." nested routing.
+
+I have decided NOT to use the new routing system.
+
+I want the original routing architecture back.
+
+---
+
+5. VERY IMPORTANT — DO NOT REVERT OLDER WORK
+
+The Fees & Payments module had already been functionally audited before this UI task.
+
+That previous working functionality MUST remain intact.
+
+Do NOT revert or modify any earlier work related to:
+
+- Fee generation
+- Invoice generation
+- Payment processing
+- Payment history
+- Multiple invoices
+- Payment race protection
+- Reminder/dunning system
+- D-2
+- D+0
+- D+3
+- D+7
+- D+14
+- MSG91
+- WhatsApp
+- SendGrid
+- Student Reminders
+- Notification history
+- Late fees
+- Deduplication
+- Retry logic
+- Timeout logic
+- Multi-tenant isolation
+- Audit logging
+- Existing tests
+
+Only undo the changes introduced by the most recent UI modernization/routing task.
+
+---
+
+6. FILES TO INSPECT
+
+Based on the previous implementation, inspect at minimum:
+
+- "App.tsx"
+- "admin-dashboard.tsx"
+- "fees-manager.tsx"
+
+Also inspect any other files that were modified specifically by the recent task.
+
+Use git diff/history if available to identify exactly what changed.
+
+DO NOT blindly reset entire files if they contain unrelated work.
+
+Use the previous version/diff to selectively restore only the recent changes.
+
+---
+
+7. PRESERVE THE WORKING BASELINE
+
+Before completing the revert, verify that the Fees & Payments module is returned to the state immediately before the UI redesign/routing task.
+
+The target state is:
+
+- Original Fees & Payments UI
+- Original tab behavior
+- Original routing
+- Original component structure
+- Original business logic
+- Original reminder functionality
+- Original payment functionality
+
+---
+
+8. VERIFICATION
+
+After reverting:
+
+TypeScript
+
+Run:
+
+"npx tsc --noEmit"
+
+Expected:
+
+"0 errors"
+
+Tests
+
+Run the complete test suite.
+
+Expected:
+
+"614/614 passing"
+
+Do NOT modify tests to make them pass.
+
+Production build
+
+Run:
+
+"npx tsx script/build.ts"
+
+Expected:
+
+Build succeeds.
+
+---
+
+9. FINAL REPORT
+
+After the revert, report:
+
+Files changed
+
+List only files actually modified by the revert.
+
+Reverted
+
+Confirm:
+
+- UI redesign reverted
+- Lucide redesign icons reverted
+- Tab navigation redesign reverted
+- "/admin-dashboard/fees-manager/:tab" routing change reverted
+- URL-driven tab state reverted
+- New routing props reverted
+- Original Fees & Payments architecture restored
+
+Preserved
+
+Explicitly confirm:
+
+- Backend unchanged
+- Database unchanged
+- API endpoints unchanged
+- Payment logic unchanged
+- Invoice logic unchanged
+- Reminder/dunning logic unchanged
+- Notification logic unchanged
+- PDF generation unchanged
+- Authentication unchanged
+- Permissions unchanged
+- Existing business logic unchanged
+
+Verification
+
+TypeScript: PASS / FAIL
+Tests: PASS / FAIL
+Production build: PASS / FAIL
+
+CRITICAL
+
+Do not report success merely because the application builds.
+
+Confirm that the code was actually compared against the pre-task state and that ONLY the most recent UI modernization/routing changes were reverted.
+
+If git history/diff is available, use it to ensure the revert is precise and does not remove older working changes.
