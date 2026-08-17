@@ -29,6 +29,7 @@ import {
   Eye, EyeOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -321,10 +322,9 @@ export function CopyConfigSelector({ selected, onChange }: { selected: Set<strin
             </div>
           ) : (
             <Checkbox
-              checked={allChildOn}
-              indeterminate={someChildOn}
-              onChange={() => toggleModule(mod)}
-              testId={`module-check-${mod.id}`}
+              checked={someChildOn ? "indeterminate" : allChildOn}
+              onCheckedChange={() => toggleModule(mod)}
+              data-testid={`module-check-${mod.id}`}
             />
           )}
 
@@ -387,8 +387,7 @@ export function CopyConfigSelector({ selected, onChange }: { selected: Set<strin
               >
                 <Checkbox
                   checked={selected.has(sub.id)}
-                  size="sm"
-                  onChange={() => toggleSub(mod, sub.id)}
+                  onCheckedChange={() => toggleSub(mod, sub.id)}
                 />
                 <span
                   className="text-xs"
@@ -416,7 +415,7 @@ export function CopyConfigSelector({ selected, onChange }: { selected: Set<strin
         onClick={toggleAll}
         data-testid="module-select-all"
       >
-        <Checkbox checked={allSelected} indeterminate={someSelected} onChange={toggleAll} testId="check-select-all" />
+        <Checkbox checked={someSelected ? "indeterminate" : allSelected} onCheckedChange={toggleAll} data-testid="check-select-all" />
         <span className="text-sm font-bold text-white">Select All</span>
         <span className="ml-auto text-xs text-white/40">
           {totalSelected} / {selectableIds.length} sub-modules

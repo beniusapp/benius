@@ -123,7 +123,7 @@ function parseUploadedFile(buffer: Buffer, filename: string): Record<string, str
       trim: true,
       relax_column_count: true,
     });
-    return records.map((row: Record<string, string>) => {
+    return (records as Record<string, string>[]).map((row) => {
       const normalized: Record<string, string> = {};
       for (const [key, value] of Object.entries(row)) {
         normalized[normalizeHeader(key)] = value;
@@ -1019,7 +1019,7 @@ export async function registerRoutes(
         return res.status(401).json({ message: "Not authenticated" });
       }
 
-      const schoolId = parseInt(req.params.schoolId);
+      const schoolId = parseInt(req.params.schoolId as string);
       if (isNaN(schoolId)) {
         return res.status(400).json({ message: "Invalid school ID" });
       }

@@ -3241,7 +3241,6 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     if (activeSess) {
       applySessionPeriods(String(activeSess.id), s.frequency);
     } else {
-      setGenSessionId("");
       setGenFeePeriodStart("");
       setGenFeePeriodEnd("");
     }

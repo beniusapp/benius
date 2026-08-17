@@ -508,7 +508,7 @@ export function registerTeacherRoutes(app: Express) {
 
   app.patch("/api/homework/:id", diskUpload.single("file"), async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const hw = await storage.getHomeworkById(id);
     if (!hw) return res.status(404).json({ message: "Homework not found" });
     if (hw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
@@ -573,7 +573,7 @@ export function registerTeacherRoutes(app: Express) {
 
   app.patch("/api/classwork/:id", diskUpload.single("file"), async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const cw = await storage.getClassworkById(id);
     if (!cw) return res.status(404).json({ message: "Classwork not found" });
     if (cw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
@@ -774,7 +774,7 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const c = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
     if (!c) return res.status(404).json({ message: "Complaint not found" });
     if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {

@@ -1335,7 +1335,7 @@ export default function StudentExamination() {
     const hidden: { el: HTMLElement; prev: string }[] = [];
     let node: HTMLElement | null = el;
     while (node && node !== document.body) {
-      const parent = node.parentElement;
+      const parent: HTMLElement | null = node.parentElement;
       if (parent) {
         Array.from(parent.children).forEach(child => {
           if (child !== node && child instanceof HTMLElement) {

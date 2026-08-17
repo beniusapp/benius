@@ -851,7 +851,7 @@ export function registerFeesRoutes(app: Express) {
 
     const invoices = (rows.rows as any[]).map(r => {
       const cfg     = lateFeeMap.get((r.feeType ?? "").trim().toLowerCase());
-      const accrued = cfg ? calculateLateFee(cfg, r.dueDate ?? "", r.status, today) : 0;
+      const accrued = cfg ? calculateLateFee(cfg, r.dueDate ?? "", r.status, new Date(today)) : 0;
       return { ...r, accruedLateFee: accrued, totalDue: Number(r.amount) + accrued };
     });
 

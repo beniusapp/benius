@@ -4639,7 +4639,8 @@ export class DatabaseStorage {
   }
 
   async createFeeRecord(data: InsertFeeRecord): Promise<FeeRecord> {
-    const [rec] = await db.insert(feeRecords).values(data).returning();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [rec] = await db.insert(feeRecords).values(data as any).returning();
     return rec;
   }
 
@@ -4664,7 +4665,8 @@ export class DatabaseStorage {
   // invoiceNumber is intentionally excluded: it is assigned once at creation and must never be overwritten.
   async updateFeeRecord(id: number, schoolId: number, data: Omit<Partial<InsertFeeRecord>, "invoiceNumber">): Promise<FeeRecord | undefined> {
     const [rec] = await db.update(feeRecords)
-      .set(data)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .set(data as any)
       .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)))
       .returning();
     return rec || undefined;
@@ -4709,7 +4711,8 @@ export class DatabaseStorage {
   // ===== FEE STRUCTURES =====
 
   async createFeeStructure(data: InsertFeeStructure): Promise<FeeStructure> {
-    const [rec] = await db.insert(feeStructures).values(data).returning();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [rec] = await db.insert(feeStructures).values(data as any).returning();
     return rec;
   }
 
@@ -4721,7 +4724,8 @@ export class DatabaseStorage {
 
   async updateFeeStructure(id: number, schoolId: number, data: Partial<InsertFeeStructure>): Promise<FeeStructure | undefined> {
     const [rec] = await db.update(feeStructures)
-      .set(data)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .set(data as any)
       .where(and(eq(feeStructures.id, id), eq(feeStructures.schoolId, schoolId)))
       .returning();
     return rec || undefined;

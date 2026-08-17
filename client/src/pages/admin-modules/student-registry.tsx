@@ -1256,8 +1256,8 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
           targetName={deactivateTarget.name}
           schoolId={schoolId}
           invalidateKeys={[
-            ["/api/schools", schoolId, "students", "paginated"],
-            ["/api/schools", schoolId, "students"],
+            ["/api/schools", String(schoolId), "students", "paginated"],
+            ["/api/schools", String(schoolId), "students"],
             ["/api/me"],
           ]}
         />
