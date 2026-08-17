@@ -1,0 +1,398 @@
+Production End-to-End Dunning Verification
+
+The automated dunning system has now passed the application-level audit and all 614 automated tests.
+
+Before making any further code changes, perform a final production integration verification. Do not redesign or modify the existing dunning architecture unless an actual issue is discovered.
+
+1. Verify Current Implementation
+
+First inspect the existing implementation and confirm that the following remain unchanged and functional:
+
+- Five stages only:
+  - D-2
+  - D+0
+  - D+3
+  - D+7
+  - D+14
+- No new D30 generation
+- IST calendar-date calculation
+- Hourly cron: "5 * * * *"
+- Startup execution
+- 2-day catch-up
+- "feeRecordId + channel + stage" deduplication
+- Paid/Waived/deleted invoice protection
+- 12-second provider timeout
+- 3-attempt transient retry
+- WhatsApp HTTP-200 error-body validation
+- Late-fee-inclusive amount
+- Indian amount/date formatting
+- Per-school isolation
+- Independent SMS/WhatsApp/Email channels
+- Manual reminder behavior
+- Automatic reminder behavior
+
+Do not change working code unnecessarily.
+
+2. Verify Notification Settings
+
+Inspect the existing Notification Settings UI and backend.
+
+Confirm that each school can independently configure:
+
+SMS
+
+- Enable/disable SMS
+- MSG91 Auth Key
+- MSG91 Sender ID
+
+WhatsApp
+
+- Enable/disable WhatsApp
+- MSG91 Auth Key
+- Integrated WhatsApp Number
+- Approved WhatsApp Template Name
+
+Email
+
+- Enable/disable Email
+- SendGrid API Key
+- From Email
+- From Name
+
+Confirm that credentials are stored and retrieved by "schoolId".
+
+There must be no hardcoded school IDs, provider credentials, template IDs, phone numbers, email addresses, or developer-only configuration.
+
+3. Test Send — Controlled Provider Testing
+
+Use the existing Test Send functionality.
+
+Do not use the automatic cron for the first provider verification.
+
+Test each enabled provider individually with a controlled test recipient.
+
+SMS
+
+Verify:
+
+1. Test Send is initiated from the correct school.
+2. MSG91 receives the correct credentials.
+3. The configured sender ID is used.
+4. The recipient phone is normalized correctly.
+5. The message is actually received.
+6. The delivery/result is recorded correctly.
+7. A provider failure is recorded as "failed".
+8. A failure never becomes "sent".
+
+WhatsApp
+
+Verify:
+
+1. Correct school's MSG91 credentials are used.
+
+2. Correct integrated WhatsApp number is used.
+
+3. Correct approved template name is used.
+
+4. Exactly five parameters are supplied in this order:
+   
+   1. Guardian name
+   2. Student name
+   3. Fee type
+   4. Amount
+   5. Stage label
+
+5. The WhatsApp message is actually received.
+
+6. HTTP 200 with a provider error response is treated as "failed".
+
+7. Successful provider acceptance is recorded as "sent".
+
+Email
+
+Verify:
+
+1. Correct school's SendGrid API key is used.
+2. From Email is correct.
+3. From Email validation works.
+4. Recipient email is correct.
+5. Email is actually received.
+6. Successful SendGrid response is recorded correctly.
+7. Invalid/missing sender configuration fails before making the provider request.
+
+4. Verify Message Content
+
+For each provider, confirm the actual received message contains:
+
+- Correct guardian name
+- Correct student name
+- Correct fee type
+- Correct total payable amount
+- Correct due date
+- Correct stage
+
+Verify formatting examples:
+
+- "5000" → "₹5,000"
+- "25000" → "₹25,000"
+- "2027-08-17" → "17 Aug 2027"
+
+If a late fee exists, verify:
+
+"base fee + applicable late fee = displayed payable amount"
+
+Do not modify the underlying accounting calculation.
+
+5. Verify Automatic Dunning
+
+Create/use controlled test invoices representing each stage:
+
+- D-2
+- D+0
+- D+3
+- D+7
+- D+14
+
+Verify that the automatic engine selects the correct stage according to the IST calendar date.
+
+Do not manually alter production invoice data just to force a reminder.
+
+If a safe test environment/database is available, use it.
+
+6. Verify Catch-Up
+
+Use controlled test data to verify:
+
+One-day outage
+
+If D+7 should have fired yesterday but the server was unavailable:
+
+- Server starts today.
+- D+7 may be sent as catch-up.
+- It must not become a new D+8 stage.
+- It must not repeatedly send D+7 every day.
+
+Already sent
+
+If D+7 already has:
+
+"status = sent"
+
+for the same:
+
+"feeRecordId + channel + stage"
+
+then catch-up must not send it again.
+
+7. Verify Multiple Invoices
+
+Use a student with two unpaid invoices:
+
+- Invoice A
+- Invoice B
+
+Verify:
+
+- Invoice A reminder is independent.
+- Invoice B reminder is independent.
+- Sending/paying Invoice A does not suppress Invoice B.
+- Deduplication remains invoice-specific.
+
+8. Verify Payment Race Protection
+
+In a controlled test:
+
+1. Start a reminder process.
+2. Mark the invoice Paid before provider execution.
+3. Confirm no notification is sent.
+4. Repeat with Waived.
+5. Repeat with a deleted/non-existent invoice.
+
+The final status check must protect against all three cases.
+
+9. Verify Multi-Tenant Isolation
+
+Create/use two test schools:
+
+- School A
+- School B
+
+Use different:
+
+- credentials
+- templates
+- students
+- invoices
+
+Verify:
+
+- School A only sees School A data.
+- School A only uses School A credentials.
+- School A only uses School A templates.
+- School A only receives School A logs.
+- School B remains completely isolated.
+
+Also verify manual reminder requests cannot reference another school's invoice.
+
+10. Verify Failure Handling
+
+Perform controlled failures for:
+
+- Missing MSG91 Auth Key
+- Missing SMS Sender ID
+- Invalid phone
+- Missing WhatsApp credentials
+- Missing WhatsApp template
+- Missing SendGrid API key
+- Missing From Email
+- Invalid From Email
+- Provider HTTP 400
+- Provider HTTP 401
+- Provider HTTP 403
+- Provider HTTP 429
+- Provider HTTP 500
+- Provider HTTP 502
+- Provider HTTP 503
+- Provider HTTP 504
+- Timeout
+- Network failure
+- WhatsApp HTTP 200 + error body
+
+Verify:
+
+- Permanent configuration errors are not retried unnecessarily.
+- Transient errors retry up to 3 attempts.
+- Timeout is limited to 12 seconds per attempt.
+- Final failure is logged as "failed".
+- No failed provider request becomes "sent".
+
+11. Verify Admin UI
+
+Confirm the final Reminders page is intentionally simple.
+
+It should show:
+
+- Automatic Reminder System
+- SMS configuration
+- WhatsApp configuration
+- Email configuration
+- Save Settings
+- Test Send
+- Last automatic check
+- Checks run every hour
+- Message Templates
+- Five reminder stages
+- Recent Deliveries
+
+Do NOT re-add:
+
+- Run Simulation button
+- Simulation Results dialog
+
+The simulation backend may remain internally for automated testing if it is not exposed to administrators.
+
+12. Final Repository Audit
+
+After testing, search the repository for:
+
+"D0"
+
+"D3"
+
+"D7"
+
+"D14"
+
+"D30"
+
+"AbortSignal"
+
+"fetch("
+
+"sendSms"
+
+"sendWhatsapp"
+
+"sendEmail"
+
+"lateFeeAmount"
+
+"dunning_log"
+
+Confirm old stage names do not remain in active reminder-generation logic.
+
+Historical D30 data may remain.
+
+13. Run Full Test Suite
+
+Run:
+
+"npx vitest run"
+
+Report exactly:
+
+- Test files
+- Total tests
+- Passed
+- Failed
+- Duration
+
+Do not only report "tests pass."
+
+Also report any TypeScript/build errors if applicable.
+
+14. Important — Do Not Claim Production Readiness Automatically
+
+Do not say "100% production ready" merely because automated tests pass.
+
+Clearly separate:
+
+Application verified
+
+From:
+
+External provider verification required
+
+External requirements may include:
+
+- MSG91 account
+- MSG91 credits
+- DLT registration
+- SMS sender approval
+- WhatsApp Business integration
+- Meta template approval
+- SendGrid sender/domain verification
+- Provider account limits/credits
+
+These are legitimate external provider requirements.
+
+15. Final Report
+
+At the end provide a concise final report containing:
+
+1. Application verification result
+2. Files changed, if any
+3. Database changes, if any
+4. Provider test results
+5. Automatic reminder test results
+6. Catch-up test results
+7. Multiple-invoice result
+8. Payment-race result
+9. Multi-tenant isolation result
+10. Failure/retry result
+11. Full test-suite result
+12. TypeScript/build result
+13. External provider requirements
+14. Any remaining limitation
+
+Critical Rule
+
+Do not make unnecessary architectural changes.
+
+The existing dunning implementation has already passed the 614-test audit. Treat it as the baseline.
+
+Only modify code if this verification discovers a genuine defect.
+
+The desired final state is:
+
+«Once a school enters valid provider credentials and completes the legitimate external provider setup/approval, the automated reminder system should operate without developer intervention or manual database changes.»
