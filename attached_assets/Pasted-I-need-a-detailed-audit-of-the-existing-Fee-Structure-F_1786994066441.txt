@@ -1,0 +1,332 @@
+I need a detailed audit of the existing Fee Structure Frequency + Due Date + Invoice Generation + Reminder/Dunning logic.
+
+I am NOT asking you to change anything yet.
+
+I only want you to inspect the existing code and explain exactly how the current system works for these four fee frequencies:
+
+1. Monthly
+2. Quarterly
+3. Annual
+4. One-Time
+
+IMPORTANT
+
+Do not modify any code, database, API, state, routes, invoice logic, reminder logic, or business logic during this audit.
+
+I want the answer based on the ACTUAL existing implementation, not assumptions.
+
+---
+
+1. Explain the current meaning of "Frequency"
+
+For each of these:
+
+- Monthly
+- Quarterly
+- Annual
+- One-Time
+
+tell me exactly:
+
+- How often an invoice is generated
+- What period the invoice represents
+- How the due date is calculated
+- When the invoice becomes overdue
+- When late fee calculation starts
+- When reminders start
+- Whether reminders are generated every month or only when an actual invoice exists
+- Whether the frequency affects dunning/reminder scheduling
+- Whether the frequency affects invoice generation dates
+
+---
+
+2. VERY IMPORTANT — Due Date Logic
+
+In the Fee Structure form there is a field:
+
+Due Date: 21st
+
+I need to know exactly what the application currently interprets this as.
+
+For example, suppose:
+
+Monthly Fee
+
+Amount = ₹2,700
+Frequency = Monthly
+Due Date = 21st
+
+Explain the exact timeline.
+
+For example:
+
+April invoice → due April 21 → overdue after April 21 → late fee/reminders begin according to the existing rules.
+
+Then explain what happens for May, June, July, etc.
+
+---
+
+3. QUARTERLY FEE — MOST IMPORTANT
+
+Suppose:
+
+Amount = ₹12,000
+Frequency = Quarterly
+Due Date = 21st
+
+I need you to determine exactly what the current code does.
+
+Does it mean:
+
+Option A — Correct quarterly interpretation
+
+Quarter 1:
+April–June → ₹12,000 → due April 21
+
+Quarter 2:
+July–September → ₹12,000 → due July 21
+
+Quarter 3:
+October–December → ₹12,000 → due October 21
+
+Quarter 4:
+January–March → ₹12,000 → due January 21
+
+OR does the current implementation incorrectly interpret:
+
+Due Date = 21st
+
+as:
+
+April 21
+May 21
+June 21
+July 21
+etc.
+
+I specifically need you to inspect the invoice generation and reminder/dunning code to determine this.
+
+---
+
+4. ANNUAL FEE
+
+Suppose:
+
+Amount = ₹35,000
+Frequency = Annual
+Due Date = 21st
+
+Explain exactly:
+
+- Which date the annual invoice is generated
+- Which period it represents
+- Whether it generates one invoice per academic session
+- Whether the due date is the 21st of the academic-session start month
+- Whether it can generate another invoice during the same academic session
+- When reminders start
+- When late fees start
+
+For an academic session such as:
+
+2027–2028
+April 2027 → March 2028
+
+tell me what the actual expected invoice/due-date timeline is according to the current code.
+
+---
+
+5. ONE-TIME FEE
+
+Suppose:
+
+Admission Fee = ₹35,000
+Frequency = One-Time
+Due Date = 21st
+
+Explain exactly:
+
+- When the invoice is generated
+- Whether it can ever generate again
+- What the due date means for a one-time fee
+- Whether the due date is tied to the academic session
+- Whether reminders continue until payment
+- Whether late fees continue after the due date
+- Whether a new academic session can generate the same one-time fee again
+
+---
+
+6. REMINDER / DUNNING BEHAVIOUR
+
+This is especially important.
+
+For each frequency, explain whether the reminder system operates based on:
+
+A. The fee structure's frequency
+
+OR
+
+B. The actual generated invoice's due date/status
+
+OR
+
+C. Both.
+
+For example, if a quarterly invoice is due on April 21:
+
+- D-2 → April 19
+- D+0 → April 21
+- D+3 → April 24
+- D+7 → April 28
+- D+14 → May 5
+
+Does the system follow this invoice-specific timeline?
+
+Or does it somehow continue sending reminders every month on the 21st?
+
+Inspect the actual dunning implementation and tell me.
+
+---
+
+7. LATE FEE / PENALTY
+
+Explain how late fees interact with frequency.
+
+For example:
+
+Quarterly:
+₹12,000 invoice
+Due April 21
+Daily penalty ₹30
+
+Does the penalty start after April 21 and continue against that specific ₹12,000 invoice?
+
+Then when the next quarterly invoice is generated in July, does it have its own independent due date and penalty calculation?
+
+I want to know whether penalties are:
+
+- Per invoice
+- Per fee structure
+- Per student
+- Per month
+- Or some other mechanism
+
+---
+
+8. ACADEMIC SESSION BEHAVIOUR
+
+Our academic session is generally:
+
+April → March.
+
+Explain how Monthly, Quarterly, Annual and One-Time frequencies interact with the academic session.
+
+Create a simple timeline for:
+
+Monthly
+
+April
+May
+June
+July
+August
+...
+
+Quarterly
+
+Apr–Jun
+Jul–Sep
+Oct–Dec
+Jan–Mar
+
+Annual
+
+Apr–Mar
+
+One-Time
+
+Single occurrence
+
+Tell me whether the existing implementation actually follows this model.
+
+---
+
+9. FIND THE EXACT CODE
+
+Please identify the relevant source files/functions responsible for:
+
+- Fee frequency handling
+- Invoice generation
+- Due-date calculation
+- Recurring invoice generation
+- Reminder scheduling
+- Dunning
+- Late fee calculation
+- Academic-session association
+
+Give me:
+
+- File path
+- Function/component name
+- Short explanation of what it does
+
+Do not modify them.
+
+---
+
+10. MOST IMPORTANT FINAL ANSWER
+
+At the end, give me a clear conclusion:
+
+CURRENT IMPLEMENTATION
+
+Monthly → ______
+
+Quarterly → ______
+
+Annual → ______
+
+One-Time → ______
+
+DUE DATE INTERPRETATION
+
+"21st" currently means → ______
+
+QUARTERLY BEHAVIOUR
+
+Does ₹12,000 Quarterly + Due Date 21st create:
+
+A. Four invoices per academic year, due on the 21st of the quarter-start month
+
+OR
+
+B. Twelve monthly due/reminder cycles
+
+OR
+
+C. Something else?
+
+REMINDER BEHAVIOUR
+
+Does the reminder system follow each invoice's actual due date?
+
+YES / NO
+
+Explain.
+
+LATE FEE BEHAVIOUR
+
+Does the late fee apply independently to each generated invoice?
+
+YES / NO
+
+Explain.
+
+RISK
+
+If the current implementation does NOT correctly distinguish Monthly vs Quarterly vs Annual vs One-Time, clearly identify the problem and explain what would need to be changed later.
+
+Again:
+
+DO NOT CHANGE ANYTHING.
+
+This is an audit/explanation only.
