@@ -1571,14 +1571,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [showStandalonePay, setShowStandalonePay] = useState(false);
   const [showPaymentsModal, setShowPaymentsModal] = useState(false);
   const [viewPaymentsRecord, setViewPaymentsRecord] = useState<FeeRecordWithStudent | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
-  const [deletePassword, setDeletePassword] = useState("");
-  const [deletePasswordVisible, setDeletePasswordVisible] = useState(false);
-  // ── Bulk selection & delete ──────────────────────────────────────────────
+  // ── Bulk selection ────────────────────────────────────────────────────────
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [showBulkDelete, setShowBulkDelete] = useState(false);
-  const [bulkPassword, setBulkPassword] = useState("");
-  const [bulkPasswordVisible, setBulkPasswordVisible] = useState(false);
   const [showNotifModal, setShowNotifModal] = useState(false);
   const [notifStudentId, setNotifStudentId] = useState<number | null>(null);
   const [notifStudentName, setNotifStudentName] = useState<string | null>(null);
@@ -1817,38 +1811,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const deleteMut = useMutation({
-    mutationFn: ({ id, password }: { id: number; password: string }) =>
-      apiRequest("DELETE", `/api/admin/fees/${id}`, { password }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/failed-counts"] });
-      setDeletePassword("");
-      toast({ title: "Fee record deleted" });
-    },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-
-  const bulkDeleteMut = useMutation({
-    mutationFn: async ({ ids, password }: { ids: number[]; password: string }) => {
-      const res = await apiRequest("POST", "/api/admin/fees/bulk-delete", { ids, password });
-      return res.json() as Promise<{ deleted: number; notFound: number }>;
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/failed-counts"] });
-      setSelectedIds(new Set());
-      setShowBulkDelete(false);
-      setBulkPassword("");
-      toast({ title: `${data.deleted} record${data.deleted !== 1 ? "s" : ""} deleted successfully` });
-    },
-    onError: (e: Error) => toast({ title: "Deletion failed", description: e.message, variant: "destructive" }),
-  });
-
   const classes = useMemo(() =>
     [...new Set(feeRecords.map(r => r.student?.class).filter(Boolean))].sort() as string[],
     [feeRecords]);
@@ -1981,18 +1943,12 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
               Select all
             </button>
           )}
-          {selectedIds.size > 0 && canRecord && !isArchiveMode && (
-            <>
-              <button
-                onClick={() => setSelectedIds(new Set())}
-                className="text-xs text-white/40 hover:text-white/70 transition-colors underline underline-offset-2">
-                Clear
-              </button>
-              <Button size="sm" onClick={() => { setBulkPassword(""); setShowBulkDelete(true); }}
-                className="bg-red-700 hover:bg-red-600 text-white gap-1.5 font-semibold">
-                <Trash2 className="w-4 h-4" /> Delete Selected ({selectedIds.size})
-              </Button>
-            </>
+          {selectedIds.size > 0 && (
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="text-xs text-white/40 hover:text-white/70 transition-colors underline underline-offset-2">
+              Clear
+            </button>
           )}
           <Button size="sm" variant="outline" onClick={() => setShowExportLedger(true)}
             className="border-emerald-700 text-emerald-400 hover:bg-emerald-900/30 gap-1">
@@ -2204,14 +2160,9 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                           return null;
                         })()}
                         {canRecord && !isArchiveMode && (
-                          <>
-                            <Button size="icon" variant="ghost" onClick={() => openEdit(rec)} className="h-7 w-7 text-white/40 hover:text-white">
-                              <Pencil className="w-3.5 h-3.5" />
-                            </Button>
-                            <Button size="icon" variant="ghost" onClick={() => setConfirmDeleteId(rec.id)} className="h-7 w-7 text-white/40 hover:text-red-400">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </>
+                          <Button size="icon" variant="ghost" onClick={() => openEdit(rec)} className="h-7 w-7 text-white/40 hover:text-white">
+                            <Pencil className="w-3.5 h-3.5" />
+                          </Button>
                         )}
                       </div>
                     </td>
@@ -2493,115 +2444,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         studentId={notifStudentId}
         studentName={notifStudentName}
       />
-
-      {/* Bulk delete confirmation — requires principal password */}
-      <Dialog open={showBulkDelete} onOpenChange={v => { if (!v) { setShowBulkDelete(false); setBulkPassword(""); } }}>
-        <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-red-400 flex items-center gap-2">
-              <Trash2 className="w-4 h-4" /> Delete {selectedIds.size} Record{selectedIds.size !== 1 ? "s" : ""}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <p className="text-white/70 text-sm">
-              You are about to permanently delete <span className="text-white font-semibold">{selectedIds.size}</span> selected fee record{selectedIds.size !== 1 ? "s" : ""}.
-              This cannot be undone.
-            </p>
-            <p className="text-amber-400/80 text-xs">
-              ⚠️ Records with status <strong>Paid</strong>, <strong>Partial</strong>, or <strong>Waived</strong> that have payment history may still be deleted — please verify your selection before proceeding.
-            </p>
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-white/60">Enter your password to confirm</label>
-              <div className="relative">
-                <input
-                  type={bulkPasswordVisible ? "text" : "password"}
-                  value={bulkPassword}
-                  onChange={e => setBulkPassword(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter" && bulkPassword) bulkDeleteMut.mutate({ ids: [...selectedIds], password: bulkPassword }); }}
-                  placeholder="Your current password"
-                  className="w-full bg-[#0F1E35] border border-white/10 rounded-lg px-3 pr-10 py-2.5 text-sm text-white focus:outline-none focus:border-red-500 placeholder:text-white/20"
-                />
-                <button type="button" onClick={() => setBulkPasswordVisible(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70">
-                  {bulkPasswordVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="ghost" className="text-white/60" onClick={() => { setShowBulkDelete(false); setBulkPassword(""); }}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={!bulkPassword || bulkDeleteMut.isPending}
-              onClick={() => bulkDeleteMut.mutate({ ids: [...selectedIds], password: bulkPassword })}
-            >
-              {bulkDeleteMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Trash2 className="w-4 h-4 mr-1" />}
-              Delete {selectedIds.size} Record{selectedIds.size !== 1 ? "s" : ""}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete confirmation */}
-      <Dialog open={confirmDeleteId !== null} onOpenChange={v => { if (!v) { setConfirmDeleteId(null); setDeletePassword(""); setDeletePasswordVisible(false); } }}>
-        <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-red-400 flex items-center gap-2">
-              <Trash2 className="w-4 h-4" /> Delete Fee Record
-            </DialogTitle>
-          </DialogHeader>
-          <p className="text-white/70 text-sm">Are you sure you want to delete this fee record? This action cannot be undone.</p>
-          <div className="space-y-2 pt-1">
-            <label className="text-white/50 text-xs">Enter your password to confirm</label>
-            <div className="relative">
-              <input
-                type={deletePasswordVisible ? "text" : "password"}
-                value={deletePassword}
-                onChange={e => setDeletePassword(e.target.value)}
-                placeholder="Your admin password"
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm pr-10 focus:outline-none focus:border-red-500/50"
-                onKeyDown={e => {
-                  if (e.key === "Enter" && deletePassword && confirmDeleteId !== null) {
-                    deleteMut.mutate({ id: confirmDeleteId, password: deletePassword }, {
-                      onSuccess: () => { setConfirmDeleteId(null); setDeletePasswordVisible(false); },
-                      onError: () => {},
-                    });
-                  }
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => setDeletePasswordVisible(v => !v)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60"
-              >
-                {deletePasswordVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="ghost" className="text-white/60" onClick={() => { setConfirmDeleteId(null); setDeletePassword(""); setDeletePasswordVisible(false); }}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={deleteMut.isPending || !deletePassword}
-              onClick={() => {
-                if (confirmDeleteId !== null) {
-                  deleteMut.mutate({ id: confirmDeleteId, password: deletePassword }, {
-                    onSuccess: () => { setConfirmDeleteId(null); setDeletePasswordVisible(false); },
-                    onError: () => {},
-                  });
-                }
-              }}
-            >
-              {deleteMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Trash2 className="w-4 h-4 mr-1" />}
-              Delete
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       {/* Add / Edit Dialog */}
       <Dialog open={showForm} onOpenChange={v => { if (!v) { setShowForm(false); setEditing(null); setAddFeeSuccessId(null); } }}>
