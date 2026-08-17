@@ -805,7 +805,12 @@ export async function runDunningForSingleFee(
 
 // ─── Per-school processing (real cron) ───────────────────────────────────────
 
-async function processDunningForSchool(cfg: typeof notificationConfig.$inferSelect): Promise<void> {
+/**
+ * Process dunning for a single school. Called by runDunningJob (which wraps it
+ * with the advisory lock guard) and exported for direct use in integration tests
+ * that want to test business logic without the advisory lock layer.
+ */
+export async function processDunningForSchool(cfg: typeof notificationConfig.$inferSelect): Promise<void> {
   // Always scope to the active session — archived sessions never get reminders
   const activeSession = await db.select({ id: academicSessions.id })
     .from(academicSessions)

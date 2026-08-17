@@ -1,0 +1,500 @@
+The implementation report looks substantially complete, but DO NOT consider this finished yet.
+
+Before I enter any real MSG91, WhatsApp, or SendGrid credentials, perform one final independent verification of the actual code and database.
+
+Do not make assumptions based on the previous implementation report. Inspect the actual implementation.
+
+1. Verify the final stage system
+
+Search the entire repository and database-related code for:
+
+- "D0"
+- "D3"
+- "D7"
+- "D14"
+- "D30"
+
+The only active reminder stages allowed are:
+
+- "D-2"
+- "D+0"
+- "D+3"
+- "D+7"
+- "D+14"
+
+Because historical data is NOT required, obsolete stage records do not need to be preserved.
+
+If obsolete D0/D3/D7/D14/D30 template or log records exist and are not required by the application, clean them up through the application's migration.
+
+Most importantly, confirm that no active code path can generate D30.
+
+2. Verify automatic cron mathematically
+
+Test the actual "getStage()" / automatic stage function against:
+
+- -3 → null
+- -2 → D-2
+- -1 → null
+- 0 → D+0
+- +1 → null
+- +2 → null
+- +3 → D+3
+- +4 → null
+- +6 → null
+- +7 → D+7
+- +8 → null
+- +13 → null
+- +14 → D+14
+- +15 → null
+- +30 → null
+
+Do not use nearest-stage logic for the automatic cron.
+
+Nearest-stage logic is only for manual reminders and simulation where specified.
+
+3. Verify catch-up carefully
+
+Inspect the actual catch-up implementation.
+
+A catch-up must identify a stage that should have fired during the previous 2 IST calendar days.
+
+It must NOT simply assign today's nearest stage.
+
+Test at minimum:
+
+Scenario A
+
+D+7 should have fired Monday.
+
+Server unavailable Monday.
+
+Server starts Tuesday.
+
+Expected:
+
+- D+7 may be sent Tuesday
+- only if D+7 was not successfully sent
+
+Scenario B
+
+D+7 was already successfully sent Monday.
+
+Server starts Tuesday.
+
+Expected:
+
+- NO second D+7 reminder
+
+Scenario C
+
+Server remains available Tuesday and Wednesday.
+
+Expected:
+
+- the missed Monday D+7 reminder must NOT repeatedly send Tuesday and Wednesday.
+
+Scenario D
+
+A stage is older than the 2-day catch-up window.
+
+Expected:
+
+- it must NOT suddenly generate a reminder.
+
+Show me the exact algorithm used for catch-up.
+
+4. Verify retry behavior
+
+The requirement is:
+
+Total attempts = 3.
+
+The timing should be approximately:
+
+- attempt 1 → immediately
+- attempt 2 → after ~1 second
+- attempt 3 → after ~2 seconds
+
+Do NOT accidentally implement 1s → 2s → 4s as three delays.
+
+Verify retry conditions:
+
+Retry:
+
+- network failure
+- timeout
+- 429
+- 500
+- 502
+- 503
+- 504
+
+Do NOT retry:
+
+- 400
+- 401
+- 403
+- invalid API key
+- invalid sender
+- invalid recipient
+- missing configuration
+- missing template
+- other permanent 4xx errors
+
+After all three attempts fail:
+
+"dunning_log.status = failed"
+
+Never "sent".
+
+5. Verify timeout
+
+Inspect every external provider call.
+
+Confirm all of these have a hard timeout:
+
+- MSG91 SMS
+- MSG91 WhatsApp
+- SendGrid
+- Mailtrap
+
+Timeout must terminate the request at approximately 12 seconds.
+
+Then verify that:
+
+- timeout is classified as transient
+- retry happens according to the retry policy
+- final failure is logged
+- advisory lock is eventually released
+- the next school/invoice/channel can continue
+
+A provider must never be able to hold the dunning engine indefinitely.
+
+6. Verify WhatsApp success detection
+
+Inspect the actual MSG91 WhatsApp response parser.
+
+Test:
+
+HTTP 200 + successful provider response
+
+Expected:
+
+"sent"
+
+HTTP 200 + provider error body
+
+Expected:
+
+"failed"
+
+HTTP 400
+
+Expected:
+
+"failed", no retry
+
+HTTP 429
+
+Expected:
+
+retry up to 3 attempts
+
+HTTP 500/502/503/504
+
+Expected:
+
+retry up to 3 attempts
+
+Make sure HTTP 200 does NOT automatically become "sent".
+
+7. Verify amount calculation
+
+Trace the actual source of "lateFeeAmount".
+
+Confirm it is the application's authoritative accrued late-fee value.
+
+Test:
+
+Base = ₹2,000
+Late fee = ₹100
+
+Expected reminder amount:
+
+"₹2,100"
+
+Test:
+
+Base = ₹2,000
+Late fee = ₹0
+
+Expected:
+
+"₹2,000"
+
+Also verify that the system does NOT calculate the late fee twice.
+
+The same authoritative total must be used by:
+
+- SMS
+- WhatsApp
+- Email
+- manual reminder
+- simulation
+- relevant UI/logs
+
+8. Verify formatting
+
+Confirm shared formatting utilities are actually reused.
+
+Expected:
+
+"5000" → "₹5,000"
+
+"25000" → "₹25,000"
+
+"2027-08-17" → "17 Aug 2027"
+
+Do not have three separate implementations for SMS, WhatsApp and Email.
+
+9. Verify SMS validation
+
+Test:
+
+- empty phone
+- whitespace phone
+- letters
+- too-short number
+- malformed number
+- valid 10-digit Indian number
+- valid 91XXXXXXXXXX number
+- +91XXXXXXXXXX
+
+For invalid numbers:
+
+zero provider API requests must occur.
+
+Also verify Auth Key and Sender ID are validated before the provider request.
+
+10. Verify email validation
+
+Test:
+
+- missing API key
+- missing student email
+- invalid email
+- missing From Email
+- invalid From Email
+
+For missing/invalid From Email:
+
+zero SendGrid requests must occur.
+
+The error must clearly say that the sender email configuration is missing/invalid.
+
+11. Verify payment race condition
+
+Use tests where the invoice changes state immediately before sending.
+
+Test:
+
+- Due → Paid
+- Due → Waived
+- Due → deleted
+
+Expected in every case:
+
+no provider request
+
+and no false "sent" record.
+
+12. Verify multiple invoices
+
+Create:
+
+Invoice A = ₹2,000
+Invoice B = ₹3,000
+
+Send/pay Invoice A.
+
+Verify Invoice B continues to operate independently.
+
+Deduplication must remain:
+
+"feeRecordId + channel + stage"
+
+Never use only:
+
+"studentId + channel"
+
+13. Verify multi-tenant isolation
+
+Create two schools:
+
+School A
+School B
+
+Verify:
+
+- A cannot use B's credentials
+- A cannot process B's invoice
+- A cannot read B's dunning logs
+- A cannot read B's templates
+- A cannot trigger B's reminder
+- A cannot access B's student reminder history
+
+Also verify notification configuration is selected using the current "schoolId".
+
+14. Verify simulation
+
+Mock all providers and prove simulation makes:
+
+zero calls to:
+
+- MSG91 SMS
+- MSG91 WhatsApp
+- SendGrid
+- Mailtrap
+
+Simulation may create:
+
+"status = simulated"
+
+But:
+
+"simulated" must never participate in successful-send deduplication.
+
+15. Verify manual reminder
+
+Confirm manual stage selection is independent from automatic cron.
+
+Manual reminder may use nearest-stage logic.
+
+Automatic cron must continue to use exact-day logic.
+
+Also confirm manual sending cannot cause the automatic system to repeatedly send the same stage.
+
+16. Verify DLT implementation
+
+Your report says:
+
+«"Calls MSG91 v2 with DLT-compliant fields."»
+
+Do not just state this.
+
+Inspect the actual payload and explain:
+
+- which DLT-related fields are sent
+- where their values come from
+- whether they are school-configurable
+- whether MSG91 actually expects those fields for the current API route
+
+If DLT configuration is entirely handled by MSG91 after Sender ID/template registration, state that clearly.
+
+Do not introduce hardcoded DLT IDs.
+
+17. Verify provider configuration independence
+
+There must be no hidden developer-only configuration such as:
+
+- hardcoded MSG91 key
+- hardcoded WhatsApp number
+- hardcoded template ID/name
+- hardcoded SendGrid sender
+- hardcoded school ID
+- environment variable required for an individual school's provider configuration
+
+The application's Notification Settings should be sufficient for school-specific provider configuration.
+
+18. Perform the required repository audit
+
+Actually execute searches for:
+
+"D0"
+
+"D3"
+
+"D7"
+
+"D14"
+
+"D30"
+
+"AbortSignal"
+
+"fetch("
+
+"sendSms"
+
+"sendWhatsapp"
+
+"sendEmail"
+
+"lateFeeAmount"
+
+"dunning_log"
+
+For each obsolete stage reference, explain whether it is:
+
+- active logic
+- test-only
+- comment
+- historical migration
+- UI text
+- legitimate reference
+
+There must be ZERO obsolete stage names in active reminder logic.
+
+19. Run the complete test suite
+
+Run the entire test suite, not only the dunning tests.
+
+Report:
+
+- total test files
+- passed test files
+- failed test files
+- total tests
+- passed tests
+- failed tests
+- duration
+
+Also report the dunning-specific test count separately.
+
+20. Final conclusion
+
+After all verification, give me a table with:
+
+Requirement| Status| Evidence
+Exact stages| | 
+IST calculation| | 
+Exact cron| | 
+2-day catch-up| | 
+Deduplication| | 
+Timeout| | 
+Retry| | 
+WhatsApp validation| | 
+SMS validation| | 
+Email validation| | 
+Late fee| | 
+INR formatting| | 
+Date formatting| | 
+Payment race protection| | 
+Multiple invoices| | 
+Multi-tenant isolation| | 
+Manual reminder| | 
+Simulation| | 
+Database integrity| | 
+Provider configuration| | 
+
+Then explicitly answer:
+
+"If I now enter the required MSG91/WhatsApp/SendGrid credentials and legitimate provider approvals through the application UI, is there ANY remaining application-code dependency or manual database/developer step required?"
+
+The answer must distinguish:
+
+Application-code dependency: YES/NO
+
+External provider dependency: YES/NO
+
+Do not say "100% production ready" merely because tests pass. If anything remains, identify it explicitly.

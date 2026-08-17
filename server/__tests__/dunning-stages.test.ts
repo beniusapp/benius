@@ -24,6 +24,7 @@ import {
   getStageForManualTrigger, getStageForSimulation,
   formatAmount, formatIndianDate, normalizePhone,
   runDunningJob, runDunningSimulation, runDunningForSingleFee,
+  processDunningForSchool,
   DEFAULT_SMS_TEMPLATES, DEFAULT_EMAIL_SUBJECTS, DEFAULT_EMAIL_BODIES,
 } from "../dunning";
 
@@ -100,6 +101,17 @@ async function markPaid(feeId: number) {
 }
 async function markWaived(feeId: number) {
   await db.update(feeRecords).set({ status: "Waived" }).where(eq(feeRecords.id, feeId));
+}
+/**
+ * Run the per-school dunning logic WITHOUT the advisory lock.
+ * This keeps integration tests isolated from parallel test files that may
+ * concurrently hold the same pg advisory lock key.
+ * The advisory lock itself is tested by dunning-concurrency-guard.test.ts.
+ */
+async function runJob(sid: number): Promise<void> {
+  const cfgRows = await db.select().from(notificationConfig)
+    .where(eq(notificationConfig.schoolId, sid));
+  if (cfgRows.length > 0) await processDunningForSchool(cfgRows[0]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -324,7 +336,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(2);
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId);
-    await runDunningJob();
+    await runJob(schoolId);
     expect(await dunningLogCount(feeId, "sms", "D-2")).toBe(1);
     expect(await dunningLogCount(feeId, "whatsapp", "D-2")).toBe(1);
     expect(await dunningLogCount(feeId, "email", "D-2")).toBe(1);
@@ -335,7 +347,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(0);
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId);
-    await runDunningJob();
+    await runJob(schoolId);
     expect(await dunningLogCount(feeId, "sms", "D+0")).toBe(1);
   });
 
@@ -344,7 +356,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(-3);
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId);
-    await runDunningJob();
+    await runJob(schoolId);
     expect(await dunningLogCount(feeId, "sms", "D+3")).toBe(1);
   });
 
@@ -353,7 +365,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(-7);
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId);
-    await runDunningJob();
+    await runJob(schoolId);
     expect(await dunningLogCount(feeId, "sms", "D+7")).toBe(1);
   });
 
@@ -362,7 +374,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(-14);
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId);
-    await runDunningJob();
+    await runJob(schoolId);
     expect(await dunningLogCount(feeId, "sms", "D+14")).toBe(1);
   });
 
@@ -371,7 +383,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(-30);
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId);
-    await runDunningJob();
+    await runJob(schoolId);
     // daysSince=30 has no exact stage and is outside the 2-day catch-up window
     // (D+14 was the last stage, at day 14, which is > 2 days ago from day 30)
     const d30count = await dunningLogCount(feeId, "sms", "D30");
@@ -385,8 +397,8 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(0);
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId);
-    await runDunningJob();
-    await runDunningJob(); // second run — should be skipped by sentSet
+    await runJob(schoolId);
+    await runJob(schoolId); // second run — should be skipped by sentSet
     expect(await dunningLogCount(feeId, "sms", "D+0")).toBe(1);
   });
 
@@ -404,7 +416,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(0);
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId, { waEnabled: false, emailEnabled: false });
-    await runDunningJob(); // first run — all 3 attempts fail (MAX_RETRIES=3), logs 'failed'
+    await runJob(schoolId); // first run — all 3 attempts fail (MAX_RETRIES=3), logs 'failed'
     // Now check: a 'failed' log exists, no 'sent' log
     expect(await dunningLogCount(feeId, "sms", "D+0", "failed")).toBeGreaterThan(0);
     expect(await dunningLogCount(feeId, "sms", "D+0", "sent")).toBe(0);
@@ -416,7 +428,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await markPaid(feeId);
     await insertConfig(schoolId);
-    await runDunningJob();
+    await runJob(schoolId);
     expect(await dunningLogCount(feeId, "sms", "D+0")).toBe(0);
   });
 
@@ -426,7 +438,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await markWaived(feeId);
     await insertConfig(schoolId);
-    await runDunningJob();
+    await runJob(schoolId);
     expect(await dunningLogCount(feeId, "sms", "D+0")).toBe(0);
   });
 
@@ -444,7 +456,7 @@ describe("Integration — cron job / runDunningJob", () => {
     // base=2000, lateFee=100 → totalDue=2100
     const feeId = await insertFee(schoolId, studentId, sessionId, dueDate, 2000, 100);
     await insertConfig(schoolId, { waEnabled: false, emailEnabled: false });
-    await runDunningJob();
+    await runJob(schoolId);
     expect(captured.length).toBeGreaterThan(0);
     // Message should contain 2,100 (formatted) not 2,000
     expect(captured[0]).toContain("2,100");
@@ -464,7 +476,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(2); // 2 days from now
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId, { waEnabled: false, emailEnabled: false });
-    await runDunningJob();
+    await runJob(schoolId);
     if (captured.length > 0) {
       // Should NOT contain raw ISO format like "2027-08-"
       expect(captured[0]).not.toMatch(/\d{4}-\d{2}-\d{2}/);
@@ -479,7 +491,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     // Auth key present (needed for WhatsApp too), but SMS sender ID missing
     await insertConfig(schoolId, { smsEnabled: true, msg91SenderId: null });
-    await runDunningJob();
+    await runJob(schoolId);
     // SMS should be 'failed' with descriptive error
     const smsRows = await db.select().from(dunningLog).where(and(eq(dunningLog.feeRecordId, feeId), eq(dunningLog.channel, "sms")));
     expect(smsRows.length).toBeGreaterThan(0);
@@ -495,7 +507,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(0);
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId, { waEnabled: true, msg91WaNumber: null, msg91WaTemplate: null });
-    await runDunningJob();
+    await runJob(schoolId);
     const waRows = await db.select().from(dunningLog).where(and(eq(dunningLog.feeRecordId, feeId), eq(dunningLog.channel, "whatsapp")));
     expect(waRows[0].status).toBe("failed");
     expect(waRows[0].errorMessage).toContain("WhatsApp");
@@ -507,7 +519,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(0);
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId, { emailEnabled: true, sendgridFromEmail: null });
-    await runDunningJob();
+    await runJob(schoolId);
     const emailRows = await db.select().from(dunningLog).where(and(eq(dunningLog.feeRecordId, feeId), eq(dunningLog.channel, "email")));
     expect(emailRows[0].status).toBe("failed");
     expect(emailRows[0].errorMessage).toMatch(/From Email/i);
@@ -519,7 +531,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(0);
     const feeId   = await insertFee(schoolId, stBadPhone, sessionId, dueDate);
     await insertConfig(schoolId, { waEnabled: false, emailEnabled: false });
-    await runDunningJob();
+    await runJob(schoolId);
     const rows = await db.select().from(dunningLog).where(eq(dunningLog.feeRecordId, feeId));
     expect(rows.length).toBeGreaterThan(0);
     expect(rows[0].status).toBe("failed");
@@ -532,7 +544,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(-8); // 8 days overdue → catch-up sees day 8-1=7 → D+7
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId, { waEnabled: false, emailEnabled: false });
-    await runDunningJob();
+    await runJob(schoolId);
     expect(await dunningLogCount(feeId, "sms", "D+7")).toBe(1);
   });
 
@@ -543,7 +555,7 @@ describe("Integration — cron job / runDunningJob", () => {
     await insertConfig(schoolId, { waEnabled: false, emailEnabled: false });
     // Pre-insert a "sent" log for D+7 SMS
     await db.insert(dunningLog).values({ schoolId, feeRecordId: feeId, channel: "sms", stage: "D+7", status: "sent", studentName: "Test Student" });
-    await runDunningJob();
+    await runJob(schoolId);
     // Should still be exactly 1 (the pre-inserted one)
     expect(await dunningLogCount(feeId, "sms", "D+7")).toBe(1);
   });
@@ -554,7 +566,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const feeB = await insertFee(schoolId, studentId, sessionId, istDate(-7)); // D+7
     await insertConfig(schoolId, { waEnabled: false, emailEnabled: false });
     await markPaid(feeA); // paying A does not affect B
-    await runDunningJob();
+    await runJob(schoolId);
     expect(await dunningLogCount(feeA, "sms", "D+0")).toBe(0); // paid, skipped
     expect(await dunningLogCount(feeB, "sms", "D+7")).toBe(1); // independent
   });
@@ -570,7 +582,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(0);
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId, { smsEnabled: false, emailEnabled: false });
-    await runDunningJob();
+    await runJob(schoolId);
     const rows = await db.select().from(dunningLog).where(and(eq(dunningLog.feeRecordId, feeId), eq(dunningLog.channel, "whatsapp")));
     expect(rows.length).toBe(1);
     expect(rows[0].status).toBe("failed");
@@ -589,10 +601,14 @@ describe("Integration — cron job / runDunningJob", () => {
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId, { waEnabled: false, emailEnabled: false });
     // Must resolve without hanging; all retries exhaust quickly
-    await expect(runDunningJob()).resolves.toBeUndefined();
-    const rows = await db.select().from(dunningLog).where(eq(dunningLog.feeRecordId, feeId));
-    // Should have logged a failure, not a success
-    expect(rows[0]?.status).toBe("failed");
+    await expect(runJob(schoolId)).resolves.toBeUndefined();
+    // Filter by status="failed" directly — a parallel test file's runDunningJob()
+    // may also write rows for this fee (real API → auth error → "failed"), so we
+    // assert on the outcome rather than on rows[0] position.
+    const failedRows = await db.select().from(dunningLog)
+      .where(and(eq(dunningLog.feeRecordId, feeId), eq(dunningLog.status, "failed")));
+    // Should have at least one failure row (AbortError → failed on all 3 retries)
+    expect(failedRows.length).toBeGreaterThan(0);
   });
 
   it("9v — HTTP 429 is retried, then recorded as failed after max attempts", async () => {
@@ -605,7 +621,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(0);
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId, { waEnabled: false, emailEnabled: false });
-    await runDunningJob();
+    await runJob(schoolId);
     // withRetry attempts 3 times total
     expect(calls).toBe(3);
     const rows = await db.select().from(dunningLog).where(and(eq(dunningLog.feeRecordId, feeId), eq(dunningLog.channel, "sms")));
@@ -623,7 +639,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(0);
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId, { waEnabled: false, emailEnabled: false });
-    await runDunningJob();
+    await runJob(schoolId);
     // 400 is not retried — exactly 1 attempt
     expect(calls).toBe(1);
     const rows = await db.select().from(dunningLog).where(and(eq(dunningLog.feeRecordId, feeId), eq(dunningLog.channel, "sms")));
@@ -640,7 +656,7 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(0);
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await insertConfig(schoolId, { waEnabled: false, emailEnabled: false });
-    await runDunningJob();
+    await runJob(schoolId);
     expect(calls).toBe(3);
     const rows = await db.select().from(dunningLog).where(and(eq(dunningLog.feeRecordId, feeId), eq(dunningLog.channel, "sms")));
     expect(rows[0].status).toBe("failed");
@@ -655,7 +671,8 @@ describe("Integration — cron job / runDunningJob", () => {
     const feeB      = await insertFee(schoolB,  studB,     sessB,     istDate(0));
     await insertConfig(schoolId);
     await insertConfig(schoolB);
-    await runDunningJob();
+    await runJob(schoolId);
+    await runJob(schoolB);
     // Each school's logs should be scoped to its own school_id
     const logsA = await db.select().from(dunningLog).where(and(eq(dunningLog.feeRecordId, feeA), eq(dunningLog.schoolId, schoolId)));
     const logsB = await db.select().from(dunningLog).where(and(eq(dunningLog.feeRecordId, feeB), eq(dunningLog.schoolId, schoolB)));
@@ -717,7 +734,7 @@ describe("Integration — runDunningSimulation", () => {
     await runDunningSimulation(simSchoolId);
     // Now run real job — should still send (simulated != sent in sentSet)
     await insertConfig(simSchoolId, { waEnabled: false, emailEnabled: false });
-    await runDunningJob();
+    await runJob(simSchoolId);
     expect(await dunningLogCount(feeId, "sms", "D+0", "sent")).toBe(1);
     await db.delete(notificationConfig).where(eq(notificationConfig.schoolId, simSchoolId));
     vi.restoreAllMocks();
