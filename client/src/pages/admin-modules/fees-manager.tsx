@@ -429,10 +429,14 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
   const cashTotal = DENOMS.reduce((s, d) => s + d * (denomQty[d] ?? 0), 0);
   const cashDiff  = cashTotal - totalAmount;
   const cashMatch = cashTotal > 0 && cashDiff === 0;
-  // Submit guard: cash must match exactly; non-cash requires a reference number + date
+  // Submit guard per spec req 20:
+  //  Cash         — denomination total matches invoice + received date
+  //  Cheque       — cheque number + cheque date + received date
+  //  BankTransfer — UTR + transfer date + received date
+  //  DemandDraft  — DD number + DD date + received date
   const canSubmit = method === "Cash"
     ? cashMatch && date.length > 0
-    : ref.trim().length > 0 && date.length > 0;
+    : ref.trim().length > 0 && instrDate.length > 0 && date.length > 0;
 
   function toggleInvoice(id: number) {
     setSelectedIds(prev => {
