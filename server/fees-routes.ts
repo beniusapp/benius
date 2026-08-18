@@ -793,14 +793,25 @@ export function registerFeesRoutes(app: Express) {
     autoFifo: z.boolean().default(false),
     // feeNotes: optional notes written to the linked invoice during payment
     feeNotes: z.string().max(500).optional().nullable(),
-    // Payment fields
-    paymentMethod: z.enum(["Cash", "Cheque", "BankTransfer", "DemandDraft", "Online"]),
+    // Payment fields — Online is excluded from manual offline recording
+    paymentMethod: z.enum(["Cash", "Cheque", "BankTransfer", "DemandDraft"]),
     referenceNumber: z.string().max(100).optional().nullable(),
     receivedDate: z.string().min(1),
     amount: z.number().int().positive(),
     cashierNotes: z.string().max(500).optional().nullable(),
     idempotencyKey: z.string().max(64).optional().nullable(),
     lateFeePaid: z.number().int().min(0).default(0),
+    // ── Cash denomination fields ──────────────────────────────────────────────
+    // denominationBreakdown: keys are denomination values ("500","200",...), values are counts.
+    denominationBreakdown: z.record(z.string(), z.number().int().min(0)).optional().nullable(),
+    // Total cash claimed by the frontend (may span multiple invoices in one session).
+    // Backend re-computes from breakdown and rejects if it does not match this figure.
+    denominationTotal: z.number().int().min(0).optional().nullable(),
+    // ── Cheque / Bank Transfer / Demand Draft extra fields ────────────────────
+    chequeDate: z.string().optional().nullable(),   // instrument date (cheque / DD / transfer)
+    branchName: z.string().max(100).optional().nullable(),
+    bankName:   z.string().max(100).optional().nullable(),
+    payerName:  z.string().max(200).optional().nullable(),
   });
 
   // NOTE: GET /api/admin/fees/students/search is registered in routes.ts
@@ -1044,6 +1055,40 @@ export function registerFeesRoutes(app: Express) {
       if (existing) return res.status(200).json({ ...existing, idempotent: true });
     }
 
+    // ── Cash denomination server-side recalculation ───────────────────────────
+    // For Cash payments the frontend must supply the denomination breakdown.
+    // The backend independently calculates the denomination total to prevent
+    // frontend manipulation. The calculated total must match denominationTotal
+    // (the combined cash the admin claims to have counted, which may span
+    // multiple invoices in one session). Each individual invoice is validated
+    // against the invoice outstanding by the existing amount guard below.
+    if (paymentData.paymentMethod === "Cash") {
+      const breakdown = paymentData.denominationBreakdown;
+      if (!breakdown || typeof breakdown !== "object") {
+        return res.status(400).json({ message: "Cash denomination breakdown is required for cash payments." });
+      }
+      const VALID_DENOMS = [500, 200, 100, 50, 20, 10, 5, 2, 1];
+      let calculatedCash = 0;
+      for (const dv of VALID_DENOMS) {
+        const qty = Number(breakdown[String(dv)] ?? 0);
+        if (!Number.isInteger(qty) || qty < 0) {
+          return res.status(400).json({ message: `Invalid quantity for ₹${dv} denomination. Must be a non-negative integer.` });
+        }
+        calculatedCash += dv * qty;
+      }
+      const claimedTotal = paymentData.denominationTotal ?? paymentData.amount;
+      if (calculatedCash !== claimedTotal) {
+        return res.status(400).json({
+          message: `Cash denomination total (₹${calculatedCash.toLocaleString("en-IN")}) does not match the declared cash total (₹${claimedTotal.toLocaleString("en-IN")}). Please recount.`,
+        });
+      }
+      if (claimedTotal < paymentData.amount) {
+        return res.status(400).json({
+          message: `Cash counted (₹${claimedTotal.toLocaleString("en-IN")}) is less than this invoice's outstanding amount (₹${paymentData.amount.toLocaleString("en-IN")}).`,
+        });
+      }
+    }
+
     // Generate a non-reusable OP receipt number BEFORE the transaction so
     // the sequence counter is always consumed even if the transaction rolls
     // back (e.g. due to a server crash or DB error mid-payment).
@@ -1188,12 +1233,19 @@ export function registerFeesRoutes(app: Express) {
         resolvedSessionId = (activeRow.rows[0] as any)?.id ?? null;
       }
 
+      // Pre-serialise the JSONB denomination breakdown so node-postgres
+      // treats it as a typed text parameter; PostgreSQL casts it via ::jsonb.
+      const denomBreakdownJson = paymentOnly.denominationBreakdown
+        ? JSON.stringify(paymentOnly.denominationBreakdown)
+        : null;
+
       // Insert payment record inside the same transaction
       const insertResult = await tx.execute(
         sql`INSERT INTO payment_records
               (school_id, session_id, fee_record_id, student_id, payment_method,
                reference_number, received_date, amount, cashier_notes,
-               idempotency_key, recorded_by, receipt_number, late_fee_paid)
+               idempotency_key, recorded_by, receipt_number, late_fee_paid,
+               denomination_breakdown, cheque_date, branch_name, bank_name, payer_name)
             VALUES (
               ${schoolId},
               ${resolvedSessionId},
@@ -1207,7 +1259,12 @@ export function registerFeesRoutes(app: Express) {
               ${idempotencyKey ?? null},
               ${req.session.userId ?? null},
               ${opReceipt},
-              ${paymentOnly.feeRecordId != null ? lateFeeForOfflineInsert : (paymentData.lateFeePaid ?? 0)}
+              ${paymentOnly.feeRecordId != null ? lateFeeForOfflineInsert : (paymentData.lateFeePaid ?? 0)},
+              ${denomBreakdownJson}::jsonb,
+              ${paymentOnly.chequeDate ?? null},
+              ${paymentOnly.branchName ?? null},
+              ${paymentOnly.bankName ?? null},
+              ${paymentOnly.payerName ?? null}
             )
             RETURNING *`,
       );

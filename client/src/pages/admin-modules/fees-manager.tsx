@@ -317,6 +317,9 @@ function MetricBar({ viewSessionId }: { viewSessionId: number | null }) {
   );
 }
 
+/** Denomination face values (₹) for cash payment counting */
+const DENOMS = [500, 200, 100, 50, 20, 10, 5, 2, 1];
+
 // ─── Standalone Offline Payment Modal (Invoice-Picker) ────────────────────────
 // Admin selects a student → sees their unpaid invoices → picks one or more →
 // enters payment method/date → payments are created one per selected invoice.
@@ -353,6 +356,13 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
   const [ref,      setRef]      = useState("");
   const [date,     setDate]     = useState(() => new Date().toISOString().split("T")[0]);
   const [notes,    setNotes]    = useState("");
+  // Cash denomination state — keys are denomination face values, values are counts
+  const [denomQty,   setDenomQty]   = useState<Record<number, number>>(() => Object.fromEntries(DENOMS.map(d => [d, 0])));
+  // Method-specific extra fields (Cheque / BankTransfer / DemandDraft)
+  const [instrDate,  setInstrDate]  = useState("");   // instrument date (cheque / DD / transfer)
+  const [bankName,   setBankName]   = useState("");
+  const [branchName, setBranchName] = useState("");
+  const [payerName,  setPayerName]  = useState("");
 
   // Multi-submit state
   const [submitting,   setSubmitting]   = useState(false);
@@ -370,6 +380,8 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
     setInvoices([]); setInvoicesLoading(false);
     setSelectedIds(new Set());
     setMethod("Cash"); setRef(""); setDate(new Date().toISOString().split("T")[0]); setNotes("");
+    setDenomQty(Object.fromEntries(DENOMS.map(d => [d, 0])));
+    setInstrDate(""); setBankName(""); setBranchName(""); setPayerName("");
     setSubmitting(false); setSubmitError(null); setDonePayments([]);
     setBaseKey(`idem-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   }, [open]);
@@ -413,6 +425,15 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
   const selectedInvoices = invoices.filter(i => selectedIds.has(i.id));
   const totalAmount      = selectedInvoices.reduce((s, i) => s + i.totalDue, 0);
 
+  // Cash denomination totals — used in the payment step verification panel
+  const cashTotal = DENOMS.reduce((s, d) => s + d * (denomQty[d] ?? 0), 0);
+  const cashDiff  = cashTotal - totalAmount;
+  const cashMatch = cashTotal > 0 && cashDiff === 0;
+  // Submit guard: cash must match exactly; non-cash requires a reference number + date
+  const canSubmit = method === "Cash"
+    ? cashMatch && date.length > 0
+    : ref.trim().length > 0 && date.length > 0;
+
   function toggleInvoice(id: number) {
     setSelectedIds(prev => {
       const next = new Set(prev);
@@ -428,35 +449,39 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
 
     for (const inv of selectedInvoices) {
       const payload: Record<string, any> = {
-        feeRecordId:     inv.id,
-        studentId:       inv.studentId,
-        paymentMethod:   method,
-        referenceNumber: ref || null,
-        receivedDate:    date,
-        amount:          inv.totalDue,
-        lateFeePaid:     inv.accruedLateFee,
-        cashierNotes:    notes || null,
-        idempotencyKey:  `${baseKey}-${inv.id}`,
+        feeRecordId:    inv.id,
+        studentId:      inv.studentId,
+        paymentMethod:  method,
+        receivedDate:   date,
+        amount:         inv.totalDue,
+        lateFeePaid:    inv.accruedLateFee,
+        cashierNotes:   notes || null,
+        idempotencyKey: `${baseKey}-${inv.id}`,
       };
+
+      if (method === "Cash") {
+        // Send denomination breakdown + the combined cash total so the backend
+        // can independently verify the denomination sum without knowing the
+        // other invoices in this multi-invoice session.
+        payload.denominationBreakdown = denomQty;
+        payload.denominationTotal     = totalAmount;
+      } else {
+        payload.referenceNumber = ref       || null;
+        payload.chequeDate      = instrDate || null;
+        payload.bankName        = bankName  || null;
+        payload.branchName      = branchName || null;
+        payload.payerName       = payerName  || null;
+      }
 
       try {
         const r    = await sessionFetch("/api/admin/fees/payments", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          body:    JSON.stringify(payload),
         });
         const body = await r.json();
-
-        if (!r.ok) {
-          throw new Error(body.message ?? "Payment failed");
-        }
-
-        results.push({
-          id:      body.id,
-          receipt: body.receipt_number ?? "—",
-          feeType: inv.feeType,
-          amount:  inv.totalDue,
-        });
+        if (!r.ok) throw new Error(body.message ?? "Payment failed");
+        results.push({ id: body.id, receipt: body.receipt_number ?? "—", feeType: inv.feeType, amount: inv.totalDue });
       } catch (e: any) {
         setSubmitError(e.message);
         setSubmitting(false);
@@ -478,7 +503,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
-      <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-lg">
+      <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-cyan-400">
             <Banknote className="w-5 h-5" />
@@ -672,7 +697,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
         {/* ── Step 3: Payment details ─────────────────────────────────────────── */}
         {step === "payment" && (
           <div className="space-y-4">
-            {/* Summary of selected invoices */}
+            {/* ── Invoice summary ─────────────────────────────────────────────── */}
             <div className="p-3 rounded-lg bg-white/5 border border-white/10 space-y-1.5">
               <p className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-1">Paying</p>
               {selectedInvoices.map(inv => (
@@ -687,39 +712,207 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                 <span className="text-white/70">Total</span>
                 <span className="text-cyan-300">{fmt(totalAmount)}</span>
               </div>
-              <p className="text-white/20 text-[10px] pt-0.5">Amount is fixed — determined by the selected invoices</p>
+              <p className="text-white/20 text-[10px] pt-0.5">Amount is fixed — derived from the selected invoices</p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-white/60 mb-1 block">Method</label>
-                <select value={method} onChange={e => setMethod(e.target.value)}
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
-                  {["Cash","Cheque","BankTransfer","DemandDraft","Online"].map(m =>
-                    <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-white/60 mb-1 block">Received Date</label>
-                <input type="date" value={date} onChange={e => setDate(e.target.value)}
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
+            {/* ── Method selector (4 buttons, Online excluded) ─────────────────── */}
+            <div>
+              <label className="text-xs text-white/60 mb-1.5 block">Payment Method</label>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { value: "Cash",         label: "Cash" },
+                  { value: "Cheque",       label: "Cheque" },
+                  { value: "BankTransfer", label: "Bank Transfer" },
+                  { value: "DemandDraft",  label: "Demand Draft" },
+                ].map(({ value, label }) => (
+                  <button key={value} type="button"
+                    onClick={() => { setMethod(value); setRef(""); setInstrDate(""); setBankName(""); setBranchName(""); setPayerName(""); }}
+                    className={`py-2 px-3 rounded-lg border text-sm font-medium transition-all ${
+                      method === value
+                        ? "bg-cyan-900/40 border-cyan-500/60 text-cyan-300"
+                        : "bg-[#0A1628] border-white/15 text-white/60 hover:border-white/30 hover:text-white/80"
+                    }`}>
+                    {label}
+                  </button>
+                ))}
               </div>
             </div>
 
-            {method !== "Cash" && (
-              <div>
-                <label className="text-xs text-white/60 mb-1 block">Reference Number</label>
-                <input value={ref} onChange={e => setRef(e.target.value)} placeholder="Cheque / UTR / DD no."
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+            {/* ── Received date (always shown) ─────────────────────────────────── */}
+            <div>
+              <label className="text-xs text-white/60 mb-1 block">Received Date</label>
+              <input type="date" value={date} onChange={e => setDate(e.target.value)}
+                className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
+            </div>
+
+            {/* ── Cash: denomination grid + verification panel ──────────────────── */}
+            {method === "Cash" && (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-white/40 uppercase tracking-widest">Denomination Count</p>
+                <div className="rounded-lg border border-white/10 overflow-hidden">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-white/5 border-b border-white/10">
+                        <th className="text-left px-3 py-1.5 text-white/40 font-medium text-[11px]">Note / Coin</th>
+                        <th className="text-center px-3 py-1.5 text-white/40 font-medium text-[11px]">Qty</th>
+                        <th className="text-right px-3 py-1.5 text-white/40 font-medium text-[11px]">Sub-total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {DENOMS.map(d => (
+                        <tr key={d}>
+                          <td className="px-3 py-1 text-white/70 text-sm">₹{d}</td>
+                          <td className="px-3 py-1 text-center">
+                            <input
+                              type="number" min="0" step="1"
+                              value={denomQty[d] || ""}
+                              onChange={e => {
+                                const v = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                                setDenomQty(prev => ({ ...prev, [d]: v }));
+                              }}
+                              className="w-16 text-center bg-[#0A1628] border border-white/15 rounded px-2 py-0.5 text-sm text-white focus:outline-none focus:border-cyan-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              placeholder="0"
+                            />
+                          </td>
+                          <td className="px-3 py-1 text-right text-white/60 font-mono text-xs tabular-nums">
+                            {d * (denomQty[d] ?? 0) > 0 ? fmt(d * (denomQty[d] ?? 0)) : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Cash verification panel */}
+                <div className={`p-3 rounded-lg border text-xs space-y-1 ${
+                  cashMatch ? "bg-emerald-900/20 border-emerald-700/40"
+                            : cashTotal > 0 ? "bg-red-900/15 border-red-700/30"
+                            : "bg-white/3 border-white/10"
+                }`}>
+                  <div className="flex justify-between">
+                    <span className="text-white/50">Invoice Due</span>
+                    <span className="text-white font-medium">{fmt(totalAmount)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/50">Cash Counted</span>
+                    <span className="text-white font-medium">{cashTotal > 0 ? fmt(cashTotal) : "—"}</span>
+                  </div>
+                  <div className="flex justify-between border-t border-white/10 pt-1 mt-1">
+                    <span className="text-white/50">Difference</span>
+                    <span className={`font-semibold ${cashDiff === 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      {cashDiff === 0 ? "₹0 ✓" : cashDiff > 0 ? `+${fmt(cashDiff)} excess` : `${fmt(Math.abs(cashDiff))} short`}
+                    </span>
+                  </div>
+                  {cashTotal > 0 && !cashMatch && (
+                    <p className="text-red-400 flex items-center gap-1 pt-1 border-t border-white/10 mt-1">
+                      <AlertTriangle className="w-3 h-3 shrink-0" />
+                      Cash must exactly match the invoice due amount
+                    </p>
+                  )}
+                  {cashMatch && (
+                    <p className="text-emerald-400 flex items-center gap-1 pt-1 border-t border-white/10 mt-1">
+                      <CheckCircle2 className="w-3 h-3 shrink-0" />
+                      Cash matches — ready to record
+                    </p>
+                  )}
+                </div>
               </div>
             )}
 
+            {/* ── Cheque / Bank Transfer / Demand Draft fields ──────────────────── */}
+            {method !== "Cash" && (
+              <div className="space-y-3">
+                {/* Reference number — required */}
+                <div>
+                  <label className="text-xs text-white/60 mb-1 block">
+                    {method === "Cheque" ? "Cheque Number" : method === "BankTransfer" ? "UTR / Transaction Reference" : "DD Number"}
+                    <span className="text-red-400 ml-0.5">*</span>
+                  </label>
+                  <input value={ref} onChange={e => setRef(e.target.value)}
+                    placeholder={
+                      method === "Cheque" ? "e.g. 123456"
+                      : method === "BankTransfer" ? "e.g. HDFC12345678901"
+                      : "e.g. DD/2024/00123"
+                    }
+                    className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">
+                      {method === "Cheque" ? "Cheque Date" : method === "BankTransfer" ? "Transfer Date" : "DD Date"}
+                    </label>
+                    <input type="date" value={instrDate} onChange={e => setInstrDate(e.target.value)}
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">
+                      {method === "BankTransfer" ? "Sender's Bank" : "Bank Name"}
+                    </label>
+                    <input value={bankName} onChange={e => setBankName(e.target.value)}
+                      placeholder="e.g. SBI, HDFC"
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">Branch <span className="text-white/30">(opt.)</span></label>
+                    <input value={branchName} onChange={e => setBranchName(e.target.value)}
+                      placeholder="Branch name"
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">
+                      {method === "BankTransfer" ? "Sender Name" : "Payer Name"} <span className="text-white/30">(opt.)</span>
+                    </label>
+                    <input value={payerName} onChange={e => setPayerName(e.target.value)}
+                      placeholder="Account holder"
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── Notes ───────────────────────────────────────────────────────── */}
             <div>
               <label className="text-xs text-white/60 mb-1 block">Notes <span className="text-white/30">(optional)</span></label>
-              <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Cheque collected, bank details, etc."
+              <input value={notes} onChange={e => setNotes(e.target.value)}
+                placeholder={method === "Cash" ? "Any notes for the cashier" : "Additional remarks"}
                 className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
             </div>
 
+            {/* ── Payment verification summary ─────────────────────────────────── */}
+            <div className="p-3 rounded-lg bg-white/3 border border-white/8 space-y-1.5">
+              <p className="text-[10px] font-semibold text-white/30 uppercase tracking-widest mb-1">Payment Verification</p>
+              <div className="flex justify-between text-xs">
+                <span className="text-white/50">Student</span>
+                <span className="text-white">{selStudent?.name} <span className="text-white/40">· {selStudent?.digitalStudentId}</span></span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-white/50">Total Due</span>
+                <span className="text-cyan-300 font-semibold">{fmt(totalAmount)}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-white/50">Method</span>
+                <span className="text-white">
+                  {method === "BankTransfer" ? "Bank Transfer" : method === "DemandDraft" ? "Demand Draft" : method}
+                  {method === "Cash" && cashMatch && <span className="text-emerald-400 ml-1.5">✓</span>}
+                  {method !== "Cash" && ref.trim() && (
+                    <span className="text-white/40 ml-1.5 font-mono text-[10px]">
+                      #{ref.length > 14 ? ref.slice(0, 14) + "…" : ref}
+                    </span>
+                  )}
+                </span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-white/50">Date Received</span>
+                <span className="text-white">{date ? fmtDate(date) : "—"}</span>
+              </div>
+            </div>
+
+            {/* ── Error ────────────────────────────────────────────────────────── */}
             {submitError && (
               <div className="p-3 rounded-lg bg-red-900/30 border border-red-600/50 text-xs text-red-400 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -730,9 +923,9 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
             <div className="flex gap-2 justify-end">
               <Button variant="ghost" onClick={() => setStep("select")} className="text-white/60">← Back</Button>
               <Button
-                disabled={submitting || !date}
+                disabled={submitting || !canSubmit}
                 onClick={() => doSubmit()}
-                className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1">
+                className="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white gap-1">
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Receipt className="w-4 h-4" />}
                 Record {selectedInvoices.length > 1 ? `${selectedInvoices.length} Payments` : "Payment"}
               </Button>

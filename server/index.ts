@@ -112,6 +112,12 @@ app.use((req, res, next) => {
   `);
 
   await pool.query(`
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS denomination_breakdown JSONB;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS cheque_date DATE;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS branch_name VARCHAR(100);
+  `);
+
+  await pool.query(`
     ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS pass_marks INTEGER NOT NULL DEFAULT 33;
     ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS class TEXT;
     ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS section TEXT;

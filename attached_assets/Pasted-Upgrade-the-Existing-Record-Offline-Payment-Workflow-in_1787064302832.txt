@@ -1,0 +1,991 @@
+Upgrade the Existing "Record Offline Payment" Workflow in Fees & Payments
+
+I want to upgrade the existing "Record Offline Payment" workflow in the Admin Portal → Fees & Payments → Ledger & Transactions section.
+
+CRITICAL: DO NOT RENAME THE MODAL
+
+Keep the existing modal name exactly as:
+
+«Record Offline Payment»
+
+Do NOT rename it to "Record Payment" or anything else.
+
+The purpose of this task is to improve the existing workflow, payment verification, denomination handling, tenant isolation, and manual payment methods.
+
+Please implement this carefully without breaking the existing Razorpay/online-payment system or any other payment functionality.
+
+---
+
+1. Multi-Tenant Security — NON-NEGOTIABLE
+
+This is a multi-tenant school application.
+
+Every payment operation must be strictly isolated by the authenticated "school_id".
+
+An admin from School A must NEVER be able to:
+
+- Search School B's invoice
+- View School B's invoice
+- View School B's student
+- View School B's DSID
+- Select School B's invoice
+- Record a payment against School B's invoice
+- View School B's payment
+- Generate School B's receipt
+- Access School B's payment history
+
+Tenant isolation must be enforced server-side at the database/query/API level, not merely by hiding records in the frontend.
+
+If an admin from School A manually knows:
+
+- School B's invoice number
+- School B's DSID
+- School B's student ID
+- School B's payment ID
+
+the backend must still return no accessible record.
+
+Every relevant query must use the authenticated "school_id".
+
+Never rely on frontend filtering for tenant security.
+
+---
+
+2. Payment Method Selector
+
+Inside the existing Record Offline Payment workflow, the payment-method selector must contain ONLY these four options:
+
+- Cash
+- Cheque
+- Bank Transfer
+- Demand Draft
+
+REMOVE ONLINE FROM THIS SELECTOR
+
+Completely remove:
+
+- Online
+- Razorpay
+- Any online-payment option
+
+from this particular manual-payment method selector.
+
+The selector should look like:
+
+Cash
+Cheque
+Bank Transfer
+Demand Draft
+
+There must be NO "Online" option here.
+
+VERY IMPORTANT
+
+This does NOT mean removing the application's online payment system.
+
+Do NOT delete, disable, rewrite, or break the existing Razorpay integration.
+
+The existing Razorpay system elsewhere in the application must continue working normally, including:
+
+- Razorpay checkout
+- Orders
+- Payment IDs
+- Webhooks
+- Captured payments
+- Failed payments
+- Authorized payments
+- Refunds
+- Payment attempts
+- Payment history
+- Duplicate-payment protection
+- Reconciliation
+
+We are ONLY removing Online from this manual Record Offline Payment method selector.
+
+---
+
+3. Keep the Existing Modal Name
+
+The modal title must remain:
+
+«Record Offline Payment»
+
+Do not rename it.
+
+The modal should dynamically change its fields based on the selected manual payment method.
+
+---
+
+4. Invoice Number Must Remain a Separate Identifier
+
+Keep the invoice number as a distinct field/identifier.
+
+Example:
+
+Invoice Number: INV-0067
+
+Do NOT treat:
+
+0067
+
+as the complete invoice identity.
+
+Maintain proper separation between:
+
+- Internal Invoice ID
+- Invoice Number
+- Student ID
+- DSID
+- School ID
+- Academic Session ID
+
+The backend must resolve the actual invoice using the authenticated tenant context.
+
+For example:
+
+If School A searches:
+
+INV-0067
+
+and that invoice belongs to School B:
+
+Return no result.
+
+Do not reveal that the invoice exists in another school.
+
+---
+
+5. Invoice Verification Before Payment
+
+Before allowing any payment to be recorded, the backend must verify the selected invoice.
+
+The backend must confirm:
+
+1. Invoice exists.
+2. Invoice belongs to the authenticated admin's "school_id".
+3. Student belongs to the same "school_id".
+4. Invoice belongs to that student.
+5. Invoice belongs to the currently selected academic session where applicable.
+6. Invoice is still payable.
+7. Invoice has not already been completely paid.
+8. There is no conflicting payment currently being processed.
+9. The payment amount does not exceed the actual outstanding amount.
+10. The invoice is not already settled by another payment request.
+
+Never trust invoice, student, amount, school, or payment information supplied only by the frontend.
+
+The database must be the final authority.
+
+---
+
+6. Payment Amount Must Come From the Invoice
+
+Do not allow the admin to freely type a payment amount when the invoice already determines the amount.
+
+Show the actual outstanding amount from the database.
+
+Example:
+
+Selected Invoice
+
+Invoice: INV-0067
+Fee: Annual Yearly Fee
+Outstanding: ₹35,000
+
+The payment verification must compare the payment against the actual outstanding amount.
+
+The frontend must NOT be able to manipulate the expected amount.
+
+---
+
+7. CASH PAYMENT — DENOMINATION VERIFICATION
+
+When the admin selects:
+
+«Cash»
+
+show a denomination-counting section.
+
+Available denominations:
+
+- ₹500
+- ₹200
+- ₹100
+- ₹50
+- ₹20
+- ₹10
+- ₹5
+- ₹2
+- ₹1
+
+For every denomination, provide a quantity input.
+
+The admin should enter only the quantity.
+
+The system automatically calculates:
+
+Denomination × Quantity = Amount
+
+Example:
+
+Denomination| Quantity| Amount
+₹500| 50| ₹25,000
+₹200| 50| ₹10,000
+₹100| 0| ₹0
+₹50| 0| ₹0
+₹20| 0| ₹0
+₹10| 0| ₹0
+₹5| 0| ₹0
+₹2| 0| ₹0
+₹1| 0| ₹0
+
+Total:
+
+₹35,000
+
+The calculation must update immediately as quantities change.
+
+Prevent negative quantities and invalid/non-numeric values.
+
+---
+
+8. CASH MUST MATCH THE INVOICE DUE EXACTLY
+
+Example:
+
+Invoice Outstanding: ₹35,000
+
+Admin enters:
+
+₹500 × 50 = ₹25,000
+₹200 × 50 = ₹10,000
+
+Therefore:
+
+Total Cash = ₹35,000
+
+Show a clear verification section:
+
+Payment Verification
+
+Invoice Due:       ₹35,000
+Cash Counted:      ₹35,000
+Difference:        ₹0
+
+✓ Cash amount matches invoice due
+
+Only then enable:
+
+«Record Cash Payment»
+
+If the amount is incorrect:
+
+Invoice Due:       ₹35,000
+Cash Counted:      ₹34,500
+Difference:        -₹500
+
+⚠ Cash amount does not match invoice amount.
+
+The payment button must remain disabled.
+
+Do NOT:
+
+- Automatically round the amount
+- Automatically adjust the amount
+- Silently add/remove money
+- Allow an incorrect cash amount
+
+Do not allow partial cash payment through this workflow unless the existing application explicitly supports partial payments.
+
+---
+
+9. CASH — BACKEND MUST RE-CALCULATE
+
+Do NOT rely only on frontend calculations.
+
+When submitting a cash payment, send the denomination quantities to the backend.
+
+The backend must independently calculate:
+
+500 × qty500
++ 200 × qty200
++ 100 × qty100
++ 50 × qty50
++ 20 × qty20
++ 10 × qty10
++ 5 × qty5
++ 2 × qty2
++ 1 × qty1
+
+Then compare the calculated amount against the invoice's actual outstanding amount retrieved from the database.
+
+Only if:
+
+Calculated Cash = Actual Invoice Outstanding
+
+should the backend create the payment.
+
+This prevents frontend manipulation.
+
+---
+
+10. STORE CASH DENOMINATION BREAKDOWN
+
+For every successful cash payment, preserve the denomination breakdown in the payment record.
+
+Example:
+
+₹500 × 50
+₹200 × 50
+₹100 × 0
+₹50 × 0
+₹20 × 0
+₹10 × 0
+₹5 × 0
+₹2 × 0
+₹1 × 0
+
+Total: ₹35,000
+
+This information is required for future:
+
+- Auditing
+- Accounting
+- Cash reconciliation
+- Payment verification
+
+Do not store only the total amount and discard the denomination information.
+
+---
+
+11. CHEQUE PAYMENT
+
+When the admin selects:
+
+«Cheque»
+
+show:
+
+- Cheque Number — REQUIRED
+- Cheque Amount — derived/validated from invoice outstanding
+- Cheque Date
+- Received Date
+- Bank Name
+- Branch Name — optional
+- Payer/Account Holder Name — optional
+- Reference/Remarks
+- Cheque image/document — optional
+
+The cheque amount must be validated against the invoice's actual outstanding amount.
+
+IMPORTANT CHEQUE RULE
+
+Treat cheque payments as COMPLETELY SETTLED immediately after successful recording.
+
+Once the admin successfully records the cheque:
+
+Payment Status = Paid / Completed
+
+and the corresponding invoice must be treated as paid according to the application's existing payment rules.
+
+Do NOT introduce:
+
+- Pending Clearance
+- Awaiting Clearance
+- Cheque Pending
+- Clearance Pending
+
+The system should still preserve:
+
+- Cheque number
+- Cheque date
+- Bank
+- Branch
+- Payer
+- Amount
+- Received date
+- Attachment
+- Audit trail
+
+If the school later needs to handle a bounced cheque, that should be implemented as a separate future reversal/adjustment workflow.
+
+Do not introduce that workflow now.
+
+---
+
+12. BANK TRANSFER
+
+When the admin selects:
+
+«Bank Transfer»
+
+show:
+
+- Amount — derived/validated from invoice outstanding
+- Transfer Date
+- Received Date
+- UTR / Transaction Reference Number — REQUIRED
+- Bank Name
+- Sender/Payer Name
+- Bank Account / Last 4 Digits — optional
+- Remarks
+- Proof/document upload — optional
+
+The amount must match the invoice's actual outstanding amount.
+
+The UTR/reference number must be stored with the payment.
+
+After successful recording:
+
+Payment Status = Paid / Completed
+
+Do not create an unnecessary pending state unless the existing application already has a separate verification workflow.
+
+---
+
+13. DEMAND DRAFT
+
+When the admin selects:
+
+«Demand Draft»
+
+show:
+
+- DD Number — REQUIRED
+- DD Amount — derived/validated from invoice outstanding
+- DD Date
+- Received Date
+- Issuing Bank
+- Issuing Branch
+- Payer Name
+- Remarks
+- DD image/document — optional
+
+Validate the DD amount against the invoice's actual outstanding amount.
+
+After successful recording:
+
+Payment Status = Paid / Completed
+
+Do not create a pending-clearance workflow.
+
+---
+
+14. ONLINE — MUST NOT APPEAR IN THIS MODAL
+
+The manual Record Offline Payment method selector must contain exactly:
+
+Cash
+Cheque
+Bank Transfer
+Demand Draft
+
+There must be no:
+
+Online
+Razorpay
+
+option.
+
+However, the existing Razorpay architecture elsewhere in the application must remain completely untouched.
+
+Do not modify existing:
+
+- Razorpay checkout
+- Razorpay orders
+- Webhooks
+- Payment capture
+- Payment authorization
+- Failed-payment handling
+- Refunds
+- Payment attempts
+- Payment history
+- Reconciliation
+- Duplicate-payment protection
+
+Again:
+
+Remove Online ONLY from this manual payment selector.
+
+---
+
+15. MULTIPLE INVOICES
+
+A student may have multiple invoices.
+
+Example:
+
+INV-0067 → ₹35,000
+INV-0068 → ₹2,500
+INV-0069 → ₹1,500
+
+If the admin is recording a payment for one invoice, clearly display:
+
+Selected Invoice
+INV-0067
+
+Fee
+Annual Yearly Fee
+
+Outstanding
+₹35,000
+
+Never accidentally apply the payment to another invoice.
+
+If the existing application supports paying multiple invoices together, then:
+
+- Display every selected invoice separately.
+- Display each outstanding amount.
+- Calculate the combined total explicitly.
+- Verify each invoice belongs to the authenticated school.
+- Verify each invoice is payable.
+- Prevent duplicate payment against any selected invoice.
+
+Do not change existing multi-invoice functionality unnecessarily.
+
+---
+
+16. DUPLICATE PAYMENT PROTECTION
+
+Before creating a payment, the backend must check whether:
+
+- The invoice has already been paid.
+- Another payment is currently being processed.
+- The same request is being submitted again.
+- Another admin has already recorded the payment.
+
+Prevent:
+
+- Double-click submission
+- Browser refresh duplication
+- Multiple tabs
+- Duplicate API requests
+- Repeated submission
+- Two admins simultaneously recording the same invoice
+
+Use proper:
+
+- Database transactions
+- Row-level locking where appropriate
+- Idempotency
+- Unique constraints where appropriate
+
+The exact implementation should follow the existing application's database architecture.
+
+The database must be the final authority.
+
+---
+
+17. PAYMENT RECORD / AUDIT TRAIL
+
+Every successful manual payment must create its own payment record.
+
+Do not overwrite existing payment history.
+
+Store relevant information such as:
+
+- Payment ID
+- School ID
+- Student ID
+- DSID
+- Invoice ID
+- Invoice Number
+- Academic Session
+- Fee Type
+- Amount
+- Payment Method
+- Payment Date
+- Received Date
+- Reference Number
+- Cheque Number where applicable
+- DD Number where applicable
+- UTR where applicable
+- Bank details where applicable
+- Cash denomination breakdown where applicable
+- Recorded By
+- Recorded At
+- Notes
+- Audit information
+
+The payment record must retain the tenant identity permanently.
+
+---
+
+18. RECEIPT
+
+After successful payment recording, use the application's existing receipt system.
+
+Do not create a second independent receipt architecture unless absolutely necessary.
+
+The receipt should clearly contain:
+
+- School
+- Student
+- DSID
+- Invoice Number
+- Fee Type
+- Amount
+- Payment Method
+- Payment Date
+- Receipt Number
+- Reference information where applicable
+
+For cash payments, optionally show:
+
+Cash Denomination Summary
+
+if the existing receipt design supports it.
+
+---
+
+19. DYNAMIC UI
+
+Keep the existing dark/blue visual design shown in the current screenshots.
+
+Keep the workflow clean, compact, and mobile-friendly.
+
+The fields must dynamically change according to the selected method.
+
+Cash
+
+Show denomination fields and cash verification.
+
+Cheque
+
+Show cheque-specific fields.
+
+Bank Transfer
+
+Show UTR/bank-transfer-specific fields.
+
+Demand Draft
+
+Show DD-specific fields.
+
+Do not show irrelevant fields.
+
+For example:
+
+- Cash must not show UTR.
+- Cash must not show cheque number.
+- Cash must not show DD number.
+- Cheque must not show DD number.
+- Cheque must not show UTR.
+- DD must not show cheque number.
+- DD must not show UTR.
+- Bank Transfer must not show cheque fields.
+- Bank Transfer must not show DD fields.
+
+---
+
+20. FINAL PAYMENT VERIFICATION
+
+Before enabling the final submit button, show a clear verification section.
+
+Example:
+
+Payment Verification
+
+Student: Rahul
+DSID: MIS-0003
+
+Invoice: INV-0067
+Fee: Annual Yearly Fee
+
+Invoice Due: ₹35,000
+
+Payment Method: Cash
+
+Cash Counted: ₹35,000
+Difference: ₹0
+
+✓ Amount Verified
+✓ Invoice Verified
+✓ Student Verified
+✓ School Verified
+
+Then show:
+
+«Record Payment»
+
+The button must only become active when all required conditions are satisfied.
+
+For cash, the denomination total must exactly match the invoice outstanding amount.
+
+For cheque, bank transfer, and demand draft, the required payment information must be valid and the amount must match the invoice outstanding amount.
+
+---
+
+21. SERVER-SIDE TENANT ISOLATION — EVERY OPERATION
+
+Every invoice/payment query must include the authenticated "school_id".
+
+Never execute queries like:
+
+WHERE invoice_number = ?
+
+without tenant restriction.
+
+It must effectively enforce:
+
+WHERE school_id = currentAuthenticatedSchoolId
+AND invoice_number = ?
+
+Likewise for:
+
+- Student searches
+- DSID searches
+- Invoice lookups
+- Payment creation
+- Payment history
+- Receipt generation
+- Invoice status updates
+- Audit records
+- Payment verification
+- Duplicate-payment checks
+
+School A must never access School B's financial information.
+
+---
+
+22. IMPORTANT: PRESERVE EXISTING DATA MODEL
+
+Before modifying the implementation:
+
+1. Inspect the existing payment schema.
+2. Inspect the existing invoice schema.
+3. Inspect invoice/student relationships.
+4. Inspect payment/invoice relationships.
+5. Inspect existing payment statuses.
+6. Inspect existing Razorpay integration.
+7. Inspect existing payment history.
+8. Inspect existing receipt generation.
+9. Inspect existing tenant/session authorization.
+10. Inspect existing duplicate-payment protection.
+11. Reuse existing structures wherever possible.
+
+Do NOT create duplicate payment tables or duplicate payment systems unnecessarily.
+
+Use the application's existing architecture.
+
+---
+
+23. DO NOT BREAK EXISTING RAZORPAY
+
+This is especially important.
+
+The existing online payment system is separate from this manual workflow.
+
+Do not remove or modify its:
+
+- Checkout
+- Orders
+- Payment IDs
+- Webhooks
+- Payment verification
+- Captured events
+- Failed events
+- Authorized events
+- Refunds
+- Payment attempts
+- Payment history
+- Reconciliation
+
+The only requested change is:
+
+«Remove "Online" from the payment-method selector inside the existing Record Offline Payment modal.»
+
+Nothing more.
+
+---
+
+24. TESTING REQUIREMENTS
+
+Do not claim the implementation is complete until the implementation has actually been tested.
+
+Test all four manual methods:
+
+Cash
+
+Test:
+
+- Correct denomination total
+- Incorrect denomination total
+- Zero quantities
+- Invalid quantities
+- Negative quantities
+- Exact invoice match
+- Overpayment
+- Underpayment
+- Backend denomination recalculation
+- Cash denomination persistence
+
+Cheque
+
+Test:
+
+- Required cheque number
+- Amount validation
+- Immediate Paid/Completed status
+- Invoice settlement
+- Cheque details persistence
+
+Bank Transfer
+
+Test:
+
+- Required UTR
+- Amount validation
+- Payment completion
+- UTR persistence
+
+Demand Draft
+
+Test:
+
+- Required DD number
+- Amount validation
+- Payment completion
+- DD details persistence
+
+Duplicate protection
+
+Test:
+
+- Double-click
+- Refresh
+- Multiple tabs
+- Duplicate API request
+- Two simultaneous admins
+- Already-paid invoice
+
+Tenant isolation
+
+Create/use at least two test schools.
+
+Example:
+
+School A
+Invoice: INV-0067
+
+School B
+Invoice: INV-0067
+
+The same invoice number may exist in both schools.
+
+Verify:
+
+- School A sees only School A's invoice.
+- School B sees only School B's invoice.
+- School A cannot search School B's invoice.
+- School B cannot search School A's invoice.
+- Cross-school student IDs are rejected.
+- Cross-school DSIDs are rejected.
+- Cross-school payment IDs are rejected.
+- Cross-school receipt access is rejected.
+- Cross-school payment creation is rejected.
+
+Do this at the API/database level, not just through UI testing.
+
+---
+
+25. VERIFY THE ONLINE OPTION IS COMPLETELY REMOVED FROM THIS SELECTOR
+
+After implementation, inspect the actual rendered UI.
+
+The manual payment selector must show exactly:
+
+Cash
+Cheque
+Bank Transfer
+Demand Draft
+
+There must be no "Online" option.
+
+Then separately verify that the existing Razorpay payment flow still works.
+
+---
+
+26. CODE QUALITY AND VALIDATION
+
+After implementation:
+
+- Run TypeScript/type checks.
+- Run linting if configured.
+- Run existing automated tests.
+- Add/update tests for the new functionality.
+- Test API responses.
+- Test database constraints.
+- Test tenant isolation.
+- Test payment transactions.
+- Test duplicate protection.
+- Test all four manual payment methods.
+- Test receipt generation.
+- Verify no existing Razorpay functionality has been broken.
+
+Check both frontend and backend.
+
+Do not simply make the UI look correct.
+
+The backend must enforce every financial and security rule.
+
+---
+
+FINAL REQUIREMENT
+
+Make the smallest safe changes necessary to upgrade the existing Record Offline Payment workflow.
+
+The final manual payment methods must be:
+
+Cash
+Cheque
+Bank Transfer
+Demand Draft
+
+The modal name must remain:
+
+Record Offline Payment
+
+Cheque must:
+
+Immediately become Paid / Completed
+
+Cash must:
+
+Use denomination counting
++
+Automatically calculate total
++
+Verify exact invoice outstanding amount
++
+Require backend recalculation
+
+Bank Transfer must:
+
+Require UTR / transaction reference
++
+Match invoice outstanding amount
++
+Become Paid / Completed after successful recording
+
+Demand Draft must:
+
+Require DD number
++
+Match invoice outstanding amount
++
+Become Paid / Completed after successful recording
+
+Online must:
+
+NOT appear in this manual payment selector
+
+while the existing Razorpay system remains completely intact.
+
+Most importantly:
+
+Every financial operation MUST be tenant-isolated by school_id.
+
+Do not expose, search, verify, select, modify, or record any financial data belonging to another school.
+
+Implement this carefully, inspect the existing architecture first, reuse existing structures, and verify everything with actual tests before declaring the work complete.

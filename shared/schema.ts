@@ -1052,6 +1052,13 @@ export const paymentRecords = pgTable("payment_records", {
   payerEmail: varchar("payer_email", { length: 255 }),
   payerContact: varchar("payer_contact", { length: 20 }),
   gatewayStatus: varchar("gateway_status", { length: 30 }), // captured | refunded | settled
+  // ── Offline-payment enrichment fields ─────────────────────────────────────
+  // Cash: JSON object keyed by denomination value → quantity, e.g. {"500":70,"200":2,...}
+  denominationBreakdown: jsonb("denomination_breakdown"),
+  // Date the instrument was issued (cheque date, DD date, bank transfer date)
+  chequeDate: date("cheque_date"),
+  // Branch name for cheque, DD, and bank transfer payments
+  branchName: varchar("branch_name", { length: 100 }),
 });
 export const insertPaymentRecordSchema = createInsertSchema(paymentRecords).omit({ id: true, createdAt: true });
 export type InsertPaymentRecord = z.infer<typeof insertPaymentRecordSchema>;
