@@ -317,256 +317,6 @@ function MetricBar({ viewSessionId }: { viewSessionId: number | null }) {
   );
 }
 
-// ─── Record Payment Modal (Linked mode — always against an existing invoice) ──
-
-interface RecordPaymentModalProps {
-  open: boolean;
-  onClose: () => void;
-  feeRecord: FeeRecordWithStudent;   // required — always a specific invoice
-  onSuccess?: () => void;
-}
-
-function RecordPaymentModal({ open, onClose, feeRecord, onSuccess }: RecordPaymentModalProps) {
-  const { toast } = useToast();
-  const [step, setStep] = useState<"form" | "done">("form");
-  const [lastPaymentId, setLastPaymentId] = useState<number | null>(null);
-  const [overpaymentError, setOverpaymentError] = useState<string | null>(null);
-
-  const { selectedSession } = useSessionView();
-
-  // Prior payments — for remaining-balance warning
-  const { data: priorPayments = [] } = useQuery<PaymentRecord[]>({
-    queryKey: ["/api/admin/fees/payments", feeRecord?.id],
-    queryFn: async () => {
-      const r = await sessionFetch(`/api/admin/fees/payments?feeRecordId=${feeRecord.id}`);
-      if (!r.ok) return [];
-      return r.json();
-    },
-    enabled: open && !!feeRecord,
-    staleTime: 0,
-  });
-  const totalAlreadyPaid = priorPayments.reduce((sum, p) => sum + p.amount, 0);
-  const remainingBalance  = feeRecord.amount - totalAlreadyPaid;
-
-  const [method, setMethod] = useState("Cash");
-  const [ref,    setRef]    = useState("");
-  const [date,   setDate]   = useState(() => new Date().toISOString().split("T")[0]);
-  const [amount, setAmount] = useState("");
-  const [feeNotes, setFeeNotes] = useState("");
-  const [idempotencyKey, setIdempotencyKey] = useState("");
-
-  const { data: opPreviewData } = useQuery<{ preview: string }>({
-    queryKey: ["/api/admin/fees/next-receipt", "OF", open],
-    queryFn: async () => {
-      const r = await sessionFetch("/api/admin/fees/next-receipt?prefix=OP");
-      if (!r.ok) return { preview: "OP—" };
-      return r.json();
-    },
-    enabled: open && step === "form",
-    staleTime: 0,
-  });
-  const opPreview = opPreviewData?.preview ?? "…";
-
-  useEffect(() => {
-    if (!open) return;
-    const fine = (feeRecord as any).accrued_late_fee ?? 0;
-    setAmount(String(feeRecord.amount + fine));
-    setFeeNotes(feeRecord.notes ?? "");
-    setStep("form");
-    setLastPaymentId(null);
-    setMethod("Cash"); setRef("");
-    setDate(new Date().toISOString().split("T")[0]);
-    setOverpaymentError(null);
-    setIdempotencyKey(`idem-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  }, [feeRecord?.id, open]);
-
-  const mut = useMutation({
-    mutationFn: async (payload: any) => {
-      const r = await sessionFetch("/api/admin/fees/payments", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const body = await r.json();
-      if (!r.ok) {
-        const err: any = new Error(body.message ?? "Failed");
-        err.overpaymentGuard = body.overpaymentGuard;
-        throw err;
-      }
-      return body;
-    },
-    onSuccess: (rec: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/payments"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/failed-counts"] });
-      onSuccess?.();
-      setLastPaymentId(rec?.id ?? null);
-      setStep("done");
-    },
-    onError: (e: any) => {
-      if (e.overpaymentGuard) { setOverpaymentError(e.message); setStep("form"); }
-      else toast({ title: "Error", description: e.message, variant: "destructive" });
-    },
-  });
-
-  function buildPayload(overrides: Record<string, any> = {}) {
-    return {
-      feeRecordId: feeRecord.id,
-      studentId:   feeRecord.studentId,
-      feeNotes:    feeNotes || null,
-      paymentMethod:   method,
-      referenceNumber: ref || null,
-      receivedDate:    date,
-      amount:          parseInt(amount),
-      lateFeePaid:     (feeRecord as any).accrued_late_fee ?? 0,
-      idempotencyKey:  idempotencyKey || null,
-      ...overrides,
-    };
-  }
-
-  const amtNum = parseInt(amount) || 0;
-
-  return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
-      <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-cyan-400">
-            <Receipt className="w-5 h-5" />
-            Record Offline Payment
-          </DialogTitle>
-        </DialogHeader>
-
-        {step === "form" && (
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800/60 border border-white/10">
-              <span className="text-white/40 text-xs">Receipt No.</span>
-              <span className="font-mono text-sm text-cyan-300 font-semibold tracking-wider">{opPreview}</span>
-              <span className="text-white/20 text-[10px] ml-auto">auto-assigned on save</span>
-            </div>
-
-            <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-sm space-y-1">
-              <p className="text-white font-semibold">{feeRecord.student?.name}</p>
-              <p className="text-white/50 text-xs">{feeRecord.feeType} · {feeRecord.student?.class}-{feeRecord.student?.section}</p>
-              {(feeRecord as any).accrued_late_fee > 0 ? (
-                <div className="space-y-0.5 pt-1 border-t border-white/10">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-white/40">Base Amount</span>
-                    <span className="text-white/60">{fmt(feeRecord.amount)}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-amber-400/80">Accrued Late Fine</span>
-                    <span className="text-amber-400 font-semibold">+{fmt((feeRecord as any).accrued_late_fee)}</span>
-                  </div>
-                  <div className="flex justify-between text-xs font-bold border-t border-white/10 pt-0.5 mt-0.5">
-                    <span className="text-white/70">Total Due</span>
-                    <span className="text-white">{fmt(feeRecord.amount + (feeRecord as any).accrued_late_fee)}</span>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-white/40 text-xs">Invoice: {fmt(feeRecord.amount)}</p>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-white/60 mb-1 block">Method</label>
-                <select value={method} onChange={e => setMethod(e.target.value)}
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
-                  {["Cash","Cheque","BankTransfer","DemandDraft","Online"].map(m =>
-                    <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-white/60 mb-1 block">Amount (₹)</label>
-                <input type="number" value={amount}
-                  onChange={e => { setAmount(e.target.value); setOverpaymentError(null); }} min={1}
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500" />
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs text-white/60 mb-1 block">Received Date</label>
-              <input type="date" value={date} onChange={e => setDate(e.target.value)}
-                className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-white/60 mb-1 block">Status</label>
-                <input value="Paid" readOnly
-                  className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-emerald-400 font-medium cursor-default" />
-              </div>
-              <div>
-                <label className="text-xs text-white/60 mb-1 block">Academic Year</label>
-                <input value={feeRecord.academicYear ?? ""} readOnly
-                  className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-sm text-white/50 cursor-default" />
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs text-white/60 mb-1 block">Notes</label>
-              <input value={feeNotes} onChange={e => setFeeNotes(e.target.value)}
-                placeholder="Optional note for this payment…"
-                className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
-            </div>
-
-            {method !== "Cash" && (
-              <div>
-                <label className="text-xs text-white/60 mb-1 block">Reference Number</label>
-                <input value={ref} onChange={e => setRef(e.target.value)} placeholder="Cheque / UTR / DD no."
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
-              </div>
-            )}
-
-            {remainingBalance !== null && amtNum > remainingBalance && !overpaymentError && (
-              <div className="p-3 rounded-lg bg-yellow-900/20 border border-yellow-600/40 text-xs text-yellow-400 flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>This payment of {fmt(amtNum)} exceeds the outstanding balance of {fmt(remainingBalance)} — the record will be marked <span className="font-semibold">Paid</span>.</span>
-              </div>
-            )}
-
-            {overpaymentError && (
-              <div className="p-3 rounded-lg bg-red-900/30 border border-red-600/50 text-xs text-red-400 flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>{overpaymentError}</span>
-              </div>
-            )}
-
-            <div className="flex gap-2 justify-end">
-              <Button variant="ghost" onClick={onClose} className="text-white/60">Cancel</Button>
-              <Button onClick={() => mut.mutate(buildPayload())}
-                disabled={mut.isPending || !amount || !date}
-                className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1">
-                {mut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Receipt className="w-4 h-4" />}
-                Record Payment
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {step === "done" && (
-          <div className="space-y-4">
-            <div className="p-4 rounded-xl bg-emerald-900/20 border border-emerald-700/40 text-center">
-              <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2" />
-              <p className="text-emerald-400 font-semibold text-lg">Payment Recorded</p>
-              <p className="text-white/60 text-sm mt-1">The payment has been logged successfully.</p>
-            </div>
-            {lastPaymentId && (
-              <Button className="w-full bg-white/10 hover:bg-white/20 text-white gap-2"
-                onClick={() => window.open(`/api/admin/fees/payments/${lastPaymentId}/receipt`, "_blank")}>
-                <Printer className="w-4 h-4" /> Print Receipt
-              </Button>
-            )}
-            <Button className="w-full bg-cyan-600 hover:bg-cyan-500 text-white" onClick={onClose}>Done</Button>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 // ─── Standalone Offline Payment Modal (Invoice-Picker) ────────────────────────
 // Admin selects a student → sees their unpaid invoices → picks one or more →
 // enters payment method/date → payments are created one per selected invoice.
@@ -1566,8 +1316,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [addFeeSuccessId, setAddFeeSuccessId] = useState<number | null>(null);
   const [showExportLedger, setShowExportLedger] = useState(false);
   const [editing, setEditing] = useState<FeeRecordWithStudent | null>(null);
-  const [payTarget, setPayTarget] = useState<FeeRecordWithStudent | null>(null);
-  const [showPay, setShowPay] = useState(false);
   const [showStandalonePay, setShowStandalonePay] = useState(false);
   const [showPaymentsModal, setShowPaymentsModal] = useState(false);
   const [viewPaymentsRecord, setViewPaymentsRecord] = useState<FeeRecordWithStudent | null>(null);
@@ -1900,11 +1648,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     setShowForm(true);
   }
 
-  function openRecordPayment(rec: FeeRecordWithStudent) {
-    setPayTarget(rec);
-    setShowPay(true);
-  }
-
   return (
     <div className="space-y-4">
       {/* Toolbar */}
@@ -2083,12 +1826,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     <td className="px-4 py-3 text-left text-white/50 text-xs max-w-[100px] truncate" title={rec.notes ?? ""}>{rec.notes || "—"}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
-                        {canRecord && !isArchiveMode && rec.status !== "Paid" && rec.status !== "Waived" && (
-                          <Button size="sm" variant="ghost" onClick={() => openRecordPayment(rec)}
-                            className="h-7 px-2 text-xs text-cyan-400 hover:bg-cyan-900/30 gap-1">
-                            <Receipt className="w-3 h-3" /> Pay
-                          </Button>
-                        )}
                         {(() => {
                           const count = paymentsByFeeRecordId.get(rec.id)?.length ?? 0;
                           const hasPayments = count > 0;
@@ -2417,9 +2154,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       </div>
 
       {/* Payment modals */}
-      {payTarget && (
-        <RecordPaymentModal open={showPay} onClose={() => { setShowPay(false); setPayTarget(null); }} feeRecord={payTarget} />
-      )}
       <StandaloneOfflinePayModal open={showStandalonePay} onClose={() => setShowStandalonePay(false)} students={students} />
       <PaymentHistoryModal
         open={showPaymentsModal}
