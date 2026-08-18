@@ -803,37 +803,70 @@ export function registerFeesRoutes(app: Express) {
     lateFeePaid: z.number().int().min(0).default(0),
   });
 
-  // ── Student Search for Offline Payment (by name, DSID, or invoice number) ───
-  // Must be registered BEFORE the :studentId wildcard route below.
+  // ── Student Search for Offline Payment ──────────────────────────────────────
+  // Accepts EITHER ?invoiceNumber=  (searches fee_records.invoice_number only)
+  //           OR   ?q=             (searches students.name + digital_student_id only)
+  // Sending both returns 400. Must be registered BEFORE the :studentId wildcard below.
   app.get("/api/admin/fees/students/search", async (req, res) => {
     if (!adminGuard(req, res)) return;
-    const schoolId = req.session.schoolId!;
-    const q = ((req.query.q as string) ?? "").trim();
-    if (!q || q.length < 2) return res.status(400).json({ message: "Enter at least 2 characters to search" });
+    const schoolId      = req.session.schoolId!;
+    const invoiceNumber = ((req.query.invoiceNumber as string) ?? "").trim();
+    const q             = ((req.query.q             as string) ?? "").trim();
 
-    const pattern = `%${q}%`;
+    if (invoiceNumber && q)
+      return res.status(400).json({ message: "Use only one search field at a time" });
+    if (!invoiceNumber && !q)
+      return res.status(400).json({ message: "Enter an invoice number or student name / DSID" });
 
-    const rows = await db.execute(sql`
-      SELECT DISTINCT
-        s.id,
-        s.name,
-        s.class,
-        s.section,
-        s.digital_student_id AS "digitalStudentId",
-        s.is_active          AS "isActive"
-      FROM students s
-      LEFT JOIN fee_records fr
-        ON fr.student_id = s.id AND fr.school_id = s.school_id
-      WHERE s.school_id = ${schoolId}
-        AND s.is_active = true
-        AND (
-          s.name ILIKE ${pattern}
-          OR s.digital_student_id ILIKE ${pattern}
-          OR fr.invoice_number    ILIKE ${pattern}
-        )
-      ORDER BY s.name ASC
-      LIMIT 20
-    `);
+    const val = invoiceNumber || q;
+    if (val.length < 2)
+      return res.status(400).json({ message: "Enter at least 2 characters to search" });
+
+    const pattern = `%${val}%`;
+
+    let rows: Awaited<ReturnType<typeof db.execute>>;
+
+    if (invoiceNumber) {
+      // Targeted invoice-number search — INNER JOIN so we only return students
+      // who actually have a matching invoice (paid or unpaid) in this school.
+      rows = await db.execute(sql`
+        SELECT DISTINCT
+          s.id,
+          s.name,
+          s.class,
+          s.section,
+          s.digital_student_id AS "digitalStudentId",
+          s.is_active          AS "isActive"
+        FROM students s
+        INNER JOIN fee_records fr
+          ON fr.student_id = s.id AND fr.school_id = s.school_id
+        WHERE s.school_id = ${schoolId}
+          AND s.is_active = true
+          AND fr.invoice_number ILIKE ${pattern}
+        ORDER BY s.name ASC
+        LIMIT 20
+      `);
+    } else {
+      // Name / DSID search — no fee_records join required.
+      rows = await db.execute(sql`
+        SELECT DISTINCT
+          s.id,
+          s.name,
+          s.class,
+          s.section,
+          s.digital_student_id AS "digitalStudentId",
+          s.is_active          AS "isActive"
+        FROM students s
+        WHERE s.school_id = ${schoolId}
+          AND s.is_active = true
+          AND (
+            s.name               ILIKE ${pattern}
+            OR s.digital_student_id ILIKE ${pattern}
+          )
+        ORDER BY s.name ASC
+        LIMIT 20
+      `);
+    }
 
     res.json(rows.rows);
   });

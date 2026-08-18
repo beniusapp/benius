@@ -333,7 +333,8 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
   type Step = "search" | "select" | "payment" | "done";
   const [step, setStep] = useState<Step>("search");
 
-  // Student search — backend-driven, no client-side student list
+  // Student search — backend-driven; two separate fields (invoice number vs name/DSID)
+  const [searchInvoice, setSearchInvoice] = useState("");
   const [searchQ,       setSearchQ]       = useState("");
   const [searching,     setSearching]     = useState(false);
   const [searchResults, setSearchResults] = useState<StudentItem[] | null>(null);
@@ -365,7 +366,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
   useEffect(() => {
     if (!open) return;
     setStep("search");
-    setSearchQ(""); setSearching(false); setSearchResults(null); setSearchError(null); setSelStudent(null);
+    setSearchInvoice(""); setSearchQ(""); setSearching(false); setSearchResults(null); setSearchError(null); setSelStudent(null);
     setInvoices([]); setInvoicesLoading(false);
     setSelectedIds(new Set());
     setMethod("Cash"); setRef(""); setDate(new Date().toISOString().split("T")[0]); setNotes("");
@@ -373,13 +374,20 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
     setBaseKey(`idem-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   }, [open]);
 
-  // Search students by name, DSID, or invoice number — backend call
+  // Search students — invoice number uses dedicated param; name/DSID uses ?q=
   async function doSearch() {
-    const q = searchQ.trim();
-    if (!q || q.length < 2) { setSearchError("Enter at least 2 characters to search"); return; }
+    const inv = searchInvoice.trim();
+    const q   = searchQ.trim();
+    if (!inv && !q)   { setSearchError("Enter an invoice number or student name / DSID to search"); return; }
+    if (inv && q)     { setSearchError("Use only one field at a time"); return; }
+    if ((inv || q).length < 2) { setSearchError("Enter at least 2 characters to search"); return; }
+
     setSearching(true); setSearchError(null); setSearchResults(null);
     try {
-      const r = await sessionFetch(`/api/admin/fees/students/search?q=${encodeURIComponent(q)}`);
+      const param = inv
+        ? `invoiceNumber=${encodeURIComponent(inv)}`
+        : `q=${encodeURIComponent(q)}`;
+      const r    = await sessionFetch(`/api/admin/fees/students/search?${param}`);
       const body = await r.json();
       if (!r.ok) { setSearchError(body.message ?? "Search failed"); return; }
       setSearchResults(body as StudentItem[]);
@@ -481,65 +489,93 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
         {/* ── Step 1: Search student ──────────────────────────────────────────── */}
         {step === "search" && (
           <div className="space-y-4">
-            <p className="text-white/50 text-sm">Search by invoice number, student name, or student ID (DSID).</p>
-            <div>
-              {selStudent ? (
-                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-cyan-500/10 border border-cyan-500/40">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white text-sm font-medium">{selStudent.name}</p>
-                    <p className="text-white/40 text-xs">{selStudent.digitalStudentId} · Class {selStudent.class}-{selStudent.section}</p>
-                  </div>
-                  <button type="button"
-                    onClick={() => { setSelStudent(null); setSearchResults(null); setSearchError(null); }}
-                    className="text-white/40 hover:text-red-400 shrink-0 text-lg leading-none">✕</button>
+            {selStudent ? (
+              /* ── Selected student chip ───────────────────────────────── */
+              <div className="flex items-center gap-2 p-2.5 rounded-lg bg-cyan-500/10 border border-cyan-500/40">
+                <div className="flex-1 min-w-0">
+                  <p className="text-white text-sm font-medium">{selStudent.name}</p>
+                  <p className="text-white/40 text-xs">{selStudent.digitalStudentId} · Class {selStudent.class}-{selStudent.section}</p>
                 </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex gap-2">
-                    <input
-                      value={searchQ}
-                      onChange={e => { setSearchQ(e.target.value); setSearchError(null); }}
-                      onKeyDown={e => e.key === "Enter" && doSearch()}
-                      placeholder="Invoice No., Student Name, or DSID…"
-                      className="flex-1 bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20"
-                    />
-                    <button type="button" onClick={doSearch} disabled={searching}
-                      className="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-sm px-3 py-2 rounded-lg shrink-0 flex items-center gap-1">
-                      {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                      Search
-                    </button>
-                  </div>
-                  {searchError && (
-                    <p className="text-red-400 text-xs px-1 flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3 shrink-0" />{searchError}
-                    </p>
-                  )}
-                  {searchResults !== null && !searchError && (
-                    searchResults.length === 0
-                      ? <p className="text-white/40 text-xs px-1">No students found.</p>
-                      : <div className="max-h-48 overflow-y-auto rounded-lg border border-white/10 divide-y divide-white/5">
-                          {searchResults.map(s => (
-                            <button key={s.id} type="button"
-                              onClick={() => { setSelStudent(s); setSearchResults(null); }}
-                              className="w-full text-left px-3 py-2 hover:bg-white/5 transition-colors">
-                              <p className="text-white text-sm">{s.name}</p>
-                              <p className="text-white/40 text-xs">{s.digitalStudentId} · Class {s.class}-{s.section}</p>
-                            </button>
-                          ))}
-                        </div>
-                  )}
+                <button type="button"
+                  onClick={() => { setSelStudent(null); setSearchResults(null); setSearchError(null); }}
+                  className="text-white/40 hover:text-red-400 shrink-0 text-lg leading-none">✕</button>
+              </div>
+            ) : (
+              /* ── Search form ─────────────────────────────────────────── */
+              <div className="space-y-3">
+                {/* Invoice Number row */}
+                <div>
+                  <label className="text-xs text-white/50 mb-1 block">Invoice Number</label>
+                  <input
+                    value={searchInvoice}
+                    onChange={e => { setSearchInvoice(e.target.value); setSearchError(null); }}
+                    onKeyDown={e => e.key === "Enter" && doSearch()}
+                    placeholder="e.g. INV-0071"
+                    className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20"
+                  />
                 </div>
-              )}
-            </div>
+
+                {/* Divider */}
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 border-t border-white/10" />
+                  <span className="text-white/20 text-xs">or</span>
+                  <div className="flex-1 border-t border-white/10" />
+                </div>
+
+                {/* Student Name / DSID row */}
+                <div>
+                  <label className="text-xs text-white/50 mb-1 block">Student Name / DSID</label>
+                  <input
+                    value={searchQ}
+                    onChange={e => { setSearchQ(e.target.value); setSearchError(null); }}
+                    onKeyDown={e => e.key === "Enter" && doSearch()}
+                    placeholder="e.g. Rahul or MIS-0003"
+                    className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20"
+                  />
+                </div>
+
+                {/* Error */}
+                {searchError && (
+                  <p className="text-red-400 text-xs flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3 shrink-0" />{searchError}
+                  </p>
+                )}
+
+                {/* Results */}
+                {searchResults !== null && !searchError && (
+                  searchResults.length === 0
+                    ? <p className="text-white/40 text-xs">No students found.</p>
+                    : <div className="max-h-44 overflow-y-auto rounded-lg border border-white/10 divide-y divide-white/5">
+                        {searchResults.map(s => (
+                          <button key={s.id} type="button"
+                            onClick={() => { setSelStudent(s); setSearchResults(null); }}
+                            className="w-full text-left px-3 py-2 hover:bg-white/5 transition-colors">
+                            <p className="text-white text-sm">{s.name}</p>
+                            <p className="text-white/40 text-xs">{s.digitalStudentId} · Class {s.class}-{s.section}</p>
+                          </button>
+                        ))}
+                      </div>
+                )}
+              </div>
+            )}
+
             <div className="flex gap-2 justify-end">
               <Button variant="ghost" onClick={onClose} className="text-white/60">Cancel</Button>
-              <Button
-                disabled={!selStudent || invoicesLoading}
-                onClick={() => fetchInvoices(selStudent!.id)}
-                className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1">
-                {invoicesLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                View Unpaid Invoices →
-              </Button>
+              {!selStudent ? (
+                <button type="button" onClick={doSearch} disabled={searching}
+                  className="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-sm px-4 py-2 rounded-lg flex items-center gap-1">
+                  {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                  Search
+                </button>
+              ) : (
+                <Button
+                  disabled={invoicesLoading}
+                  onClick={() => fetchInvoices(selStudent!.id)}
+                  className="bg-cyan-600 hover:bg-cyan-500 text-white gap-1">
+                  {invoicesLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                  View Unpaid Invoices →
+                </Button>
+              )}
             </div>
           </div>
         )}
