@@ -391,7 +391,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
       const body = await r.json();
       if (!r.ok) { setSearchError(body.message ?? "Search failed"); return; }
       setSearchResults(body as StudentItem[]);
-    } catch { setSearchError("Network error — please try again"); }
+    } catch (e: any) { setSearchError(e?.message ?? "Network error — please try again"); }
     finally  { setSearching(false); }
   }
 

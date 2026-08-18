@@ -824,51 +824,55 @@ export function registerFeesRoutes(app: Express) {
 
     const pattern = `%${val}%`;
 
-    let rows: Awaited<ReturnType<typeof db.execute>>;
+    try {
+      let rows: Awaited<ReturnType<typeof db.execute>>;
 
-    if (invoiceNumber) {
-      // Targeted invoice-number search — INNER JOIN so we only return students
-      // who actually have a matching invoice (paid or unpaid) in this school.
-      rows = await db.execute(sql`
-        SELECT DISTINCT
-          s.id,
-          s.name,
-          s.class,
-          s.section,
-          s.digital_student_id AS "digitalStudentId",
-          s.is_active          AS "isActive"
-        FROM students s
-        INNER JOIN fee_records fr
-          ON fr.student_id = s.id AND fr.school_id = s.school_id
-        WHERE s.school_id = ${schoolId}
-          AND s.is_active = true
-          AND fr.invoice_number ILIKE ${pattern}
-        ORDER BY s.name ASC
-        LIMIT 20
-      `);
-    } else {
-      // Name / DSID search — no fee_records join required.
-      rows = await db.execute(sql`
-        SELECT DISTINCT
-          s.id,
-          s.name,
-          s.class,
-          s.section,
-          s.digital_student_id AS "digitalStudentId",
-          s.is_active          AS "isActive"
-        FROM students s
-        WHERE s.school_id = ${schoolId}
-          AND s.is_active = true
-          AND (
-            s.name               ILIKE ${pattern}
-            OR s.digital_student_id ILIKE ${pattern}
-          )
-        ORDER BY s.name ASC
-        LIMIT 20
-      `);
+      if (invoiceNumber) {
+        // Targeted invoice-number search — join fee_records to find the owning student.
+        rows = await db.execute(sql`
+          SELECT DISTINCT
+            s.id,
+            s.name,
+            s.class,
+            s.section,
+            s.digital_student_id AS "digitalStudentId",
+            s.is_active          AS "isActive"
+          FROM fee_records fr
+          INNER JOIN students s
+            ON s.id = fr.student_id AND s.school_id = fr.school_id
+          WHERE fr.school_id = ${schoolId}
+            AND s.is_active = true
+            AND fr.invoice_number ILIKE ${pattern}
+          ORDER BY s.name ASC
+          LIMIT 20
+        `);
+      } else {
+        // Name / DSID search — no fee_records join required.
+        rows = await db.execute(sql`
+          SELECT DISTINCT
+            s.id,
+            s.name,
+            s.class,
+            s.section,
+            s.digital_student_id AS "digitalStudentId",
+            s.is_active          AS "isActive"
+          FROM students s
+          WHERE s.school_id = ${schoolId}
+            AND s.is_active = true
+            AND (
+              s.name               ILIKE ${pattern}
+              OR s.digital_student_id ILIKE ${pattern}
+            )
+          ORDER BY s.name ASC
+          LIMIT 20
+        `);
+      }
+
+      res.json(rows.rows);
+    } catch (err: any) {
+      console.error("[fees/students/search] DB error:", err?.message ?? err);
+      res.status(500).json({ message: "Search failed — please try again" });
     }
-
-    res.json(rows.rows);
   });
 
   // ── Unpaid Invoices for a Student (invoice-picker endpoint) ─────────────────
