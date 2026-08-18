@@ -794,7 +794,7 @@ export function registerFeesRoutes(app: Express) {
     // feeNotes: optional notes written to the linked invoice during payment
     feeNotes: z.string().max(500).optional().nullable(),
     // Payment fields — Online is excluded from manual offline recording
-    paymentMethod: z.enum(["Cash", "Cheque", "BankTransfer", "DemandDraft"]),
+    paymentMethod: z.enum(["Cash", "Cheque", "BankTransfer", "DemandDraft", "UpiQr"]),
     referenceNumber: z.string().max(100).optional().nullable(),
     receivedDate: z.string().min(1),
     amount: z.number().int().positive(),
@@ -812,6 +812,8 @@ export function registerFeesRoutes(app: Express) {
     branchName: z.string().max(100).optional().nullable(),
     bankName:   z.string().max(100).optional().nullable(),
     payerName:  z.string().max(200).optional().nullable(),
+    // ── UPI / QR Payment extra fields ────────────────────────────────────────
+    payerUpiId: z.string().max(100).optional().nullable(),  // payer's UPI ID / VPA
   });
 
   // NOTE: GET /api/admin/fees/students/search is registered in routes.ts
@@ -1089,6 +1091,16 @@ export function registerFeesRoutes(app: Express) {
       }
     }
 
+    // UPI / QR Payment: UTR and payment date are both required.
+    if (paymentData.paymentMethod === "UpiQr") {
+      if (!paymentData.referenceNumber?.trim()) {
+        return res.status(400).json({ message: "UPI Transaction ID / UTR is required for UPI / QR payments." });
+      }
+      if (!paymentData.chequeDate?.trim()) {
+        return res.status(400).json({ message: "Payment Date is required for UPI / QR payments." });
+      }
+    }
+
     // Generate a non-reusable OP receipt number BEFORE the transaction so
     // the sequence counter is always consumed even if the transaction rolls
     // back (e.g. due to a server crash or DB error mid-payment).
@@ -1245,7 +1257,7 @@ export function registerFeesRoutes(app: Express) {
               (school_id, session_id, fee_record_id, student_id, payment_method,
                reference_number, received_date, amount, cashier_notes,
                idempotency_key, recorded_by, receipt_number, late_fee_paid,
-               denomination_breakdown, cheque_date, branch_name, bank_name, payer_name)
+               denomination_breakdown, cheque_date, branch_name, bank_name, payer_name, vpa)
             VALUES (
               ${schoolId},
               ${resolvedSessionId},
@@ -1264,7 +1276,8 @@ export function registerFeesRoutes(app: Express) {
               ${paymentOnly.chequeDate ?? null},
               ${paymentOnly.branchName ?? null},
               ${paymentOnly.bankName ?? null},
-              ${paymentOnly.payerName ?? null}
+              ${paymentOnly.payerName ?? null},
+              ${paymentOnly.payerUpiId ?? null}
             )
             RETURNING *`,
       );
@@ -2932,7 +2945,7 @@ export function registerFeesRoutes(app: Express) {
     const schoolName = esc(school?.name ?? "School");
     const methodLabel: Record<string, string> = {
       Cash: "Cash", Cheque: "Cheque", BankTransfer: "Bank Transfer",
-      DemandDraft: "Demand Draft", Online: "Online Transfer",
+      DemandDraft: "Demand Draft", UpiQr: "UPI / QR Payment", Online: "Online Transfer",
     };
 
     const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Payment Receipt</title>

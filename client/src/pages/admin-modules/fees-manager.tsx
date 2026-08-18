@@ -358,11 +358,12 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
   const [notes,    setNotes]    = useState("");
   // Cash denomination state — keys are denomination face values, values are counts
   const [denomQty,   setDenomQty]   = useState<Record<number, number>>(() => Object.fromEntries(DENOMS.map(d => [d, 0])));
-  // Method-specific extra fields (Cheque / BankTransfer / DemandDraft)
-  const [instrDate,  setInstrDate]  = useState("");   // instrument date (cheque / DD / transfer)
+  // Method-specific extra fields (Cheque / BankTransfer / DemandDraft / UpiQr)
+  const [instrDate,  setInstrDate]  = useState("");   // instrument date (cheque / DD / transfer / UPI payment date)
   const [bankName,   setBankName]   = useState("");
   const [branchName, setBranchName] = useState("");
   const [payerName,  setPayerName]  = useState("");
+  const [payerUpiId, setPayerUpiId] = useState("");   // UPI / QR: payer's UPI ID / VPA
 
   // Multi-submit state
   const [submitting,   setSubmitting]   = useState(false);
@@ -381,7 +382,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
     setSelectedIds(new Set());
     setMethod("Cash"); setRef(""); setDate(new Date().toISOString().split("T")[0]); setNotes("");
     setDenomQty(Object.fromEntries(DENOMS.map(d => [d, 0])));
-    setInstrDate(""); setBankName(""); setBranchName(""); setPayerName("");
+    setInstrDate(""); setBankName(""); setBranchName(""); setPayerName(""); setPayerUpiId("");
     setSubmitting(false); setSubmitError(null); setDonePayments([]);
     setBaseKey(`idem-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   }, [open]);
@@ -469,10 +470,16 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
         // other invoices in this multi-invoice session.
         payload.denominationBreakdown = denomQty;
         payload.denominationTotal     = totalAmount;
+      } else if (method === "UpiQr") {
+        payload.referenceNumber = ref        || null;  // UTR
+        payload.chequeDate      = instrDate  || null;  // Payment Date
+        payload.bankName        = bankName   || null;  // Bank / UPI App
+        payload.payerName       = payerName  || null;
+        payload.payerUpiId      = payerUpiId || null;
       } else {
-        payload.referenceNumber = ref       || null;
-        payload.chequeDate      = instrDate || null;
-        payload.bankName        = bankName  || null;
+        payload.referenceNumber = ref        || null;
+        payload.chequeDate      = instrDate  || null;
+        payload.bankName        = bankName   || null;
         payload.branchName      = branchName || null;
         payload.payerName       = payerName  || null;
       }
@@ -718,7 +725,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
               </div>
             </div>
 
-            {/* ── Method selector (4 buttons, Online excluded) ─────────────────── */}
+            {/* ── Method selector (5 buttons, Online/Razorpay excluded) ──────── */}
             <div>
               <label className="text-xs text-white/60 mb-1.5 block">Payment Method</label>
               <div className="grid grid-cols-2 gap-2">
@@ -729,7 +736,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                   { value: "DemandDraft",  label: "Demand Draft" },
                 ].map(({ value, label }) => (
                   <button key={value} type="button"
-                    onClick={() => { setMethod(value); setRef(""); setInstrDate(""); setBankName(""); setBranchName(""); setPayerName(""); }}
+                    onClick={() => { setMethod(value); setRef(""); setInstrDate(""); setBankName(""); setBranchName(""); setPayerName(""); setPayerUpiId(""); }}
                     className={`py-2 px-3 rounded-lg border text-sm font-medium transition-all ${
                       method === value
                         ? "bg-cyan-900/40 border-cyan-500/60 text-cyan-300"
@@ -738,6 +745,16 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                     {label}
                   </button>
                 ))}
+                {/* UPI / QR Payment — full-width on its own row */}
+                <button type="button"
+                  onClick={() => { setMethod("UpiQr"); setRef(""); setInstrDate(""); setBankName(""); setBranchName(""); setPayerName(""); setPayerUpiId(""); }}
+                  className={`col-span-2 py-2 px-3 rounded-lg border text-sm font-medium transition-all ${
+                    method === "UpiQr"
+                      ? "bg-cyan-900/40 border-cyan-500/60 text-cyan-300"
+                      : "bg-[#0A1628] border-white/15 text-white/60 hover:border-white/30 hover:text-white/80"
+                  }`}>
+                  UPI / QR Payment
+                </button>
               </div>
             </div>
 
@@ -822,8 +839,58 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
               </div>
             )}
 
+            {/* ── UPI / QR Payment fields ──────────────────────────────────────── */}
+            {method === "UpiQr" && (
+              <div className="space-y-3">
+                {/* UPI Transaction ID / UTR — required */}
+                <div>
+                  <label className="text-xs text-white/60 mb-1 block">
+                    UPI Transaction ID / UTR <span className="text-red-400">*</span>
+                  </label>
+                  <input value={ref} onChange={e => setRef(e.target.value)}
+                    placeholder="e.g. 123456789012"
+                    className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20 font-mono" />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Payment Date — required */}
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">
+                      Payment Date <span className="text-red-400">*</span>
+                    </label>
+                    <input type="date" value={instrDate} onChange={e => setInstrDate(e.target.value)}
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
+                  </div>
+                  {/* Bank / UPI App — optional */}
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">Bank / UPI App <span className="text-white/30">(opt.)</span></label>
+                    <input value={bankName} onChange={e => setBankName(e.target.value)}
+                      placeholder="e.g. GPay, PhonePe, HDFC"
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Payer Name — optional */}
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">Payer Name <span className="text-white/30">(opt.)</span></label>
+                    <input value={payerName} onChange={e => setPayerName(e.target.value)}
+                      placeholder="Account holder name"
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                  </div>
+                  {/* Payer UPI ID — optional */}
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">Payer UPI ID <span className="text-white/30">(opt.)</span></label>
+                    <input value={payerUpiId} onChange={e => setPayerUpiId(e.target.value)}
+                      placeholder="e.g. name@upi"
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20 font-mono" />
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* ── Cheque / Bank Transfer / Demand Draft fields ──────────────────── */}
-            {method !== "Cash" && (
+            {method !== "Cash" && method !== "UpiQr" && (
               <div className="space-y-3">
                 {/* Reference number — required */}
                 <div>
@@ -944,6 +1011,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                   <span className="text-white">
                     {method === "BankTransfer" ? "Bank Transfer"
                      : method === "DemandDraft" ? "Demand Draft"
+                     : method === "UpiQr" ? "UPI / QR Payment"
                      : method}
                   </span>
                 </div>
@@ -951,6 +1019,14 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                   <span className="text-white/50">Received Date</span>
                   <span className="text-white">{date ? fmtDate(date) : "—"}</span>
                 </div>
+
+                {/* UPI-specific: show UTR in verification */}
+                {method === "UpiQr" && (
+                  <div className="flex justify-between">
+                    <span className="text-white/50">UPI Transaction ID</span>
+                    <span className="text-white font-mono">{ref.trim() || "—"}</span>
+                  </div>
+                )}
 
                 {/* Cash-specific mini-summary inside verification */}
                 {method === "Cash" && cashTotal > 0 && (
@@ -1082,7 +1158,7 @@ function PaymentHistoryModal({ open, onClose, feeRecord }: PaymentHistoryModalPr
 
   const methodLabel: Record<string, string> = {
     Cash: "Cash", Cheque: "Cheque", BankTransfer: "Bank Transfer",
-    DemandDraft: "Demand Draft", Online: "Online",
+    DemandDraft: "Demand Draft", UpiQr: "UPI / QR Payment", Online: "Online",
   };
 
   const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
@@ -1285,6 +1361,7 @@ ${filterDesc ? `<div class="filter-badge">Filtered: ${esc(filterDesc)}</div>` : 
               <option value="Cheque">Cheque</option>
               <option value="BankTransfer">Bank Transfer</option>
               <option value="DemandDraft">Demand Draft</option>
+              <option value="UpiQr">UPI / QR Payment</option>
               <option value="Online">Online</option>
             </select>
             {isFiltered && (
@@ -2113,6 +2190,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                         <span className="mt-1 inline-block text-[10px] font-medium px-1.5 py-0.5 rounded bg-cyan-900/40 border border-cyan-700/40 text-cyan-300">
                           {paymentMethodMap.get(rec.id) === "BankTransfer" ? "Bank" :
                            paymentMethodMap.get(rec.id) === "DemandDraft" ? "DD" :
+                           paymentMethodMap.get(rec.id) === "UpiQr" ? "UPI" :
                            paymentMethodMap.get(rec.id)}
                         </span>
                       )}

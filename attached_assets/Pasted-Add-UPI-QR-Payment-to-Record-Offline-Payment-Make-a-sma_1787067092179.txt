@@ -1,0 +1,121 @@
+Add UPI / QR Payment to Record Offline Payment
+
+Make a small, targeted update to the existing Record Offline Payment workflow.
+
+Do not redesign or rebuild the existing payment system.
+
+Payment Methods
+
+The manual payment-method selector should now contain exactly:
+
+- Cash
+- Cheque
+- Bank Transfer
+- Demand Draft
+- UPI / QR Payment
+
+Keep Online / Razorpay completely separate.
+
+Do NOT rename the modal. Keep:
+
+Record Offline Payment
+
+Do NOT modify or break the existing Razorpay checkout, webhook, payment verification, payment history, reconciliation, or online-payment flow.
+
+---
+
+UPI / QR Payment
+
+When UPI / QR Payment is selected, show only the fields relevant to this method:
+
+- UPI Transaction ID / UTR — Required
+- Payment Date — Required
+- Received Date — Required
+- Payer Name — Optional
+- Payer UPI ID — Optional
+- Bank / UPI App — Optional
+- Payment Screenshot / Proof — Optional
+- Remarks — Optional
+
+The payment amount must come from the selected invoice's Outstanding amount.
+
+Do not allow the admin to manually change the payment amount.
+
+---
+
+Verification
+
+The final verification section should show:
+
+Student: Random2Student
+DSID: MIS-0013
+Invoice: INV-0067
+Fee: Annual Yearly Fee
+Outstanding: ₹35,000
+Payment Method: UPI / QR Payment
+Received Date: 18 Aug 2026
+UPI Transaction ID: XXXXXXXX
+
+Then show:
+
+✓ Amount verified
+
+Only enable Record Payment when all required fields are valid.
+
+---
+
+Payment Status
+
+After the admin successfully records and verifies the UPI / QR payment:
+
+Payment Status = Paid / Completed
+
+Do not create a pending-clearance state.
+
+This is a manually verified payment because the parent/student has paid directly to the school's own UPI/QR/bank account.
+
+---
+
+Important Distinction
+
+UPI / QR Payment is NOT Razorpay Online Payment.
+
+UPI / QR Payment means:
+
+«Parent/student pays directly to the school's own UPI/QR account → admin verifies the transaction → admin records it manually.»
+
+Razorpay means:
+
+«Parent/student uses the application's existing Razorpay checkout → Razorpay handles the payment → existing webhook/payment verification system records it.»
+
+Keep these two systems completely separate.
+
+---
+
+Security
+
+Maintain the existing strict multi-tenant "school_id" isolation.
+
+An admin must only be able to record a UPI / QR payment against an invoice belonging to their own school.
+
+Do not weaken any existing invoice validation, duplicate-payment protection, authorization, or server-side verification.
+
+---
+
+Final Check
+
+After implementation:
+
+- Verify all 5 manual methods work.
+- Verify UPI / QR Payment appears in the selector.
+- Verify Online/Razorpay does NOT appear in this manual selector.
+- Verify UPI Transaction ID is required.
+- Verify Payment Date is required.
+- Verify Received Date is required.
+- Verify amount comes from invoice Outstanding.
+- Verify successful payment becomes Paid/Completed.
+- Verify payment appears correctly in Payment History/Ledger/Receipt.
+- Verify Razorpay functionality remains untouched.
+- Run TypeScript checks and existing tests.
+
+Make only the necessary changes.
