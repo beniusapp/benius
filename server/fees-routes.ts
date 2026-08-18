@@ -803,77 +803,9 @@ export function registerFeesRoutes(app: Express) {
     lateFeePaid: z.number().int().min(0).default(0),
   });
 
-  // ── Student Search for Offline Payment ──────────────────────────────────────
-  // Accepts EITHER ?invoiceNumber=  (searches fee_records.invoice_number only)
-  //           OR   ?q=             (searches students.name + digital_student_id only)
-  // Sending both returns 400. Must be registered BEFORE the :studentId wildcard below.
-  app.get("/api/admin/fees/students/search", async (req, res) => {
-    if (!adminGuard(req, res)) return;
-    const schoolId      = req.session.schoolId!;
-    const invoiceNumber = ((req.query.invoiceNumber as string) ?? "").trim();
-    const q             = ((req.query.q             as string) ?? "").trim();
-
-    if (invoiceNumber && q)
-      return res.status(400).json({ message: "Use only one search field at a time" });
-    if (!invoiceNumber && !q)
-      return res.status(400).json({ message: "Enter an invoice number or student name / DSID" });
-
-    const val = invoiceNumber || q;
-    if (val.length < 2)
-      return res.status(400).json({ message: "Enter at least 2 characters to search" });
-
-    const pattern = `%${val}%`;
-
-    try {
-      let rows: Awaited<ReturnType<typeof db.execute>>;
-
-      if (invoiceNumber) {
-        // Targeted invoice-number search — join fee_records to find the owning student.
-        rows = await db.execute(sql`
-          SELECT DISTINCT
-            s.id,
-            s.name,
-            s.class,
-            s.section,
-            s.digital_student_id AS "digitalStudentId",
-            s.is_active          AS "isActive"
-          FROM fee_records fr
-          INNER JOIN students s
-            ON s.id = fr.student_id AND s.school_id = fr.school_id
-          WHERE fr.school_id = ${schoolId}
-            AND s.is_active = true
-            AND fr.invoice_number ILIKE ${pattern}
-          ORDER BY s.name ASC
-          LIMIT 20
-        `);
-      } else {
-        // Name / DSID search — no fee_records join required.
-        rows = await db.execute(sql`
-          SELECT DISTINCT
-            s.id,
-            s.name,
-            s.class,
-            s.section,
-            s.digital_student_id AS "digitalStudentId",
-            s.is_active          AS "isActive"
-          FROM students s
-          WHERE s.school_id = ${schoolId}
-            AND s.is_active = true
-            AND (
-              s.name               ILIKE ${pattern}
-              OR s.digital_student_id ILIKE ${pattern}
-            )
-          ORDER BY s.name ASC
-          LIMIT 20
-        `);
-      }
-
-      res.json(rows.rows);
-    } catch (err: any) {
-      console.error("[fees/students/search] DB error:", err?.message ?? err);
-      res.status(500).json({ message: "Search failed — please try again" });
-    }
-  });
+  // NOTE: GET /api/admin/fees/students/search is registered in routes.ts
+  // (alongside the other /api/admin/fees routes) to ensure it is matched by
+  // Express before Vite's dev-server middleware takes over. Do not re-add it here.
 
   // ── Unpaid Invoices for a Student (invoice-picker endpoint) ─────────────────
   // Returns Due/Overdue fee_records for the specified student, with accrued late fee.

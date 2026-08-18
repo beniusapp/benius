@@ -4534,6 +4534,84 @@ export async function registerRoutes(
     }
   });
 
+  // ── Student search for Record-Offline-Payment modal ───────────────────────
+  // Tenant-isolated: every query is hard-scoped to req.session.schoolId.
+  // Accepts EITHER ?invoiceNumber=  (searches fee_records only for this school)
+  //           OR   ?q=             (name / DSID of students in this school only)
+  // Sending both → 400. Must NOT be registered after any /:id wildcard.
+  app.get("/api/admin/fees/students/search", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+
+    const invoiceNumber = ((req.query.invoiceNumber as string) ?? "").trim();
+    const q             = ((req.query.q             as string) ?? "").trim();
+
+    if (invoiceNumber && q)
+      return res.status(400).json({ message: "Use only one search field at a time" });
+    if (!invoiceNumber && !q)
+      return res.status(400).json({ message: "Enter an invoice number or student name / DSID" });
+
+    const val = invoiceNumber || q;
+    if (val.length < 2)
+      return res.status(400).json({ message: "Enter at least 2 characters to search" });
+
+    const pattern = `%${val}%`;
+
+    try {
+      let rows: Awaited<ReturnType<typeof db.execute>>;
+
+      if (invoiceNumber) {
+        // Invoice-number search: anchor on fee_records to guarantee tenant isolation.
+        // fr.school_id = schoolId is the hard tenant boundary — students from other
+        // schools who share an invoice number prefix will never appear here.
+        rows = await db.execute(sql`
+          SELECT DISTINCT
+            s.id,
+            s.name,
+            s.class,
+            s.section,
+            s.digital_student_id AS "digitalStudentId",
+            s.is_active          AS "isActive"
+          FROM fee_records fr
+          INNER JOIN students s
+            ON s.id = fr.student_id AND s.school_id = fr.school_id
+          WHERE fr.school_id = ${schoolId}
+            AND s.is_active = true
+            AND fr.invoice_number ILIKE ${pattern}
+          ORDER BY s.name ASC
+          LIMIT 20
+        `);
+      } else {
+        // Name / DSID search: tenant boundary is s.school_id = schoolId.
+        rows = await db.execute(sql`
+          SELECT DISTINCT
+            s.id,
+            s.name,
+            s.class,
+            s.section,
+            s.digital_student_id AS "digitalStudentId",
+            s.is_active          AS "isActive"
+          FROM students s
+          WHERE s.school_id = ${schoolId}
+            AND s.is_active = true
+            AND (
+              s.name               ILIKE ${pattern}
+              OR s.digital_student_id ILIKE ${pattern}
+            )
+          ORDER BY s.name ASC
+          LIMIT 20
+        `);
+      }
+
+      return res.json(rows.rows);
+    } catch (err: any) {
+      console.error("[fees/students/search] DB error:", err?.message ?? err);
+      return res.status(500).json({ message: "Search failed — please try again" });
+    }
+  });
+
   // ===== STUDENT: VIEW OWN FEES =====
   app.get("/api/student/academic-sessions", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
