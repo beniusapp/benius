@@ -2938,9 +2938,14 @@ export function registerFeesRoutes(app: Express) {
     const esc = (s: string | null | undefined) =>
       (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
-    const receivedDateStr = payment.receivedDate
-      ? new Date(payment.receivedDate).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })
-      : "—";
+    const receivedDateStr = (() => {
+      const datePart = payment.receivedDate
+        ? new Date(String(payment.receivedDate) + "T12:00:00").toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "long", year: "numeric" })
+        : "—";
+      if (!payment.createdAt) return datePart;
+      const timePart = new Date(payment.createdAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: true }).toUpperCase();
+      return `${datePart}, ${timePart} IST`;
+    })();
     const amountStr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(payment.amount);
     const schoolName = esc(school?.name ?? "School");
     const methodLabel: Record<string, string> = {

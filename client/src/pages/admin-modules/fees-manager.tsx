@@ -240,6 +240,21 @@ function fmtDateTime(d: string) {
   return new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+// IST helpers — always use Asia/Kolkata so the time is correct regardless of
+// the server's or browser's local timezone.
+function fmtDateTimeIST(ts: string | Date | null | undefined): string {
+  if (!ts) return "—";
+  const d = typeof ts === "string" ? new Date(ts) : ts;
+  const datePart = d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric" });
+  const timePart = d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: true }).toUpperCase();
+  return `${datePart}, ${timePart} IST`;
+}
+
+/** Returns the current wall-clock time formatted in IST, e.g. "09:15 PM IST" */
+function nowIST(): string {
+  return new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: true }).toUpperCase() + " IST";
+}
+
 function StatusChip({ status }: { status: string }) {
   const variants: Record<string, { cls: string; icon: React.ReactNode }> = {
     Paid:    { cls: "bg-emerald-900/40 text-emerald-400 border-emerald-700/40", icon: <CheckCircle2 className="w-3 h-3" /> },
@@ -1017,7 +1032,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                 </div>
                 <div className="flex justify-between">
                   <span className="text-white/50">Received Date</span>
-                  <span className="text-white">{date ? fmtDate(date) : "—"}</span>
+                  <span className="text-white">{date ? `${fmtDate(date)}, ${nowIST()}` : "—"}</span>
                 </div>
 
                 {/* UPI-specific: show UTR in verification */}
@@ -1403,7 +1418,7 @@ ${filterDesc ? `<div class="filter-badge">Filtered: ${esc(filterDesc)}</div>` : 
                       <span className="text-white/30 text-xs font-mono shrink-0">#{idx + 1}</span>
                       <div className="min-w-0">
                         <p className="text-white font-semibold text-sm">{fmt(p.amount)}</p>
-                        <p className="text-white/50 text-xs mt-0.5">{fmtDate(p.receivedDate)}</p>
+                        <p className="text-white/50 text-xs mt-0.5">{p.createdAt ? fmtDateTimeIST(p.createdAt) : fmtDate(p.receivedDate)}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -2332,7 +2347,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                                     <div className="flex items-center gap-2 text-xs font-semibold text-white/60 border-b border-white/8 pb-2">
                                       <span className="text-white/40">Payment {detail.payments.length > 1 ? `#${pi + 1} of ${detail.payments.length}` : ""}</span>
                                       <span className="font-mono text-cyan-300">{fmt(pay.amount)}</span>
-                                      <span className="ml-auto text-white/30">{fmtDate(pay.receivedDate)}</span>
+                                      <span className="ml-auto text-white/30">{pay.createdAt ? fmtDateTimeIST(pay.createdAt) : fmtDate(pay.receivedDate)}</span>
                                     </div>
                                     {pay.paymentMethod === "Online" ? (
                                       <div className="grid grid-cols-2 gap-4">
@@ -2402,7 +2417,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                                       <p className="text-white/30 text-[10px] mb-1">Payment history ({detail.payments.length} transactions)</p>
                                       {detail.payments.map((p, i) => (
                                         <div key={p.id} className="flex justify-between text-xs py-0.5 text-white/50">
-                                          <span>#{i + 1} {p.paymentMethod} · {fmtDate(p.receivedDate)}</span>
+                                          <span>#{i + 1} {p.paymentMethod} · {p.createdAt ? fmtDateTimeIST(p.createdAt) : fmtDate(p.receivedDate)}</span>
                                           <span className="text-white/70">{fmt(p.amount)}</span>
                                         </div>
                                       ))}
