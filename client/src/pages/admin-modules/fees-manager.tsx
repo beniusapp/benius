@@ -325,19 +325,19 @@ function MetricBar({ viewSessionId }: { viewSessionId: number | null }) {
 interface StandaloneOfflinePayModalProps {
   open: boolean;
   onClose: () => void;
-  students: StudentItem[];
   onSuccess?: () => void;
 }
 
-function StandaloneOfflinePayModal({ open, onClose, students, onSuccess }: StandaloneOfflinePayModalProps) {
+function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOfflinePayModalProps) {
   const { toast } = useToast();
   type Step = "search" | "select" | "payment" | "done";
   const [step, setStep] = useState<Step>("search");
 
-  // Student search
-  const [searchCls,     setSearchCls]     = useState("");
+  // Student search — backend-driven, no client-side student list
   const [searchQ,       setSearchQ]       = useState("");
+  const [searching,     setSearching]     = useState(false);
   const [searchResults, setSearchResults] = useState<StudentItem[] | null>(null);
+  const [searchError,   setSearchError]   = useState<string | null>(null);
   const [selStudent,    setSelStudent]    = useState<StudentItem | null>(null);
 
   // Unpaid invoices for selected student
@@ -361,23 +361,31 @@ function StandaloneOfflinePayModal({ open, onClose, students, onSuccess }: Stand
   // Idempotency base key — one per modal open, suffixed per invoice
   const [baseKey, setBaseKey] = useState("");
 
-  const { data: schoolConfig } = useQuery<{ classes: string[] }>({
-    queryKey: ["/api/admin/school-config"],
-    staleTime: 300_000,
-  });
-  const classes = schoolConfig?.classes ?? [];
-
   // Reset on every open
   useEffect(() => {
     if (!open) return;
     setStep("search");
-    setSearchCls(""); setSearchQ(""); setSearchResults(null); setSelStudent(null);
+    setSearchQ(""); setSearching(false); setSearchResults(null); setSearchError(null); setSelStudent(null);
     setInvoices([]); setInvoicesLoading(false);
     setSelectedIds(new Set());
     setMethod("Cash"); setRef(""); setDate(new Date().toISOString().split("T")[0]); setNotes("");
     setSubmitting(false); setSubmitError(null); setDonePayments([]);
     setBaseKey(`idem-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   }, [open]);
+
+  // Search students by name, DSID, or invoice number — backend call
+  async function doSearch() {
+    const q = searchQ.trim();
+    if (!q || q.length < 2) { setSearchError("Enter at least 2 characters to search"); return; }
+    setSearching(true); setSearchError(null); setSearchResults(null);
+    try {
+      const r = await sessionFetch(`/api/admin/fees/students/search?q=${encodeURIComponent(q)}`);
+      const body = await r.json();
+      if (!r.ok) { setSearchError(body.message ?? "Search failed"); return; }
+      setSearchResults(body as StudentItem[]);
+    } catch { setSearchError("Network error — please try again"); }
+    finally  { setSearching(false); }
+  }
 
   // Fetch unpaid invoices for a student
   async function fetchInvoices(studentId: number) {
@@ -460,14 +468,6 @@ function StandaloneOfflinePayModal({ open, onClose, students, onSuccess }: Stand
     setStep("done");
   }
 
-  function searchStudents() {
-    const q = searchQ.toLowerCase().trim();
-    setSearchResults(students.filter(s => {
-      if (searchCls && s.class !== searchCls) return false;
-      return !q || s.name.toLowerCase().includes(q) || (s.digitalStudentId ?? "").toLowerCase().includes(q);
-    }));
-  }
-
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
       <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-lg">
@@ -481,39 +481,43 @@ function StandaloneOfflinePayModal({ open, onClose, students, onSuccess }: Stand
         {/* ── Step 1: Search student ──────────────────────────────────────────── */}
         {step === "search" && (
           <div className="space-y-4">
-            <p className="text-white/50 text-sm">Search for the student whose payment you are recording.</p>
+            <p className="text-white/50 text-sm">Search by invoice number, student name, or student ID (DSID).</p>
             <div>
-              <label className="text-xs text-white/60 mb-1 block">Student</label>
               {selStudent ? (
                 <div className="flex items-center gap-2 p-2.5 rounded-lg bg-cyan-500/10 border border-cyan-500/40">
                   <div className="flex-1 min-w-0">
                     <p className="text-white text-sm font-medium">{selStudent.name}</p>
                     <p className="text-white/40 text-xs">{selStudent.digitalStudentId} · Class {selStudent.class}-{selStudent.section}</p>
                   </div>
-                  <button type="button" onClick={() => { setSelStudent(null); setSearchResults(null); }}
+                  <button type="button"
+                    onClick={() => { setSelStudent(null); setSearchResults(null); setSearchError(null); }}
                     className="text-white/40 hover:text-red-400 shrink-0 text-lg leading-none">✕</button>
                 </div>
               ) : (
                 <div className="space-y-2">
                   <div className="flex gap-2">
-                    <select value={searchCls} onChange={e => setSearchCls(e.target.value)}
-                      className="bg-[#0A1628] border border-white/20 rounded-lg px-2 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 shrink-0">
-                      <option value="">All Classes</option>
-                      {classes.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                    <input value={searchQ} onChange={e => setSearchQ(e.target.value)}
-                      onKeyDown={e => e.key === "Enter" && searchStudents()}
-                      placeholder="Name or Student ID…"
-                      className="flex-1 bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
-                    <button type="button" onClick={searchStudents}
-                      className="bg-cyan-600 hover:bg-cyan-500 text-white text-sm px-3 py-2 rounded-lg shrink-0">
+                    <input
+                      value={searchQ}
+                      onChange={e => { setSearchQ(e.target.value); setSearchError(null); }}
+                      onKeyDown={e => e.key === "Enter" && doSearch()}
+                      placeholder="Invoice No., Student Name, or DSID…"
+                      className="flex-1 bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20"
+                    />
+                    <button type="button" onClick={doSearch} disabled={searching}
+                      className="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-sm px-3 py-2 rounded-lg shrink-0 flex items-center gap-1">
+                      {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                       Search
                     </button>
                   </div>
-                  {searchResults !== null && (
+                  {searchError && (
+                    <p className="text-red-400 text-xs px-1 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3 shrink-0" />{searchError}
+                    </p>
+                  )}
+                  {searchResults !== null && !searchError && (
                     searchResults.length === 0
                       ? <p className="text-white/40 text-xs px-1">No students found.</p>
-                      : <div className="max-h-40 overflow-y-auto rounded-lg border border-white/10 divide-y divide-white/5">
+                      : <div className="max-h-48 overflow-y-auto rounded-lg border border-white/10 divide-y divide-white/5">
                           {searchResults.map(s => (
                             <button key={s.id} type="button"
                               onClick={() => { setSelStudent(s); setSearchResults(null); }}
@@ -2154,7 +2158,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       </div>
 
       {/* Payment modals */}
-      <StandaloneOfflinePayModal open={showStandalonePay} onClose={() => setShowStandalonePay(false)} students={students} />
+      <StandaloneOfflinePayModal open={showStandalonePay} onClose={() => setShowStandalonePay(false)} />
       <PaymentHistoryModal
         open={showPaymentsModal}
         onClose={() => { setShowPaymentsModal(false); setViewPaymentsRecord(null); }}

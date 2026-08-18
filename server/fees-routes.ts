@@ -803,6 +803,41 @@ export function registerFeesRoutes(app: Express) {
     lateFeePaid: z.number().int().min(0).default(0),
   });
 
+  // ── Student Search for Offline Payment (by name, DSID, or invoice number) ───
+  // Must be registered BEFORE the :studentId wildcard route below.
+  app.get("/api/admin/fees/students/search", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const q = ((req.query.q as string) ?? "").trim();
+    if (!q || q.length < 2) return res.status(400).json({ message: "Enter at least 2 characters to search" });
+
+    const pattern = `%${q}%`;
+
+    const rows = await db.execute(sql`
+      SELECT DISTINCT
+        s.id,
+        s.name,
+        s.class,
+        s.section,
+        s.digital_student_id AS "digitalStudentId",
+        s.is_active          AS "isActive"
+      FROM students s
+      LEFT JOIN fee_records fr
+        ON fr.student_id = s.id AND fr.school_id = s.school_id
+      WHERE s.school_id = ${schoolId}
+        AND s.is_active = true
+        AND (
+          s.name ILIKE ${pattern}
+          OR s.digital_student_id ILIKE ${pattern}
+          OR fr.invoice_number    ILIKE ${pattern}
+        )
+      ORDER BY s.name ASC
+      LIMIT 20
+    `);
+
+    res.json(rows.rows);
+  });
+
   // ── Unpaid Invoices for a Student (invoice-picker endpoint) ─────────────────
   // Returns Due/Overdue fee_records for the specified student, with accrued late fee.
   // Used by the "Record Offline Payment" modal to let the admin select which
