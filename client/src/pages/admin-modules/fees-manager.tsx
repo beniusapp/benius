@@ -716,7 +716,6 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                 <span className="text-white/70">Total</span>
                 <span className="text-cyan-300">{fmt(totalAmount)}</span>
               </div>
-              <p className="text-white/20 text-[10px] pt-0.5">Amount is fixed — derived from the selected invoices</p>
             </div>
 
             {/* ── Method selector (4 buttons, Online excluded) ─────────────────── */}
@@ -846,6 +845,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                   <div>
                     <label className="text-xs text-white/60 mb-1 block">
                       {method === "Cheque" ? "Cheque Date" : method === "BankTransfer" ? "Transfer Date" : "DD Date"}
+                      <span className="text-red-400 ml-0.5">*</span>
                     </label>
                     <input type="date" value={instrDate} onChange={e => setInstrDate(e.target.value)}
                       className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
@@ -887,32 +887,91 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                 className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
             </div>
 
-            {/* ── Payment verification summary ─────────────────────────────────── */}
-            <div className="p-3 rounded-lg bg-white/3 border border-white/8 space-y-1.5">
-              <p className="text-[10px] font-semibold text-white/30 uppercase tracking-widest mb-1">Payment Verification</p>
-              <div className="flex justify-between text-xs">
-                <span className="text-white/50">Student</span>
-                <span className="text-white">{selStudent?.name} <span className="text-white/40">· {selStudent?.digitalStudentId}</span></span>
-              </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-white/50">Total Due</span>
-                <span className="text-cyan-300 font-semibold">{fmt(totalAmount)}</span>
-              </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-white/50">Method</span>
-                <span className="text-white">
-                  {method === "BankTransfer" ? "Bank Transfer" : method === "DemandDraft" ? "Demand Draft" : method}
-                  {method === "Cash" && cashMatch && <span className="text-emerald-400 ml-1.5">✓</span>}
-                  {method !== "Cash" && ref.trim() && (
-                    <span className="text-white/40 ml-1.5 font-mono text-[10px]">
-                      #{ref.length > 14 ? ref.slice(0, 14) + "…" : ref}
+            {/* ── Payment verification card (spec §5/6/7) ─────────────────────── */}
+            <div className={`rounded-lg border transition-colors ${
+              canSubmit ? "border-emerald-700/40 bg-emerald-900/10" : "border-white/10 bg-white/3"
+            }`}>
+              <p className="px-3 pt-2.5 pb-1 text-[10px] font-semibold text-white/30 uppercase tracking-widest">
+                Payment Verification
+              </p>
+              <div className="px-3 pb-3 space-y-1.5 text-xs">
+                {/* Student */}
+                <div className="flex justify-between">
+                  <span className="text-white/50">Student</span>
+                  <span className="text-white font-medium">{selStudent?.name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-white/50">DSID</span>
+                  <span className="text-white/80 font-mono">{selStudent?.digitalStudentId}</span>
+                </div>
+
+                {/* Per-invoice details */}
+                {selectedInvoices.length === 1 ? (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-white/50">Invoice</span>
+                      <span className="text-white font-mono">{selectedInvoices[0].invoiceNumber ?? "—"}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-white/50">Fee</span>
+                      <span className="text-white">{selectedInvoices[0].feeType}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-white/50">Outstanding</span>
+                      <span className="text-white font-semibold">{fmt(selectedInvoices[0].totalDue)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {selectedInvoices.map(inv => (
+                      <div key={inv.id} className="flex justify-between">
+                        <span className="text-white/50 font-mono">{inv.invoiceNumber ?? `#${inv.id}`}</span>
+                        <span className="text-white">
+                          {inv.feeType} — <span className="font-semibold">{fmt(inv.totalDue)}</span>
+                        </span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between border-t border-white/10 pt-1">
+                      <span className="text-white/50">Outstanding</span>
+                      <span className="text-white font-semibold">{fmt(totalAmount)}</span>
+                    </div>
+                  </>
+                )}
+
+                {/* Method + dates */}
+                <div className="flex justify-between">
+                  <span className="text-white/50">Payment Method</span>
+                  <span className="text-white">
+                    {method === "BankTransfer" ? "Bank Transfer"
+                     : method === "DemandDraft" ? "Demand Draft"
+                     : method}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-white/50">Received Date</span>
+                  <span className="text-white">{date ? fmtDate(date) : "—"}</span>
+                </div>
+
+                {/* Cash-specific mini-summary inside verification */}
+                {method === "Cash" && cashTotal > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-white/50">Cash Counted</span>
+                    <span className={cashMatch ? "text-emerald-400 font-semibold" : "text-red-400 font-semibold"}>
+                      {fmt(cashTotal)}
                     </span>
-                  )}
-                </span>
-              </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-white/50">Date Received</span>
-                <span className="text-white">{date ? fmtDate(date) : "—"}</span>
+                  </div>
+                )}
+
+                {/* Verification status */}
+                <div className={`flex items-center gap-1.5 pt-1.5 border-t border-white/10 mt-0.5 font-medium ${
+                  canSubmit ? "text-emerald-400" : "text-white/25"
+                }`}>
+                  {canSubmit
+                    ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    : <span className="w-3.5 h-3.5 shrink-0 rounded-full border border-white/20 inline-block" />
+                  }
+                  Amount verified
+                </div>
               </div>
             </div>
 

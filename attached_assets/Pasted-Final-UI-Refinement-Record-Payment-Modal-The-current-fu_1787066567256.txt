@@ -1,0 +1,404 @@
+Final UI Refinement — Record Payment Modal
+
+The current functionality and backend implementation are already in place. Do not rebuild the payment system.
+
+I only want you to refine the UI/UX and displayed information of the existing Record Payment modal according to the final design below.
+
+IMPORTANT
+
+Do NOT change:
+
+- Razorpay/online payment functionality
+- Existing payment APIs
+- Existing webhook system
+- Existing payment verification
+- Existing database/payment architecture
+- Multi-tenant security
+- Duplicate-payment protection
+- Cash denomination server-side validation
+- Payment recording logic
+
+Do NOT add historical-data migration or backward-compatibility work. This application is still in the building phase.
+
+---
+
+1. Modal Title
+
+Keep the modal title as:
+
+Record Offline Payment
+
+Do NOT rename it.
+
+This is the only exception to the earlier "Record Payment" naming requirement.
+
+---
+
+2. Top Payment Summary
+
+At the top of the modal, show a compact summary:
+
+PAYING
+
+Annual Yearly Fee (2027-04) — ₹35,000
+
+Total — ₹35,000
+
+Keep this section visually clean and compact.
+
+The amount must continue to come from the selected invoice/invoices and must not be manually editable.
+
+Do not show unnecessary explanatory text such as:
+
+"Amount is fixed — derived from the selected invoices"
+
+unless it is genuinely useful to the UI.
+
+Prefer a clean visual hierarchy.
+
+---
+
+3. Payment Method
+
+Show exactly these four methods:
+
+Cash | Cheque
+
+Bank Transfer | Demand Draft
+
+Use the existing four-button layout.
+
+Do NOT show:
+
+- Online
+- Razorpay
+- Online Payment
+- Any other payment method
+
+The existing Razorpay system elsewhere in the application must remain completely untouched.
+
+---
+
+4. Method-Specific Fields
+
+Immediately below the payment-method selector, show only the fields relevant to the selected method.
+
+Cash
+
+Show:
+
+- Received Date
+- Cash denomination grid
+- Cash total
+- Payment verification
+
+The denomination calculation and server-side validation already implemented must remain unchanged.
+
+Do not add an unnecessary manually editable payment amount.
+
+---
+
+Cheque
+
+Show:
+
+- Received Date
+- Cheque Number — required
+- Cheque Date — required
+- Bank Name
+- Branch — optional
+- Payer Name — optional
+- Notes — optional
+
+The payment amount must come from the invoice outstanding amount.
+
+Do not require the admin to manually enter the cheque amount if the invoice already determines the exact payment amount.
+
+Cheque should be treated as:
+
+Paid / Completed immediately after successful recording.
+
+Do not introduce any pending-clearance state.
+
+---
+
+Bank Transfer
+
+Show:
+
+- Received Date
+- UTR / Transaction Reference — required
+- Transfer Date — required
+- Sender's Bank
+- Branch — optional
+- Sender Name — optional
+- Notes — optional
+
+Again, the payment amount comes directly from the invoice outstanding amount.
+
+---
+
+Demand Draft
+
+Show:
+
+- Received Date
+- DD Number — required
+- DD Date — required
+- Issuing Bank
+- Issuing Branch
+- Payer Name — optional
+- Notes — optional
+
+The DD amount must come directly from the invoice outstanding amount.
+
+Treat the DD as:
+
+Paid / Completed immediately after successful recording.
+
+Do not introduce a pending-clearance state.
+
+---
+
+5. Final Payment Verification Section
+
+This is the most important UI refinement.
+
+At the bottom of the method-specific fields, show a clean verification card.
+
+The final layout should essentially be:
+
+PAYMENT VERIFICATION
+
+Student: Random2Student
+DSID: MIS-0013
+Invoice: INV-0067
+Fee: Annual Yearly Fee
+Outstanding: ₹35,000
+Payment Method: Demand Draft
+Received Date: 18 Aug 2026
+
+✓ Amount verified
+
+Then:
+
+← Back  [ Record Payment ]
+
+---
+
+6. Verification Section Rules
+
+The verification section must dynamically reflect the selected invoice and payment method.
+
+For example, if Cash is selected:
+
+Student: Random2Student
+DSID: MIS-0013
+Invoice: INV-0067
+Fee: Annual Yearly Fee
+Outstanding: ₹35,000
+Payment Method: Cash
+Received Date: 18 Aug 2026
+
+Then, only when the denomination total exactly matches the invoice outstanding:
+
+✓ Amount verified
+
+The Record Payment button becomes enabled.
+
+---
+
+For Cheque:
+
+Student: Random2Student
+DSID: MIS-0013
+Invoice: INV-0067
+Fee: Annual Yearly Fee
+Outstanding: ₹35,000
+Payment Method: Cheque
+Received Date: 18 Aug 2026
+
+✓ Amount verified
+
+The button becomes enabled only when all required cheque fields are valid.
+
+---
+
+For Bank Transfer:
+
+Student: Random2Student
+DSID: MIS-0013
+Invoice: INV-0067
+Fee: Annual Yearly Fee
+Outstanding: ₹35,000
+Payment Method: Bank Transfer
+Received Date: 18 Aug 2026
+
+✓ Amount verified
+
+The button becomes enabled only when the required UTR and transfer date are provided.
+
+---
+
+For Demand Draft:
+
+Student: Random2Student
+DSID: MIS-0013
+Invoice: INV-0067
+Fee: Annual Yearly Fee
+Outstanding: ₹35,000
+Payment Method: Demand Draft
+Received Date: 18 Aug 2026
+
+✓ Amount verified
+
+The button becomes enabled only when DD Number and DD Date are provided and all required validation succeeds.
+
+---
+
+7. Remove Redundant Information
+
+The final verification card should NOT unnecessarily repeat:
+
+- Total Due
+- Cash Counted for non-cash methods
+- Duplicate amount fields
+- Technical database information
+- Internal IDs other than DSID where useful
+- Unnecessary payment metadata
+
+Keep the card focused on the information an admin needs to verify before clicking Record Payment.
+
+The important fields are:
+
+Student
+DSID
+Invoice
+Fee
+Outstanding
+Payment Method
+Received Date
+
+Then the verification state.
+
+---
+
+8. Button Behaviour
+
+The bottom of the modal should remain:
+
+← Back  [ Record Payment ]
+
+The Record Payment button must remain disabled until all required conditions are satisfied.
+
+Do not enable it merely because the required text fields are filled.
+
+For Cash:
+
+- Denominations must exactly equal the invoice outstanding amount.
+- No underpayment.
+- No overpayment.
+
+For Cheque:
+
+- Cheque Number required.
+- Cheque Date required.
+- Other existing validation must pass.
+
+For Bank Transfer:
+
+- UTR/Transaction Reference required.
+- Transfer Date required.
+- Other existing validation must pass.
+
+For Demand Draft:
+
+- DD Number required.
+- DD Date required.
+- Other existing validation must pass.
+
+---
+
+9. Keep the Existing Visual Design
+
+Keep the current dark/blue visual style.
+
+Improve the visual hierarchy so the modal feels:
+
+- Clean
+- Compact
+- Professional
+- Easy to scan
+- Suitable for a school accounting/admin system
+
+Do not unnecessarily redesign the entire modal.
+
+The goal is refinement, not a completely different UI.
+
+---
+
+10. Invoice Information Must Be Clearly Identifiable
+
+The selected invoice must always be visible in the verification section.
+
+Example:
+
+Invoice: INV-0067
+
+Do not display only an internal invoice ID.
+
+Maintain the distinction between:
+
+- Internal Invoice ID
+- Invoice Number
+- Student ID
+- DSID
+- School ID
+- Academic Session ID
+
+The frontend may display the invoice number, but backend authorization and tenant isolation must continue using the proper internal identifiers and authenticated school_id.
+
+---
+
+11. Multiple Invoice Safety
+
+If multiple invoices are selected, do not hide or ambiguously combine them.
+
+If the existing workflow supports multiple invoices:
+
+Show each selected invoice clearly and calculate the combined outstanding amount explicitly.
+
+If only one invoice is being paid, show that exact invoice:
+
+Invoice: INV-0067
+
+Never allow the payment to accidentally apply to another invoice.
+
+---
+
+12. Final Instruction
+
+Do not change working backend/payment logic unnecessarily.
+
+This is primarily a UI/UX refinement of the existing implementation.
+
+Before finishing:
+
+1. Verify the modal title remains "Record Offline Payment".
+2. Verify the four payment methods are exactly:
+   - Cash
+   - Cheque
+   - Bank Transfer
+   - Demand Draft
+3. Verify Online/Razorpay is absent from this selector.
+4. Verify the invoice number appears in Payment Verification.
+5. Verify the field label is Outstanding, not "Total Due".
+6. Verify the payment method dynamically appears in the verification section.
+7. Verify Received Date appears there.
+8. Verify ✓ Amount verified appears only after successful validation.
+9. Verify the Record Payment button remains disabled until valid.
+10. Verify all four payment methods still work.
+11. Verify existing Razorpay functionality remains untouched.
+12. Run TypeScript/type checks and existing tests.
+
+Do not claim completion unless the implementation actually passes these checks.
