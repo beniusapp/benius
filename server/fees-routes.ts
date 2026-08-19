@@ -2,7 +2,6 @@ import type { Express } from "express";
 import { storage } from "./storage";
 import { db } from "./db";
 import { calculateLateFee, recalculateLateFees, DEFAULT_LATE_FEE_CONFIG, type LateFeeConfig } from "./late-fee-engine";
-import { buildBreakdownSnapshot, warnOnSumMismatch } from "./invoice-snapshot";
 import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings, feeStructures, dunningJobStatus } from "@shared/schema";
 import { and, eq, sql, desc, or, isNotNull } from "drizzle-orm";
 import { z } from "zod";
@@ -15,6 +14,13 @@ import multer from "multer";
 import path from "node:path";
 import fs from "node:fs";
 import sharp from "sharp";
+import {
+  InvoiceGenerationError,
+  buildInvoiceDuplicateIndex,
+  createStructureInvoice,
+  isStudentEligibleForStructure,
+  prepareStructureInvoiceContext,
+} from "./structure-invoice-service";
 
 // ── Signature background removal ─────────────────────────────────────────────
 // Converts white/light-grey background to transparency.
@@ -2784,11 +2790,21 @@ export function registerFeesRoutes(app: Express) {
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
 
     const { feePeriodStart: bodyPeriodStart, feePeriodEnd: bodyPeriodEnd } = parsed.data;
-    const structure = await storage.getFeeStructureById(structureId, schoolId);
-    if (!structure) return res.status(404).json({ message: "Fee structure not found" });
-    // Academic session is always the currently active session — the client cannot override this.
-    const invoiceSession = await storage.getActiveSession(schoolId);
-    if (!invoiceSession) return res.status(400).json({ message: "No active academic session found. Please activate a session first." });
+    let invoiceContext;
+    try {
+      invoiceContext = await prepareStructureInvoiceContext({
+        schoolId,
+        structureId,
+        requestedPeriodStart: bodyPeriodStart,
+        requestedPeriodEnd: bodyPeriodEnd,
+      });
+    } catch (error) {
+      if (error instanceof InvoiceGenerationError) {
+        return res.status(error.statusCode).json({ message: error.message });
+      }
+      throw error;
+    }
+    const { structure, session: invoiceSession, periodStart, periodEnd } = invoiceContext;
     const sessionId = invoiceSession.id;
 
     // The Student Registry is global and session-independent — a student's class/section
@@ -2797,104 +2813,26 @@ export function registerFeesRoutes(app: Express) {
     // rather than the session-enrollment table, ensuring no active student is ever skipped.
     const allActiveStudents = await storage.getStudentsBySchool(schoolId);
     const effectiveRoster = allActiveStudents
-      .filter(s => s.class && s.section)
+      .filter(s => isStudentEligibleForStructure(structure, s))
       .map(s => ({ studentId: s.id, className: s.class!, sectionName: s.section! }));
 
-    // Always enforce the structure's own applicableClasses — the frontend cannot override this.
-    // If no classes are set on the structure, the fee applies to every active student.
     const applicableClasses: string[] = (structure as any).applicableClasses ?? [];
-    const filtered = applicableClasses.length > 0
-      ? effectiveRoster.filter(e => applicableClasses.includes(e.className))
-      : effectiveRoster;
-
-    // Determine the immutable fee period for this batch.
-    // Priority: explicit body params (monthly/quarterly admin pick) → session dates (annual/one-time).
-    const freq: string = (structure as any).frequency ?? "annual";
-    let periodStart: string;
-    let periodEnd:   string;
-    if (bodyPeriodStart && bodyPeriodEnd) {
-      // Admin explicitly selected a fee period in the UI (monthly/quarterly).
-      // Validate that the selected period falls within the active session.
-      const sessStart = String(invoiceSession.startDate).slice(0, 10);
-      const sessEnd   = String(invoiceSession.endDate).slice(0, 10);
-      if (bodyPeriodStart < sessStart || bodyPeriodEnd > sessEnd) {
-        return res.status(400).json({ message: "The selected fee period is outside the active academic session." });
-      }
-      periodStart = bodyPeriodStart;
-      periodEnd   = bodyPeriodEnd;
-    } else {
-      // Annual/one-time: use academic session start/end as the period.
-      periodStart = String(invoiceSession.startDate).slice(0, 10);
-      periodEnd   = String(invoiceSession.endDate).slice(0, 10);
-    }
-
-    // Compute the invoice due date from the fee structure's dueDayOfMonth + the period's month.
-    // For monthly/quarterly fees, the due date falls within the fee period month.
-    // For annual/one-time, the due date falls within the session's start month.
-    const dueDayOfMonth: number | null = (structure as any).dueDayOfMonth ?? null;
-    let dueDate: string;
-    if (dueDayOfMonth) {
-      const refDate = new Date(periodStart + "T00:00:00");
-      const y = refDate.getFullYear();
-      const m = refDate.getMonth();
-      const lastDay = new Date(y, m + 1, 0).getDate();
-      const d = Math.min(dueDayOfMonth, lastDay);
-      dueDate = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    } else {
-      // No due day configured on the structure — fall back to the last day of the fee period.
-      dueDate = periodEnd;
-    }
+    const filtered = effectiveRoster;
 
     const existingRecords = await storage.getFeeRecordsBySchool(schoolId, { sessionId });
-
-    // Period-based idempotency: one invoice per student × feeType × feePeriodStart.
-    // Falls back to legacy "studentId:feeType" key for pre-migration records (null feePeriodStart).
-    const existingByPeriodStart = new Map(
-      existingRecords
-        .filter((r: any) => r.feePeriodStart)
-        .map((r: any) => [`${r.studentId}:${r.feeType}:${String(r.feePeriodStart).slice(0, 10)}`, r])
-    );
-    const existingByType = new Map(
-      existingRecords
-        .filter((r: any) => !r.feePeriodStart)
-        .map((r: any) => [`${r.studentId}:${r.feeType}`, r])
-    );
-
-    // Build the immutable breakdown snapshot once for this structure before the student loop.
-    // Throws on invalid component data (empty name, negative/non-finite amount) — return 400.
-    let breakdownSnap2: Array<{ name: string; purpose: string; amount: number }>;
-    try {
-      breakdownSnap2 = buildBreakdownSnapshot((structure as any).breakdown);
-      warnOnSumMismatch(breakdownSnap2, structure.amount, `structure "${structure.name}"`);
-    } catch (snapErr: any) {
-      return res.status(400).json({ message: `Invalid fee component breakdown: ${snapErr.message}` });
-    }
+    const duplicateIndex = buildInvoiceDuplicateIndex(existingRecords);
 
     let created = 0, skipped = 0;
     for (const enrollment of filtered) {
-      const periodKey = `${enrollment.studentId}:${structure.feeType}:${periodStart}`;
-      const legacyKey = `${enrollment.studentId}:${structure.feeType}`;
-      const existing = existingByPeriodStart.get(periodKey) ?? existingByType.get(legacyKey);
-      if (existing) {
-        // Invoice already exists for this student × feeType × period — skip completely.
-        // Existing invoices are immutable through Generate Invoices: amount, due date,
-        // and status are never updated regardless of changes to the fee structure.
+      const result = await createStructureInvoice({
+        context: invoiceContext,
+        studentId: enrollment.studentId,
+        duplicateIndex,
+      });
+      if (!result.created) {
         skipped++;
         continue;
       }
-      // Assign a permanent invoice number — stored in invoice_number, never in receipt_number.
-      // The INV- sequence is school-scoped, atomic, and never reused or reset.
-      const invoiceNumber = await storage.nextReceiptNumber(schoolId, "INV-", 4);
-      await storage.createFeeRecord({
-        schoolId, studentId: enrollment.studentId, sessionId,
-        feeType: structure.feeType, amount: structure.amount, dueDate, status: "Due",
-        academicYear: invoiceSession?.sessionName ?? null,
-        notes: null,
-        invoiceNumber,
-        feePeriodStart: periodStart,
-        feePeriodEnd:   periodEnd,
-        breakdownSnapshot: breakdownSnap2,
-      } as any);
       created++;
     }
 

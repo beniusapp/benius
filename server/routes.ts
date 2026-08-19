@@ -24,6 +24,12 @@ import { registerFeesRoutes } from "./fees-routes";
 import { calculateLateFee } from "./late-fee-engine";
 import { buildLateFeeInfo } from "./late-fee-display";
 import { ledgerPaymentMethodLabel } from "./payment-method-label";
+import {
+  InvoiceGenerationError,
+  createStructureInvoice,
+  isStudentEligibleForStructure,
+  prepareStructureInvoiceContext,
+} from "./structure-invoice-service";
 import { addSSEClient, broadcastSessionActivated, broadcastSessionDeleted } from "./sse";
 import { db } from "./db";
 import { eq, and, sql, inArray, not } from "drizzle-orm";
@@ -4260,18 +4266,14 @@ export async function registerRoutes(
   // Fee Period (start + end) is required so the invoice is properly period-tagged.
   const createFeeRecordBodySchema = z.object({
     studentId: z.number().int().positive(),
-    feeType: z.string().min(1, "Fee type is required").max(100),
-    amount: z.number().int().positive("Amount must be greater than 0"),
-    dueDate: z.string({ required_error: "Due date is required" })
-      .regex(/^\d{4}-\d{2}-\d{2}$/, "Due date must be YYYY-MM-DD"),
-    feePeriodStart: z.string({ required_error: "Fee period is required" })
-      .regex(/^\d{4}-\d{2}-\d{2}$/, "Fee period start must be YYYY-MM-DD"),
-    feePeriodEnd: z.string({ required_error: "Fee period is required" })
-      .regex(/^\d{4}-\d{2}-\d{2}$/, "Fee period end must be YYYY-MM-DD"),
+    feeStructureId: z.number().int().positive("Fee name is required"),
+    feePeriodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+    feePeriodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
     notes: z.string().optional().nullable(),
-    academicYear: z.string().max(20).optional().nullable(),
   }).superRefine((val, ctx) => {
-    if (val.feePeriodEnd < val.feePeriodStart) {
+    if (!!val.feePeriodStart !== !!val.feePeriodEnd) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Fee period start and end must be provided together", path: ["feePeriodEnd"] });
+    } else if (val.feePeriodStart && val.feePeriodEnd && val.feePeriodEnd < val.feePeriodStart) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Fee period end must be on or after start", path: ["feePeriodEnd"] });
     }
   });
@@ -4473,54 +4475,53 @@ export async function registerRoutes(
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const parsed = createFeeRecordBodySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-    const [studentCheck] = await db.select({ id: students.id, name: students.name, cls: students.class, section: students.section }).from(students)
+    const [studentCheck] = await db.select({
+      id: students.id,
+      name: students.name,
+      class: students.class,
+      section: students.section,
+      isActive: students.isActive,
+    }).from(students)
       .where(and(eq(students.id, parsed.data.studentId), eq(students.schoolId, schoolId)));
     if (!studentCheck) return res.status(400).json({ message: "Student does not belong to this school" });
 
-    // Duplicate prevention: same student + same feeType + same fee period → block.
-    // Different fee types for the same period are explicitly allowed (Lab + Tuition + Transport etc.).
-    const { feePeriodStart, feePeriodEnd } = parsed.data;
-    const existingRecords = await storage.getFeeRecordsBySchool(schoolId, { studentId: parsed.data.studentId });
-    const duplicate = existingRecords.find(r =>
-      r.feeType.trim().toLowerCase() === parsed.data.feeType.trim().toLowerCase() &&
-      (r as any).feePeriodStart === feePeriodStart &&
-      (r as any).feePeriodEnd   === feePeriodEnd
-    );
-    if (duplicate) {
-      return res.status(409).json({
-        message: `An invoice for "${parsed.data.feeType}" already exists for this student for the selected fee period.`,
+    try {
+      const invoiceContext = await prepareStructureInvoiceContext({
+        schoolId,
+        structureId: parsed.data.feeStructureId,
+        requestedPeriodStart: parsed.data.feePeriodStart,
+        requestedPeriodEnd: parsed.data.feePeriodEnd,
       });
+      if (!isStudentEligibleForStructure(invoiceContext.structure, studentCheck)) {
+        return res.status(400).json({
+          message: "This fee structure does not apply to the selected student's current class.",
+        });
+      }
+
+      const result = await createStructureInvoice({
+        context: invoiceContext,
+        studentId: parsed.data.studentId,
+        notes: parsed.data.notes,
+        createdBy: req.session.userId,
+      });
+      if (!result.created) {
+        return res.status(409).json({
+          message: `An invoice for "${invoiceContext.structure.feeType}" already exists for this student for the selected fee period.`,
+        });
+      }
+
+      const rec = result.record;
+      const createStuLabel = `${studentCheck.name} (${studentCheck.class ?? ""}${studentCheck.section ? "-" + studentCheck.section : ""})`;
+      await appendFeeRecordAudit(req, schoolId, "create", "fee_record", rec.id,
+        `Added invoice ${rec.invoiceNumber ?? `#${rec.id}`}: ${rec.feeType} ₹${rec.amount} for ${createStuLabel} (Due) — period ${invoiceContext.periodStart} to ${invoiceContext.periodEnd}`,
+        parsed.data.studentId);
+      res.status(201).json(rec);
+    } catch (error) {
+      if (error instanceof InvoiceGenerationError) {
+        return res.status(error.statusCode).json({ message: error.message });
+      }
+      throw error;
     }
-
-    const activeSession = await storage.getActiveSession(schoolId);
-    // Auto-generate a permanent invoice number stored in invoice_number.
-    // Format: INV-0001, INV-0002 … (4-digit zero-padded, per-school, never reset by session).
-    // invoice_number is SEPARATE from receipt_number — it must NEVER be overwritten by payment.
-    const invNumber = await storage.nextReceiptNumber(schoolId, "INV-", 4);
-    // Every manual invoice starts as "Due" — status is never accepted from the client.
-    const rec = await storage.createFeeRecord({
-      studentId: parsed.data.studentId,
-      feeType: parsed.data.feeType,
-      amount: parsed.data.amount,
-      dueDate: parsed.data.dueDate,
-      status: "Due",
-      feePeriodStart: parsed.data.feePeriodStart,
-      feePeriodEnd:   parsed.data.feePeriodEnd,
-      notes: parsed.data.notes ?? null,
-      academicYear: parsed.data.academicYear ?? null,
-      schoolId,
-      sessionId: activeSession?.id ?? null,
-      createdBy: req.session.userId,
-      invoiceNumber: invNumber,
-    });
-
-    const createStuLabel = studentCheck
-      ? `${studentCheck.name} (${studentCheck.cls ?? ""}${studentCheck.section ? "-" + studentCheck.section : ""})`
-      : `Student #${parsed.data.studentId}`;
-    await appendFeeRecordAudit(req, schoolId, "create", "fee_record", rec.id,
-      `Added invoice ${rec.invoiceNumber ?? `#${rec.id}`}: ${parsed.data.feeType} ₹${parsed.data.amount} for ${createStuLabel} (Due) — period ${feePeriodStart} to ${feePeriodEnd}`,
-      parsed.data.studentId);
-    res.status(201).json(rec);
   });
 
   app.patch("/api/admin/fees/:id", async (req, res) => {

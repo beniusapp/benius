@@ -4644,6 +4644,60 @@ export class DatabaseStorage {
     return rec;
   }
 
+  /**
+   * Atomically creates one structure-backed invoice for a student/type/period.
+   * The transaction-scoped advisory lock prevents concurrent single or bulk
+   * requests from both passing the duplicate check. Legacy period-less records
+   * remain duplicates for the same student/type within the active session.
+   */
+  async createStructureFeeRecordIfAbsent(input: {
+    data: Omit<InsertFeeRecord, "invoiceNumber">;
+    periodStart: string;
+  }): Promise<{ created: boolean; record: FeeRecord }> {
+    const data = input.data;
+    if (!data.sessionId) throw new Error("Structure-backed invoices require an active session");
+    const normalizedType = data.feeType.trim().toLowerCase();
+    const lockKey = [
+      "fee-invoice",
+      data.schoolId,
+      data.sessionId,
+      data.studentId,
+      normalizedType,
+      input.periodStart,
+    ].join(":");
+
+    return db.transaction(async tx => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+
+      const [existing] = await tx.select().from(feeRecords).where(and(
+        eq(feeRecords.schoolId, data.schoolId),
+        eq(feeRecords.sessionId, data.sessionId!),
+        eq(feeRecords.studentId, data.studentId),
+        sql`lower(btrim(${feeRecords.feeType})) = ${normalizedType}`,
+        or(
+          eq(feeRecords.feePeriodStart, input.periodStart),
+          isNull(feeRecords.feePeriodStart),
+        ),
+      )).limit(1);
+      if (existing) return { created: false, record: existing };
+
+      const sequenceResult = await tx.execute(
+        sql`INSERT INTO receipt_sequences (school_id, prefix, current_number)
+            VALUES (${data.schoolId}, ${"INV-"}, 1)
+            ON CONFLICT (school_id, prefix) DO UPDATE
+              SET current_number = receipt_sequences.current_number + 1
+            RETURNING current_number`,
+      );
+      const sequence = Number((sequenceResult.rows[0] as any).current_number);
+      const invoiceNumber = `INV-${String(sequence).padStart(4, "0")}`;
+      const [record] = await tx.insert(feeRecords)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .values({ ...data, invoiceNumber } as any)
+        .returning();
+      return { created: true, record };
+    });
+  }
+
   async getFeeRecordsByStudent(studentId: number, schoolId: number, sessionId?: number | null): Promise<FeeRecord[]> {
     const conditions: SQL<unknown>[] = [eq(feeRecords.studentId, studentId), eq(feeRecords.schoolId, schoolId)];
     if (sessionId) conditions.push(eq(feeRecords.sessionId, sessionId));

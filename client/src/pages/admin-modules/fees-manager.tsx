@@ -1775,10 +1775,11 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [detailSection, setDetailSection] = useState<Record<number, number>>({});
   const [adminNotes, setAdminNotes] = useState<Record<number, string>>({});
   const [savingNotes, setSavingNotes] = useState<Set<number>>(new Set());
-  const [studentSearchCls, setStudentSearchCls] = useState("");
   const [studentSearchQ, setStudentSearchQ] = useState("");
   const [studentResults, setStudentResults] = useState<StudentItem[] | null>(null);
   const [selectedStudent, setSelectedStudent] = useState<StudentItem | null>(null);
+  const [studentSearchLoading, setStudentSearchLoading] = useState(false);
+  const [selectedStructureId, setSelectedStructureId] = useState<number | null>(null);
 
   const { data: ledgerData, isLoading, isFetching } = useQuery<LedgerPageResponse>({
     queryKey: ["/api/admin/fees", viewSessionId, ledgerPage, search, statusFilter, classFilter, feeNameFilter, feeTypeFilter],
@@ -1954,25 +1955,65 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const watchPeriodStart = form.watch("feePeriodStart") ?? "";
   const watchPeriodEnd   = form.watch("feePeriodEnd")   ?? "";
   const feePeriodPreview = clientFeePeriodLabel(watchPeriodStart, watchPeriodEnd);
+  const selectedInvoiceStructure = selectedStructureId == null
+    ? null
+    : activeStructures.find(structure => structure.id === selectedStructureId) ?? null;
 
   // Auto-clear due date when status makes it irrelevant
   useEffect(() => {
     if (dueDateNotNeeded) form.setValue("dueDate", "");
   }, [dueDateNotNeeded]);
 
+  useEffect(() => {
+    if (editing || !selectedInvoiceStructure || !watchPeriodStart) return;
+    if (!selectedInvoiceStructure.dueDayOfMonth) {
+      form.setValue("dueDate", watchPeriodEnd);
+      return;
+    }
+    const referenceDate = new Date(`${watchPeriodStart}T00:00:00`);
+    if (Number.isNaN(referenceDate.getTime())) return;
+    const year = referenceDate.getFullYear();
+    const month = referenceDate.getMonth();
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    const day = Math.min(selectedInvoiceStructure.dueDayOfMonth, lastDay);
+    form.setValue(
+      "dueDate",
+      `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+    );
+  }, [editing, form, selectedInvoiceStructure, watchPeriodStart, watchPeriodEnd]);
+
+  function selectInvoiceStructure(structureId: string) {
+    const structure = activeStructures.find(item => item.id === Number(structureId));
+    if (!structure) return;
+    setSelectedStructureId(structure.id);
+    form.setValue("feeType", structure.feeType, { shouldValidate: true });
+    form.setValue("amount", String(structure.amount), { shouldValidate: true });
+    form.setValue("academicYear", selectedSession?.sessionName ?? "");
+
+    if (
+      (structure.frequency === "annual" || structure.frequency === "one-time")
+      && selectedSession?.startDate
+      && selectedSession.endDate
+    ) {
+      form.setValue("feePeriodStart", String(selectedSession.startDate).slice(0, 10), { shouldValidate: true });
+      form.setValue("feePeriodEnd", String(selectedSession.endDate).slice(0, 10), { shouldValidate: true });
+    } else {
+      form.setValue("feePeriodStart", "");
+      form.setValue("feePeriodEnd", "");
+      form.setValue("dueDate", "");
+    }
+  }
+
   const createMut = useMutation({
     mutationFn: async (data: FeeFormValues) => {
+      if (!selectedStructureId) throw new Error("Fee name is required");
       if (!data.feePeriodStart || !data.feePeriodEnd) throw new Error("Fee period is required");
       const res = await apiRequest("POST", "/api/admin/fees", {
         studentId: Number(data.studentId),
-        feeType: data.feeType,
-        amount: Number(data.amount),
-        dueDate: data.dueDate,
+        feeStructureId: selectedStructureId,
         feePeriodStart: data.feePeriodStart,
         feePeriodEnd:   data.feePeriodEnd,
         notes: data.notes || null,
-        academicYear: data.academicYear || null,
-        // status is NOT sent — server always creates new invoices as "Due"
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -2021,26 +2062,49 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     : [...new Set(students.filter(s => s.isActive).map(s => s.class))].sort();
   const classes = studentClasses;
 
-  function runStudentSearch() {
-    const q = studentSearchQ.toLowerCase().trim();
-    setStudentResults(students.filter(s => {
-      if (!s.isActive) return false;
-      if (studentSearchCls && s.class !== studentSearchCls) return false;
-      if (q && !s.name.toLowerCase().includes(q) && !s.digitalStudentId.toLowerCase().includes(q)) return false;
-      return true;
-    }));
+  async function runStudentSearch() {
+    const q = studentSearchQ.trim();
+    if (q.length < 2) {
+      setStudentResults([]);
+      return;
+    }
+    setStudentSearchLoading(true);
+    try {
+      const response = await sessionFetch(`/api/admin/fees/students/search?q=${encodeURIComponent(q)}`);
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.message ?? "Student search failed");
+      setStudentResults(body as StudentItem[]);
+    } catch (error: any) {
+      setStudentResults([]);
+      toast({ title: "Student search failed", description: error.message, variant: "destructive" });
+    } finally {
+      setStudentSearchLoading(false);
+    }
   }
 
   function pickStudent(s: StudentItem) {
     setSelectedStudent(s);
     form.setValue("studentId", String(s.id), { shouldValidate: true });
     setStudentResults(null);
+    setStudentSearchQ("");
+    setSelectedStructureId(null);
+    form.setValue("feeType", "");
+    form.setValue("amount", "");
+    form.setValue("feePeriodStart", "");
+    form.setValue("feePeriodEnd", "");
+    form.setValue("dueDate", "");
   }
 
   function clearStudentPick() {
     setSelectedStudent(null);
-    setStudentSearchCls(""); setStudentSearchQ(""); setStudentResults(null);
+    setStudentSearchQ(""); setStudentResults(null);
+    setSelectedStructureId(null);
     form.setValue("studentId", "", { shouldValidate: false });
+    form.setValue("feeType", "");
+    form.setValue("amount", "");
+    form.setValue("feePeriodStart", "");
+    form.setValue("feePeriodEnd", "");
+    form.setValue("dueDate", "");
   }
 
   // The server applies all ledger filters; these are only the current page rows.
@@ -2059,7 +2123,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   function openCreate() {
     setEditing(null);
     form.reset({ studentId: "", feeType: "", amount: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: selectedSession?.sessionName ?? "", feePeriodStart: "", feePeriodEnd: "" });
-    setSelectedStudent(null); setStudentSearchCls(""); setStudentSearchQ(""); setStudentResults(null);
+    setSelectedStudent(null); setStudentSearchQ(""); setStudentResults(null); setSelectedStructureId(null);
     setShowForm(true);
   }
 
@@ -2072,7 +2136,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       feePeriodStart: (rec as any).feePeriodStart ?? "", feePeriodEnd: (rec as any).feePeriodEnd ?? "",
     });
     setSelectedStudent(students.find(s => s.id === rec.studentId) ?? null);
-    setStudentSearchCls(""); setStudentSearchQ(""); setStudentResults(null);
+    setStudentSearchQ(""); setStudentResults(null); setSelectedStructureId(null);
     setShowForm(true);
   }
 
@@ -2683,18 +2747,14 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   ) : (
                     <div className="space-y-2">
                       <div className="flex gap-2">
-                        <select value={studentSearchCls} onChange={e => setStudentSearchCls(e.target.value)}
-                          className="bg-[#0A1628] border border-white/20 rounded-lg px-2 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 w-28 flex-shrink-0">
-                          <option value="">All Classes</option>
-                          {studentClasses.map(c => <option key={c} value={c}>Class {c}</option>)}
-                        </select>
                         <input value={studentSearchQ} onChange={e => setStudentSearchQ(e.target.value)}
-                          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); runStudentSearch(); } }}
-                          placeholder="Name or Student ID…"
+                          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void runStudentSearch(); } }}
+                          placeholder="Search by student name or DSID…"
                           className="flex-1 bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20 min-w-0" />
-                        <button type="button" onClick={runStudentSearch}
+                        <button type="button" onClick={() => void runStudentSearch()}
+                          disabled={studentSearchLoading || studentSearchQ.trim().length < 2}
                           className="px-3 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium flex-shrink-0">
-                          Search
+                          {studentSearchLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Search"}
                         </button>
                       </div>
                       {studentResults !== null && (
@@ -2718,23 +2778,21 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                 </FormItem>
               )} />
               {/* Fee Name picker — filtered to selected student's class */}
-              {structuresForStudent.length > 0 && (
+              {!editing && selectedStudent && (
                 <div>
                   <label className="text-sm font-medium text-white/70 block mb-1.5">Fee Name</label>
                   <select
-                    onChange={e => {
-                      const s = structuresForStudent.find(s => String(s.id) === e.target.value);
-                      if (s) {
-                        form.setValue("feeType", s.feeType, { shouldValidate: true });
-                        form.setValue("amount", String(s.amount), { shouldValidate: true });
-                      }
-                    }}
+                    value={selectedStructureId?.toString() ?? ""}
+                    onChange={e => selectInvoiceStructure(e.target.value)}
                     className="w-full bg-[#0A1628] border border-white/20 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
                     <option value="">— Select fee name —</option>
                     {structuresForStudent.map(s => (
                       <option key={s.id} value={s.id}>{s.name} · ₹{s.amount.toLocaleString("en-IN")}</option>
                     ))}
                   </select>
+                  {structuresForStudent.length === 0 && (
+                    <p className="text-amber-400 text-xs mt-1">No fee structures apply to this student's class.</p>
+                  )}
                 </div>
               )}
               <div className="grid grid-cols-2 gap-3">
@@ -2742,7 +2800,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   <FormItem>
                     <FormLabel className="text-white/70">Fee Type</FormLabel>
                     <FormControl>
-                      <Input {...field} placeholder="Tuition, Transport…" className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30" />
+                      <Input {...field} readOnly={!editing} placeholder="Tuition, Transport…" className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30 read-only:text-white/60" />
                     </FormControl>
                     <FormMessage className="text-red-400" />
                   </FormItem>
@@ -2751,7 +2809,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   <FormItem>
                     <FormLabel className="text-white/70">Amount (₹)</FormLabel>
                     <FormControl>
-                      <Input {...field} type="text" inputMode="numeric" placeholder="0" className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30" />
+                      <Input {...field} readOnly={!editing} type="text" inputMode="numeric" placeholder="0" className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30 read-only:text-white/60" />
                     </FormControl>
                     <FormMessage className="text-red-400" />
                   </FormItem>
@@ -2768,7 +2826,9 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                       <FormItem>
                         <FormLabel className="text-white/50 text-xs">Start</FormLabel>
                         <FormControl>
-                          <Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" />
+                          <Input {...field} type="date"
+                            readOnly={selectedInvoiceStructure?.frequency === "annual" || selectedInvoiceStructure?.frequency === "one-time"}
+                            className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" />
                         </FormControl>
                         <FormMessage className="text-red-400" />
                       </FormItem>
@@ -2777,7 +2837,9 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                       <FormItem>
                         <FormLabel className="text-white/50 text-xs">End</FormLabel>
                         <FormControl>
-                          <Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" />
+                          <Input {...field} type="date"
+                            readOnly={selectedInvoiceStructure?.frequency === "annual" || selectedInvoiceStructure?.frequency === "one-time"}
+                            className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" />
                         </FormControl>
                         <FormMessage className="text-red-400" />
                       </FormItem>
@@ -2824,7 +2886,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                       Due Date {dueDateNotNeeded && <span className="font-normal text-xs">(not required)</span>}
                     </FormLabel>
                     <FormControl>
-                      <Input {...field} type="date" disabled={dueDateNotNeeded}
+                      <Input {...field} type="date" disabled={dueDateNotNeeded} readOnly={!editing}
                         className={`bg-[#0A1628] border-white/20 text-white [color-scheme:dark] ${dueDateNotNeeded ? "opacity-40 cursor-not-allowed" : ""}`} />
                     </FormControl>
                     <FormMessage className="text-red-400" />
@@ -2855,7 +2917,9 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
               </div>
               <div className="flex gap-2 justify-end pt-2">
                 <Button type="button" variant="ghost" onClick={() => { setShowForm(false); setEditing(null); }} className="text-white/60">Cancel</Button>
-                <Button type="submit" disabled={createMut.isPending || updateMut.isPending} className="bg-cyan-600 hover:bg-cyan-500 text-white">
+                <Button type="submit"
+                  disabled={createMut.isPending || updateMut.isPending || (!editing && (!selectedStudent || !selectedStructureId))}
+                  className="bg-cyan-600 hover:bg-cyan-500 text-white">
                   {(createMut.isPending || updateMut.isPending) && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
                   {editing ? "Save Changes" : "Create Invoice"}
                 </Button>
@@ -3282,7 +3346,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
-              {[["Name", name, setName, "Annual Tuition Fee"], ["Fee Type", feeType, setFeeType, "Tuition / Transport…"]].map(([label, val, set, ph]) => (
+              {[["Fee Name", name, setName, "Annual Tuition Fee"], ["Fee Type", feeType, setFeeType, "Tuition / Transport…"]].map(([label, val, set, ph]) => (
                 <div key={label as string}>
                   <label className="text-xs text-white/60 mb-1 block">{label as string}</label>
                   <input value={val as string} onChange={e => (set as any)(e.target.value)} placeholder={ph as string}
