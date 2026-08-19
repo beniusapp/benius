@@ -4288,50 +4288,152 @@ export async function registerRoutes(
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
-    const { studentId, status } = req.query as { studentId?: string; status?: string };
+    const pageSize = 20;
+    const requestedPageSize = req.query.pageSize ? parseInt(String(req.query.pageSize), 10) : pageSize;
+    if (requestedPageSize !== pageSize) {
+      return res.status(400).json({ message: `pageSize must be ${pageSize}` });
+    }
+
+    const requestedPage = parseInt(String(req.query.page ?? "1"), 10);
+    const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+    const {
+      studentId, status, search, class: classFilter, feeName, feeType, academicYear,
+    } = req.query as {
+      studentId?: string;
+      status?: string;
+      search?: string;
+      class?: string;
+      feeName?: string;
+      feeType?: string;
+      academicYear?: string;
+    };
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
-    const opts: { studentId?: number; status?: string; sessionId?: number | null } = { sessionId: sessionFilter };
-    if (studentId) opts.studentId = parseInt(studentId);
-    if (status) opts.status = status;
-    const records = await storage.getFeeRecordsBySchool(schoolId, opts);
-    const studentIds = [...new Set(records.map(r => r.studentId))];
-    let studentMap: Record<number, { name: string; class: string; section: string; digitalStudentId: string }> = {};
-    if (studentIds.length > 0) {
-      const stList = await db.select({ id: students.id, name: students.name, class: students.class, section: students.section, digitalStudentId: students.digitalStudentId })
-        .from(students)
-        .where(and(inArray(students.id, studentIds), eq(students.schoolId, schoolId)));
-      for (const s of stList) studentMap[s.id] = s;
+
+    // Keep the existing ledger filters, but apply them in SQL so the browser
+    // receives only the requested page.
+    const conditions: any[] = [
+      sql`fr.school_id = ${schoolId}`,
+    ];
+    if (sessionFilter != null) conditions.push(sql`fr.session_id = ${sessionFilter}`);
+    if (studentId) conditions.push(sql`fr.student_id = ${parseInt(studentId, 10)}`);
+    if (status && status !== "all") {
+      if (status === "offline") {
+        conditions.push(sql`EXISTS (
+          SELECT 1
+          FROM payment_records pr
+          WHERE pr.school_id = fr.school_id
+            AND pr.fee_record_id = fr.id
+            AND (pr.cashier_notes IS NULL OR pr.cashier_notes <> 'Auto-recorded from Add Fee Record')
+        )`);
+      } else {
+        conditions.push(sql`fr.status = ${status}`);
+      }
     }
-    // Resolve feeName server-side so the ledger always reflects the current
-    // structure name even when feeType strings differ by case or whitespace.
-    // Also compute lateFeeAmount on-the-fly from each structure's lateFeeConfig.
-    const allStructures = await storage.getFeeStructuresBySchool(schoolId);
-    const ftToName   = new Map<string, string>();
-    const ftToConfig = new Map<string, any>();
-    for (const s of allStructures) {
-      const key = s.feeType.trim().toLowerCase();
-      if (!ftToName.has(key))   ftToName.set(key, s.name);
-      if (!ftToConfig.has(key)) ftToConfig.set(key, (s as any).lateFeeConfig ?? null);
+    if (classFilter && classFilter !== "all") conditions.push(sql`s.class = ${classFilter}`);
+    if (feeType && feeType !== "all") conditions.push(sql`fr.fee_type = ${feeType}`);
+    if (feeName && feeName !== "all") conditions.push(sql`COALESCE(structure.fee_name, fr.fee_type) = ${feeName}`);
+    if (academicYear && academicYear !== "all") conditions.push(sql`fr.academic_year = ${academicYear}`);
+    if (search?.trim()) {
+      const searchPattern = `%${search.trim()}%`;
+      conditions.push(sql`(
+        s.name ILIKE ${searchPattern}
+        OR s.digital_student_id ILIKE ${searchPattern}
+        OR fr.fee_type ILIKE ${searchPattern}
+        OR COALESCE(structure.fee_name, fr.fee_type) ILIKE ${searchPattern}
+        OR COALESCE(fr.receipt_number, '') ILIKE ${searchPattern}
+        OR COALESCE(fr.invoice_number, '') ILIKE ${searchPattern}
+      )`);
     }
+    const whereClause = sql.join(conditions, sql` AND `);
+    const structureJoin = sql`
+      LEFT JOIN LATERAL (
+        SELECT fs.name AS fee_name, fs.late_fee_config
+        FROM fee_structures fs
+        WHERE fs.school_id = fr.school_id
+          AND lower(trim(fs.fee_type)) = lower(trim(fr.fee_type))
+        ORDER BY fs.id ASC
+        LIMIT 1
+      ) structure ON true
+    `;
+
+    const totalResult = await db.execute(sql`
+      SELECT COUNT(*)::int AS total
+      FROM fee_records fr
+      LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+      ${structureJoin}
+      WHERE ${whereClause}
+    `);
+    const total = Number((totalResult.rows[0] as any)?.total ?? 0);
+    const totalPages = Math.ceil(total / pageSize);
+    const safePage = totalPages > 0 ? Math.min(page, totalPages) : 1;
+
+    const result = await db.execute(sql`
+      SELECT
+        fr.id,
+        fr.student_id AS "studentId",
+        fr.school_id AS "schoolId",
+        fr.session_id AS "sessionId",
+        fr.fee_type AS "feeType",
+        fr.amount,
+        fr.due_date AS "dueDate",
+        fr.paid_date AS "paidDate",
+        fr.status,
+        fr.receipt_number AS "receiptNumber",
+        fr.invoice_number AS "invoiceNumber",
+        fr.notes,
+        fr.late_fee_amount AS "lateFeeAmount",
+        fr.academic_year AS "academicYear",
+        fr.razorpay_order_id AS "razorpayOrderId",
+        fr.razorpay_order_expires_at AS "razorpayOrderExpiresAt",
+        fr.fee_period_start AS "feePeriodStart",
+        fr.fee_period_end AS "feePeriodEnd",
+        fr.breakdown_snapshot AS "breakdownSnapshot",
+        fr.created_at AS "createdAt",
+        fr.created_by AS "createdBy",
+        structure.fee_name AS "__feeName",
+        structure.late_fee_config AS "__lateFeeConfig",
+        s.name AS "__studentName",
+        s.class AS "__studentClass",
+        s.section AS "__studentSection",
+        s.digital_student_id AS "__studentDigitalStudentId"
+      FROM fee_records fr
+      LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+      ${structureJoin}
+      WHERE ${whereClause}
+      ORDER BY fr.created_at DESC, fr.id DESC
+      LIMIT ${pageSize}
+      OFFSET ${(safePage - 1) * pageSize}
+    `);
+
     const now = new Date();
-    res.json(records.map(r => {
-      const cfg = ftToConfig.get(r.feeType.trim().toLowerCase());
-      const accrued_late_fee = cfg?.enabled
-        ? calculateLateFee(cfg, r.dueDate, r.status, now)
-        : ((r as any).lateFeeAmount ?? 0);
-      const base_amount = r.amount;
+    const records = (result.rows as any[]).map(row => {
+      const {
+        __feeName, __lateFeeConfig, __studentName, __studentClass,
+        __studentSection, __studentDigitalStudentId, ...record
+      } = row;
+      const accrued_late_fee = __lateFeeConfig?.enabled
+        ? calculateLateFee(__lateFeeConfig, record.dueDate, record.status, now)
+        : Number(record.lateFeeAmount ?? 0);
+      const base_amount = Number(record.amount);
       const total_due   = base_amount + accrued_late_fee;
       return {
-        ...r,
-        feeName:          ftToName.get(r.feeType.trim().toLowerCase()) ?? r.feeType,
-        student:          studentMap[r.studentId] ?? null,
+        ...record,
+        feeName:          __feeName ?? record.feeType,
+        student:          __studentName == null ? null : {
+          name: __studentName,
+          class: __studentClass,
+          section: __studentSection,
+          digitalStudentId: __studentDigitalStudentId,
+        },
         lateFeeAmount:    accrued_late_fee,   // backward-compat alias
         base_amount,
         accrued_late_fee,
         total_due,
       };
-    }));
+    });
+
+    res.json({ records, total, page: safePage, pageSize, totalPages });
   });
 
   // ── Local audit helper for fee-record routes defined in this file ───────────

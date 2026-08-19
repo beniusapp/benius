@@ -1,0 +1,177 @@
+Update the Fees & Payments → Ledger & Transactions page to use server-side pagination with exactly 20 records per page.
+
+Problem
+
+The current page can load/render the entire fee ledger at once. For a school with 3,000+ students, this can cause slow loading, excessive browser memory usage, poor scrolling performance, and possible page crashes—especially on mobile.
+
+Required solution
+
+Implement server-side pagination.
+
+The browser must receive and render ONLY 20 ledger records at a time.
+
+Do NOT fetch all records and paginate them in JavaScript.
+
+Page size
+
+The fixed default page size must be:
+
+20 records per page
+
+Example:
+
+- Page 1 → records 1–20
+- Page 2 → records 21–40
+- Page 3 → records 41–60
+
+If there are 73 matching records:
+
+- Page 1 → 20
+- Page 2 → 20
+- Page 3 → 20
+- Page 4 → 13
+
+Pagination UI
+
+Keep the existing table design unchanged.
+
+At the bottom provide clean pagination controls such as:
+
+← Previous | Page 1 of 4 | Next →
+
+Disable Previous on the first page and Next on the last page.
+
+Make the controls responsive and easy to tap on mobile.
+
+Backend
+
+Implement true database-level pagination using the existing ledger API.
+
+Support parameters equivalent to:
+
+- "page"
+- "pageSize"
+
+Set:
+
+pageSize = 20
+
+The backend should return only the requested 20 records plus pagination metadata:
+
+- "records"
+- "total"
+- "page"
+- "pageSize"
+- "totalPages"
+
+Do NOT fetch all ledger records and then use ".slice()" or equivalent client-side pagination.
+
+Existing search and filters
+
+Pagination must work with all existing filters/search:
+
+- Search
+- All Status
+- All Classes
+- All Fee Names
+- All Fee Types
+- Academic Year
+- Existing sorting/filtering
+
+When the user changes any search/filter:
+
+1. Reset to Page 1.
+2. Send the search/filter values to the backend.
+3. Backend returns only the first 20 matching records.
+4. Update the total count and total pages.
+
+Stable ordering
+
+Use the application's existing ledger ordering.
+
+If no deterministic ordering currently exists, use a stable database ordering such as:
+
+"created_at DESC, id DESC"
+
+Do not allow records to randomly move between pages.
+
+Loading
+
+When changing pages or filters, show a small loading state/skeleton inside the ledger area.
+
+Do not reload the entire application.
+
+Mobile requirement
+
+At approximately 390×844:
+
+- Only 20 records should be rendered.
+- Scrolling should remain smooth.
+- Pagination should be easy to use.
+- No layout clipping or overlap.
+- Do not render thousands of hidden rows in the DOM.
+
+Performance goal
+
+The ledger should remain usable for:
+
+- 10 students
+- 300 students
+- 3,000+ students
+- 10,000+ students
+
+The browser must never receive the entire ledger simply because the school has thousands of students.
+
+Do NOT change
+
+Do not modify:
+
+- Fee calculations
+- Invoice generation
+- Invoice numbers
+- Payment records
+- Payment history
+- Razorpay
+- UPI / QR Payment
+- Cash
+- Cheque
+- Bank Transfer
+- Demand Draft
+- Receipts
+- Academic session logic
+- Fee structures
+- Due/Overdue logic
+- Late fees/penalties
+- Existing filters/search behavior
+- Existing table columns
+- Existing visual design
+
+This is strictly a performance and pagination change.
+
+Verification
+
+After implementation verify:
+
+1. API returns exactly 20 records for page 1 when at least 20 exist.
+2. Page 2 returns the next 20 records.
+3. Total count is correct.
+4. Total pages are calculated correctly.
+5. Search works.
+6. Every existing filter works.
+7. Changing a filter resets to page 1.
+8. Previous/Next works correctly.
+9. First/last page buttons disable correctly.
+10. Mobile view around 390×844 works correctly.
+11. Only 20 ledger rows are rendered in the DOM.
+12. No thousands of records are loaded into the browser.
+13. TypeScript passes.
+14. Existing test suite passes.
+15. No unrelated payment, invoice, or fee logic changes.
+
+Scope restriction
+
+Make the smallest possible change required to add server-side pagination.
+
+Do not refactor unrelated code or redesign the existing Ledger & Transactions page.
+
+Final requirement: exactly 20 records per page.

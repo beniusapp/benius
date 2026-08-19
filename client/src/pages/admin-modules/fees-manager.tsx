@@ -54,6 +54,14 @@ interface FeeRecordWithStudent {
   student: { name: string; class: string; section: string; digitalStudentId: string } | null;
 }
 
+interface LedgerPageResponse {
+  records: FeeRecordWithStudent[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
 interface FeeStructure {
   id: number;
   schoolId: number;
@@ -1704,6 +1712,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [classFilter, setClassFilter] = useState("all");
   const [feeNameFilter, setFeeNameFilter] = useState("all");
   const [feeTypeFilter, setFeeTypeFilter] = useState("all");
+  const [ledgerPage, setLedgerPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [addFeeSuccessId, setAddFeeSuccessId] = useState<number | null>(null);
   const [showExportLedger, setShowExportLedger] = useState(false);
@@ -1728,15 +1737,38 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [studentResults, setStudentResults] = useState<StudentItem[] | null>(null);
   const [selectedStudent, setSelectedStudent] = useState<StudentItem | null>(null);
 
-  const { data: feeRecords = [], isLoading } = useQuery<FeeRecordWithStudent[]>({
-    queryKey: ["/api/admin/fees", viewSessionId],
+  const { data: ledgerData, isLoading, isFetching } = useQuery<LedgerPageResponse>({
+    queryKey: ["/api/admin/fees", viewSessionId, ledgerPage, search, statusFilter, classFilter, feeNameFilter, feeTypeFilter],
     queryFn: async () => {
-      const r = await sessionFetch("/api/admin/fees");
+      const params = new URLSearchParams({
+        page: String(ledgerPage),
+        pageSize: "20",
+      });
+      if (search.trim()) params.set("search", search.trim());
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      if (classFilter !== "all") params.set("class", classFilter);
+      if (feeNameFilter !== "all") params.set("feeName", feeNameFilter);
+      if (feeTypeFilter !== "all") params.set("feeType", feeTypeFilter);
+      const r = await sessionFetch(`/api/admin/fees?${params.toString()}`);
       if (!r.ok) throw new Error("Failed to fetch fee records");
       return r.json();
     },
     refetchInterval: 30_000,
   });
+  const feeRecords = ledgerData?.records ?? [];
+  const ledgerTotal = ledgerData?.total ?? 0;
+  const ledgerTotalPages = ledgerData?.totalPages ?? 0;
+
+  useEffect(() => {
+    setLedgerPage(1);
+    setSelectedIds(new Set());
+    setExpandedLedgerRow(null);
+  }, [search, statusFilter, classFilter, feeNameFilter, feeTypeFilter, viewSessionId]);
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setExpandedLedgerRow(null);
+  }, [ledgerPage]);
 
   // Fee structures — used for "Fee Name" picker in Add Fee form
   const { data: feeStructures = [] } = useQuery<FeeStructure[]>({
@@ -1854,15 +1886,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       .forEach(p => { if (p.feeRecordId != null) map.set(p.feeRecordId, p.paymentMethod); });
     return map;
   }, [paymentRecordsList]);
-  // Set of feeRecordIds that have at least one explicitly recorded offline payment
-  const offlinePaidIds = useMemo(
-    () => new Set(
-      paymentRecordsList
-        .filter(p => p.feeRecordId != null && p.cashierNotes !== "Auto-recorded from Add Fee Record")
-        .map(p => p.feeRecordId as number)
-    ),
-    [paymentRecordsList]
-  );
   // Map feeRecordId → all payment records (sorted newest-first) for the history modal
   const paymentsByFeeRecordId = useMemo(() => {
     const map = new Map<number, PaymentRecord[]>();
@@ -1951,10 +1974,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const classes = useMemo(() =>
-    [...new Set(feeRecords.map(r => r.student?.class).filter(Boolean))].sort() as string[],
-    [feeRecords]);
-
   const { data: ledgerSchoolConfig } = useQuery<{ classes: string[] }>({
     queryKey: ["/api/admin/school-config"],
     queryFn: async () => {
@@ -1968,6 +1987,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const studentClasses: string[] = (ledgerSchoolConfig?.classes ?? []).length > 0
     ? ledgerSchoolConfig!.classes
     : [...new Set(students.filter(s => s.isActive).map(s => s.class))].sort();
+  const classes = studentClasses;
 
   function runStudentSearch() {
     const q = studentSearchQ.toLowerCase().trim();
@@ -1991,34 +2011,18 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     form.setValue("studentId", "", { shouldValidate: false });
   }
 
-  const filtered = useMemo(() => feeRecords.filter(r => {
-    const q = search.toLowerCase();
-    const ms = !q ||
-      (r.student?.name ?? "").toLowerCase().includes(q) ||
-      r.feeType.toLowerCase().includes(q) ||
-      (r.student?.digitalStudentId ?? "").toLowerCase().includes(q) ||
-      (r.receiptNumber ?? "").toLowerCase().includes(q) ||
-      (r.invoiceNumber ?? "").toLowerCase().includes(q);
-    const statusMatch = statusFilter === "all"
-      ? true
-      : statusFilter === "offline"
-        ? offlinePaidIds.has(r.id)
-        : r.status === statusFilter;
-    const classMatch    = classFilter   === "all" || r.student?.class === classFilter;
-    const feeTypeMatch  = feeTypeFilter === "all" || r.feeType === feeTypeFilter;
-    const feeNameMatch  = feeNameFilter === "all" || resolveFeeDisplayName(r) === feeNameFilter;
-    return ms && statusMatch && classMatch && feeTypeMatch && feeNameMatch;
-  }), [feeRecords, search, statusFilter, classFilter, feeTypeFilter, feeNameFilter, offlinePaidIds, resolveFeeDisplayName]);
+  // The server applies all ledger filters; these are only the current page rows.
+  const filtered = feeRecords;
 
-  // Distinct fee names from all loaded records — uses resolver so stale cache still populates list
+  // Distinct fee names/types come from fee structures so pagination does not
+  // remove filter options that are not present on the current page.
   const allFeeNames = useMemo(() =>
-    [...new Set(feeRecords.map(r => resolveFeeDisplayName(r)))].filter(Boolean).sort(),
-    [feeRecords, resolveFeeDisplayName]);
+    [...new Set([...activeStructures.map(s => s.name), ...feeRecords.map(r => resolveFeeDisplayName(r))])].filter(Boolean).sort(),
+    [activeStructures, feeRecords, resolveFeeDisplayName]);
 
-  // Distinct fee types from all loaded records (for the export dialog filter)
   const allFeeTypes = useMemo(() =>
-    [...new Set(feeRecords.map(r => r.feeType))].sort(),
-    [feeRecords]);
+    [...new Set([...activeStructures.map(s => s.feeType), ...feeRecords.map(r => r.feeType)])].sort(),
+    [activeStructures, feeRecords]);
 
   function openCreate() {
     setEditing(null);
@@ -2114,7 +2118,14 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
           <p className="text-sm">No fee records match your filters.</p>
         </div>
       ) : (
-        <div className="rounded-xl border border-white/10 overflow-hidden">
+        <div className="relative rounded-xl border border-white/10 overflow-hidden">
+          {isFetching && (
+            <div className="absolute inset-0 z-10 flex items-start justify-center pt-3 pointer-events-none">
+              <span className="rounded-full bg-[#0A1628]/90 border border-cyan-700/40 px-3 py-1 text-[11px] text-cyan-300">
+                Loading page…
+              </span>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -2525,6 +2536,32 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         </div>
       )}
 
+      {ledgerTotalPages > 0 && (
+        <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={ledgerPage <= 1 || isFetching}
+            onClick={() => setLedgerPage(page => Math.max(1, page - 1))}
+            className="min-w-28 min-h-9 border-white/15 text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-40"
+          >
+            <ChevronLeft className="w-4 h-4 mr-1" /> Previous
+          </Button>
+          <span className="text-xs text-white/60 min-w-24 text-center">
+            Page {ledgerData?.page ?? ledgerPage} of {ledgerTotalPages}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={ledgerPage >= ledgerTotalPages || isFetching}
+            onClick={() => setLedgerPage(page => Math.min(ledgerTotalPages, page + 1))}
+            className="min-w-28 min-h-9 border-white/15 text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-40"
+          >
+            Next <ChevronRight className="w-4 h-4 ml-1" />
+          </Button>
+        </div>
+      )}
+
       {/* Summary strip — updates live as filters change */}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
         <span className="text-white/30">
@@ -2536,7 +2573,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         </span>
         <span className="text-white/20">·</span>
         <span className="text-white/30">
-          <span className="text-white/50 font-semibold">{filtered.length}</span> of <span className="text-white/50 font-semibold">{feeRecords.length}</span> records
+          <span className="text-white/50 font-semibold">{filtered.length}</span> of <span className="text-white/50 font-semibold">{ledgerTotal}</span> records
         </span>
         {selectedIds.size > 0 && (
           <>
