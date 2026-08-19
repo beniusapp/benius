@@ -1,0 +1,462 @@
+VERY IMPORTANT — READ CAREFULLY BEFORE MAKING ANY CODE CHANGES
+
+I want you to make the following changes in the Fees & Payments → Fee Structures and Ledger & Transactions → Add Invoice areas.
+
+CRITICAL RULE
+
+DO NOT change, refactor, redesign, simplify, or break any existing functionality that is not explicitly mentioned below.
+
+Before modifying anything, inspect the existing codebase and understand the complete current implementation of:
+
+- Fee Structures
+- Generate Invoices
+- Add Invoice
+- Invoice numbering
+- Fee records
+- Academic-session handling
+- Applicable classes
+- Fee components / breakdown
+- Due-date logic
+- Invoice creation
+- Database writes
+- Existing validation
+- Existing ledger integration
+- Student portal integration
+- Any backend/API/service functions involved
+
+The existing Generate Invoices functionality is already working and I want to use its architecture and business logic as the foundation.
+
+---
+
+1. Rename "Name" → "Fee Name"
+
+In the Fee Structure form, wherever the field currently says:
+
+Name
+
+change only the visible label to:
+
+Fee Name
+
+Example:
+
+Current:
+
+«Name
+Admission fee»
+
+Change to:
+
+«Fee Name
+Admission fee»
+
+Important
+
+This is only a label/UI terminology change.
+
+Do not unnecessarily rename database columns, API fields, variables, schema fields, or internal identifiers if they are already working correctly.
+
+Keep the existing backend architecture unless a change is genuinely required.
+
+---
+
+2. FIRST UNDERSTAND THE COMPLETE "GENERATE INVOICES" LOGIC
+
+This is extremely important.
+
+I want to use the exact same architecture and business logic for creating invoices.
+
+Before implementing the Add Invoice changes, inspect the existing Generate Invoices implementation and document internally:
+
+A. Source data
+
+Identify exactly where Generate Invoices gets:
+
+- Fee structure
+- Fee name
+- Fee type
+- Amount
+- Frequency
+- Fee period
+- Academic year/session
+- Applicable classes
+- Students
+- Due date
+- Fee components
+- Late-fee configuration
+- Any other relevant configuration
+
+B. Student selection logic
+
+Understand exactly how Generate Invoices determines which students receive an invoice.
+
+For example:
+
+- How applicable classes are interpreted
+- How students are selected
+- Whether inactive students are excluded
+- Whether academic session is considered
+- Whether duplicate invoices are prevented
+- Whether existing invoices are checked
+- How the system handles already-generated invoices
+
+C. Invoice creation logic
+
+Document the complete sequence used when Generate Invoices creates an invoice.
+
+I specifically want to know:
+
+1. How the invoice number is generated.
+2. When the invoice number is assigned.
+3. How the fee record is created.
+4. Which fields are stored.
+5. How the academic session is stored.
+6. How the fee period is stored.
+7. How the due date is calculated/stored.
+8. How the amount is calculated.
+9. How fee components are handled.
+10. How the student is linked.
+11. How the fee structure is linked.
+12. What status is assigned initially.
+13. How duplicate invoice creation is prevented.
+14. What validations occur.
+15. What database/API operations happen.
+16. What happens after successful invoice creation.
+17. How the invoice appears in Ledger & Transactions.
+18. How the invoice appears in the Student Portal.
+
+D. DO NOT create a second invoice architecture
+
+The new Add Invoice functionality must reuse the same underlying invoice-generation architecture wherever possible.
+
+There should NOT be:
+
+- A separate invoice schema
+- A separate numbering system
+- A separate fee-record structure
+- A separate academic-session logic
+- A separate due-date logic
+- A separate validation architecture
+- A separate invoice lifecycle
+
+The goal is:
+
+«Generate Invoices and Add Invoice should ultimately create the same type of invoice/fee record using the same underlying business logic.»
+
+The ONLY fundamental difference is how the student is selected.
+
+---
+
+3. CHANGE "ADD INVOICE" TO BE FOR ONE PARTICULAR STUDENT
+
+Currently, the Add Invoice modal has:
+
+«Student
+[All Classes ▼] [Name or Student ID...] [Search]»
+
+I do NOT want the All Classes selector here.
+
+Remove:
+
+All Classes
+
+completely from the Add Invoice student-selection area.
+
+Keep only:
+
+Search by Student Name
+
+and
+
+Search by Student DSID
+
+The admin should be able to search for a particular student using either:
+
+- Student Name
+- Student DSID
+
+Then select that specific student.
+
+---
+
+4. IMPORTANT — ADD INVOICE IS A SINGLE-STUDENT OPERATION
+
+The new Add Invoice flow should work like this:
+
+Step 1
+
+Admin opens:
+
+Fees & Payments → Ledger & Transactions → Add Invoice
+
+Step 2
+
+Admin sees:
+
+Student
+
+Search field:
+
+«Search by student name or DSID...»
+
+Step 3
+
+Admin searches for a student.
+
+The search results should clearly identify the student, preferably showing relevant existing information such as:
+
+- Student Name
+- DSID
+- Class
+- Section
+
+Use the existing student information/design patterns already present in the application.
+
+Step 4
+
+Admin selects exactly ONE student.
+
+After selecting the student, the invoice is being created specifically for that student.
+
+There should be no applicable-class selection in this Add Invoice flow.
+
+---
+
+5. REMOVE "ALL CLASSES" ONLY FROM ADD INVOICE
+
+This is VERY IMPORTANT.
+
+Do NOT remove or modify:
+
+- Applicable Classes from Fee Structure
+- Applicable Classes from Edit Fee Structure
+- Generate Invoice functionality
+- Class-based invoice generation
+- Existing fee structure class mapping
+
+The Fee Structure functionality should remain exactly as it currently works.
+
+Only the Add Invoice modal should stop using the "All Classes" selector because Add Invoice is now explicitly for one selected student.
+
+---
+
+6. ADD INVOICE MUST REUSE GENERATE-INVOICE LOGIC
+
+After the admin selects one student, the rest of the invoice creation process should follow the same logic/architecture used by Generate Invoices.
+
+For example, if Generate Invoices currently handles:
+
+- Invoice number generation
+- Fee record creation
+- Academic session
+- Fee period
+- Amount
+- Due date
+- Status
+- Fee components
+- Notes
+- Fee structure references
+- Duplicate prevention
+- Validation
+- Ledger creation/update
+
+then Add Invoice should use the same mechanisms.
+
+Do NOT duplicate this logic unnecessarily.
+
+Prefer calling/reusing the existing backend service/function used by Generate Invoices.
+
+If the existing Generate Invoices logic is currently spread across multiple functions, understand those functions first and reuse the correct existing service layer rather than creating parallel logic.
+
+---
+
+7. DO NOT CHANGE THE EXISTING ADD INVOICE FIELDS UNNECESSARILY
+
+Apart from the student-selection change described above, preserve the current Add Invoice form and behavior.
+
+The existing fields such as:
+
+- Invoice No.
+- Student
+- Fee Type
+- Amount
+- Fee Period
+- Status
+- Due Date
+- Academic Year
+- Notes
+
+should remain unless the existing Generate Invoice architecture requires something internally.
+
+Do not redesign the modal.
+
+Do not change its styling unnecessarily.
+
+Do not change unrelated labels.
+
+Do not change the Ledger layout.
+
+Do not change payment functionality.
+
+Do not change Razorpay/payment logic.
+
+Do not change invoice numbering behavior.
+
+---
+
+8. INVOICE NUMBER MUST REMAIN CONSISTENT
+
+The Add Invoice-created invoice must use the same invoice-number generation mechanism as Generate Invoices.
+
+Do NOT introduce a new numbering system.
+
+For example, if the existing system generates:
+
+«INV-0090
+INV-0091
+INV-0092»
+
+then Add Invoice must continue using that same mechanism.
+
+Invoice numbers must remain permanent and must not be replaced by receipt numbers after payment.
+
+---
+
+9. ACADEMIC SESSION MUST REMAIN CONSISTENT
+
+The Add Invoice operation must use the currently selected/active academic session exactly as the existing invoice-generation system does.
+
+For example:
+
+«2027-2028»
+
+Do not create a separate session-selection mechanism unless the existing architecture already requires it.
+
+The resulting invoice must be associated with the correct academic session and appear correctly in:
+
+- Ledger & Transactions
+- Student Portal
+- Payment history
+- Invoice/receipt views
+
+---
+
+10. DUPLICATE PREVENTION
+
+Use the same duplicate-prevention rules as Generate Invoices.
+
+Do not invent a new duplicate-prevention mechanism.
+
+Before creating the invoice, use the existing system's logic to determine whether an equivalent invoice already exists.
+
+If Generate Invoices allows certain combinations and prevents others, Add Invoice should follow the same rules unless the existing architecture explicitly distinguishes manual invoices.
+
+---
+
+11. FINAL IMPLEMENTATION REQUIREMENT
+
+Before coding, inspect the existing implementation and identify the exact reusable functions/services/API endpoints used by Generate Invoices.
+
+Then implement Add Invoice so that:
+
+Generate Invoices
+
+→ selects multiple students according to fee structure/applicable-class rules
+→ uses existing invoice-generation service
+→ creates invoices
+
+while:
+
+Add Invoice
+
+→ searches for one student by Name/DSID
+→ selects one student
+→ uses the SAME invoice-generation service/business logic
+→ creates one invoice for that selected student
+
+The difference should primarily be the student-selection mechanism, not the invoice architecture.
+
+---
+
+12. DO NOT BREAK EXISTING FUNCTIONALITY
+
+After implementation, verify that all of the following still work exactly as before:
+
+- Fee Structure creation
+- Fee Structure editing
+- Applicable Classes
+- Fee components
+- Generate Invoices
+- Bulk invoice generation
+- Invoice numbering
+- Academic session handling
+- Due dates
+- Ledger & Transactions
+- Student Portal invoices
+- Online payments
+- Offline payments
+- Payment history
+- Receipts
+- Invoice references
+- Existing fee records
+
+---
+
+13. TESTING CHECKLIST
+
+After making the changes, test at minimum:
+
+Fee Structure
+
+- [ ] "Name" is displayed as "Fee Name"
+- [ ] Existing fee structures still work
+- [ ] Editing fee structures still works
+- [ ] Applicable Classes still work in Fee Structure
+
+Generate Invoices
+
+- [ ] Existing Generate Invoices flow is unchanged
+- [ ] Existing class-based student selection still works
+- [ ] Invoice numbers remain correct
+- [ ] Duplicate prevention still works
+- [ ] Academic session remains correct
+- [ ] Due dates remain correct
+- [ ] Generated invoices appear in Ledger
+- [ ] Generated invoices appear in Student Portal
+
+Add Invoice
+
+- [ ] "All Classes" is completely removed from Add Invoice
+- [ ] Admin can search by student name
+- [ ] Admin can search by DSID
+- [ ] Search results identify the correct student
+- [ ] Admin can select exactly one student
+- [ ] Selected student is clearly shown
+- [ ] Invoice creation uses the same underlying logic as Generate Invoices
+- [ ] Invoice number is generated using the existing numbering system
+- [ ] Academic session is correct
+- [ ] Due date is correct
+- [ ] Invoice appears correctly in Ledger
+- [ ] Invoice appears correctly in Student Portal
+- [ ] No duplicate invoice is accidentally created
+
+---
+
+FINAL INSTRUCTION
+
+DO NOT start by rewriting the invoice-generation system.
+
+First inspect and understand the current Generate Invoices implementation.
+
+Then reuse the existing architecture.
+
+Make the smallest possible changes required for the requested behavior.
+
+The only intended changes are:
+
+1. Fee Structure: Rename visible label "Name" → "Fee Name".
+2. Add Invoice: Remove "All Classes".
+3. Add Invoice: Allow student selection only through Student Name / Student DSID search.
+4. Add Invoice: Once one student is selected, create the invoice using the same underlying invoice-generation logic and architecture already used by Generate Invoices.
+
+Everything else should remain unchanged.
