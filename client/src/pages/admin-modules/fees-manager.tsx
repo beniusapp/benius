@@ -888,9 +888,9 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                     <input type="date" value={instrDate} onChange={e => setInstrDate(e.target.value)}
                       className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
                   </div>
-                  {/* Bank / UPI App — optional */}
+                  {/* Bank / UPI App — supporting detail */}
                   <div>
-                    <label className="text-xs text-white/60 mb-1 block">Bank / UPI App <span className="text-white/30">(opt.)</span></label>
+                    <label className="text-xs text-white/60 mb-1 block">Bank / UPI App</label>
                     <input value={bankName} onChange={e => setBankName(e.target.value)}
                       placeholder="e.g. GPay, PhonePe, HDFC"
                       className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
@@ -898,16 +898,16 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  {/* Payer Name — optional */}
+                  {/* Payer Name — supporting detail */}
                   <div>
-                    <label className="text-xs text-white/60 mb-1 block">Payer Name <span className="text-white/30">(opt.)</span></label>
+                    <label className="text-xs text-white/60 mb-1 block">Payer Name</label>
                     <input value={payerName} onChange={e => setPayerName(e.target.value)}
                       placeholder="Account holder name"
                       className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
                   </div>
-                  {/* Payer UPI ID — optional */}
+                  {/* Payer UPI ID — supporting detail */}
                   <div>
-                    <label className="text-xs text-white/60 mb-1 block">Payer UPI ID <span className="text-white/30">(opt.)</span></label>
+                    <label className="text-xs text-white/60 mb-1 block">Payer UPI ID</label>
                     <input value={payerUpiId} onChange={e => setPayerUpiId(e.target.value)}
                       placeholder="e.g. name@upi"
                       className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20 font-mono" />
@@ -956,14 +956,14 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs text-white/60 mb-1 block">Branch <span className="text-white/30">(opt.)</span></label>
+                    <label className="text-xs text-white/60 mb-1 block">Branch</label>
                     <input value={branchName} onChange={e => setBranchName(e.target.value)}
                       placeholder="Branch name"
                       className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
                   </div>
                   <div>
                     <label className="text-xs text-white/60 mb-1 block">
-                      {method === "BankTransfer" ? "Sender Name" : "Payer Name"} <span className="text-white/30">(opt.)</span>
+                      {method === "BankTransfer" ? "Sender Name" : "Payer Name"}
                     </label>
                     <input value={payerName} onChange={e => setPayerName(e.target.value)}
                       placeholder="Account holder"
@@ -975,7 +975,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
 
             {/* ── Notes ───────────────────────────────────────────────────────── */}
             <div>
-              <label className="text-xs text-white/60 mb-1 block">Notes <span className="text-white/30">(optional)</span></label>
+              <label className="text-xs text-white/60 mb-1 block">Notes</label>
               <input value={notes} onChange={e => setNotes(e.target.value)}
                 placeholder={method === "Cash" ? "Any notes for the cashier" : "Additional remarks"}
                 className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
