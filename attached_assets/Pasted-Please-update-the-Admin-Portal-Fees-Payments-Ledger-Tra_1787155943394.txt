@@ -1,0 +1,252 @@
+Please update the Admin Portal → Fees & Payments → Ledger & Transactions table.
+
+I want to make Payment Method a completely separate column from Status.
+
+Current problem
+
+Currently, when an invoice is paid, the Ledger shows something like:
+
+Status
+🟢 Paid
+"Cash"
+
+This mixes two different pieces of information.
+
+- Status should tell us the financial state of the invoice.
+- Payment Method should tell us how the payment was made.
+
+I want these to be completely separated.
+
+---
+
+1. Add a separate Payment Method column
+
+Add a new column named:
+
+Payment Method
+
+The Ledger should display payment methods such as:
+
+- Cash
+- Cheque
+- Bank Transfer
+- Demand Draft
+- UPI / QR
+- Portal Payment
+
+Important
+
+For payments made through the Student Portal using the online payment gateway, the Payment Method should be:
+
+Portal Payment
+
+Do NOT use:
+
+- Online
+- Digital Payment
+- Razorpay
+
+as the main Ledger payment-method label.
+
+"Portal Payment" is the agreed terminology for this application.
+
+---
+
+2. Keep Status completely separate
+
+The Status column must only represent the invoice/fee status.
+
+The supported invoice statuses are:
+
+- Due
+- Overdue
+- Paid
+
+Do not put payment methods underneath the Status badge anymore.
+
+For example:
+
+Correct
+
+Status| Payment Method
+Paid| Cash
+Paid| Cheque
+Paid| Bank Transfer
+Paid| Demand Draft
+Paid| UPI / QR
+Paid| Portal Payment
+Due| —
+Overdue| —
+
+The "—" means no payment has been made yet, therefore there is no payment method.
+
+---
+
+3. Portal Payment
+
+For a successful payment made from the Student Portal through Razorpay:
+
+Ledger:
+
+Status → "Paid"
+
+Payment Method → "Portal Payment"
+
+Do not display "Razorpay" as the payment method in the Ledger.
+
+Razorpay is the payment gateway, not the user-facing payment method.
+
+The detailed Payment Details section can continue showing the actual gateway information, such as:
+
+- Payment Method: Portal Payment
+- Gateway: Razorpay
+- Gateway Method: UPI / Card / Net Banking
+- Payment ID
+- Order ID
+- Other existing payment details
+
+Do not remove any existing detailed payment information.
+
+---
+
+4. Offline payments
+
+Make sure the existing offline payment methods map correctly to the new Payment Method column:
+
+- Cash → "Cash"
+- Cheque → "Cheque"
+- Bank Transfer → "Bank Transfer"
+- Demand Draft → "Demand Draft"
+- UPI / QR Payment → "UPI / QR"
+- Student Portal/Razorpay payment → "Portal Payment"
+
+Use the existing payment data/source wherever possible. Do not duplicate payment records just to implement this UI change.
+
+---
+
+5. Payment failures and cancellations
+
+Do NOT put "Failed" or "Cancelled" into the Payment Method column.
+
+Payment attempts remain a separate concept.
+
+For example:
+
+Invoice:
+
+- Status = "Due"
+- Payment Method = "—"
+
+Payment history:
+
+- Attempt #1 = Failed
+- Attempt #2 = Cancelled
+- Attempt #3 = Captured
+
+After successful capture:
+
+Invoice:
+
+- Status = "Paid"
+- Payment Method = "Portal Payment"
+
+Keep the existing payment-attempt/history architecture unchanged.
+
+---
+
+6. Database/backend consistency
+
+Please inspect the existing implementation before making changes.
+
+Do not create duplicate or conflicting payment-method fields if an appropriate field already exists.
+
+Make sure the Ledger API/backend provides the correct payment method for each fee record.
+
+The frontend should not guess the payment method based only on the status.
+
+The value must come from the actual payment/transaction data.
+
+For invoices that have not been paid:
+
+Payment Method = "—"
+
+For paid invoices:
+
+Display the actual method used for that successful payment.
+
+---
+
+7. Existing data
+
+Do not lose any existing payment history.
+
+Do not modify payment amounts, invoice numbers, receipt numbers, payment IDs, order IDs, or payment-attempt records.
+
+If existing paid records already have payment-method information, map them correctly into the new column.
+
+If a historical record genuinely has no payment-method information available, display "—" rather than guessing.
+
+---
+
+8. UI/UX
+
+Keep the existing Ledger & Transactions design, styling, responsiveness, pagination, filters, and overall layout intact.
+
+Only introduce the new Payment Method column and remove the payment-method text currently displayed underneath the Status badge.
+
+The Status badge should contain only the status.
+
+Example:
+
+Status
+
+🟢 Paid
+
+Payment Method
+
+"Portal Payment"
+
+Do not show:
+
+🟢 Paid
+"Portal Payment"
+
+inside the Status column.
+
+---
+
+9. Check mobile layout
+
+This is important because the Admin Portal is also used on mobile.
+
+After adding the column, verify that the Ledger remains usable on mobile without breaking the existing horizontal scrolling/table behavior.
+
+Do not shrink the text excessively just to force every column into the screen.
+
+---
+
+10. Final verification
+
+After implementing the change, test at least these cases:
+
+1. Paid by Cash
+2. Paid by Cheque
+3. Paid by Bank Transfer
+4. Paid by Demand Draft
+5. Paid by UPI / QR
+6. Paid through Student Portal/Razorpay
+7. Due invoice
+8. Overdue invoice
+9. Failed Portal payment attempt
+10. Cancelled Portal payment attempt
+
+Expected result:
+
+- Status shows only "Due", "Overdue", or "Paid".
+- Payment Method shows the actual successful payment method.
+- Failed/Cancelled attempts do not become invoice statuses.
+- Unpaid invoices show "—" for Payment Method.
+- Student Portal payments show Portal Payment.
+- Existing payment history remains unchanged.
+
+Do not make unrelated changes to the Fees & Payments module.

@@ -23,6 +23,7 @@ import { registerTeacherRoutes } from "./teacher-routes";
 import { registerFeesRoutes } from "./fees-routes";
 import { calculateLateFee } from "./late-fee-engine";
 import { buildLateFeeInfo } from "./late-fee-display";
+import { ledgerPaymentMethodLabel } from "./payment-method-label";
 import { addSSEClient, broadcastSessionActivated, broadcastSessionDeleted } from "./sse";
 import { db } from "./db";
 import { eq, and, sql, inArray, not } from "drizzle-orm";
@@ -4350,6 +4351,17 @@ export async function registerRoutes(
         LIMIT 1
       ) structure ON true
     `;
+    const ledgerPaymentJoin = sql`
+      LEFT JOIN LATERAL (
+        SELECT pr.payment_method AS raw_payment_method
+        FROM payment_records pr
+        WHERE pr.school_id = fr.school_id
+          AND pr.fee_record_id = fr.id
+          AND (pr.cashier_notes IS NULL OR pr.cashier_notes <> 'Auto-recorded from Add Fee Record')
+        ORDER BY pr.created_at DESC, pr.id DESC
+        LIMIT 1
+      ) ledger_payment ON true
+    `;
 
     const totalResult = await db.execute(sql`
       SELECT COUNT(*)::int AS total
@@ -4390,10 +4402,12 @@ export async function registerRoutes(
         s.name AS "__studentName",
         s.class AS "__studentClass",
         s.section AS "__studentSection",
-        s.digital_student_id AS "__studentDigitalStudentId"
+        s.digital_student_id AS "__studentDigitalStudentId",
+        ledger_payment.raw_payment_method AS "__paymentMethod"
       FROM fee_records fr
       LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
       ${structureJoin}
+      ${ledgerPaymentJoin}
       WHERE ${whereClause}
       ORDER BY fr.created_at DESC, fr.id DESC
       LIMIT ${pageSize}
@@ -4404,7 +4418,7 @@ export async function registerRoutes(
     const records = (result.rows as any[]).map(row => {
       const {
         __feeName, __lateFeeConfig, __studentName, __studentClass,
-        __studentSection, __studentDigitalStudentId, ...record
+        __studentSection, __studentDigitalStudentId, __paymentMethod, ...record
       } = row;
       const accrued_late_fee = __lateFeeConfig?.enabled
         ? calculateLateFee(__lateFeeConfig, record.dueDate, record.status, now)
@@ -4414,6 +4428,7 @@ export async function registerRoutes(
       return {
         ...record,
         feeName:          __feeName ?? record.feeType,
+        paymentMethod:    record.status === "Paid" ? ledgerPaymentMethodLabel(__paymentMethod) : null,
         student:          __studentName == null ? null : {
           name: __studentName,
           class: __studentClass,

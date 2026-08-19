@@ -46,6 +46,7 @@ interface FeeRecordWithStudent {
   dueDate: string;
   paidDate: string | null;
   status: string;
+  paymentMethod: string | null;
   receiptNumber: string | null;
   invoiceNumber: string | null;
   notes: string | null;
@@ -1183,7 +1184,7 @@ function PaymentHistoryModal({ open, onClose, feeRecord }: PaymentHistoryModalPr
 
   const methodLabel: Record<string, string> = {
     Cash: "Cash", Cheque: "Cheque", BankTransfer: "Bank Transfer",
-    DemandDraft: "Demand Draft", UpiQr: "UPI / QR Payment", Online: "Online",
+    DemandDraft: "Demand Draft", UpiQr: "UPI / QR", Online: "Portal Payment",
   };
 
   const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
@@ -1863,7 +1864,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     staleTime: 30_000,
   });
 
-  // Payment records — used for payment-method badges and transaction details.
+  // Payment records — used for transaction history, receipts, and action badges.
   const { data: paymentRecordsList = [] } = useQuery<PaymentRecord[]>({
     queryKey: ["/api/admin/fees/payments"],
     queryFn: async () => {
@@ -1873,17 +1874,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     },
     staleTime: 30_000,
   });
-  // Map feeRecordId → most recent payment method (for badge display).
-  // Exclude auto-created records so "Add Fee" rows never show a Cash/method badge.
-  const paymentMethodMap = useMemo(() => {
-    const map = new Map<number, string>();
-    // Sort oldest-first so the last write wins (most recent payment method)
-    [...paymentRecordsList]
-      .filter(p => p.cashierNotes !== "Auto-recorded from Add Fee Record")
-      .sort((a, b) => a.id - b.id)
-      .forEach(p => { if (p.feeRecordId != null) map.set(p.feeRecordId, p.paymentMethod); });
-    return map;
-  }, [paymentRecordsList]);
   // Map feeRecordId → all payment records (sorted newest-first) for the history modal
   const paymentsByFeeRecordId = useMemo(() => {
     const map = new Map<number, PaymentRecord[]>();
@@ -2124,7 +2114,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
             </div>
           )}
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[1500px] text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-white/5">
                   {/* Expand chevron */}
@@ -2133,8 +2123,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   {selectedIds.size > 0 && canRecord && !isArchiveMode && (
                     <th className="px-3 py-3 w-8" />
                   )}
-                  {["Invoice No.","Receipt No.","Student","DSID","Class","Section","Fee Name","Fee Type","Amount","Due Date","Status","Paid On","Acad. Year","Notes","Actions"].map((h, i) => (
-                    <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 8 ? "text-right" : i >= 14 ? "text-right" : i >= 9 ? "text-center" : "text-left"}`}>{h}</th>
+                  {["Invoice No.","Receipt No.","Student","DSID","Class","Section","Fee Name","Fee Type","Amount","Due Date","Status","Payment Method","Paid On","Acad. Year","Notes","Actions"].map((h, i) => (
+                    <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 8 || i === 15 ? "text-right" : i >= 9 && i <= 13 ? "text-center" : "text-left"}`}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -2145,7 +2135,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   const isLoadingDetail = detailLoading === rec.id;
                   const activeSection = detailSection[rec.id] ?? 0;
                   const mainPayment = detail?.payment ?? null;
-                  const colSpan = 16 + (selectedIds.size > 0 && canRecord && !isArchiveMode ? 1 : 0);
+                  const colSpan = 17 + (selectedIds.size > 0 && canRecord && !isArchiveMode ? 1 : 0);
                   return (
                   <React.Fragment key={rec.id}>
                   <tr className={`border-b border-white/5 transition-colors ${selectedIds.has(rec.id) ? "bg-red-900/10" : isExpanded ? "bg-white/[0.04]" : "hover:bg-white/5"}`}
@@ -2213,14 +2203,9 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{fmtDate(rec.dueDate)}</td>
                     <td className="px-4 py-3 text-center">
                       <StatusChip status={rec.status} />
-                      {paymentMethodMap.has(rec.id) && (
-                        <span className="mt-1 inline-block text-[10px] font-medium px-1.5 py-0.5 rounded bg-cyan-900/40 border border-cyan-700/40 text-cyan-300">
-                          {paymentMethodMap.get(rec.id) === "BankTransfer" ? "Bank" :
-                           paymentMethodMap.get(rec.id) === "DemandDraft" ? "DD" :
-                           paymentMethodMap.get(rec.id) === "UpiQr" ? "UPI" :
-                           paymentMethodMap.get(rec.id)}
-                        </span>
-                      )}
+                    </td>
+                    <td className="px-4 py-3 text-center text-white/70 text-xs whitespace-nowrap">
+                      {rec.paymentMethod ?? "—"}
                     </td>
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{fmtDate(rec.paidDate)}</td>
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{rec.academicYear ?? "—"}</td>
@@ -2364,13 +2349,15 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                                     {pay.paymentMethod === "Online" ? (
                                       <div className="grid grid-cols-2 gap-4">
                                         <div className="space-y-1.5">
+                                          <TxnDetailRow label="Payment Method" value="Portal Payment" />
+                                          <TxnDetailRow label="Gateway" value="Razorpay" />
                                           <TxnDetailRow label="Payment ID" value={
                                             pay.razorpayPaymentId
                                               ? <a href={`https://dashboard.razorpay.com/app/payments/${pay.razorpayPaymentId}`} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline font-mono text-xs flex items-center gap-1">{pay.razorpayPaymentId} <ExternalLink className="w-3 h-3" /></a>
                                               : null
                                           } />
                                           <TxnDetailRow label="Order ID" value={<span className="font-mono text-xs">{pay.razorpayOrderId ?? "—"}</span>} />
-                                          <TxnDetailRow label="Mode" value={
+                                          <TxnDetailRow label="Gateway Method" value={
                                             pay.paymentMode
                                               ? <span className="capitalize px-2 py-0.5 rounded-full text-xs bg-blue-900/40 text-blue-300 border border-blue-700/40">{pay.paymentMode}</span>
                                               : null
