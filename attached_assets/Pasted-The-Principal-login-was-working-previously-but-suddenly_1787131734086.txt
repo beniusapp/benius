@@ -1,0 +1,189 @@
+The Principal login was working previously, but suddenly when I enter the same Principal credentials, the login now returns:
+
+"Invalid email or password"
+
+I have NOT intentionally changed the Principal credentials.
+
+Before making any changes, I want you to thoroughly diagnose the issue.
+
+IMPORTANT
+
+Do NOT reset the Principal password.
+
+Do NOT create a new Principal account.
+
+Do NOT modify authentication logic yet.
+
+First identify the exact reason why the previously working Principal credentials are now being rejected.
+
+---
+
+1. Check the Principal Account
+
+Find the Principal account in the database using the existing email/username.
+
+Verify:
+
+- The account still exists.
+- The email is unchanged.
+- The account is associated with the correct "school_id".
+- The account role is still Principal.
+- The account is not disabled/deactivated.
+- The account has not been accidentally deleted.
+- The password hash still exists.
+- The password hash has not unexpectedly changed.
+
+Do NOT expose the actual password or password hash in the output.
+
+---
+
+2. Check Password Verification
+
+Inspect the existing login/authentication flow.
+
+Determine:
+
+- Which password hashing algorithm is being used.
+- How the submitted password is compared with the stored password hash.
+- Whether the password verification function is currently working.
+- Whether the login endpoint is receiving the credentials correctly.
+- Whether email normalization/case handling has changed.
+- Whether whitespace or formatting is affecting the email/password.
+
+Do not change the authentication implementation yet.
+
+---
+
+3. Check Recent Changes
+
+Inspect the recent code changes/commits, especially changes made around:
+
+- Fees & Payments
+- Payment records
+- Payment routes
+- Database migrations
+- Schema changes
+- Server startup/migration logic
+- Authentication
+- User/session handling
+- Database initialization
+- Seed/demo data
+
+Determine whether any recent change could have modified, overwritten, deleted, or affected the Principal account.
+
+The recent Fees & Payments changes should NOT have affected authentication, so verify whether there is any unexpected side effect.
+
+---
+
+4. Check Database/Migration Effects
+
+Verify whether any recent migration or application startup process:
+
+- recreated users,
+- modified user records,
+- reset passwords,
+- changed roles,
+- changed school IDs,
+- changed authentication fields,
+- inserted seed/demo users,
+- or replaced database data.
+
+Pay particular attention to whether a development seed/reset process is running automatically when the application starts.
+
+---
+
+5. Check the Login API
+
+Inspect the actual login request and backend response.
+
+Determine whether the ""Invalid email or password"" message is coming from:
+
+- email lookup failure,
+- password mismatch,
+- inactive account,
+- role validation,
+- school/tenant validation,
+- session validation,
+- or another authentication condition.
+
+I want the actual root cause, not just the generic error message.
+
+---
+
+6. Check Tenant Isolation
+
+This is a multi-tenant school application.
+
+Verify that the Principal account is still associated with the correct:
+
+"school_id"
+
+and that the login process is not accidentally filtering the Principal out because of an incorrect tenant condition.
+
+Do NOT weaken tenant isolation to fix the problem.
+
+---
+
+7. Check Environment/Database
+
+Confirm that the application is connected to the expected development database.
+
+Make sure the login is not suddenly pointing to:
+
+- a different database,
+- a fresh database,
+- an empty database,
+- a different environment,
+- or a database where the Principal account does not exist.
+
+This is especially important because the application is still under development.
+
+---
+
+8. Do NOT Make Changes Until Diagnosis Is Complete
+
+First provide me with a concise diagnosis in this format:
+
+Principal account: Found / Not Found
+
+Email: Correct / Changed / Not Found
+
+School ID: Correct / Incorrect
+
+Role: Correct / Incorrect
+
+Account status: Active / Inactive
+
+Password hash: Present / Missing / Changed
+
+Password verification: Passing / Failing
+
+Database: Correct / Different / Fresh
+
+Recent code change affecting login: Yes / No
+
+Root cause: [exact explanation]
+
+---
+
+9. Only After Finding the Root Cause
+
+If the issue can be fixed safely, tell me exactly what needs to be changed before making the change.
+
+Do not reset credentials unless the investigation proves that the stored password itself is the problem.
+
+Do not create duplicate accounts.
+
+Do not bypass authentication.
+
+Do not weaken password verification.
+
+Do not remove tenant/security checks.
+
+The goal is to restore the existing Principal login using the existing valid credentials while keeping the authentication and multi-tenant security architecture intact.
+
+Final Requirement
+
+Diagnose first. Fix second.
+
+Do not make unrelated changes to the application.
