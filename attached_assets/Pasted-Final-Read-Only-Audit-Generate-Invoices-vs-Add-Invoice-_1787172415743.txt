@@ -1,0 +1,214 @@
+Final Read-Only Audit: Generate Invoices vs Add Invoice
+
+Do not change any code, database, schema, UI, routes, or configuration.
+
+I want a very detailed final comparison between these two invoice-creation flows:
+
+1. Fee Structure → Generate Invoices
+   
+   - Generates invoices for multiple eligible students.
+
+2. Ledger & Transactions → Add Invoice
+   
+   - Creates a completely manual invoice for ONE selected student only.
+   - This is intentionally a manual invoice and does NOT need to use a Fee Structure.
+   - Example: a student needs a Math Book, so the admin manually creates a ₹500 Math Book invoice.
+
+The purpose of this audit is to confirm that although the two flows have different inputs and scope, the resulting invoice works correctly everywhere in the application.
+
+1. Tell me exactly what is IDENTICAL
+
+Compare both flows and list everything that is exactly the same, including:
+
+- Active academic session handling
+- Fee Period resolution
+- Monthly / Quarterly / Annual / One-time rules
+- Invoice number generation
+- Duplicate prevention
+- PostgreSQL advisory locking
+- Database transaction/atomicity
+- "fee_records" creation
+- Invoice status
+- Student/school/tenant isolation
+- Amount handling
+- Payment compatibility
+- Razorpay compatibility
+- Payment status updates
+- Receipt generation
+- Receipt number generation
+- Payment history
+- Ledger display
+- Transaction display
+- Late-fee calculation
+- Late-fee configuration storage
+- Component/breakdown snapshot
+- Audit logging
+- Invoice immutability
+- Academic-session association
+- Any other downstream invoice behavior
+
+Clearly mark each item as:
+
+IDENTICAL
+
+if the same production logic is used.
+
+2. Tell me exactly what is DIFFERENT
+
+Create a clear table:
+
+Area| Generate Invoices| Add Invoice| Why different?| Does it affect the resulting invoice?
+
+Include at minimum:
+
+- Number of students
+- Fee Structure usage
+- Fee Name
+- Fee Type
+- Amount
+- Frequency
+- Fee Period
+- Due Date
+- Late Fee
+- Components
+- Applicable Classes
+- Student eligibility
+- Notes
+- Created By
+- Audit behavior
+- Duplicate response behavior
+- Bulk-specific behavior
+
+Remember:
+
+The fact that Add Invoice is manually entered is intentional.
+
+Do NOT classify manual Fee Name, Fee Type, Amount, Frequency, etc. as bugs merely because Generate Invoices gets those values from Fee Structure.
+
+3. MOST IMPORTANT: What happens after Add Invoice creates the invoice?
+
+Trace the complete lifecycle of an invoice created through Add Invoice.
+
+Start from:
+
+Add Invoice → fee_records
+
+Then follow the invoice through:
+
+Ledger → Student Fees → Payment → Razorpay → Webhook → Payment Status → Receipt → Payment History → Transaction/Ledger
+
+Confirm whether an Add Invoice record is treated exactly like a Generate Invoices record after creation.
+
+I specifically want to know:
+
+«Once Add Invoice successfully creates the "fee_records" row, does the rest of the application treat it as a normal invoice?»
+
+Answer YES or NO, with technical evidence.
+
+4. Payment impact
+
+Verify whether an invoice created through Add Invoice can be:
+
+- Paid through the student portal
+- Paid through Razorpay
+- Successfully captured
+- Marked Paid
+- Assigned a payment ID
+- Assigned an order ID
+- Assigned a receipt number
+- Shown in payment history
+- Shown in transaction history
+- Refunded if applicable
+- Handled by webhooks
+- Subject to the same duplicate-payment protection
+
+Confirm whether there is ANY payment-related difference between an Add Invoice invoice and a Generate Invoices invoice.
+
+5. Duplicate protection
+
+Test/review all combinations:
+
+1. Generate → Generate
+2. Add → Add
+3. Generate → Add
+4. Add → Generate
+
+Explain exactly when an invoice will be rejected/skipped as a duplicate.
+
+Also verify that creating an Add Invoice does not accidentally prevent an unrelated invoice from being generated.
+
+6. Fee Period
+
+Confirm that the new Add Invoice Fee Period selector uses the same canonical server logic as Generate Invoices.
+
+Verify:
+
+Monthly
+
+Complete calendar month only.
+
+Quarterly
+
+Complete calendar quarter only.
+
+Annual
+
+Complete active academic session.
+
+One-time
+
+Complete active academic session.
+
+Confirm that Add Invoice does NOT allow arbitrary start/end dates anymore.
+
+7. Does Add Invoice have ANY negative impact?
+
+This is extremely important.
+
+Answer clearly:
+
+«If I create an invoice through Add Invoice instead of Generate Invoices, can it cause any problem later in payments, Razorpay, receipts, ledger, transaction history, student fees, late fees, reporting, academic sessions, or invoice numbering?»
+
+If NO, say:
+
+NO KNOWN IMPACT — Add Invoice creates a valid normal invoice record and downstream systems treat it the same way.
+
+If YES, identify every issue precisely.
+
+8. Final verdict
+
+Give me a simple final conclusion using this format:
+
+IDENTICAL
+
+[List]
+
+DIFFERENT
+
+[List]
+
+DOWNSTREAM IMPACT
+
+[Yes/No + explanation]
+
+PAYMENT/Razorpay IMPACT
+
+[Yes/No + explanation]
+
+DUPLICATE SAFETY
+
+[Safe/Issue + explanation]
+
+FINAL VERDICT
+
+Choose exactly one:
+
+PASS — Add Invoice is a safe one-student manual invoice path and has no negative downstream impact.
+
+or
+
+FAIL — There are still differences that can cause functional problems.
+
+If FAIL, explain exactly what must be fixed.
+
+Again: READ-ONLY ONLY. Do not modify anything.
