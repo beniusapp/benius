@@ -65,6 +65,8 @@ interface FeeStructure {
   dueDayOfMonth: number | null;
   breakdown: Array<{ name: string; purpose: string; amount: number }>;
   lastInvoicesGeneratedAt: string | null;
+  latestGeneratedFeePeriodStart: string | null;
+  latestGeneratedFeePeriodEnd: string | null;
   createdAt: string;
 }
 
@@ -3175,6 +3177,16 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                     </p>
                   </div>
                 )}
+                {(s.frequency === "monthly" || s.frequency === "quarterly") &&
+                  s.latestGeneratedFeePeriodStart &&
+                  s.latestGeneratedFeePeriodEnd && (
+                    <div className="col-span-2">
+                      <p className="text-white/40 mb-0.5">Latest Fee Period</p>
+                      <p className="text-emerald-400/80 text-[11px]">
+                        {clientFeePeriodLabel(s.latestGeneratedFeePeriodStart, s.latestGeneratedFeePeriodEnd)}
+                      </p>
+                    </div>
+                  )}
               </div>
               {!isArchiveMode && (
                 <div className="space-y-1 pt-1 border-t border-white/10">

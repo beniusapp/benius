@@ -4,7 +4,7 @@ import { db } from "./db";
 import { calculateLateFee, recalculateLateFees, DEFAULT_LATE_FEE_CONFIG, type LateFeeConfig } from "./late-fee-engine";
 import { buildBreakdownSnapshot, warnOnSumMismatch } from "./invoice-snapshot";
 import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings, feeStructures, dunningJobStatus } from "@shared/schema";
-import { and, eq, sql, desc, or } from "drizzle-orm";
+import { and, eq, sql, desc, or, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
@@ -632,8 +632,45 @@ export function registerFeesRoutes(app: Express) {
 
   app.get("/api/admin/fees/structures", async (req, res) => {
     if (!adminGuard(req, res)) return;
-    const structures = await storage.getFeeStructuresBySchool(req.session.schoolId!);
-    res.json(structures);
+    const schoolId = req.session.schoolId!;
+    const structures = await storage.getFeeStructuresBySchool(schoolId);
+
+    // Fee records carry the immutable period selected when each invoice was
+    // generated. Read the newest period per fee type for the display cards.
+    const latestPeriods = await db.select({
+      feeType: feeRecords.feeType,
+      feePeriodStart: feeRecords.feePeriodStart,
+      feePeriodEnd: feeRecords.feePeriodEnd,
+    }).from(feeRecords)
+      .where(and(
+        eq(feeRecords.schoolId, schoolId),
+        isNotNull(feeRecords.invoiceNumber),
+        isNotNull(feeRecords.feePeriodStart),
+        isNotNull(feeRecords.feePeriodEnd),
+      ))
+      .orderBy(desc(feeRecords.feePeriodStart), desc(feeRecords.createdAt));
+
+    const latestPeriodByFeeType = new Map<string, {
+      feePeriodStart: string;
+      feePeriodEnd: string;
+    }>();
+    for (const period of latestPeriods) {
+      if (!latestPeriodByFeeType.has(period.feeType) && period.feePeriodStart && period.feePeriodEnd) {
+        latestPeriodByFeeType.set(period.feeType, {
+          feePeriodStart: String(period.feePeriodStart),
+          feePeriodEnd: String(period.feePeriodEnd),
+        });
+      }
+    }
+
+    res.json(structures.map(structure => {
+      const latest = latestPeriodByFeeType.get(structure.feeType);
+      return {
+        ...structure,
+        latestGeneratedFeePeriodStart: latest?.feePeriodStart ?? null,
+        latestGeneratedFeePeriodEnd: latest?.feePeriodEnd ?? null,
+      };
+    }));
   });
 
   app.post("/api/admin/fees/structures", async (req, res) => {
