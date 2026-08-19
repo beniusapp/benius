@@ -1,27 +1,50 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-// Mirrors the narrow POST /api/admin/fees request contract. Canonical invoice
-// fields are intentionally absent because the server derives them from the fee
-// structure and active academic session.
+const breakdownItemSchema = z.object({
+  name: z.string().min(1).max(100),
+  purpose: z.string().max(300).default(""),
+  amount: z.number().int().min(0),
+});
+
+const lateFeeConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  type: z.enum(["NONE", "FLAT", "DAILY", "TIERED"]).default("NONE"),
+  grace_period_days: z.number().int().min(0).default(0),
+  flat_amount: z.number().int().min(0).default(0),
+  daily_rate: z.number().min(0).default(0),
+  max_cap: z.number().int().min(0).default(0),
+  tiered_slabs: z.array(z.object({
+    from_day: z.number().int().min(1),
+    to_day: z.number().int().min(1),
+    amount: z.number().int().min(0),
+  })).default([]),
+});
+
+// Mirrors POST /api/admin/fees. Payment, status, session, numbering, and receipt
+// fields remain server-controlled; manual invoice details are explicit inputs.
 const addInvoiceBodySchema = z.object({
   studentId: z.number().int().positive(),
-  feeStructureId: z.number().int().positive("Fee name is required"),
-  feePeriodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
-  feePeriodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  feeName: z.string().trim().min(1).max(100),
+  feeType: z.string().trim().min(1).max(100),
+  amount: z.number().int().positive(),
+  frequency: z.enum(["monthly", "quarterly", "annual", "one-time"]),
+  feePeriodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  feePeriodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  breakdown: z.array(breakdownItemSchema).default([]),
+  lateFeeConfig: lateFeeConfigSchema.default({
+    enabled: false,
+    type: "NONE",
+    grace_period_days: 0,
+    flat_amount: 0,
+    daily_rate: 0,
+    max_cap: 0,
+    tiered_slabs: [],
+  }),
   notes: z.string().optional().nullable(),
 }).superRefine((value, context) => {
-  if (!!value.feePeriodStart !== !!value.feePeriodEnd) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Fee period start and end must be provided together",
-      path: ["feePeriodEnd"],
-    });
-  } else if (
-    value.feePeriodStart
-    && value.feePeriodEnd
-    && value.feePeriodEnd < value.feePeriodStart
-  ) {
+  if (value.feePeriodEnd < value.feePeriodStart) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Fee period end must be on or after start",
@@ -32,77 +55,83 @@ const addInvoiceBodySchema = z.object({
 
 const validPayload = {
   studentId: 11,
-  feeStructureId: 7,
+  feeName: "August Tuition",
+  feeType: "Tuition",
+  amount: 3600,
+  frequency: "monthly" as const,
   feePeriodStart: "2026-08-01",
   feePeriodEnd: "2026-08-31",
+  dueDate: "2026-08-10",
+  breakdown: [{ name: "Instruction", purpose: "August classes", amount: 3600 }],
+  lateFeeConfig: {
+    enabled: true,
+    type: "DAILY" as const,
+    grace_period_days: 3,
+    flat_amount: 0,
+    daily_rate: 25,
+    max_cap: 300,
+    tiered_slabs: [],
+  },
   notes: "August invoice",
 };
 
-describe("Add Invoice request contract", () => {
-  it("accepts one student, one fee structure, and a complete period", () => {
+describe("Add Invoice manual request contract", () => {
+  it("accepts one student with explicit manual invoice details", () => {
     expect(addInvoiceBodySchema.safeParse(validPayload).success).toBe(true);
   });
 
-  it("requires a positive student ID", () => {
-    expect(addInvoiceBodySchema.safeParse({ ...validPayload, studentId: 0 }).success).toBe(false);
+  it.each(["monthly", "quarterly", "annual", "one-time"] as const)(
+    "accepts supported %s frequency",
+    frequency => {
+      expect(addInvoiceBodySchema.safeParse({ ...validPayload, frequency }).success).toBe(true);
+    },
+  );
+
+  it("requires student, fee name/type, amount, frequency, period, and due date", () => {
+    for (const payload of [
+      { ...validPayload, studentId: 0 },
+      { ...validPayload, feeName: " " },
+      { ...validPayload, feeType: " " },
+      { ...validPayload, amount: 0 },
+      { ...validPayload, frequency: "weekly" },
+      { ...validPayload, feePeriodStart: undefined },
+      { ...validPayload, dueDate: undefined },
+    ]) {
+      expect(addInvoiceBodySchema.safeParse(payload).success).toBe(false);
+    }
   });
 
-  it("requires a positive fee structure ID", () => {
-    expect(addInvoiceBodySchema.safeParse({ ...validPayload, feeStructureId: 0 }).success).toBe(false);
-  });
-
-  it("requires fee-period dates to be supplied together", () => {
-    expect(addInvoiceBodySchema.safeParse({
-      ...validPayload,
-      feePeriodEnd: undefined,
-    }).success).toBe(false);
-    expect(addInvoiceBodySchema.safeParse({
-      ...validPayload,
-      feePeriodStart: undefined,
-    }).success).toBe(false);
-  });
-
-  it("allows the period to be omitted so annual/one-time invoices use session dates", () => {
-    expect(addInvoiceBodySchema.safeParse({
-      studentId: 11,
-      feeStructureId: 7,
-      notes: null,
-    }).success).toBe(true);
-  });
-
-  it("rejects an end date before the start date", () => {
+  it("rejects an inverted period and malformed late-fee/component input", () => {
     expect(addInvoiceBodySchema.safeParse({
       ...validPayload,
       feePeriodStart: "2026-08-31",
       feePeriodEnd: "2026-08-01",
     }).success).toBe(false);
-  });
-
-  it("strips client attempts to override structure- and session-derived fields", () => {
-    const result = addInvoiceBodySchema.safeParse({
+    expect(addInvoiceBodySchema.safeParse({
       ...validPayload,
-      feeType: "Tampered",
-      amount: 1,
-      dueDate: "2099-01-01",
-      academicYear: "2099-00",
-      status: "Paid",
-      breakdownSnapshot: [],
-      invoiceNumber: "INV-0000",
-    });
-    expect(result.success).toBe(true);
-    if (!result.success) throw new Error("Expected schema success");
-    expect(result.data).toEqual(validPayload);
+      breakdown: [{ name: "", purpose: "", amount: 1 }],
+    }).success).toBe(false);
+    expect(addInvoiceBodySchema.safeParse({
+      ...validPayload,
+      lateFeeConfig: { ...validPayload.lateFeeConfig, type: "WEEKLY" },
+    }).success).toBe(false);
   });
 
-  it("contains no payment or receipt fields", () => {
+  it("strips payment, receipt, status, and invoice-number overrides", () => {
     const result = addInvoiceBodySchema.parse({
       ...validPayload,
+      status: "Paid",
       paidDate: "2026-08-01",
       receiptNumber: "RCPT-1",
-      razorpayOrderId: "order_1",
+      invoiceNumber: "INV-0000",
+      sessionId: 999,
+      feeStructureId: 7,
     }) as any;
+    expect(result.status).toBeUndefined();
     expect(result.paidDate).toBeUndefined();
     expect(result.receiptNumber).toBeUndefined();
-    expect(result.razorpayOrderId).toBeUndefined();
+    expect(result.invoiceNumber).toBeUndefined();
+    expect(result.sessionId).toBeUndefined();
+    expect(result.feeStructureId).toBeUndefined();
   });
 });

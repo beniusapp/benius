@@ -156,7 +156,7 @@ export async function acquireRazorpayOrder(
 
     // Row-level write lock — concurrent requests for this fee block here.
     const lockedResult = await tx.execute(sql`
-      SELECT id, status, amount, late_fee_amount, due_date, fee_type,
+      SELECT id, status, amount, late_fee_amount, due_date, fee_type, late_fee_config,
              razorpay_order_id, razorpay_order_expires_at
       FROM fee_records
       WHERE id = ${feeRecordId} AND school_id = ${schoolId}
@@ -291,7 +291,7 @@ export async function acquireRazorpayOrder(
     // Compute the authoritative late fee at this exact moment — not the nightly-cached
     // late_fee_amount stored on the row.  This guarantees the Razorpay order amount
     // equals exactly what the student portal displays right now.
-    const lateFeeConfig = lateFeeConfigMap.get(
+    const lateFeeConfig = (locked.late_fee_config as LateFeeConfig | null) ?? lateFeeConfigMap.get(
       ((locked.fee_type as string) ?? "").trim().toLowerCase(),
     ) ?? DEFAULT_LATE_FEE_CONFIG;
     const currentLateFee = calculateLateFee(
@@ -884,6 +884,8 @@ export function registerFeesRoutes(app: Express) {
         fr.id,
         fr.student_id       AS "studentId",
         fr.fee_type         AS "feeType",
+        fr.fee_name         AS "feeName",
+        fr.frequency        AS "frequency",
         fr.amount,
         fr.due_date         AS "dueDate",
         fr.status,
@@ -891,6 +893,7 @@ export function registerFeesRoutes(app: Express) {
         fr.fee_period_start AS "feePeriodStart",
         fr.fee_period_end   AS "feePeriodEnd",
         fr.late_fee_amount  AS "lateFeeAmount",
+        fr.late_fee_config  AS "lateFeeConfig",
         fr.academic_year    AS "academicYear"
       FROM fee_records fr
       WHERE fr.student_id = ${studentId}
@@ -909,7 +912,7 @@ export function registerFeesRoutes(app: Express) {
     const today = new Date().toISOString().slice(0, 10);
 
     const invoices = (rows.rows as any[]).map(r => {
-      const cfg     = lateFeeMap.get((r.feeType ?? "").trim().toLowerCase());
+      const cfg     = r.lateFeeConfig ?? lateFeeMap.get((r.feeType ?? "").trim().toLowerCase());
       const accrued = cfg ? calculateLateFee(cfg, r.dueDate ?? "", r.status, new Date(today)) : 0;
       return { ...r, accruedLateFee: accrued, totalDue: Number(r.amount) + accrued };
     });
@@ -1204,12 +1207,12 @@ export function registerFeesRoutes(app: Express) {
 
         // Acquire a row-level write lock — concurrent requests will queue here.
         const lockResult = await tx.execute(
-          sql`SELECT status, amount, due_date, fee_type FROM fee_records
+          sql`SELECT status, amount, due_date, fee_type, late_fee_config FROM fee_records
               WHERE id = ${paymentOnly.feeRecordId} AND school_id = ${schoolId}
               FOR UPDATE`,
         );
         const lockedFee = lockResult.rows[0] as {
-          status: string; amount: number; due_date: string; fee_type: string;
+          status: string; amount: number; due_date: string; fee_type: string; late_fee_config: LateFeeConfig | null;
         } | undefined;
 
         if (lockedFee) {
@@ -1228,7 +1231,7 @@ export function registerFeesRoutes(app: Express) {
 
           // Compute the current late fee using the live moment — same function used by the
           // student portal and Razorpay order creation, so all three surfaces agree.
-          const offlineLFConfig = offlineLateFeeMap.get(
+          const offlineLFConfig = lockedFee.late_fee_config ?? offlineLateFeeMap.get(
             (lockedFee.fee_type ?? "").trim().toLowerCase(),
           ) ?? DEFAULT_LATE_FEE_CONFIG;
           const offlineLateFee = calculateLateFee(
@@ -3367,7 +3370,7 @@ td:last-child{font-weight:600;word-break:break-all;}
         s.digital_student_id AS student_id,
         s.class             AS class,
         s.section           AS section,
-        COALESCE(fs.name, fr.fee_type) AS fee_name,
+        COALESCE(fr.fee_name, fs.name, fr.fee_type) AS fee_name,
         fr.fee_type         AS fee_type,
         fr.amount           AS invoice_amount,
         COALESCE(p.total_paid, 0)::int  AS amount_paid,
@@ -3401,7 +3404,7 @@ td:last-child{font-weight:600;word-break:break-all;}
         ${dateTo   ? sql`AND fr.due_date <= ${dateTo}`   : sql``}
         ${classFilter   ? sql`AND s.class = ${classFilter}`         : sql``}
         ${feeTypeFilter ? sql`AND fr.fee_type = ${feeTypeFilter}`   : sql``}
-        ${feeNameFilter ? sql`AND fs.name = ${feeNameFilter}`       : sql``}
+        ${feeNameFilter ? sql`AND COALESCE(fr.fee_name, fs.name, fr.fee_type) = ${feeNameFilter}` : sql``}
       ORDER BY s.class, s.name, fr.due_date
     `);
 
@@ -3514,9 +3517,9 @@ td:last-child{font-weight:600;word-break:break-all;}
         // so the sequence advance rolls back with the row updates if the server
         // crashes mid-run.  This prevents gaps from partial backfill runs.
         const afSeqResult = await tx.execute(
-          sql`INSERT INTO receipt_sequences (prefix, current_number)
-                VALUES ('AF', ${feeIds.length})
-              ON CONFLICT (prefix) DO UPDATE
+          sql`INSERT INTO receipt_sequences (school_id, prefix, current_number)
+                VALUES (${schoolId}, 'AF', ${feeIds.length})
+              ON CONFLICT (school_id, prefix) DO UPDATE
                 SET current_number = receipt_sequences.current_number + ${feeIds.length}
               RETURNING current_number`,
         );
@@ -3550,9 +3553,9 @@ td:last-child{font-weight:600;word-break:break-all;}
         // Same atomic batch pattern: advance the OP sequence once inside the
         // transaction so a mid-run crash rolls back both the counter and the rows.
         const opSeqResult = await tx.execute(
-          sql`INSERT INTO receipt_sequences (prefix, current_number)
-                VALUES ('OP', ${payIds.length})
-              ON CONFLICT (prefix) DO UPDATE
+          sql`INSERT INTO receipt_sequences (school_id, prefix, current_number)
+                VALUES (${schoolId}, 'OP', ${payIds.length})
+              ON CONFLICT (school_id, prefix) DO UPDATE
                 SET current_number = receipt_sequences.current_number + ${payIds.length}
               RETURNING current_number`,
         );
@@ -4094,7 +4097,7 @@ td:last-child{font-weight:600;word-break:break-all;}
           -- Fee info
           pa.fee_record_id                                                 AS "feeRecordId",
           fr.fee_type                                                      AS "feeType",
-          fr.fee_type                                                      AS "feeName",
+          COALESCE(fr.fee_name, fr.fee_type)                                AS "feeName",
           fr.invoice_number                                                AS "invoiceNumber",
 
           -- Amount: display rupees for existing logic; raw paise for breakdowns

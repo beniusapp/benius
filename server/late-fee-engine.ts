@@ -132,7 +132,7 @@ export function getInvoiceCurrentDetails(
 
 /**
  * Recalculates and persists `late_fee_amount` for every unpaid invoice in a
- * school that belongs to a structure with late-fee rules enabled.
+ * school that has an invoice-specific or structure-backed late-fee rule.
  * Returns the count of records updated.
  */
 export async function recalculateLateFees(schoolId: number): Promise<number> {
@@ -153,11 +153,15 @@ export async function recalculateLateFees(schoolId: number): Promise<number> {
     }
   }
 
-  if (configMap.size === 0) return 0;
-
   // 2. Load all unpaid fee records for the school
   const unpaid = await db
-    .select({ id: feeRecords.id, feeType: feeRecords.feeType, dueDate: feeRecords.dueDate, status: feeRecords.status })
+    .select({
+      id: feeRecords.id,
+      feeType: feeRecords.feeType,
+      dueDate: feeRecords.dueDate,
+      status: feeRecords.status,
+      lateFeeConfig: feeRecords.lateFeeConfig,
+    })
     .from(feeRecords)
     .where(and(
       eq(feeRecords.schoolId, schoolId),
@@ -170,7 +174,8 @@ export async function recalculateLateFees(schoolId: number): Promise<number> {
   // 3. Compute and batch-update
   let updated = 0;
   for (const rec of unpaid) {
-    const cfg = configMap.get(rec.feeType.trim().toLowerCase());
+    const cfg = (rec.lateFeeConfig as LateFeeConfig | null)
+      ?? configMap.get(rec.feeType.trim().toLowerCase());
     if (!cfg) continue;
     const lateFee = calculateLateFee(cfg, rec.dueDate, rec.status, today);
     await db

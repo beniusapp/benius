@@ -647,6 +647,11 @@ export const feeRecords = pgTable("fee_records", {
   // Legacy and admin-direct invoices default to [] (empty — no component table shown on receipt).
   // Shape matches fee_structures.breakdown exactly: { name, purpose, amount }.
   breakdownSnapshot: jsonb("breakdown_snapshot").$type<Array<{ name: string; purpose: string; amount: number }>>().notNull().default([]),
+  // Manual one-student invoices retain their own fee metadata so later edits to a
+  // fee structure never alter what was originally billed.
+  feeName: varchar("fee_name", { length: 100 }),
+  frequency: varchar("frequency", { length: 20 }),
+  lateFeeConfig: jsonb("late_fee_config").$type<LateFeeConfig | null>(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
 }, (table) => [
@@ -1099,11 +1104,11 @@ export const externalPaymentSettings = pgTable("external_payment_settings", {
 });
 export type ExternalPaymentSettings = typeof externalPaymentSettings.$inferSelect;
 
-// Monotonically-increasing receipt sequence counters — one row per prefix (OP, AF).
+// Monotonically-increasing receipt sequence counters — one row per school/prefix.
 // Deletion of any ledger row NEVER decrements these counters.
 export const receiptSequences = pgTable("receipt_sequences", {
   id: serial("id").primaryKey(),
-  schoolId: integer("school_id").notNull().default(1),
+  schoolId: integer("school_id").notNull(),
   prefix: varchar("prefix", { length: 10 }).notNull(),
   currentNumber: integer("current_number").notNull().default(0),
 });

@@ -1623,10 +1623,15 @@ const NOTIF_CHANNEL_ICONS: Record<string, React.ReactNode> = {
   whatsapp: <Phone className="w-3.5 h-3.5" />,
   email:    <Mail className="w-3.5 h-3.5" />,
 };
+const SUPPORTED_FREQUENCIES = ["monthly", "quarterly", "annual", "one-time"] as const;
+type SupportedFrequency = typeof SUPPORTED_FREQUENCIES[number];
+
 const feeFormSchema = z.object({
   studentId: z.string().min(1, "Select a student"),
+  feeName: z.string().optional(),
   feeType: z.string().min(1, "Fee type is required"),
   amount: z.string().min(1, "Amount is required").refine(v => !isNaN(Number(v)) && Number(v) > 0, "Must be a positive number"),
+  frequency: z.string().optional(),
   dueDate: z.string().optional(),
   status: z.enum(["Due", "Paid", "Overdue"]),
   paidDate: z.string().optional(),
@@ -1846,7 +1851,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [studentResults, setStudentResults] = useState<StudentItem[] | null>(null);
   const [selectedStudent, setSelectedStudent] = useState<StudentItem | null>(null);
   const [studentSearchLoading, setStudentSearchLoading] = useState(false);
-  const [selectedStructureId, setSelectedStructureId] = useState<number | null>(null);
   const [invoiceBreakdown, setInvoiceBreakdown] = useState<InvoiceBreakdownRow[]>([]);
   const [invoiceLateFeeEnabled, setInvoiceLateFeeEnabled] = useState(false);
   const [invoiceLateFeeType, setInvoiceLateFeeType] = useState<"NONE" | "FLAT" | "DAILY" | "TIERED">("FLAT");
@@ -1889,19 +1893,12 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     setExpandedLedgerRow(null);
   }, [ledgerPage]);
 
-  // Fee structures — used for "Fee Name" picker in Add Fee form
+  // Fee structures remain the source for historical display-name fallbacks.
   const { data: feeStructures = [] } = useQuery<FeeStructure[]>({
     queryKey: ["/api/admin/fees/structures"],
     staleTime: 300_000,
   });
   const activeStructures = useMemo(() => feeStructures, [feeStructures]);
-  // Structures filtered to the currently selected student's class (or all if no student / no class restriction)
-  const structuresForStudent = useMemo(() => {
-    const cls = selectedStudent?.class ?? null;
-    return activeStructures.filter(s =>
-      s.applicableClasses.length === 0 || (cls && s.applicableClasses.includes(cls))
-    );
-  }, [activeStructures, selectedStudent]);
   // Map feeType (normalized: trim+lowercase) → structure name.
   // Used as a client-side fallback when the server-side feeName field is absent
   // (e.g. stale React Query cache from before the field was added).
@@ -2010,15 +2007,13 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
   const form = useForm<FeeFormValues>({
     resolver: zodResolver(feeFormSchema),
-    defaultValues: { studentId: "", feeType: "", amount: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: "", feePeriodStart: "", feePeriodEnd: "" },
+    defaultValues: { studentId: "", feeName: "", feeType: "", amount: "", frequency: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: "", feePeriodStart: "", feePeriodEnd: "" },
   });
   const watchStatus = form.watch("status");
   const dueDateNotNeeded = watchStatus === "Paid";
   const watchPeriodStart = form.watch("feePeriodStart") ?? "";
   const watchPeriodEnd   = form.watch("feePeriodEnd")   ?? "";
-  const selectedInvoiceStructure = selectedStructureId == null
-    ? null
-    : activeStructures.find(structure => structure.id === selectedStructureId) ?? null;
+  const watchFrequency   = form.watch("frequency") ?? "";
   const invoiceBreakdownTotal = invoiceBreakdown.reduce((sum, row) => sum + (parseInt(row.amount) || 0), 0);
   const invoiceBreakdownMismatch = invoiceBreakdown.length > 0
     && invoiceBreakdownTotal !== (parseInt(form.watch("amount")) || 0);
@@ -2028,53 +2023,17 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     if (dueDateNotNeeded) form.setValue("dueDate", "");
   }, [dueDateNotNeeded]);
 
+  // When frequency changes in create mode, suggest period dates from session
   useEffect(() => {
-    if (editing || !selectedInvoiceStructure || !watchPeriodStart) return;
-    if (!selectedInvoiceStructure.dueDayOfMonth) {
-      form.setValue("dueDate", watchPeriodEnd);
-      return;
+    if (editing || !selectedStudent || !watchFrequency) return;
+    if (!SUPPORTED_FREQUENCIES.includes(watchFrequency as SupportedFrequency)) return;
+    const period = addInvoicePeriodForSession(watchFrequency, selectedSession);
+    if (period.start) form.setValue("feePeriodStart", period.start, { shouldValidate: true });
+    if (period.end) {
+      form.setValue("feePeriodEnd", period.end, { shouldValidate: true });
+      form.setValue("dueDate", period.end);
     }
-    const referenceDate = new Date(`${watchPeriodStart}T00:00:00`);
-    if (Number.isNaN(referenceDate.getTime())) return;
-    const year = referenceDate.getFullYear();
-    const month = referenceDate.getMonth();
-    const lastDay = new Date(year, month + 1, 0).getDate();
-    const day = Math.min(selectedInvoiceStructure.dueDayOfMonth, lastDay);
-    form.setValue(
-      "dueDate",
-      `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
-    );
-  }, [editing, form, selectedInvoiceStructure, watchPeriodStart, watchPeriodEnd]);
-
-  function selectInvoiceStructure(structureId: string) {
-    const structure = activeStructures.find(item => item.id === Number(structureId));
-    if (!structure) return;
-    setSelectedStructureId(structure.id);
-    setInvoiceBreakdown((structure.breakdown ?? []).map(row => ({
-      name: row.name,
-      purpose: row.purpose,
-      amount: String(row.amount),
-    })));
-    const lateFeeConfig = structure.lateFeeConfig ?? {};
-    setInvoiceLateFeeEnabled(!!lateFeeConfig.enabled);
-    setInvoiceLateFeeType(lateFeeConfig.type && lateFeeConfig.type !== "NONE" ? lateFeeConfig.type : "FLAT");
-    setInvoiceLateFeeGraceDays(String(lateFeeConfig.grace_period_days ?? 0));
-    setInvoiceLateFeeFlat(String(lateFeeConfig.flat_amount ?? 0));
-    setInvoiceLateFeeDailyRate(String(lateFeeConfig.daily_rate ?? 0));
-    setInvoiceLateFeeCap(String(lateFeeConfig.max_cap ?? 0));
-    setInvoiceLateFeeSlabs((lateFeeConfig.tiered_slabs ?? []).map(slab => ({
-      from_day: String(slab.from_day ?? ""),
-      to_day: String(slab.to_day ?? ""),
-      amount: String(slab.amount ?? ""),
-    })));
-    form.setValue("feeType", structure.feeType, { shouldValidate: true });
-    form.setValue("amount", String(structure.amount), { shouldValidate: true });
-    form.setValue("academicYear", selectedSession?.sessionName ?? "");
-    const period = addInvoicePeriodForSession(structure.frequency, selectedSession);
-    form.setValue("feePeriodStart", period.start, { shouldValidate: true });
-    form.setValue("feePeriodEnd", period.end, { shouldValidate: true });
-    form.setValue("dueDate", period.end);
-  }
+  }, [editing, watchFrequency, selectedStudent, selectedSession]);
 
   function resetInvoiceStructureDraft() {
     setInvoiceBreakdown([]);
@@ -2121,8 +2080,11 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
   const createMut = useMutation({
     mutationFn: async (data: FeeFormValues) => {
-      if (!selectedStructureId) throw new Error("Fee name is required");
+      if (!data.feeName?.trim()) throw new Error("Fee name is required");
+      if (!data.feeType?.trim()) throw new Error("Fee type is required");
+      if (!data.frequency || !SUPPORTED_FREQUENCIES.includes(data.frequency as SupportedFrequency)) throw new Error("Valid frequency is required");
       if (!data.feePeriodStart || !data.feePeriodEnd) throw new Error("Fee period is required");
+      if (!data.dueDate) throw new Error("Due date is required");
 
       const parsedBreakdown = invoiceBreakdown
         .filter(row => row.name.trim())
@@ -2131,36 +2093,36 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
           purpose: row.purpose.trim(),
           amount: parseInt(row.amount) || 0,
         }));
-      const structureUpdate = await apiRequest("PATCH", `/api/admin/fees/structures/${selectedStructureId}`, {
-        breakdown: parsedBreakdown,
-        lateFeeConfig: {
-          enabled: invoiceLateFeeEnabled,
-          type: invoiceLateFeeEnabled ? invoiceLateFeeType : "NONE",
-          grace_period_days: invoiceLateFeeEnabled && invoiceLateFeeType === "DAILY"
-            ? (parseInt(invoiceLateFeeGraceDays) || 0) : 0,
-          flat_amount: parseInt(invoiceLateFeeFlat) || 0,
-          daily_rate: parseFloat(invoiceLateFeeDailyRate) || 0,
-          max_cap: invoiceLateFeeEnabled && invoiceLateFeeType === "DAILY"
-            ? (parseInt(invoiceLateFeeCap) || 0) : 0,
-          tiered_slabs: invoiceLateFeeSlabs
-            .filter(slab => slab.from_day && slab.to_day && slab.amount)
-            .map(slab => ({
-              from_day: parseInt(slab.from_day),
-              to_day: parseInt(slab.to_day),
-              amount: parseInt(slab.amount),
-            })),
-        },
-      });
-      if (!structureUpdate.ok) {
-        const body = await structureUpdate.json().catch(() => ({}));
-        throw new Error(body.message ?? "Failed to update the selected fee structure");
-      }
+
+      const lateFeeConfig = {
+        enabled: invoiceLateFeeEnabled,
+        type: invoiceLateFeeEnabled ? invoiceLateFeeType : "NONE",
+        grace_period_days: invoiceLateFeeEnabled && invoiceLateFeeType === "DAILY"
+          ? (parseInt(invoiceLateFeeGraceDays) || 0) : 0,
+        flat_amount: parseInt(invoiceLateFeeFlat) || 0,
+        daily_rate: parseFloat(invoiceLateFeeDailyRate) || 0,
+        max_cap: invoiceLateFeeEnabled && invoiceLateFeeType === "DAILY"
+          ? (parseInt(invoiceLateFeeCap) || 0) : 0,
+        tiered_slabs: invoiceLateFeeSlabs
+          .filter(slab => slab.from_day && slab.to_day && slab.amount)
+          .map(slab => ({
+            from_day: parseInt(slab.from_day),
+            to_day: parseInt(slab.to_day),
+            amount: parseInt(slab.amount),
+          })),
+      };
 
       const res = await apiRequest("POST", "/api/admin/fees", {
         studentId: Number(data.studentId),
-        feeStructureId: selectedStructureId,
+        feeName: data.feeName.trim(),
+        feeType: data.feeType.trim(),
+        amount: Number(data.amount),
+        frequency: data.frequency,
         feePeriodStart: data.feePeriodStart,
         feePeriodEnd:   data.feePeriodEnd,
+        dueDate: data.dueDate,
+        lateFeeConfig,
+        breakdown: parsedBreakdown,
         notes: data.notes || null,
       });
       if (!res.ok) {
@@ -2170,7 +2132,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       return res.json();
     },
     onSuccess: (rec: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/structures"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/payments"] });
@@ -2236,10 +2197,11 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     form.setValue("studentId", String(s.id), { shouldValidate: true });
     setStudentResults(null);
     setStudentSearchQ("");
-    setSelectedStructureId(null);
     setInvoiceBreakdown([]);
+    form.setValue("feeName", "");
     form.setValue("feeType", "");
     form.setValue("amount", "");
+    form.setValue("frequency", "");
     form.setValue("feePeriodStart", "");
     form.setValue("feePeriodEnd", "");
     form.setValue("dueDate", "");
@@ -2248,11 +2210,13 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   function clearStudentPick() {
     setSelectedStudent(null);
     setStudentSearchQ(""); setStudentResults(null);
-    setSelectedStructureId(null);
     setInvoiceBreakdown([]);
+    resetInvoiceStructureDraft();
     form.setValue("studentId", "", { shouldValidate: false });
+    form.setValue("feeName", "");
     form.setValue("feeType", "");
     form.setValue("amount", "");
+    form.setValue("frequency", "");
     form.setValue("feePeriodStart", "");
     form.setValue("feePeriodEnd", "");
     form.setValue("dueDate", "");
@@ -2273,8 +2237,9 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
   function openCreate() {
     setEditing(null);
-    form.reset({ studentId: "", feeType: "", amount: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: selectedSession?.sessionName ?? "", feePeriodStart: "", feePeriodEnd: "" });
-    setSelectedStudent(null); setStudentSearchQ(""); setStudentResults(null); setSelectedStructureId(null); setInvoiceBreakdown([]);
+    form.reset({ studentId: "", feeName: "", feeType: "", amount: "", frequency: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: selectedSession?.sessionName ?? "", feePeriodStart: "", feePeriodEnd: "" });
+    setSelectedStudent(null); setStudentSearchQ(""); setStudentResults(null); setInvoiceBreakdown([]);
+    resetInvoiceStructureDraft();
     setShowForm(true);
   }
 
@@ -2287,7 +2252,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       feePeriodStart: (rec as any).feePeriodStart ?? "", feePeriodEnd: (rec as any).feePeriodEnd ?? "",
     });
     setSelectedStudent(students.find(s => s.id === rec.studentId) ?? null);
-    setStudentSearchQ(""); setStudentResults(null); setSelectedStructureId(null); setInvoiceBreakdown([]);
+    setStudentSearchQ(""); setStudentResults(null); setInvoiceBreakdown([]);
     setShowForm(true);
   }
 
@@ -2924,68 +2889,90 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
               {!editing && selectedStudent && (
                 <>
                   <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs text-white/60 mb-1 block">Fee Name</label>
-                      <select
-                        value={selectedStructureId?.toString() ?? ""}
-                        onChange={e => selectInvoiceStructure(e.target.value)}
-                        className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
-                        <option value="">— Select fee name —</option>
-                        {structuresForStudent.map(s => (
-                          <option key={s.id} value={s.id}>{s.name} · ₹{s.amount.toLocaleString("en-IN")}</option>
-                        ))}
-                      </select>
-                    </div>
+                    <FormField control={form.control} name="feeName" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs text-white/60 mb-1 block">Fee Name</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="e.g. Tuition Fee" className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30" />
+                        </FormControl>
+                        <FormMessage className="text-red-400" />
+                      </FormItem>
+                    )} />
                     <FormField control={form.control} name="feeType" render={({ field }) => (
                       <FormItem>
                         <FormLabel className="text-xs text-white/60 mb-1 block">Fee Type</FormLabel>
                         <FormControl>
-                          <Input {...field} readOnly placeholder="Tuition / Transport…" className="bg-[#0A1628] border-white/20 text-white read-only:text-white/60" />
+                          <Input {...field} placeholder="Tuition / Transport…" className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30" />
                         </FormControl>
+                        <FormMessage className="text-red-400" />
                       </FormItem>
                     )} />
                   </div>
-                  {structuresForStudent.length === 0 && (
-                    <p className="text-amber-400 text-xs -mt-2">No fee structures apply to this student's class.</p>
-                  )}
 
                   <div className="grid grid-cols-2 gap-3">
                     <FormField control={form.control} name="amount" render={({ field }) => (
                       <FormItem>
                         <FormLabel className="text-xs text-white/60 mb-1 block">Amount (₹)</FormLabel>
                         <FormControl>
-                          <Input {...field} readOnly type="number" min={1} placeholder="Enter amount" className="bg-[#0A1628] border-white/20 text-white read-only:text-white/60" />
+                          <Input {...field} type="number" min={1} placeholder="Enter amount" className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30" />
                         </FormControl>
+                        <FormMessage className="text-red-400" />
                       </FormItem>
                     )} />
-                    <div>
-                      <label className="text-xs text-white/60 mb-1 block">Frequency</label>
-                      <select
-                        value={selectedInvoiceStructure?.frequency ?? ""}
-                        disabled
-                        className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white disabled:opacity-60">
-                        <option value="">Select fee name first</option>
-                        <option value="monthly">Monthly</option>
-                        <option value="quarterly">Quarterly</option>
-                        <option value="annual">Annual</option>
-                        <option value="one-time">One-Time</option>
-                      </select>
-                    </div>
+                    <FormField control={form.control} name="frequency" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs text-white/60 mb-1 block">Frequency</FormLabel>
+                        <FormControl>
+                          <select
+                            {...field}
+                            className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
+                            <option value="">— Select frequency —</option>
+                            <option value="monthly">Monthly</option>
+                            <option value="quarterly">Quarterly</option>
+                            <option value="annual">Annual</option>
+                            <option value="one-time">One-Time</option>
+                          </select>
+                        </FormControl>
+                        <FormMessage className="text-red-400" />
+                      </FormItem>
+                    )} />
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
-                    <FormField control={form.control} name="dueDate" render={({ field }) => (
+                    <FormField control={form.control} name="feePeriodStart" render={({ field }) => (
                       <FormItem>
-                        <FormLabel className="text-xs text-white/60 mb-1 block">Due Date</FormLabel>
+                        <FormLabel className="text-xs text-white/60 mb-1 block">Fee Period Start</FormLabel>
                         <FormControl>
-                          <Input {...field} type="date" readOnly className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark] read-only:text-white/60" />
+                          <Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" />
                         </FormControl>
-                        {selectedInvoiceStructure?.dueDayOfMonth != null && (
-                          <p className="text-white/40 text-xs mt-1">Day {selectedInvoiceStructure.dueDayOfMonth} of each month</p>
-                        )}
+                        <FormMessage className="text-red-400" />
+                      </FormItem>
+                    )} />
+                    <FormField control={form.control} name="feePeriodEnd" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs text-white/60 mb-1 block">Fee Period End</FormLabel>
+                        <FormControl>
+                          <Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" />
+                        </FormControl>
+                        <FormMessage className="text-red-400" />
                       </FormItem>
                     )} />
                   </div>
+                  {watchPeriodStart && watchPeriodEnd && (
+                    <p className="text-xs text-white/40 -mt-1">
+                      Period: {clientFeePeriodLabel(watchPeriodStart, watchPeriodEnd)}
+                    </p>
+                  )}
+
+                  <FormField control={form.control} name="dueDate" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs text-white/60 mb-1 block">Due Date</FormLabel>
+                      <FormControl>
+                        <Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" />
+                      </FormControl>
+                      <FormMessage className="text-red-400" />
+                    </FormItem>
+                  )} />
 
                   <div className={`rounded-xl border p-4 space-y-3 transition-all ${invoiceLateFeeEnabled ? "border-amber-600/40 bg-amber-900/10" : "border-white/10 bg-white/5"}`}>
                     <div className="flex items-center justify-between">
@@ -3065,7 +3052,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                             )}
                           </div>
                         )}
-                        <p className="text-[11px] text-amber-400/60 leading-snug">⏰ The nightly cron recalculates fines for all overdue invoices under this structure automatically.</p>
+                        <p className="text-[11px] text-amber-400/60 leading-snug">⏰ The nightly cron recalculates fines for all overdue invoices with a matching late fee config automatically.</p>
                       </div>
                     )}
                   </div>
@@ -3112,7 +3099,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                         Components total (₹{invoiceBreakdownTotal.toLocaleString("en-IN")}) doesn't match main amount (₹{(parseInt(form.watch("amount")) || 0).toLocaleString("en-IN")}). Adjust or remove components.
                       </p>
                     )}
-                    <p className="text-[11px] text-white/30 px-1">Changes update the selected Fee Structure and are saved as this invoice's component snapshot.</p>
+                    <p className="text-[11px] text-white/30 px-1">Components are saved as this invoice's breakdown snapshot.</p>
                   </div>
                 </>
               )}
@@ -3161,7 +3148,21 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
               <div className="flex gap-2 justify-end pt-2">
                 <Button type="button" variant="ghost" onClick={() => { setShowForm(false); setEditing(null); }} className="text-white/60">Cancel</Button>
                 <Button type="submit"
-                  disabled={createMut.isPending || updateMut.isPending || (!editing && (!selectedStudent || !selectedStructureId || !watchPeriodStart || !watchPeriodEnd))}
+                  disabled={
+                    createMut.isPending || updateMut.isPending || (
+                      !editing && (
+                        !selectedStudent ||
+                        !form.watch("feeName")?.trim() ||
+                        !form.watch("feeType")?.trim() ||
+                        !(Number(form.watch("amount")) > 0) ||
+                        !SUPPORTED_FREQUENCIES.includes(watchFrequency as SupportedFrequency) ||
+                        !watchPeriodStart ||
+                        !watchPeriodEnd ||
+                        !form.watch("dueDate") ||
+                        invoiceBreakdownMismatch
+                      )
+                    )
+                  }
                   className="bg-cyan-600 hover:bg-cyan-500 text-white">
                   {(createMut.isPending || updateMut.isPending) && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
                   {editing ? "Save Changes" : "Create Invoice"}

@@ -56,3 +56,11 @@ High-value payment re-auth: amounts ≥ ₹10 000 require a second PIN confirmat
 **AcquireOrderResult** success shape now includes `lateFeeAmount: number`. Existing tests unaffected (no fee structure → `DEFAULT_LATE_FEE_CONFIG` → late fee = 0).
 
 **Test coverage:** `server/__tests__/late-fee-engine.test.ts` (27 pure unit tests, all pass in isolation); `server/__tests__/late-fee-integration.test.ts` (8 tests, 1 unit guard passes in isolation, 7 DB tests pass in full `npm test` suite — same as all other DB integration tests).
+
+## Manual Invoice Metadata Snapshots
+
+Manual one-student invoices must not create or mutate a fee structure. Their fee name, frequency, and late-fee configuration are stored on the invoice record alongside the immutable component breakdown. All later display, late-fee, and payment calculations prefer these invoice snapshots and fall back to fee-structure values only for legacy/structure-backed rows.
+
+**Why:** A structure is reusable configuration, while a manually issued invoice is historical billing data; changing a structure after creation must never change what a student was billed or what late fee applies.
+
+**How to apply:** Keep manual creation on the shared active-session/period/duplicate/numbering service, persist the snapshots on `fee_records`, and use `COALESCE`/record-first selection in every fee display and payment-total query.

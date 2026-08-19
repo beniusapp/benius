@@ -13,9 +13,11 @@ import {
   InvoiceGenerationError,
   buildInvoiceDuplicateIndex,
   computeStructureInvoiceDueDate,
+  createManualInvoice,
   createStructureInvoice,
   findDuplicateInvoice,
   isStudentEligibleForStructure,
+  prepareManualInvoiceContext,
   prepareStructureInvoiceContext,
   resolveInvoicePeriod,
 } from "../structure-invoice-service";
@@ -181,6 +183,115 @@ describe("shared structure invoice service", () => {
       periodStart: "2026-08-01",
     });
   });
+
+  it.each([
+    ["monthly", "2026-08-01", "2026-08-31", "2026-08-10"],
+    ["quarterly", "2026-04-01", "2026-06-30", "2026-05-10"],
+    ["annual", "2026-04-01", "2027-03-31", "2027-03-31"],
+    ["one-time", "2026-04-01", "2027-03-31", "2027-03-31"],
+  ] as const)("prepares a manual %s invoice with the canonical period", async (
+    frequency,
+    start,
+    end,
+    dueDate,
+  ) => {
+    const context = await prepareManualInvoiceContext({
+      schoolId: 3,
+      feeName: "Custom Tuition",
+      feeType: "Tuition",
+      amount: 3600,
+      frequency,
+      requestedPeriodStart: start,
+      requestedPeriodEnd: end,
+      dueDate,
+      breakdown: [{ name: "Instruction", purpose: "Classes", amount: 3600 }],
+      lateFeeConfig: {
+        enabled: true,
+        type: "DAILY",
+        grace_period_days: 2,
+        flat_amount: 0,
+        daily_rate: 25,
+        max_cap: 300,
+        tiered_slabs: [],
+      },
+    });
+
+    expect(context).toMatchObject({
+      feeName: "Custom Tuition",
+      feeType: "Tuition",
+      amount: 3600,
+      frequency,
+      periodStart: start,
+      periodEnd: end,
+      dueDate,
+      breakdownSnapshot: [{ name: "Instruction", purpose: "Classes", amount: 3600 }],
+    });
+  });
+
+  it("rejects manual due dates outside the canonical fee period and component mismatch", async () => {
+    await expect(prepareManualInvoiceContext({
+      schoolId: 3,
+      feeName: "Custom Tuition",
+      feeType: "Tuition",
+      amount: 3600,
+      frequency: "monthly",
+      requestedPeriodStart: "2026-08-01",
+      requestedPeriodEnd: "2026-08-31",
+      dueDate: "2026-09-01",
+      breakdown: [],
+      lateFeeConfig: null,
+    })).rejects.toThrow(/within the selected fee period/i);
+
+    await expect(prepareManualInvoiceContext({
+      schoolId: 3,
+      feeName: "Custom Tuition",
+      feeType: "Tuition",
+      amount: 3600,
+      frequency: "monthly",
+      requestedPeriodStart: "2026-08-01",
+      requestedPeriodEnd: "2026-08-31",
+      dueDate: "2026-08-10",
+      breakdown: [{ name: "Instruction", purpose: "", amount: 3500 }],
+      lateFeeConfig: null,
+    })).rejects.toThrow(/must match the invoice amount/i);
+  });
+
+  it.each(["FLAT", "DAILY", "TIERED"] as const)(
+    "persists a manual %s late-fee snapshot through the shared atomic creator",
+    async type => {
+      const context = await prepareManualInvoiceContext({
+        schoolId: 3,
+        feeName: "Custom Tuition",
+        feeType: "Tuition",
+        amount: 3600,
+        frequency: "monthly",
+        requestedPeriodStart: "2026-08-01",
+        requestedPeriodEnd: "2026-08-31",
+        dueDate: "2026-08-10",
+        breakdown: [{ name: "Instruction", purpose: "", amount: 3600 }],
+        lateFeeConfig: {
+          enabled: true,
+          type,
+          grace_period_days: type === "DAILY" ? 2 : 0,
+          flat_amount: type === "FLAT" ? 100 : 0,
+          daily_rate: type === "DAILY" ? 25 : 0,
+          max_cap: type === "DAILY" ? 300 : 0,
+          tiered_slabs: type === "TIERED" ? [{ from_day: 1, to_day: 7, amount: 100 }] : [],
+        },
+      });
+      await createManualInvoice({ context, studentId: 11, createdBy: 99 });
+
+      expect(storageMock.createStructureFeeRecordIfAbsent).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          feeName: "Custom Tuition",
+          frequency: "monthly",
+          lateFeeConfig: expect.objectContaining({ type }),
+          breakdownSnapshot: [{ name: "Instruction", purpose: "", amount: 3600 }],
+        }),
+        periodStart: "2026-08-01",
+      });
+    },
+  );
 
   it("uses the same case-insensitive duplicate identity for single and bulk callers", () => {
     const index = buildInvoiceDuplicateIndex([existingRecord] as any);

@@ -1,5 +1,6 @@
 import { storage } from "./storage";
 import { buildBreakdownSnapshot, warnOnSumMismatch, type BreakdownComponent } from "./invoice-snapshot";
+import type { LateFeeConfig } from "@shared/schema";
 
 type ActiveSession = NonNullable<Awaited<ReturnType<typeof storage.getActiveSession>>>;
 type Structure = NonNullable<Awaited<ReturnType<typeof storage.getFeeStructureById>>>;
@@ -22,6 +23,22 @@ export interface StructureInvoiceContext {
   breakdownSnapshot: BreakdownComponent[];
 }
 
+interface InvoiceCreationContext {
+  schoolId: number;
+  session: ActiveSession;
+  feeName: string;
+  feeType: string;
+  amount: number;
+  frequency: string;
+  periodStart: string;
+  periodEnd: string;
+  dueDate: string;
+  breakdownSnapshot: BreakdownComponent[];
+  lateFeeConfig: LateFeeConfig | null;
+}
+
+export interface ManualInvoiceContext extends InvoiceCreationContext {}
+
 export interface InvoiceDuplicateIndex {
   byPeriodStart: Map<string, ExistingFeeRecord>;
   legacyByType: Map<string, ExistingFeeRecord>;
@@ -39,6 +56,21 @@ function legacyKey(studentId: number, feeType: string): string {
   return `${studentId}:${normalizedFeeType(feeType)}`;
 }
 
+export function assertRealIsoDate(value: string, label: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new InvoiceGenerationError(`${label} must be a valid YYYY-MM-DD date.`);
+  }
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    parsed.getUTCFullYear() !== year
+    || parsed.getUTCMonth() !== month - 1
+    || parsed.getUTCDate() !== day
+  ) {
+    throw new InvoiceGenerationError(`${label} must be a real calendar date.`);
+  }
+}
+
 export function resolveInvoicePeriod(
   frequency: string,
   session: { startDate: string | Date; endDate: string | Date },
@@ -47,21 +79,6 @@ export function resolveInvoicePeriod(
 ): { periodStart: string; periodEnd: string } {
   const sessionStart = String(session.startDate).slice(0, 10);
   const sessionEnd = String(session.endDate).slice(0, 10);
-
-  const assertRealIsoDate = (value: string, label: string) => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      throw new InvoiceGenerationError(`${label} must be a valid YYYY-MM-DD date.`);
-    }
-    const [year, month, day] = value.split("-").map(Number);
-    const parsed = new Date(Date.UTC(year, month - 1, day));
-    if (
-      parsed.getUTCFullYear() !== year
-      || parsed.getUTCMonth() !== month - 1
-      || parsed.getUTCDate() !== day
-    ) {
-      throw new InvoiceGenerationError(`${label} must be a real calendar date.`);
-    }
-  };
 
   assertRealIsoDate(sessionStart, "Academic session start");
   assertRealIsoDate(sessionEnd, "Academic session end");
@@ -219,8 +236,64 @@ export async function prepareStructureInvoiceContext(input: {
   };
 }
 
-export async function createStructureInvoice(input: {
-  context: StructureInvoiceContext;
+export async function prepareManualInvoiceContext(input: {
+  schoolId: number;
+  feeName: string;
+  feeType: string;
+  amount: number;
+  frequency: string;
+  requestedPeriodStart: string;
+  requestedPeriodEnd: string;
+  dueDate: string;
+  breakdown: unknown;
+  lateFeeConfig: LateFeeConfig | null;
+}): Promise<ManualInvoiceContext> {
+  const session = await storage.getActiveSession(input.schoolId);
+  if (!session) {
+    throw new InvoiceGenerationError("No active academic session found. Please activate a session first.");
+  }
+
+  const { periodStart, periodEnd } = resolveInvoicePeriod(
+    input.frequency,
+    session,
+    input.requestedPeriodStart,
+    input.requestedPeriodEnd,
+  );
+  assertRealIsoDate(input.dueDate, "Due date");
+  if (input.dueDate < periodStart || input.dueDate > periodEnd) {
+    throw new InvoiceGenerationError("Due date must fall within the selected fee period.");
+  }
+
+  let breakdownSnapshot: BreakdownComponent[];
+  try {
+    breakdownSnapshot = buildBreakdownSnapshot(input.breakdown);
+  } catch (error: any) {
+    throw new InvoiceGenerationError(`Invalid fee component breakdown: ${error.message}`);
+  }
+  const componentTotal = breakdownSnapshot.reduce((sum, component) => sum + component.amount, 0);
+  if (breakdownSnapshot.length > 0 && componentTotal !== input.amount) {
+    throw new InvoiceGenerationError(
+      `Component total (₹${componentTotal}) must match the invoice amount (₹${input.amount}).`,
+    );
+  }
+
+  return {
+    schoolId: input.schoolId,
+    session,
+    feeName: input.feeName.trim(),
+    feeType: input.feeType.trim(),
+    amount: input.amount,
+    frequency: input.frequency,
+    periodStart,
+    periodEnd,
+    dueDate: input.dueDate,
+    breakdownSnapshot,
+    lateFeeConfig: input.lateFeeConfig,
+  };
+}
+
+async function createInvoiceFromContext(input: {
+  context: InvoiceCreationContext;
   studentId: number;
   notes?: string | null;
   createdBy?: number | null;
@@ -238,7 +311,7 @@ export async function createStructureInvoice(input: {
   const duplicate = findDuplicateInvoice(
     duplicateIndex,
     input.studentId,
-    input.context.structure.feeType,
+    input.context.feeType,
     input.context.periodStart,
   );
   if (duplicate) return { created: false, duplicate };
@@ -248,8 +321,9 @@ export async function createStructureInvoice(input: {
       schoolId: input.context.schoolId,
       studentId: input.studentId,
       sessionId: input.context.session.id,
-      feeType: input.context.structure.feeType,
-      amount: input.context.structure.amount,
+      feeName: input.context.feeName,
+      feeType: input.context.feeType,
+      amount: input.context.amount,
       dueDate: input.context.dueDate,
       status: "Due",
       academicYear: input.context.session.sessionName ?? null,
@@ -257,6 +331,8 @@ export async function createStructureInvoice(input: {
       feePeriodStart: input.context.periodStart,
       feePeriodEnd: input.context.periodEnd,
       breakdownSnapshot: input.context.breakdownSnapshot,
+      frequency: input.context.frequency,
+      lateFeeConfig: input.context.lateFeeConfig,
       createdBy: input.createdBy ?? null,
     },
     periodStart: input.context.periodStart,
@@ -267,8 +343,49 @@ export async function createStructureInvoice(input: {
   const record = atomicResult.record;
 
   duplicateIndex.byPeriodStart.set(
-    periodKey(input.studentId, input.context.structure.feeType, input.context.periodStart),
+    periodKey(input.studentId, input.context.feeType, input.context.periodStart),
     record,
   );
   return { created: true, record };
+}
+
+export async function createStructureInvoice(input: {
+  context: StructureInvoiceContext;
+  studentId: number;
+  notes?: string | null;
+  createdBy?: number | null;
+  duplicateIndex?: InvoiceDuplicateIndex;
+}): Promise<
+  | { created: false; duplicate: ExistingFeeRecord }
+  | { created: true; record: ExistingFeeRecord }
+> {
+  return createInvoiceFromContext({
+    ...input,
+    context: {
+      schoolId: input.context.schoolId,
+      session: input.context.session,
+      feeName: input.context.structure.name,
+      feeType: input.context.structure.feeType,
+      amount: input.context.structure.amount,
+      frequency: input.context.structure.frequency,
+      periodStart: input.context.periodStart,
+      periodEnd: input.context.periodEnd,
+      dueDate: input.context.dueDate,
+      breakdownSnapshot: input.context.breakdownSnapshot,
+      lateFeeConfig: (input.context.structure.lateFeeConfig as LateFeeConfig | null) ?? null,
+    },
+  });
+}
+
+export async function createManualInvoice(input: {
+  context: ManualInvoiceContext;
+  studentId: number;
+  notes?: string | null;
+  createdBy?: number | null;
+  duplicateIndex?: InvoiceDuplicateIndex;
+}): Promise<
+  | { created: false; duplicate: ExistingFeeRecord }
+  | { created: true; record: ExistingFeeRecord }
+> {
+  return createInvoiceFromContext(input);
 }

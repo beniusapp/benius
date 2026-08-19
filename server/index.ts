@@ -401,15 +401,39 @@ app.use((req, res, next) => {
     -- billing_timing removed from fee_structures (Step: Remove Billing Timing)
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS fee_period_start DATE;
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS fee_period_end DATE;
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS fee_name VARCHAR(100);
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS frequency VARCHAR(20);
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS late_fee_config JSONB;
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS late_fee_paid INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES academic_sessions(id) ON DELETE SET NULL;
     ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS student_id INTEGER REFERENCES students(id) ON DELETE SET NULL;
     CREATE INDEX IF NOT EXISTS idx_payment_records_school_session ON payment_records(school_id, session_id);
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS receipt_number VARCHAR(20);
     CREATE TABLE IF NOT EXISTS receipt_sequences (
-      prefix VARCHAR(10) PRIMARY KEY,
-      current_number INTEGER NOT NULL DEFAULT 0
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL,
+      prefix VARCHAR(10) NOT NULL,
+      current_number INTEGER NOT NULL DEFAULT 0,
+      UNIQUE (school_id, prefix)
     );
+    -- Older deployments used a global prefix-only counter. Keep those legacy
+    -- rows untouched, but provision the school-scoped sequence contract used by
+    -- invoice and payment creation before any current code writes to it.
+    ALTER TABLE receipt_sequences ADD COLUMN IF NOT EXISTS id SERIAL;
+    ALTER TABLE receipt_sequences ADD COLUMN IF NOT EXISTS school_id INTEGER;
+    ALTER TABLE receipt_sequences DROP CONSTRAINT IF EXISTS receipt_sequences_pkey;
+    CREATE UNIQUE INDEX IF NOT EXISTS receipt_sequences_school_prefix_uniq
+      ON receipt_sequences (school_id, prefix);
+    INSERT INTO receipt_sequences (school_id, prefix, current_number)
+      SELECT school_id, 'INV-', MAX((substring(invoice_number FROM '([0-9]+)$'))::integer)
+      FROM fee_records
+      WHERE invoice_number ~ '^INV-[0-9]+$'
+      GROUP BY school_id
+      ON CONFLICT (school_id, prefix) DO UPDATE
+      SET current_number = GREATEST(
+        receipt_sequences.current_number,
+        EXCLUDED.current_number
+      );
     CREATE TABLE IF NOT EXISTS notification_config (
       id SERIAL PRIMARY KEY,
       school_id INTEGER NOT NULL UNIQUE REFERENCES schools(id) ON DELETE CASCADE,

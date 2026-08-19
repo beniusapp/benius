@@ -26,9 +26,8 @@ import { buildLateFeeInfo } from "./late-fee-display";
 import { ledgerPaymentMethodLabel } from "./payment-method-label";
 import {
   InvoiceGenerationError,
-  createStructureInvoice,
-  isStudentEligibleForStructure,
-  prepareStructureInvoiceContext,
+  createManualInvoice,
+  prepareManualInvoiceContext,
 } from "./structure-invoice-service";
 import { addSSEClient, broadcastSessionActivated, broadcastSessionDeleted } from "./sse";
 import { db } from "./db";
@@ -4261,19 +4260,49 @@ export async function registerRoutes(
     notes: z.string().optional().nullable(),
     academicYear: z.string().max(20).optional().nullable(),
   });
+  const manualBreakdownItemSchema = z.object({
+    name: z.string().min(1).max(100),
+    purpose: z.string().max(300).default(""),
+    amount: z.number().int().min(0),
+  });
+  const manualLateFeeConfigSchema = z.object({
+    enabled: z.boolean().default(false),
+    type: z.enum(["NONE", "FLAT", "DAILY", "TIERED"]).default("NONE"),
+    grace_period_days: z.number().int().min(0).default(0),
+    flat_amount: z.number().int().min(0).default(0),
+    daily_rate: z.number().min(0).default(0),
+    max_cap: z.number().int().min(0).default(0),
+    tiered_slabs: z.array(z.object({
+      from_day: z.number().int().min(1),
+      to_day: z.number().int().min(1),
+      amount: z.number().int().min(0),
+    })).default([]),
+  });
+
   // Schema for manual individual invoice creation (POST /api/admin/fees).
-  // Status is NOT accepted from the client — every new manual invoice starts as "Due".
-  // Fee Period (start + end) is required so the invoice is properly period-tagged.
+  // Status, session, invoice number, and payment fields remain server controlled.
   const createFeeRecordBodySchema = z.object({
     studentId: z.number().int().positive(),
-    feeStructureId: z.number().int().positive("Fee name is required"),
-    feePeriodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
-    feePeriodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+    feeName: z.string().trim().min(1).max(100),
+    feeType: z.string().trim().min(1).max(100),
+    amount: z.number().int().positive(),
+    frequency: z.enum(["monthly", "quarterly", "annual", "one-time"]),
+    feePeriodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    feePeriodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    breakdown: z.array(manualBreakdownItemSchema).default([]),
+    lateFeeConfig: manualLateFeeConfigSchema.default({
+      enabled: false,
+      type: "NONE",
+      grace_period_days: 0,
+      flat_amount: 0,
+      daily_rate: 0,
+      max_cap: 0,
+      tiered_slabs: [],
+    }),
     notes: z.string().optional().nullable(),
   }).superRefine((val, ctx) => {
-    if (!!val.feePeriodStart !== !!val.feePeriodEnd) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Fee period start and end must be provided together", path: ["feePeriodEnd"] });
-    } else if (val.feePeriodStart && val.feePeriodEnd && val.feePeriodEnd < val.feePeriodStart) {
+    if (val.feePeriodEnd < val.feePeriodStart) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Fee period end must be on or after start", path: ["feePeriodEnd"] });
     }
   });
@@ -4329,7 +4358,7 @@ export async function registerRoutes(
     }
     if (classFilter && classFilter !== "all") conditions.push(sql`s.class = ${classFilter}`);
     if (feeType && feeType !== "all") conditions.push(sql`fr.fee_type = ${feeType}`);
-    if (feeName && feeName !== "all") conditions.push(sql`COALESCE(structure.fee_name, fr.fee_type) = ${feeName}`);
+    if (feeName && feeName !== "all") conditions.push(sql`COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) = ${feeName}`);
     if (academicYear && academicYear !== "all") conditions.push(sql`fr.academic_year = ${academicYear}`);
     if (search?.trim()) {
       const searchPattern = `%${search.trim()}%`;
@@ -4337,7 +4366,7 @@ export async function registerRoutes(
         s.name ILIKE ${searchPattern}
         OR s.digital_student_id ILIKE ${searchPattern}
         OR fr.fee_type ILIKE ${searchPattern}
-        OR COALESCE(structure.fee_name, fr.fee_type) ILIKE ${searchPattern}
+        OR COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) ILIKE ${searchPattern}
         OR COALESCE(fr.receipt_number, '') ILIKE ${searchPattern}
         OR COALESCE(fr.invoice_number, '') ILIKE ${searchPattern}
       )`);
@@ -4397,6 +4426,9 @@ export async function registerRoutes(
         fr.fee_period_start AS "feePeriodStart",
         fr.fee_period_end AS "feePeriodEnd",
         fr.breakdown_snapshot AS "breakdownSnapshot",
+        fr.fee_name AS "__manualFeeName",
+        fr.frequency AS "frequency",
+        fr.late_fee_config AS "__manualLateFeeConfig",
         fr.created_at AS "createdAt",
         fr.created_by AS "createdBy",
         structure.fee_name AS "__feeName",
@@ -4419,17 +4451,18 @@ export async function registerRoutes(
     const now = new Date();
     const records = (result.rows as any[]).map(row => {
       const {
-        __feeName, __lateFeeConfig, __studentName, __studentClass,
+        __feeName, __lateFeeConfig, __manualFeeName, __manualLateFeeConfig, __studentName, __studentClass,
         __studentSection, __studentDigitalStudentId, __paymentMethod, ...record
       } = row;
-      const accrued_late_fee = __lateFeeConfig?.enabled
-        ? calculateLateFee(__lateFeeConfig, record.dueDate, record.status, now)
+      const lateFeeConfig = __manualLateFeeConfig ?? __lateFeeConfig;
+      const accrued_late_fee = lateFeeConfig?.enabled
+        ? calculateLateFee(lateFeeConfig, record.dueDate, record.status, now)
         : Number(record.lateFeeAmount ?? 0);
       const base_amount = Number(record.amount);
       const total_due   = base_amount + accrued_late_fee;
       return {
         ...record,
-        feeName:          __feeName ?? record.feeType,
+        feeName:          __manualFeeName ?? __feeName ?? record.feeType,
         paymentMethod:    record.status === "Paid" ? ledgerPaymentMethodLabel(__paymentMethod) : null,
         student:          __studentName == null ? null : {
           name: __studentName,
@@ -4485,20 +4518,24 @@ export async function registerRoutes(
       .where(and(eq(students.id, parsed.data.studentId), eq(students.schoolId, schoolId)));
     if (!studentCheck) return res.status(400).json({ message: "Student does not belong to this school" });
 
+    if (studentCheck.isActive === false) {
+      return res.status(400).json({ message: "Select an active student." });
+    }
+
     try {
-      const invoiceContext = await prepareStructureInvoiceContext({
+      const invoiceContext = await prepareManualInvoiceContext({
         schoolId,
-        structureId: parsed.data.feeStructureId,
+        feeName: parsed.data.feeName,
+        feeType: parsed.data.feeType,
+        amount: parsed.data.amount,
+        frequency: parsed.data.frequency,
         requestedPeriodStart: parsed.data.feePeriodStart,
         requestedPeriodEnd: parsed.data.feePeriodEnd,
+        dueDate: parsed.data.dueDate,
+        breakdown: parsed.data.breakdown,
+        lateFeeConfig: parsed.data.lateFeeConfig,
       });
-      if (!isStudentEligibleForStructure(invoiceContext.structure, studentCheck)) {
-        return res.status(400).json({
-          message: "This fee structure does not apply to the selected student's current class.",
-        });
-      }
-
-      const result = await createStructureInvoice({
+      const result = await createManualInvoice({
         context: invoiceContext,
         studentId: parsed.data.studentId,
         notes: parsed.data.notes,
@@ -4506,14 +4543,14 @@ export async function registerRoutes(
       });
       if (!result.created) {
         return res.status(409).json({
-          message: `An invoice for "${invoiceContext.structure.feeType}" already exists for this student for the selected fee period.`,
+          message: `An invoice for "${invoiceContext.feeType}" already exists for this student for the selected fee period.`,
         });
       }
 
       const rec = result.record;
       const createStuLabel = `${studentCheck.name} (${studentCheck.class ?? ""}${studentCheck.section ? "-" + studentCheck.section : ""})`;
       await appendFeeRecordAudit(req, schoolId, "create", "fee_record", rec.id,
-        `Added invoice ${rec.invoiceNumber ?? `#${rec.id}`}: ${rec.feeType} ₹${rec.amount} for ${createStuLabel} (Due) — period ${invoiceContext.periodStart} to ${invoiceContext.periodEnd}`,
+        `Added invoice ${rec.invoiceNumber ?? `#${rec.id}`}: ${rec.feeName ?? rec.feeType} ₹${rec.amount} for ${createStuLabel} (Due) — period ${invoiceContext.periodStart} to ${invoiceContext.periodEnd}`,
         parsed.data.studentId);
       res.status(201).json(rec);
     } catch (error) {
@@ -4781,7 +4818,7 @@ export async function registerRoutes(
 
     const now = new Date();
     const enriched = records.map(r => {
-      const cfg = ftToConfig.get(r.feeType.trim().toLowerCase());
+      const cfg = (r.lateFeeConfig as any) ?? ftToConfig.get(r.feeType.trim().toLowerCase());
       const accrued_late_fee = cfg?.enabled
         ? calculateLateFee(cfg, r.dueDate, r.status, now)
         : ((r as any).lateFeeAmount ?? 0);
@@ -4795,8 +4832,8 @@ export async function registerRoutes(
       );
       return {
         ...r,
-        feeName:           ftToName.get(r.feeType.trim().toLowerCase()) ?? r.feeType,
-        breakdown:         breakdownMap.get(r.feeType.trim().toLowerCase()) ?? [],
+        feeName:           r.feeName ?? ftToName.get(r.feeType.trim().toLowerCase()) ?? r.feeType,
+        breakdown:         (r.breakdownSnapshot?.length ? r.breakdownSnapshot : breakdownMap.get(r.feeType.trim().toLowerCase())) ?? [],
         base_amount:       r.amount,
         accrued_late_fee,
         total_due:         r.amount + accrued_late_fee,
