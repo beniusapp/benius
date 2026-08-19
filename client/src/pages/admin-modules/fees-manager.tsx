@@ -673,7 +673,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                               <p className="text-white/40 text-[11px]">
                                 {inv.invoiceNumber ?? "—"}
                                 {inv.feePeriodStart && inv.feePeriodEnd && (
-                                  <> · {inv.feePeriodStart.slice(0,7)} – {inv.feePeriodEnd.slice(0,7)}</>
+                                  <> · {clientFeePeriodLabel(inv.feePeriodStart, inv.feePeriodEnd)}</>
                                 )}
                               </p>
                               <p className="text-white/30 text-[11px]">Due: {fmtDate(inv.dueDate)}</p>
@@ -729,7 +729,9 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
               {selectedInvoices.map(inv => (
                 <div key={inv.id} className="flex justify-between text-sm">
                   <span className="text-white/70">{inv.feeType}
-                    {inv.feePeriodStart && <span className="text-white/30 text-xs ml-1">({inv.feePeriodStart.slice(0,7)})</span>}
+                    {inv.feePeriodStart && inv.feePeriodEnd && (
+                      <span className="text-white/30 text-xs ml-1">({clientFeePeriodLabel(inv.feePeriodStart, inv.feePeriodEnd)})</span>
+                    )}
                   </span>
                   <span className="text-white font-medium">{fmt(inv.totalDue)}</span>
                 </div>
