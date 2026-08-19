@@ -88,6 +88,29 @@ describe("shared structure invoice service", () => {
     });
   });
 
+  it("resolves logical manual month, quarter, and active-session selections through the canonical rules", () => {
+    expect(resolveInvoicePeriod("monthly", session, undefined, undefined, "2026-08")).toEqual({
+      periodStart: "2026-08-01",
+      periodEnd: "2026-08-31",
+    });
+    expect(resolveInvoicePeriod("quarterly", session, undefined, undefined, "2026-Q2")).toEqual({
+      periodStart: "2026-04-01",
+      periodEnd: "2026-06-30",
+    });
+    expect(resolveInvoicePeriod("annual", session, undefined, undefined, "active-session")).toEqual({
+      periodStart: session.startDate,
+      periodEnd: session.endDate,
+    });
+    expect(resolveInvoicePeriod("one-time", session, undefined, undefined, "active-session")).toEqual({
+      periodStart: session.startDate,
+      periodEnd: session.endDate,
+    });
+    expect(() => resolveInvoicePeriod("monthly", session, undefined, undefined, "2026-03"))
+      .toThrow(/outside the active academic session/i);
+    expect(() => resolveInvoicePeriod("quarterly", session, undefined, undefined, "2026-Q5"))
+      .toThrow(/valid calendar quarter/i);
+  });
+
   it("rejects impossible dates and non-canonical monthly or quarterly ranges", () => {
     expect(() => resolveInvoicePeriod("monthly", session, "2026-04-31", "2026-05-31"))
       .toThrow(/real calendar date/i);
@@ -185,12 +208,13 @@ describe("shared structure invoice service", () => {
   });
 
   it.each([
-    ["monthly", "2026-08-01", "2026-08-31", "2026-08-10"],
-    ["quarterly", "2026-04-01", "2026-06-30", "2026-05-10"],
-    ["annual", "2026-04-01", "2027-03-31", "2027-03-31"],
-    ["one-time", "2026-04-01", "2027-03-31", "2027-03-31"],
+    ["monthly", "2026-08", "2026-08-01", "2026-08-31", "2026-08-10"],
+    ["quarterly", "2026-Q2", "2026-04-01", "2026-06-30", "2026-05-10"],
+    ["annual", "active-session", "2026-04-01", "2027-03-31", "2027-03-31"],
+    ["one-time", "active-session", "2026-04-01", "2027-03-31", "2027-03-31"],
   ] as const)("prepares a manual %s invoice with the canonical period", async (
     frequency,
+    feePeriod,
     start,
     end,
     dueDate,
@@ -201,8 +225,7 @@ describe("shared structure invoice service", () => {
       feeType: "Tuition",
       amount: 3600,
       frequency,
-      requestedPeriodStart: start,
-      requestedPeriodEnd: end,
+      feePeriod,
       dueDate,
       breakdown: [{ name: "Instruction", purpose: "Classes", amount: 3600 }],
       lateFeeConfig: {
@@ -235,8 +258,7 @@ describe("shared structure invoice service", () => {
       feeType: "Tuition",
       amount: 3600,
       frequency: "monthly",
-      requestedPeriodStart: "2026-08-01",
-      requestedPeriodEnd: "2026-08-31",
+      feePeriod: "2026-08",
       dueDate: "2026-09-01",
       breakdown: [],
       lateFeeConfig: null,
@@ -248,8 +270,7 @@ describe("shared structure invoice service", () => {
       feeType: "Tuition",
       amount: 3600,
       frequency: "monthly",
-      requestedPeriodStart: "2026-08-01",
-      requestedPeriodEnd: "2026-08-31",
+      feePeriod: "2026-08",
       dueDate: "2026-08-10",
       breakdown: [{ name: "Instruction", purpose: "", amount: 3500 }],
       lateFeeConfig: null,
@@ -265,8 +286,7 @@ describe("shared structure invoice service", () => {
         feeType: "Tuition",
         amount: 3600,
         frequency: "monthly",
-        requestedPeriodStart: "2026-08-01",
-        requestedPeriodEnd: "2026-08-31",
+        feePeriod: "2026-08",
         dueDate: "2026-08-10",
         breakdown: [{ name: "Instruction", purpose: "", amount: 3600 }],
         lateFeeConfig: {
@@ -324,8 +344,7 @@ describe("shared structure invoice service", () => {
       feeType: "Tuition",
       amount: 3600,
       frequency: "monthly",
-      requestedPeriodStart: "2026-08-01",
-      requestedPeriodEnd: "2026-08-31",
+      feePeriod: "2026-08",
       dueDate: "2026-08-10",
       breakdown: [{ name: "Instruction", purpose: "", amount: 3600 }],
       lateFeeConfig: null,

@@ -10,8 +10,7 @@ const validPayload = {
   feeType: "Tuition",
   amount: 3600,
   frequency: "monthly" as const,
-  feePeriodStart: "2026-08-01",
-  feePeriodEnd: "2026-08-31",
+  feePeriod: "2026-08",
   dueDate: "2026-08-10",
   breakdown: [{ name: "Instruction", purpose: "August classes", amount: 3600 }],
   lateFeeConfig: {
@@ -31,32 +30,36 @@ describe("Add Invoice production request contract", () => {
     expect(manualInvoiceBodySchema.safeParse(validPayload).success).toBe(true);
   });
 
-  it.each(["monthly", "quarterly", "annual", "one-time"] as const)(
-    "accepts supported %s frequency",
-    frequency => {
-      expect(manualInvoiceBodySchema.safeParse({ ...validPayload, frequency }).success).toBe(true);
+  it.each([
+    ["monthly", "2026-08"],
+    ["quarterly", "2026-Q3"],
+    ["annual", "active-session"],
+    ["one-time", "active-session"],
+  ] as const)(
+    "accepts supported %s frequency with its logical fee period",
+    (frequency, feePeriod) => {
+      expect(manualInvoiceBodySchema.safeParse({ ...validPayload, frequency, feePeriod }).success).toBe(true);
     },
   );
 
-  it("requires student, fee name/type, amount, frequency, period, and due date", () => {
+  it("requires student, fee name/type, amount, frequency, logical period, and due date", () => {
     for (const payload of [
       { ...validPayload, studentId: 0 },
       { ...validPayload, feeName: " " },
       { ...validPayload, feeType: " " },
       { ...validPayload, amount: 0 },
       { ...validPayload, frequency: "weekly" },
-      { ...validPayload, feePeriodStart: undefined },
+      { ...validPayload, feePeriod: undefined },
       { ...validPayload, dueDate: undefined },
     ]) {
       expect(manualInvoiceBodySchema.safeParse(payload).success).toBe(false);
     }
   });
 
-  it("rejects an inverted period and malformed late-fee/component input", () => {
+  it("rejects an invalid logical period and malformed late-fee/component input", () => {
     expect(manualInvoiceBodySchema.safeParse({
       ...validPayload,
-      feePeriodStart: "2026-08-31",
-      feePeriodEnd: "2026-08-01",
+      feePeriod: "2026-08-01",
     }).success).toBe(false);
     expect(manualInvoiceBodySchema.safeParse({
       ...validPayload,
@@ -68,7 +71,7 @@ describe("Add Invoice production request contract", () => {
     }).success).toBe(false);
   });
 
-  it("strips payment, receipt, status, and invoice-number overrides", () => {
+  it("strips payment, receipt, status, invoice-number, and raw-period overrides", () => {
     const result = manualInvoiceBodySchema.parse({
       ...validPayload,
       status: "Paid",
@@ -77,6 +80,8 @@ describe("Add Invoice production request contract", () => {
       invoiceNumber: "INV-0000",
       sessionId: 999,
       feeStructureId: 7,
+      feePeriodStart: "2026-08-31",
+      feePeriodEnd: "2026-08-01",
     }) as any;
     expect(result.status).toBeUndefined();
     expect(result.paidDate).toBeUndefined();
@@ -84,6 +89,8 @@ describe("Add Invoice production request contract", () => {
     expect(result.invoiceNumber).toBeUndefined();
     expect(result.sessionId).toBeUndefined();
     expect(result.feeStructureId).toBeUndefined();
+    expect(result.feePeriodStart).toBeUndefined();
+    expect(result.feePeriodEnd).toBeUndefined();
   });
 });
 

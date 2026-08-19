@@ -90,60 +90,79 @@ interface FeeStructure {
 
 type InvoiceBreakdownRow = { name: string; purpose: string; amount: string };
 
-function addInvoicePeriodForSession(
+type InvoicePeriodOption = {
+  value: string;
+  label: string;
+  start: string;
+  end: string;
+};
+
+function addInvoicePeriodOptionsForSession(
   frequency: string,
   session: { startDate?: string | null; endDate?: string | null } | null,
-): { start: string; end: string } {
+): InvoicePeriodOption[] {
   const sessionStart = String(session?.startDate ?? "").slice(0, 10);
   const sessionEnd = String(session?.endDate ?? "").slice(0, 10);
-  if (!sessionStart || !sessionEnd) return { start: "", end: "" };
+  if (!sessionStart || !sessionEnd) return [];
   if (frequency === "annual" || frequency === "one-time") {
-    return { start: sessionStart, end: sessionEnd };
+    return [{
+      value: "active-session",
+      label: (session as AcademicSession | null)?.sessionName ?? `${sessionStart} – ${sessionEnd}`,
+      start: sessionStart,
+      end: sessionEnd,
+    }];
   }
 
-  const isWithinSession = (start: string, end: string) => start >= sessionStart && end <= sessionEnd;
-  const monthPeriod = (year: number, month: number) => {
+  const isWithinSession = (start: string, end: string) =>
+    start >= sessionStart && end <= sessionEnd;
+  const options: InvoicePeriodOption[] = [];
+  const monthPeriod = (year: number, month: number): InvoicePeriodOption => {
     const lastDay = new Date(year, month + 1, 0).getDate();
     return {
+      value: `${year}-${String(month + 1).padStart(2, "0")}`,
+      label: new Date(year, month, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" }),
       start: `${year}-${String(month + 1).padStart(2, "0")}-01`,
       end: `${year}-${String(month + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
     };
   };
-  const quarterPeriod = (year: number, quarterStartMonth: number) => {
+  const quarterPeriod = (year: number, quarterStartMonth: number): InvoicePeriodOption => {
     const lastDay = new Date(year, quarterStartMonth + 3, 0).getDate();
     return {
+      value: `${year}-Q${Math.floor(quarterStartMonth / 3) + 1}`,
+      label: `Q${Math.floor(quarterStartMonth / 3) + 1} ${year}`,
       start: `${year}-${String(quarterStartMonth + 1).padStart(2, "0")}-01`,
       end: `${year}-${String(quarterStartMonth + 3).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
     };
   };
 
-  const today = new Date();
   const startDate = new Date(`${sessionStart}T00:00:00`);
   const endDate = new Date(`${sessionEnd}T00:00:00`);
-  const reference = today >= startDate && today <= endDate ? today : startDate;
-  const preferredYear = reference.getFullYear();
-  const preferredMonth = reference.getMonth();
   if (frequency === "quarterly") {
-    const preferred = quarterPeriod(preferredYear, Math.floor(preferredMonth / 3) * 3);
-    if (isWithinSession(preferred.start, preferred.end)) return preferred;
-    for (let year = startDate.getFullYear(); year <= endDate.getFullYear(); year++) {
-      for (const month of [0, 3, 6, 9]) {
-        const candidate = quarterPeriod(year, month);
-        if (isWithinSession(candidate.start, candidate.end)) return candidate;
-      }
+    let current = new Date(
+      startDate.getFullYear(),
+      Math.floor(startDate.getMonth() / 3) * 3,
+      1,
+    );
+    while (current <= endDate) {
+      const candidate = quarterPeriod(current.getFullYear(), current.getMonth());
+      if (isWithinSession(candidate.start, candidate.end)) options.push(candidate);
+      current = new Date(current.getFullYear(), current.getMonth() + 3, 1);
     }
-    return { start: "", end: "" };
+    return options;
   }
 
-  const preferred = monthPeriod(preferredYear, preferredMonth);
-  if (isWithinSession(preferred.start, preferred.end)) return preferred;
-  for (let year = startDate.getFullYear(); year <= endDate.getFullYear(); year++) {
-    for (let month = 0; month < 12; month++) {
-      const candidate = monthPeriod(year, month);
-      if (isWithinSession(candidate.start, candidate.end)) return candidate;
-    }
+  let current = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+  while (current <= endDate) {
+    const candidate = monthPeriod(current.getFullYear(), current.getMonth());
+    if (isWithinSession(candidate.start, candidate.end)) options.push(candidate);
+    current = new Date(current.getFullYear(), current.getMonth() + 1, 1);
   }
-  return { start: "", end: "" };
+  return options;
+}
+
+function preferredInvoicePeriod(options: InvoicePeriodOption[]): InvoicePeriodOption | undefined {
+  const today = new Date().toISOString().slice(0, 10);
+  return options.find(option => option.start <= today && option.end >= today) ?? options[0];
 }
 
 interface AuditLogEntry {
@@ -1632,16 +1651,13 @@ const feeFormSchema = z.object({
   feeType: z.string().min(1, "Fee type is required"),
   amount: z.string().min(1, "Amount is required").refine(v => !isNaN(Number(v)) && Number(v) > 0, "Must be a positive number"),
   frequency: z.string().optional(),
+  feePeriod: z.string().optional(),
   dueDate: z.string().optional(),
   status: z.enum(["Due", "Paid", "Overdue"]),
   paidDate: z.string().optional(),
   receiptNumber: z.string().optional(),
   notes: z.string().optional(),
   academicYear: z.string().optional(),
-  // Fee period: required when creating a new invoice (create mode), optional in edit mode.
-  // Stored as ISO date strings (YYYY-MM-DD) matching fee_records.fee_period_start/end.
-  feePeriodStart: z.string().optional(),
-  feePeriodEnd: z.string().optional(),
 }).superRefine((val, ctx) => {
   const noDeadlineNeeded = val.status === "Paid";
   if (!noDeadlineNeeded && !val.dueDate) {
@@ -1860,6 +1876,22 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [invoiceLateFeeCap, setInvoiceLateFeeCap] = useState("0");
   const [invoiceLateFeeSlabs, setInvoiceLateFeeSlabs] = useState<Array<{ from_day: string; to_day: string; amount: string }>>([]);
 
+  // The manual invoice endpoint always uses the server's active session. Fetch
+  // that same session here rather than deriving periods from the archive view.
+  const { data: invoiceSessions = [] } = useQuery<AcademicSession[]>({
+    queryKey: ["/api/admin/fees/sessions"],
+    queryFn: async () => {
+      const response = await sessionFetch("/api/admin/fees/sessions");
+      if (!response.ok) throw new Error("Failed to load academic sessions");
+      return response.json();
+    },
+    staleTime: 60_000,
+  });
+  const activeInvoiceSession = useMemo(
+    () => invoiceSessions.find(session => session.isActive) ?? null,
+    [invoiceSessions],
+  );
+
   const { data: ledgerData, isLoading, isFetching } = useQuery<LedgerPageResponse>({
     queryKey: ["/api/admin/fees", viewSessionId, ledgerPage, search, statusFilter, classFilter, feeNameFilter, feeTypeFilter],
     queryFn: async () => {
@@ -2007,33 +2039,49 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
   const form = useForm<FeeFormValues>({
     resolver: zodResolver(feeFormSchema),
-    defaultValues: { studentId: "", feeName: "", feeType: "", amount: "", frequency: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: "", feePeriodStart: "", feePeriodEnd: "" },
+    defaultValues: { studentId: "", feeName: "", feeType: "", amount: "", frequency: "", feePeriod: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: "" },
   });
   const watchStatus = form.watch("status");
   const dueDateNotNeeded = watchStatus === "Paid";
-  const watchPeriodStart = form.watch("feePeriodStart") ?? "";
-  const watchPeriodEnd   = form.watch("feePeriodEnd")   ?? "";
+  const watchFeePeriod   = form.watch("feePeriod") ?? "";
   const watchFrequency   = form.watch("frequency") ?? "";
   const invoiceBreakdownTotal = invoiceBreakdown.reduce((sum, row) => sum + (parseInt(row.amount) || 0), 0);
   const invoiceBreakdownMismatch = invoiceBreakdown.length > 0
     && invoiceBreakdownTotal !== (parseInt(form.watch("amount")) || 0);
+  const invoicePeriodOptions = useMemo(
+    () => addInvoicePeriodOptionsForSession(watchFrequency, activeInvoiceSession),
+    [watchFrequency, activeInvoiceSession],
+  );
+  const selectedInvoicePeriod = invoicePeriodOptions.find(option => option.value === watchFeePeriod);
 
   // Auto-clear due date when status makes it irrelevant
   useEffect(() => {
     if (dueDateNotNeeded) form.setValue("dueDate", "");
   }, [dueDateNotNeeded]);
 
-  // When frequency changes in create mode, suggest period dates from session
+  // Frequency drives one logical period selection; raw dates remain server-owned.
   useEffect(() => {
     if (editing || !selectedStudent || !watchFrequency) return;
     if (!SUPPORTED_FREQUENCIES.includes(watchFrequency as SupportedFrequency)) return;
-    const period = addInvoicePeriodForSession(watchFrequency, selectedSession);
-    if (period.start) form.setValue("feePeriodStart", period.start, { shouldValidate: true });
-    if (period.end) {
-      form.setValue("feePeriodEnd", period.end, { shouldValidate: true });
-      form.setValue("dueDate", period.end);
+    const period = preferredInvoicePeriod(invoicePeriodOptions);
+    if (period) {
+      form.setValue("feePeriod", period.value, { shouldValidate: true });
     }
-  }, [editing, watchFrequency, selectedStudent, selectedSession]);
+  }, [editing, watchFrequency, selectedStudent, invoicePeriodOptions]);
+
+  // Keep Due Date separate, but reset an empty or now-invalid default to the
+  // selected period end so the manual due-date validation remains satisfiable.
+  useEffect(() => {
+    if (editing || !selectedStudent || !selectedInvoicePeriod) return;
+    const dueDate = form.getValues("dueDate");
+    if (
+      !dueDate
+      || dueDate < selectedInvoicePeriod.start
+      || dueDate > selectedInvoicePeriod.end
+    ) {
+      form.setValue("dueDate", selectedInvoicePeriod.end, { shouldValidate: true });
+    }
+  }, [editing, selectedStudent, selectedInvoicePeriod, form]);
 
   function resetInvoiceStructureDraft() {
     setInvoiceBreakdown([]);
@@ -2083,7 +2131,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       if (!data.feeName?.trim()) throw new Error("Fee name is required");
       if (!data.feeType?.trim()) throw new Error("Fee type is required");
       if (!data.frequency || !SUPPORTED_FREQUENCIES.includes(data.frequency as SupportedFrequency)) throw new Error("Valid frequency is required");
-      if (!data.feePeriodStart || !data.feePeriodEnd) throw new Error("Fee period is required");
+      if (!data.feePeriod) throw new Error("Fee period is required");
       if (!data.dueDate) throw new Error("Due date is required");
 
       const parsedBreakdown = invoiceBreakdown
@@ -2118,8 +2166,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         feeType: data.feeType.trim(),
         amount: Number(data.amount),
         frequency: data.frequency,
-        feePeriodStart: data.feePeriodStart,
-        feePeriodEnd:   data.feePeriodEnd,
+        feePeriod: data.feePeriod,
         dueDate: data.dueDate,
         lateFeeConfig,
         breakdown: parsedBreakdown,
@@ -2202,8 +2249,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     form.setValue("feeType", "");
     form.setValue("amount", "");
     form.setValue("frequency", "");
-    form.setValue("feePeriodStart", "");
-    form.setValue("feePeriodEnd", "");
+    form.setValue("feePeriod", "");
     form.setValue("dueDate", "");
   }
 
@@ -2217,8 +2263,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     form.setValue("feeType", "");
     form.setValue("amount", "");
     form.setValue("frequency", "");
-    form.setValue("feePeriodStart", "");
-    form.setValue("feePeriodEnd", "");
+    form.setValue("feePeriod", "");
     form.setValue("dueDate", "");
   }
 
@@ -2237,7 +2282,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
   function openCreate() {
     setEditing(null);
-    form.reset({ studentId: "", feeName: "", feeType: "", amount: "", frequency: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: selectedSession?.sessionName ?? "", feePeriodStart: "", feePeriodEnd: "" });
+    form.reset({ studentId: "", feeName: "", feeType: "", amount: "", frequency: "", feePeriod: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: activeInvoiceSession?.sessionName ?? selectedSession?.sessionName ?? "" });
     setSelectedStudent(null); setStudentSearchQ(""); setStudentResults(null); setInvoiceBreakdown([]);
     resetInvoiceStructureDraft();
     setShowForm(true);
@@ -2249,7 +2294,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       studentId: String(rec.studentId), feeType: rec.feeType, amount: String(rec.amount),
       dueDate: rec.dueDate, status: rec.status as any, paidDate: rec.paidDate ?? "",
       receiptNumber: rec.receiptNumber ?? "", notes: rec.notes ?? "", academicYear: rec.academicYear ?? "",
-      feePeriodStart: (rec as any).feePeriodStart ?? "", feePeriodEnd: (rec as any).feePeriodEnd ?? "",
     });
     setSelectedStudent(students.find(s => s.id === rec.studentId) ?? null);
     setStudentSearchQ(""); setStudentResults(null); setInvoiceBreakdown([]);
@@ -2938,31 +2982,45 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     )} />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <FormField control={form.control} name="feePeriodStart" render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-xs text-white/60 mb-1 block">Fee Period Start</FormLabel>
+                  <FormField control={form.control} name="feePeriod" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs text-white/60 mb-1 block">Fee Period</FormLabel>
+                      {watchFrequency === "monthly" || watchFrequency === "quarterly" ? (
                         <FormControl>
-                          <Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" />
+                          <select
+                            {...field}
+                            disabled={invoicePeriodOptions.length === 0}
+                            className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 disabled:opacity-50">
+                            <option value="">
+                              {invoicePeriodOptions.length === 0
+                                ? "No complete periods in the active session"
+                                : "— Select fee period —"}
+                            </option>
+                            {invoicePeriodOptions.map(option => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
                         </FormControl>
-                        <FormMessage className="text-red-400" />
-                      </FormItem>
-                    )} />
-                    <FormField control={form.control} name="feePeriodEnd" render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-xs text-white/60 mb-1 block">Fee Period End</FormLabel>
-                        <FormControl>
-                          <Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" />
-                        </FormControl>
-                        <FormMessage className="text-red-400" />
-                      </FormItem>
-                    )} />
-                  </div>
-                  {watchPeriodStart && watchPeriodEnd && (
-                    <p className="text-xs text-white/40 -mt-1">
-                      Period: {clientFeePeriodLabel(watchPeriodStart, watchPeriodEnd)}
-                    </p>
-                  )}
+                      ) : watchFrequency === "annual" || watchFrequency === "one-time" ? (
+                        <div className="rounded-lg border border-white/10 bg-[#0A1628] px-3 py-2 text-sm text-white/80">
+                          {activeInvoiceSession
+                            ? `${activeInvoiceSession.sessionName} (Active academic session)`
+                            : "No active academic session found"}
+                          <input type="hidden" name={field.name} value={field.value} onChange={field.onChange} />
+                        </div>
+                      ) : (
+                        <div className="rounded-lg border border-dashed border-white/10 px-3 py-2 text-sm text-white/30">
+                          Select a frequency to choose a fee period.
+                        </div>
+                      )}
+                      {selectedInvoicePeriod && (
+                        <p className="text-xs text-white/40">
+                          Resolved period: {selectedInvoicePeriod.start} → {selectedInvoicePeriod.end}
+                        </p>
+                      )}
+                      <FormMessage className="text-red-400" />
+                    </FormItem>
+                  )} />
 
                   <FormField control={form.control} name="dueDate" render={({ field }) => (
                     <FormItem>
@@ -3156,8 +3214,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                         !form.watch("feeType")?.trim() ||
                         !(Number(form.watch("amount")) > 0) ||
                         !SUPPORTED_FREQUENCIES.includes(watchFrequency as SupportedFrequency) ||
-                        !watchPeriodStart ||
-                        !watchPeriodEnd ||
+                         !selectedInvoicePeriod ||
                         !form.watch("dueDate") ||
                         invoiceBreakdownMismatch
                       )

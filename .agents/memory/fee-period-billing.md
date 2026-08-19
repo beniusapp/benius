@@ -54,5 +54,12 @@ Value = feePeriodLabel(rec.feePeriodStart, rec.feePeriodEnd, rec.academicYear)
 - Period picker pre-selects the correct period based on structure's billingTiming
 - Annual/one-time: period derived from selected session's startDate/endDate automatically
 
+## Manual Add Invoice period input
+Manual Add Invoice accepts one frequency-matched logical selection rather than editable start/end dates: `YYYY-MM` for monthly, `YYYY-QN` for quarterly, and `active-session` for annual or one-time. The backend maps it through the shared canonical period resolver before persisting the immutable dates.
+
+**Why:** The frontend must not be able to choose arbitrary billing boundaries, while manual and structure-generated invoices must retain identical calendar and active-session rules.
+
+**How to apply:** Keep the manual request contract logical-only; any new manual entry point must resolve its selection through the shared period resolver, not calculate or trust raw dates in the client.
+
 ## Test coverage
 42 focused tests in `server/__tests__/fee-period.test.ts` covering all 4 billing combos, idempotency, multi-tenant, label display, backward compat, and receipt row label. All pass as of implementation.

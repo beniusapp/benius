@@ -33,8 +33,9 @@ export const manualInvoiceBodySchema = z.object({
   feeType: z.string().trim().min(1).max(100),
   amount: z.number().int().positive(),
   frequency: z.enum(["monthly", "quarterly", "annual", "one-time"]),
-  feePeriodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  feePeriodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  // A logical selection only. The service resolves and persists the canonical
+  // fee_period_start/fee_period_end values from the active academic session.
+  feePeriod: z.string().trim().min(1),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   breakdown: z.array(manualInvoiceBreakdownItemSchema).default([]),
   lateFeeConfig: manualInvoiceLateFeeConfigSchema.default({
@@ -48,11 +49,20 @@ export const manualInvoiceBodySchema = z.object({
   }),
   notes: z.string().optional().nullable(),
 }).superRefine((value, context) => {
-  if (value.feePeriodEnd < value.feePeriodStart) {
+  const expectedPattern = value.frequency === "monthly"
+    ? /^\d{4}-(0[1-9]|1[0-2])$/
+    : value.frequency === "quarterly"
+      ? /^\d{4}-Q[1-4]$/
+      : /^active-session$/;
+  if (!expectedPattern.test(value.feePeriod)) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "Fee period end must be on or after start",
-      path: ["feePeriodEnd"],
+      message: value.frequency === "monthly"
+        ? "Select a valid month for the fee period"
+        : value.frequency === "quarterly"
+          ? "Select a valid calendar quarter for the fee period"
+          : "Annual and one-time invoices must use the active academic session",
+      path: ["feePeriod"],
     });
   }
 });

@@ -70,8 +70,7 @@ describe("manual Add Invoice concurrency", () => {
       feeType: "Books",
       amount: 450,
       frequency: "one-time",
-      requestedPeriodStart: "2026-04-01",
-      requestedPeriodEnd: "2027-03-31",
+      feePeriod: "active-session",
       dueDate: "2026-04-15",
       breakdown: [
         { name: "Mathematics Book", purpose: "Required textbook", amount: 400 },

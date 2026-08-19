@@ -71,12 +71,73 @@ export function assertRealIsoDate(value: string, label: string): void {
   }
 }
 
+function logicalInvoicePeriodBounds(
+  frequency: string,
+  selection: string,
+): { requestedStart?: string; requestedEnd?: string } {
+  if (frequency === "annual" || frequency === "one-time") {
+    if (selection !== "active-session") {
+      throw new InvoiceGenerationError(
+        "Annual and one-time invoices must use the active academic session.",
+      );
+    }
+    return {};
+  }
+
+  if (frequency === "monthly") {
+    const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(selection);
+    if (!match) {
+      throw new InvoiceGenerationError("Select a valid month for the fee period.");
+    }
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return {
+      requestedStart: `${match[1]}-${match[2]}-01`,
+      requestedEnd: `${match[1]}-${match[2]}-${String(lastDay).padStart(2, "0")}`,
+    };
+  }
+
+  if (frequency === "quarterly") {
+    const match = /^(\d{4})-Q([1-4])$/.exec(selection);
+    if (!match) {
+      throw new InvoiceGenerationError("Select a valid calendar quarter for the fee period.");
+    }
+    const year = Number(match[1]);
+    const quarter = Number(match[2]);
+    const startMonth = (quarter - 1) * 3 + 1;
+    const quarterEnd = new Date(Date.UTC(year, startMonth + 2, 0));
+    return {
+      requestedStart: `${year}-${String(startMonth).padStart(2, "0")}-01`,
+      requestedEnd: `${quarterEnd.getUTCFullYear()}-${String(quarterEnd.getUTCMonth() + 1).padStart(2, "0")}-${String(quarterEnd.getUTCDate()).padStart(2, "0")}`,
+    };
+  }
+
+  throw new InvoiceGenerationError("Select a supported invoice frequency.");
+}
+
 export function resolveInvoicePeriod(
   frequency: string,
   session: { startDate: string | Date; endDate: string | Date },
   requestedStart?: string | null,
   requestedEnd?: string | null,
+  logicalSelection?: string | null,
 ): { periodStart: string; periodEnd: string } {
+  if (logicalSelection != null) {
+    if (requestedStart || requestedEnd) {
+      throw new InvoiceGenerationError(
+        "Use either a logical fee period selection or explicit period dates, not both.",
+      );
+    }
+    const resolvedSelection = logicalInvoicePeriodBounds(frequency, logicalSelection);
+    return resolveInvoicePeriod(
+      frequency,
+      session,
+      resolvedSelection.requestedStart,
+      resolvedSelection.requestedEnd,
+    );
+  }
+
   const sessionStart = String(session.startDate).slice(0, 10);
   const sessionEnd = String(session.endDate).slice(0, 10);
 
@@ -242,8 +303,7 @@ export async function prepareManualInvoiceContext(input: {
   feeType: string;
   amount: number;
   frequency: string;
-  requestedPeriodStart: string;
-  requestedPeriodEnd: string;
+  feePeriod: string;
   dueDate: string;
   breakdown: unknown;
   lateFeeConfig: LateFeeConfig | null;
@@ -256,8 +316,9 @@ export async function prepareManualInvoiceContext(input: {
   const { periodStart, periodEnd } = resolveInvoicePeriod(
     input.frequency,
     session,
-    input.requestedPeriodStart,
-    input.requestedPeriodEnd,
+    undefined,
+    undefined,
+    input.feePeriod,
   );
   assertRealIsoDate(input.dueDate, "Due date");
   if (input.dueDate < periodStart || input.dueDate > periodEnd) {
