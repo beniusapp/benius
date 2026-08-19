@@ -269,8 +269,6 @@ function StatusChip({ status }: { status: string }) {
   const variants: Record<string, { cls: string; icon: React.ReactNode }> = {
     Paid:    { cls: "bg-emerald-900/40 text-emerald-400 border-emerald-700/40", icon: <CheckCircle2 className="w-3 h-3" /> },
     Overdue: { cls: "bg-red-900/40 text-red-400 border-red-700/40",           icon: <AlertTriangle className="w-3 h-3" /> },
-    Partial: { cls: "bg-blue-900/40 text-blue-400 border-blue-700/40",        icon: <Clock className="w-3 h-3" /> },
-    Waived:  { cls: "bg-purple-900/40 text-purple-400 border-purple-700/40",  icon: <Shield className="w-3 h-3" /> },
     Due:     { cls: "bg-amber-900/40 text-amber-400 border-amber-700/40",     icon: <Clock className="w-3 h-3" /> },
   };
   const v = variants[status] ?? variants.Due;
@@ -1518,7 +1516,7 @@ const feeFormSchema = z.object({
   feeType: z.string().min(1, "Fee type is required"),
   amount: z.string().min(1, "Amount is required").refine(v => !isNaN(Number(v)) && Number(v) > 0, "Must be a positive number"),
   dueDate: z.string().optional(),
-  status: z.enum(["Due", "Paid", "Overdue", "Partial", "Waived"]),
+  status: z.enum(["Due", "Paid", "Overdue"]),
   paidDate: z.string().optional(),
   receiptNumber: z.string().optional(),
   notes: z.string().optional(),
@@ -1528,7 +1526,7 @@ const feeFormSchema = z.object({
   feePeriodStart: z.string().optional(),
   feePeriodEnd: z.string().optional(),
 }).superRefine((val, ctx) => {
-  const noDeadlineNeeded = val.status === "Paid" || val.status === "Waived";
+  const noDeadlineNeeded = val.status === "Paid";
   if (!noDeadlineNeeded && !val.dueDate) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Due date is required", path: ["dueDate"] });
   }
@@ -1865,7 +1863,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     staleTime: 30_000,
   });
 
-  // Payment records — used for "Offline Payment" filter + method badge
+  // Payment records — used for payment-method badges and transaction details.
   const { data: paymentRecordsList = [] } = useQuery<PaymentRecord[]>({
     queryKey: ["/api/admin/fees/payments"],
     queryFn: async () => {
@@ -1918,7 +1916,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     defaultValues: { studentId: "", feeType: "", amount: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: "", feePeriodStart: "", feePeriodEnd: "" },
   });
   const watchStatus = form.watch("status");
-  const dueDateNotNeeded = watchStatus === "Paid" || watchStatus === "Waived";
+  const dueDateNotNeeded = watchStatus === "Paid";
   const watchPeriodStart = form.watch("feePeriodStart") ?? "";
   const watchPeriodEnd   = form.watch("feePeriodEnd")   ?? "";
   const feePeriodPreview = clientFeePeriodLabel(watchPeriodStart, watchPeriodEnd);
@@ -2056,8 +2054,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
           className="bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-28">
           <option value="all">All Status</option>
-          {["Due","Paid","Overdue","Partial","Waived"].map(s => <option key={s} value={s}>{s}</option>)}
-          <option value="offline">Offline Payment</option>
+          {["Due","Paid","Overdue"].map(s => <option key={s} value={s}>{s}</option>)}
         </select>
         <select value={classFilter} onChange={e => setClassFilter(e.target.value)}
           className="bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-28">
@@ -2287,8 +2284,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                               </Button>
                             );
                           }
-                          // Show AF fee-record receipt for any Paid / Partial / Waived record
-                          if (rec.status === "Paid" || rec.status === "Partial" || rec.status === "Waived") {
+                          // Show the fee-record receipt after the invoice is paid.
+                          if (rec.status === "Paid") {
                             return (
                               <Button size="icon" variant="ghost"
                                 onClick={() => window.open(`/api/admin/fees/${rec.id}/receipt`, "_blank")}
@@ -2337,7 +2334,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                                       <Receipt className="w-3 h-3" /> Receipt
                                     </Button>
                                   );
-                                  if (rec.status === "Paid" || rec.status === "Partial") return (
+                                  if (rec.status === "Paid") return (
                                     <Button size="sm" variant="ghost"
                                       onClick={() => window.open(`/api/admin/fees/${rec.id}/receipt`, "_blank")}
                                       className="h-7 px-2 text-xs text-cyan-400 hover:bg-cyan-900/30 gap-1">
@@ -2773,7 +2770,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                           <SelectTrigger className="bg-[#0A1628] border-white/20 text-white"><SelectValue /></SelectTrigger>
                         </FormControl>
                         <SelectContent className="bg-[#1A2942] border-white/10">
-                          {["Due","Paid","Overdue","Partial","Waived"].map(s => (
+                          {["Due","Paid","Overdue"].map(s => (
                             <SelectItem key={s} value={s} className="text-white focus:bg-white/10">{s}</SelectItem>
                           ))}
                         </SelectContent>
@@ -2803,7 +2800,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   </FormItem>
                 )} />
               </div>
-              {editing && (watchStatus === "Paid" || watchStatus === "Partial") && (
+              {editing && watchStatus === "Paid" && (
                 <FormField control={form.control} name="paidDate" render={({ field }) => (
                   <FormItem>
                     <FormLabel className="text-white/70">Paid Date</FormLabel>

@@ -5107,7 +5107,6 @@ export class DatabaseStorage {
     totalRevenue: number; outstanding: number; collectionRate: number; offlinePaymentsCount: number;
   }> {
     // Total revenue = actual money received (sum of all payment_records), not invoice amounts.
-    // This correctly counts partial payments that haven't yet closed the full invoice.
     const sessionJoin = sessionId != null
       ? sql`AND (pr.session_id = ${sessionId} OR (pr.session_id IS NULL AND fr2.session_id = ${sessionId}))`
       : sql``;
@@ -5120,8 +5119,7 @@ export class DatabaseStorage {
     `);
     const totalRevenue = Number((revenueRow.rows[0] as any)?.total_revenue) || 0;
 
-    // Outstanding = net balance of all unpaid invoices (invoice amount minus any partial payments).
-    // Waived records are excluded; Paid records contribute zero.
+    // Outstanding = the remaining amount on unpaid invoices.
     const sessionCond = sessionId != null ? sql`AND fr.session_id = ${sessionId}` : sql``;
     const outstandingRow = await db.execute(sql`
       SELECT COALESCE(SUM(GREATEST(fr.amount - COALESCE(p.total_paid, 0), 0)), 0)::int AS outstanding
@@ -5133,7 +5131,7 @@ export class DatabaseStorage {
         GROUP BY fee_record_id
       ) p ON p.fee_record_id = fr.id
       WHERE fr.school_id = ${schoolId}
-        AND fr.status IN ('Due', 'Overdue', 'Partial')
+        AND fr.status IN ('Due', 'Overdue')
       ${sessionCond}
     `);
     const outstanding = Number((outstandingRow.rows[0] as any)?.outstanding) || 0;

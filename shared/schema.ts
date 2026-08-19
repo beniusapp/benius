@@ -1,5 +1,5 @@
-import { relations } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, boolean, date, timestamp, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
+import { relations, sql } from "drizzle-orm";
+import { pgTable, text, varchar, serial, integer, boolean, date, timestamp, uniqueIndex, jsonb, check } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -649,7 +649,9 @@ export const feeRecords = pgTable("fee_records", {
   breakdownSnapshot: jsonb("breakdown_snapshot").$type<Array<{ name: string; purpose: string; amount: number }>>().notNull().default([]),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
-});
+}, (table) => [
+  check("fee_records_status_check", sql`${table.status} IN ('Due', 'Overdue', 'Paid')`),
+]);
 
 export const insertFeeRecordSchema = createInsertSchema(feeRecords).omit({ id: true, createdAt: true });
 export type InsertFeeRecord = z.infer<typeof insertFeeRecordSchema>;

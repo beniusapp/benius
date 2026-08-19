@@ -703,7 +703,7 @@ export async function runDunningForSingleFee(
   if (rows.length === 0) throw new Error("Fee record not found or does not belong to this school");
 
   const row = rows[0];
-  if (row.status === "Paid" || row.status === "Waived") {
+  if (row.status === "Paid") {
     return { sent, failed, skipped: [`${row.status} — no reminder needed`] };
   }
 
@@ -874,7 +874,7 @@ export async function processDunningForSchool(cfg: typeof notificationConfig.$in
       continue;
     }
     const freshStatus = freshRow[0].status;
-    if (freshStatus === "Paid" || freshStatus === "Waived") {
+    if (freshStatus === "Paid") {
       log(`fee #${fee.feeId} (${fee.studentName}) now ${freshStatus} — skipping`);
       for (const channel of channels) {
         const key = `${fee.feeId}|${channel}|${stage}`;

@@ -8,7 +8,7 @@
  *  FLAT    – fires on day 1, stays constant, ignores grace_period_days
  *  DAILY   – accumulates each day after grace period, respects max_cap
  *  TIERED  – matches correct slab, uses last slab when beyond range
- *  GUARDS  – Paid/Waived status → always 0; disabled config → always 0
+ *  GUARDS  – Paid status → always 0; disabled config → always 0
  */
 
 import { describe, it, expect } from "vitest";
@@ -178,10 +178,6 @@ describe("calculateLateFee — status guards", () => {
 
   it("returns 0 for Paid status regardless of config and overdue days", () => {
     expect(calculateLateFee(activeCfg, DUE, "Paid", daysAfterDue(DUE, 10))).toBe(0);
-  });
-
-  it("returns 0 for Waived status", () => {
-    expect(calculateLateFee(activeCfg, DUE, "Waived", daysAfterDue(DUE, 10))).toBe(0);
   });
 
   it("non-zero for Overdue status", () => {

@@ -42,7 +42,7 @@ export function calculateLateFee(
   referenceDate: Date = new Date(),
 ): number {
   if (!config?.enabled || config.type === "NONE") return 0;
-  if (status === "Paid" || status === "Waived") return 0;
+  if (status === "Paid") return 0;
 
   // Parse both dates in UTC to eliminate timezone-offset drift on server
   const [dy, dm, dd] = dueDateStr.split("-").map(Number);
@@ -164,7 +164,6 @@ export async function recalculateLateFees(schoolId: number): Promise<number> {
       or(
         eq(feeRecords.status, "Due"),
         eq(feeRecords.status, "Overdue"),
-        eq(feeRecords.status, "Partial"),
       ),
     ));
 

@@ -99,9 +99,6 @@ async function dunningLogCount(feeId: number, channel: string, stage: string, st
 async function markPaid(feeId: number) {
   await db.update(feeRecords).set({ status: "Paid" }).where(eq(feeRecords.id, feeId));
 }
-async function markWaived(feeId: number) {
-  await db.update(feeRecords).set({ status: "Waived" }).where(eq(feeRecords.id, feeId));
-}
 /**
  * Run the per-school dunning logic WITHOUT the advisory lock.
  * This keeps integration tests isolated from parallel test files that may
@@ -427,16 +424,6 @@ describe("Integration — cron job / runDunningJob", () => {
     const dueDate = istDate(0);
     const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
     await markPaid(feeId);
-    await insertConfig(schoolId);
-    await runJob(schoolId);
-    expect(await dunningLogCount(feeId, "sms", "D+0")).toBe(0);
-  });
-
-  it("9j — waived invoice NEVER receives a reminder", async () => {
-    stubProviders();
-    const dueDate = istDate(0);
-    const feeId   = await insertFee(schoolId, studentId, sessionId, dueDate);
-    await markWaived(feeId);
     await insertConfig(schoolId);
     await runJob(schoolId);
     expect(await dunningLogCount(feeId, "sms", "D+0")).toBe(0);
@@ -791,13 +778,6 @@ describe("Integration — runDunningForSingleFee", () => {
     const result = await runDunningForSingleFee(manSchoolId, feeId);
     expect(result.skipped).toContain("Paid — no reminder needed");
     expect(result.sent.length).toBe(0);
-  });
-
-  it("11c — waived fee is skipped without sending", async () => {
-    const feeId = await insertFee(manSchoolId, manStudentId, manSessionId, istDate(0));
-    await markWaived(feeId);
-    const result = await runDunningForSingleFee(manSchoolId, feeId);
-    expect(result.skipped).toContain("Waived — no reminder needed");
   });
 
   it("11d — cross-school access is rejected", async () => {

@@ -89,10 +89,6 @@ describe("buildLateFeeInfo — late fee disabled", () => {
     expect(r.enabled).toBe(false);
   });
 
-  test("Waived invoice returns enabled:false even with active config", () => {
-    const r = buildLateFeeInfo(DAILY_CFG, DUE_DATE, "Waived", DAY3_AFTER, 0);
-    expect(r.enabled).toBe(false);
-  });
 });
 
 // ── Before due date ───────────────────────────────────────────────────────────
@@ -276,17 +272,6 @@ describe("buildLateFeeInfo — TIERED rule overdue", () => {
     expect(r.tieredSlabs![1].from_day).toBe(8);
     expect(r.tieredSlabs![2].from_day).toBe(15);
     expect(r.activeSlabIndex).toBe(1);
-  });
-});
-
-// ── Status — Partial ──────────────────────────────────────────────────────────
-
-describe("buildLateFeeInfo — Partial status", () => {
-  test("Partial invoice: treated as overdue (not disabled)", () => {
-    const r = buildLateFeeInfo(DAILY_CFG, DUE_DATE, "Partial", DAY3_AFTER, 60);
-    expect(r.enabled).toBe(true);
-    expect(r.daysOverdue).toBe(3);
-    expect(r.currentLateFee).toBe(60);
   });
 });
 

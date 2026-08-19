@@ -4249,7 +4249,7 @@ export async function registerRoutes(
     // Accept empty string from client and coerce to null so the DB never sees ""
     dueDate: z.string().optional().nullable().transform(v => (v === "" ? null : v ?? null)),
     paidDate: z.string().optional().nullable().transform(v => (v === "" ? null : v ?? null)),
-    status: z.enum(["Due", "Paid", "Overdue", "Partial", "Waived"]),
+    status: z.enum(["Due", "Paid", "Overdue"]),
     receiptNumber: z.string().max(50).optional().nullable(),
     notes: z.string().optional().nullable(),
     academicYear: z.string().max(20).optional().nullable(),
@@ -4276,7 +4276,7 @@ export async function registerRoutes(
   });
   // Full schema with conditional dueDate validation (for PATCH reuse as update)
   const feeRecordBodySchema = feeRecordBaseSchema.superRefine((val, ctx) => {
-    const noDeadlineNeeded = val.status === "Paid" || val.status === "Waived";
+    const noDeadlineNeeded = val.status === "Paid";
     if (!noDeadlineNeeded && !val.dueDate) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Due date is required", path: ["dueDate"] });
     }
@@ -4318,17 +4318,11 @@ export async function registerRoutes(
     if (sessionFilter != null) conditions.push(sql`fr.session_id = ${sessionFilter}`);
     if (studentId) conditions.push(sql`fr.student_id = ${parseInt(studentId, 10)}`);
     if (status && status !== "all") {
-      if (status === "offline") {
-        conditions.push(sql`EXISTS (
-          SELECT 1
-          FROM payment_records pr
-          WHERE pr.school_id = fr.school_id
-            AND pr.fee_record_id = fr.id
-            AND (pr.cashier_notes IS NULL OR pr.cashier_notes <> 'Auto-recorded from Add Fee Record')
-        )`);
-      } else {
-        conditions.push(sql`fr.status = ${status}`);
+      const supportedFeeStatuses = ["Due", "Paid", "Overdue"];
+      if (!supportedFeeStatuses.includes(status)) {
+        return res.status(400).json({ message: "Status must be one of: Due, Paid, Overdue" });
       }
+      conditions.push(sql`fr.status = ${status}`);
     }
     if (classFilter && classFilter !== "all") conditions.push(sql`s.class = ${classFilter}`);
     if (feeType && feeType !== "all") conditions.push(sql`fr.fee_type = ${feeType}`);
@@ -4527,7 +4521,7 @@ export async function registerRoutes(
         .where(and(eq(students.id, parsed.data.studentId), eq(students.schoolId, schoolId)));
       if (!studentCheck) return res.status(400).json({ message: "Student does not belong to this school" });
     }
-    // If dueDate was cleared (Paid/Waived), fall back to paidDate or today
+    // If dueDate was cleared for a paid invoice, fall back to paidDate or today
     // rather than passing null into a NOT NULL column.
     const patchData = { ...parsed.data };
     if (patchData.dueDate == null) {
@@ -4840,7 +4834,7 @@ export async function registerRoutes(
       ) p ON p.fee_record_id = fr.id
       WHERE fr.student_id = ${req.session.studentId}
         AND fr.school_id  = ${student.schoolId}
-        AND fr.status IN ('Due', 'Overdue', 'Partial')
+        AND fr.status IN ('Due', 'Overdue')
       ${sessionCond}
     `);
 

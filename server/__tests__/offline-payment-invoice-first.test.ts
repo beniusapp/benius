@@ -9,7 +9,7 @@
  *  4.  Multiple invoice payments → each invoice handled independently.
  *  5.  Already-Paid invoice is blocked with 400.
  *  6.  Duplicate / idempotency protection: second call returns the first record.
- *  7.  Partial payment (amount < full balance) is rejected.
+ *  7.  An underpayment (amount < full balance) is rejected.
  *  8.  Payment amount cannot be arbitrarily altered (server rejects wrong amount).
  *  9.  Concurrent duplicate protection via row lock.
  * 10.  GET /unpaid-invoices returns only Due/Overdue records for the student.
@@ -124,7 +124,7 @@ async function apiPay(
     const [fr] = await db.select().from(schema.feeRecords)
       .where(and(eq(schema.feeRecords.id, payload.feeRecordId), eq(schema.feeRecords.schoolId, schoolId)));
     if (!fr) return { status: 400, body: { message: "Fee record not found" } };
-    if (fr.status === "Paid" || fr.status === "Waived") {
+    if (fr.status === "Paid") {
       return { status: 400, body: { message: `Invoice is already ${fr.status}` } };
     }
     // Check amount matches (server rejects wrong amounts)
@@ -383,9 +383,9 @@ describe("6. Duplicate / idempotency protection", () => {
   });
 });
 
-// ── 7 & 8: Partial payment / wrong amount rejected ───────────────────────────
+// ── 7 & 8: Underpayment / wrong amount rejected ──────────────────────────────
 
-describe("7+8. Partial payment and wrong amount are rejected", () => {
+describe("7+8. Underpayment and wrong amount are rejected", () => {
   let school: Awaited<ReturnType<typeof createSchool>>;
   let student: Awaited<ReturnType<typeof createStudent>>;
   let session: Awaited<ReturnType<typeof createSession>>;
@@ -399,7 +399,7 @@ describe("7+8. Partial payment and wrong amount are rejected", () => {
     createdSchoolIds.push(school.id);
   });
 
-  it("rejects partial payment (₹1,000 of ₹2,000 invoice)", async () => {
+  it("rejects an amount below the invoice total (₹1,000 of ₹2,000)", async () => {
     const res = await apiPay(school.id, student.id, { feeRecordId: invoice.id, amount: 1000 });
     expect(res.status).toBe(400);
     expect(res.body.message).toMatch(/must equal the full invoice amount/i);
@@ -416,7 +416,7 @@ describe("7+8. Partial payment and wrong amount are rejected", () => {
     expect(fr.status).toBe("Due");
   });
 
-  it("no payment_record is created after rejected partial", async () => {
+  it("creates no payment record after a rejected underpayment", async () => {
     const rows = await db.execute(sql`
       SELECT COUNT(*) AS cnt FROM payment_records WHERE fee_record_id = ${invoice.id}
     `);
@@ -448,8 +448,6 @@ describe("10. GET /unpaid-invoices logic (pure DB query validation)", () => {
     // One paid invoice (should NOT appear)
     const paidInv = await createInvoice(school.id, student.id, session.id, { feeType: "Transport", amount: 500, status: "Due" });
     await dbInsertPayment(school.id, student.id, paidInv.id, 500);
-    // One Waived invoice (should NOT appear)
-    await createInvoice(school.id, student.id, session.id, { feeType: "Library", amount: 100, status: "Waived" });
   });
 
   it("only Due and Overdue invoices are returned", async () => {
@@ -462,7 +460,6 @@ describe("10. GET /unpaid-invoices logic (pure DB query validation)", () => {
     expect(rows.rows.length).toBe(2);
     const statuses = (rows.rows as any[]).map(r => r.status);
     expect(statuses).not.toContain("Paid");
-    expect(statuses).not.toContain("Waived");
   });
 
   it("Paid invoice does NOT appear in unpaid list", async () => {

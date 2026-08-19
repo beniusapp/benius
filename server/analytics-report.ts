@@ -59,7 +59,7 @@ async function fetchAnalyticsData(schoolId: number, sessionId: number | null) {
       SELECT COALESCE(SUM(GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.paid,0),0)),0)::int AS outstanding
       FROM fee_records fr
       LEFT JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
-      WHERE fr.school_id = ${schoolId} AND fr.status IN ('Due','Overdue','Partial')${sfFR}`),
+      WHERE fr.school_id = ${schoolId} AND fr.status IN ('Due','Overdue')${sfFR}`),
     db.execute(sql`
       WITH mc AS (
         SELECT DATE_TRUNC('month', pr.received_date::date) AS pd,
@@ -127,7 +127,7 @@ async function fetchAnalyticsData(schoolId: number, sessionId: number | null) {
       FROM fee_records fr
       LEFT JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
       WHERE fr.school_id = ${schoolId}
-        AND fr.status IN ('Due','Overdue','Partial')
+        AND fr.status IN ('Due','Overdue')
         AND fr.due_date IS NOT NULL
         AND CURRENT_DATE > fr.due_date::date
         ${sfFR}

@@ -73,7 +73,7 @@ function dayWord(n: number): string {
  *
  * @param cfg            The fee structure's lateFeeConfig (may be null/undefined).
  * @param dueDate        ISO date string "YYYY-MM-DD" from the fee record.
- * @param status         Invoice status ("Due", "Overdue", "Partial", "Paid", "Waived").
+ * @param status         Invoice status ("Due", "Overdue", "Paid").
  * @param now            Reference date (pass new Date() in production).
  * @param accruedLateFee The amount already returned by calculateLateFee() — reused here,
  *                       never recalculated.
@@ -87,7 +87,7 @@ export function buildLateFeeInfo(
 ): LateFeeInfo {
   // Guard: no policy, or invoice is already settled
   if (!cfg?.enabled || cfg.type === "NONE") return { ...DISABLED };
-  if (status === "Paid" || status === "Waived") return { ...DISABLED };
+  if (status === "Paid") return { ...DISABLED };
 
   // ── Compute daysOverdue using the same UTC arithmetic as calculateLateFee() ──
   const [dy, dm, dd] = dueDate.split("-").map(Number);

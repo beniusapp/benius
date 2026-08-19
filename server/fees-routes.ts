@@ -164,7 +164,7 @@ export async function acquireRazorpayOrder(
 
     // Re-check payable status under lock — a concurrent webhook may have just
     // marked this fee Paid between the pre-flight read and now.
-    if (!["Due", "Overdue", "Partial"].includes(locked.status)) {
+    if (!["Due", "Overdue"].includes(locked.status)) {
       result = { ok: false, status: 400, message: `Fee is not payable (status: ${locked.status})` };
       return;
     }
@@ -479,7 +479,7 @@ export function registerFeesRoutes(app: Express) {
           FROM fee_records fr
           LEFT JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
           WHERE fr.school_id = ${schoolId}
-            AND fr.status IN ('Due','Overdue','Partial')${sfFR}
+            AND fr.status IN ('Due','Overdue')${sfFR}
         `),
         // ── 2. Time-series — bounded by session start/end dates so every
         //        school's full academic year is always covered regardless of
@@ -563,7 +563,7 @@ export function registerFeesRoutes(app: Express) {
           FROM fee_records fr
           LEFT JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
           WHERE fr.school_id = ${schoolId}
-            AND fr.status IN ('Due','Overdue','Partial')
+            AND fr.status IN ('Due','Overdue')
             AND fr.due_date IS NOT NULL
             AND CURRENT_DATE > fr.due_date::date
             ${sfFR}
@@ -975,7 +975,7 @@ export function registerFeesRoutes(app: Express) {
         ) p ON p.fee_record_id = fr.id
         WHERE fr.student_id = ${paymentData.studentId}
           AND fr.school_id  = ${schoolId}
-          AND fr.status IN ('Due', 'Overdue', 'Partial')
+          AND fr.status IN ('Due', 'Overdue')
         HAVING GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.total_paid, 0), 0) > 0
         ORDER BY fr.due_date ASC, fr.id ASC
       `);
@@ -992,7 +992,7 @@ export function registerFeesRoutes(app: Express) {
       // Build allocation plan (oldest-first).
       // One-invoice = one-payment rule: only include an invoice when the remaining
       // balance can cover its full outstanding amount.  Invoices that cannot be
-      // fully paid in this sweep are skipped — no Partial status is ever created.
+      // Fully paid invoices are skipped because successful payments always set Paid.
       let remaining = paymentData.amount;
       const plan: Array<{ invoiceId: number; allocation: number; sessionId: number | null; lateFeeAmount: number }> = [];
       for (const inv of invoices) {
@@ -1032,7 +1032,7 @@ export function registerFeesRoutes(app: Express) {
           const fifoLockedStatus = (lockedRow.rows[0] as any)?.status as string | undefined;
           if (fifoLockedStatus === "Paid") continue;
 
-          // Reject if this invoice cannot be fully paid — no Partial status allowed.
+          // Reject underpayments: every payment must settle its invoice in full.
           const balance = Math.max(0, invoiceAmount + invoiceLateFee - alreadyPaid);
           if (balance <= 0 || step.allocation < balance) continue;
           const safeAllocation = balance; // always exact full payment (base + late fee)
@@ -1053,7 +1053,7 @@ export function registerFeesRoutes(app: Express) {
             )
           `);
 
-          const newStatus = "Paid"; // one-invoice = one-payment: Partial rejected above
+          const newStatus = "Paid"; // one invoice is settled by one full payment
           await tx.execute(sql`
             UPDATE fee_records
             SET status       = ${newStatus},
@@ -1231,12 +1231,12 @@ export function registerFeesRoutes(app: Express) {
           const expectedTotal = Number(lockedFee.amount) + offlineLateFee;
           lateFeeForOfflineInsert = offlineLateFee; // capture for the INSERT below
 
-          // Guard 2: payment must equal base + applicable late fee (no partial payments).
+          // Guard 2: payment must equal base + applicable late fee.
           if (paymentOnly.amount !== expectedTotal) {
             overpaymentBlock = {
               message: offlineLateFee > 0
-                ? `Payment amount (₹${paymentOnly.amount.toLocaleString("en-IN")}) must equal the full invoice amount including late fee (₹${expectedTotal.toLocaleString("en-IN")} = ₹${Number(lockedFee.amount).toLocaleString("en-IN")} base + ₹${offlineLateFee.toLocaleString("en-IN")} late fee). Partial payments are not accepted.`
-                : `Payment amount (₹${paymentOnly.amount.toLocaleString("en-IN")}) must equal the full invoice amount (₹${Number(lockedFee.amount).toLocaleString("en-IN")}). Partial payments are not accepted.`,
+                ? `Payment amount (₹${paymentOnly.amount.toLocaleString("en-IN")}) must equal the full invoice amount including late fee (₹${expectedTotal.toLocaleString("en-IN")} = ₹${Number(lockedFee.amount).toLocaleString("en-IN")} base + ₹${offlineLateFee.toLocaleString("en-IN")} late fee). Amounts below the full invoice total are not accepted.`
+                : `Payment amount (₹${paymentOnly.amount.toLocaleString("en-IN")}) must equal the full invoice amount (₹${Number(lockedFee.amount).toLocaleString("en-IN")}). Amounts below the full invoice total are not accepted.`,
               invoiceAmount: expectedTotal,
               totalAlreadyPaid: 0,
               newAmount: paymentOnly.amount,
@@ -1335,7 +1335,7 @@ export function registerFeesRoutes(app: Express) {
                 WHERE fee_record_id = ${paymentOnly.feeRecordId}`,
           );
           const totalPaid = Number((paidRow.rows[0] as any)?.total_paid) || 0;
-          const newStatus = "Paid"; // one-invoice = one-payment: partial amount blocked above
+          const newStatus = "Paid"; // one invoice is settled by one full payment
           const notesPatch = _fn != null ? sql`, notes = ${_fn}` : sql``;
           await tx.execute(
             sql`UPDATE fee_records
@@ -2357,7 +2357,7 @@ export function registerFeesRoutes(app: Express) {
       SET razorpay_order_id         = NULL,
           razorpay_order_expires_at = NULL
       WHERE ${condition}
-        AND status IN ('Due', 'Overdue', 'Partial')
+        AND status IN ('Due', 'Overdue')
     `);
 
     // ── Write payment_failed / payment_cancelled audit log entry ─────────────
@@ -3802,7 +3802,7 @@ td:last-child{font-weight:600;word-break:break-all;}
               AND al.entity_type = 'fee_record'
               AND al.entity_id   IS NOT NULL
               AND fr.session_id  = ${sessionFilter}
-              AND fr.status      NOT IN ('Paid', 'Waived')
+              AND fr.status      <> 'Paid'
             GROUP BY al.entity_id`
         : sql`
             SELECT
@@ -3815,7 +3815,7 @@ td:last-child{font-weight:600;word-break:break-all;}
               AND al.action      = 'payment_failed'
               AND al.entity_type = 'fee_record'
               AND al.entity_id   IS NOT NULL
-              AND fr.status      NOT IN ('Paid', 'Waived')
+              AND fr.status      <> 'Paid'
             GROUP BY al.entity_id`,
     );
 
@@ -4090,7 +4090,7 @@ td:last-child{font-weight:600;word-break:break-all;}
           GROUP BY fee_record_id
         ) p ON p.fee_record_id = fr.id
         WHERE fr.school_id = ${schoolId}
-          AND fr.status IN ('Due', 'Overdue', 'Partial')
+          AND fr.status IN ('Due', 'Overdue')
           AND fr.due_date IS NOT NULL
           AND ${bucketCondition}
           ${sfFR}

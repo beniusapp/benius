@@ -1027,7 +1027,7 @@ function ChannelIcon({ channel }: { channel: string }) {
 
 // ── Late Fee Policy transparency panel ────────────────────────────────────────
 // Pure display component. Renders only when lateFeeInfo.enabled is true and
-// the invoice is not Paid or Waived. Never calculates any amounts — only
+// the invoice is not Paid. Never calculates any amounts — only
 // renders server-supplied strings and pre-computed values.
 
 function LateFeeInfoPanel({
@@ -1043,7 +1043,7 @@ function LateFeeInfoPanel({
   // on currentLateFee === 0, because the policy may still be enabled even
   // when no fee is yet accrued.
   if (!info?.enabled) return null;
-  if (status === "Paid" || status === "Waived") return null;
+  if (status === "Paid") return null;
 
   const isOverdue  = !info.inGracePeriod && info.daysOverdue > 0 && info.currentLateFee > 0;
   const isGrace    = info.inGracePeriod;
@@ -1868,7 +1868,7 @@ export default function StudentFees() {
                                 <p className="text-xs text-slate-400 mt-1 italic">{rec.notes}</p>
                               )}
                               {/* Late Fee Policy transparency panel — display-only, no payment logic */}
-                              {rec.status !== "Paid" && rec.status !== "Waived" && (
+                              {rec.status !== "Paid" && (
                                 <LateFeeInfoPanel
                                   info={rec.lateFeeInfo}
                                   baseAmount={rec.amount}
