@@ -9,9 +9,9 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   CreditCard, Plus, Search, Loader2, Trash2, Pencil, CheckCircle2, AlertTriangle, Clock,
-  Receipt, DollarSign, TrendingUp, TrendingDown, Banknote, BookOpen, Bell, ExternalLink,
+  Receipt, DollarSign, TrendingUp, TrendingDown, Banknote, Wallet, BookOpen, Bell, ExternalLink,
   Shield, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Lock, X, Printer, History, Download, FileText,
-  MessageSquare, Mail, Send, Eye, EyeOff, Zap, Phone, BarChart2, Calendar, Users,
+  FileCheck2, Building2, QrCode, Monitor, MessageSquare, Mail, Send, Eye, EyeOff, Zap, Phone, BarChart2, Calendar, Users,
   PenLine, Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -276,6 +276,50 @@ function StatusChip({ status }: { status: string }) {
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border ${v.cls}`}>
       {v.icon} {status}
+    </span>
+  );
+}
+
+function PaymentMethodBadge({ method }: { method: string | null }) {
+  const variants: Record<string, { cls: string; icon?: React.ReactNode }> = {
+    Cash: {
+      cls: "bg-emerald-500/10 text-emerald-300 border-emerald-500/25",
+      icon: <Wallet className="w-3 h-3" />,
+    },
+    Cheque: {
+      cls: "bg-blue-500/10 text-blue-300 border-blue-500/25",
+      icon: <FileCheck2 className="w-3 h-3" />,
+    },
+    "Bank Transfer": {
+      cls: "bg-indigo-500/10 text-indigo-300 border-indigo-500/25",
+      icon: <Building2 className="w-3 h-3" />,
+    },
+    "Demand Draft": {
+      cls: "bg-amber-500/10 text-amber-300 border-amber-500/25",
+      icon: <FileText className="w-3 h-3" />,
+    },
+    "UPI / QR": {
+      cls: "bg-cyan-500/10 text-cyan-300 border-cyan-500/25",
+      icon: <QrCode className="w-3 h-3" />,
+    },
+    "Portal Payment": {
+      cls: "bg-violet-500/10 text-violet-300 border-violet-500/25",
+      icon: <Monitor className="w-3 h-3" />,
+    },
+    "—": {
+      cls: "bg-slate-500/10 text-slate-400 border-slate-500/20",
+    },
+  };
+  const label = method ?? "—";
+  const variant = variants[label] ?? variants["—"];
+
+  return (
+    <span
+      className={`inline-flex items-center justify-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-medium leading-4 whitespace-nowrap ${variant.cls}`}
+      title={label}
+    >
+      {variant.icon && <span aria-hidden="true">{variant.icon}</span>}
+      {label}
     </span>
   );
 }
@@ -2204,8 +2248,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     <td className="px-4 py-3 text-center">
                       <StatusChip status={rec.status} />
                     </td>
-                    <td className="px-4 py-3 text-center text-white/70 text-xs whitespace-nowrap">
-                      {rec.paymentMethod ?? "—"}
+                    <td className="px-4 py-3 text-center">
+                      <PaymentMethodBadge method={rec.paymentMethod} />
                     </td>
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{fmtDate(rec.paidDate)}</td>
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{rec.academicYear ?? "—"}</td>
