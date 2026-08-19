@@ -37,6 +37,8 @@ const invoice: InvoiceDocumentData = {
     email: null,
     affiliationNumber: null,
     gstin: null,
+    signatureUrl: null,
+    signatoryName: null,
   },
 };
 
@@ -63,5 +65,66 @@ describe("renderInvoiceDocument", () => {
 
     expect(html).toContain("Not available");
     expect(html).not.toContain("undefined");
+  });
+
+  it("shows the signature image when a signatureUrl is provided", () => {
+    const html = renderInvoiceDocument({
+      ...invoice,
+      school: {
+        ...invoice.school,
+        signatureUrl: "https://cdn.example.com/sig-school-42.png",
+        signatoryName: "Dr. Priya Menon",
+      },
+    });
+
+    expect(html).toContain("https://cdn.example.com/sig-school-42.png");
+    expect(html).toContain("Dr. Priya Menon");
+    expect(html).toContain("Authorized Signatory");
+    // Must not render blank sig-space placeholder when image is present
+    expect(html).not.toContain('class="sig-space"');
+  });
+
+  it("renders a clean blank signature area when no signature is configured", () => {
+    const html = renderInvoiceDocument({
+      ...invoice,
+      school: { ...invoice.school, signatureUrl: null, signatoryName: null },
+    });
+
+    expect(html).toContain("Authorized Signatory");
+    expect(html).toContain('class="sig-space"');
+    // Must not output an img tag for the signature
+    expect(html).not.toContain('alt="Authorized Signature"');
+  });
+
+  it("renders the signatory name label when provided without a signature image", () => {
+    const html = renderInvoiceDocument({
+      ...invoice,
+      school: { ...invoice.school, signatureUrl: null, signatoryName: "Principal" },
+    });
+
+    expect(html).toContain("Principal");
+    expect(html).toContain("Authorized Signatory");
+  });
+
+  it("includes the computer-generated footer statement", () => {
+    const html = renderInvoiceDocument(invoice);
+    expect(html).toContain("Computer-generated document");
+  });
+
+  it("HTML-escapes signatory name to prevent injection", () => {
+    const html = renderInvoiceDocument({
+      ...invoice,
+      school: {
+        ...invoice.school,
+        signatureUrl: null,
+        signatoryName: '<script>alert("xss")</script>',
+      },
+    });
+
+    // The payload must appear only in its escaped form inside the sig-name element.
+    expect(html).toContain("&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;");
+    // The raw unescaped payload tag must not appear anywhere as an HTML element
+    // (the legitimate window.print() script tag is distinct and expected).
+    expect(html).not.toContain('<script>alert("xss")</script>');
   });
 });

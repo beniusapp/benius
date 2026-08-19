@@ -2918,6 +2918,25 @@ export function registerFeesRoutes(app: Express) {
     const esc = (s: string | null | undefined) =>
       (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
+    // ── Authorized signature (tenant-scoped) ────────────────────────────────
+    const prSigMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
+    const prSigRelUrl =
+      prSigMeta?.processedSignatureUrl ??
+      prSigMeta?.originalSignatureUrl ??
+      prSigMeta?.fileUrl ?? null;
+    const prSigUrl = prSigRelUrl
+      ? (/^https?:\/\//i.test(prSigRelUrl)
+        ? prSigRelUrl
+        : `${req.protocol}://${req.get("host")}${prSigRelUrl}`)
+      : null;
+    const prSignatoryMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_signatory_name") as any;
+    const prSignatoryName: string | null =
+      (typeof prSignatoryMeta === "string" && prSignatoryMeta.trim())
+        ? prSignatoryMeta.trim()
+        : (typeof prSignatoryMeta?.name === "string" && prSignatoryMeta.name.trim())
+          ? prSignatoryMeta.name.trim()
+          : null;
+
     const paymentDateTime = formatPersistedDateTimeIST(payment.createdAt);
     const amountStr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(payment.amount);
     const schoolName = esc(school?.name ?? "School");
@@ -2939,7 +2958,15 @@ export function registerFeesRoutes(app: Express) {
   td:first-child{color:#64748b;width:45%;}
   td:last-child{font-weight:600;}
   .amount-row td:last-child{font-size:18px;font-weight:800;color:#0891b2;}
-  .footer{margin-top:24px;text-align:center;font-size:11px;color:#94a3b8;}
+  .sig-row{display:flex;justify-content:flex-end;margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0;}
+  .sig-box{text-align:center;min-width:140px;}
+  .sig-img{max-height:48px;max-width:160px;object-fit:contain;display:block;margin:0 auto 6px;}
+  .sig-space{height:48px;}
+  .sig-line{width:140px;border-top:1.5px solid #475569;margin:6px auto 4px;}
+  .sig-lbl{font-size:11px;font-weight:700;color:#334155;margin:0;}
+  .sig-name{font-size:10px;color:#334155;margin:2px 0 0;}
+  .sig-school{font-size:9px;color:#94a3b8;margin:2px 0 0;}
+  .footer{margin-top:16px;text-align:center;font-size:11px;color:#94a3b8;}
   @media print{body{padding:0;}button{display:none;}}
 </style></head><body>
 <div class="receipt">
@@ -2947,7 +2974,7 @@ export function registerFeesRoutes(app: Express) {
   <div style="text-align:center;margin-bottom:16px;"><span class="badge">&#10003; PAYMENT RECEIVED</span></div>
   <table>
     <tr><td>Invoice No.</td><td>${esc(feeInvoiceNumber ?? "—")}</td></tr>
-    <tr><td>Receipt No.</td><td>${(payment as any).receiptNumber ?? `PAY-${payment.id}`}</td></tr>
+    <tr><td>Receipt No.</td><td>${esc((payment as any).receiptNumber ?? `PAY-${payment.id}`)}</td></tr>
     <tr><td>Student Name</td><td>${esc(student.name)}</td></tr>
     <tr><td>Student ID</td><td>${esc(student.digitalStudentId)}</td></tr>
     <tr><td>Class / Section</td><td>${esc(student.class)} / ${esc(student.section)}</td></tr>
@@ -2958,8 +2985,19 @@ export function registerFeesRoutes(app: Express) {
     ${payment.cashierNotes ? `<tr><td>Notes</td><td>${esc(payment.cashierNotes)}</td></tr>` : ""}
     <tr class="amount-row"><td>Amount Received</td><td>${amountStr}</td></tr>
   </table>
+  <div class="sig-row">
+    <div class="sig-box">
+      ${prSigUrl
+        ? `<img class="sig-img" src="${esc(prSigUrl)}" alt="Authorized Signature">`
+        : `<div class="sig-space"></div>`}
+      <div class="sig-line"></div>
+      <p class="sig-lbl">Authorized Signatory</p>
+      ${prSignatoryName ? `<p class="sig-name">${esc(prSignatoryName)}</p>` : ""}
+      <p class="sig-school">${schoolName}</p>
+    </div>
+  </div>
   <div class="footer">
-    <p>This is a computer-generated receipt. No signature required.</p>
+    <p>Computer-generated receipt. No physical signature is required where a digital signature is configured.</p>
     <p>&#169; ${new Date().getFullYear()} BENIUS &middot; ${schoolName}</p>
   </div>
 </div>
@@ -3326,6 +3364,28 @@ td:last-child{font-weight:600;word-break:break-all;}
           ? relativeLogoUrl
           : `${req.protocol}://${req.get("host")}${relativeLogoUrl}`)
         : null;
+
+      // ── Authorized signature (tenant-scoped) ────────────────────────────────
+      const invSigMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
+      const invSigRelUrl =
+        invSigMeta?.processedSignatureUrl ??
+        invSigMeta?.originalSignatureUrl ??
+        invSigMeta?.fileUrl ?? null;
+      const invoiceSignatureUrl = invSigRelUrl
+        ? (/^https?:\/\//i.test(invSigRelUrl)
+          ? invSigRelUrl
+          : `${req.protocol}://${req.get("host")}${invSigRelUrl}`)
+        : null;
+      // signatoryName is stored in school_metadata under "fee_signatory_name",
+      // or falls back to null — never hardcoded.
+      const invSignatoryMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_signatory_name") as any;
+      const invoiceSignatoryName: string | null =
+        (typeof invSignatoryMeta === "string" && invSignatoryMeta.trim())
+          ? invSignatoryMeta.trim()
+          : (typeof invSignatoryMeta?.name === "string" && invSignatoryMeta.name.trim())
+            ? invSignatoryMeta.name.trim()
+            : null;
+
       const html = renderInvoiceDocument({
         invoiceNumber: row.invoice_number ?? null,
         status: row.status,
@@ -3362,6 +3422,8 @@ td:last-child{font-weight:600;word-break:break-all;}
           email: row.school_email ?? null,
           affiliationNumber: row.school_affiliation_number ?? null,
           gstin: row.school_gstin ?? null,
+          signatureUrl: invoiceSignatureUrl,
+          signatoryName: invoiceSignatoryName,
         },
       });
       res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -3398,6 +3460,25 @@ td:last-child{font-weight:600;word-break:break-all;}
     const [school] = await db.select({ name: schools.name }).from(schools).where(eq(schools.id, schoolId));
     const esc = (s: string | null | undefined) =>
       (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+    // ── Authorized signature (tenant-scoped) ────────────────────────────────
+    const frSigMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
+    const frSigRelUrl =
+      frSigMeta?.processedSignatureUrl ??
+      frSigMeta?.originalSignatureUrl ??
+      frSigMeta?.fileUrl ?? null;
+    const frSigUrl = frSigRelUrl
+      ? (/^https?:\/\//i.test(frSigRelUrl)
+        ? frSigRelUrl
+        : `${req.protocol}://${req.get("host")}${frSigRelUrl}`)
+      : null;
+    const frSignatoryMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_signatory_name") as any;
+    const frSignatoryName: string | null =
+      (typeof frSignatoryMeta === "string" && frSignatoryMeta.trim())
+        ? frSignatoryMeta.trim()
+        : (typeof frSignatoryMeta?.name === "string" && frSignatoryMeta.name.trim())
+          ? frSignatoryMeta.name.trim()
+          : null;
 
     const paymentTimestampResult = await db.execute(sql`
       SELECT COALESCE(
@@ -3444,7 +3525,15 @@ td:last-child{font-weight:600;word-break:break-all;}
   td:first-child{color:#64748b;width:45%;}
   td:last-child{font-weight:600;}
   .amount-row td:last-child{font-size:18px;font-weight:800;color:#0891b2;}
-  .footer{margin-top:24px;text-align:center;font-size:11px;color:#94a3b8;}
+  .sig-row{display:flex;justify-content:flex-end;margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0;}
+  .sig-box{text-align:center;min-width:140px;}
+  .sig-img{max-height:48px;max-width:160px;object-fit:contain;display:block;margin:0 auto 6px;}
+  .sig-space{height:48px;}
+  .sig-line{width:140px;border-top:1.5px solid #475569;margin:6px auto 4px;}
+  .sig-lbl{font-size:11px;font-weight:700;color:#334155;margin:0;}
+  .sig-name{font-size:10px;color:#334155;margin:2px 0 0;}
+  .sig-school{font-size:9px;color:#94a3b8;margin:2px 0 0;}
+  .footer{margin-top:16px;text-align:center;font-size:11px;color:#94a3b8;}
   @media print{body{padding:0;}button{display:none;}}
 </style></head><body>
 <div class="receipt">
@@ -3464,8 +3553,19 @@ td:last-child{font-weight:600;word-break:break-all;}
     ${row.notes ? `<tr><td>Notes</td><td>${esc(row.notes)}</td></tr>` : ""}
     <tr class="amount-row"><td>Amount</td><td>${amountStr}</td></tr>
   </table>
+  <div class="sig-row">
+    <div class="sig-box">
+      ${frSigUrl
+        ? `<img class="sig-img" src="${esc(frSigUrl)}" alt="Authorized Signature">`
+        : `<div class="sig-space"></div>`}
+      <div class="sig-line"></div>
+      <p class="sig-lbl">Authorized Signatory</p>
+      ${frSignatoryName ? `<p class="sig-name">${esc(frSignatoryName)}</p>` : ""}
+      <p class="sig-school">${schoolName}</p>
+    </div>
+  </div>
   <div class="footer">
-    <p>This is a computer-generated receipt. No signature required.</p>
+    <p>Computer-generated receipt. No physical signature is required where a digital signature is configured.</p>
     <p>&#169; ${new Date().getFullYear()} BENIUS &middot; ${schoolName}</p>
   </div>
 </div>

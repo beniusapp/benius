@@ -1,0 +1,272 @@
+Implement a professional Invoice PDF feature in the Student Portal → Fees → Outstanding section.
+
+The goal is that every outstanding/due invoice has its own downloadable invoice PDF, and after successful payment the invoice action changes appropriately to the payment receipt.
+
+1. Outstanding invoices — add “View Invoice”
+
+For every Due/Outstanding invoice shown in Student Portal → Fees → Outstanding, add a clear action:
+
+📄 View Invoice
+
+Optionally, it can also say:
+
+Download Invoice
+
+The student/parent should be able to open the invoice first and then:
+
+- View the invoice
+- Download the invoice as PDF
+- Print/share the PDF where supported
+
+Do NOT create a new invoice. This must use the existing invoice record and its existing permanent Invoice Number.
+
+2. Invoice PDF must contain complete information
+
+The generated invoice PDF must use the same professional invoice design already implemented in the Admin Portal.
+
+It must include all relevant information stored against that invoice:
+
+School Information
+
+- School logo
+- School name
+- School address
+- Phone
+- Official email
+- Affiliation number
+- GSTIN/tax ID, if configured
+
+Invoice Header
+
+- Make INVOICE highly prominent
+- Permanent Invoice No.
+- Invoice status: DUE / OVERDUE
+- Exact Invoice Date & Time in IST
+- Use the actual invoice creation timestamp from the database; do not generate a new timestamp when the PDF is downloaded.
+- Display the timestamp clearly, for example:
+  "19 Aug 2026, 09:08 PM IST"
+
+Student / Parent Details
+
+- Student name
+- Student ID / MIS ID
+- Parent/Guardian name — use the existing parent/guardian field already available in the system
+- Class
+- Section
+
+Invoice Details
+
+- Fee Name
+- Fee Type
+- Frequency
+- Fee Period
+- Academic Session
+- Due Date
+- Invoice amount
+- Amount in words
+
+Fee Breakdown
+If components exist, show every component:
+
+- Component name
+- Description
+- Amount
+- Component subtotal
+
+If there are no components, do not show an unnecessary empty breakdown section.
+
+Late Fee & Penalty
+If enabled, show:
+
+- Late fee type
+- Penalty amount/rate
+- Relevant late-fee policy
+
+If disabled, clearly show:
+"Late Fee & Penalty: Disabled"
+
+Amount Summary
+
+- Invoice Amount
+- Any applicable late fee
+- Total Payable
+- Amount in words
+- Payment Status
+
+3. Important distinction between Invoice and Receipt
+
+Keep the Invoice and Receipt as two different documents.
+
+Use a clearly distinguishable, modern professional visual identity:
+
+Invoice
+
+- Modern professional invoice design
+- Prominent INVOICE heading
+- Strong but clean invoice styling
+- Clearly visible Invoice No.
+- Status such as DUE/OVERDUE
+
+Receipt
+
+- Different visual treatment from the invoice
+- Prominent PAYMENT RECEIPT / RECEIPT
+- Clearly visible Receipt No.
+- Payment details
+- Payment method
+- Payment date/time
+- Payment ID / Order ID where applicable
+- Clearly show PAID status
+
+Do not make an invoice look like a payment receipt.
+
+4. After successful payment
+
+Once the invoice is successfully paid, the outstanding invoice should move according to the existing student-fee lifecycle.
+
+The invoice must remain historically available, but the primary document/action should now become:
+
+🧾 View Receipt
+
+The student/parent should be able to open/download the payment receipt PDF.
+
+Do not delete the invoice record or overwrite the invoice information after payment.
+
+The permanent Invoice Number must remain unchanged.
+
+5. Important document lifecycle
+
+The intended flow is:
+
+DUE / OUTSTANDING
+
+"View Invoice → Invoice PDF → Pay Now"
+
+Then, after successful payment:
+
+PAID
+
+"View Receipt → Receipt PDF"
+
+The invoice and receipt must remain separate documents.
+
+6. Do NOT break existing payment functionality
+
+This feature is only a document/view/download enhancement.
+
+Do NOT modify or bypass the existing:
+
+- Razorpay payment flow
+- Payment verification
+- Webhooks
+- Payment idempotency
+- Duplicate-payment protection
+- Invoice numbering
+- Receipt numbering
+- Payment history
+- Transaction history
+- Fee status logic
+- Late-fee calculation
+- Academic-session logic
+- Tenant/school isolation
+
+The existing invoice record must be the single source of truth.
+
+7. Security / tenant isolation
+
+A student must only be able to view/download invoices belonging to:
+
+- Their authenticated student account
+- Their school/tenant
+
+Do not allow a student to access another student's invoice by changing an invoice ID, fee record ID, URL parameter, or API request.
+
+The server must authorize access before returning invoice data or generating the PDF.
+
+8. PDF consistency
+
+The PDF generated from the Student Portal must use the same invoice data as the Admin Portal.
+
+Do not maintain a separate set of invoice values for the student portal.
+
+If the Admin Portal shows:
+
+"INV-0093"
+
+then the Student Portal must also show:
+
+"INV-0093"
+
+with the same:
+
+- Student
+- Parent/Guardian
+- Fee details
+- Amount
+- Fee period
+- Due date
+- Components
+- Late-fee configuration
+- Academic session
+- Invoice creation date/time
+- Status
+
+9. UI requirement
+
+Keep the existing Outstanding cards clean and modern.
+
+Do not overcrowd each card with all invoice information.
+
+Add a clear action such as:
+
+📄 View Invoice
+
+and retain:
+
+⚡ Pay Now
+
+For a paid invoice, use:
+
+🧾 View Receipt
+
+The design should be modern, attractive, professional, mobile-friendly, and easy for parents to understand.
+
+10. Important implementation rule
+
+Before changing anything, inspect the existing:
+
+- Student Portal Fees/Outstanding UI
+- Invoice PDF generation
+- Receipt PDF generation
+- Invoice data model
+- fee_records
+- invoice number handling
+- payment status handling
+- student authorization
+- existing Admin Portal invoice design
+
+Reuse existing invoice/receipt generation infrastructure wherever possible.
+
+Do not create duplicate invoice-generation logic if an existing canonical invoice PDF generator already exists.
+
+Acceptance criteria
+
+Consider this complete only when:
+
+1. Every outstanding invoice has a View Invoice action.
+2. The action opens the correct invoice for that student.
+3. The invoice can be downloaded as PDF.
+4. The PDF contains all required invoice details.
+5. Invoice date/time is the original database timestamp and is displayed in IST.
+6. Parent/Guardian name is included using the existing system field.
+7. Amount in words is included.
+8. Invoice Number is prominent and permanent.
+9. Invoice and Receipt have visually distinct designs.
+10. After successful payment, the user can access the Receipt instead of treating the invoice as a receipt.
+11. Existing payment/Razorpay/webhook functionality remains unchanged.
+12. Existing invoice and receipt numbering remains unchanged.
+13. Student/tenant authorization is enforced server-side.
+14. No duplicate invoice records are created by viewing or downloading the PDF.
+15. Existing tests continue to pass.
+
+First inspect the current implementation and identify the exact files/components/routes involved. Then implement this with the smallest safe change possible without breaking existing Fees, Invoice, Payment, Razorpay, Receipt, or Ledger functionality.
