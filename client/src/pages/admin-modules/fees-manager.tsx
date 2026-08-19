@@ -126,12 +126,14 @@ function addInvoicePeriodOptionsForSession(
     };
   };
   const quarterPeriod = (year: number, quarterStartMonth: number): InvoicePeriodOption => {
+    const quarterStart = new Date(year, quarterStartMonth, 1);
+    const quarterEnd = new Date(year, quarterStartMonth + 2, 1);
     const lastDay = new Date(year, quarterStartMonth + 3, 0).getDate();
     return {
       value: `${year}-Q${Math.floor(quarterStartMonth / 3) + 1}`,
-      label: `Q${Math.floor(quarterStartMonth / 3) + 1} ${year}`,
+      label: `${quarterStart.toLocaleDateString("en-IN", { month: "long" })}–${quarterEnd.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}`,
       start: `${year}-${String(quarterStartMonth + 1).padStart(2, "0")}-01`,
-      end: `${year}-${String(quarterStartMonth + 3).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+      end: `${quarterEnd.getFullYear()}-${String(quarterEnd.getMonth() + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
     };
   };
 
