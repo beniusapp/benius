@@ -302,6 +302,21 @@ interface TransactionDetail {
     status: string;
     academicYear: string | null;
     notes: string | null;
+    invoiceNumber: string | null;
+    frequency: string | null;
+    feePeriodStart: string | null;
+    feePeriodEnd: string | null;
+    lateFeeConfig: {
+      enabled?: boolean;
+      type?: "NONE" | "FLAT" | "DAILY" | "TIERED";
+      grace_period_days?: number;
+      flat_amount?: number;
+      daily_rate?: number;
+      max_cap?: number;
+      tiered_slabs?: Array<{ from_day: number; to_day: number; amount: number }>;
+    } | null;
+    createdAt: string;
+    createdBy: number | null;
     breakdown: Array<{ name: string; purpose: string; amount: number }>;
   };
   payments: PaymentRecord[];
@@ -337,6 +352,126 @@ function fmtDate(d: string | null) {
 
 function fmtDateTime(d: string) {
   return new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function invoiceFrequencyLabel(frequency: string | null): string {
+  const labels: Record<string, string> = {
+    monthly: "Monthly",
+    quarterly: "Quarterly",
+    annual: "Annual",
+    "one-time": "One-Time",
+  };
+  return frequency ? (labels[frequency] ?? frequency) : "—";
+}
+
+function lateFeeRuleLabel(type: string | undefined): string {
+  if (type === "FLAT") return "Flat One-Time Penalty";
+  if (type === "DAILY") return "Daily Accumulating Fine";
+  if (type === "TIERED") return "Tiered Schedule";
+  return type ?? "—";
+}
+
+function invoiceFeePeriodLabel(feeRecord: Pick<TransactionDetail["feeRecord"], "feePeriodStart" | "feePeriodEnd" | "frequency" | "academicYear">): string {
+  if (!feeRecord.feePeriodStart || !feeRecord.feePeriodEnd) return "—";
+  if ((feeRecord.frequency === "annual" || feeRecord.frequency === "one-time") && feeRecord.academicYear) {
+    return feeRecord.academicYear;
+  }
+  return clientFeePeriodLabel(feeRecord.feePeriodStart, feeRecord.feePeriodEnd);
+}
+
+function escapeInvoiceHtml(value: unknown): string {
+  return String(value ?? "—")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function printCreatedInvoice(detail: TransactionDetail): boolean {
+  const { feeRecord, student } = detail;
+  const lateFee = feeRecord.lateFeeConfig;
+  const lateFeeEnabled = lateFee?.enabled === true;
+  const feePeriod = invoiceFeePeriodLabel(feeRecord);
+  const lateFeeDetails = !lateFeeEnabled
+    ? `<tr><td>Late Fee &amp; Penalty</td><td>Disabled</td></tr>`
+    : `
+      <tr><td>Late Fee &amp; Penalty</td><td>Enabled</td></tr>
+      <tr><td>Late Fee Rule</td><td>${escapeInvoiceHtml(lateFeeRuleLabel(lateFee?.type))}</td></tr>
+      ${lateFee?.type === "FLAT" ? `<tr><td>Penalty Amount</td><td>${escapeInvoiceHtml(fmt(Number(lateFee.flat_amount ?? 0)))}</td></tr>` : ""}
+      ${lateFee?.type === "DAILY" ? `<tr><td>Daily Penalty</td><td>${escapeInvoiceHtml(fmt(Number(lateFee.daily_rate ?? 0)))} / day</td></tr>` : ""}
+      ${lateFee?.type === "DAILY" && Number(lateFee.grace_period_days ?? 0) > 0 ? `<tr><td>Grace Period</td><td>${escapeInvoiceHtml(lateFee.grace_period_days)} day(s)</td></tr>` : ""}
+      ${lateFee?.type === "DAILY" && Number(lateFee.max_cap ?? 0) > 0 ? `<tr><td>Maximum Penalty Cap</td><td>${escapeInvoiceHtml(fmt(Number(lateFee.max_cap)))}</td></tr>` : ""}
+      ${lateFee?.type === "TIERED" && lateFee.tiered_slabs?.length ? `<tr><td>Tiered Penalties</td><td>${lateFee.tiered_slabs.map(slab => `${escapeInvoiceHtml(slab.from_day)}–${escapeInvoiceHtml(slab.to_day)} days: ${escapeInvoiceHtml(fmt(Number(slab.amount)))}`).join("<br>")}</td></tr>` : ""}
+    `;
+  const componentRows = feeRecord.breakdown.length > 0
+    ? `
+      <section>
+        <h2>Fee Components</h2>
+        <table>
+          <thead><tr><th>Component</th><th>Purpose</th><th class="right">Amount</th></tr></thead>
+          <tbody>${feeRecord.breakdown.map(component => `
+            <tr>
+              <td>${escapeInvoiceHtml(component.name)}</td>
+              <td>${escapeInvoiceHtml(component.purpose || "—")}</td>
+              <td class="right">${escapeInvoiceHtml(fmt(Number(component.amount)))}</td>
+            </tr>`).join("")}</tbody>
+        </table>
+      </section>`
+    : "";
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) return false;
+  // Keep a usable same-origin document reference for printing while preventing
+  // the printed tab from retaining access back to the admin portal.
+  printWindow.opener = null;
+  printWindow.document.write(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Invoice ${escapeInvoiceHtml(feeRecord.invoiceNumber)}</title>
+<style>
+  *{box-sizing:border-box} body{font-family:Arial,sans-serif;color:#172033;background:#fff;margin:0;padding:32px}
+  .invoice{max-width:760px;margin:0 auto;border:1px solid #cbd5e1;border-radius:16px;overflow:hidden}
+  .head{padding:30px 34px;background:#0f2747;color:#fff;display:flex;justify-content:space-between;gap:24px}
+  .head h1{font-size:28px;margin:0 0 6px}.head p{margin:0;color:#bfdbfe;font-size:13px}.invoice-no{text-align:right}
+  .invoice-no span{display:block;font-size:11px;letter-spacing:.12em;color:#bae6fd;font-weight:700}.invoice-no strong{font-size:26px;letter-spacing:.04em}
+  .status{display:inline-block;background:#fef3c7;color:#92400e;font-size:12px;font-weight:700;border-radius:999px;padding:5px 10px;margin-top:10px}
+  main{padding:28px 34px} h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#475569;margin:24px 0 9px}
+  h2:first-child{margin-top:0} table{width:100%;border-collapse:collapse} td,th{padding:10px 8px;border-bottom:1px solid #e2e8f0;text-align:left;font-size:13px}
+  td:first-child{width:38%;color:#64748b} td:last-child{font-weight:600} th{background:#f8fafc;color:#64748b;font-size:11px;text-transform:uppercase}
+  .right{text-align:right}.amount{font-size:22px;color:#0e7490;font-weight:800}.note{padding:12px;background:#f8fafc;border-radius:8px;white-space:pre-wrap;font-size:13px}
+  footer{padding:18px 34px;border-top:1px solid #e2e8f0;color:#64748b;font-size:11px;text-align:center}
+  @media print{body{padding:0}.invoice{border:0;border-radius:0}}
+</style></head><body>
+<article class="invoice">
+  <header class="head">
+    <div><h1>Invoice</h1><p>School fee invoice</p><span class="status">STATUS: ${escapeInvoiceHtml(feeRecord.status.toUpperCase())}</span></div>
+    <div class="invoice-no"><span>INVOICE NO.</span><strong>${escapeInvoiceHtml(feeRecord.invoiceNumber)}</strong></div>
+  </header>
+  <main>
+    <h2>Student</h2>
+    <table>
+      <tr><td>Student Name</td><td>${escapeInvoiceHtml(student.name)}</td></tr>
+      <tr><td>Student ID / MIS ID</td><td>${escapeInvoiceHtml(student.digitalStudentId)}</td></tr>
+      <tr><td>Class / Section</td><td>${escapeInvoiceHtml(`${student.class ?? "—"} / ${student.section ?? "—"}`)}</td></tr>
+    </table>
+    <h2>Invoice Details</h2>
+    <table>
+      <tr><td>Fee Name</td><td>${escapeInvoiceHtml(feeRecord.feeName)}</td></tr>
+      <tr><td>Fee Type</td><td>${escapeInvoiceHtml(feeRecord.feeType)}</td></tr>
+      <tr><td>Amount</td><td class="amount">${escapeInvoiceHtml(fmt(feeRecord.amount))}</td></tr>
+      <tr><td>Frequency</td><td>${escapeInvoiceHtml(invoiceFrequencyLabel(feeRecord.frequency))}</td></tr>
+      <tr><td>Fee Period</td><td>${escapeInvoiceHtml(feePeriod)}</td></tr>
+      <tr><td>Due Date</td><td>${escapeInvoiceHtml(fmtDate(feeRecord.dueDate))}</td></tr>
+      <tr><td>Academic Session</td><td>${escapeInvoiceHtml(feeRecord.academicYear)}</td></tr>
+      <tr><td>Created On</td><td>${escapeInvoiceHtml(fmtDateTime(feeRecord.createdAt))}</td></tr>
+      ${lateFeeDetails}
+    </table>
+    ${componentRows}
+    ${feeRecord.notes ? `<section><h2>Notes</h2><div class="note">${escapeInvoiceHtml(feeRecord.notes)}</div></section>` : ""}
+  </main>
+  <footer>This is an invoice only. A payment receipt is generated after successful payment.</footer>
+</article>
+<script>window.print();</script></body></html>`);
+  printWindow.document.close();
+  return true;
 }
 
 // IST helpers — always use Asia/Kolkata so the time is correct regardless of
@@ -1893,6 +2028,20 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     () => invoiceSessions.find(session => session.isActive) ?? null,
     [invoiceSessions],
   );
+  const {
+    data: addFeeSuccessDetail,
+    isLoading: isAddFeeSuccessLoading,
+    isError: isAddFeeSuccessDetailError,
+  } = useQuery<TransactionDetail>({
+    queryKey: ["/api/admin/fees", addFeeSuccessId, "transaction-detail"],
+    queryFn: async () => {
+      const response = await sessionFetch(`/api/admin/fees/${addFeeSuccessId}/transaction-detail`);
+      if (!response.ok) throw new Error("Failed to load the created invoice");
+      return response.json();
+    },
+    enabled: addFeeSuccessId !== null,
+    retry: false,
+  });
 
   const { data: ledgerData, isLoading, isFetching } = useQuery<LedgerPageResponse>({
     queryKey: ["/api/admin/fees", viewSessionId, ledgerPage, search, statusFilter, classFilter, feeNameFilter, feeTypeFilter],
@@ -2862,24 +3011,136 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       <Dialog open={showForm} onOpenChange={v => { if (!v) { setShowForm(false); setEditing(null); setAddFeeSuccessId(null); } }}>
         <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-cyan-400">{editing ? "Edit Fee Record" : "Add Invoice"}</DialogTitle>
+            <DialogTitle className="text-cyan-400">
+              {addFeeSuccessId !== null ? "Invoice Created Successfully" : editing ? "Edit Fee Record" : "Add Invoice"}
+            </DialogTitle>
           </DialogHeader>
           {addFeeSuccessId !== null ? (
             <div className="space-y-4 py-2">
-              <div className="p-4 rounded-xl bg-emerald-900/20 border border-emerald-700/40 text-center">
-                <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2" />
-                <p className="text-emerald-400 font-semibold text-lg">Invoice Created</p>
-                <p className="text-white/60 text-sm mt-1">The invoice has been saved successfully.</p>
-              </div>
-              <Button
-                className="w-full bg-white/10 hover:bg-white/20 text-white gap-2"
-                onClick={() => window.open(`/api/admin/fees/${addFeeSuccessId}/receipt`, "_blank")}
-              >
-                <Printer className="w-4 h-4" /> Print Receipt
-              </Button>
-              <Button className="w-full bg-cyan-600 hover:bg-cyan-500 text-white" onClick={() => { setShowForm(false); setAddFeeSuccessId(null); }}>
-                Done
-              </Button>
+              {isAddFeeSuccessLoading ? (
+                <div className="py-12 text-center">
+                  <Loader2 className="w-8 h-8 text-cyan-400 animate-spin mx-auto mb-3" />
+                  <p className="text-white/60 text-sm">Loading the created invoice…</p>
+                </div>
+              ) : addFeeSuccessDetail ? (
+                <>
+                  <div className="p-5 rounded-xl bg-emerald-900/20 border border-emerald-700/40 text-center">
+                    <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2" />
+                    <p className="text-emerald-400 font-bold tracking-wide">INVOICE CREATED SUCCESSFULLY</p>
+                    <div className="mt-4 rounded-lg bg-[#081426] border border-cyan-400/30 px-4 py-3">
+                      <p className="text-[10px] font-bold tracking-[0.18em] text-cyan-300/70">INVOICE NO.</p>
+                      <p className="mt-1 text-2xl font-black tracking-wide text-cyan-300">
+                        {addFeeSuccessDetail.feeRecord.invoiceNumber ?? "—"}
+                      </p>
+                    </div>
+                    <span className="inline-flex mt-3 rounded-full border border-amber-500/30 bg-amber-900/20 px-3 py-1 text-xs font-bold text-amber-300">
+                      STATUS: {addFeeSuccessDetail.feeRecord.status.toUpperCase()}
+                    </span>
+                  </div>
+
+                  <div className="space-y-4 rounded-xl border border-white/10 bg-[#0A1628]/60 p-4 text-sm">
+                    <div>
+                      <p className="text-[10px] font-bold tracking-[0.14em] text-white/40 uppercase mb-2">Student</p>
+                      <p className="font-semibold text-white">{addFeeSuccessDetail.student.name}</p>
+                      <p className="text-xs text-white/50 mt-1">
+                        {addFeeSuccessDetail.student.digitalStudentId} · Class {addFeeSuccessDetail.student.class ?? "—"}-{addFeeSuccessDetail.student.section ?? "—"}
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-3 border-t border-white/10 pt-4">
+                      {[
+                        ["Fee Name", addFeeSuccessDetail.feeRecord.feeName],
+                        ["Fee Type", addFeeSuccessDetail.feeRecord.feeType],
+                        ["Amount", fmt(addFeeSuccessDetail.feeRecord.amount)],
+                        ["Frequency", invoiceFrequencyLabel(addFeeSuccessDetail.feeRecord.frequency)],
+                        ["Fee Period", invoiceFeePeriodLabel(addFeeSuccessDetail.feeRecord)],
+                        ["Due Date", fmtDate(addFeeSuccessDetail.feeRecord.dueDate)],
+                        ["Academic Session", addFeeSuccessDetail.feeRecord.academicYear ?? "—"],
+                        ["Created On", fmtDateTime(addFeeSuccessDetail.feeRecord.createdAt)],
+                      ].map(([label, value]) => (
+                        <div key={label}>
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-white/40">{label}</p>
+                          <p className="mt-0.5 font-medium text-white/85 break-words">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="border-t border-white/10 pt-4">
+                      <p className="text-[10px] font-bold tracking-[0.14em] text-white/40 uppercase">Late Fee &amp; Penalty</p>
+                      {addFeeSuccessDetail.feeRecord.lateFeeConfig?.enabled ? (
+                        <div className="mt-2 text-white/85 space-y-1">
+                          <p><span className="text-amber-300 font-semibold">Enabled</span> · {lateFeeRuleLabel(addFeeSuccessDetail.feeRecord.lateFeeConfig.type)}</p>
+                          {addFeeSuccessDetail.feeRecord.lateFeeConfig.type === "FLAT" && <p className="text-white/60">Penalty Amount: {fmt(Number(addFeeSuccessDetail.feeRecord.lateFeeConfig.flat_amount ?? 0))}</p>}
+                          {addFeeSuccessDetail.feeRecord.lateFeeConfig.type === "DAILY" && (
+                            <>
+                              <p className="text-white/60">Daily Penalty: {fmt(Number(addFeeSuccessDetail.feeRecord.lateFeeConfig.daily_rate ?? 0))} / day</p>
+                              {Number(addFeeSuccessDetail.feeRecord.lateFeeConfig.grace_period_days ?? 0) > 0 && <p className="text-white/60">Grace Period: {addFeeSuccessDetail.feeRecord.lateFeeConfig.grace_period_days} day(s)</p>}
+                              {Number(addFeeSuccessDetail.feeRecord.lateFeeConfig.max_cap ?? 0) > 0 && <p className="text-white/60">Maximum Penalty Cap: {fmt(Number(addFeeSuccessDetail.feeRecord.lateFeeConfig.max_cap))}</p>}
+                            </>
+                          )}
+                          {addFeeSuccessDetail.feeRecord.lateFeeConfig.type === "TIERED" && (addFeeSuccessDetail.feeRecord.lateFeeConfig.tiered_slabs?.length ?? 0) > 0 && (
+                            <div className="pt-1 space-y-1">
+                              {addFeeSuccessDetail.feeRecord.lateFeeConfig.tiered_slabs!.map((slab, index) => (
+                                <p key={`${slab.from_day}-${slab.to_day}-${index}`} className="text-white/60">
+                                  Days {slab.from_day}–{slab.to_day}: {fmt(Number(slab.amount))}
+                                </p>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-white/60">Disabled</p>
+                      )}
+                    </div>
+
+                    {addFeeSuccessDetail.feeRecord.breakdown.length > 0 && (
+                      <div className="border-t border-white/10 pt-4">
+                        <p className="text-[10px] font-bold tracking-[0.14em] text-white/40 uppercase mb-2">Fee Components</p>
+                        <div className="space-y-2">
+                          {addFeeSuccessDetail.feeRecord.breakdown.map((component, index) => (
+                            <div key={`${component.name}-${index}`} className="flex items-start justify-between gap-3 rounded-lg bg-white/5 px-3 py-2">
+                              <div><p className="font-medium text-white/85">{component.name}</p>{component.purpose && <p className="text-xs text-white/45">{component.purpose}</p>}</div>
+                              <p className="font-semibold text-cyan-300">{fmt(Number(component.amount))}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {addFeeSuccessDetail.feeRecord.notes && (
+                      <div className="border-t border-white/10 pt-4">
+                        <p className="text-[10px] font-bold tracking-[0.14em] text-white/40 uppercase">Notes</p>
+                        <p className="mt-2 whitespace-pre-wrap text-white/70">{addFeeSuccessDetail.feeRecord.notes}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <p className="text-center text-xs text-white/40">
+                    This is an invoice only. A payment receipt is available after successful payment.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button className="bg-white/10 hover:bg-white/20 text-white gap-2" onClick={() => {
+                      if (!printCreatedInvoice(addFeeSuccessDetail)) {
+                        toast({
+                          title: "Invoice window blocked",
+                          description: "Allow pop-ups for this site, then try View / Print Invoice again.",
+                          variant: "destructive",
+                        });
+                      }
+                    }}>
+                      <Printer className="w-4 h-4" /> View / Print Invoice
+                    </Button>
+                    <Button className="bg-cyan-600 hover:bg-cyan-500 text-white" onClick={() => { setShowForm(false); setAddFeeSuccessId(null); }}>
+                      Done
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-4 py-8 text-center">
+                  <AlertTriangle className="w-8 h-8 text-amber-400 mx-auto" />
+                  <p className="text-white/70 text-sm">{isAddFeeSuccessDetailError ? "The invoice was created, but its details could not be loaded." : "The invoice details are unavailable."}</p>
+                  <Button className="w-full bg-cyan-600 hover:bg-cyan-500 text-white" onClick={() => { setShowForm(false); setAddFeeSuccessId(null); }}>Done</Button>
+                </div>
+              )}
             </div>
           ) : (
           <>

@@ -3046,6 +3046,13 @@ export function registerFeesRoutes(app: Express) {
           status: feeRow.status,
           academicYear: feeRow.academic_year ?? null,
           notes: feeRow.notes ?? null,
+          invoiceNumber: feeRow.invoice_number ?? null,
+          frequency: feeRow.frequency ?? null,
+          feePeriodStart: feeRow.fee_period_start ?? null,
+          feePeriodEnd: feeRow.fee_period_end ?? null,
+          lateFeeConfig: feeRow.late_fee_config ?? null,
+          createdAt: feeRow.created_at,
+          createdBy: feeRow.created_by ?? null,
           // Source: fee_records.breakdown_snapshot (JSONB, immutable, frozen at invoice creation).
           // NEVER reads fee_structures.breakdown — that is live config and may have changed.
           // The pg driver returns JSONB columns as parsed JS values; no JSON.parse needed.

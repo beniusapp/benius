@@ -1,0 +1,159 @@
+Update the Add Invoice → Create Invoice success flow.
+
+Problem
+
+Currently, when an admin clicks Create Invoice, the success screen shows:
+
+«Invoice Created
+The invoice has been saved successfully.
+Print Receipt»
+
+This is incorrect/misleading because creating an invoice does not mean that the invoice has been paid.
+
+An invoice and a receipt are two different things:
+
+- Invoice = created when the admin raises the charge.
+- Receipt = generated only after the invoice/payment is successfully paid.
+
+Required change
+
+After clicking Create Invoice, show a proper Invoice Created Successfully confirmation/details screen.
+
+Do NOT show "Print Receipt" at this stage.
+
+Instead, show:
+
+INVOICE CREATED SUCCESSFULLY
+
+Make the Invoice Number the most prominent element on the screen.
+
+Example:
+
+INVOICE NO.
+INV-000123
+
+The invoice number should be visually prominent, bold, attractive, and easy to identify.
+
+Show every detail entered/created for this invoice
+
+Display a clean invoice summary containing:
+
+- Student Name
+- Student ID / MIS ID
+- Class / Section
+- Fee Name
+- Fee Type
+- Amount
+- Frequency
+- Fee Period
+- Due Date
+- Invoice Number
+- Invoice Status
+- Late Fee & Penalty status
+- Late Fee Rule Type, if enabled
+- Penalty Amount, if enabled
+- All Fee Breakdown / Components, if added
+- Notes, if provided
+- Academic Session
+- Invoice creation date/time
+
+The information shown should come from the actual successfully created invoice record, not merely from the form state.
+
+Invoice status
+
+Immediately after creation, the invoice must show:
+
+Status: DUE
+
+Creating an invoice must NOT create or imply a payment.
+
+At this stage there should be:
+
+- No Receipt Number
+- No Payment ID
+- No Razorpay Payment ID
+- No Razorpay Order ID
+- No payment date
+- No "Paid" status
+
+Do not generate or display a payment receipt simply because the invoice was created.
+
+Buttons
+
+Replace:
+
+Print Receipt
+
+with:
+
+View / Print Invoice
+
+This should print/display the actual invoice document containing the invoice number and all relevant invoice details.
+
+Keep:
+
+Done
+
+as the secondary action to close the success screen.
+
+Important distinction
+
+The flow must be:
+
+Create Invoice
+→ Invoice created
+→ Invoice No. generated
+→ Status = DUE
+→ Admin can view/print the invoice
+
+Later:
+
+Student/Admin pays invoice
+→ Payment successfully captured/recorded
+→ Invoice becomes PAID
+→ Receipt Number generated
+→ Receipt can then be viewed/printed
+
+Do NOT change
+
+Do not change:
+
+- Invoice numbering logic
+- Duplicate protection
+- Academic-session logic
+- Fee Period logic
+- Payment/Razorpay logic
+- Webhooks
+- Receipt-generation logic
+- Ledger behavior
+- Student portal payment behavior
+- Database schema unless absolutely required
+- Generate Invoices flow
+
+This is primarily a correction to the post-creation Add Invoice UI and invoice-vs-receipt behavior.
+
+Final expected behavior
+
+When I create a Math Book invoice for ₹500, the success screen should clearly say:
+
+INVOICE CREATED SUCCESSFULLY
+
+INVOICE NO. INV-000123
+
+Student: Student Name
+Fee: Math Book
+Fee Type: Math Book Fee
+Amount: ₹500
+Frequency: One-time
+Fee Period: 2027–2028
+Due Date: 22 Aug 2027
+Status: DUE
+Late Fee: Disabled/Enabled
+Components: ...
+Academic Session: 2027–2028
+
+[View / Print Invoice] [Done]
+
+There must be no receipt presented at invoice-creation time.
+
+Please inspect the existing invoice and receipt components/routes first and make the smallest safe change necessary. Preserve all existing backend/payment functionality.
