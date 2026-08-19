@@ -977,7 +977,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
             <div>
               <label className="text-xs text-white/60 mb-1 block">Notes</label>
               <input value={notes} onChange={e => setNotes(e.target.value)}
-                placeholder={method === "Cash" ? "Any notes for the cashier" : "Additional remarks"}
+                placeholder="Notes, Collected by"
                 className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
             </div>
 
