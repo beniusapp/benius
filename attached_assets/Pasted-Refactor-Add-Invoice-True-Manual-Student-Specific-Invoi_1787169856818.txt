@@ -1,0 +1,542 @@
+Refactor Add Invoice — True Manual Student-Specific Invoice
+
+Please understand this requirement very carefully before making any code changes.
+
+Core requirement
+
+Do NOT convert Add Invoice into a Fee Structure selector.
+
+I want Add Invoice to remain a completely manual invoice creation system.
+
+The purpose of Add Invoice is to create a special, one-off invoice for one specific student when that charge does not necessarily exist in Fee Structure.
+
+Example
+
+A student needs a Mathematics book.
+
+The admin/cashier should be able to:
+
+- Select the student
+- Manually enter Fee Name: "Mathematics Book"
+- Manually enter Fee Type: "Books"
+- Enter Amount: "₹450"
+- Select Frequency: "One-Time"
+- Select the appropriate Fee Period
+- Select Due Date
+- Configure Late Fee & Penalty if required
+- Create the invoice
+
+This invoice does not need to exist in Fee Structure.
+
+Other examples:
+
+- School book
+- Uniform
+- ID card
+- Certificate fee
+- Special activity fee
+- Replacement charge
+- Miscellaneous student-specific charge
+- Any other manually created student-specific invoice
+
+---
+
+1. Keep the two workflows conceptually separate
+
+Generate Invoices
+
+Fee Structure
+     ↓
+Structure rules/configuration
+     ↓
+Eligible students
+     ↓
+Multiple students
+     ↓
+Create invoices
+
+Add Invoice
+
+Selected student
+     ↓
+Manual invoice information
+     ↓
+Exactly ONE student
+     ↓
+Create invoice
+
+Do not make Add Invoice depend on Fee Structure.
+
+There must NOT be a mandatory "feeStructureId" for Add Invoice.
+
+---
+
+2. Add Invoice UI
+
+When clicking Add Invoice, the workflow should be:
+
+Step 1 — Select Student
+
+Search by:
+
+- Student Name
+- Student DSID
+
+Search → select exactly one student.
+
+After selection, clearly show the selected student's:
+
+- Name
+- DSID
+- Class
+- Section
+
+There must be no "All Classes" option.
+
+There must be no multiple-student selection.
+
+---
+
+3. Manual Invoice Details
+
+After selecting the student:
+
+Fee Name
+
+Manual text input.
+
+Example:
+
+"Mathematics Book"
+
+Do NOT populate this from Fee Structure.
+
+Fee Type
+
+Manual text input.
+
+Example:
+
+"Books"
+
+Do NOT force the admin to select an existing Fee Structure type.
+
+Amount
+
+Manual numeric amount input.
+
+Example:
+
+"450"
+
+Frequency
+
+Keep the existing supported frequency system.
+
+For example:
+
+- Monthly
+- Quarterly
+- Annual
+- One-Time
+
+The admin selects the frequency.
+
+---
+
+4. Fee Period
+
+The Fee Period must follow the same canonical period rules used by Generate Invoices.
+
+Important:
+
+The invoice is still manually created, but the period calculation/validation should use the same reliable period logic already implemented in the application.
+
+For example:
+
+Monthly
+
+August 2026
+
+Quarterly
+
+April–June 2026
+
+Annual
+
+2026–27
+
+One-Time
+
+Use the appropriate existing application behavior.
+
+Do not create a second or conflicting period calculation system.
+
+---
+
+5. Due Date
+
+Due Date should remain available in Add Invoice because this is a manual invoice.
+
+The admin/cashier should be able to select the Due Date.
+
+However, the backend must validate it properly using the same date/session safety rules already used by the invoice system.
+
+Do NOT allow:
+
+- Invalid dates
+- Dates outside the valid invoice period where the existing rules prohibit them
+- Invalid academic-session dates
+
+The client must never be trusted as the final authority.
+
+---
+
+6. Late Fee & Penalty
+
+Keep the same Late Fee & Penalty UI and underlying calculation architecture already used by Fee Structure.
+
+The admin can manually configure:
+
+- Flat penalty
+- Daily penalty
+- Tiered penalty
+- Grace period
+- Cap
+- Other currently supported late-fee configuration
+
+This is intentionally manual.
+
+For example:
+
+Mathematics Book
+₹450
+
+Late Fee:
+Flat: ₹50
+Grace Period: 10 days
+
+The configuration must be stored correctly with the invoice and must remain compatible with the existing late-fee/payment system.
+
+Do not create a second late-fee calculation engine.
+
+---
+
+7. Components / Fee Breakdown
+
+If Add Invoice currently supports components/breakdown, keep that functionality.
+
+The admin should be able to manually add components.
+
+Example:
+
+Mathematics Book        ₹400
+Activity Charge          ₹50
+-----------------------------
+Total                   ₹450
+
+The invoice should store an immutable snapshot of the breakdown exactly as the existing invoice architecture expects.
+
+Use the existing snapshot/storage mechanism.
+
+Do not create a new database structure unnecessarily.
+
+---
+
+8. Reuse the common invoice safety architecture
+
+This is extremely important.
+
+I do NOT want Add Invoice to duplicate the entire invoice engine.
+
+The source of the invoice information is different, but the common invoice creation infrastructure should remain shared wherever possible.
+
+Both:
+
+Generate Invoices
+
+and
+
+Add Invoice
+
+should ultimately use the same reliable underlying mechanisms for:
+
+- Active academic session
+- Period validation
+- Invoice numbering
+- Duplicate protection
+- Database insertion
+- Status initialization
+- Invoice record creation
+- Breakdown snapshot
+- Late-fee storage/calculation compatibility
+- Audit/security handling
+- Tenant/school isolation
+- Payment compatibility
+
+The difference is only the source of the invoice data and the number of students.
+
+---
+
+9. Student eligibility
+
+Add Invoice is for exactly one selected student.
+
+It must still verify:
+
+- Student belongs to the logged-in school/tenant
+- Student is active
+- Student record is valid
+
+Do not allow an admin from School A to manually invoice a student from School B.
+
+Do not allow an invalid/non-existent student.
+
+Because Add Invoice is intentionally a manual invoice, do not require applicable-class matching against a Fee Structure.
+
+There is no Fee Structure involved.
+
+---
+
+10. Duplicate protection
+
+Use the existing canonical duplicate-protection mechanism.
+
+Do not create a weaker duplicate check for Add Invoice.
+
+The server must remain authoritative.
+
+If the same invoice identity already exists according to the application's existing duplicate rules, Add Invoice must safely prevent an accidental duplicate.
+
+It must also remain safe if:
+
+- Generate Invoices and Add Invoice are used almost simultaneously
+- The cashier double-clicks Create Invoice
+- The browser submits the request twice
+- Two requests arrive concurrently
+
+Use the existing transaction/advisory-lock/invoice-number architecture wherever already implemented.
+
+---
+
+11. Invoice Number
+
+Add Invoice must use the same invoice-number generation system as Generate Invoices.
+
+For example:
+
+INV-0067
+INV-0068
+INV-0069
+
+Do NOT allow the client to provide the invoice number.
+
+Do NOT create a separate numbering sequence for Add Invoice.
+
+The server must allocate the invoice number.
+
+---
+
+12. Status
+
+A newly created manual invoice must start with the same initial invoice status used by the normal invoice-generation flow.
+
+For example:
+
+Due
+
+Do not allow the client to create an invoice directly as:
+
+- Paid
+- Overdue
+- Failed
+- Cancelled
+- Refunded
+
+Payment status and invoice status must remain separate concepts.
+
+---
+
+13. Academic Session
+
+The admin should NOT manually choose an arbitrary academic session for the invoice if the existing application architecture determines the active session server-side.
+
+Use the same active academic-session logic already used by Generate Invoices.
+
+The client must not be trusted to choose the persisted session.
+
+---
+
+14. DO NOT do these things
+
+Very important:
+
+Do NOT:
+
+- Add a Fee Structure selector to Add Invoice
+- Require "feeStructureId"
+- Automatically copy Fee Name from Fee Structure
+- Automatically copy Fee Type from Fee Structure
+- Automatically copy Amount from Fee Structure
+- Automatically copy Late Fee from Fee Structure
+- Automatically copy Components from Fee Structure
+- Require Applicable Classes
+- Add "All Classes"
+- Convert Add Invoice into a one-student Generate Invoices button
+
+Add Invoice must remain manual.
+
+---
+
+15. What should be shared with Generate Invoices
+
+Use this principle:
+
+Same architecture:
+
+                  INVOICE CREATION
+                         │
+          ┌──────────────┴──────────────┐
+          │                             │
+ Generate Invoices                 Add Invoice
+          │                             │
+ Fee Structure data              Manual data
+          │                             │
+ Multiple students               One student
+          │                             │
+          └──────────────┬──────────────┘
+                         ↓
+               Common Invoice Engine
+                         ↓
+              Validation / Duplicate
+                / Number / Storage
+                         ↓
+                  fee_records
+
+The business input is different.
+
+The core invoice infrastructure should be shared.
+
+---
+
+16. Compare against Generate Invoices
+
+Before making changes, carefully inspect the current Generate Invoices implementation.
+
+Do not assume how it works.
+
+Trace:
+
+- Frontend
+- Backend route
+- Period calculation
+- Academic session
+- Due-date validation
+- Late-fee configuration
+- Component snapshot
+- Duplicate protection
+- Invoice numbering
+- Database insertion
+- Audit logging
+- Tenant isolation
+
+Then make Add Invoice use the same canonical mechanisms wherever applicable.
+
+---
+
+17. Tests required
+
+Do not just run TypeScript.
+
+Add/modify proper tests for the production routes/services.
+
+Test:
+
+Basic
+
+- Create manual invoice for one student
+- Correct Fee Name
+- Correct Fee Type
+- Correct Amount
+- Correct Frequency
+- Correct Fee Period
+- Correct Due Date
+- Correct Late Fee configuration
+- Correct Components
+- Correct Academic Session
+- Correct Status
+- Correct Invoice Number
+
+Student security
+
+- Student belongs to same school → allowed
+- Student belongs to another school → rejected
+- Inactive student → rejected
+- Invalid student → rejected
+
+Duplicate
+
+Test:
+
+- Add Invoice → Add Invoice
+- Add Invoice → Generate Invoices
+- Generate Invoices → Add Invoice
+- Concurrent Add Invoice requests
+
+Period
+
+Test:
+
+- Monthly
+- Quarterly
+- Annual
+- One-Time
+
+Payment compatibility
+
+Verify the resulting invoice works normally with the existing:
+
+- Offline payment
+- UPI / QR payment
+- Portal Payment / Razorpay
+- Receipt generation
+- Ledger
+- Payment history
+
+---
+
+18. Very important final requirement
+
+Do not make unrelated changes.
+
+Do NOT modify:
+
+- Fee Structure UI
+- Generate Invoices UI
+- Payment methods
+- Razorpay
+- UPI / QR
+- Ledger layout
+- Payment history
+- Receipt design
+- Academic session architecture
+- Database schema unless absolutely required
+
+Only refactor/fix Add Invoice and its shared invoice-creation path where necessary.
+
+Before changing code, give me a concise comparison of:
+
+Current Add Invoice → Generate Invoices → What needs to change
+
+Then implement the changes.
+
+After implementation report:
+
+1. What changed
+2. What remains intentionally different
+3. What common logic is now shared
+4. Tests performed
+5. Test results
+6. Any remaining risks
+
+Most important: Add Invoice is a manual student-specific invoice, not a Fee Structure-based invoice. Do not change that requirement.
