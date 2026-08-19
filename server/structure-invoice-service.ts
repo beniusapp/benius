@@ -316,7 +316,7 @@ async function createInvoiceFromContext(input: {
   );
   if (duplicate) return { created: false, duplicate };
 
-  const atomicResult = await storage.createStructureFeeRecordIfAbsent({
+  const atomicResult = await storage.createInvoiceFeeRecordIfAbsent({
     data: {
       schoolId: input.context.schoolId,
       studentId: input.studentId,

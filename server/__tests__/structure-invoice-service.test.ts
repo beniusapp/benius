@@ -4,7 +4,7 @@ const storageMock = vi.hoisted(() => ({
   getActiveSession: vi.fn(),
   getFeeStructureById: vi.fn(),
   getFeeRecordsBySchool: vi.fn(),
-  createStructureFeeRecordIfAbsent: vi.fn(),
+  createInvoiceFeeRecordIfAbsent: vi.fn(),
 }));
 
 vi.mock("../storage", () => ({ storage: storageMock }));
@@ -66,7 +66,7 @@ describe("shared structure invoice service", () => {
     storageMock.getFeeStructureById.mockResolvedValue(structure);
     storageMock.getActiveSession.mockResolvedValue(session);
     storageMock.getFeeRecordsBySchool.mockResolvedValue([]);
-    storageMock.createStructureFeeRecordIfAbsent.mockImplementation(async ({ data }) => ({
+    storageMock.createInvoiceFeeRecordIfAbsent.mockImplementation(async ({ data }) => ({
       created: true,
       record: { id: 42, invoiceNumber: "INV-0042", ...data },
     }));
@@ -164,7 +164,7 @@ describe("shared structure invoice service", () => {
     });
 
     expect(result.created).toBe(true);
-    expect(storageMock.createStructureFeeRecordIfAbsent).toHaveBeenCalledWith({
+    expect(storageMock.createInvoiceFeeRecordIfAbsent).toHaveBeenCalledWith({
       data: expect.objectContaining({
         schoolId: 3,
         studentId: 11,
@@ -281,7 +281,7 @@ describe("shared structure invoice service", () => {
       });
       await createManualInvoice({ context, studentId: 11, createdBy: 99 });
 
-      expect(storageMock.createStructureFeeRecordIfAbsent).toHaveBeenCalledWith({
+      expect(storageMock.createInvoiceFeeRecordIfAbsent).toHaveBeenCalledWith({
         data: expect.objectContaining({
           feeName: "Custom Tuition",
           frequency: "monthly",
@@ -314,7 +314,57 @@ describe("shared structure invoice service", () => {
     });
 
     expect(result).toEqual({ created: false, duplicate: existingRecord });
-    expect(storageMock.createStructureFeeRecordIfAbsent).not.toHaveBeenCalled();
+    expect(storageMock.createInvoiceFeeRecordIfAbsent).not.toHaveBeenCalled();
+  });
+
+  it("prevents duplicate invoices across manual and structure-backed entry points", async () => {
+    const manualContext = await prepareManualInvoiceContext({
+      schoolId: 3,
+      feeName: "Custom Tuition",
+      feeType: "Tuition",
+      amount: 3600,
+      frequency: "monthly",
+      requestedPeriodStart: "2026-08-01",
+      requestedPeriodEnd: "2026-08-31",
+      dueDate: "2026-08-10",
+      breakdown: [{ name: "Instruction", purpose: "", amount: 3600 }],
+      lateFeeConfig: null,
+    });
+    const structureContext = await prepareStructureInvoiceContext({
+      schoolId: 3,
+      structureId: 7,
+      requestedPeriodStart: "2026-08-01",
+      requestedPeriodEnd: "2026-08-31",
+    });
+    const manualFirst = await createManualInvoice({
+      context: manualContext,
+      studentId: 11,
+      duplicateIndex: buildInvoiceDuplicateIndex([]),
+    });
+    expect(manualFirst.created).toBe(true);
+
+    const manualThenStructure = await createStructureInvoice({
+      context: structureContext,
+      studentId: 11,
+      duplicateIndex: buildInvoiceDuplicateIndex([manualFirst.record] as any),
+    });
+    expect(manualThenStructure).toMatchObject({ created: false });
+
+    vi.clearAllMocks();
+    const structureFirst = await createStructureInvoice({
+      context: structureContext,
+      studentId: 11,
+      duplicateIndex: buildInvoiceDuplicateIndex([]),
+    });
+    expect(structureFirst.created).toBe(true);
+
+    const structureThenManual = await createManualInvoice({
+      context: manualContext,
+      studentId: 11,
+      duplicateIndex: buildInvoiceDuplicateIndex([structureFirst.record] as any),
+    });
+    expect(structureThenManual).toMatchObject({ created: false });
+    expect(storageMock.createInvoiceFeeRecordIfAbsent).toHaveBeenCalledTimes(1);
   });
 
   it("treats a legacy invoice with no stored period as a duplicate", () => {

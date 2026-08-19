@@ -4645,17 +4645,18 @@ export class DatabaseStorage {
   }
 
   /**
-   * Atomically creates one structure-backed invoice for a student/type/period.
-   * The transaction-scoped advisory lock prevents concurrent single or bulk
-   * requests from both passing the duplicate check. Legacy period-less records
-   * remain duplicates for the same student/type within the active session.
+   * Atomically creates one invoice for a student/type/period.
+   * The transaction-scoped advisory lock protects both manual and
+   * structure-backed callers from concurrent duplicate creation. Legacy
+   * period-less records remain duplicates for the same student/type within the
+   * active session.
    */
-  async createStructureFeeRecordIfAbsent(input: {
+  async createInvoiceFeeRecordIfAbsent(input: {
     data: Omit<InsertFeeRecord, "invoiceNumber">;
     periodStart: string;
   }): Promise<{ created: boolean; record: FeeRecord }> {
     const data = input.data;
-    if (!data.sessionId) throw new Error("Structure-backed invoices require an active session");
+    if (!data.sessionId) throw new Error("Invoices require an active session");
     const normalizedType = data.feeType.trim().toLowerCase();
     const lockKey = [
       "fee-invoice",

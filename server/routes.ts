@@ -29,6 +29,10 @@ import {
   createManualInvoice,
   prepareManualInvoiceContext,
 } from "./structure-invoice-service";
+import {
+  manualInvoiceBodySchema,
+  manualInvoiceStudentValidationMessage,
+} from "./manual-invoice-validation";
 import { addSSEClient, broadcastSessionActivated, broadcastSessionDeleted } from "./sse";
 import { db } from "./db";
 import { eq, and, sql, inArray, not } from "drizzle-orm";
@@ -4260,52 +4264,6 @@ export async function registerRoutes(
     notes: z.string().optional().nullable(),
     academicYear: z.string().max(20).optional().nullable(),
   });
-  const manualBreakdownItemSchema = z.object({
-    name: z.string().min(1).max(100),
-    purpose: z.string().max(300).default(""),
-    amount: z.number().int().min(0),
-  });
-  const manualLateFeeConfigSchema = z.object({
-    enabled: z.boolean().default(false),
-    type: z.enum(["NONE", "FLAT", "DAILY", "TIERED"]).default("NONE"),
-    grace_period_days: z.number().int().min(0).default(0),
-    flat_amount: z.number().int().min(0).default(0),
-    daily_rate: z.number().min(0).default(0),
-    max_cap: z.number().int().min(0).default(0),
-    tiered_slabs: z.array(z.object({
-      from_day: z.number().int().min(1),
-      to_day: z.number().int().min(1),
-      amount: z.number().int().min(0),
-    })).default([]),
-  });
-
-  // Schema for manual individual invoice creation (POST /api/admin/fees).
-  // Status, session, invoice number, and payment fields remain server controlled.
-  const createFeeRecordBodySchema = z.object({
-    studentId: z.number().int().positive(),
-    feeName: z.string().trim().min(1).max(100),
-    feeType: z.string().trim().min(1).max(100),
-    amount: z.number().int().positive(),
-    frequency: z.enum(["monthly", "quarterly", "annual", "one-time"]),
-    feePeriodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    feePeriodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    breakdown: z.array(manualBreakdownItemSchema).default([]),
-    lateFeeConfig: manualLateFeeConfigSchema.default({
-      enabled: false,
-      type: "NONE",
-      grace_period_days: 0,
-      flat_amount: 0,
-      daily_rate: 0,
-      max_cap: 0,
-      tiered_slabs: [],
-    }),
-    notes: z.string().optional().nullable(),
-  }).superRefine((val, ctx) => {
-    if (val.feePeriodEnd < val.feePeriodStart) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Fee period end must be on or after start", path: ["feePeriodEnd"] });
-    }
-  });
   // Full schema with conditional dueDate validation (for PATCH reuse as update)
   const feeRecordBodySchema = feeRecordBaseSchema.superRefine((val, ctx) => {
     const noDeadlineNeeded = val.status === "Paid";
@@ -4506,21 +4464,18 @@ export async function registerRoutes(
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
-    const parsed = createFeeRecordBodySchema.safeParse(req.body);
+    const parsed = manualInvoiceBodySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const [studentCheck] = await db.select({
       id: students.id,
+      schoolId: students.schoolId,
       name: students.name,
       class: students.class,
       section: students.section,
       isActive: students.isActive,
-    }).from(students)
-      .where(and(eq(students.id, parsed.data.studentId), eq(students.schoolId, schoolId)));
-    if (!studentCheck) return res.status(400).json({ message: "Student does not belong to this school" });
-
-    if (studentCheck.isActive === false) {
-      return res.status(400).json({ message: "Select an active student." });
-    }
+    }).from(students).where(eq(students.id, parsed.data.studentId));
+    const studentError = manualInvoiceStudentValidationMessage(studentCheck, schoolId);
+    if (studentError) return res.status(400).json({ message: studentError });
 
     try {
       const invoiceContext = await prepareManualInvoiceContext({
