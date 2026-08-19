@@ -24,6 +24,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, sessionFetch, queryClient } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 import { amountInWords, formatIndianRupees } from "@/lib/amount-in-words";
+import { formatPersistedInvoiceDateTimeIST } from "@/lib/invoice-date-time";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -531,7 +532,7 @@ function printCreatedInvoice(detail: TransactionDetail): boolean {
      <div class="metadata-card">
        <h2 class="metadata-title">Invoice Metadata</h2>
        <div class="metadata-rows">
-         <span class="metadata-label">Invoice Date</span><span class="metadata-value">${escapeInvoiceHtml(formatIssueDate(feeRecord.createdAt))}</span>
+         <span class="metadata-label">Invoice Date &amp; Time</span><span class="metadata-value">${escapeInvoiceHtml(formatPersistedInvoiceDateTimeIST(feeRecord.createdAt))}</span>
          <span class="metadata-label">Academic Session</span><span class="metadata-value">${escapeInvoiceHtml(feeRecord.academicYear)}</span>
          <span class="metadata-label">Fee Period</span><span class="metadata-value">${escapeInvoiceHtml(feePeriod)}</span>
          <span class="metadata-label">Due Date</span><span class="metadata-value">${escapeInvoiceHtml(formatIssueDate(feeRecord.dueDate))}</span>
@@ -582,11 +583,7 @@ function printCreatedInvoice(detail: TransactionDetail): boolean {
 // IST helpers — always use Asia/Kolkata so the time is correct regardless of
 // the server's or browser's local timezone.
 function fmtDateTimeIST(ts: string | Date | null | undefined): string {
-  if (!ts) return "—";
-  const d = typeof ts === "string" ? new Date(ts) : ts;
-  const datePart = d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric" });
-  const timePart = d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: true }).toUpperCase();
-  return `${datePart}, ${timePart} IST`;
+  return formatPersistedInvoiceDateTimeIST(ts);
 }
 
 /** Returns the current wall-clock time formatted in IST, e.g. "09:15 PM IST" */
@@ -2934,6 +2931,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                                   <TxnDetailRow label="Total Charged" value={<span className="font-black">{fmt(detail.feeRecord.amount + detail.feeRecord.lateFeeAmount)}</span>} />
                                   <TxnDetailRow label="Total Received" value={<span className="font-black text-emerald-400">{fmt(detail.payments.reduce((s, p) => s + p.amount, 0))}</span>} />
                                   <TxnDetailRow label="Invoice No." value={<span className="font-mono text-violet-300 text-xs">{rec.invoiceNumber ?? "—"}</span>} />
+                                   <TxnDetailRow label="Invoice Date & Time" value={formatPersistedInvoiceDateTimeIST(detail.feeRecord.createdAt)} />
                                   <TxnDetailRow label="Receipt No." value={<span className="font-mono text-cyan-300 text-xs">{rec.receiptNumber ?? mainPayment?.receiptNumber ?? "—"}</span>} />
                                   {detail.payments.length > 1 && (
                                     <div className="mt-2 pt-2 border-t border-white/10">
@@ -3160,7 +3158,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                         ["Fee Period", invoiceFeePeriodLabel(addFeeSuccessDetail.feeRecord)],
                         ["Due Date", fmtDate(addFeeSuccessDetail.feeRecord.dueDate)],
                         ["Academic Session", addFeeSuccessDetail.feeRecord.academicYear ?? "—"],
-                        ["Created On", fmtDateTime(addFeeSuccessDetail.feeRecord.createdAt)],
+                        ["Invoice Date & Time", formatPersistedInvoiceDateTimeIST(addFeeSuccessDetail.feeRecord.createdAt)],
                       ].map(([label, value]) => (
                         <div key={label}>
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-white/40">{label}</p>
