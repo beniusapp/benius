@@ -1,0 +1,432 @@
+Redesign the Add Invoice → View / Print Invoice → PDF completely.
+
+The current invoice PDF is technically functional, but visually it looks too plain, basic, and generic. I need this to look like a modern, premium, professional school invoice that could be given to a parent/student as an official financial document.
+
+Use the existing invoice data and backend values. Do not create fake data and do not change the invoice business logic.
+
+1. Overall design direction
+
+Create a highly polished, modern invoice with:
+
+- Professional school-finance-document appearance
+- Clean modern typography
+- Strong visual hierarchy
+- Excellent spacing and alignment
+- Premium but restrained design
+- Clear sections and cards
+- Strong Invoice Number presentation
+- Professional status badge
+- Modern table design
+- Excellent PDF/print readability
+- Proper A4 invoice layout
+- Responsive print/PDF rendering
+- No unnecessary empty space
+- No childish or overly decorative elements
+
+It should look comparable to a professionally designed SaaS/ERP invoice rather than a simple HTML print page.
+
+The invoice should be A4 optimized, preferably one page when the amount of data allows it.
+
+---
+
+2. Header
+
+Create a strong professional header.
+
+Left side
+
+Show:
+
+[SCHOOL LOGO]
+
+SCHOOL NAME
+
+Below it:
+
+School address
+Phone / official email
+Affiliation number / GSTIN if available
+
+Use the school's actual profile/configuration data.
+
+Do not invent school information.
+
+Right side
+
+Make this visually prominent:
+
+INVOICE
+
+Then:
+
+INVOICE NO.
+
+INV-0092
+
+The Invoice Number must be one of the most visually important elements on the entire document.
+
+Also display:
+
+STATUS: DUE
+
+Use a modern status badge.
+
+For example:
+
+"DUE"
+
+Do NOT show a receipt number because this invoice has not been paid.
+
+---
+
+3. Invoice metadata
+
+Under the header, create a clean metadata section.
+
+Show:
+
+Field| Value
+Invoice Date| Actual invoice creation date
+Academic Session| 2027–2028
+Fee Period| 2027–2028
+Due Date| 31 Mar 2028
+Frequency| One-Time
+
+Make the dates human-readable.
+
+Do not expose raw database formatting.
+
+---
+
+4. Student information
+
+Create a dedicated BILLED TO / STUDENT DETAILS section.
+
+Display:
+
+Student Name: student3mis
+Student ID / MIS ID: MIS-0004
+Class: 6
+Section: A
+
+Use a clean two-column or card-based layout.
+
+The student identity should be immediately understandable.
+
+---
+
+5. Invoice details
+
+Create a strong section titled:
+
+INVOICE DETAILS
+
+Use a professional table.
+
+Columns:
+
+Description | Fee Type | Frequency | Period | Amount
+
+Example:
+
+Description| Fee Type| Frequency| Fee Period| Amount
+Math book| Math| One-Time| 2027–2028| ₹600
+
+Make the amount visually prominent.
+
+Use proper Indian currency formatting.
+
+---
+
+6. Fee breakdown / components
+
+If components were added while creating the invoice, show a dedicated section:
+
+FEE BREAKDOWN
+
+Use a professional table:
+
+Component | Description | Amount
+
+For example:
+
+Component| Description| Amount
+Mathematics Book| Mathematics textbook| ₹600
+
+Then show:
+
+Subtotal: ₹600
+
+If there are multiple components, calculate and display the component total exactly from the saved invoice snapshot.
+
+If there are no components, do not show an empty table.
+
+---
+
+7. Amount summary
+
+Create a visually strong payment summary section.
+
+Show:
+
+Invoice Amount
+
+₹600
+
+Then, where applicable:
+
+- Subtotal
+- Concession/discount
+- Late fee
+- Other applicable charges
+- Total Payable
+
+The final amount should be the strongest financial figure on the document.
+
+For an unpaid invoice:
+
+TOTAL PAYABLE
+
+₹600
+
+Do not show payment information that does not exist.
+
+---
+
+8. Late Fee & Penalty
+
+If Late Fee & Penalty is enabled, show a professional section:
+
+LATE FEE & PENALTY
+
+Display the actual saved configuration, such as:
+
+- Rule Type
+- Penalty Amount / Rate
+- Grace Period
+- Daily Penalty
+- Maximum Cap
+
+Only display fields that actually exist.
+
+If disabled, show a compact:
+
+Late Fee & Penalty: Disabled
+
+Do not make this section unnecessarily large.
+
+---
+
+9. Notes
+
+If the admin entered notes while creating the invoice, show:
+
+NOTES
+
+Then display the exact saved note.
+
+If there are no notes, do not display an empty Notes section.
+
+---
+
+10. Payment status
+
+Because this document is generated immediately after creating an invoice, it is NOT a receipt.
+
+Clearly show:
+
+PAYMENT STATUS: DUE
+
+Do NOT display:
+
+- Receipt Number
+- Payment ID
+- Razorpay Payment ID
+- Razorpay Order ID
+- Payment Date
+- Payment Method
+- Paid Amount
+
+unless the invoice has actually been paid and those values exist.
+
+---
+
+11. Important invoice vs receipt distinction
+
+At the bottom of the invoice, clearly state something professional such as:
+
+This document is an invoice and confirms the amount due. A payment receipt will be issued separately after successful payment.
+
+The wording should make it impossible to confuse this document with a payment receipt.
+
+---
+
+12. Footer
+
+Create a professional footer containing:
+
+School name
+Official contact information
+Academic session if appropriate
+
+And a small line:
+
+Computer-generated invoice. No signature is required.
+
+Only use this wording if it is appropriate for the application's existing conventions.
+
+Do not add fake legal terms.
+
+---
+
+13. Visual design
+
+The current PDF has too much empty white space and looks like a basic generated report.
+
+Improve it substantially.
+
+Use:
+
+- Modern typography
+- Consistent font weights
+- Proper visual hierarchy
+- Subtle borders
+- Soft section backgrounds where appropriate
+- Rounded cards only where they look professional in print
+- Strong alignment
+- Professional table headers
+- Subtle separators
+- Consistent spacing
+- Clear currency formatting
+- A premium invoice header
+- Strong invoice number treatment
+- Professional DUE badge
+- Proper A4 margins
+
+Avoid:
+
+- Excessive colors
+- Huge decorative graphics
+- Gradients that print poorly
+- Excessive rounded boxes
+- Cartoonish design
+- Unnecessary icons everywhere
+- Tiny unreadable text
+- Excessive empty space
+
+The final result should feel like a premium school ERP / financial management system.
+
+---
+
+14. Print/PDF requirements
+
+This is extremely important.
+
+The invoice must be optimized specifically for:
+
+A4 paper / PDF
+
+Ensure:
+
+- Correct A4 dimensions
+- Proper print margins
+- No content clipped
+- No content overflowing
+- Tables do not break badly
+- Header remains aligned
+- Footer remains aligned
+- Text remains readable when printed
+- Currency symbols render correctly
+- Invoice number remains highly visible
+- One-page layout whenever practical
+- If the invoice legitimately contains too many components/details, allow a clean multi-page invoice rather than shrinking everything to unreadable text
+
+The browser's Save as PDF output must look like a professionally designed invoice.
+
+---
+
+15. Use actual saved invoice data
+
+The invoice must be generated from the actual created invoice record, including its immutable snapshots.
+
+For the example shown:
+
+- Invoice No: INV-0092
+- Status: DUE
+- Student: student3mis
+- MIS ID: MIS-0004
+- Class: 6
+- Section: A
+- Fee Name: Math book
+- Fee Type: Math
+- Amount: ₹600
+- Frequency: One-Time
+- Fee Period: 2027–2028
+- Due Date: 31 Mar 2028
+- Academic Session: 2027–2028
+- Late Fee & Penalty: Disabled
+- Created On: 19 Aug 2026, 09:08 PM
+
+These values are examples from the current invoice and must come from the actual invoice record at runtime.
+
+---
+
+16. Do not break the existing system
+
+This redesign must NOT change:
+
+- Invoice creation
+- Invoice numbering
+- Fee Period logic
+- Academic session logic
+- Duplicate protection
+- Fee breakdown persistence
+- Late-fee configuration
+- Payment processing
+- Razorpay
+- Webhooks
+- Receipt generation
+- Ledger
+- Student portal
+- Generate Invoices
+- Database schema unless absolutely necessary
+
+This task is primarily a professional invoice-document/UI redesign.
+
+---
+
+17. Invoice and receipt must remain separate
+
+Maintain this lifecycle:
+
+Create Invoice
+→ Invoice Number generated
+→ Status = DUE
+→ View / Print Invoice
+
+Then later:
+
+Successful Payment
+→ Status = PAID
+→ Receipt Number generated
+→ View / Print Receipt
+
+Do not reuse the receipt template for the invoice.
+
+The Invoice PDF must have its own dedicated professional invoice design.
+
+---
+
+Final quality requirement
+
+Before considering this complete, inspect the generated PDF at A4 size.
+
+Do not just make it technically correct.
+
+Ask:
+
+«"Would a professional school give this document to a parent?"»
+
+If the answer is no, continue refining the typography, spacing, hierarchy, tables, header, invoice number, amount summary, and overall visual polish.
+
+The final invoice should look modern, premium, professional, clean, trustworthy, and production-ready.

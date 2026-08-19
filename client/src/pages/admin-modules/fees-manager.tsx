@@ -331,6 +331,20 @@ interface TransactionDetail {
     phone: string | null;
     email: string | null;
   };
+  school: {
+    name: string;
+    logoUrl: string | null;
+    addressLine1: string | null;
+    addressLine2: string | null;
+    city: string | null;
+    state: string | null;
+    pinCode: string | null;
+    country: string | null;
+    phone: string | null;
+    email: string | null;
+    affiliationNumber: string | null;
+    gstin: string | null;
+  };
   auditEntries: Array<{
     id: number;
     action: string;
@@ -389,35 +403,75 @@ function escapeInvoiceHtml(value: unknown): string {
 }
 
 function printCreatedInvoice(detail: TransactionDetail): boolean {
-  const { feeRecord, student } = detail;
+  const { feeRecord, student, school } = detail;
   const lateFee = feeRecord.lateFeeConfig;
   const lateFeeEnabled = lateFee?.enabled === true;
   const feePeriod = invoiceFeePeriodLabel(feeRecord);
-  const lateFeeDetails = !lateFeeEnabled
-    ? `<tr><td>Late Fee &amp; Penalty</td><td>Disabled</td></tr>`
+  const invoiceAmount = Number(feeRecord.amount);
+  const assessedLateFee = Math.max(0, Number(feeRecord.lateFeeAmount ?? 0));
+  const totalPayable = invoiceAmount + assessedLateFee;
+  const componentSubtotal = feeRecord.breakdown.reduce(
+    (total, component) => total + Number(component.amount ?? 0),
+    0,
+  );
+  const formatIssueDate = (value: string | null) => {
+    if (!value) return "—";
+    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+    const date = dateOnly ? new Date(`${value}T00:00:00Z`) : new Date(value);
+    return date.toLocaleDateString("en-IN", {
+      timeZone: dateOnly ? "UTC" : "Asia/Kolkata",
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  };
+  const schoolAddress = [
+    school.addressLine1,
+    school.addressLine2,
+    [school.city, school.state, school.pinCode].filter(Boolean).join(", "),
+    school.country && school.country !== "India" ? school.country : null,
+  ].filter(Boolean);
+  const schoolContact = [
+    school.phone ? `Phone: ${school.phone}` : null,
+    school.email ? `Email: ${school.email}` : null,
+  ].filter(Boolean);
+  const schoolRegulatoryDetails = [
+    school.affiliationNumber ? `Affiliation No. ${school.affiliationNumber}` : null,
+    school.gstin ? `GSTIN ${school.gstin}` : null,
+  ].filter(Boolean);
+  const lateFeePolicy = !lateFeeEnabled
+    ? `<div class="policy policy-disabled"><span>Late Fee &amp; Penalty</span><strong>Disabled</strong></div>`
     : `
-      <tr><td>Late Fee &amp; Penalty</td><td>Enabled</td></tr>
-      <tr><td>Late Fee Rule</td><td>${escapeInvoiceHtml(lateFeeRuleLabel(lateFee?.type))}</td></tr>
-      ${lateFee?.type === "FLAT" ? `<tr><td>Penalty Amount</td><td>${escapeInvoiceHtml(fmt(Number(lateFee.flat_amount ?? 0)))}</td></tr>` : ""}
-      ${lateFee?.type === "DAILY" ? `<tr><td>Daily Penalty</td><td>${escapeInvoiceHtml(fmt(Number(lateFee.daily_rate ?? 0)))} / day</td></tr>` : ""}
-      ${lateFee?.type === "DAILY" && Number(lateFee.grace_period_days ?? 0) > 0 ? `<tr><td>Grace Period</td><td>${escapeInvoiceHtml(lateFee.grace_period_days)} day(s)</td></tr>` : ""}
-      ${lateFee?.type === "DAILY" && Number(lateFee.max_cap ?? 0) > 0 ? `<tr><td>Maximum Penalty Cap</td><td>${escapeInvoiceHtml(fmt(Number(lateFee.max_cap)))}</td></tr>` : ""}
-      ${lateFee?.type === "TIERED" && lateFee.tiered_slabs?.length ? `<tr><td>Tiered Penalties</td><td>${lateFee.tiered_slabs.map(slab => `${escapeInvoiceHtml(slab.from_day)}–${escapeInvoiceHtml(slab.to_day)} days: ${escapeInvoiceHtml(fmt(Number(slab.amount)))}`).join("<br>")}</td></tr>` : ""}
+      <section class="policy">
+        <div class="policy-heading"><span>Late Fee &amp; Penalty</span><strong>Enabled</strong></div>
+        <dl class="policy-grid">
+          <div><dt>Rule type</dt><dd>${escapeInvoiceHtml(lateFeeRuleLabel(lateFee?.type))}</dd></div>
+          ${lateFee?.type === "FLAT" ? `<div><dt>Penalty amount</dt><dd>${escapeInvoiceHtml(fmt(Number(lateFee.flat_amount ?? 0)))}</dd></div>` : ""}
+          ${lateFee?.type === "DAILY" ? `<div><dt>Daily penalty</dt><dd>${escapeInvoiceHtml(fmt(Number(lateFee.daily_rate ?? 0)))} / day</dd></div>` : ""}
+          ${lateFee?.type === "DAILY" && Number(lateFee.grace_period_days ?? 0) > 0 ? `<div><dt>Grace period</dt><dd>${escapeInvoiceHtml(lateFee.grace_period_days)} day(s)</dd></div>` : ""}
+          ${lateFee?.type === "DAILY" && Number(lateFee.max_cap ?? 0) > 0 ? `<div><dt>Maximum cap</dt><dd>${escapeInvoiceHtml(fmt(Number(lateFee.max_cap)))}</dd></div>` : ""}
+          ${lateFee?.type === "TIERED" && lateFee.tiered_slabs?.length ? `<div class="policy-full"><dt>Penalty schedule</dt><dd>${lateFee.tiered_slabs.map(slab => `${escapeInvoiceHtml(slab.from_day)}–${escapeInvoiceHtml(slab.to_day)} days: ${escapeInvoiceHtml(fmt(Number(slab.amount)))}`).join(" &nbsp;•&nbsp; ")}</dd></div>` : ""}
+        </dl>
+      </section>
     `;
   const componentRows = feeRecord.breakdown.length > 0
     ? `
-      <section>
-        <h2>Fee Components</h2>
-        <table>
-          <thead><tr><th>Component</th><th>Purpose</th><th class="right">Amount</th></tr></thead>
+      <section class="document-section component-section">
+        <div class="section-label">Fee Breakdown</div>
+        <table class="invoice-table">
+          <thead><tr><th>Component</th><th>Description</th><th class="amount-cell">Amount</th></tr></thead>
           <tbody>${feeRecord.breakdown.map(component => `
             <tr>
               <td>${escapeInvoiceHtml(component.name)}</td>
               <td>${escapeInvoiceHtml(component.purpose || "—")}</td>
-              <td class="right">${escapeInvoiceHtml(fmt(Number(component.amount)))}</td>
+              <td class="amount-cell">${escapeInvoiceHtml(fmt(Number(component.amount)))}</td>
             </tr>`).join("")}</tbody>
+          <tfoot><tr><td colspan="2">Component subtotal</td><td class="amount-cell">${escapeInvoiceHtml(fmt(componentSubtotal))}</td></tr></tfoot>
         </table>
       </section>`
+    : "";
+  const logo = school.logoUrl
+    ? `<img class="school-logo" src="${escapeInvoiceHtml(school.logoUrl)}" alt="" onerror="this.style.display='none'">`
     : "";
   const printWindow = window.open("", "_blank");
   if (!printWindow) return false;
@@ -425,51 +479,98 @@ function printCreatedInvoice(detail: TransactionDetail): boolean {
   // the printed tab from retaining access back to the admin portal.
   printWindow.opener = null;
   printWindow.document.write(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Invoice ${escapeInvoiceHtml(feeRecord.invoiceNumber)}</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Invoice ${escapeInvoiceHtml(feeRecord.invoiceNumber)}</title>
 <style>
-  *{box-sizing:border-box} body{font-family:Arial,sans-serif;color:#172033;background:#fff;margin:0;padding:32px}
-  .invoice{max-width:760px;margin:0 auto;border:1px solid #cbd5e1;border-radius:16px;overflow:hidden}
-  .head{padding:30px 34px;background:#0f2747;color:#fff;display:flex;justify-content:space-between;gap:24px}
-  .head h1{font-size:28px;margin:0 0 6px}.head p{margin:0;color:#bfdbfe;font-size:13px}.invoice-no{text-align:right}
-  .invoice-no span{display:block;font-size:11px;letter-spacing:.12em;color:#bae6fd;font-weight:700}.invoice-no strong{font-size:26px;letter-spacing:.04em}
-  .status{display:inline-block;background:#fef3c7;color:#92400e;font-size:12px;font-weight:700;border-radius:999px;padding:5px 10px;margin-top:10px}
-  main{padding:28px 34px} h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#475569;margin:24px 0 9px}
-  h2:first-child{margin-top:0} table{width:100%;border-collapse:collapse} td,th{padding:10px 8px;border-bottom:1px solid #e2e8f0;text-align:left;font-size:13px}
-  td:first-child{width:38%;color:#64748b} td:last-child{font-weight:600} th{background:#f8fafc;color:#64748b;font-size:11px;text-transform:uppercase}
-  .right{text-align:right}.amount{font-size:22px;color:#0e7490;font-weight:800}.note{padding:12px;background:#f8fafc;border-radius:8px;white-space:pre-wrap;font-size:13px}
-  footer{padding:18px 34px;border-top:1px solid #e2e8f0;color:#64748b;font-size:11px;text-align:center}
-  @media print{body{padding:0}.invoice{border:0;border-radius:0}}
+  @page{size:A4;margin:15mm}
+  :root{color-scheme:light} *{box-sizing:border-box}
+  body{margin:0;background:#edf1f5;color:#172033;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:10.5pt;line-height:1.45;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .invoice{width:min(100%,180mm);min-height:267mm;margin:24px auto;background:#fff;box-shadow:0 8px 28px rgba(15,39,71,.14);padding:0 11mm 8mm}
+  .invoice-header{display:flex;justify-content:space-between;gap:18mm;padding:11mm 0 8mm;border-bottom:2px solid #183b61}
+  .school-identity{display:flex;gap:12px;min-width:0}.school-logo{width:42px;height:42px;object-fit:contain;flex:0 0 auto}.school-name{font-size:16pt;line-height:1.15;font-weight:800;letter-spacing:-.025em;color:#102b49;margin:0 0 5px}.school-address,.school-contact,.school-regulatory{font-size:8.6pt;color:#536579;margin:0;overflow-wrap:anywhere}.school-contact{margin-top:3px}.school-regulatory{margin-top:2px;color:#75869a}
+  .document-title{text-align:right;flex:0 0 auto}.document-title h1{font-size:21pt;letter-spacing:.14em;line-height:1;margin:0 0 9px;color:#102b49;font-weight:800}.invoice-number-label,.section-label,.metadata-label{display:block;font-size:7.8pt;text-transform:uppercase;letter-spacing:.12em;font-weight:800;color:#708196}.invoice-number{font-size:15pt;font-weight:800;color:#102b49;letter-spacing:.035em;overflow-wrap:anywhere}.status-badge{display:inline-block;margin-top:8px;border:1px solid #c78b24;background:#fff7e8;color:#8b5a08;padding:3px 8px;font-size:8pt;line-height:1.25;font-weight:800;letter-spacing:.1em}
+  .metadata-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:8mm 0 6mm;border-bottom:1px solid #d9e1e8}.metadata-card{min-width:0}.metadata-card+.metadata-card{border-left:1px solid #d9e1e8;padding-left:16px}.metadata-title{margin:0 0 8px;color:#102b49;font-size:8.2pt;text-transform:uppercase;letter-spacing:.13em;font-weight:800}.student-name{font-size:13pt;color:#172033;font-weight:800;margin:0 0 3px}.student-id{margin:0;color:#627386;font-size:9pt}.metadata-rows{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;margin:10px 0 0}.metadata-label{font-size:7.6pt;align-self:baseline}.metadata-value{font-size:9.3pt;font-weight:650;text-align:right;overflow-wrap:anywhere;color:#26384a}
+  .document-section{padding-top:7mm;break-inside:avoid}.invoice-table{width:100%;border-collapse:collapse;table-layout:fixed}.invoice-table th{background:#102b49;color:#fff;font-size:7.8pt;font-weight:800;letter-spacing:.1em;text-transform:uppercase;text-align:left;padding:8px 9px}.invoice-table td{padding:9px;border-bottom:1px solid #dce4eb;vertical-align:top;font-size:9.4pt;overflow-wrap:anywhere}.invoice-table td:first-child{font-weight:700;color:#26384a}.invoice-table th:first-child{width:29%}.invoice-table th:nth-child(2){width:18%}.invoice-table th:nth-child(3){width:17%}.invoice-table th:nth-child(4){width:21%}.amount-cell{text-align:right!important;font-variant-numeric:tabular-nums;white-space:nowrap}.invoice-table tfoot td{border-top:1px solid #aab8c5;border-bottom:0;background:#f6f8fa;font-size:8.8pt;font-weight:800}.component-section .invoice-table th:first-child{width:30%}.component-section .invoice-table th:nth-child(2){width:auto}.component-section .invoice-table th:nth-child(3){width:22%}
+  .summary-layout{display:grid;grid-template-columns:minmax(0,1fr) 68mm;gap:16px;padding-top:7mm;align-items:start}.policy{border:1px solid #dce4eb;border-left:3px solid #3b6388;padding:10px 11px;break-inside:avoid}.policy-disabled{display:flex;align-items:center;justify-content:space-between;gap:12px;border-left-color:#aab8c5;background:#fafbfc;color:#4d5f72;font-size:9pt}.policy-heading{display:flex;justify-content:space-between;gap:12px;color:#102b49;font-size:9.2pt;font-weight:800}.policy-heading strong{color:#8b5a08}.policy-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin:9px 0 0}.policy-grid div{min-width:0}.policy-grid .policy-full{grid-column:1/-1}.policy-grid dt{font-size:7.4pt;text-transform:uppercase;letter-spacing:.09em;color:#708196;font-weight:800}.policy-grid dd{margin:2px 0 0;font-size:8.8pt;color:#314457;overflow-wrap:anywhere}
+  .amount-summary{border:1px solid #b9c7d4;break-inside:avoid}.amount-summary-header{padding:8px 10px;background:#eef4f8;color:#102b49;font-size:8pt;font-weight:800;text-transform:uppercase;letter-spacing:.12em}.summary-rows{padding:7px 10px 0}.summary-row{display:flex;justify-content:space-between;gap:14px;padding:4px 0;color:#536579;font-size:9pt}.summary-row strong{font-variant-numeric:tabular-nums;color:#26384a}.summary-total{display:flex;justify-content:space-between;gap:14px;margin-top:7px;padding:9px 10px;background:#102b49;color:#fff;font-size:9.4pt;font-weight:800;text-transform:uppercase;letter-spacing:.055em}.summary-total strong{font-size:14pt;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:0}.payment-status{padding:8px 10px;font-size:8.2pt;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#8b5a08;background:#fffaf0;border-top:1px solid #efd6a3}
+  .notes{margin-top:7mm;border:1px solid #dce4eb;padding:10px 11px;break-inside:avoid}.notes p{margin:5px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;color:#34485b;font-size:9.2pt}.invoice-footer{margin-top:8mm;padding-top:5mm;border-top:1px solid #d9e1e8;color:#617387;font-size:8.1pt;text-align:center}.invoice-footer p{margin:2px 0}.invoice-footer .invoice-notice{color:#394e63;font-weight:650}
+  thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}h1,h2,h3,p{orphans:3;widows:3}
+  @media print{body{background:#fff}.invoice{width:auto;min-height:0;margin:0;box-shadow:none;padding:0}.invoice-header{padding-top:0}.document-section,.policy,.amount-summary,.notes{break-inside:avoid;page-break-inside:avoid}}
+  @media screen and (max-width:720px){body{background:#fff}.invoice{width:100%;margin:0;padding:0 20px 24px;box-shadow:none}.invoice-header{gap:18px}.metadata-grid,.summary-layout{grid-template-columns:1fr}.metadata-card+.metadata-card{border-left:0;border-top:1px solid #d9e1e8;padding:14px 0 0}.document-title h1{font-size:18pt}.invoice-table{font-size:8.5pt}.policy-grid{grid-template-columns:1fr}}
 </style></head><body>
 <article class="invoice">
-  <header class="head">
-    <div><h1>Invoice</h1><p>School fee invoice</p><span class="status">STATUS: ${escapeInvoiceHtml(feeRecord.status.toUpperCase())}</span></div>
-    <div class="invoice-no"><span>INVOICE NO.</span><strong>${escapeInvoiceHtml(feeRecord.invoiceNumber)}</strong></div>
+   <header class="invoice-header">
+     <div class="school-identity">
+       ${logo}
+       <div>
+         <p class="school-name">${escapeInvoiceHtml(school.name)}</p>
+         ${schoolAddress.length ? `<p class="school-address">${schoolAddress.map(line => escapeInvoiceHtml(line)).join("<br>")}</p>` : ""}
+         ${schoolContact.length ? `<p class="school-contact">${schoolContact.map(item => escapeInvoiceHtml(item)).join(" &nbsp;|&nbsp; ")}</p>` : ""}
+         ${schoolRegulatoryDetails.length ? `<p class="school-regulatory">${schoolRegulatoryDetails.map(item => escapeInvoiceHtml(item)).join(" &nbsp;|&nbsp; ")}</p>` : ""}
+       </div>
+     </div>
+     <div class="document-title">
+       <h1>INVOICE</h1>
+       <span class="invoice-number-label">Invoice No.</span>
+       <div class="invoice-number">${escapeInvoiceHtml(feeRecord.invoiceNumber)}</div>
+       <span class="status-badge">Status: ${escapeInvoiceHtml(feeRecord.status.toUpperCase())}</span>
+     </div>
   </header>
-  <main>
-    <h2>Student</h2>
-    <table>
-      <tr><td>Student Name</td><td>${escapeInvoiceHtml(student.name)}</td></tr>
-      <tr><td>Student ID / MIS ID</td><td>${escapeInvoiceHtml(student.digitalStudentId)}</td></tr>
-      <tr><td>Class / Section</td><td>${escapeInvoiceHtml(`${student.class ?? "—"} / ${student.section ?? "—"}`)}</td></tr>
-    </table>
-    <h2>Invoice Details</h2>
-    <table>
-      <tr><td>Fee Name</td><td>${escapeInvoiceHtml(feeRecord.feeName)}</td></tr>
-      <tr><td>Fee Type</td><td>${escapeInvoiceHtml(feeRecord.feeType)}</td></tr>
-      <tr><td>Amount</td><td class="amount">${escapeInvoiceHtml(fmt(feeRecord.amount))}</td></tr>
-      <tr><td>Frequency</td><td>${escapeInvoiceHtml(invoiceFrequencyLabel(feeRecord.frequency))}</td></tr>
-      <tr><td>Fee Period</td><td>${escapeInvoiceHtml(feePeriod)}</td></tr>
-      <tr><td>Due Date</td><td>${escapeInvoiceHtml(fmtDate(feeRecord.dueDate))}</td></tr>
-      <tr><td>Academic Session</td><td>${escapeInvoiceHtml(feeRecord.academicYear)}</td></tr>
-      <tr><td>Created On</td><td>${escapeInvoiceHtml(fmtDateTime(feeRecord.createdAt))}</td></tr>
-      ${lateFeeDetails}
-    </table>
-    ${componentRows}
-    ${feeRecord.notes ? `<section><h2>Notes</h2><div class="note">${escapeInvoiceHtml(feeRecord.notes)}</div></section>` : ""}
-  </main>
-  <footer>This is an invoice only. A payment receipt is generated after successful payment.</footer>
+   <section class="metadata-grid">
+     <div class="metadata-card">
+       <h2 class="metadata-title">Billed To / Student Details</h2>
+       <p class="student-name">${escapeInvoiceHtml(student.name)}</p>
+       <p class="student-id">Student ID / MIS ID: ${escapeInvoiceHtml(student.digitalStudentId)}</p>
+       <div class="metadata-rows">
+         <span class="metadata-label">Class</span><span class="metadata-value">${escapeInvoiceHtml(student.class)}</span>
+         <span class="metadata-label">Section</span><span class="metadata-value">${escapeInvoiceHtml(student.section)}</span>
+       </div>
+     </div>
+     <div class="metadata-card">
+       <h2 class="metadata-title">Invoice Metadata</h2>
+       <div class="metadata-rows">
+         <span class="metadata-label">Invoice Date</span><span class="metadata-value">${escapeInvoiceHtml(formatIssueDate(feeRecord.createdAt))}</span>
+         <span class="metadata-label">Academic Session</span><span class="metadata-value">${escapeInvoiceHtml(feeRecord.academicYear)}</span>
+         <span class="metadata-label">Fee Period</span><span class="metadata-value">${escapeInvoiceHtml(feePeriod)}</span>
+         <span class="metadata-label">Due Date</span><span class="metadata-value">${escapeInvoiceHtml(formatIssueDate(feeRecord.dueDate))}</span>
+         <span class="metadata-label">Frequency</span><span class="metadata-value">${escapeInvoiceHtml(invoiceFrequencyLabel(feeRecord.frequency))}</span>
+       </div>
+     </div>
+   </section>
+   <section class="document-section">
+     <div class="section-label">Invoice Details</div>
+     <table class="invoice-table">
+       <thead><tr><th>Description</th><th>Fee Type</th><th>Frequency</th><th>Fee Period</th><th class="amount-cell">Amount</th></tr></thead>
+       <tbody><tr><td>${escapeInvoiceHtml(feeRecord.feeName)}</td><td>${escapeInvoiceHtml(feeRecord.feeType)}</td><td>${escapeInvoiceHtml(invoiceFrequencyLabel(feeRecord.frequency))}</td><td>${escapeInvoiceHtml(feePeriod)}</td><td class="amount-cell">${escapeInvoiceHtml(fmt(invoiceAmount))}</td></tr></tbody>
+     </table>
+   </section>
+   ${componentRows}
+   <section class="summary-layout">
+     <div>${lateFeePolicy}</div>
+     <aside class="amount-summary">
+       <div class="amount-summary-header">Amount Summary</div>
+       <div class="summary-rows">
+         <div class="summary-row"><span>Invoice amount</span><strong>${escapeInvoiceHtml(fmt(invoiceAmount))}</strong></div>
+         ${assessedLateFee > 0 ? `<div class="summary-row"><span>Late fee assessed</span><strong>${escapeInvoiceHtml(fmt(assessedLateFee))}</strong></div>` : ""}
+       </div>
+       <div class="summary-total"><span>Total Payable</span><strong>${escapeInvoiceHtml(fmt(totalPayable))}</strong></div>
+       <div class="payment-status">Payment Status: ${escapeInvoiceHtml(feeRecord.status.toUpperCase())}</div>
+     </aside>
+   </section>
+   ${feeRecord.notes ? `<section class="notes"><span class="section-label">Notes</span><p>${escapeInvoiceHtml(feeRecord.notes)}</p></section>` : ""}
+   <footer class="invoice-footer">
+     <p class="invoice-notice">This document is an invoice and confirms the amount due. A payment receipt will be issued separately after successful payment.</p>
+     ${schoolContact.length ? `<p>${schoolContact.map(item => escapeInvoiceHtml(item)).join(" &nbsp;|&nbsp; ")}</p>` : ""}
+     <p>Computer-generated invoice. No signature is required.</p>
+   </footer>
 </article>
-<script>window.print();</script></body></html>`);
+<script>
+  (function () {
+    var printDocument = function () { window.setTimeout(function () { window.print(); }, 180); };
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(printDocument);
+    else if (document.readyState === "complete") printDocument();
+    else window.addEventListener("load", printDocument, { once: true });
+  })();
+</script></body></html>`);
   printWindow.document.close();
   return true;
 }

@@ -2988,9 +2988,15 @@ export function registerFeesRoutes(app: Express) {
       const feeRow = (await db.execute(sql`
         SELECT fr.*,
                s.name AS student_name, s.digital_student_id, s.class, s.section,
-               s.roll_number, s.guardian_name, s.phone, s.email AS student_email
+               s.roll_number, s.guardian_name, s.phone, s.email AS student_email,
+               sch.name AS school_name, sch.logo_url AS school_logo_url,
+               sch.address_line1 AS school_address_line1, sch.address_line2 AS school_address_line2,
+               sch.city AS school_city, sch.state AS school_state, sch.pin_code AS school_pin_code,
+               sch.country AS school_country, sch.phone AS school_phone, sch.email AS school_email,
+               sch.affiliation_number AS school_affiliation_number, sch.gstin AS school_gstin
         FROM fee_records fr
         JOIN students s ON s.id = fr.student_id
+        JOIN schools sch ON sch.id = fr.school_id
         WHERE fr.id = ${feeRecordId} AND fr.school_id = ${schoolId}
         LIMIT 1
       `)).rows[0] as any;
@@ -3070,6 +3076,20 @@ export function registerFeesRoutes(app: Express) {
           guardianName: feeRow.guardian_name ?? null,
           phone: feeRow.phone ?? null,
           email: feeRow.student_email ?? null,
+        },
+        school: {
+          name: feeRow.school_name,
+          logoUrl: feeRow.school_logo_url ?? null,
+          addressLine1: feeRow.school_address_line1 ?? null,
+          addressLine2: feeRow.school_address_line2 ?? null,
+          city: feeRow.school_city ?? null,
+          state: feeRow.school_state ?? null,
+          pinCode: feeRow.school_pin_code ?? null,
+          country: feeRow.school_country ?? null,
+          phone: feeRow.school_phone ?? null,
+          email: feeRow.school_email ?? null,
+          affiliationNumber: feeRow.school_affiliation_number ?? null,
+          gstin: feeRow.school_gstin ?? null,
         },
         auditEntries: auditRows.map((a: any) => ({
           id: a.id,
