@@ -21,6 +21,8 @@ import {
   isStudentEligibleForStructure,
   prepareStructureInvoiceContext,
 } from "./structure-invoice-service";
+import { formatPersistedDateTimeIST } from "./persisted-date-time";
+import { renderInvoiceDocument } from "./invoice-document";
 
 // ── Signature background removal ─────────────────────────────────────────────
 // Converts white/light-grey background to transparency.
@@ -2916,14 +2918,7 @@ export function registerFeesRoutes(app: Express) {
     const esc = (s: string | null | undefined) =>
       (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
-    const receivedDateStr = (() => {
-      const datePart = payment.receivedDate
-        ? new Date(String(payment.receivedDate) + "T12:00:00").toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "long", year: "numeric" })
-        : "—";
-      if (!payment.createdAt) return datePart;
-      const timePart = new Date(payment.createdAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: true }).toUpperCase();
-      return `${datePart}, ${timePart} IST`;
-    })();
+    const paymentDateTime = formatPersistedDateTimeIST(payment.createdAt);
     const amountStr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(payment.amount);
     const schoolName = esc(school?.name ?? "School");
     const methodLabel: Record<string, string> = {
@@ -2959,7 +2954,7 @@ export function registerFeesRoutes(app: Express) {
     ${feeType ? `<tr><td>Fee Type</td><td>${esc(feeType)}</td></tr>` : ""}
     <tr><td>Payment Method</td><td>${esc(methodLabel[payment.paymentMethod] ?? payment.paymentMethod)}</td></tr>
     ${payment.referenceNumber ? `<tr><td>Reference No.</td><td>${esc(payment.referenceNumber)}</td></tr>` : ""}
-    <tr><td>Received Date</td><td>${receivedDateStr}</td></tr>
+    <tr><td>Payment Date &amp; Time</td><td>${paymentDateTime}</td></tr>
     ${payment.cashierNotes ? `<tr><td>Notes</td><td>${esc(payment.cashierNotes)}</td></tr>` : ""}
     <tr class="amount-row"><td>Amount Received</td><td>${amountStr}</td></tr>
   </table>
@@ -3294,6 +3289,90 @@ td:last-child{font-weight:600;word-break:break-all;}
     }
   });
 
+  // ── Professional Invoice HTML ────────────────────────────────────────────
+  // The document is rendered server-side from canonical invoice data. This
+  // status check happens at document generation time so paid invoices cannot
+  // be newly downloaded through the active ledger actions.
+  app.get("/api/admin/fees/:id/invoice", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+
+    try {
+      const result = await db.execute(sql`
+        SELECT fr.*,
+               s.name AS student_name, s.digital_student_id, s.class, s.section, s.guardian_name,
+               sch.name AS school_name, sch.logo_url AS school_logo_url,
+               sch.address_line1 AS school_address_line1, sch.address_line2 AS school_address_line2,
+               sch.city AS school_city, sch.state AS school_state, sch.pin_code AS school_pin_code,
+               sch.country AS school_country, sch.phone AS school_phone, sch.email AS school_email,
+               sch.affiliation_number AS school_affiliation_number, sch.gstin AS school_gstin
+        FROM fee_records fr
+        JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+        JOIN schools sch ON sch.id = fr.school_id
+        WHERE fr.id = ${id} AND fr.school_id = ${schoolId}
+        LIMIT 1
+      `);
+      const row = result.rows[0] as any;
+      if (!row) return res.status(404).json({ message: "Invoice not found" });
+      if (row.status !== "Due" && row.status !== "Overdue") {
+        return res.status(409).type("html").send(`<!doctype html><title>Invoice unavailable</title><body style="font-family:Arial,sans-serif;padding:32px;color:#334155"><h1>Invoice unavailable</h1><p>This invoice is already paid. Use the payment receipt from the ledger instead.</p></body>`);
+      }
+
+      const relativeLogoUrl = row.school_logo_url as string | null;
+      const logoUrl = relativeLogoUrl
+        ? (/^https?:\/\//i.test(relativeLogoUrl)
+          ? relativeLogoUrl
+          : `${req.protocol}://${req.get("host")}${relativeLogoUrl}`)
+        : null;
+      const html = renderInvoiceDocument({
+        invoiceNumber: row.invoice_number ?? null,
+        status: row.status,
+        createdAt: row.created_at,
+        feeName: row.fee_name ?? row.fee_type,
+        feeType: row.fee_type,
+        amount: Number(row.amount),
+        lateFeeAmount: Number(row.late_fee_amount ?? 0),
+        frequency: row.frequency ?? null,
+        feePeriodStart: row.fee_period_start ?? null,
+        feePeriodEnd: row.fee_period_end ?? null,
+        academicYear: row.academic_year ?? null,
+        dueDate: row.due_date ?? null,
+        notes: row.notes ?? null,
+        breakdown: Array.isArray(row.breakdown_snapshot) ? row.breakdown_snapshot : [],
+        lateFeeConfig: row.late_fee_config ?? null,
+        student: {
+          name: row.student_name,
+          digitalStudentId: row.digital_student_id,
+          guardianName: row.guardian_name ?? null,
+          className: row.class,
+          section: row.section,
+        },
+        school: {
+          name: row.school_name,
+          logoUrl,
+          addressLine1: row.school_address_line1 ?? null,
+          addressLine2: row.school_address_line2 ?? null,
+          city: row.school_city ?? null,
+          state: row.school_state ?? null,
+          pinCode: row.school_pin_code ?? null,
+          country: row.school_country ?? null,
+          phone: row.school_phone ?? null,
+          email: row.school_email ?? null,
+          affiliationNumber: row.school_affiliation_number ?? null,
+          gstin: row.school_gstin ?? null,
+        },
+      });
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Content-Disposition", `inline; filename="invoice-${row.invoice_number ?? id}.html"`);
+      res.send(html);
+    } catch (error) {
+      console.error("[invoice-document]", error);
+      res.status(500).json({ message: "Unable to generate invoice document" });
+    }
+  });
+
   // ── Fee Record Receipt HTML (Add Fee — AF receipts) ──────────────────────
   // Generates a printable receipt directly from the fee record, so Add Fee
   // entries that have no offline payment record still get a receipt.
@@ -3312,14 +3391,38 @@ td:last-child{font-weight:600;word-break:break-all;}
     `);
     const row = recs.rows[0] as any;
     if (!row) return res.status(404).json({ message: "Fee record not found" });
+    if (row.status !== "Paid") {
+      return res.status(400).json({ message: "Receipt only available for paid records" });
+    }
 
     const [school] = await db.select({ name: schools.name }).from(schools).where(eq(schools.id, schoolId));
     const esc = (s: string | null | undefined) =>
       (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
-    const paidDateStr = row.paid_date
-      ? new Date(row.paid_date).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })
-      : "—";
+    const paymentTimestampResult = await db.execute(sql`
+      SELECT COALESCE(
+        (
+          SELECT pa.rzp_captured_at
+          FROM payment_attempts pa
+          WHERE pa.fee_record_id = ${id}
+            AND pa.school_id = ${schoolId}
+            AND pa.outcome = 'captured'
+          ORDER BY pa.created_at DESC
+          LIMIT 1
+        ),
+        (
+          SELECT pr.created_at
+          FROM payment_records pr
+          WHERE pr.fee_record_id = ${id}
+            AND pr.school_id = ${schoolId}
+          ORDER BY pr.created_at DESC
+          LIMIT 1
+        )
+      ) AS payment_at
+    `);
+    const paymentDateTime = formatPersistedDateTimeIST(
+      (paymentTimestampResult.rows[0] as any)?.payment_at ?? null,
+    );
     const dueDateStr = row.due_date
       ? new Date(row.due_date).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })
       : "—";
@@ -3357,7 +3460,7 @@ td:last-child{font-weight:600;word-break:break-all;}
     <tr><td>Academic Year</td><td>${esc(row.academic_year ?? "—")}</td></tr>
     <tr><td>Status</td><td>${esc(row.status)}</td></tr>
     ${row.due_date ? `<tr><td>Due Date</td><td>${dueDateStr}</td></tr>` : ""}
-    ${row.paid_date ? `<tr><td>Paid On</td><td>${paidDateStr}</td></tr>` : ""}
+    <tr><td>Payment Date &amp; Time</td><td>${paymentDateTime}</td></tr>
     ${row.notes ? `<tr><td>Notes</td><td>${esc(row.notes)}</td></tr>` : ""}
     <tr class="amount-row"><td>Amount</td><td>${amountStr}</td></tr>
   </table>

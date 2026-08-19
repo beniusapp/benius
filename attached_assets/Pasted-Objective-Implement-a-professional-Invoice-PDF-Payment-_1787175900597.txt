@@ -1,0 +1,493 @@
+Objective
+
+Implement a professional Invoice PDF + Payment Receipt PDF system in the Fees/Ledger module.
+
+The goal is to clearly distinguish an Invoice from a Payment Receipt, provide downloadable PDFs at the correct stage of the payment lifecycle, and maintain complete auditability.
+
+1. Invoice PDF
+
+Every newly created invoice must have a professionally designed PDF available while the invoice is Due / Overdue.
+
+The invoice PDF should be:
+
+- Modern
+- Premium and professional
+- Clean and easy to read
+- A4-friendly
+- Suitable for printing and digital sharing
+- Consistent with the school's branding
+- Clearly identified as INVOICE
+
+The Invoice should prominently display:
+
+INVOICE
+
+and a highly visible:
+
+Invoice No. INV-XXXX
+
+Include all relevant invoice information already captured by the system, including:
+
+School Details
+
+- School logo
+- School name
+- School address
+- Phone
+- Official email
+- Affiliation number
+- GSTIN, if available
+
+Student / Parent Details
+
+- Student name
+- Student ID / MIS ID
+- Parent/Guardian name — use the actual parent/guardian field already available in the system
+- Class
+- Section
+
+Invoice Information
+
+- Invoice Number
+- Invoice Date & Time
+- Academic Session
+- Frequency
+- Fee Period
+- Due Date
+
+2. Exact Invoice Date & Time
+
+The invoice must display the actual persisted invoice creation timestamp.
+
+Example:
+
+Invoice Date & Time: 19 Aug 2026, 09:08:34 PM IST
+
+Rules:
+
+- Use the server-side persisted creation timestamp.
+- Display it in "Asia/Kolkata" / IST.
+- Include date, hours, minutes, seconds and "IST".
+- Never use the browser/device time.
+- Never generate a new timestamp when opening, printing or downloading the invoice.
+- The timestamp must remain unchanged permanently for that invoice.
+
+This must work identically for both:
+
+- Add Invoice
+- Generate Invoices
+
+3. Invoice Line Details
+
+Clearly display:
+
+- Fee Name / Description
+- Fee Type
+- Frequency
+- Fee Period
+- Amount
+
+If the invoice contains fee components, display a professional Fee Breakdown / Components section containing:
+
+- Component
+- Description
+- Amount
+- Component subtotal
+
+The component subtotal must remain consistent with the invoice amount according to the existing validation rules.
+
+4. Amount Presentation
+
+Show the amount prominently.
+
+For example:
+
+TOTAL PAYABLE ₹1,000
+
+Also display the amount in words:
+
+Amount in Words: One Thousand Rupees Only
+
+The amount in words must be generated automatically from the actual invoice amount and must never be manually entered.
+
+5. Late Fee & Penalty
+
+If enabled, clearly display:
+
+- Late Fee & Penalty: Enabled
+- Rule type
+- Penalty amount/rate
+- Relevant configuration already stored on the invoice
+
+If disabled:
+
+Late Fee & Penalty: Disabled
+
+Do not invent or recalculate historical configuration when generating the PDF. Use the invoice's saved configuration/snapshot.
+
+---
+
+6. Invoice vs Receipt — VERY IMPORTANT
+
+The Invoice and Payment Receipt must have different visual identities so users can immediately understand the difference.
+
+Invoice Design
+
+Use a professional navy/blue-based visual identity.
+
+It should communicate:
+
+Amount Due / Payment Required
+
+Use the school's branding together with tasteful navy/blue accents.
+
+The document must prominently say:
+
+INVOICE
+
+and show:
+
+STATUS: DUE
+
+or:
+
+STATUS: OVERDUE
+
+when applicable.
+
+Do not make the design excessively colorful. It should remain professional and look good both digitally and when printed.
+
+Payment Receipt Design
+
+Use a professional green/teal-based visual identity.
+
+It should communicate:
+
+Payment Successfully Received
+
+The document must prominently say:
+
+PAYMENT RECEIPT
+
+and clearly show:
+
+Receipt No.
+
+The receipt should also show the relevant invoice number so the payment can be traced back to the original invoice.
+
+For example:
+
+Invoice No.: INV-0094
+Receipt No.: ON-0007
+
+The receipt should have a clear:
+
+PAID / PAYMENT SUCCESSFUL
+
+visual status.
+
+---
+
+7. Invoice Download / Print Lifecycle
+
+Add an Invoice PDF action to the Ledger/Transactions table.
+
+For an invoice that is:
+
+Due
+
+Show:
+
+📄 Download Invoice
+
+and, if the existing UI supports printing:
+
+🖨️ Print Invoice
+
+Overdue
+
+The Invoice PDF remains available.
+
+Show:
+
+📄 Download Invoice
+
+and optionally:
+
+🖨️ Print Invoice
+
+Paid
+
+Once the invoice becomes Paid:
+
+The normal Invoice download/print action must no longer be available from the active invoice actions.
+
+Instead, show:
+
+🧾 Download Receipt
+
+and/or:
+
+🖨️ Print Receipt
+
+The user should be guided toward the payment receipt because the invoice has already been settled.
+
+---
+
+8. IMPORTANT — Do Not Delete the Invoice
+
+When an invoice becomes Paid:
+
+DO NOT delete the invoice.
+
+DO NOT modify its historical invoice information.
+
+DO NOT invalidate or overwrite the invoice number.
+
+The invoice must remain permanently stored for:
+
+- Audit
+- Accounting
+- Historical records
+- Reporting
+- Payment reconciliation
+- Academic-session history
+
+Only the user-facing download/print action changes after payment.
+
+The system cannot prevent someone from retaining a PDF that they downloaded before payment. The requirement is only to prevent new invoice downloads/prints through the application after payment.
+
+---
+
+9. Receipt Availability
+
+After successful payment:
+
+The system should provide the Payment Receipt PDF.
+
+The receipt must use the existing payment/receipt data and include, where available:
+
+- School details
+- Student name
+- Parent/Guardian name
+- Student ID / MIS ID
+- Class
+- Section
+- Invoice number
+- Receipt number
+- Payment date & time
+- Payment method
+- Amount paid
+- Amount in words
+- Payment ID
+- Razorpay Order ID, if applicable
+- Razorpay Payment ID, if applicable
+- Auth Code, if available
+- Fee name
+- Fee type
+- Fee period
+- Academic session
+- Components/breakdown
+- Any applicable concession/late fee information
+- Payment status
+
+The receipt must clearly communicate that payment has been successfully received.
+
+---
+
+10. Ledger Action Logic
+
+The Actions column should automatically reflect the invoice/payment state.
+
+Due / Overdue
+
+Show the Invoice action:
+
+📄 Invoice
+
+Paid
+
+Replace the Invoice action with:
+
+🧾 Receipt
+
+Do not show both as active download actions in the normal ledger view.
+
+However, do not delete or alter the underlying invoice record.
+
+---
+
+11. PDF Generation
+
+Do not simply print the browser page as the PDF.
+
+Generate a proper professional A4 invoice/receipt document using the application's PDF generation system.
+
+The PDF must:
+
+- Have proper A4 dimensions
+- Have consistent margins
+- Have professional typography
+- Have clear section hierarchy
+- Avoid excessive empty space
+- Avoid tiny unreadable text
+- Avoid clipped content
+- Automatically handle longer fee names/descriptions
+- Automatically handle multiple components
+- Remain readable when printed
+- Stay within a clean page layout
+- Use the school's logo when available
+
+If content exceeds one page, handle pagination professionally rather than shrinking everything to an unreadable size.
+
+---
+
+12. Data Integrity
+
+Do not create a separate competing invoice/payment data model.
+
+Use the existing canonical:
+
+- "fee_records"
+- invoice number
+- payment records
+- payment attempts
+- receipt number
+- Razorpay payment/order data
+- existing snapshots
+
+The PDF must be generated from the authoritative stored invoice/payment data.
+
+Do not use client-submitted values as the authoritative source for historical invoice/receipt information.
+
+---
+
+13. Add Invoice and Generate Invoices
+
+This feature must work identically for invoices created through:
+
+Add Invoice
+
+and:
+
+Generate Invoices
+
+Both must produce the same professional Invoice PDF structure.
+
+The only difference is how the invoice data was created.
+
+Downstream behavior must remain unchanged for:
+
+- Payments
+- Razorpay
+- Webhooks
+- Payment attempts
+- Receipts
+- Ledger
+- Transactions
+- Late fees
+- Reporting
+- Duplicate protection
+- Academic sessions
+- Tenant isolation
+
+---
+
+14. Existing Invoice Number Must Remain Permanent
+
+The Invoice Number must never be replaced by a Receipt Number.
+
+Example:
+
+Invoice creation:
+
+INV-0094
+
+After payment:
+
+Invoice No.: INV-0094
+Receipt No.: ON-0007
+
+Never overwrite "invoice_number" with the receipt number.
+
+---
+
+15. Exact Payment Timestamp
+
+For the receipt, use the actual persisted successful payment timestamp.
+
+Display it in:
+
+Asia/Kolkata / IST
+
+Example:
+
+Payment Date & Time: 19 Aug 2026, 09:15:42 PM IST
+
+Do not use browser/device time.
+
+Do not generate a new timestamp when the receipt is viewed or downloaded.
+
+---
+
+16. Security and Authorization
+
+Before allowing Invoice or Receipt PDF access:
+
+- Verify the authenticated user's school/tenant.
+- Verify the invoice belongs to that school.
+- Verify the user has the appropriate permission.
+- Do not expose another school's invoice/receipt.
+- Do not allow invoice IDs from another tenant to retrieve documents.
+
+Maintain the existing tenant-isolation and authorization rules.
+
+---
+
+17. Final UI Goal
+
+The final user experience should be extremely clear:
+
+Invoice lifecycle
+
+Invoice Created
+↓
+📄 Download Invoice
+↓
+Payment Made
+↓
+Invoice becomes Paid
+↓
+🧾 Download Payment Receipt
+
+The Invoice should visually communicate:
+
+“This is what you need to pay.”
+
+The Receipt should visually communicate:
+
+“This is proof that you have paid.”
+
+Both documents should look like professionally designed documents from a modern premium school ERP — not like a browser printout or basic table.
+
+Before making changes, inspect the existing invoice PDF and receipt generation code and reuse existing infrastructure where possible. Do not break existing payment, Razorpay, receipt, invoice-number, or audit functionality.
+
+After implementation, test:
+
+1. Add Invoice → Due → Invoice PDF
+2. Generate Invoice → Due → Invoice PDF
+3. Due → Paid → Invoice action replaced by Receipt action
+4. Paid → Receipt PDF
+5. Invoice number remains unchanged after payment
+6. Receipt number is generated only through the existing successful-payment flow
+7. Exact invoice creation timestamp displays correctly in IST
+8. Exact successful payment timestamp displays correctly in IST
+9. Amount in words is correct
+10. Parent/Guardian name is taken from the existing system field
+11. Multiple fee components render correctly
+12. Long fee names/components do not break the PDF layout
+13. Tenant/security isolation remains intact
+14. Existing Razorpay and payment flows continue to work
+15. Both Add Invoice and Generate Invoices produce the same professional invoice format
+
+Do not change unrelated Fees, Payments, Razorpay, or Ledger behavior.

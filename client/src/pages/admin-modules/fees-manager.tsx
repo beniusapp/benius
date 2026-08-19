@@ -404,7 +404,7 @@ function escapeInvoiceHtml(value: unknown): string {
     .replace(/'/g, "&#39;");
 }
 
-function printCreatedInvoice(detail: TransactionDetail): boolean {
+function printCreatedInvoice(detail: TransactionDetail, existingWindow?: Window | null): boolean {
   const { feeRecord, student, school } = detail;
   const lateFee = feeRecord.lateFeeConfig;
   const lateFeeEnabled = lateFee?.enabled === true;
@@ -476,7 +476,7 @@ function printCreatedInvoice(detail: TransactionDetail): boolean {
   const logo = school.logoUrl
     ? `<img class="school-logo" src="${escapeInvoiceHtml(school.logoUrl)}" alt="" onerror="this.style.display='none'">`
     : "";
-  const printWindow = window.open("", "_blank");
+  const printWindow = existingWindow ?? window.open("", "_blank");
   if (!printWindow) return false;
   // Keep a usable same-origin document reference for printing while preventing
   // the printed tab from retaining access back to the admin portal.
@@ -2205,19 +2205,24 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   );
 
   // ── Accordion callbacks ────────────────────────────────────────────────────
-  const fetchDetail = useCallback(async (feeRecordId: number) => {
-    if (detailCache.has(feeRecordId)) return;
+  const fetchDetail = useCallback(async (feeRecordId: number, forceRefresh = false): Promise<TransactionDetail | null> => {
+    if (!forceRefresh) {
+      const cached = detailCache.get(feeRecordId);
+      if (cached) return cached;
+    }
     setDetailLoading(feeRecordId);
     try {
       const r = await sessionFetch(`/api/admin/fees/${feeRecordId}/transaction-detail`);
-      if (!r.ok) return;
+      if (!r.ok) return null;
       const data: TransactionDetail = await r.json();
       setDetailCache(prev => new Map(prev).set(feeRecordId, data));
       if (data.payment?.cashierNotes) {
         setAdminNotes(prev => ({ ...prev, [feeRecordId]: data.payment!.cashierNotes! }));
       }
+      return data;
     } catch { /* non-critical */ }
     finally { setDetailLoading(null); }
+    return null;
   }, [detailCache]);
 
   const toggleLedgerRow = useCallback((id: number) => {
@@ -2228,6 +2233,13 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       fetchDetail(id);
     }
   }, [expandedLedgerRow, fetchDetail]);
+
+  const printInvoiceFromRecord = useCallback((recordId: number) => {
+    const printWindow = window.open(`/api/admin/fees/${recordId}/invoice`, "_blank");
+    if (!printWindow) {
+      toast({ title: "Invoice could not open", description: "Allow pop-ups for this site to print or download invoices.", variant: "destructive" });
+    }
+  }, [toast]);
 
   const saveAdminNotes = useCallback(async (feeRecordId: number, paymentId: number | undefined, notes: string) => {
     if (!paymentId) return;
@@ -2775,34 +2787,32 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                             </span>
                           );
                         })()}
-                        {(() => {
+                        {rec.status === "Paid" ? (() => {
                           // Prefer the most recent offline (OP) payment receipt;
                           // fall back to the fee-record (AF) receipt for Add Fee entries.
                           const offlinePayment = (paymentsByFeeRecordId.get(rec.id) ?? [])
                             .find(p => p.cashierNotes !== "Auto-recorded from Add Fee Record");
-                          if (offlinePayment) {
-                            return (
-                              <Button size="icon" variant="ghost"
-                                onClick={() => window.open(`/api/admin/fees/payments/${offlinePayment.id}/receipt`, "_blank")}
-                                className="h-7 w-7 text-white/40 hover:text-cyan-400"
-                                title={`Print offline receipt ${offlinePayment.receiptNumber ?? ""}`}>
-                                <Printer className="w-3.5 h-3.5" />
-                              </Button>
-                            );
-                          }
-                          // Show the fee-record receipt after the invoice is paid.
-                          if (rec.status === "Paid") {
-                            return (
-                              <Button size="icon" variant="ghost"
-                                onClick={() => window.open(`/api/admin/fees/${rec.id}/receipt`, "_blank")}
-                                className="h-7 w-7 text-white/40 hover:text-cyan-400"
-                                title={`Print receipt ${rec.invoiceNumber ?? rec.receiptNumber ?? ""}`}>
-                                <Printer className="w-3.5 h-3.5" />
-                              </Button>
-                            );
-                          }
-                          return null;
-                        })()}
+                          return (
+                            <Button size="sm" variant="ghost"
+                              onClick={() => window.open(
+                                offlinePayment
+                                  ? `/api/admin/fees/payments/${offlinePayment.id}/receipt`
+                                  : `/api/admin/fees/${rec.id}/receipt`,
+                                "_blank",
+                              )}
+                              className="h-7 px-2 text-xs text-cyan-400 hover:bg-cyan-900/30 gap-1"
+                              title={`Print receipt ${rec.invoiceNumber ?? rec.receiptNumber ?? ""}`}>
+                              <Receipt className="w-3 h-3" /> Receipt
+                            </Button>
+                          );
+                        })() : (
+                          <Button size="sm" variant="ghost"
+                            onClick={() => printInvoiceFromRecord(rec.id)}
+                            className="h-7 px-2 text-xs text-blue-300 hover:bg-blue-900/30 gap-1"
+                            title={`Print or download invoice ${rec.invoiceNumber ?? ""}`}>
+                            <FileText className="w-3 h-3" /> Invoice
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -2831,7 +2841,14 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                                   className="h-7 px-2 text-xs text-emerald-400 hover:bg-emerald-900/30 gap-1">
                                   <FileText className="w-3 h-3" /> Full Detail PDF
                                 </Button>
-                                {(() => {
+                                {rec.status !== "Paid" && (
+                                  <Button size="sm" variant="ghost"
+                                    onClick={() => printInvoiceFromRecord(rec.id)}
+                                    className="h-7 px-2 text-xs text-blue-300 hover:bg-blue-900/30 gap-1">
+                                    <FileText className="w-3 h-3" /> Invoice
+                                  </Button>
+                                )}
+                                {rec.status === "Paid" && (() => {
                                   const offPay = (paymentsByFeeRecordId.get(rec.id) ?? []).find(p => p.cashierNotes !== "Auto-recorded from Add Fee Record");
                                   if (offPay) return (
                                     <Button size="sm" variant="ghost"
@@ -3221,15 +3238,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     This is an invoice only. A payment receipt is available after successful payment.
                   </p>
                   <div className="grid grid-cols-2 gap-3">
-                    <Button className="bg-white/10 hover:bg-white/20 text-white gap-2" onClick={() => {
-                      if (!printCreatedInvoice(addFeeSuccessDetail)) {
-                        toast({
-                          title: "Invoice window blocked",
-                          description: "Allow pop-ups for this site, then try View / Print Invoice again.",
-                          variant: "destructive",
-                        });
-                      }
-                    }}>
+                    <Button className="bg-white/10 hover:bg-white/20 text-white gap-2"
+                      onClick={() => printInvoiceFromRecord(addFeeSuccessDetail.feeRecord.id)}>
                       <Printer className="w-4 h-4" /> View / Print Invoice
                     </Button>
                     <Button className="bg-cyan-600 hover:bg-cyan-500 text-white" onClick={() => { setShowForm(false); setAddFeeSuccessId(null); }}>

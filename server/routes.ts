@@ -24,6 +24,7 @@ import { registerFeesRoutes } from "./fees-routes";
 import { calculateLateFee } from "./late-fee-engine";
 import { buildLateFeeInfo } from "./late-fee-display";
 import { ledgerPaymentMethodLabel } from "./payment-method-label";
+import { formatPersistedDateTimeIST } from "./persisted-date-time";
 import {
   InvoiceGenerationError,
   createManualInvoice,
@@ -4942,7 +4943,7 @@ export async function registerRoutes(
     // One-invoice = one-payment rule guarantees at most one row per fee_record_id.
     const prRows = await db.execute(sql`
       SELECT amount, late_fee_paid, payment_method,
-             reference_number, payer_name, received_date
+             reference_number, payer_name, received_date, created_at
       FROM payment_records
       WHERE fee_record_id = ${id}
         AND school_id     = ${student.schoolId}
@@ -4988,13 +4989,6 @@ export async function registerRoutes(
     const fmt = (n: number) =>
       new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(n);
 
-    const fmtDt = (d: string | Date | null | undefined): string => {
-      if (!d) return "—";
-      const dt = new Date(String(d).replace(" ","T").replace(/([+-]\d{2})$/,"$1:00").replace(/Z?$/,"Z").replace("ZZ","Z"));
-      return isNaN(dt.getTime()) ? "—" : dt.toLocaleString("en-IN", {
-        day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit", hour12:true, timeZone:"Asia/Kolkata"
-      });
-    };
     // Date-only formatter (no time) — for invoice date, due date, received date.
     // Plain YYYY-MM-DD strings (from DB DATE columns) must be handled separately
     // because appending "Z" directly to a date-only string ("2026-08-20Z") is
@@ -5074,8 +5068,11 @@ export async function registerRoutes(
     // ── Receipt identity fields ────────────────────────────────────────────────
     const invoiceDateFmt = fmtDate((rec as any).createdAt);   // fee_records.created_at
     const dueDateFmt     = fmtDate(rec.dueDate);               // fee_records.due_date
-    const paidDateFmt    = fmtDate(rec.paidDate ?? (pa?.rzp_captured_at as string | null) ?? (receivedDateRaw));
-    const paidTs         = fmtDt(rec.paidDate ?? (pa?.rzp_captured_at as string | null));
+    const paidTs = formatPersistedDateTimeIST(
+      (pa?.rzp_captured_at as string | null)
+      ?? (pr?.created_at as string | Date | null)
+      ?? (pa?.created_at as string | Date | null),
+    );
 
     // ── Fee period label ───────────────────────────────────────────────────────
     // Already computed inline in the HTML; pull it out here for the table column.
@@ -5288,8 +5285,8 @@ tfoot td:last-child{text-align:right;}
         <span class="id-val" style="font-family:Arial">${esc(dueDateFmt)}</span>
       </div>
       <div class="id-pair">
-        <span class="id-lbl">Payment Date</span>
-        <span class="id-val" style="font-family:Arial">${esc(paidDateFmt)}</span>
+        <span class="id-lbl">Payment Date &amp; Time</span>
+        <span class="id-val" style="font-family:Arial">${esc(paidTs)}</span>
       </div>
     </div>
   </div>
