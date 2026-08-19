@@ -30,6 +30,7 @@ import {
   createManualInvoice,
   prepareManualInvoiceContext,
 } from "./structure-invoice-service";
+import { renderInvoiceDocument } from "./invoice-document";
 import {
   manualInvoiceBodySchema,
   manualInvoiceStudentValidationMessage,
@@ -4877,6 +4878,128 @@ export async function registerRoutes(
       totalPaid,
       currentMonth: currentYYYYMM,
     });
+  });
+
+  // ===== STUDENT: VIEW INVOICE =====
+  // Returns the same server-rendered invoice HTML as the admin route, but
+  // authorised against the student's own session and school.  Only due/overdue
+  // records are served — paid records must use the receipt route.
+  app.get("/api/student/fees/:id/invoice", async (req, res) => {
+    if (!req.session.studentId) return res.status(403).json({ message: "Student access required" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(403).json({ message: "Student not found" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid fee record ID" });
+
+    // Ownership check — the fee record must belong to this student and school.
+    // getFeeRecordsByStudent already scopes by studentId + schoolId so a forged
+    // id from a different student will simply not be found.
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const records = await storage.getFeeRecordsByStudent(req.session.studentId, student.schoolId, viewSessionId);
+    const owned = records.find(r => r.id === id);
+    if (!owned) return res.status(404).json({ message: "Invoice not found" });
+    if (owned.status === "Paid") {
+      return res.status(409).type("html").send(
+        `<!doctype html><title>Invoice unavailable</title>` +
+        `<body style="font-family:Arial,sans-serif;padding:32px;color:#334155">` +
+        `<h1>Invoice unavailable</h1>` +
+        `<p>This invoice is already paid. Use the payment receipt instead.</p>` +
+        `</body>`
+      );
+    }
+
+    try {
+      // Fetch full row with school + student joins (same query shape as admin route)
+      const result = await db.execute(sql`
+        SELECT fr.*,
+               s.name AS student_name, s.digital_student_id, s.class, s.section, s.guardian_name,
+               sch.name AS school_name, sch.logo_url AS school_logo_url,
+               sch.address_line1 AS school_address_line1, sch.address_line2 AS school_address_line2,
+               sch.city AS school_city, sch.state AS school_state, sch.pin_code AS school_pin_code,
+               sch.country AS school_country, sch.phone AS school_phone, sch.email AS school_email,
+               sch.affiliation_number AS school_affiliation_number, sch.gstin AS school_gstin
+        FROM fee_records fr
+        JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+        JOIN schools sch ON sch.id = fr.school_id
+        WHERE fr.id = ${id} AND fr.school_id = ${student.schoolId}
+        LIMIT 1
+      `);
+      const row = result.rows[0] as any;
+      if (!row) return res.status(404).json({ message: "Invoice not found" });
+
+      const relativeLogoUrl = row.school_logo_url as string | null;
+      const logoUrl = relativeLogoUrl
+        ? (/^https?:\/\//i.test(relativeLogoUrl)
+          ? relativeLogoUrl
+          : `${req.protocol}://${req.get("host")}${relativeLogoUrl}`)
+        : null;
+
+      // ── Authorized signature (tenant-scoped, same as admin invoice) ──────────
+      const invSigMeta = await storage.getSchoolMetadataRaw(student.schoolId, "fee_receipt_signature") as any;
+      const invSigRelUrl =
+        invSigMeta?.processedSignatureUrl ??
+        invSigMeta?.originalSignatureUrl ??
+        invSigMeta?.fileUrl ?? null;
+      const invoiceSignatureUrl = invSigRelUrl
+        ? (/^https?:\/\//i.test(invSigRelUrl)
+          ? invSigRelUrl
+          : `${req.protocol}://${req.get("host")}${invSigRelUrl}`)
+        : null;
+      const invSignatoryMeta = await storage.getSchoolMetadataRaw(student.schoolId, "fee_signatory_name") as any;
+      const invoiceSignatoryName: string | null =
+        (typeof invSignatoryMeta === "string" && invSignatoryMeta.trim())
+          ? invSignatoryMeta.trim()
+          : (typeof invSignatoryMeta?.name === "string" && invSignatoryMeta.name.trim())
+            ? invSignatoryMeta.name.trim()
+            : null;
+
+      const html = renderInvoiceDocument({
+        invoiceNumber: row.invoice_number ?? null,
+        status: row.status,
+        createdAt: row.created_at,
+        feeName: row.fee_name ?? row.fee_type,
+        feeType: row.fee_type,
+        amount: Number(row.amount),
+        lateFeeAmount: Number(row.late_fee_amount ?? 0),
+        frequency: row.frequency ?? null,
+        feePeriodStart: row.fee_period_start ?? null,
+        feePeriodEnd: row.fee_period_end ?? null,
+        academicYear: row.academic_year ?? null,
+        dueDate: row.due_date ?? null,
+        notes: row.notes ?? null,
+        breakdown: Array.isArray(row.breakdown_snapshot) ? row.breakdown_snapshot : [],
+        lateFeeConfig: row.late_fee_config ?? null,
+        student: {
+          name: row.student_name,
+          digitalStudentId: row.digital_student_id,
+          guardianName: row.guardian_name ?? null,
+          className: row.class,
+          section: row.section,
+        },
+        school: {
+          name: row.school_name,
+          logoUrl,
+          addressLine1: row.school_address_line1 ?? null,
+          addressLine2: row.school_address_line2 ?? null,
+          city: row.school_city ?? null,
+          state: row.school_state ?? null,
+          pinCode: row.school_pin_code ?? null,
+          country: row.school_country ?? null,
+          phone: row.school_phone ?? null,
+          email: row.school_email ?? null,
+          affiliationNumber: row.school_affiliation_number ?? null,
+          gstin: row.school_gstin ?? null,
+          signatureUrl: invoiceSignatureUrl,
+          signatoryName: invoiceSignatoryName,
+        },
+      });
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Content-Disposition", `inline; filename="invoice-${row.invoice_number ?? id}.html"`);
+      res.send(html);
+    } catch (error) {
+      console.error("[student-invoice-document]", error);
+      res.status(500).json({ message: "Unable to generate invoice document" });
+    }
   });
 
   // ===== STUDENT: DOWNLOAD RECEIPT =====

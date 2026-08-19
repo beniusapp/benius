@@ -1909,6 +1909,20 @@ export default function StudentFees() {
                                   </div>
                                 )}
                               </div>
+                              {/* View Invoice — opens the server-rendered invoice in a new tab */}
+                              {rec.invoiceNumber && (
+                                <button
+                                  onClick={() => window.open(`/api/student/fees/${rec.id}/invoice`, "_blank")}
+                                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-bold transition-all active:scale-95"
+                                  style={{
+                                    background: "#f5f3ff",
+                                    color: "#6d28d9",
+                                    border: "1.5px solid #c4b5fd",
+                                  }}
+                                  data-testid={`button-view-invoice-${rec.id}`}>
+                                  <ReceiptText className="w-3.5 h-3.5" /> View Invoice
+                                </button>
+                              )}
                               {/* Razorpay Pay Now / Try Again — shown only when toggle is ON and live keys are saved */}
                               {razorpayActive && (() => {
                                 const hasFailed = (rec.failed_count ?? 0) > 0;
