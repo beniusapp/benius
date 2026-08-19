@@ -1,0 +1,76 @@
+Update the existing Invoice PDF/design only. Do not change the invoice creation logic, database structure, payment flow, Razorpay integration, receipt system, fee calculations, or any existing invoice data.
+
+Make only these 3 additions/improvements:
+
+1. Add Parent/Guardian Name
+
+In the Billed To / Student Details section, add:
+
+Parent/Guardian Name: [use the parent/guardian name already stored in the system]
+
+Important:
+
+- Fetch the parent/guardian name from the existing student/parent/guardian record in the database.
+- Do not create a new field or ask the admin to enter it again.
+- Do not invent or derive the name from the student name.
+- If the system has no parent/guardian name available, handle it gracefully rather than displaying incorrect data.
+
+Keep the existing Student Name, Student ID/MIS ID, Class and Section.
+
+2. Make the INVOICE and Invoice Number More Prominent
+
+Improve the top-right invoice header so it is immediately recognizable as a professional financial document.
+
+Make:
+
+INVOICE
+
+large, bold, highly prominent.
+
+Directly below it, make:
+
+INVOICE NO.
+INV-0094
+
+very clear and visually prominent.
+
+The invoice number must remain the permanent server-generated invoice number. Do not change its generation or numbering logic.
+
+The design should look modern, premium and professional, but do not make it oversized to the point that it wastes valuable page space.
+
+3. Add Amount in Full Words
+
+In the Amount Summary section, add:
+
+Amount in Words:
+One Thousand Rupees Only
+
+The amount in words must be generated automatically from the actual invoice amount.
+
+Examples:
+
+₹500 → Five Hundred Rupees Only
+₹1,000 → One Thousand Rupees Only
+₹1,250 → One Thousand Two Hundred Fifty Rupees Only
+
+Important:
+
+- It must always match the numeric invoice amount.
+- Never hardcode the text.
+- Use Indian Rupees terminology.
+- Handle amounts correctly, including paise where applicable.
+- Keep the numeric Total Payable clearly visible as it is now.
+
+Do NOT change anything else
+
+Keep the current invoice structure, styling direction, fee breakdown, late-fee section, amount summary, footer, academic session, fee period, due date, frequency and all existing invoice information.
+
+This is a small final UI enhancement, not a redesign.
+
+After implementation:
+
+1. Verify the parent/guardian name comes from the existing system data.
+2. Verify the invoice number is clearly prominent.
+3. Verify the amount-in-words calculation matches the numeric amount.
+4. Verify the PDF remains clean, professional, readable and ideally fits on one page.
+5. Run the relevant tests/type checks and confirm there are no regressions.

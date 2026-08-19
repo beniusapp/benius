@@ -23,6 +23,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, sessionFetch, queryClient } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
+import { amountInWords, formatIndianRupees } from "@/lib/amount-in-words";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -410,6 +411,7 @@ function printCreatedInvoice(detail: TransactionDetail): boolean {
   const invoiceAmount = Number(feeRecord.amount);
   const assessedLateFee = Math.max(0, Number(feeRecord.lateFeeAmount ?? 0));
   const totalPayable = invoiceAmount + assessedLateFee;
+  const fmtInvoiceAmount = (amount: number) => formatIndianRupees(amount);
   const componentSubtotal = feeRecord.breakdown.reduce(
     (total, component) => total + Number(component.amount ?? 0),
     0,
@@ -487,11 +489,11 @@ function printCreatedInvoice(detail: TransactionDetail): boolean {
   .invoice{width:min(100%,180mm);min-height:267mm;margin:24px auto;background:#fff;box-shadow:0 8px 28px rgba(15,39,71,.14);padding:0 11mm 8mm}
   .invoice-header{display:flex;justify-content:space-between;gap:18mm;padding:11mm 0 8mm;border-bottom:2px solid #183b61}
   .school-identity{display:flex;gap:12px;min-width:0}.school-logo{width:42px;height:42px;object-fit:contain;flex:0 0 auto}.school-name{font-size:16pt;line-height:1.15;font-weight:800;letter-spacing:-.025em;color:#102b49;margin:0 0 5px}.school-address,.school-contact,.school-regulatory{font-size:8.6pt;color:#536579;margin:0;overflow-wrap:anywhere}.school-contact{margin-top:3px}.school-regulatory{margin-top:2px;color:#75869a}
-  .document-title{text-align:right;flex:0 0 auto}.document-title h1{font-size:21pt;letter-spacing:.14em;line-height:1;margin:0 0 9px;color:#102b49;font-weight:800}.invoice-number-label,.section-label,.metadata-label{display:block;font-size:7.8pt;text-transform:uppercase;letter-spacing:.12em;font-weight:800;color:#708196}.invoice-number{font-size:15pt;font-weight:800;color:#102b49;letter-spacing:.035em;overflow-wrap:anywhere}.status-badge{display:inline-block;margin-top:8px;border:1px solid #c78b24;background:#fff7e8;color:#8b5a08;padding:3px 8px;font-size:8pt;line-height:1.25;font-weight:800;letter-spacing:.1em}
+  .document-title{text-align:right;flex:0 0 auto}.document-title h1{font-size:24pt;letter-spacing:.15em;line-height:1;margin:0 0 9px;color:#102b49;font-weight:850}.invoice-number-label,.section-label,.metadata-label{display:block;font-size:8.2pt;text-transform:uppercase;letter-spacing:.12em;font-weight:800;color:#708196}.invoice-number{font-size:17pt;font-weight:850;color:#102b49;letter-spacing:.035em;overflow-wrap:anywhere}.status-badge{display:inline-block;margin-top:8px;border:1px solid #c78b24;background:#fff7e8;color:#8b5a08;padding:3px 8px;font-size:8pt;line-height:1.25;font-weight:800;letter-spacing:.1em}
   .metadata-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:8mm 0 6mm;border-bottom:1px solid #d9e1e8}.metadata-card{min-width:0}.metadata-card+.metadata-card{border-left:1px solid #d9e1e8;padding-left:16px}.metadata-title{margin:0 0 8px;color:#102b49;font-size:8.2pt;text-transform:uppercase;letter-spacing:.13em;font-weight:800}.student-name{font-size:13pt;color:#172033;font-weight:800;margin:0 0 3px}.student-id{margin:0;color:#627386;font-size:9pt}.metadata-rows{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;margin:10px 0 0}.metadata-label{font-size:7.6pt;align-self:baseline}.metadata-value{font-size:9.3pt;font-weight:650;text-align:right;overflow-wrap:anywhere;color:#26384a}
   .document-section{padding-top:7mm;break-inside:avoid}.invoice-table{width:100%;border-collapse:collapse;table-layout:fixed}.invoice-table th{background:#102b49;color:#fff;font-size:7.8pt;font-weight:800;letter-spacing:.1em;text-transform:uppercase;text-align:left;padding:8px 9px}.invoice-table td{padding:9px;border-bottom:1px solid #dce4eb;vertical-align:top;font-size:9.4pt;overflow-wrap:anywhere}.invoice-table td:first-child{font-weight:700;color:#26384a}.invoice-table th:first-child{width:29%}.invoice-table th:nth-child(2){width:18%}.invoice-table th:nth-child(3){width:17%}.invoice-table th:nth-child(4){width:21%}.amount-cell{text-align:right!important;font-variant-numeric:tabular-nums;white-space:nowrap}.invoice-table tfoot td{border-top:1px solid #aab8c5;border-bottom:0;background:#f6f8fa;font-size:8.8pt;font-weight:800}.component-section .invoice-table th:first-child{width:30%}.component-section .invoice-table th:nth-child(2){width:auto}.component-section .invoice-table th:nth-child(3){width:22%}
   .summary-layout{display:grid;grid-template-columns:minmax(0,1fr) 68mm;gap:16px;padding-top:7mm;align-items:start}.policy{border:1px solid #dce4eb;border-left:3px solid #3b6388;padding:10px 11px;break-inside:avoid}.policy-disabled{display:flex;align-items:center;justify-content:space-between;gap:12px;border-left-color:#aab8c5;background:#fafbfc;color:#4d5f72;font-size:9pt}.policy-heading{display:flex;justify-content:space-between;gap:12px;color:#102b49;font-size:9.2pt;font-weight:800}.policy-heading strong{color:#8b5a08}.policy-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin:9px 0 0}.policy-grid div{min-width:0}.policy-grid .policy-full{grid-column:1/-1}.policy-grid dt{font-size:7.4pt;text-transform:uppercase;letter-spacing:.09em;color:#708196;font-weight:800}.policy-grid dd{margin:2px 0 0;font-size:8.8pt;color:#314457;overflow-wrap:anywhere}
-  .amount-summary{border:1px solid #b9c7d4;break-inside:avoid}.amount-summary-header{padding:8px 10px;background:#eef4f8;color:#102b49;font-size:8pt;font-weight:800;text-transform:uppercase;letter-spacing:.12em}.summary-rows{padding:7px 10px 0}.summary-row{display:flex;justify-content:space-between;gap:14px;padding:4px 0;color:#536579;font-size:9pt}.summary-row strong{font-variant-numeric:tabular-nums;color:#26384a}.summary-total{display:flex;justify-content:space-between;gap:14px;margin-top:7px;padding:9px 10px;background:#102b49;color:#fff;font-size:9.4pt;font-weight:800;text-transform:uppercase;letter-spacing:.055em}.summary-total strong{font-size:14pt;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:0}.payment-status{padding:8px 10px;font-size:8.2pt;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#8b5a08;background:#fffaf0;border-top:1px solid #efd6a3}
+  .amount-summary{border:1px solid #b9c7d4;break-inside:avoid}.amount-summary-header{padding:8px 10px;background:#eef4f8;color:#102b49;font-size:8pt;font-weight:800;text-transform:uppercase;letter-spacing:.12em}.summary-rows{padding:7px 10px 0}.summary-row{display:flex;justify-content:space-between;gap:14px;padding:4px 0;color:#536579;font-size:9pt}.summary-row strong{font-variant-numeric:tabular-nums;color:#26384a}.amount-words{margin-top:7px;padding:8px 10px;border-top:1px solid #dce4eb;background:#fafbfc}.amount-words-label{display:block;color:#708196;font-size:7.4pt;text-transform:uppercase;letter-spacing:.09em;font-weight:800}.amount-words-value{display:block;margin-top:3px;color:#26384a;font-size:8.7pt;font-weight:700;line-height:1.35;overflow-wrap:anywhere}.summary-total{display:flex;justify-content:space-between;gap:14px;margin-top:7px;padding:9px 10px;background:#102b49;color:#fff;font-size:9.4pt;font-weight:800;text-transform:uppercase;letter-spacing:.055em}.summary-total strong{font-size:14pt;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:0}.payment-status{padding:8px 10px;font-size:8.2pt;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#8b5a08;background:#fffaf0;border-top:1px solid #efd6a3}
   .notes{margin-top:7mm;border:1px solid #dce4eb;padding:10px 11px;break-inside:avoid}.notes p{margin:5px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;color:#34485b;font-size:9.2pt}.invoice-footer{margin-top:8mm;padding-top:5mm;border-top:1px solid #d9e1e8;color:#617387;font-size:8.1pt;text-align:center}.invoice-footer p{margin:2px 0}.invoice-footer .invoice-notice{color:#394e63;font-weight:650}
   thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}h1,h2,h3,p{orphans:3;widows:3}
   @media print{body{background:#fff}.invoice{width:auto;min-height:0;margin:0;box-shadow:none;padding:0}.invoice-header{padding-top:0}.document-section,.policy,.amount-summary,.notes{break-inside:avoid;page-break-inside:avoid}}
@@ -521,6 +523,7 @@ function printCreatedInvoice(detail: TransactionDetail): boolean {
        <p class="student-name">${escapeInvoiceHtml(student.name)}</p>
        <p class="student-id">Student ID / MIS ID: ${escapeInvoiceHtml(student.digitalStudentId)}</p>
        <div class="metadata-rows">
+         <span class="metadata-label">Parent / Guardian</span><span class="metadata-value">${escapeInvoiceHtml(student.guardianName?.trim() || "Not available")}</span>
          <span class="metadata-label">Class</span><span class="metadata-value">${escapeInvoiceHtml(student.class)}</span>
          <span class="metadata-label">Section</span><span class="metadata-value">${escapeInvoiceHtml(student.section)}</span>
        </div>
@@ -540,7 +543,7 @@ function printCreatedInvoice(detail: TransactionDetail): boolean {
      <div class="section-label">Invoice Details</div>
      <table class="invoice-table">
        <thead><tr><th>Description</th><th>Fee Type</th><th>Frequency</th><th>Fee Period</th><th class="amount-cell">Amount</th></tr></thead>
-       <tbody><tr><td>${escapeInvoiceHtml(feeRecord.feeName)}</td><td>${escapeInvoiceHtml(feeRecord.feeType)}</td><td>${escapeInvoiceHtml(invoiceFrequencyLabel(feeRecord.frequency))}</td><td>${escapeInvoiceHtml(feePeriod)}</td><td class="amount-cell">${escapeInvoiceHtml(fmt(invoiceAmount))}</td></tr></tbody>
+       <tbody><tr><td>${escapeInvoiceHtml(feeRecord.feeName)}</td><td>${escapeInvoiceHtml(feeRecord.feeType)}</td><td>${escapeInvoiceHtml(invoiceFrequencyLabel(feeRecord.frequency))}</td><td>${escapeInvoiceHtml(feePeriod)}</td><td class="amount-cell">${escapeInvoiceHtml(fmtInvoiceAmount(invoiceAmount))}</td></tr></tbody>
      </table>
    </section>
    ${componentRows}
@@ -549,10 +552,11 @@ function printCreatedInvoice(detail: TransactionDetail): boolean {
      <aside class="amount-summary">
        <div class="amount-summary-header">Amount Summary</div>
        <div class="summary-rows">
-         <div class="summary-row"><span>Invoice amount</span><strong>${escapeInvoiceHtml(fmt(invoiceAmount))}</strong></div>
-         ${assessedLateFee > 0 ? `<div class="summary-row"><span>Late fee assessed</span><strong>${escapeInvoiceHtml(fmt(assessedLateFee))}</strong></div>` : ""}
+         <div class="summary-row"><span>Invoice amount</span><strong>${escapeInvoiceHtml(fmtInvoiceAmount(invoiceAmount))}</strong></div>
+         ${assessedLateFee > 0 ? `<div class="summary-row"><span>Late fee assessed</span><strong>${escapeInvoiceHtml(fmtInvoiceAmount(assessedLateFee))}</strong></div>` : ""}
        </div>
-       <div class="summary-total"><span>Total Payable</span><strong>${escapeInvoiceHtml(fmt(totalPayable))}</strong></div>
+       <div class="amount-words"><span class="amount-words-label">Amount in Words</span><span class="amount-words-value">${escapeInvoiceHtml(amountInWords(invoiceAmount))}</span></div>
+       <div class="summary-total"><span>Total Payable</span><strong>${escapeInvoiceHtml(fmtInvoiceAmount(totalPayable))}</strong></div>
        <div class="payment-status">Payment Status: ${escapeInvoiceHtml(feeRecord.status.toUpperCase())}</div>
      </aside>
    </section>
