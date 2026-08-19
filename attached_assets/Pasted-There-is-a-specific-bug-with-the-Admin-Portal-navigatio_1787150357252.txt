@@ -1,0 +1,174 @@
+There is a specific bug with the Admin Portal navigation/sidebar.
+
+Current behavior
+
+When I manually close the Admin Portal navigation using the existing toggle:
+
+- The navigation closes correctly.
+- It stays closed for a few seconds.
+- After approximately 5 seconds, it automatically opens again without me clicking anything.
+
+This is NOT the desired behavior.
+
+Important: diagnose the actual cause
+
+Do NOT simply add another "localStorage" implementation on top of the existing navigation logic.
+
+First trace the entire navigation state lifecycle and find what is causing the sidebar to reopen after approximately 5 seconds.
+
+Look specifically for:
+
+- "setTimeout"
+- "setInterval"
+- polling/auto-refresh
+- "useEffect"
+- route changes
+- authentication/session refresh
+- dashboard data refresh
+- responsive/mobile detection
+- resize listeners
+- layout re-initialization
+- parent component re-renders
+- state synchronization effects
+- default-state restoration
+- code that calls the sidebar open function automatically
+- code that resets sidebar state after API responses
+- any effect that runs approximately every 5 seconds
+
+Search the entire Admin Portal navigation/layout code for anything that can execute after the sidebar is closed and set it back to "open".
+
+Required behavior
+
+The user's manual choice must have absolute priority.
+
+If user closes navigation:
+
+The navigation must remain closed indefinitely until the user explicitly opens it.
+
+It must NOT reopen after:
+
+- 5 seconds
+- 10 seconds
+- API polling
+- dashboard refresh
+- session refresh
+- component re-render
+- route navigation
+- changing Admin modules
+- switching Fees & Payments tabs
+- browser refresh
+
+If user opens navigation:
+
+The navigation must remain open indefinitely until the user explicitly closes it.
+
+Persistence
+
+Persist the user's choice using "localStorage".
+
+For example:
+
+adminNavigationOpen=true
+adminNavigationOpen=false
+
+On application initialization:
+
+- If a saved preference exists, use it.
+- Do not overwrite it later with a default value.
+- Do not let any background effect reset it.
+
+Critical requirement
+
+There must be one authoritative source of truth for the navigation open/closed state.
+
+Avoid having multiple independent states such as:
+
+sidebarOpen
+navigationOpen
+isMenuOpen
+isNavExpanded
+
+where one state can overwrite another.
+
+If multiple states currently exist, consolidate them or make sure they cannot conflict.
+
+Re-render requirement
+
+A React re-render must NOT reset the navigation state.
+
+For example, this must NOT happen:
+
+User closes navigation
+        ↓
+sidebarOpen = false
+        ↓
+5-second polling/API refresh
+        ↓
+component re-renders
+        ↓
+sidebarOpen = true   ❌
+
+It must remain:
+
+User closes navigation
+        ↓
+sidebarOpen = false
+        ↓
+API refresh / polling / re-render
+        ↓
+sidebarOpen = false
+        ↓
+still closed ✅
+
+Do not disable existing application refresh/polling
+
+If the application legitimately refreshes data every few seconds, do not remove or break that functionality.
+
+Instead, make sure those refreshes cannot modify the user's navigation preference.
+
+Verification — very important
+
+After making the fix, test this exact scenario:
+
+1. Open Admin Portal.
+2. Close the navigation.
+3. Wait at least 30 seconds without touching the navigation.
+4. Confirm it remains closed.
+5. Wait through any existing 5-second refresh/polling cycles.
+6. Navigate to another Admin module.
+7. Confirm it remains closed.
+8. Refresh the browser.
+9. Confirm it remains closed.
+10. Manually open it.
+11. Wait at least 30 seconds.
+12. Confirm it remains open.
+13. Navigate between Admin modules.
+14. Confirm it remains open.
+15. Refresh the browser.
+16. Confirm it remains open.
+
+Scope
+
+Do NOT change:
+
+- Navigation design
+- Navigation menu items
+- Sidebar width
+- Icons
+- Colors
+- Responsive design
+- Fees & Payments
+- Ledger & Transactions
+- Payment functionality
+- Authentication
+- Database
+- API behavior
+- Existing polling/data refresh functionality
+
+Only fix the navigation state being unexpectedly reset/opened.
+
+Final requirement
+
+The sidebar must never automatically open again after the user closes it.
+
+The only thing allowed to change the open/closed state is the user's explicit navigation toggle, plus the initial restoration of the user's previously saved preference.
