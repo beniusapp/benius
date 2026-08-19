@@ -115,6 +115,8 @@ interface PaymentAttempt {
   feeRecordId: number | null;
   feeType: string | null;
   feeName: string | null;
+  /** Original invoice number from the associated fee record, when available. */
+  invoiceNumber: string | null;
 
   // Amount: display rupees + raw paise for the financial breakdown
   amount: number | null;              // rupees (for display)
@@ -2002,10 +2004,13 @@ export default function StudentFees() {
                       const isPaid   = attempt.type === "paid";
                       const isFailed = attempt.type === "failed";
                       const outcome  = classifyAttempt(attempt);
-                      // Resolve invoice number from the parent fee record (already loaded)
-                      const attemptInvoiceNo = attempt.feeRecordId
-                        ? feeRecords.find(r => r.id === attempt.feeRecordId)?.invoiceNumber ?? null
-                        : null;
+                      // The history endpoint provides the authoritative invoice number.
+                      // Keep the loaded-record lookup as a safe fallback for older responses.
+                      const attemptInvoiceNo = attempt.invoiceNumber ?? (
+                        attempt.feeRecordId
+                          ? feeRecords.find(r => r.id === attempt.feeRecordId)?.invoiceNumber ?? null
+                          : null
+                      );
                       const accentGradient =
                         outcome === "Paid"              ? "linear-gradient(90deg,#10b981,#34d399)" :
                         outcome === "Payment Cancelled" ? "linear-gradient(90deg,#a855f7,#c084fc)" :
@@ -2077,8 +2082,8 @@ export default function StudentFees() {
                                   {dateLineLabel} {formatDateTime(attempt.createdAt)}
                                 </div>
 
-                                {/* Invoice number (paid only — resolved from parent fee record) */}
-                                {isPaid && attemptInvoiceNo && (
+                                {/* Original invoice number from the associated fee record. */}
+                                {attemptInvoiceNo && (
                                   <div className="flex items-center gap-1 mt-1.5">
                                     <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg"
                                       style={{ background: "linear-gradient(135deg,#f5f3ff,#ede9fe)", border: "1px solid #c4b5fd" }}>

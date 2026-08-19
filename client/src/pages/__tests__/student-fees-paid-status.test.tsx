@@ -84,6 +84,7 @@ const FEE_DUE = {
   paidDate: null,
   status: "Due",
   receiptNumber: null,
+  invoiceNumber: "INV-0042",
   notes: null,
   academicYear: "2026-27",
   createdAt: "2026-08-01T00:00:00Z",
@@ -107,6 +108,7 @@ const PAYMENT_ATTEMPT_PAID = {
   feeRecordId: FEE_PAID.id,       // 42 — drives the card-fee-paid-{id} testid
   feeType: FEE_PAID.feeType,
   feeName: FEE_PAID.feeName,
+  invoiceNumber: FEE_PAID.invoiceNumber,
   amount: FEE_PAID.amount,
   amountPaise: FEE_PAID.amount * 100,
   amountCapturedPaise: FEE_PAID.amount * 100,
@@ -136,6 +138,34 @@ const PAYMENT_ATTEMPT_PAID = {
   failed_count: 0,
   last_failed_error: null,
   sessionId: null,
+};
+
+const PAYMENT_ATTEMPT_FAILED = {
+  ...PAYMENT_ATTEMPT_PAID,
+  id: 1000,
+  type: "failed" as const,
+  outcome: "failed" as const,
+  receiptNumber: null,
+  invoiceNumber: "INV-0073",
+  razorpayPaymentId: "pay_failed_001",
+  razorpayOrderId: "order_failed_001",
+  errorDescription: "Payment could not be completed",
+};
+
+const PAYMENT_ATTEMPT_CANCELLED = {
+  ...PAYMENT_ATTEMPT_PAID,
+  id: 1001,
+  type: "failed" as const,
+  isCancelled: true,
+  outcome: "cancelled" as const,
+  feeRecordId: 43,
+  feeType: "Monthly",
+  feeName: "Monthly Fee",
+  receiptNumber: null,
+  invoiceNumber: "INV-0079",
+  razorpayPaymentId: null,
+  razorpayOrderId: "order_cancelled_001",
+  errorDescription: "Payment checkout was closed before the payment was completed",
 };
 
 const SUMMARY = {
@@ -554,6 +584,36 @@ describe("Fee card shows correct Paid/Due status from server data", () => {
     await waitFor(() =>
       expect(screen.getByTestId(`card-fee-paid-${FEE_PAID.id}`)).toBeInTheDocument(),
     );
+  });
+
+  it("shows each API-provided invoice number on failed and cancelled attempts", async () => {
+    const otherFee = {
+      ...FEE_DUE,
+      id: 43,
+      feeType: "Monthly",
+      feeName: "Monthly Fee",
+      invoiceNumber: "INV-0079",
+    };
+    const qc = buildQueryClient(
+      [FEE_DUE, otherFee],
+      [PAYMENT_ATTEMPT_FAILED, PAYMENT_ATTEMPT_CANCELLED],
+    );
+
+    render(
+      <Wrapper queryClient={qc}>
+        <StudentFees />
+      </Wrapper>,
+    );
+
+    const historyTab = await screen.findByRole("button", { name: /history/i });
+    await act(async () => { historyTab.click(); });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("text-attempt-invoice-1000")).toHaveTextContent("INV-0073");
+      expect(screen.getByTestId("text-attempt-invoice-1001")).toHaveTextContent("INV-0079");
+    });
+    expect(screen.getByText("Payment Failed")).toBeInTheDocument();
+    expect(screen.getByText("Payment Cancelled")).toBeInTheDocument();
   });
 
   it("Outstanding tab shows Pay Now when fee is Due", async () => {

@@ -4157,6 +4157,7 @@ td:last-child{font-weight:600;word-break:break-all;}
           pa.fee_record_id                                                 AS "feeRecordId",
           fr.fee_type                                                      AS "feeType",
           fr.fee_type                                                      AS "feeName",
+          fr.invoice_number                                                AS "invoiceNumber",
 
           -- Amount: display rupees for existing logic; raw paise for breakdowns
           COALESCE(pa.amount_paise, fr.amount * 100) / 100                AS amount,
