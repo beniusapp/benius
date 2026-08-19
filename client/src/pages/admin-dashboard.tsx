@@ -143,6 +143,24 @@ const GROUP_ZONE: Record<string, { color: string; sidebarClass: string }> = {
   Enterprise: { color: "#D4AF37", sidebarClass: "text-yellow-500" },
 };
 
+const ADMIN_NAVIGATION_STORAGE_KEY = "adminNavigationOpen";
+
+function getInitialAdminNavigationOpen() {
+  if (typeof window === "undefined") return true;
+
+  try {
+    const savedPreference = window.localStorage.getItem(ADMIN_NAVIGATION_STORAGE_KEY);
+    if (savedPreference === "true") return true;
+    if (savedPreference === "false") return false;
+  } catch {
+    // Browser storage can be unavailable in private or restricted contexts.
+  }
+
+  // First-time visitors retain the existing viewport-based default. Once a
+  // preference exists, it is the sole source of truth for this state.
+  return window.innerWidth >= 640;
+}
+
 const containerVariants = {
   hidden: {},
   show: { transition: { staggerChildren: 0.05 } },
@@ -1459,28 +1477,37 @@ export default function AdminDashboard() {
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
     Foundation: true, Oversight: true, Management: true, Enterprise: true,
   });
-  const [sidebarOpen, setSidebarOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 640);
+  const [sidebarOpen, setSidebarOpen] = useState(getInitialAdminNavigationOpen);
+  const setAdminNavigationOpen = useCallback((isOpen: boolean) => {
+    setSidebarOpen(isOpen);
+    try {
+      window.localStorage.setItem(ADMIN_NAVIGATION_STORAGE_KEY, String(isOpen));
+    } catch {
+      // Keep the in-memory choice when browser storage is unavailable.
+    }
+  }, []);
+  const toggleAdminNavigation = useCallback(() => {
+    setSidebarOpen(current => {
+      const next = !current;
+      try {
+        window.localStorage.setItem(ADMIN_NAVIGATION_STORAGE_KEY, String(next));
+      } catch {
+        // Keep the in-memory choice when browser storage is unavailable.
+      }
+      return next;
+    });
+  }, []);
 
   // Hoisted here (before the data queries) so that selectedViewSession.id can
   // be included in every session-scoped queryKey.  The default is null; the
   // useEffect below sets it to the active session once sessions data loads.
   const [selectedViewSession, setSelectedViewSession] = useState<AcademicSession | null>(null);
 
-  useEffect(() => {
-    const handleResize = () => {
-      if (window.innerWidth < 640) setSidebarOpen(false);
-      else setSidebarOpen(true);
-    };
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
-
   function toggleGroup(group: string) {
     setExpandedGroups(prev => ({ ...prev, [group]: !prev[group] }));
   }
 
   function goToModule(id: ActiveModule | "grid") {
-    if (window.innerWidth < 640) setSidebarOpen(false);
     if (id === "grid") setLocation("/admin-dashboard");
     else setLocation(`/admin-dashboard/${id}`);
   }
@@ -1777,7 +1804,7 @@ export default function AdminDashboard() {
           <div className="flex items-center gap-2 sm:gap-3">
             {/* Mobile hamburger / sidebar toggle */}
             <button
-              onClick={() => setSidebarOpen(v => !v)}
+              onClick={toggleAdminNavigation}
               className="p-1.5 rounded-lg hover:bg-white/10 transition-colors sm:hidden"
               data-testid="button-toggle-sidebar-mobile"
               aria-label="Toggle navigation"
@@ -2091,7 +2118,7 @@ export default function AdminDashboard() {
         {sidebarOpen && (
           <div
             className="fixed inset-0 z-30 bg-black/50 sm:hidden"
-            onClick={() => setSidebarOpen(false)}
+            onClick={() => setAdminNavigationOpen(false)}
             aria-hidden
           />
         )}
@@ -2117,7 +2144,7 @@ export default function AdminDashboard() {
             <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
               <span className="text-[10px] font-bold text-white/30 uppercase tracking-widest">Navigation</span>
               <button
-                onClick={() => setSidebarOpen(false)}
+                onClick={() => setAdminNavigationOpen(false)}
                 className="p-1 rounded-md text-white/25 hover:text-white hover:bg-white/8 transition-colors"
                 data-testid="button-collapse-sidebar"
               >
@@ -2206,7 +2233,7 @@ export default function AdminDashboard() {
 
             {!sidebarOpen && (
               <button
-                onClick={() => setSidebarOpen(true)}
+                onClick={() => setAdminNavigationOpen(true)}
                 className="hidden sm:flex items-center gap-2 mb-5 text-xs text-white/35 hover:text-white transition-colors"
                 data-testid="button-expand-sidebar"
               >
