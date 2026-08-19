@@ -73,10 +73,77 @@ interface FeeStructure {
   applicableClasses: string[];
   dueDayOfMonth: number | null;
   breakdown: Array<{ name: string; purpose: string; amount: number }>;
+  lateFeeConfig?: {
+    enabled?: boolean;
+    type?: "NONE" | "FLAT" | "DAILY" | "TIERED";
+    grace_period_days?: number;
+    flat_amount?: number;
+    daily_rate?: number;
+    max_cap?: number;
+    tiered_slabs?: Array<{ from_day: number; to_day: number; amount: number }>;
+  } | null;
   lastInvoicesGeneratedAt: string | null;
   latestGeneratedFeePeriodStart: string | null;
   latestGeneratedFeePeriodEnd: string | null;
   createdAt: string;
+}
+
+type InvoiceBreakdownRow = { name: string; purpose: string; amount: string };
+
+function addInvoicePeriodForSession(
+  frequency: string,
+  session: { startDate?: string | null; endDate?: string | null } | null,
+): { start: string; end: string } {
+  const sessionStart = String(session?.startDate ?? "").slice(0, 10);
+  const sessionEnd = String(session?.endDate ?? "").slice(0, 10);
+  if (!sessionStart || !sessionEnd) return { start: "", end: "" };
+  if (frequency === "annual" || frequency === "one-time") {
+    return { start: sessionStart, end: sessionEnd };
+  }
+
+  const isWithinSession = (start: string, end: string) => start >= sessionStart && end <= sessionEnd;
+  const monthPeriod = (year: number, month: number) => {
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    return {
+      start: `${year}-${String(month + 1).padStart(2, "0")}-01`,
+      end: `${year}-${String(month + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+    };
+  };
+  const quarterPeriod = (year: number, quarterStartMonth: number) => {
+    const lastDay = new Date(year, quarterStartMonth + 3, 0).getDate();
+    return {
+      start: `${year}-${String(quarterStartMonth + 1).padStart(2, "0")}-01`,
+      end: `${year}-${String(quarterStartMonth + 3).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+    };
+  };
+
+  const today = new Date();
+  const startDate = new Date(`${sessionStart}T00:00:00`);
+  const endDate = new Date(`${sessionEnd}T00:00:00`);
+  const reference = today >= startDate && today <= endDate ? today : startDate;
+  const preferredYear = reference.getFullYear();
+  const preferredMonth = reference.getMonth();
+  if (frequency === "quarterly") {
+    const preferred = quarterPeriod(preferredYear, Math.floor(preferredMonth / 3) * 3);
+    if (isWithinSession(preferred.start, preferred.end)) return preferred;
+    for (let year = startDate.getFullYear(); year <= endDate.getFullYear(); year++) {
+      for (const month of [0, 3, 6, 9]) {
+        const candidate = quarterPeriod(year, month);
+        if (isWithinSession(candidate.start, candidate.end)) return candidate;
+      }
+    }
+    return { start: "", end: "" };
+  }
+
+  const preferred = monthPeriod(preferredYear, preferredMonth);
+  if (isWithinSession(preferred.start, preferred.end)) return preferred;
+  for (let year = startDate.getFullYear(); year <= endDate.getFullYear(); year++) {
+    for (let month = 0; month < 12; month++) {
+      const candidate = monthPeriod(year, month);
+      if (isWithinSession(candidate.start, candidate.end)) return candidate;
+    }
+  }
+  return { start: "", end: "" };
 }
 
 interface AuditLogEntry {
@@ -1780,6 +1847,14 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [selectedStudent, setSelectedStudent] = useState<StudentItem | null>(null);
   const [studentSearchLoading, setStudentSearchLoading] = useState(false);
   const [selectedStructureId, setSelectedStructureId] = useState<number | null>(null);
+  const [invoiceBreakdown, setInvoiceBreakdown] = useState<InvoiceBreakdownRow[]>([]);
+  const [invoiceLateFeeEnabled, setInvoiceLateFeeEnabled] = useState(false);
+  const [invoiceLateFeeType, setInvoiceLateFeeType] = useState<"NONE" | "FLAT" | "DAILY" | "TIERED">("FLAT");
+  const [invoiceLateFeeGraceDays, setInvoiceLateFeeGraceDays] = useState("0");
+  const [invoiceLateFeeFlat, setInvoiceLateFeeFlat] = useState("");
+  const [invoiceLateFeeDailyRate, setInvoiceLateFeeDailyRate] = useState("");
+  const [invoiceLateFeeCap, setInvoiceLateFeeCap] = useState("0");
+  const [invoiceLateFeeSlabs, setInvoiceLateFeeSlabs] = useState<Array<{ from_day: string; to_day: string; amount: string }>>([]);
 
   const { data: ledgerData, isLoading, isFetching } = useQuery<LedgerPageResponse>({
     queryKey: ["/api/admin/fees", viewSessionId, ledgerPage, search, statusFilter, classFilter, feeNameFilter, feeTypeFilter],
@@ -1933,19 +2008,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     return map;
   }, [paymentRecordsList]);
 
-  // Preview next AF receipt number — peek only, no DB write
-  const { data: afPreviewData } = useQuery<{ preview: string }>({
-    queryKey: ["/api/admin/fees/next-receipt", "INV-", showForm],
-    queryFn: async () => {
-      const r = await sessionFetch("/api/admin/fees/next-receipt?prefix=INV-");
-      if (!r.ok) return { preview: "INV-—" };
-      return r.json();
-    },
-    enabled: showForm && !editing,
-    staleTime: 0,
-  });
-  const afPreview = afPreviewData?.preview ?? "…";
-
   const form = useForm<FeeFormValues>({
     resolver: zodResolver(feeFormSchema),
     defaultValues: { studentId: "", feeType: "", amount: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: "", feePeriodStart: "", feePeriodEnd: "" },
@@ -1954,10 +2016,12 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const dueDateNotNeeded = watchStatus === "Paid";
   const watchPeriodStart = form.watch("feePeriodStart") ?? "";
   const watchPeriodEnd   = form.watch("feePeriodEnd")   ?? "";
-  const feePeriodPreview = clientFeePeriodLabel(watchPeriodStart, watchPeriodEnd);
   const selectedInvoiceStructure = selectedStructureId == null
     ? null
     : activeStructures.find(structure => structure.id === selectedStructureId) ?? null;
+  const invoiceBreakdownTotal = invoiceBreakdown.reduce((sum, row) => sum + (parseInt(row.amount) || 0), 0);
+  const invoiceBreakdownMismatch = invoiceBreakdown.length > 0
+    && invoiceBreakdownTotal !== (parseInt(form.watch("amount")) || 0);
 
   // Auto-clear due date when status makes it irrelevant
   useEffect(() => {
@@ -1986,28 +2050,112 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     const structure = activeStructures.find(item => item.id === Number(structureId));
     if (!structure) return;
     setSelectedStructureId(structure.id);
+    setInvoiceBreakdown((structure.breakdown ?? []).map(row => ({
+      name: row.name,
+      purpose: row.purpose,
+      amount: String(row.amount),
+    })));
+    const lateFeeConfig = structure.lateFeeConfig ?? {};
+    setInvoiceLateFeeEnabled(!!lateFeeConfig.enabled);
+    setInvoiceLateFeeType(lateFeeConfig.type && lateFeeConfig.type !== "NONE" ? lateFeeConfig.type : "FLAT");
+    setInvoiceLateFeeGraceDays(String(lateFeeConfig.grace_period_days ?? 0));
+    setInvoiceLateFeeFlat(String(lateFeeConfig.flat_amount ?? 0));
+    setInvoiceLateFeeDailyRate(String(lateFeeConfig.daily_rate ?? 0));
+    setInvoiceLateFeeCap(String(lateFeeConfig.max_cap ?? 0));
+    setInvoiceLateFeeSlabs((lateFeeConfig.tiered_slabs ?? []).map(slab => ({
+      from_day: String(slab.from_day ?? ""),
+      to_day: String(slab.to_day ?? ""),
+      amount: String(slab.amount ?? ""),
+    })));
     form.setValue("feeType", structure.feeType, { shouldValidate: true });
     form.setValue("amount", String(structure.amount), { shouldValidate: true });
     form.setValue("academicYear", selectedSession?.sessionName ?? "");
+    const period = addInvoicePeriodForSession(structure.frequency, selectedSession);
+    form.setValue("feePeriodStart", period.start, { shouldValidate: true });
+    form.setValue("feePeriodEnd", period.end, { shouldValidate: true });
+    form.setValue("dueDate", period.end);
+  }
 
-    if (
-      (structure.frequency === "annual" || structure.frequency === "one-time")
-      && selectedSession?.startDate
-      && selectedSession.endDate
-    ) {
-      form.setValue("feePeriodStart", String(selectedSession.startDate).slice(0, 10), { shouldValidate: true });
-      form.setValue("feePeriodEnd", String(selectedSession.endDate).slice(0, 10), { shouldValidate: true });
-    } else {
-      form.setValue("feePeriodStart", "");
-      form.setValue("feePeriodEnd", "");
-      form.setValue("dueDate", "");
-    }
+  function resetInvoiceStructureDraft() {
+    setInvoiceBreakdown([]);
+    setInvoiceLateFeeEnabled(false);
+    setInvoiceLateFeeType("FLAT");
+    setInvoiceLateFeeGraceDays("0");
+    setInvoiceLateFeeFlat("");
+    setInvoiceLateFeeDailyRate("");
+    setInvoiceLateFeeCap("0");
+    setInvoiceLateFeeSlabs([]);
+  }
+
+  function addInvoiceBreakdownRow() {
+    setInvoiceBreakdown(previous => [...previous, { name: "", purpose: "", amount: "" }]);
+  }
+
+  function updateInvoiceBreakdownRow(index: number, field: keyof InvoiceBreakdownRow, value: string) {
+    setInvoiceBreakdown(previous => previous.map((row, rowIndex) =>
+      rowIndex === index ? { ...row, [field]: value } : row,
+    ));
+  }
+
+  function removeInvoiceBreakdownRow(index: number) {
+    setInvoiceBreakdown(previous => previous.filter((_, rowIndex) => rowIndex !== index));
+  }
+
+  function addInvoiceLateFeeSlab() {
+    setInvoiceLateFeeSlabs(previous => [...previous, { from_day: "", to_day: "", amount: "" }]);
+  }
+
+  function updateInvoiceLateFeeSlab(
+    index: number,
+    field: "from_day" | "to_day" | "amount",
+    value: string,
+  ) {
+    setInvoiceLateFeeSlabs(previous => previous.map((slab, slabIndex) =>
+      slabIndex === index ? { ...slab, [field]: value } : slab,
+    ));
+  }
+
+  function removeInvoiceLateFeeSlab(index: number) {
+    setInvoiceLateFeeSlabs(previous => previous.filter((_, slabIndex) => slabIndex !== index));
   }
 
   const createMut = useMutation({
     mutationFn: async (data: FeeFormValues) => {
       if (!selectedStructureId) throw new Error("Fee name is required");
       if (!data.feePeriodStart || !data.feePeriodEnd) throw new Error("Fee period is required");
+
+      const parsedBreakdown = invoiceBreakdown
+        .filter(row => row.name.trim())
+        .map(row => ({
+          name: row.name.trim(),
+          purpose: row.purpose.trim(),
+          amount: parseInt(row.amount) || 0,
+        }));
+      const structureUpdate = await apiRequest("PATCH", `/api/admin/fees/structures/${selectedStructureId}`, {
+        breakdown: parsedBreakdown,
+        lateFeeConfig: {
+          enabled: invoiceLateFeeEnabled,
+          type: invoiceLateFeeEnabled ? invoiceLateFeeType : "NONE",
+          grace_period_days: invoiceLateFeeEnabled && invoiceLateFeeType === "DAILY"
+            ? (parseInt(invoiceLateFeeGraceDays) || 0) : 0,
+          flat_amount: parseInt(invoiceLateFeeFlat) || 0,
+          daily_rate: parseFloat(invoiceLateFeeDailyRate) || 0,
+          max_cap: invoiceLateFeeEnabled && invoiceLateFeeType === "DAILY"
+            ? (parseInt(invoiceLateFeeCap) || 0) : 0,
+          tiered_slabs: invoiceLateFeeSlabs
+            .filter(slab => slab.from_day && slab.to_day && slab.amount)
+            .map(slab => ({
+              from_day: parseInt(slab.from_day),
+              to_day: parseInt(slab.to_day),
+              amount: parseInt(slab.amount),
+            })),
+        },
+      });
+      if (!structureUpdate.ok) {
+        const body = await structureUpdate.json().catch(() => ({}));
+        throw new Error(body.message ?? "Failed to update the selected fee structure");
+      }
+
       const res = await apiRequest("POST", "/api/admin/fees", {
         studentId: Number(data.studentId),
         feeStructureId: selectedStructureId,
@@ -2022,6 +2170,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       return res.json();
     },
     onSuccess: (rec: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/structures"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/payments"] });
@@ -2088,6 +2237,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     setStudentResults(null);
     setStudentSearchQ("");
     setSelectedStructureId(null);
+    setInvoiceBreakdown([]);
     form.setValue("feeType", "");
     form.setValue("amount", "");
     form.setValue("feePeriodStart", "");
@@ -2099,6 +2249,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     setSelectedStudent(null);
     setStudentSearchQ(""); setStudentResults(null);
     setSelectedStructureId(null);
+    setInvoiceBreakdown([]);
     form.setValue("studentId", "", { shouldValidate: false });
     form.setValue("feeType", "");
     form.setValue("amount", "");
@@ -2123,7 +2274,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   function openCreate() {
     setEditing(null);
     form.reset({ studentId: "", feeType: "", amount: "", dueDate: "", status: "Due", paidDate: "", receiptNumber: "", notes: "", academicYear: selectedSession?.sessionName ?? "", feePeriodStart: "", feePeriodEnd: "" });
-    setSelectedStudent(null); setStudentSearchQ(""); setStudentResults(null); setSelectedStructureId(null);
+    setSelectedStudent(null); setStudentSearchQ(""); setStudentResults(null); setSelectedStructureId(null); setInvoiceBreakdown([]);
     setShowForm(true);
   }
 
@@ -2136,7 +2287,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       feePeriodStart: (rec as any).feePeriodStart ?? "", feePeriodEnd: (rec as any).feePeriodEnd ?? "",
     });
     setSelectedStudent(students.find(s => s.id === rec.studentId) ?? null);
-    setStudentSearchQ(""); setStudentResults(null); setSelectedStructureId(null);
+    setStudentSearchQ(""); setStudentResults(null); setSelectedStructureId(null); setInvoiceBreakdown([]);
     setShowForm(true);
   }
 
@@ -2721,13 +2872,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
             </div>
           ) : (
           <>
-          {!editing && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800/60 border border-white/10">
-              <span className="text-white/40 text-xs">Invoice No.</span>
-              <span className="font-mono text-sm text-cyan-300 font-semibold tracking-wider">{afPreview}</span>
-              <span className="text-white/20 text-[10px] ml-auto">auto-assigned on save</span>
-            </div>
-          )}
           <Form {...form}>
             <form onSubmit={form.handleSubmit(d => editing ? updateMut.mutate({ id: editing.id, data: d }) : createMut.mutate(d))} className="space-y-4">
               {/* ── Student search & select ── */}
@@ -2777,148 +2921,247 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   <FormMessage className="text-red-400" />
                 </FormItem>
               )} />
-              {/* Fee Name picker — filtered to selected student's class */}
               {!editing && selectedStudent && (
-                <div>
-                  <label className="text-sm font-medium text-white/70 block mb-1.5">Fee Name</label>
-                  <select
-                    value={selectedStructureId?.toString() ?? ""}
-                    onChange={e => selectInvoiceStructure(e.target.value)}
-                    className="w-full bg-[#0A1628] border border-white/20 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
-                    <option value="">— Select fee name —</option>
-                    {structuresForStudent.map(s => (
-                      <option key={s.id} value={s.id}>{s.name} · ₹{s.amount.toLocaleString("en-IN")}</option>
-                    ))}
-                  </select>
-                  {structuresForStudent.length === 0 && (
-                    <p className="text-amber-400 text-xs mt-1">No fee structures apply to this student's class.</p>
-                  )}
-                </div>
-              )}
-              <div className="grid grid-cols-2 gap-3">
-                <FormField control={form.control} name="feeType" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-white/70">Fee Type</FormLabel>
-                    <FormControl>
-                      <Input {...field} readOnly={!editing} placeholder="Tuition, Transport…" className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30 read-only:text-white/60" />
-                    </FormControl>
-                    <FormMessage className="text-red-400" />
-                  </FormItem>
-                )} />
-                <FormField control={form.control} name="amount" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-white/70">Amount (₹)</FormLabel>
-                    <FormControl>
-                      <Input {...field} readOnly={!editing} type="text" inputMode="numeric" placeholder="0" className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30 read-only:text-white/60" />
-                    </FormControl>
-                    <FormMessage className="text-red-400" />
-                  </FormItem>
-                )} />
-              </div>
-              {/* Fee Period — shown only for new invoices; not editable in edit flow */}
-              {!editing && (
-                <div>
-                  <label className="text-sm font-medium text-white/70 block mb-1.5">
-                    Fee Period <span className="text-red-400">*</span>
-                  </label>
+                <>
                   <div className="grid grid-cols-2 gap-3">
-                    <FormField control={form.control} name="feePeriodStart" render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-white/50 text-xs">Start</FormLabel>
-                        <FormControl>
-                          <Input {...field} type="date"
-                            readOnly={selectedInvoiceStructure?.frequency === "annual" || selectedInvoiceStructure?.frequency === "one-time"}
-                            className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" />
-                        </FormControl>
-                        <FormMessage className="text-red-400" />
-                      </FormItem>
-                    )} />
-                    <FormField control={form.control} name="feePeriodEnd" render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-white/50 text-xs">End</FormLabel>
-                        <FormControl>
-                          <Input {...field} type="date"
-                            readOnly={selectedInvoiceStructure?.frequency === "annual" || selectedInvoiceStructure?.frequency === "one-time"}
-                            className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" />
-                        </FormControl>
-                        <FormMessage className="text-red-400" />
-                      </FormItem>
-                    )} />
-                  </div>
-                  {feePeriodPreview && (
-                    <p className="mt-1.5 text-xs text-cyan-400/80 flex items-center gap-1">
-                      <span className="text-white/30">→</span> {feePeriodPreview}
-                    </p>
-                  )}
-                </div>
-              )}
-              {/* Status — only shown when editing; new invoices always start as "Due" */}
-              <div className="grid grid-cols-2 gap-3">
-                {editing ? (
-                  <FormField control={form.control} name="status" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-white/70">Status</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger className="bg-[#0A1628] border-white/20 text-white"><SelectValue /></SelectTrigger>
-                        </FormControl>
-                        <SelectContent className="bg-[#1A2942] border-white/10">
-                          {["Due","Paid","Overdue"].map(s => (
-                            <SelectItem key={s} value={s} className="text-white focus:bg-white/10">{s}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage className="text-red-400" />
-                    </FormItem>
-                  )} />
-                ) : (
-                  <div>
-                    <label className="text-sm font-medium text-white/70 block mb-1.5">Status</label>
-                    <div className="px-3 py-2 rounded-lg bg-emerald-900/20 border border-emerald-700/40 text-emerald-400 text-sm font-medium">
-                      Due
+                    <div>
+                      <label className="text-xs text-white/60 mb-1 block">Fee Name</label>
+                      <select
+                        value={selectedStructureId?.toString() ?? ""}
+                        onChange={e => selectInvoiceStructure(e.target.value)}
+                        className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
+                        <option value="">— Select fee name —</option>
+                        {structuresForStudent.map(s => (
+                          <option key={s.id} value={s.id}>{s.name} · ₹{s.amount.toLocaleString("en-IN")}</option>
+                        ))}
+                      </select>
                     </div>
-                    <p className="text-white/30 text-xs mt-1">Set automatically</p>
+                    <FormField control={form.control} name="feeType" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs text-white/60 mb-1 block">Fee Type</FormLabel>
+                        <FormControl>
+                          <Input {...field} readOnly placeholder="Tuition / Transport…" className="bg-[#0A1628] border-white/20 text-white read-only:text-white/60" />
+                        </FormControl>
+                      </FormItem>
+                    )} />
                   </div>
-                )}
-                <FormField control={form.control} name="dueDate" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className={dueDateNotNeeded ? "text-white/30" : "text-white/70"}>
-                      Due Date {dueDateNotNeeded && <span className="font-normal text-xs">(not required)</span>}
-                    </FormLabel>
-                    <FormControl>
-                      <Input {...field} type="date" disabled={dueDateNotNeeded} readOnly={!editing}
-                        className={`bg-[#0A1628] border-white/20 text-white [color-scheme:dark] ${dueDateNotNeeded ? "opacity-40 cursor-not-allowed" : ""}`} />
-                    </FormControl>
-                    <FormMessage className="text-red-400" />
-                  </FormItem>
-                )} />
-              </div>
-              {editing && watchStatus === "Paid" && (
-                <FormField control={form.control} name="paidDate" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-white/70">Paid Date</FormLabel>
-                    <FormControl><Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" /></FormControl>
-                  </FormItem>
-                )} />
+                  {structuresForStudent.length === 0 && (
+                    <p className="text-amber-400 text-xs -mt-2">No fee structures apply to this student's class.</p>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField control={form.control} name="amount" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs text-white/60 mb-1 block">Amount (₹)</FormLabel>
+                        <FormControl>
+                          <Input {...field} readOnly type="number" min={1} placeholder="Enter amount" className="bg-[#0A1628] border-white/20 text-white read-only:text-white/60" />
+                        </FormControl>
+                      </FormItem>
+                    )} />
+                    <div>
+                      <label className="text-xs text-white/60 mb-1 block">Frequency</label>
+                      <select
+                        value={selectedInvoiceStructure?.frequency ?? ""}
+                        disabled
+                        className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white disabled:opacity-60">
+                        <option value="">Select fee name first</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="quarterly">Quarterly</option>
+                        <option value="annual">Annual</option>
+                        <option value="one-time">One-Time</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField control={form.control} name="dueDate" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs text-white/60 mb-1 block">Due Date</FormLabel>
+                        <FormControl>
+                          <Input {...field} type="date" readOnly className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark] read-only:text-white/60" />
+                        </FormControl>
+                        {selectedInvoiceStructure?.dueDayOfMonth != null && (
+                          <p className="text-white/40 text-xs mt-1">Day {selectedInvoiceStructure.dueDayOfMonth} of each month</p>
+                        )}
+                      </FormItem>
+                    )} />
+                  </div>
+
+                  <div className={`rounded-xl border p-4 space-y-3 transition-all ${invoiceLateFeeEnabled ? "border-amber-600/40 bg-amber-900/10" : "border-white/10 bg-white/5"}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <Switch checked={invoiceLateFeeEnabled} onCheckedChange={enabled => {
+                          setInvoiceLateFeeEnabled(enabled);
+                          if (enabled && invoiceLateFeeType === "NONE") setInvoiceLateFeeType("FLAT");
+                        }} />
+                        <div>
+                          <p className="text-sm font-semibold text-white/80">Late Fee &amp; Penalty</p>
+                          <p className="text-xs text-white/40 leading-tight">Automatically fine overdue invoices</p>
+                        </div>
+                      </div>
+                      {invoiceLateFeeEnabled && (
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-900/40 text-amber-400 border border-amber-700/40 flex-shrink-0">ACTIVE</span>
+                      )}
+                    </div>
+                    {invoiceLateFeeEnabled && (
+                      <div className="pt-2 border-t border-white/10 space-y-3">
+                        <div>
+                          <label className="text-xs text-white/50 block mb-1">Rule Type</label>
+                          <select value={invoiceLateFeeType} onChange={event => setInvoiceLateFeeType(event.target.value as "FLAT" | "DAILY" | "TIERED")} className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500">
+                            <option value="FLAT">Flat One-Time Penalty</option>
+                            <option value="DAILY">Daily Accumulating Fine</option>
+                            <option value="TIERED">Tiered Schedule</option>
+                          </select>
+                        </div>
+                        {invoiceLateFeeType === "FLAT" && (
+                          <div>
+                            <label className="text-xs text-white/50 block mb-1">Penalty Amount (₹)</label>
+                            <input type="number" min={0} value={invoiceLateFeeFlat} onChange={event => setInvoiceLateFeeFlat(event.target.value)} placeholder="Enter amount" className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-amber-500" />
+                          </div>
+                        )}
+                        {invoiceLateFeeType === "DAILY" && (
+                          <>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="text-xs text-white/50 block mb-1">Grace Period (Days)</label>
+                                <input type="number" min={0} value={invoiceLateFeeGraceDays} onChange={event => setInvoiceLateFeeGraceDays(event.target.value)} className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500" />
+                              </div>
+                              <div>
+                                <label className="text-xs text-white/50 block mb-1">Daily Rate (₹/day)</label>
+                                <input type="number" min={0} step="0.5" value={invoiceLateFeeDailyRate} onChange={event => setInvoiceLateFeeDailyRate(event.target.value)} placeholder="Enter rate" className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-amber-500" />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-xs text-white/50 block mb-1">Maximum Cap (₹) <span className="text-white/30">— 0 = no cap</span></label>
+                              <input type="number" min={0} value={invoiceLateFeeCap} onChange={event => setInvoiceLateFeeCap(event.target.value)} className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500" />
+                            </div>
+                          </>
+                        )}
+                        {invoiceLateFeeType === "TIERED" && (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <label className="text-xs text-white/50">Penalty Slabs</label>
+                              <button type="button" onClick={addInvoiceLateFeeSlab} className="text-xs px-2.5 py-0.5 rounded border border-amber-700/40 text-amber-400 hover:bg-amber-900/20 transition-all">+ Add Slab</button>
+                            </div>
+                            {invoiceLateFeeSlabs.length > 0 ? (
+                              <div className="rounded-lg border border-white/10 overflow-hidden">
+                                <div className="grid grid-cols-[1fr_1fr_1fr_28px] gap-2 px-3 py-1.5 bg-white/5 border-b border-white/10">
+                                  <span className="text-[10px] font-bold text-white/40 uppercase tracking-wide">From Day</span>
+                                  <span className="text-[10px] font-bold text-white/40 uppercase tracking-wide">To Day</span>
+                                  <span className="text-[10px] font-bold text-white/40 uppercase tracking-wide">Fine (₹)</span>
+                                  <span />
+                                </div>
+                                {invoiceLateFeeSlabs.map((slab, index) => (
+                                  <div key={index} className="grid grid-cols-[1fr_1fr_1fr_28px] gap-2 px-3 py-2 border-b border-white/5 last:border-0 bg-[#0A1628]/60">
+                                    <input type="number" min={1} placeholder="e.g. 1" value={slab.from_day} onChange={event => updateInvoiceLateFeeSlab(index, "from_day", event.target.value)} className="bg-transparent border border-white/10 rounded px-2 py-1 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-amber-500 w-full" />
+                                    <input type="number" min={1} placeholder="e.g. 7" value={slab.to_day} onChange={event => updateInvoiceLateFeeSlab(index, "to_day", event.target.value)} className="bg-transparent border border-white/10 rounded px-2 py-1 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-amber-500 w-full" />
+                                    <input type="number" min={0} placeholder="e.g. 100" value={slab.amount} onChange={event => updateInvoiceLateFeeSlab(index, "amount", event.target.value)} className="bg-transparent border border-white/10 rounded px-2 py-1 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-amber-500 w-full" />
+                                    <button type="button" onClick={() => removeInvoiceLateFeeSlab(index)} className="flex items-center justify-center w-7 h-7 rounded hover:bg-red-900/30 text-white/30 hover:text-red-400 transition-all"><Trash2 className="w-3.5 h-3.5" /></button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-white/25 px-1">No slabs. Add slabs — e.g. Day 1–7: ₹100 fine, Day 8–14: ₹200 fine.</p>
+                            )}
+                          </div>
+                        )}
+                        <p className="text-[11px] text-amber-400/60 leading-snug">⏰ The nightly cron recalculates fines for all overdue invoices under this structure automatically.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold text-white/60 flex items-center gap-1.5">
+                        <span className="text-cyan-400">⊞</span> Fee Breakdown / Components
+                        <span className="text-white/30 font-normal">(optional — shown to students)</span>
+                      </label>
+                      <button type="button" onClick={addInvoiceBreakdownRow}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all hover:bg-cyan-900/40 border border-cyan-700/40 text-cyan-400">
+                        <Plus className="w-3 h-3" /> Add Component
+                      </button>
+                    </div>
+                    {invoiceBreakdown.length > 0 ? (
+                      <div className="rounded-xl border border-white/10 overflow-hidden">
+                        <div className="grid grid-cols-[1fr_1.5fr_80px_32px] gap-2 px-3 py-2 bg-white/5 border-b border-white/10">
+                          <span className="text-[10px] font-bold text-white/40 uppercase tracking-wide">Component</span>
+                          <span className="text-[10px] font-bold text-white/40 uppercase tracking-wide">Purpose / Description</span>
+                          <span className="text-[10px] font-bold text-white/40 uppercase tracking-wide text-right">Amount ₹</span>
+                          <span />
+                        </div>
+                        {invoiceBreakdown.map((row, index) => (
+                          <div key={index} className="grid grid-cols-[1fr_1.5fr_80px_32px] gap-2 px-3 py-2 border-b border-white/5 last:border-0 bg-[#0A1628]/60">
+                            <input value={row.name} onChange={event => updateInvoiceBreakdownRow(index, "name", event.target.value)} placeholder="Lab Fee…" className="bg-transparent border border-white/10 rounded-md px-2 py-1 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-cyan-500 w-full" />
+                            <input value={row.purpose} onChange={event => updateInvoiceBreakdownRow(index, "purpose", event.target.value)} placeholder="Covers equipment & software…" className="bg-transparent border border-white/10 rounded-md px-2 py-1 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-cyan-500 w-full" />
+                            <input type="number" min={0} value={row.amount} onChange={event => updateInvoiceBreakdownRow(index, "amount", event.target.value)} placeholder="0" className="bg-transparent border border-white/10 rounded-md px-2 py-1 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-cyan-500 w-full text-right" />
+                            <button type="button" onClick={() => removeInvoiceBreakdownRow(index)} className="flex items-center justify-center w-7 h-7 rounded-lg hover:bg-red-900/30 text-white/30 hover:text-red-400 transition-all"><Trash2 className="w-3.5 h-3.5" /></button>
+                          </div>
+                        ))}
+                        <div className="grid grid-cols-[1fr_1.5fr_80px_32px] gap-2 px-3 py-2 bg-white/5 border-t border-white/10">
+                          <span className="text-xs font-bold text-white/60 col-span-2">Components Total</span>
+                          <span className={`text-xs font-black text-right ${invoiceBreakdownMismatch ? "text-red-400" : "text-emerald-400"}`}>₹{invoiceBreakdownTotal.toLocaleString("en-IN")}</span>
+                          <span />
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-white/25 px-1">No components added. Click "+ Add Component" to itemise this fee (e.g. Tuition ₹2,500 + Library ₹500).</p>
+                    )}
+                    {invoiceBreakdownMismatch && (
+                      <p className="text-xs text-red-400 flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                        Components total (₹{invoiceBreakdownTotal.toLocaleString("en-IN")}) doesn't match main amount (₹{(parseInt(form.watch("amount")) || 0).toLocaleString("en-IN")}). Adjust or remove components.
+                      </p>
+                    )}
+                    <p className="text-[11px] text-white/30 px-1">Changes update the selected Fee Structure and are saved as this invoice's component snapshot.</p>
+                  </div>
+                </>
               )}
-              <div className="grid grid-cols-2 gap-3">
-                <FormField control={form.control} name="academicYear" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-white/70">Academic Year</FormLabel>
-                    <FormControl><Input {...field} readOnly className="bg-[#0A1628] border-white/10 text-white/60 cursor-default select-none" /></FormControl>
-                  </FormItem>
-                )} />
-                <FormField control={form.control} name="notes" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-white/70">Notes</FormLabel>
-                    <FormControl><Input {...field} placeholder="" className="bg-[#0A1628] border-white/20 text-white placeholder:text-white/30" /></FormControl>
-                  </FormItem>
-                )} />
-              </div>
+
+              {editing && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField control={form.control} name="feeType" render={({ field }) => (
+                      <FormItem><FormLabel className="text-white/70">Fee Type</FormLabel><FormControl><Input {...field} className="bg-[#0A1628] border-white/20 text-white" /></FormControl><FormMessage className="text-red-400" /></FormItem>
+                    )} />
+                    <FormField control={form.control} name="amount" render={({ field }) => (
+                      <FormItem><FormLabel className="text-white/70">Amount (₹)</FormLabel><FormControl><Input {...field} type="text" inputMode="numeric" className="bg-[#0A1628] border-white/20 text-white" /></FormControl><FormMessage className="text-red-400" /></FormItem>
+                    )} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField control={form.control} name="status" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-white/70">Status</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl><SelectTrigger className="bg-[#0A1628] border-white/20 text-white"><SelectValue /></SelectTrigger></FormControl>
+                          <SelectContent className="bg-[#1A2942] border-white/10">
+                            {["Due","Paid","Overdue"].map(status => <SelectItem key={status} value={status} className="text-white focus:bg-white/10">{status}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </FormItem>
+                    )} />
+                    <FormField control={form.control} name="dueDate" render={({ field }) => (
+                      <FormItem><FormLabel className={dueDateNotNeeded ? "text-white/30" : "text-white/70"}>Due Date</FormLabel><FormControl><Input {...field} type="date" disabled={dueDateNotNeeded} className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" /></FormControl></FormItem>
+                    )} />
+                  </div>
+                  {watchStatus === "Paid" && (
+                    <FormField control={form.control} name="paidDate" render={({ field }) => (
+                      <FormItem><FormLabel className="text-white/70">Paid Date</FormLabel><FormControl><Input {...field} type="date" className="bg-[#0A1628] border-white/20 text-white [color-scheme:dark]" /></FormControl></FormItem>
+                    )} />
+                  )}
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField control={form.control} name="academicYear" render={({ field }) => (
+                      <FormItem><FormLabel className="text-white/70">Academic Year</FormLabel><FormControl><Input {...field} readOnly className="bg-[#0A1628] border-white/10 text-white/60 cursor-default select-none" /></FormControl></FormItem>
+                    )} />
+                    <FormField control={form.control} name="notes" render={({ field }) => (
+                      <FormItem><FormLabel className="text-white/70">Notes</FormLabel><FormControl><Input {...field} className="bg-[#0A1628] border-white/20 text-white" /></FormControl></FormItem>
+                    )} />
+                  </div>
+                </>
+              )}
               <div className="flex gap-2 justify-end pt-2">
                 <Button type="button" variant="ghost" onClick={() => { setShowForm(false); setEditing(null); }} className="text-white/60">Cancel</Button>
                 <Button type="submit"
-                  disabled={createMut.isPending || updateMut.isPending || (!editing && (!selectedStudent || !selectedStructureId))}
+                  disabled={createMut.isPending || updateMut.isPending || (!editing && (!selectedStudent || !selectedStructureId || !watchPeriodStart || !watchPeriodEnd))}
                   className="bg-cyan-600 hover:bg-cyan-500 text-white">
                   {(createMut.isPending || updateMut.isPending) && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
                   {editing ? "Save Changes" : "Create Invoice"}
