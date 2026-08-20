@@ -1,0 +1,92 @@
+The Invoice PDF module is now visually and functionally approved.
+
+Please make only the following final changes and then LOCK the invoice module. Do not introduce any additional redesign or unnecessary changes.
+
+1. Make A4 the default PDF paper size
+
+The invoice is currently showing Letter in the Android print preview.
+
+Set the invoice PDF/print layout to A4 by default, because this is a school ERP intended primarily for India.
+
+Requirements:
+
+- A4 portrait
+- Professional print margins
+- Preserve the current one-page layout for normal invoices
+- Do not allow changing to A4 to push the signature/footer onto another page
+- Large invoices may still intelligently flow to additional pages when genuinely necessary
+
+2. Preserve the current approved invoice design
+
+Do NOT redesign the invoice.
+
+Keep exactly what is currently working:
+
+- School logo and branding
+- School name/address/contact details
+- Affiliation number
+- GSTIN/tax information where configured
+- Prominent INVOICE heading
+- Invoice Number
+- Invoice Status
+- Student Name
+- Student ID / MIS ID
+- Parent / Guardian Name
+- Student Phone Number
+- Class
+- Section
+- Exact persisted Invoice Date & Time
+- IST / Asia/Kolkata timezone
+- Academic Session
+- Frequency
+- Fee Period
+- Due Date
+- Invoice Details
+- Fee Breakdown / Components
+- Component subtotal
+- Late Fee & Penalty
+- Amount Summary
+- Amount in Words
+- Total Payable
+- Authorized Signature
+- Footer/disclaimer
+
+3. Do NOT modify business logic
+
+Do not change anything related to:
+
+- Invoice generation
+- Invoice numbering
+- Fee records
+- Academic session logic
+- Student records
+- Payment processing
+- Razorpay
+- Webhooks
+- Payment attempts
+- Receipts
+- Receipt numbering
+- Duplicate-payment protection
+- Student portal
+- Admin portal
+- Tenant isolation
+
+This is only a final PDF/print configuration change.
+
+4. Final validation
+
+After making the A4 change:
+
+- Generate a normal invoice.
+- Open Print / Save as PDF.
+- Confirm it shows A4 instead of Letter.
+- Confirm the complete normal invoice remains 1 page.
+- Confirm the signature remains on page 1.
+- Confirm the footer remains on page 1.
+- Confirm the invoice date/time remains the original persisted IST timestamp.
+- Confirm all existing invoice details are still present.
+- Confirm large invoices can still paginate correctly.
+
+If everything passes, consider the Invoice PDF module complete and frozen.
+
+Do not make further visual changes unless specifically requested later.
