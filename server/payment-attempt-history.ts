@@ -47,6 +47,7 @@ export type WebhookDeliveryInput = {
   feeRecordId?: number | null;
   feeResolutionSource?: "notes" | "payment_id" | "order_id" | null;
   providerOccurredAt?: Date | null;
+  signatureVerified?: boolean;
 };
 
 const sensitivePayloadKeys = new Set([
@@ -103,14 +104,14 @@ export async function recordWebhookDelivery(input: WebhookDeliveryInput): Promis
     INSERT INTO payment_webhook_events (
       school_id, provider, provider_event_id, event_type, razorpay_payment_id,
       razorpay_order_id, fee_record_id, fee_resolution_source, fee_resolution_status,
-      provider_occurred_at, payload, received_at, last_received_at,
+       provider_occurred_at, signature_verified, payload, received_at, last_received_at,
       processing_status, delivery_count
     ) VALUES (
       ${input.schoolId}, 'razorpay', ${providerEventId}, ${input.eventType},
       ${input.razorpayPaymentId ?? null}, ${input.razorpayOrderId ?? null},
       ${input.feeRecordId ?? null}, ${input.feeResolutionSource ?? null},
       ${input.feeRecordId != null ? "resolved" : "unresolved"},
-      ${(input.providerOccurredAt ?? providerTimestamp(input.payload))?.toISOString() ?? null}, ${payloadJson(input.payload)}::jsonb, NOW(), NOW(),
+       ${(input.providerOccurredAt ?? providerTimestamp(input.payload))?.toISOString() ?? null}, ${input.signatureVerified ?? false}, ${payloadJson(input.payload)}::jsonb, NOW(), NOW(),
       'received', 1
     )
     RETURNING id

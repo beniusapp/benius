@@ -2105,25 +2105,9 @@ export function registerFeesRoutes(app: Express) {
       const disputeEntity = event?.payload?.dispute?.entity ?? {};
       const providerPaymentId = payment.id ?? refundEntity.payment_id ?? disputeEntity.payment_id ?? null;
       const providerOrderId = payment.order_id ?? refundEntity.order_id ?? disputeEntity.order_id ?? null;
-      let schoolId: number | null = notes.schoolId ? parseInt(notes.schoolId) : null;
+      const notedSchoolId: number | null = notes.schoolId ? parseInt(notes.schoolId) : null;
+      let schoolId: number | null = null;
 
-      // Fallback: when schoolId is absent from notes, resolve it from the stored
-      // razorpay_order_id (written at order-creation time) so we can still locate
-      // the correct school credentials and verify the HMAC signature.
-      if (!schoolId && providerOrderId) {
-        const orderRow = (await db.execute(sql`
-          SELECT school_id FROM fee_records
-          WHERE razorpay_order_id = ${providerOrderId}
-          LIMIT 1
-        `)).rows[0] as any;
-        if (orderRow) {
-          schoolId = Number(orderRow.school_id);
-          console.warn(
-            `[razorpay webhook] schoolId missing from notes for payment ${payment.id ?? "unknown"} ` +
-            `— resolved school #${schoolId} via order_id ${payment.order_id}`
-          );
-        }
-      }
       // Refund/dispute payloads often omit nested payment notes. Resolve only
       // when a stored provider identity maps unambiguously to one tenant; an
       // ambiguous identifier is deliberately not trusted to select a school.
@@ -2132,10 +2116,18 @@ export function registerFeesRoutes(app: Express) {
           SELECT school_id FROM payment_attempts
           WHERE (${providerPaymentId}::text IS NOT NULL AND razorpay_payment_id = ${providerPaymentId})
              OR (${providerOrderId}::text IS NOT NULL AND razorpay_order_id = ${providerOrderId})
-          GROUP BY school_id
+          UNION
+          SELECT school_id FROM fee_records
+          WHERE ${providerOrderId}::text IS NOT NULL AND razorpay_order_id = ${providerOrderId}
           LIMIT 2
         `)).rows as any[];
         if (candidates.length === 1) schoolId = Number(candidates[0].school_id);
+      }
+      // Notes are only a fallback after stored provider identities have had a
+      // chance to resolve the tenant. They can never override a known payment
+      // or order relationship.
+      if (!schoolId && notedSchoolId && !providerPaymentId && !providerOrderId) {
+        schoolId = notedSchoolId;
       }
 
       if (!schoolId) return res.status(400).json({ message: "schoolId missing from payment notes and could not be resolved from order_id" });
@@ -2163,6 +2155,7 @@ export function registerFeesRoutes(app: Express) {
         razorpayPaymentId: payment.id ?? null,
         razorpayOrderId: payment.order_id ?? null,
         feeRecordId: webhookFeeRecordId,
+        signatureVerified: true,
       });
       await updateWebhookDelivery(webhookDeliveryId, { verified: true });
 

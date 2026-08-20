@@ -788,6 +788,17 @@ app.use((req, res, next) => {
       error TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    CREATE OR REPLACE FUNCTION reject_payment_webhook_processing_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+      IF TG_OP = 'DELETE' AND current_setting('app.payment_history_cleanup', true) = 'on' THEN RETURN OLD; END IF;
+      RAISE EXCEPTION 'payment_webhook_processing_events are append-only';
+    END;
+    $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS payment_webhook_processing_events_append_only ON payment_webhook_processing_events;
+    CREATE TRIGGER payment_webhook_processing_events_append_only
+      BEFORE UPDATE OR DELETE ON payment_webhook_processing_events
+      FOR EACH ROW EXECUTE FUNCTION reject_payment_webhook_processing_mutation();
 
     ALTER TABLE payment_attempt_events ADD COLUMN IF NOT EXISTS provider_occurred_at TIMESTAMPTZ;
     ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS fee_resolution_source VARCHAR(20);
