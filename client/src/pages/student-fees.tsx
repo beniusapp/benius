@@ -63,6 +63,7 @@ interface FeeRecord {
   schoolId: number;
   feeType: string;
   feeName: string;          // current structure display name — always fresh from server
+  frequency?: string | null;
   amount: number;
   dueDate: string;
   paidDate: string | null;
@@ -76,6 +77,17 @@ interface FeeRecord {
   failed_count?: number;
   last_failed_error?: string | null;
   lateFeeInfo?: LateFeeInfo | null;
+}
+
+function formatFeeFrequency(frequency: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    monthly: "Monthly",
+    quarterly: "Quarterly",
+    annual: "Annual",
+    "one-time": "One-Time",
+  };
+  const value = frequency?.trim();
+  return value ? (labels[value] ?? value) : "";
 }
 
 interface FeesSummary {
@@ -1848,6 +1860,22 @@ export default function StudentFees() {
                               </div>
                               <p className="font-extrabold text-slate-800 text-base leading-tight"
                                 data-testid={`text-fee-type-${rec.id}`}>{rec.feeName || rec.feeType}</p>
+                              {(rec.feeType?.trim() || rec.frequency) && (
+                                <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-[11px] text-slate-500">
+                                  {rec.feeType?.trim() && (
+                                    <span data-testid={`text-fee-type-detail-${rec.id}`}>
+                                      <span className="font-semibold text-slate-400">Fee Type:</span>{" "}
+                                      {rec.feeType.trim()}
+                                    </span>
+                                  )}
+                                  {formatFeeFrequency(rec.frequency) && (
+                                    <span data-testid={`text-fee-frequency-${rec.id}`}>
+                                      <span className="font-semibold text-slate-400">Frequency:</span>{" "}
+                                      {formatFeeFrequency(rec.frequency)}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                               {rec.invoiceNumber && (
                                 <p className="text-[11px] text-slate-400 mt-0.5 font-mono tracking-wide"
                                   data-testid={`text-invoice-number-${rec.id}`}>
