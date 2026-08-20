@@ -1,0 +1,1635 @@
+Complete Online Payment Attempt History & Ledger Audit Trail
+
+You have already completed an audit of the current Online Payment / Razorpay implementation.
+
+Do NOT assume the existing implementation is already complete just because "payment_attempts" exists.
+
+The audit clearly shows that the current system preserves many payment details, but the Admin Ledger & Transactions does not currently expose the complete chronological payment-attempt history, and several payment lifecycle events/details are either mutable, not displayed, or not permanently retained.
+
+I now want you to implement a production-grade, complete payment-attempt audit trail.
+
+The objective is:
+
+«For every invoice, I must be able to reconstruct EXACTLY what happened from the first payment attempt until the final outcome, including every cancellation, failure, retry, successful payment, refund, etc., with exact timestamps and all available technical/payment information.»
+
+---
+
+1. CORE REQUIREMENT
+
+Suppose invoice:
+
+"INV-0079"
+
+The student attempts payment four times:
+
+Attempt #1
+
+20 Aug 2026, 07:30:10 PM
+
+Student opens Razorpay checkout and dismisses/closes it.
+
+Result:
+
+"Cancelled"
+
+Attempt #2
+
+20 Aug 2026, 07:35:42 PM
+
+Student tries again.
+
+Payment gateway returns an error.
+
+Result:
+
+"Failed"
+
+Attempt #3
+
+20 Aug 2026, 07:39:18 PM
+
+Student tries again and closes Razorpay checkout.
+
+Result:
+
+"Cancelled"
+
+Attempt #4
+
+20 Aug 2026, 07:45:55 PM
+
+Student pays successfully.
+
+Result:
+
+"Captured / Paid"
+
+The Admin Ledger for "INV-0079" must permanently show:
+
+Attempt #1 — Cancelled — 07:30:10 PM
+Attempt #2 — Failed   — 07:35:42 PM
+Attempt #3 — Cancelled — 07:39:18 PM
+Attempt #4 — Captured — 07:45:55 PM
+
+And when each attempt is expanded, the administrator must be able to see every relevant detail available for that attempt.
+
+The final successful payment must NOT replace or hide attempts #1, #2 and #3.
+
+The failed/cancelled attempts must NEVER disappear merely because a later payment succeeded.
+
+---
+
+2. VERY IMPORTANT: FIRST VERIFY THE CURRENT IMPLEMENTATION
+
+Before modifying code, inspect the actual current implementation again.
+
+Verify:
+
+- "payment_attempts"
+- "payment_records"
+- "fee_audit_log"
+- "fee_records"
+- Razorpay create-order flow
+- Razorpay checkout callbacks
+- Razorpay verify route
+- Razorpay webhook route
+- Razorpay enrichment helper
+- payment cancellation handling
+- payment failure handling
+- capture handling
+- refund handling
+- dispute handling
+- student payment history
+- Admin Ledger
+- Admin Transactions
+- Student receipt
+- Admin payment receipt
+- Admin fee receipt
+- all database indexes and constraints
+- all relevant migrations
+
+Do not rely only on the previous audit document.
+
+Compare the actual code/database schema against this requirement.
+
+---
+
+3. DO NOT BREAK THE EXISTING PAYMENT ARCHITECTURE
+
+Do NOT unnecessarily replace:
+
+- "fee_records"
+- "payment_records"
+- invoice numbering
+- receipt numbering
+- Razorpay verification
+- webhook verification
+- existing tenant isolation
+- existing idempotency
+- existing successful payment flow
+- existing offline payment functionality
+
+The current architecture can remain.
+
+However, improve it where required so that the payment history becomes genuinely complete.
+
+---
+
+4. PAYMENT ATTEMPTS MUST BE FIRST-CLASS HISTORICAL RECORDS
+
+"payment_attempts" should become the authoritative unified history of online payment attempts.
+
+Each distinct attempt must have its own historical identity.
+
+For example:
+
+INV-0079
+
+ATTEMPT-0001 → Cancelled
+ATTEMPT-0002 → Failed
+ATTEMPT-0003 → Cancelled
+ATTEMPT-0004 → Captured
+
+Do NOT collapse these into one record.
+
+Do NOT overwrite an earlier cancelled/failed attempt with the successful attempt.
+
+Do NOT delete earlier attempts.
+
+---
+
+5. ATTEMPT NUMBER
+
+Introduce/display a deterministic attempt number per invoice.
+
+Example:
+
+Attempt #1
+Attempt #2
+Attempt #3
+Attempt #4
+
+This must be calculated/persisted safely so that administrators can immediately understand the chronological sequence.
+
+The numbering must be scoped correctly to the invoice/fee record.
+
+---
+
+6. EVERY ATTEMPT MUST HAVE AN EXACT TIMESTAMP
+
+Every payment attempt must have a reliable timestamp.
+
+At minimum preserve:
+
+- application-created timestamp
+- updated timestamp
+- Razorpay-created timestamp when available
+- authorized timestamp when available
+- captured timestamp when available
+- failed timestamp when available
+- refund timestamps when available
+- webhook received timestamp
+- API enrichment timestamp
+
+Do NOT display an approximate date/time.
+
+Use the application's established timezone conventions and display the correct Indian date/time where the UI currently uses Indian time.
+
+---
+
+7. CANCELLED ATTEMPTS
+
+If the student opens Razorpay and dismisses/closes the checkout:
+
+Create a permanent cancelled attempt record.
+
+Example:
+
+Status: Cancelled
+Source: Client
+Description: Checkout dismissed by student (no payment attempted)
+Razorpay Order ID: order_xxxxx
+Payment ID: —
+Amount: ₹12,000
+Timestamp: 20 Aug 2026, 07:30:10 PM
+
+The cancellation must remain permanently associated with the invoice.
+
+Do not treat it merely as temporary order-lock information.
+
+Do not rely only on "fee_audit_log".
+
+---
+
+8. FAILED ATTEMPTS
+
+For every failed payment, permanently preserve all available failure information.
+
+At minimum:
+
+- Payment ID
+- Order ID
+- Attempt number
+- status
+- timestamp
+- amount
+- currency
+- payment method
+- card network
+- card type
+- issuer
+- last 4 digits
+- bank
+- VPA
+- wallet
+- error code
+- error description
+- error source
+- error step
+- error reason
+- gateway status
+- payer information where available
+- Razorpay timestamps
+- webhook information
+- API enrichment information
+
+Example:
+
+Attempt #2
+Status: Failed
+
+Error Code: BAD_REQUEST_ERROR
+Source: gateway
+Step: payment_authorization
+Reason: payment_failed
+Description: Payment failed
+
+Method: Card
+Network: Visa
+Type: Domestic Debit Card
+Issuer: DCBL
+Last 4: 1007
+
+Do not reduce this to only:
+
+"Payment failed"
+
+---
+
+9. SUCCESSFUL/CAPTURED ATTEMPTS
+
+A successful payment must create/preserve a captured attempt containing all available information.
+
+It must remain separate from earlier attempts.
+
+The successful attempt should contain:
+
+- Payment ID
+- Order ID
+- Invoice number
+- Fee record ID
+- Student ID
+- School ID
+- Session ID
+- Attempt number
+- timestamp
+- amount
+- captured amount
+- refunded amount
+- currency
+- payment method
+- card information
+- bank information
+- UPI information
+- wallet information
+- payer information
+- receipt number
+- Razorpay fee
+- Razorpay tax/GST
+- gateway status
+- authorization information
+- capture information
+- webhook information
+- API enrichment information
+
+The corresponding "payment_records" row remains the authoritative receipt/collection record.
+
+Do not replace "payment_records" with "payment_attempts".
+
+---
+
+10. ORDER CREATION MUST ALSO BE CONSIDERED
+
+The current audit says:
+
+«Order creation with no later outcome does not create a "payment_attempts" row.»
+
+This creates a historical gap.
+
+I want you to determine the safest production-grade approach so that an administrator can reconstruct:
+
+Checkout initiated
+↓
+Razorpay order created
+↓
+Checkout opened
+↓
+Cancelled / Failed / Captured / Expired
+
+If an order is created but no payment outcome occurs, it should not simply disappear from historical understanding.
+
+Preserve the relevant order-attempt information without incorrectly claiming that a payment was attempted when the student never actually made a payment.
+
+Use a distinct lifecycle/status if necessary, such as:
+
+Initiated
+Checkout Opened
+Cancelled
+Failed
+Captured
+Expired
+
+Do NOT incorrectly classify an untouched order as a failed payment.
+
+---
+
+11. DO NOT LOSE PREVIOUS RAZORPAY ORDER IDs
+
+"fee_records.razorpay_order_id" is mutable current state.
+
+That is fine for the active checkout lock.
+
+But it must NOT be the only place where an order ID exists.
+
+If:
+
+order_001 → Cancelled
+
+order_002 → Failed
+
+order_003 → Cancelled
+
+order_004 → Captured
+
+all four order IDs must remain historically associated with the invoice.
+
+The current active order field can continue to be updated/cleared.
+
+Historical attempt/order records must remain permanent.
+
+---
+
+12. WEBHOOK HISTORY
+
+The current audit says:
+
+"payment_attempts.webhook_payload" has 0 populated rows in the current database.
+
+Also, duplicate webhook deliveries are currently merged into the same attempt.
+
+I want you to carefully improve this.
+
+For every relevant Razorpay webhook received, preserve a durable webhook event record.
+
+At minimum retain:
+
+- internal webhook event ID
+- Razorpay event name
+- payment ID
+- order ID
+- fee record ID
+- school ID
+- received timestamp
+- webhook signature verification status
+- webhook payload
+- processing status
+- processing error if any
+- related attempt ID
+
+The goal is to answer:
+
+«What webhook did Razorpay send, when did we receive it, was it verified, and what did our server do with it?»
+
+Do not destroy the original webhook event merely because the same payment ID already exists.
+
+---
+
+13. IMPORTANT: ATTEMPT VS WEBHOOK EVENT
+
+Do NOT confuse these two concepts.
+
+One payment attempt can have multiple webhook events.
+
+Example:
+
+Attempt #4
+Payment ID: pay_xxxxx
+
+payment.authorized
+payment.captured
+refund.created
+refund.processed
+
+These are lifecycle events associated with the same payment attempt.
+
+Therefore:
+
+"payment_attempts"
+
+Represents the unified payment attempt/current lifecycle state.
+
+"payment_webhook_events" or equivalent event table
+
+Represents every individual webhook event received.
+
+"fee_audit_log"
+
+Remains the broader application audit trail.
+
+"payment_records"
+
+Represents actual collected payment/receipt information.
+
+Do not force all of these concepts into one table.
+
+---
+
+14. RAW RAZORPAY API DATA
+
+The current system already retains:
+
+razorpay_payment_data
+razorpay_order_data
+
+when enrichment succeeds.
+
+Keep this functionality.
+
+For every payment/order where the API response is successfully fetched, preserve the complete JSON response.
+
+Do not unnecessarily discard fields.
+
+Do not store sensitive data such as:
+
+- CVV
+- full PAN
+- other prohibited sensitive card data
+
+Only store information Razorpay legitimately exposes and the application is permitted to retain.
+
+---
+
+15. API ENRICHMENT MUST BE TRACEABLE
+
+Currently API enrichment can happen asynchronously.
+
+I want the history to make clear:
+
+Payment received
+↓
+Razorpay API enrichment attempted
+↓
+Success / Failed
+↓
+Timestamp
+
+If enrichment fails, do not silently lose this information.
+
+Persist an enrichment status/error where appropriate.
+
+For example:
+
+API Enrichment
+Status: Successful
+Synced At: 20 Aug 2026, 07:46:03 PM
+
+or
+
+API Enrichment
+Status: Failed
+Reason: Razorpay API timeout
+
+Do not expose secrets.
+
+---
+
+16. REFUNDS
+
+Refunds must be connected to the original payment attempt.
+
+Example:
+
+Attempt #4
+Captured
+₹12,000
+
+Refund Created
+₹5,000
+
+Refund Processed
+₹5,000
+
+Preserve:
+
+- refund ID
+- refund amount
+- refund status
+- refund created time
+- refund initiated time
+- refund processed time
+- refund failed time
+- refund event/webhook details
+- original payment ID
+- original attempt ID
+
+Do not overwrite the captured payment into a generic "Refunded" record and lose the original captured state.
+
+---
+
+17. DISPUTES
+
+If Razorpay sends dispute events, preserve the event historically.
+
+Do not merely write a descriptive audit message and discard the underlying event information if the payload is available.
+
+Preserve:
+
+- dispute ID
+- payment ID
+- event
+- status
+- amount
+- timestamp
+- payload
+- related attempt
+
+Use a separate lifecycle/event structure if required.
+
+---
+
+18. ADMIN LEDGER MUST SHOW COMPLETE ATTEMPT HISTORY
+
+This is one of the most important changes.
+
+Currently:
+
+"GET /api/admin/fees?..."
+
+returns invoice-level "fee_records".
+
+And:
+
+"GET /api/admin/fees/:feeRecordId/transaction-detail"
+
+does not query "payment_attempts".
+
+Change the Admin Ledger transaction detail so that an administrator can see:
+
+Payment Attempt History
+
+For example:
+
+INV-0079
+Student: student3mis
+DSID: MIS-0004
+Amount: ₹12,000
+Final Status: Paid
+
+Payment Attempt History
+
+#1  Cancelled
+20 Aug 2026, 07:30:10 PM
+
+#2  Failed
+20 Aug 2026, 07:35:42 PM
+
+#3  Cancelled
+20 Aug 2026, 07:39:18 PM
+
+#4  Captured
+20 Aug 2026, 07:45:55 PM
+Receipt: ONxx
+
+This must be chronological.
+
+Latest attempt can be visually prominent, but earlier attempts must remain accessible.
+
+---
+
+19. EACH ATTEMPT MUST BE EXPANDABLE
+
+When an administrator expands Attempt #2, they should see the complete structured details available for that attempt.
+
+Organize the information logically.
+
+Suggested sections:
+
+Attempt Identification
+
+- Attempt #
+- Internal Attempt ID
+- Fee Record ID
+- Invoice Number
+- School ID
+- Student ID
+- Session ID
+- Source
+- Created At
+- Updated At
+
+Payment Identification
+
+- Razorpay Payment ID
+- Razorpay Order ID
+- Receipt Number
+- External ID where applicable
+
+Status
+
+- Outcome
+- Gateway Status
+- Attempt timestamp
+- Razorpay created timestamp
+- Authorized timestamp
+- Captured timestamp
+- Failed timestamp
+
+Amount & Financial
+
+- Amount
+- Currency
+- Captured amount
+- Refunded amount
+- Razorpay processing fee
+- GST/tax
+
+Payment Method
+
+- Method
+- Card network
+- Card type
+- Last 4 digits
+- Issuer
+- Cardholder name where available
+- International flag
+- EMI flag
+- Bank
+- UPI VPA
+- Wallet
+
+Payer
+
+- Name
+- Email
+- Contact
+
+Use masking/privacy rules where appropriate.
+
+Failure Details
+
+Only when relevant:
+
+- Error code
+- Description
+- Source
+- Step
+- Reason
+
+Bank & Acquirer
+
+- RRN
+- Authorization code
+- Transaction ID where available
+- Other available non-sensitive acquirer information
+
+Refund
+
+- Refund ID
+- Refund status
+- Refund amount
+- Refund timestamps
+
+Webhook
+
+- Webhook event(s)
+- Verification status
+- Received timestamp
+- Event processing status
+
+Razorpay API Enrichment
+
+- API sync timestamp
+- Payment API fetch status
+- Order API fetch status
+- enrichment error if any
+
+Raw Data
+
+Provide an administrator-only expandable section for:
+
+- Razorpay Payment API JSON
+- Razorpay Order API JSON
+- webhook payload JSON
+
+Do not show sensitive secrets.
+
+Pretty-print JSON and make it readable.
+
+---
+
+20. "MINUTE DETAILS" REQUIREMENT
+
+When I say:
+
+«I want every minute detail.»
+
+I mean:
+
+If the application receives or legitimately obtains the information and it is safe/legal to retain, I do not want that information silently discarded.
+
+The system should preserve:
+
+1. application-generated information
+2. Razorpay Payment API information
+3. Razorpay Order API information
+4. relevant webhook information
+5. browser SDK failure information
+6. cancellation information
+7. refund information
+8. dispute information
+9. timestamps
+10. processing/enrichment status
+11. tenant association
+12. invoice association
+13. student association
+14. attempt sequence
+15. gateway/acquirer information
+16. audit information
+
+Do NOT simply add random fields.
+
+Create a clean, normalized, traceable architecture.
+
+---
+
+21. IMPORTANT: IMMUTABILITY
+
+The audit clearly says the current "payment_attempts" rows are NOT strictly immutable.
+
+For example, the same payment ID can be updated through:
+
+- client verification
+- webhook
+- API enrichment
+- refund
+- backfill
+
+That is acceptable for a current-state projection, but it is NOT enough for a complete audit history.
+
+Therefore implement a proper separation:
+
+Current attempt state
+
+"payment_attempts"
+
+Immutable event/history
+
+Use a suitable table such as:
+
+"payment_attempt_events"
+
+or another well-designed equivalent.
+
+Each event must be append-only.
+
+Example:
+
+ATTEMPT #4
+
+Event 1
+created
+
+Event 2
+payment.authorized
+
+Event 3
+payment.captured
+
+Event 4
+API enrichment completed
+
+Event 5
+refund.created
+
+Event 6
+refund.processed
+
+Never update old events.
+
+Never delete old events as part of normal application operation.
+
+The current "payment_attempts" row can act as the latest projection/state.
+
+---
+
+22. EVENT TYPES
+
+Design an appropriate event taxonomy.
+
+At minimum support events such as:
+
+attempt_created
+checkout_started
+checkout_cancelled
+payment_failed
+payment_authorized
+payment_captured
+payment_verified
+api_enrichment_started
+api_enrichment_completed
+api_enrichment_failed
+refund_created
+refund_processed
+refund_failed
+refund_speed_changed
+dispute_created
+dispute_updated
+webhook_received
+webhook_processed
+webhook_failed
+
+Only create events when actually applicable.
+
+Do not fabricate events.
+
+---
+
+23. EXACT SOURCE OF EVERY FIELD
+
+For every important field, document in code/comments or architecture documentation:
+
+Field
+↓
+Source
+↓
+When populated
+↓
+Whether mutable or immutable
+
+For example:
+
+razorpay_payment_id
+Source: Razorpay Payment API / webhook / client verification
+Historical: immutable event value
+Current: payment_attempts value
+
+This is important because I do not want a future developer to accidentally overwrite historical information.
+
+---
+
+24. ADMIN LEDGER SHOULD DISTINGUISH THESE LEVELS
+
+Do not mix them together.
+
+Invoice level
+
+Invoice
+INV-0079
+₹12,000
+Paid
+
+Attempt level
+
+Attempt #1 — Cancelled
+Attempt #2 — Failed
+Attempt #3 — Cancelled
+Attempt #4 — Captured
+
+Event level
+
+Attempt #4
+payment.authorized
+payment.captured
+API enrichment
+refund.created
+refund.processed
+
+This hierarchy must be understandable.
+
+---
+
+25. STUDENT PAYMENT HISTORY
+
+The student history should continue to show useful information, but do not expose administrator-only raw technical information unnecessarily.
+
+Students should see:
+
+- attempt number
+- status
+- date/time
+- amount
+- payment method where applicable
+- relevant failure reason
+- payment ID/order ID where appropriate
+- receipt for successful payment
+
+Admin users can see the deeper technical/audit information.
+
+Maintain proper authorization.
+
+---
+
+26. RECEIPTS
+
+Do not turn receipts into raw technical audit screens.
+
+Receipts should remain clean and professional.
+
+However, verify that successful online receipts have the correct:
+
+- Invoice Number
+- Receipt Number
+- Payment ID
+- Order ID
+- Payment Method
+- Payment date/time
+- Bank/UPI/card details where relevant
+- RRN/Auth Code where relevant
+
+Do not show failed/cancelled attempts as paid receipts.
+
+A cancelled or failed attempt must never generate a payment receipt.
+
+---
+
+27. OFFLINE PAYMENTS MUST NOT BREAK
+
+The existing offline payment functionality must remain intact.
+
+For example:
+
+Offline (Cash)
+Offline (Bank Transfer)
+Offline (Demand Draft)
+Offline (Cheque)
+Offline (UPI/QR)
+
+Offline payments should continue to use "payment_records" and their existing offline details.
+
+Do not force Razorpay fields onto offline payments.
+
+The Ledger should clearly distinguish:
+
+Online
+Offline (Cash)
+Offline (Bank Transfer)
+Offline (Demand Draft)
+Offline (Cheque)
+Offline (UPI/QR)
+
+---
+
+28. TENANT ISOLATION
+
+This is a multi-tenant school application.
+
+Every payment-attempt/event query must enforce tenant isolation.
+
+Never allow:
+
+School A administrator
+→ to see School B payment attempts/events.
+
+All relevant queries must be scoped using the correct:
+
+- school_id
+- student ownership
+- fee_record ownership
+- academic session where applicable
+
+Review all new endpoints for tenant isolation.
+
+---
+
+29. SECURITY
+
+Never store or expose:
+
+- CVV
+- full card number/PAN
+- secrets
+- Razorpay webhook secret
+- authentication tokens
+- unnecessary sensitive data
+
+Raw JSON must be sanitized where required.
+
+Administrator raw technical data must only be accessible to authorized admin roles.
+
+Student APIs must never return internal tenant-wide payment information.
+
+---
+
+30. DATABASE DESIGN
+
+Before coding, determine whether the existing schema can safely support this.
+
+If new tables are required, create proper migrations.
+
+A good architecture may include:
+
+fee_records
+    ↓
+payment_attempts
+    ↓
+payment_attempt_events
+    ↓
+payment_webhook_events
+
+payment_records
+    ↓
+successful collection / receipt
+
+You may use different names if there is a better architectural solution.
+
+Do NOT blindly create duplicate tables if an existing table can safely fulfill the same responsibility.
+
+---
+
+31. INDEXES & IDEMPOTENCY
+
+Design proper indexes for:
+
+- school_id
+- fee_record_id
+- payment ID
+- order ID
+- attempt sequence
+- created_at
+- event type
+- webhook event ID
+- refund ID
+- dispute ID
+
+Maintain idempotency.
+
+The same Razorpay payment must NOT create duplicate successful payment records.
+
+The same webhook event must NOT accidentally create duplicate event records if Razorpay retries the exact same event.
+
+However:
+
+Do not collapse genuinely different webhook events into one.
+
+For example:
+
+payment.authorized
+payment.captured
+refund.created
+refund.processed
+
+are separate events.
+
+---
+
+32. IMPORTANT DISTINCTION: DUPLICATE VS DIFFERENT EVENT
+
+Implement proper event identity.
+
+If Razorpay sends the same webhook event twice:
+
+event_123
+event_123
+
+store it once with delivery/retry information if appropriate.
+
+But:
+
+event_123 = payment.captured
+event_456 = refund.created
+
+must remain two separate historical events.
+
+Do not use only "payment_id" as the uniqueness key for webhook events.
+
+---
+
+33. DATABASE IMMUTABILITY
+
+For historical event tables, implement strong protection against accidental mutation.
+
+At minimum:
+
+- application code should only INSERT events
+- no normal UPDATE of historical event payload
+- no normal DELETE
+- use database constraints where practical
+- preserve original "created_at"
+- preserve received timestamps
+- preserve source
+- preserve payload
+
+If database triggers are appropriate, consider them.
+
+The goal is:
+
+«Once an event happened, the historical record must remain trustworthy.»
+
+---
+
+34. EXISTING DATA MIGRATION
+
+Do not destroy existing 78 "payment_attempts" rows.
+
+Do not destroy:
+
+- 59 payment_records
+- 239 fee_audit_log
+- 31 fee_records
+
+Create a safe migration/backfill plan.
+
+For existing payment attempts, populate the new structures wherever information can be reconstructed safely.
+
+Do not invent historical events.
+
+If something cannot be reconstructed, mark it clearly as:
+
+historical / unavailable
+
+rather than fabricating data.
+
+---
+
+35. CURRENT DATABASE FACTS TO PRESERVE
+
+The audit currently reports:
+
+payment_attempts = 78
+payment_records = 59
+fee_audit_log = 239
+fee_records = 31
+
+Do not assume these numbers remain the same after legitimate testing.
+
+But before migration, verify the current counts and ensure the migration does not accidentally duplicate records.
+
+Also verify the current coverage:
+
+Razorpay Payment IDs
+Razorpay Order IDs
+Payment API JSON
+Order API JSON
+Webhook payloads
+
+---
+
+36. API DESIGN
+
+Create/update the Admin transaction-detail API so it can return a structure conceptually similar to:
+
+{
+  "invoice": {},
+  "paymentAttempts": [
+    {
+      "attemptNumber": 1,
+      "attempt": {},
+      "events": []
+    },
+    {
+      "attemptNumber": 2,
+      "attempt": {},
+      "events": []
+    }
+  ],
+  "paymentRecords": [],
+  "auditEvents": [],
+  "webhookEvents": []
+}
+
+Use the project's existing API conventions and TypeScript types.
+
+Do not expose unnecessary internal fields to the frontend.
+
+---
+
+37. UI DESIGN
+
+The UI should be clean and professional.
+
+Do not make the Ledger look like a raw database dump.
+
+Use a hierarchy:
+
+Invoice
+ └── Payment History
+      ├── Attempt #1 — Cancelled
+      ├── Attempt #2 — Failed
+      ├── Attempt #3 — Cancelled
+      └── Attempt #4 — Paid
+            ├── Payment Details
+            ├── Financial Details
+            ├── Gateway Details
+            ├── Webhook Events
+            ├── API Enrichment
+            └── Raw Data
+
+Each section should be collapsible.
+
+Use clear status badges.
+
+---
+
+38. FAILED PAYMENT UI
+
+For failed attempts, clearly show:
+
+Payment Failed
+
+Why did it fail?
+BAD_REQUEST_ERROR
+
+Source:
+gateway
+
+Step:
+payment_authorization
+
+Reason:
+payment_failed
+
+Description:
+Payment failed
+
+Do not hide this inside an audit-log sentence.
+
+---
+
+39. CANCELLED PAYMENT UI
+
+For cancelled attempts:
+
+Payment Cancelled
+
+Reason:
+Checkout dismissed by student (no payment attempted)
+
+Date:
+20 Aug 2026, 07:30:10 PM
+
+Order ID:
+order_xxxxx
+
+Make it clear that:
+
+Captured amount = ₹0
+No payment was collected
+No refund was required
+
+Do not incorrectly tell the student/admin that money was charged unless the actual gateway data confirms it.
+
+---
+
+40. SUCCESSFUL PAYMENT UI
+
+For captured:
+
+Payment Captured
+
+Amount: ₹12,000
+Payment ID: pay_xxxxx
+Order ID: order_xxxxx
+Receipt: ONxx
+
+Method: Card
+Network: Visa
+Last 4: 1007
+Issuer: DCBL
+
+Captured At:
+20 Aug 2026, 07:45:55 PM
+
+Then allow expansion into all additional available data.
+
+---
+
+41. SEARCH/FILTER
+
+Where practical, allow administrators to find payment history by:
+
+- Invoice Number
+- Receipt Number
+- Student
+- DSID
+- Payment ID
+- Order ID
+- Attempt status
+- Date range
+
+Do not compromise existing pagination/performance.
+
+---
+
+42. TESTING
+
+Add comprehensive tests.
+
+At minimum test this exact lifecycle:
+
+Invoice INV-0079
+
+Attempt 1 → Cancelled
+Attempt 2 → Failed
+Attempt 3 → Cancelled
+Attempt 4 → Captured
+
+Verify:
+
+Database
+
+There are four distinct attempts.
+
+UI
+
+All four are visible in order.
+
+Attempt details
+
+Each attempt shows its own information.
+
+Invoice
+
+Final invoice status is Paid.
+
+Receipt
+
+Receipt belongs only to successful payment.
+
+Earlier attempts
+
+Cancelled and failed attempts remain visible after successful payment.
+
+Order IDs
+
+Every distinct order ID remains historically associated.
+
+Payment ID
+
+Only the successful/failed payment attempts with actual Razorpay payment IDs have them.
+
+Webhooks
+
+Different webhook events remain separate.
+
+Duplicate webhook
+
+Same webhook event does not create a duplicate event.
+
+Tenant isolation
+
+School A cannot see School B history.
+
+Refresh
+
+Refreshing the page does not create a duplicate attempt.
+
+Double-click
+
+Double-clicking Pay Now does not create duplicate payment attempts/orders incorrectly.
+
+Retry
+
+A legitimate retry creates a new attempt.
+
+Refund
+
+Refund is associated with the correct captured attempt.
+
+Failed payment
+
+Failed payment never marks invoice Paid.
+
+Cancelled payment
+
+Cancelled payment never marks invoice Paid.
+
+---
+
+43. TEST EVENT SEQUENCE
+
+Create automated tests for:
+
+create-order
+checkout initiated
+cancelled
+retry
+failed
+retry
+cancelled
+retry
+authorized
+captured
+refund.created
+refund.processed
+
+Also test:
+
+client verify
++
+webhook payment.captured
+
+Ensure these do not create duplicate payment records or duplicate payment attempts for the same payment identity.
+
+---
+
+44. DO NOT SILENTLY DISCARD EVENTS
+
+After this implementation, I want you to audit every Razorpay event received by the application.
+
+For every event, explicitly classify it:
+
+Persisted as historical event
+OR
+Intentionally ignored with documented reason
+
+Do not have silent:
+
+console.log()
+return 200
+
+behavior for important payment lifecycle events without documentation.
+
+---
+
+45. FINAL AUDIT AFTER IMPLEMENTATION
+
+After completing the implementation, perform another full audit.
+
+Tell me:
+
+A. What is stored?
+
+List every payment-attempt field.
+
+B. Where is it stored?
+
+Table + column.
+
+C. Where does it come from?
+
+Browser / Razorpay API / webhook / database / application.
+
+D. Is it immutable?
+
+Yes/No and why.
+
+E. Is it displayed?
+
+Student History / Admin Ledger / Transaction Detail / Receipt / Raw Admin View.
+
+F. What is intentionally NOT stored?
+
+Give the exact list.
+
+G. What cannot be reconstructed from historical data?
+
+Give the exact list.
+
+H. What happens for multiple retries?
+
+Show the complete lifecycle.
+
+---
+
+46. MOST IMPORTANT ACCEPTANCE CRITERION
+
+After this work, if I give you:
+
+Invoice INV-0079
+
+you should be able to answer:
+
+«"Show me EVERYTHING that happened with this invoice's online payment attempts."»
+
+And the system must provide a complete chronological trail such as:
+
+INV-0079
+₹12,000
+
+ATTEMPT #1
+20 Aug 2026 07:30:10 PM
+Cancelled
+Order: order_001
+Reason: Checkout dismissed
+
+ATTEMPT #2
+20 Aug 2026 07:35:42 PM
+Failed
+Order: order_002
+Payment: pay_002
+Error: BAD_REQUEST_ERROR
+Source: gateway
+Step: payment_authorization
+Reason: payment_failed
+Method: Card
+Network: Visa
+Last 4: 1007
+
+ATTEMPT #3
+20 Aug 2026 07:39:18 PM
+Cancelled
+Order: order_003
+Reason: Checkout dismissed
+
+ATTEMPT #4
+20 Aug 2026 07:45:55 PM
+Captured
+Order: order_004
+Payment: pay_004
+Receipt: ONxx
+Amount: ₹12,000
+Method: Card
+...
+
+And underneath Attempt #4:
+
+EVENTS
+
+payment.authorized
+payment.captured
+API enrichment completed
+refund.created
+refund.processed
+
+with the appropriate information and timestamps.
+
+---
+
+47. DO NOT CONSIDER THE TASK COMPLETE JUST BECAUSE TESTS PASS
+
+Passing existing tests is not sufficient.
+
+The implementation is complete only if:
+
+1. Every legitimate payment attempt is historically represented.
+2. Cancelled attempts remain permanently visible.
+3. Failed attempts remain permanently visible.
+4. Successful attempts remain permanently visible.
+5. Earlier attempts are never overwritten by later attempts.
+6. Every attempt has exact timestamps.
+7. Distinct Razorpay orders remain historically associated.
+8. Webhook events are historically retained.
+9. Duplicate webhook delivery is idempotent.
+10. Different webhook events remain separate.
+11. API enrichment is traceable.
+12. Refund lifecycle is retained.
+13. Admin Ledger displays the complete attempt sequence.
+14. Each attempt can be expanded.
+15. Raw technical information is available to authorized administrators.
+16. Sensitive card information is never exposed/stored improperly.
+17. Tenant isolation remains intact.
+18. Existing payment/receipt behavior remains correct.
+19. Existing offline payment behavior remains correct.
+20. Existing 684+ test suite and relevant payment tests continue to pass.
+21. New tests cover the complete retry lifecycle.
+22. Existing production-like data is preserved safely.
+
+---
+
+48. BEFORE YOU FINISH
+
+Do one final code/database audit and specifically search for any location where:
+
+- a previous payment attempt is overwritten
+- an order ID is discarded
+- a cancellation is not persisted
+- a failure is not persisted
+- a webhook is acknowledged but discarded
+- a raw payload is discarded unnecessarily
+- an API enrichment failure disappears into console logs
+- a refund overwrites previous payment state
+- an attempt timestamp is replaced
+- payment history is fetched only from "payment_records"
+- Ledger ignores "payment_attempts"
+- student history and admin history disagree
+
+Fix every issue that violates the requirements above.
+
+Then provide a final implementation report containing:
+
+1. Files changed
+2. Database migrations created
+3. Tables/columns added
+4. Indexes/constraints added
+5. APIs changed
+6. UI changes
+7. Payment lifecycle behavior
+8. Webhook behavior
+9. Data retention behavior
+10. Immutability strategy
+11. Tenant isolation verification
+12. Migration/backfill result
+13. Test results
+14. Any information that is STILL not retained and the exact reason
+
+Do not claim "complete audit history" unless the implementation genuinely satisfies the requirements above.
