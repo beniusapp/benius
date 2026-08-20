@@ -1,0 +1,1168 @@
+We now need to design and implement the complete Admin-Initiated Razorpay Refund system.
+
+IMPORTANT:
+
+Do not start coding immediately.
+
+First inspect the existing payment, invoice, payment_attempts, payment_attempt_events, webhook delivery/processing, fee audit, receipt, Ledger, student-fee, tenant-isolation, permission, and Razorpay integration architecture.
+
+Then provide an implementation plan and wait for approval before making code changes.
+
+The existing system already has strong immutable payment-attempt and webhook forensic history. Preserve that architecture. Do NOT replace or weaken it.
+
+The goal is to build a production-grade refund system where every refund is independently traceable and the original payment is never overwritten.
+
+---
+
+1. CURRENT STATE TO PRESERVE
+
+The current application already supports:
+
+- Razorpay online payments
+- payment records
+- payment attempts
+- immutable payment-attempt lifecycle events
+- immutable webhook delivery receipts
+- append-only webhook processing history
+- tenant-safe webhook resolution
+- verified/unverifiable webhook states
+- Razorpay payment/order/refund/dispute identifiers
+- Admin payment forensic timeline
+- Student payment-attempt details
+- existing receipts
+- offline payments
+- existing fee/invoice architecture
+
+Do NOT break any of these.
+
+Do NOT modify the original payment record to represent a refund.
+
+Do NOT overwrite the original payment amount.
+
+Do NOT delete or rewrite the original payment receipt.
+
+A refund is a separate financial event.
+
+---
+
+2. ADMIN REFUND WORKFLOW
+
+The Admin should be able to navigate approximately:
+
+Admin Portal
+→ Fees / Ledger
+→ Student
+→ Invoice / Fee Record
+→ Online Payment Details
+→ Select captured Razorpay payment
+→ Refund Payment
+
+Only captured/eligible payments should show the Refund action.
+
+Before showing the final confirmation, display:
+
+- Student name
+- Student ID / DSID
+- Invoice number
+- Fee record
+- Original payment amount
+- Razorpay payment ID
+- Razorpay order ID
+- Total already refunded
+- Amount currently refundable
+- Currency
+- Payment date/time in IST
+
+Example:
+
+Original payment: ₹10,000
+Already refunded: ₹2,000
+Currently refundable: ₹8,000
+
+---
+
+3. FULL OR PARTIAL REFUND
+
+The Admin must be able to choose:
+
+Full refund
+
+Refund the entire currently refundable amount.
+
+Partial refund
+
+Enter a specific refund amount.
+
+Validation:
+
+refund amount > 0
+
+refund amount <= currently refundable amount
+
+Do not allow:
+
+- zero refund
+- negative refund
+- refund greater than captured amount
+- refund greater than remaining refundable amount
+- refund currency mismatch
+
+All money calculations must use integer paise internally.
+
+Never use floating-point arithmetic for financial calculations.
+
+---
+
+4. REFUND REASON
+
+The Admin should select/enter a refund reason.
+
+Provide a controlled reason list if appropriate, for example:
+
+- Duplicate payment
+- Payment made by mistake
+- Fee correction
+- Student withdrawal
+- Excess payment
+- Administrative correction
+- Other
+
+Also provide:
+
+Optional internal note
+
+The internal note is Admin-only and must never automatically appear in the student portal.
+
+Persist:
+
+- reason
+- internal note
+- requested amount
+- requested by Admin
+- request timestamp
+
+---
+
+5. CONFIRMATION SCREEN
+
+Before sending the request to Razorpay, show a strong confirmation.
+
+Example:
+
+REFUND PAYMENT
+
+Student:
+ABC Student
+
+Invoice:
+INV-000123
+
+Original Payment:
+₹10,000
+
+Already Refunded:
+₹2,000
+
+Refund Amount:
+₹3,000
+
+Remaining After Refund:
+₹5,000 refundable
+
+Net Paid After Refund:
+₹7,000
+
+Razorpay Payment ID:
+pay_xxxxx
+
+Warning:
+
+"This action will initiate a refund through Razorpay. The refund may take time to reach the original payment method. The original payment receipt will remain unchanged."
+
+Require explicit confirmation.
+
+---
+
+6. PERMISSION AND SECURITY
+
+Do NOT allow every Admin automatically to refund money.
+
+First inspect the existing role/permission architecture.
+
+Implement an explicit refund permission using the existing authorization system.
+
+At minimum distinguish:
+
+- View refund history
+- Initiate refund
+
+If the current system supports approval workflows, consider:
+
+- Refund initiator
+- Refund approver
+
+Do not invent a second authorization system if an existing permission system can be extended safely.
+
+Every refund request must record:
+
+- tenant/school
+- Admin/user ID
+- Admin identity available from the existing auth system
+- timestamp
+- IP/device metadata only if already supported and appropriate
+- reason
+- internal note
+- amount
+
+Never trust tenant ID, student ID, invoice ID, or payment ID supplied only by the browser.
+
+The backend must independently resolve and validate everything.
+
+---
+
+7. TENANT ISOLATION
+
+This is a multi-tenant school application.
+
+Refund operations must be strictly tenant-scoped.
+
+Before creating a refund:
+
+1. Resolve authenticated Admin.
+2. Resolve their school/tenant.
+3. Resolve invoice inside that tenant.
+4. Resolve payment record inside that tenant.
+5. Resolve payment attempt inside that tenant.
+6. Verify Razorpay payment ID belongs to that tenant/payment.
+7. Verify the invoice/student relationship.
+8. Verify refund eligibility.
+
+Never allow a payment ID from another school to be refunded.
+
+Never select a tenant using a first-match query.
+
+Ambiguous identity must fail safely.
+
+---
+
+8. DEDICATED REFUND ENTITY
+
+Do NOT store only one refund ID/status/amount on payment_attempts.
+
+Create a proper dedicated refund entity/table.
+
+Each Razorpay refund must have its own immutable local record.
+
+At minimum include:
+
+- internal refund ID
+- tenant/school ID
+- academic session ID
+- student ID
+- fee record/invoice ID
+- original payment record ID
+- payment attempt ID
+- Razorpay payment ID
+- Razorpay order ID
+- Razorpay refund ID
+- requested amount paise
+- processed amount paise
+- currency
+- reason
+- internal note
+- local request/idempotency key
+- local status
+- provider status
+- provider-created timestamp
+- application-request timestamp
+- provider-processed timestamp
+- failure code
+- failure message
+- requested-by Admin ID
+- created timestamp
+- updated timestamp where appropriate
+
+Do not make the immutable refund entity mutable in a way that destroys historical truth.
+
+Use append-only refund lifecycle events for state transitions.
+
+---
+
+9. REFUND EVENT TABLE
+
+Create a dedicated append-only refund event history if the current architecture does not already provide equivalent functionality.
+
+Possible lifecycle:
+
+refund_requested
+refund_api_submitted
+refund_created
+refund_processed
+refund_failed
+refund_speed_changed
+refund_reconciled
+refund_cancelled
+refund_reversed
+
+Only use events actually supported by Razorpay/current business flow.
+
+Every event should retain:
+
+- refund ID
+- tenant
+- invoice
+- payment ID
+- order ID
+- provider refund ID
+- event type
+- amount
+- provider timestamp if supplied
+- application receipt timestamp
+- event payload/reference
+- source
+- correlation/request ID
+
+Database-level protection should prevent ordinary UPDATE/DELETE of immutable event rows.
+
+---
+
+10. RAZORPAY REFUND API
+
+The application must initiate the refund through the existing Razorpay integration.
+
+Use the original:
+
+pay_...
+
+payment ID.
+
+For partial refunds send the exact amount in paise.
+
+Do not implement a fake/local-only refund.
+
+The Razorpay API response is an initial provider acknowledgement.
+
+It is NOT the final financial authority.
+
+The webhook lifecycle must still reconcile the refund.
+
+Store:
+
+- Razorpay refund ID
+- provider status
+- provider timestamps
+- amount
+- currency
+- provider response fields that are safe and useful
+- correlation information
+
+Do not store secrets.
+
+Do not expose sensitive provider credentials in the UI.
+
+---
+
+11. IDEMPOTENCY — VERY IMPORTANT
+
+The Admin must not accidentally create two refunds because of:
+
+- double click
+- page refresh
+- browser retry
+- network timeout
+- API timeout
+- duplicate frontend request
+- two browser windows
+- two Admins attempting overlapping refunds
+
+Implement server-side idempotency.
+
+Each refund action must have a unique local request/idempotency key.
+
+Persist the request before calling Razorpay.
+
+If the same request is received again:
+
+return the existing refund request/result rather than creating another refund.
+
+Also enforce provider refund ID uniqueness.
+
+---
+
+12. CONCURRENCY PROTECTION
+
+This is extremely important.
+
+Example:
+
+Payment = ₹10,000
+
+Admin A tries to refund ₹7,000.
+
+At the same time Admin B tries to refund ₹5,000.
+
+The system must NOT allow both simply because both saw ₹10,000 refundable.
+
+Use a transaction/row lock/advisory lock appropriate to the existing database architecture.
+
+Calculate:
+
+Captured amount
+− Successfully processed refunds
+− Reserved/in-flight refund amounts
+
+Currently refundable amount
+
+Then reserve the requested amount before calling Razorpay.
+
+Do not allow total active refund reservations to exceed the refundable amount.
+
+---
+
+13. IMPORTANT NETWORK FAILURE CASE
+
+Handle this scenario carefully:
+
+Admin clicks Refund.
+
+Your server sends request to Razorpay.
+
+Razorpay accepts the refund.
+
+Then the network connection fails before your server receives the response.
+
+The UI must NOT simply say:
+
+"Refund failed."
+
+because the refund may actually have succeeded.
+
+Instead:
+
+- retain the local refund request
+- mark it as pending/reconciliation-required
+- do NOT create another refund automatically
+- reconcile using Razorpay refund/payment information
+- allow webhook processing to complete the lifecycle
+- use provider refund ID when available
+- maintain an immutable audit trail
+
+This is critical to prevent duplicate refunds.
+
+---
+
+14. WEBHOOK RECONCILIATION
+
+The existing webhook forensic architecture must remain.
+
+Refund webhook lifecycle should follow:
+
+Webhook received
+↓
+Resolve tenant safely
+↓
+Verify HMAC
+↓
+Persist immutable delivery receipt
+↓
+Resolve refund by Razorpay refund ID first
+↓
+Fallback to payment ID/order ID within resolved tenant
+↓
+Resolve invoice safely
+↓
+Create/update the appropriate refund projection without overwriting history
+↓
+Append refund lifecycle event
+↓
+Recalculate payment financial projection
+↓
+Recalculate invoice financial projection
+↓
+Append accounting/ledger event
+↓
+Expose safe Admin/Student projection
+
+The Razorpay refund ID must be the strongest identity for the refund once available.
+
+Never create a second local refund for the same provider refund ID.
+
+---
+
+15. REFUND STATUS MODEL
+
+Design clear statuses.
+
+At minimum distinguish:
+
+requested
+pending
+created
+processed
+failed
+reconciliation_required
+
+Do not use "refunded" to represent a partial refund incorrectly.
+
+A payment may have:
+
+Captured = ₹10,000
+Refunded = ₹3,000
+Net retained = ₹7,000
+
+The payment itself was not fully refunded.
+
+Therefore the payment-level state should be capable of distinguishing:
+
+Captured
+Partially refunded
+Fully refunded
+Refund pending
+Refund failed
+
+Use the existing payment projection architecture where appropriate.
+
+---
+
+16. FINANCIAL CALCULATION
+
+For every payment:
+
+Gross captured
+− Successfully processed refunds
+
+Net retained
+
+Example:
+
+Captured: ₹10,000
+Refund #1: ₹2,000
+Refund #2: ₹3,000
+
+Total refunded: ₹5,000
+
+Net retained: ₹5,000
+
+Remaining refundable:
+
+₹10,000 − ₹5,000 = ₹5,000
+
+Never calculate using mutable single refund fields.
+
+Always derive the financial truth from the refund records/projection.
+
+---
+
+17. INVOICE EFFECT
+
+This requires an explicit business policy.
+
+For normal fee refunds, use the following model unless the existing accounting rules prove otherwise:
+
+Invoice:
+₹10,000
+
+Captured:
+₹10,000
+
+Refunded:
+₹3,000
+
+Net paid:
+₹7,000
+
+Outstanding:
+₹3,000
+
+The invoice should therefore normally show the remaining amount due.
+
+For a full refund:
+
+Invoice:
+₹10,000
+
+Captured:
+₹10,000
+
+Refunded:
+₹10,000
+
+Net paid:
+₹0
+
+Outstanding:
+₹10,000
+
+The invoice should normally return to Due/Outstanding unless a separate business action such as:
+
+- waiver
+- concession
+- cancellation
+- credit note
+- adjustment
+
+removes the remaining obligation.
+
+Do NOT silently treat a refund as a fee waiver.
+
+Before implementation, inspect the existing invoice/status architecture and clearly document how refund balance interacts with it.
+
+---
+
+18. ORIGINAL PAYMENT MUST NEVER CHANGE
+
+This is a hard rule.
+
+If the student originally paid:
+
+₹10,000
+
+The original payment record remains:
+
+Captured: ₹10,000
+
+Do NOT change it to:
+
+Captured: ₹7,000
+
+Do NOT delete it.
+
+Do NOT overwrite its receipt.
+
+Do NOT change the original payment amount.
+
+Refunds are separate financial events.
+
+---
+
+19. RECEIPT / CREDIT NOTE
+
+The original payment receipt must remain unchanged.
+
+For each processed refund, generate a separate refund document/credit note if supported by the existing document architecture.
+
+Example:
+
+Original Receipt:
+₹10,000
+
+Refund Receipt / Credit Note:
+₹3,000
+
+The refund document should reference:
+
+- original invoice
+- original payment receipt
+- payment ID
+- refund ID
+- amount
+- reason
+- processed timestamp
+- academic session
+- student
+
+Do not modify the original receipt to make it look like the original payment was only ₹7,000.
+
+---
+
+20. ADMIN LEDGER
+
+The Admin Ledger should show refunds as first-class financial events.
+
+Example:
+
+21 Aug 2026, 10:00 AM IST
+Payment Captured
++₹10,000
+
+22 Aug 2026, 11:00 AM IST
+Refund Requested
+₹3,000
+
+22 Aug 2026, 11:01 AM IST
+Refund Created
+₹3,000
+
+22 Aug 2026, 11:05 AM IST
+Refund Processed
+₹3,000
+
+Summary:
+
+Gross Payment: ₹10,000
+Total Refunded: ₹3,000
+Net Retained: ₹7,000
+Remaining Refundable: ₹7,000
+
+Display:
+
+- student
+- invoice
+- payment date
+- refund date
+- amount
+- refund status
+- reason
+- requested by Admin
+- Razorpay refund ID
+
+Expandable forensic details should show:
+
+- Razorpay payment ID
+- Razorpay order ID
+- Razorpay refund ID
+- provider timestamp
+- application timestamp
+- webhook deliveries
+- retry history
+- verification state
+- resolution state
+- processing history
+- sanitized provider payload where permitted
+
+All timestamps displayed to Admin must be explicitly formatted as Asia/Kolkata / IST.
+
+---
+
+21. STUDENT PORTAL
+
+Student should see simple financial information.
+
+Example:
+
+Invoice Total:
+₹10,000
+
+Payment Received:
+₹10,000
+
+Refund Processed:
+₹3,000
+
+Net Paid:
+₹7,000
+
+Outstanding:
+₹3,000
+
+Timeline:
+
+Payment received — ₹10,000
+Refund requested — ₹3,000
+Refund processed — ₹3,000
+
+Do NOT expose:
+
+- raw webhook payloads
+- HMAC information
+- internal resolution states
+- internal reconciliation errors
+- tenant-resolution details
+- Admin internal notes
+- technical processing metadata
+
+Only expose safe financial/refund information.
+
+---
+
+22. REFUND FAILURE
+
+If Razorpay rejects/fails a refund:
+
+The system must:
+
+- preserve the original payment
+- preserve the invoice financial state
+- create/retain the failed refund request
+- retain failure reason/code
+- record who requested it
+- record requested amount
+- record provider response
+- append refund_failed event
+- show failure to authorized Admins
+- NOT show it as a processed refund to students
+- NOT reduce the invoice balance
+- allow a controlled retry/reconciliation flow
+
+Never delete the failed refund attempt.
+
+---
+
+23. MULTIPLE REFUNDS
+
+The system MUST support:
+
+Payment:
+₹10,000
+
+Refund A:
+₹2,000
+
+Refund B:
+₹3,000
+
+Refund C:
+₹5,000
+
+Total refunded:
+₹10,000
+
+Net retained:
+₹0
+
+Remaining refundable:
+₹0
+
+Each refund must have its own:
+
+- local refund ID
+- Razorpay refund ID
+- amount
+- status
+- reason
+- Admin
+- timestamps
+- lifecycle events
+- webhook evidence
+
+No later refund may overwrite an earlier refund.
+
+---
+
+24. REFUND RECONCILIATION SCREEN
+
+Because the existing system already has strong forensic webhook handling, add a controlled Admin reconciliation area for unresolved refund webhooks.
+
+It should allow authorized Admins to discover:
+
+- tenant-null refund webhooks
+- invoice-unresolved refund webhooks
+- verification problems
+- provider refund IDs
+- payment IDs
+- order IDs
+- delivery timestamps
+- processing errors
+
+If manual attribution is implemented:
+
+It must require explicit Admin action.
+
+It must NEVER automatically choose the first matching invoice.
+
+The manual attribution action itself must create a permanent audit event containing:
+
+- who performed attribution
+- when
+- previous unresolved state
+- new invoice
+- reason
+- evidence used
+
+---
+
+25. TIMEZONE / IST REQUIREMENT
+
+This is mandatory throughout the refund system.
+
+All school-facing date/time displays must use:
+
+Asia/Kolkata
+
+Do not depend on:
+
+- browser timezone
+- server timezone
+- PostgreSQL session timezone
+- device timezone
+
+Separate:
+
+Provider event time
+Application request time
+Application receipt time
+Processing time
+
+When Razorpay provides epoch timestamps, convert them correctly.
+
+Do NOT manually add +05:30.
+
+Do NOT double-convert.
+
+Use the application's centralized IST formatter.
+
+Date-only values must remain date-only and must NOT be passed through new Date("YYYY-MM-DD") in a way that can shift the calendar date.
+
+Examples:
+
+Refund requested:
+21 Aug 2026, 10:30 AM IST
+
+Refund processed:
+21 Aug 2026, 10:35 AM IST
+
+Provider timestamp and application timestamp must remain separate facts.
+
+---
+
+26. AUDIT TRAIL
+
+Every refund must be completely reconstructable.
+
+An Admin reviewing the refund months later should be able to answer:
+
+Who requested it?
+When?
+Which student?
+Which invoice?
+Which payment?
+How much?
+Why?
+Was it full or partial?
+What was refundable before the request?
+What did Razorpay return?
+What refund ID did Razorpay create?
+When did Razorpay process it?
+Which webhooks arrived?
+How many duplicate deliveries occurred?
+What happened to each delivery?
+When did the invoice balance change?
+What is the final net retained amount?
+Was the refund successful?
+If failed, why?
+Was reconciliation required?
+Who manually reconciled it, if applicable?
+
+No historical state should depend solely on a mutable field.
+
+---
+
+27. TESTING REQUIREMENTS
+
+Before declaring the refund feature complete, add automated tests for at least:
+
+Basic full refund
+
+₹10,000 payment
+→ ₹10,000 refund
+→ net ₹0
+→ invoice balance ₹10,000
+
+Partial refund
+
+₹10,000 payment
+→ ₹3,000 refund
+→ net ₹7,000
+→ invoice balance ₹3,000
+
+Multiple refunds
+
+₹10,000 payment
+→ ₹2,000
+→ ₹3,000
+→ ₹5,000
+
+Correct cumulative total.
+
+Over-refund protection
+
+Attempt:
+
+₹10,000 payment
+→ refund ₹8,000
+→ another refund ₹5,000
+
+Second request must be rejected/reserved safely.
+
+Concurrent refund protection
+
+Two Admins simultaneously request overlapping refunds.
+
+The database must prevent over-refunding.
+
+Duplicate request
+
+Same idempotency key submitted twice.
+
+Only one refund request must be created.
+
+Network timeout after provider acceptance
+
+Must not automatically create a second refund.
+
+Duplicate webhook
+
+Same Razorpay refund webhook delivered multiple times.
+
+All delivery receipts remain independently traceable.
+
+Financial state changes only once.
+
+Refund failed
+
+Original payment/invoice remain financially unchanged.
+
+Refund processed later
+
+Pending refund becomes processed correctly.
+
+Tenant isolation
+
+School A must never refund School B's payment.
+
+Provider refund ID uniqueness
+
+Same Razorpay refund ID cannot create two local refund entities.
+
+Full refund after partial refund
+
+Correct remaining refundable amount.
+
+IST
+
+Run timestamp tests under a non-India browser timezone and confirm school-facing refund times still display in Asia/Kolkata.
+
+Original receipt
+
+Original payment receipt remains unchanged after refund.
+
+Refund document
+
+Refund receipt/credit note references the correct original invoice/payment/refund.
+
+Student privacy
+
+Student portal must not expose Admin-only forensic data.
+
+---
+
+28. MIGRATION SAFETY
+
+Do not destroy existing payment history.
+
+Do not rewrite historical payment amounts.
+
+Do not fabricate historical refunds.
+
+If historical refund webhooks already exist, analyze them before attempting any backfill.
+
+Historical data that cannot be safely reconstructed must remain explicitly marked as historical/unavailable rather than inventing values.
+
+All migrations must be additive and restart-safe.
+
+---
+
+29. IMPORTANT IMPLEMENTATION ORDER
+
+Implement in this order:
+
+1. Inspect current architecture.
+2. Define refund financial/business rules.
+3. Design refund entity.
+4. Design append-only refund event history.
+5. Add migration.
+6. Add refund permission.
+7. Add server-side idempotency.
+8. Add concurrency protection.
+9. Add refund reservation.
+10. Implement Razorpay refund API call.
+11. Implement provider response reconciliation.
+12. Integrate existing webhook forensic system.
+13. Implement refund webhook reconciliation.
+14. Implement payment financial projection.
+15. Implement invoice balance/status projection.
+16. Implement Admin Ledger.
+17. Implement Student Portal.
+18. Implement refund receipt/credit note.
+19. Implement unresolved refund reconciliation queue.
+20. Add full automated test suite.
+21. Run typecheck.
+22. Run migration on a clean database/test database.
+23. Run complete regression suite.
+24. Verify existing online payment behavior.
+25. Verify existing offline payment behavior.
+26. Verify existing receipts.
+27. Verify tenant isolation.
+28. Verify IST formatting.
+29. Perform final architecture review.
+
+---
+
+30. DO NOT BREAK EXISTING SYSTEMS
+
+Before declaring completion, verify:
+
+- Online payment creation still works.
+- Payment capture still works.
+- Failed payments still work.
+- Payment retry still works.
+- Multiple invoices still work.
+- Offline cash payments still work.
+- Offline bank transfer payments still work.
+- Offline cheque payments still work.
+- Offline DD payments still work.
+- Offline UPI/QR payments still work.
+- Existing receipt numbers remain unchanged.
+- Existing invoice numbers remain unchanged.
+- Existing payment records remain intact.
+- Existing webhook forensic history remains intact.
+- Existing dispute handling remains intact.
+- Student portal payment history remains functional.
+- Admin Ledger remains functional.
+- Tenant isolation remains intact.
+
+---
+
+31. FINAL ACCEPTANCE CRITERIA
+
+Do NOT say "100% complete" merely because TypeScript and tests pass.
+
+The feature is complete only when an authorized Admin can actually:
+
+1. Select a captured payment.
+2. See the refundable amount.
+3. Select full or partial refund.
+4. Enter reason.
+5. Confirm refund.
+6. Send a real refund request to Razorpay.
+7. Receive/store the provider refund ID.
+8. Handle provider/webhook reconciliation.
+9. See refund status.
+10. See cumulative refunds.
+11. See net retained amount.
+12. See correct invoice outstanding balance.
+13. See refund in Admin Ledger.
+14. See refund safely in Student Portal.
+15. Generate/view separate refund documentation.
+16. Preserve the original receipt.
+17. Preserve every refund as an independent immutable record.
+18. Prevent duplicate/over-refunds.
+19. Preserve failed refund attempts.
+20. Handle network timeout/reconciliation safely.
+21. Preserve duplicate webhook deliveries.
+22. Preserve processing history.
+23. Maintain strict tenant isolation.
+24. Display every school-facing timestamp accurately in Asia/Kolkata / IST.
+25. Pass the complete regression suite.
+
+Before coding, report:
+
+A. Existing architecture relevant to refunds
+B. Exact gaps
+C. Proposed database model
+D. Proposed API endpoints
+E. Razorpay API integration approach
+F. Permission model
+G. Idempotency strategy
+H. Concurrency strategy
+I. Payment/invoice accounting behavior
+J. Admin workflow
+K. Student workflow
+L. Receipt/credit-note strategy
+M. Webhook reconciliation strategy
+N. IST/date-time strategy
+O. Migration strategy
+P. Test plan
+Q. Any business decisions that require my approval
+
+Then STOP and wait for my approval before modifying code.
