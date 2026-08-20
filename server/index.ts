@@ -781,12 +781,31 @@ app.use((req, res, next) => {
       historical BOOLEAN NOT NULL DEFAULT FALSE,
       UNIQUE(school_id, idempotency_key)
     );
+    CREATE TABLE IF NOT EXISTS payment_webhook_processing_events (
+      id SERIAL PRIMARY KEY,
+      webhook_delivery_id INTEGER NOT NULL REFERENCES payment_webhook_events(id) ON DELETE CASCADE,
+      status VARCHAR(30) NOT NULL,
+      error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
 
     ALTER TABLE payment_attempt_events ADD COLUMN IF NOT EXISTS provider_occurred_at TIMESTAMPTZ;
     ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS fee_resolution_source VARCHAR(20);
     ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS fee_resolution_status VARCHAR(20) NOT NULL DEFAULT 'unresolved';
     ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS provider_occurred_at TIMESTAMPTZ;
     DROP INDEX IF EXISTS payment_webhook_events_provider_event_uniq;
+    ALTER TABLE payment_webhook_events DROP CONSTRAINT IF EXISTS payment_webhook_events_provider_provider_event_id_key;
+    CREATE OR REPLACE FUNCTION reject_payment_webhook_delivery_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+      IF TG_OP = 'DELETE' AND current_setting('app.payment_history_cleanup', true) = 'on' THEN RETURN OLD; END IF;
+      RAISE EXCEPTION 'payment_webhook_events are append-only';
+    END;
+    $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS payment_webhook_events_append_only ON payment_webhook_events;
+    CREATE TRIGGER payment_webhook_events_append_only
+      BEFORE UPDATE OR DELETE ON payment_webhook_events
+      FOR EACH ROW EXECUTE FUNCTION reject_payment_webhook_delivery_mutation();
 
     CREATE INDEX IF NOT EXISTS payment_attempt_events_fee_timeline_idx
       ON payment_attempt_events(school_id, fee_record_id, occurred_at DESC, recorded_at DESC);

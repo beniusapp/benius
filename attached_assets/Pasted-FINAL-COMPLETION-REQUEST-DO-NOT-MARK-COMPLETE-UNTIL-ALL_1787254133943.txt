@@ -1,0 +1,527 @@
+FINAL COMPLETION REQUEST — DO NOT MARK COMPLETE UNTIL ALL REQUIREMENTS PASS
+
+Continue from the current implementation.
+
+The latest status confirms that the following are already implemented:
+
+- Webhook deliveries are now stored as separate delivery rows.
+- No-notes refund/dispute webhook ingress can derive payment/order identifiers before tenant resolution.
+- Tenant resolution requires an unambiguous stored tenant identity.
+- Provider timestamps are centrally extracted when supplied by Razorpay.
+- Additive migration has been applied successfully.
+- Typecheck passes.
+- Full suite currently passes with 686 tests.
+
+Do NOT redo or redesign the completed work.
+
+There are only two remaining release blockers, and the task must remain open until both are completely implemented and covered by regression tests.
+
+---
+
+BLOCKER 1 — WEBHOOK DELIVERY RECORDS MUST BE TRULY IMMUTABLE
+
+The current implementation creates separate webhook delivery rows, but the processing outcome can still be updated on that same row after insertion.
+
+That does NOT satisfy the forensic requirement.
+
+Required architecture
+
+A webhook delivery must behave as an immutable historical fact.
+
+Once a delivery record is inserted:
+
+«It must NEVER be updated or deleted.»
+
+For example:
+
+Delivery #1
+Delivery #2
+Delivery #3
+Delivery #4
+
+must each remain exactly as originally recorded.
+
+Do NOT do this:
+
+delivery_id = X
+status = received
+
+later:
+
+delivery_id = X
+status = processed
+
+That destroys the original historical state.
+
+---
+
+Separate delivery receipt from processing outcome
+
+If the application needs to know what happened while processing a delivery, separate the two concepts.
+
+Immutable webhook delivery
+
+Stores what was actually received:
+
+- delivery ID
+- event ID
+- event type
+- payment ID
+- order ID
+- refund ID
+- dispute ID
+- provider timestamp
+- received timestamp
+- signature verification result
+- raw/safely retained payload reference
+- tenant resolution result
+- invoice resolution result
+- delivery fingerprint
+- original delivery metadata
+
+This record must never change.
+
+Immutable processing event/history
+
+If processing changes over time, append another event instead of modifying the original delivery.
+
+For example:
+
+Webhook Delivery #1
+    ↓
+Processing Started
+    ↓
+Processing Failed
+    ↓
+Processing Retried
+    ↓
+Processing Succeeded
+
+These must be separate immutable events/records.
+
+The exact existing schema can be reused/extended if appropriate; do not create unnecessary duplicate architecture.
+
+---
+
+Database-level immutability
+
+Do not rely only on application code.
+
+The database must prevent ordinary:
+
+UPDATE
+DELETE
+
+against immutable webhook delivery history.
+
+Use the same append-only/immutability approach already implemented for lifecycle events.
+
+If controlled tenant deletion requires cascading deletion, preserve the existing explicit cleanup mechanism rather than weakening normal immutability.
+
+Normal application requests must not be able to modify or delete historical delivery rows.
+
+---
+
+BLOCKER 2 — ADD DEDICATED REGRESSION TESTS
+
+The latest status explicitly says these tests are still missing.
+
+Add focused tests for all of the following.
+
+---
+
+A. No-notes refund resolution
+
+Create a signed refund webhook that contains:
+
+- refund ID
+- payment ID
+- order ID where applicable
+- NO "feeRecordId"
+- NO useful tenant information in notes
+
+Expected:
+
+1. Signature is verified.
+2. Payment/order identity is resolved against stored tenant-scoped data.
+3. Correct school/tenant is determined.
+4. Correct payment attempt is found.
+5. Correct invoice is linked when possible.
+6. Refund lifecycle event is persisted.
+7. Webhook delivery is persisted.
+8. Resolution source is explicitly recorded.
+
+Example:
+
+resolution_status = resolved
+resolution_source = payment_id
+
+Do not hardcode the exact field name if the existing schema uses a different equivalent.
+
+---
+
+B. No-notes dispute resolution
+
+Repeat the same test for a dispute webhook.
+
+No "feeRecordId".
+
+No trustworthy tenant information in notes.
+
+Expected:
+
+- tenant resolved safely;
+- correct payment/order matched;
+- correct invoice linked when possible;
+- dispute event retained;
+- webhook delivery retained;
+- resolution source recorded.
+
+---
+
+C. Unresolved webhook retention
+
+Create a validly signed refund/dispute webhook where:
+
+- payment ID is unknown;
+- order ID is unknown;
+- notes do not identify a tenant;
+- no safe tenant resolution is possible.
+
+Expected:
+
+The webhook must NOT simply disappear or be rejected without an audit record.
+
+It must be retained as an explicitly unresolved event/delivery wherever security permits.
+
+Example:
+
+resolution_status = unresolved
+resolution_source = none
+fee_record_id = NULL
+school_id = NULL
+
+Do not guess the tenant.
+
+Do not attach it to another school's invoice.
+
+---
+
+D. Cross-tenant isolation
+
+This test is mandatory.
+
+Create:
+
+School A
+  payment_id = pay_A
+  order_id = order_A
+
+School B
+  payment_id = pay_B
+  order_id = order_B
+
+Then attempt to send a webhook associated with School A while supplying misleading notes that reference School B.
+
+Expected:
+
+- School B must NEVER be selected merely because notes say School B.
+- Stored provider identity must win.
+- If the identity cannot be safely resolved, mark the event unresolved.
+- Never leak the event into another school's Ledger.
+
+Also test:
+
+- payment ID from another tenant;
+- order ID from another tenant;
+- refund ID from another tenant;
+- dispute ID from another tenant.
+
+---
+
+E. Duplicate webhook deliveries
+
+This is extremely important.
+
+Send the same signed webhook multiple times.
+
+Example:
+
+payment.captured
+payment.captured
+payment.captured
+payment.captured
+
+Expected database result:
+
+Delivery #1
+Delivery #2
+Delivery #3
+Delivery #4
+
+Four independent immutable delivery records.
+
+NOT:
+
+one row + retry_count = 4
+
+Business processing must remain idempotent.
+
+Therefore:
+
+- payment_records must not be duplicated;
+- receipt must not be duplicated;
+- fee must not be paid twice;
+- payment_attempt business identity must remain correct;
+
+while:
+
+- every webhook delivery remains separately preserved.
+
+This distinction must be explicitly tested.
+
+---
+
+F. Delivery immutability test
+
+After inserting a webhook delivery:
+
+1. Read the original row.
+2. Attempt to update it.
+3. Attempt to delete it.
+
+Expected:
+
+UPDATE → rejected
+DELETE → rejected
+
+Then confirm the original row is byte/value-equivalent to what was originally inserted.
+
+If the existing application uses a controlled database cleanup context for tenant deletion, ensure the test distinguishes:
+
+- normal application mutation → rejected;
+- authorized tenant cleanup → permitted.
+
+Do not weaken the normal append-only guarantee.
+
+---
+
+G. Processing-status history
+
+Test:
+
+Delivery received
+↓
+Processing started
+↓
+Processing failed
+↓
+Retry
+↓
+Processing succeeded
+
+The original delivery record must remain unchanged.
+
+The system should append processing-history events instead of rewriting the delivery.
+
+The final Admin Ledger should therefore be able to answer:
+
+«What was received?»
+
+and separately:
+
+«What happened while processing it?»
+
+---
+
+ADMIN LEDGER VERIFICATION
+
+After implementing the above, verify the Admin Ledger → Transaction Details.
+
+For an invoice such as:
+
+INV00079
+
+the administrator must be able to see a chronological history containing, where applicable:
+
+Attempt 1 — Checkout Initiated
+Attempt 1 — Cancelled
+
+Attempt 2 — Checkout Initiated
+Attempt 2 — Failed
+Webhook Delivery #1
+Webhook Delivery #2
+
+Attempt 3 — Checkout Initiated
+Attempt 3 — Cancelled
+
+Attempt 4 — Checkout Initiated
+Attempt 4 — Authorized
+Attempt 4 — Captured
+
+Webhook Delivery #1
+Webhook Delivery #2
+
+Refund Created
+Refund Processed
+
+Dispute Created / Updated
+
+Enrichment Started
+Enrichment Completed
+
+Do not invent events that did not actually occur.
+
+The UI must render the persisted timeline dynamically.
+
+---
+
+IMPORTANT DISTINCTION
+
+The final architecture must maintain three separate layers:
+
+1. Payment attempt projection
+
+Represents the current state of an individual payment attempt.
+
+Example:
+
+Attempt #2
+payment_id = pay_xxx
+outcome = failed
+
+2. Immutable lifecycle events
+
+Represents every observed lifecycle transition.
+
+Example:
+
+payment.failed
+payment.authorized
+payment.captured
+refund.created
+refund.processed
+
+3. Immutable webhook deliveries
+
+Represents every actual webhook delivery received from Razorpay.
+
+Example:
+
+Delivery #1
+Delivery #2
+Delivery #3
+
+Never merge these concepts just to simplify the implementation.
+
+---
+
+DATA RETENTION RULE
+
+For newly occurring events:
+
+If Razorpay provides the information and it is safe/legal to retain it, preserve it.
+
+If Razorpay does not provide it:
+
+NULL / Not provided
+
+If it is intentionally not retained for security/privacy:
+
+Not retained for security/privacy
+
+Never fabricate missing information.
+
+Never silently discard information that can safely be retained.
+
+---
+
+FINAL VALIDATION
+
+After implementation:
+
+1. TypeScript
+
+Run the project's complete typecheck.
+
+2. Focused tests
+
+Run all payment/audit/webhook regression tests.
+
+3. Full suite
+
+Run the complete test suite.
+
+4. Migration
+
+Restart the application and confirm the additive migration succeeds on a clean/current database.
+
+5. Database immutability
+
+Verify database-level protection for immutable delivery records.
+
+6. Tenant isolation
+
+Verify cross-school refund/dispute/payment/order resolution.
+
+7. Duplicate delivery behavior
+
+Verify:
+
+4 webhook deliveries
+=
+4 immutable delivery records
++
+1 idempotent business outcome
+
+where appropriate.
+
+8. Admin Ledger
+
+Verify chronological reconstruction for a real/test invoice.
+
+9. Final review
+
+Perform a final code review specifically looking for:
+
+- UPDATE against immutable delivery records;
+- DELETE against immutable delivery records;
+- retry counters replacing delivery records;
+- tenant resolution from untrusted notes;
+- cross-tenant joins;
+- missing webhook retention;
+- duplicated payment records;
+- duplicated receipts;
+- overwritten attempts.
+
+---
+
+COMPLETION RULE
+
+DO NOT MARK THIS TASK COMPLETE UNTIL ALL OF THE FOLLOWING ARE TRUE:
+
+- [ ] Every webhook delivery is an independent historical record.
+- [ ] Webhook delivery records cannot be updated/deleted through normal application/database paths.
+- [ ] Processing outcome changes are represented as additional immutable history, not mutation of the original delivery.
+- [ ] No-notes refund webhooks resolve safely by provider identifiers where possible.
+- [ ] No-notes dispute webhooks resolve safely by provider identifiers where possible.
+- [ ] Unresolvable signed events are retained safely as unresolved where possible.
+- [ ] Cross-tenant resolution is explicitly regression-tested.
+- [ ] Duplicate webhook deliveries remain individually preserved.
+- [ ] Business payment processing remains idempotent.
+- [ ] Same-order/different-payment-ID behavior remains correct.
+- [ ] Provider timestamps remain separate from application receipt timestamps.
+- [ ] Enrichment remains traceable.
+- [ ] Admin Ledger can reconstruct the chronological online payment history.
+- [ ] No historical information is fabricated during migration/backfill.
+- [ ] Typecheck passes.
+- [ ] Focused regression tests pass.
+- [ ] Full test suite passes.
+- [ ] Application restarts successfully with migrations.
+- [ ] Final code review finds no remaining release blocker.
+
+If any checkbox is not satisfied, keep the task open and explicitly report the remaining blocker.
+
+Do not claim “100% complete” merely because the test suite is green.
+
+The acceptance standard is forensic reconstructability of newly occurring online Razorpay payment activity, while maintaining security, privacy, tenant isolation, and business idempotency.

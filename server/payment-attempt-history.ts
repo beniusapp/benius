@@ -123,15 +123,8 @@ export async function updateWebhookDelivery(
   patch: { verified?: boolean; status?: "received" | "processed" | "failed" | "ignored"; error?: string | null; feeRecordId?: number | null; resolutionSource?: "notes" | "payment_id" | "order_id" | null; resolutionStatus?: "resolved" | "unresolved" },
 ): Promise<void> {
   await db.execute(sql`
-    UPDATE payment_webhook_events
-    SET signature_verified = COALESCE(${patch.verified ?? null}, signature_verified),
-        processing_status = COALESCE(${patch.status ?? null}, processing_status),
-        processing_error = CASE WHEN ${patch.error === undefined} THEN processing_error ELSE ${patch.error ?? null} END,
-        fee_record_id = COALESCE(${patch.feeRecordId ?? null}, fee_record_id),
-        fee_resolution_source = COALESCE(${patch.resolutionSource ?? null}, fee_resolution_source),
-        fee_resolution_status = COALESCE(${patch.resolutionStatus ?? null}, fee_resolution_status),
-        processed_at = CASE WHEN ${patch.status && patch.status !== "received"} THEN NOW() ELSE processed_at END
-    WHERE id = ${webhookEventId}
+    INSERT INTO payment_webhook_processing_events (webhook_delivery_id, status, error)
+    VALUES (${webhookEventId}, ${patch.status ?? (patch.verified ? "verified" : "received")}, ${patch.error ?? null})
   `);
 }
 
