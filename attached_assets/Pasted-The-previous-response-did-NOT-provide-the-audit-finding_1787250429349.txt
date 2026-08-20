@@ -1,0 +1,55 @@
+The previous response did NOT provide the audit findings I requested. It only reported that the task was complete and that an audit attachment was unavailable.
+
+Do not create an attachment/file. Do not modify any code.
+
+Please provide the complete ONLINE PAYMENT / RAZORPAY AUDIT REPORT directly in this chat based on the actual current codebase and database.
+
+I specifically need the answers to all 16 sections from my previous audit request, especially:
+
+1. Exactly how a single invoice can currently have multiple payment attempts.
+2. For a sequence such as:
+   - Attempt 1 → Cancelled
+   - Attempt 2 → Failed
+   - Attempt 3 → Cancelled
+   - Attempt 4 → Captured/Paid
+     explain exactly what is stored for EACH attempt.
+3. Which database table/model stores each attempt.
+4. Whether each attempt gets its own permanent record or whether records are updated/overwritten.
+5. Exactly where every field currently comes from:
+   - Our database
+   - Razorpay webhook
+   - Razorpay Payment API
+   - Razorpay Order API
+   - Frontend/browser
+   - Other source
+6. Exactly what the Ledger & Transactions page currently fetches and displays.
+7. Exactly what the receipt currently fetches and displays.
+8. Exactly what information Razorpay provides that we currently do NOT store.
+9. Exactly what information we store but do NOT display.
+10. Exactly what information is currently discarded/lost.
+11. How cancelled payments are recorded.
+12. How failed payments are recorded.
+13. How successful/captured payments are recorded.
+14. Which Razorpay webhook events are currently handled.
+15. Whether raw webhook payloads are stored.
+16. Whether the historical payment-attempt records are immutable and tenant-isolated.
+
+VERY IMPORTANT
+
+I am NOT asking you to recommend changes yet.
+
+I want an accurate picture of the CURRENT implementation only.
+
+Please inspect the actual source code, database schema/models, API routes, webhook handlers and Ledger/Receipt data-fetching logic before answering.
+
+For the final section, give me a table like:
+
+Information| Currently Stored?| Stored Where?| Source| Displayed in Ledger?| Displayed in Receipt?| Permanently Preserved?
+
+I want this to be extremely detailed — down to every payment-attempt field available to the application.
+
+Do not say "the system should..." or "we could...".
+
+Tell me what the system actually does TODAY.
+
+After you provide this audit, I will give you the next instruction.
