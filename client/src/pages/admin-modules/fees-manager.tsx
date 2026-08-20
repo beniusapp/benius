@@ -379,6 +379,7 @@ interface TransactionDetail {
       refundId: string | null;
       disputeId: string | null;
       amountPaise: number | null;
+      providerOccurredAt: string | null;
       occurredAt: string | null;
       recordedAt: string;
       historical: boolean;
@@ -395,6 +396,9 @@ interface TransactionDetail {
     signatureVerified: boolean;
     processingStatus: string;
     processingError: string | null;
+    providerOccurredAt: string | null;
+    resolutionSource: string | null;
+    resolutionStatus: string;
     receivedAt: string;
     lastReceivedAt: string;
     processedAt: string | null;
@@ -505,6 +509,10 @@ function PaymentAttemptTimeline({ detail }: { detail: TransactionDetail }) {
                     <div className="mt-2 space-y-1 text-[11px] text-white/55">
                       {event.refundId && <p>Refund: <span className="font-mono">{event.refundId}</span></p>}
                       {event.disputeId && <p>Dispute: <span className="font-mono">{event.disputeId}</span></p>}
+                      {event.providerOccurredAt
+                        ? <p>Provider event time: {fmtDateTime(event.providerOccurredAt)}</p>
+                        : <p>Provider event time: unavailable</p>}
+                      <p>Recorded by application: {fmtDateTime(event.recordedAt)}</p>
                       {event.payload != null && <pre className="max-h-44 overflow-auto rounded bg-black/30 p-2 text-[10px] leading-relaxed text-cyan-100/75">{JSON.stringify(event.payload, null, 2)}</pre>}
                     </div>
                   </details>
@@ -525,6 +533,10 @@ function PaymentAttemptTimeline({ detail }: { detail: TransactionDetail }) {
                   <span className="capitalize">{event.processingStatus}</span>
                   <span className="text-[10px] text-white/35">delivery ×{event.deliveryCount} · {fmtDateTime(event.receivedAt)}</span>
                 </summary>
+                <div className="mt-1 text-[10px] text-white/45">
+                  Resolution: {event.resolutionStatus}{event.resolutionSource ? ` via ${event.resolutionSource.replace(/_/g, " ")}` : ""}
+                  {event.providerOccurredAt ? ` · provider time ${fmtDateTime(event.providerOccurredAt)}` : ""}
+                </div>
                 {event.payload != null && <pre className="mt-2 max-h-44 overflow-auto rounded bg-black/30 p-2 text-[10px] text-cyan-100/75">{JSON.stringify(event.payload, null, 2)}</pre>}
               </details>
             ))}

@@ -32,6 +32,7 @@ export type AttemptEventInput = {
   webhookEventId?: number | null;
   idempotencyKey: string;
   payload?: unknown;
+  providerOccurredAt?: Date | null;
   occurredAt?: Date | null;
   historical?: boolean;
 };
@@ -44,6 +45,8 @@ export type WebhookDeliveryInput = {
   razorpayPaymentId?: string | null;
   razorpayOrderId?: string | null;
   feeRecordId?: number | null;
+  feeResolutionSource?: "notes" | "payment_id" | "order_id" | null;
+  providerOccurredAt?: Date | null;
 };
 
 const sensitivePayloadKeys = new Set([
@@ -69,6 +72,20 @@ function payloadJson(value: unknown): string | null {
   return JSON.stringify(sanitizePaymentPayload(value));
 }
 
+function providerTimestamp(value: any): Date | null {
+  const raw = value?.created_at ?? value?.createdAt
+    ?? value?.payload?.payment?.entity?.created_at
+    ?? value?.payload?.refund?.entity?.created_at
+    ?? value?.payload?.dispute?.entity?.created_at
+    ?? value?.payload?.order?.entity?.created_at;
+  if (typeof raw === "number" && raw > 0) return new Date(raw * 1000);
+  if (typeof raw === "string") {
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  return null;
+}
+
 /** Stable retry identity even when Razorpay does not include a top-level event id. */
 export function webhookProviderEventId(rawBody: string, payload: any): string {
   const supplied = payload?.id ?? payload?.event_id ?? payload?.eventId;
@@ -85,12 +102,15 @@ export async function recordWebhookDelivery(input: WebhookDeliveryInput): Promis
   const result = await db.execute(sql`
     INSERT INTO payment_webhook_events (
       school_id, provider, provider_event_id, event_type, razorpay_payment_id,
-      razorpay_order_id, fee_record_id, payload, received_at, last_received_at,
+      razorpay_order_id, fee_record_id, fee_resolution_source, fee_resolution_status,
+      provider_occurred_at, payload, received_at, last_received_at,
       processing_status, delivery_count
     ) VALUES (
       ${input.schoolId}, 'razorpay', ${providerEventId}, ${input.eventType},
       ${input.razorpayPaymentId ?? null}, ${input.razorpayOrderId ?? null},
-      ${input.feeRecordId ?? null}, ${payloadJson(input.payload)}::jsonb, NOW(), NOW(),
+      ${input.feeRecordId ?? null}, ${input.feeResolutionSource ?? null},
+      ${input.feeRecordId != null ? "resolved" : "unresolved"},
+      ${(input.providerOccurredAt ?? providerTimestamp(input.payload))?.toISOString() ?? null}, ${payloadJson(input.payload)}::jsonb, NOW(), NOW(),
       'received', 1
     )
     ON CONFLICT (provider, provider_event_id)
@@ -104,13 +124,16 @@ export async function recordWebhookDelivery(input: WebhookDeliveryInput): Promis
 
 export async function updateWebhookDelivery(
   webhookEventId: number,
-  patch: { verified?: boolean; status?: "received" | "processed" | "failed" | "ignored"; error?: string | null },
+  patch: { verified?: boolean; status?: "received" | "processed" | "failed" | "ignored"; error?: string | null; feeRecordId?: number | null; resolutionSource?: "notes" | "payment_id" | "order_id" | null; resolutionStatus?: "resolved" | "unresolved" },
 ): Promise<void> {
   await db.execute(sql`
     UPDATE payment_webhook_events
     SET signature_verified = COALESCE(${patch.verified ?? null}, signature_verified),
         processing_status = COALESCE(${patch.status ?? null}, processing_status),
         processing_error = CASE WHEN ${patch.error === undefined} THEN processing_error ELSE ${patch.error ?? null} END,
+        fee_record_id = COALESCE(${patch.feeRecordId ?? null}, fee_record_id),
+        fee_resolution_source = COALESCE(${patch.resolutionSource ?? null}, fee_resolution_source),
+        fee_resolution_status = COALESCE(${patch.resolutionStatus ?? null}, fee_resolution_status),
         processed_at = CASE WHEN ${patch.status && patch.status !== "received"} THEN NOW() ELSE processed_at END
     WHERE id = ${webhookEventId}
   `);
@@ -148,7 +171,7 @@ export async function appendPaymentAttemptEvent(input: AttemptEventInput): Promi
       school_id, payment_attempt_id, student_id, fee_record_id, session_id,
       event_type, outcome, razorpay_payment_id, razorpay_order_id, refund_id,
       dispute_id, amount_paise, currency, source, webhook_event_id,
-      idempotency_key, payload, occurred_at, historical
+      idempotency_key, payload, provider_occurred_at, occurred_at, historical
     ) VALUES (
       ${input.schoolId}, ${attemptId}, ${input.studentId ?? null}, ${input.feeRecordId ?? null},
       ${input.sessionId ?? null}, ${input.eventType}, ${input.outcome ?? null},
@@ -156,6 +179,7 @@ export async function appendPaymentAttemptEvent(input: AttemptEventInput): Promi
       ${input.refundId ?? null}, ${input.disputeId ?? null}, ${input.amountPaise ?? null},
       ${input.currency ?? "INR"}, ${input.source}, ${input.webhookEventId ?? null},
       ${input.idempotencyKey}, ${payloadJson(input.payload)}::jsonb,
+      ${(input.providerOccurredAt ?? providerTimestamp(input.payload))?.toISOString() ?? null},
       ${input.occurredAt?.toISOString() ?? null}, ${input.historical ?? false}
     )
     ON CONFLICT (school_id, idempotency_key) DO NOTHING

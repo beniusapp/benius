@@ -2605,17 +2605,37 @@ export function registerFeesRoutes(app: Express) {
         const refund        = event?.payload?.refund?.entity  ?? {};
         const refPmtEntity  = event?.payload?.payment?.entity ?? {};
         const refPmtId      = refund.payment_id ?? refPmtEntity.id ?? null;
+        const refOrderId    = refund.order_id ?? refPmtEntity.order_id ?? null;
         let rfFeeRecordId: number | null = null;
         let rfStudentId:   number | null = null;
-        if (refPmtId) {
+        let rfSessionId: number | null = null;
+        let rfResolution: "notes" | "payment_id" | "order_id" | null = null;
+        const linkedAttempt = (await db.execute(sql`
+          SELECT fee_record_id, student_id, session_id
+          FROM payment_attempts
+          WHERE school_id = ${schoolId}
+            AND ((${refPmtId}::text IS NOT NULL AND razorpay_payment_id = ${refPmtId})
+              OR (${refOrderId}::text IS NOT NULL AND razorpay_order_id = ${refOrderId}))
+          ORDER BY CASE WHEN razorpay_payment_id = ${refPmtId} THEN 0 ELSE 1 END, updated_at DESC, id DESC
+          LIMIT 1
+        `)).rows[0] as any;
+        if (linkedAttempt?.fee_record_id != null) {
+          rfFeeRecordId = Number(linkedAttempt.fee_record_id); rfStudentId = Number(linkedAttempt.student_id);
+          rfSessionId = linkedAttempt.session_id == null ? null : Number(linkedAttempt.session_id);
+          rfResolution = refPmtId && linkedAttempt ? "payment_id" : "order_id";
+        } else if (refPmtId) {
           const pr = (await db.execute(sql`
             SELECT fee_record_id, student_id FROM payment_records
-            WHERE school_id = ${schoolId} AND reference_number = ${refPmtId}
-            LIMIT 1
+            WHERE school_id = ${schoolId} AND reference_number = ${refPmtId} LIMIT 1
           `)).rows[0] as any;
-          if (pr) { rfFeeRecordId = Number(pr.fee_record_id); rfStudentId = Number(pr.student_id); }
+          if (pr) { rfFeeRecordId = Number(pr.fee_record_id); rfStudentId = Number(pr.student_id); rfResolution = "payment_id"; }
         }
         const now = new Date();
+        const refundProviderAt = typeof refund.created_at === "number" ? new Date(refund.created_at * 1000) : null;
+        await updateWebhookDelivery(webhookDeliveryId, {
+          feeRecordId: rfFeeRecordId, resolutionSource: rfResolution,
+          resolutionStatus: rfFeeRecordId != null ? "resolved" : "unresolved",
+        });
         const amtRs = (Number(refund.amount ?? 0) / 100).toFixed(2);
         const rfAction =
           event.event === "refund.created"   ? "refund_initiated" :
@@ -2636,13 +2656,13 @@ export function registerFeesRoutes(app: Express) {
           )
         `);
         // Update payment_attempts with refund data
-        if (refPmtId && refund.id) {
+        if ((refPmtId || refOrderId) && refund.id) {
           const rfOutcome  = event.event === "refund.processed" ? "refunded" : "captured";
           const rfStatus   = event.event === "refund.created"   ? "initiated"
                            : event.event === "refund.processed" ? "processed"
                            : event.event === "refund.failed"    ? "failed"
                                                                 : "updated";
-          void updatePaymentAttemptRefund(
+          if (refPmtId) void updatePaymentAttemptRefund(
             schoolId, refPmtId, refund.id, rfStatus,
             refund.amount != null ? Number(refund.amount) : null,
             now,
@@ -2650,11 +2670,12 @@ export function registerFeesRoutes(app: Express) {
             rfOutcome,
           ).catch(err => console.warn("[webhook] updatePaymentAttemptRefund error:", err));
           await appendPaymentAttemptEvent({
-            schoolId, feeRecordId: rfFeeRecordId, studentId: rfStudentId,
+            schoolId, feeRecordId: rfFeeRecordId, studentId: rfStudentId, sessionId: rfSessionId,
             eventType: rfAction, outcome: rfOutcome, source: "webhook",
-            webhookEventId: webhookDeliveryId, razorpayPaymentId: refPmtId,
+            webhookEventId: webhookDeliveryId, razorpayPaymentId: refPmtId, razorpayOrderId: refOrderId,
             refundId: refund.id, amountPaise: refund.amount != null ? Number(refund.amount) : null,
-            payload: event, occurredAt: now,
+            payload: { event, resolution: { source: rfResolution, status: rfFeeRecordId != null ? "resolved" : "unresolved" } },
+            providerOccurredAt: refundProviderAt, occurredAt: now,
             idempotencyKey: `webhook:${webhookDeliveryId}:${rfAction}`,
           });
         }
@@ -2666,17 +2687,36 @@ export function registerFeesRoutes(app: Express) {
         const dispute   = event?.payload?.dispute?.entity  ?? {};
         const disPmt    = event?.payload?.payment?.entity  ?? {};
         const disPmtId  = dispute.payment_id ?? disPmt.id ?? null;
+        const disOrderId = dispute.order_id ?? disPmt.order_id ?? null;
         let disFeeId:  number | null = null;
         let disStudId: number | null = null;
-        if (disPmtId) {
+        let disSessionId: number | null = null;
+        let disResolution: "notes" | "payment_id" | "order_id" | null = null;
+        const disAttempt = (await db.execute(sql`
+          SELECT fee_record_id, student_id, session_id FROM payment_attempts
+          WHERE school_id = ${schoolId}
+            AND ((${disPmtId}::text IS NOT NULL AND razorpay_payment_id = ${disPmtId})
+              OR (${disOrderId}::text IS NOT NULL AND razorpay_order_id = ${disOrderId}))
+          ORDER BY CASE WHEN razorpay_payment_id = ${disPmtId} THEN 0 ELSE 1 END, updated_at DESC, id DESC LIMIT 1
+        `)).rows[0] as any;
+        if (disAttempt?.fee_record_id != null) {
+          disFeeId = Number(disAttempt.fee_record_id); disStudId = Number(disAttempt.student_id);
+          disSessionId = disAttempt.session_id == null ? null : Number(disAttempt.session_id);
+          disResolution = disPmtId ? "payment_id" : "order_id";
+        } else if (disPmtId) {
           const pr = (await db.execute(sql`
             SELECT fee_record_id, student_id FROM payment_records
             WHERE school_id = ${schoolId} AND reference_number = ${disPmtId}
             LIMIT 1
           `)).rows[0] as any;
-          if (pr) { disFeeId = Number(pr.fee_record_id); disStudId = Number(pr.student_id); }
+          if (pr) { disFeeId = Number(pr.fee_record_id); disStudId = Number(pr.student_id); disResolution = "payment_id"; }
         }
         const now = new Date();
+        const disputeProviderAt = typeof dispute.created_at === "number" ? new Date(dispute.created_at * 1000) : null;
+        await updateWebhookDelivery(webhookDeliveryId, {
+          feeRecordId: disFeeId, resolutionSource: disResolution,
+          resolutionStatus: disFeeId != null ? "resolved" : "unresolved",
+        });
         const disAmtRs  = (Number(dispute.amount ?? 0) / 100).toFixed(2);
         const disLabel: Record<string, string> = {
           "payment.dispute.created":         "Dispute raised by student",
@@ -2705,12 +2745,13 @@ export function registerFeesRoutes(app: Express) {
           // Notify admin dashboard — no receipt number for disputes, pass empty string
           broadcastPaymentUpdate(schoolId, { feeRecordId: disFeeId ?? 0, receiptNumber: "" });
         }
-        if (disPmtId) {
+        if (disPmtId || disOrderId) {
           await appendPaymentAttemptEvent({
-            schoolId, feeRecordId: disFeeId, studentId: disStudId, eventType: disAction,
-            source: "webhook", webhookEventId: webhookDeliveryId, razorpayPaymentId: disPmtId,
+            schoolId, feeRecordId: disFeeId, studentId: disStudId, sessionId: disSessionId, eventType: disAction,
+            source: "webhook", webhookEventId: webhookDeliveryId, razorpayPaymentId: disPmtId, razorpayOrderId: disOrderId,
             disputeId: dispute.id ?? null, amountPaise: dispute.amount != null ? Number(dispute.amount) : null,
-            payload: event, occurredAt: now,
+            payload: { event, resolution: { source: disResolution, status: disFeeId != null ? "resolved" : "unresolved" } },
+            providerOccurredAt: disputeProviderAt, occurredAt: now,
             idempotencyKey: `webhook:${webhookDeliveryId}:${disAction}`,
           });
         }
@@ -2935,7 +2976,12 @@ export function registerFeesRoutes(app: Express) {
               schoolId, feeRecordId, studentId: studentId ?? null, sessionId: clientFeeSessionId,
               eventType: "api_enrichment_completed", source: "system",
               razorpayPaymentId, razorpayOrderId: razorpayOrderId ?? null,
-              payload: { entities: ["payment", "order"] }, occurredAt: new Date(),
+              payload: {
+                enrichmentType: ["Payment API", "Order API"],
+                requestInitiatedAt: new Date().toISOString(), completionAt: new Date().toISOString(),
+                status: "completed", snapshot: ["payment_attempts.razorpay_payment_data", "payment_attempts.razorpay_order_data"],
+                normalizedFields: Object.keys(mapRazorpayPayment(paymentData)), apiSyncedAt: new Date().toISOString(),
+              }, occurredAt: new Date(),
               idempotencyKey: `enrichment:completed:${razorpayPaymentId}`,
             });
           }
@@ -2949,7 +2995,7 @@ export function registerFeesRoutes(app: Express) {
             schoolId, feeRecordId, studentId: studentId ?? null, sessionId: clientFeeSessionId,
             eventType: "api_enrichment_failed", source: "system",
             razorpayPaymentId, razorpayOrderId: razorpayOrderId ?? null,
-            payload: { error: (enrichErr as any)?.message ?? String(enrichErr) }, occurredAt: new Date(),
+            payload: { enrichmentType: ["Payment API", "Order API"], status: "failed", error: (enrichErr as any)?.message ?? String(enrichErr), completionAt: new Date().toISOString() }, occurredAt: new Date(),
             idempotencyKey: `enrichment:failed:${razorpayPaymentId}`,
           });
         }
@@ -3685,10 +3731,18 @@ export function registerFeesRoutes(app: Express) {
       const webhookRows = (await db.execute(sql`
         SELECT pwe.id, pwe.provider_event_id, pwe.event_type, pwe.razorpay_payment_id,
                pwe.razorpay_order_id, pwe.signature_verified, pwe.processing_status,
-               pwe.processing_error, pwe.received_at, pwe.last_received_at, pwe.processed_at,
-               pwe.delivery_count, pwe.payload
+                pwe.processing_error, pwe.received_at, pwe.last_received_at, pwe.processed_at,
+                pwe.delivery_count, pwe.payload, pwe.provider_occurred_at,
+                pwe.fee_resolution_source, pwe.fee_resolution_status
         FROM payment_webhook_events pwe
-        WHERE pwe.school_id = ${schoolId} AND pwe.fee_record_id = ${feeRecordId}
+        WHERE pwe.school_id = ${schoolId}
+          AND (pwe.fee_record_id = ${feeRecordId} OR EXISTS (
+            SELECT 1 FROM payment_attempts linked_pa
+            WHERE linked_pa.school_id = pwe.school_id
+              AND linked_pa.fee_record_id = ${feeRecordId}
+              AND ((pwe.razorpay_payment_id IS NOT NULL AND linked_pa.razorpay_payment_id = pwe.razorpay_payment_id)
+                OR (pwe.razorpay_order_id IS NOT NULL AND linked_pa.razorpay_order_id = pwe.razorpay_order_id))
+          ))
         ORDER BY pwe.received_at ASC, pwe.id ASC
       `)).rows as any[];
       const paymentAttempts = attemptRows.map((attempt: any) => ({
@@ -3712,6 +3766,7 @@ export function registerFeesRoutes(app: Express) {
           source: event.source, razorpayPaymentId: event.razorpay_payment_id ?? null,
           razorpayOrderId: event.razorpay_order_id ?? null, refundId: event.refund_id ?? null,
           disputeId: event.dispute_id ?? null, amountPaise: event.amount_paise ?? null,
+          providerOccurredAt: event.provider_occurred_at ?? null,
           occurredAt: event.occurred_at ?? null, recordedAt: event.recorded_at,
           historical: Boolean(event.historical), payload: event.payload ?? null,
           webhookEventId: event.webhook_event_id ?? null,
@@ -3787,6 +3842,9 @@ export function registerFeesRoutes(app: Express) {
           id: event.id, providerEventId: event.provider_event_id, eventType: event.event_type,
           razorpayPaymentId: event.razorpay_payment_id ?? null, razorpayOrderId: event.razorpay_order_id ?? null,
           signatureVerified: Boolean(event.signature_verified), processingStatus: event.processing_status,
+          providerOccurredAt: event.provider_occurred_at ?? null,
+          resolutionSource: event.fee_resolution_source ?? null,
+          resolutionStatus: event.fee_resolution_status ?? "unresolved",
           processingError: event.processing_error ?? null, receivedAt: event.received_at,
           lastReceivedAt: event.last_received_at, processedAt: event.processed_at ?? null,
           deliveryCount: Number(event.delivery_count ?? 1), payload: event.payload ?? null,
