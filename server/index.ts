@@ -786,6 +786,7 @@ app.use((req, res, next) => {
     ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS fee_resolution_source VARCHAR(20);
     ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS fee_resolution_status VARCHAR(20) NOT NULL DEFAULT 'unresolved';
     ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS provider_occurred_at TIMESTAMPTZ;
+    DROP INDEX IF EXISTS payment_webhook_events_provider_event_uniq;
 
     CREATE INDEX IF NOT EXISTS payment_attempt_events_fee_timeline_idx
       ON payment_attempt_events(school_id, fee_record_id, occurred_at DESC, recorded_at DESC);

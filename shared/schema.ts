@@ -84,7 +84,6 @@ export const paymentWebhookEvents = pgTable("payment_webhook_events", {
   processedAt: timestamp("processed_at", { withTimezone: true }),
   deliveryCount: integer("delivery_count").notNull().default(1),
 }, (table) => [
-  uniqueIndex("payment_webhook_events_provider_event_uniq").on(table.provider, table.providerEventId),
 ]);
 
 export const users = pgTable("users", {

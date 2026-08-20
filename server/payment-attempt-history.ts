@@ -113,10 +113,6 @@ export async function recordWebhookDelivery(input: WebhookDeliveryInput): Promis
       ${(input.providerOccurredAt ?? providerTimestamp(input.payload))?.toISOString() ?? null}, ${payloadJson(input.payload)}::jsonb, NOW(), NOW(),
       'received', 1
     )
-    ON CONFLICT (provider, provider_event_id)
-    DO UPDATE SET
-      delivery_count = payment_webhook_events.delivery_count + 1,
-      last_received_at = NOW()
     RETURNING id
   `);
   return Number((result.rows[0] as any)?.id ?? 0);

@@ -1,0 +1,619 @@
+Objective
+
+Continue the existing online Razorpay payment-history/audit implementation and fix the two remaining release-blocking gaps identified during the latest validation.
+
+Do not redesign or replace the existing payment architecture. Do not disturb the existing Razorpay capture/verification flow, receipts, payment records, invoice numbering, offline payments, academic-session logic, tenant isolation, or existing successful functionality.
+
+The goal is to make the online payment history forensically reconstructable: an administrator must be able to understand exactly what happened to an invoice, in chronological order, including retries, webhook deliveries, failures, cancellations, captures, refunds, disputes, and enrichment.
+
+---
+
+1. FIX NO-NOTES REFUND/DISPUTE WEBHOOKS
+
+The current remaining problem is:
+
+«Refund/dispute webhook events may not contain "feeRecordId" or school/tenant information in Razorpay notes.»
+
+The system must not reject or lose these events merely because invoice notes are missing.
+
+Required resolution strategy
+
+For every signed Razorpay refund/dispute webhook:
+
+1. Verify the Razorpay webhook signature first.
+2. Extract every reliable provider identifier available, including:
+   - Razorpay payment ID
+   - Razorpay order ID
+   - refund ID
+   - dispute/payment identifiers
+3. Resolve the tenant without trusting unverified payload notes.
+4. Resolve the related payment attempt using tenant-scoped identifiers:
+   - First: Razorpay payment ID
+   - Second: Razorpay order ID
+   - If necessary: refund/dispute → associated payment/order lookup
+5. From the resolved payment attempt, obtain:
+   - "school_id"
+   - "fee_record_id"
+   - "student_id"
+   - "session_id"
+6. If the event can be safely associated with a tenant but cannot be associated with a specific invoice:
+   - retain the webhook delivery/event as a tenant-scoped unresolved event
+   - mark the resolution status explicitly
+   - do not fabricate "fee_record_id"
+7. If the tenant itself cannot be safely determined:
+   - retain only the minimum security/audit information that can safely be retained
+   - explicitly mark it as unresolved/unattributed
+   - never guess a tenant.
+
+Critical security rule
+
+Never use Razorpay notes alone to establish tenant ownership.
+
+Notes may be used as an additional consistency check after the tenant has been independently resolved.
+
+Never allow an unverified webhook payload to select a school/tenant.
+
+---
+
+2. EVERY WEBHOOK DELIVERY MUST BE IMMUTABLY RETAINED
+
+The second remaining gap is more important.
+
+Currently, webhook retries can be represented by a mutable retry counter on one delivery row.
+
+That is not sufficient for a forensic audit.
+
+Change the implementation so that:
+
+«Every webhook delivery/retry is its own immutable delivery record.»
+
+For example, if Razorpay sends the same "payment.captured" event five times:
+
+Delivery #1
+Delivery #2
+Delivery #3
+Delivery #4
+Delivery #5
+
+must all exist as separate immutable records.
+
+Do NOT collapse them into:
+
+delivery_count = 5
+
+on one mutable row.
+
+The administrator must be able to see every individual delivery.
+
+---
+
+3. IMMUTABLE WEBHOOK DELIVERY RECORD
+
+Each individual delivery record should preserve, where safely available:
+
+Identity
+
+- delivery record ID
+- tenant/school ID if safely resolved
+- fee record ID if safely resolved
+- student ID if safely resolved
+- session ID if safely resolved
+- Razorpay event ID
+- Razorpay payment ID
+- Razorpay order ID
+- refund ID
+- dispute ID
+- event name/type
+- delivery sequence/attempt number if available
+- unique delivery identity/fingerprint
+
+Timing
+
+Store separately:
+
+- provider event timestamp, when Razorpay provides one
+- webhook received timestamp
+- processing started timestamp
+- processing completed timestamp
+- processing duration if useful
+- failure/retry timestamp where applicable
+
+Never replace provider time with application receipt time.
+
+If Razorpay does not provide a trustworthy provider timestamp, store "NULL" rather than inventing one.
+
+Verification
+
+Store:
+
+- signature verification result
+- verification timestamp
+- verification status
+- resolution status
+- resolution source
+
+For example:
+
+resolved_by = payment_id
+resolved_by = order_id
+resolved_by = refund_id
+resolved_by = dispute_id
+resolved_by = notes
+resolved_by = unresolved
+
+But remember:
+
+notes must never be the sole security mechanism for tenant resolution.
+
+Processing result
+
+Store:
+
+- processing status
+- HTTP/result status
+- success/failure
+- processing error if any
+- whether the delivery triggered a lifecycle event
+- whether it triggered payment reconciliation
+- whether it triggered refund reconciliation
+- whether it triggered dispute reconciliation
+- whether it triggered enrichment
+
+---
+
+4. DO NOT OVERWRITE WEBHOOK DELIVERY HISTORY
+
+This is critical.
+
+If the same webhook is delivered repeatedly:
+
+payment.captured
+payment.captured
+payment.captured
+
+do not update one delivery record.
+
+Instead preserve:
+
+Webhook Delivery #1
+Webhook Delivery #2
+Webhook Delivery #3
+
+Each row must remain historically immutable.
+
+If you need deduplication for business processing, maintain a separate idempotency/reconciliation mechanism.
+
+Do not use business idempotency as a reason to destroy delivery history.
+
+Therefore the architecture should distinguish:
+
+Delivery history
+
+Append-only and immutable.
+
+Business processing
+
+Idempotent and allowed to recognize duplicate events.
+
+These are two different concerns.
+
+---
+
+5. PRESERVE DUPLICATE DELIVERY INFORMATION
+
+For duplicate deliveries, retain enough information to answer:
+
+- Was this the first delivery?
+- Was this a retry?
+- How many previous deliveries existed?
+- Which delivery was processed successfully?
+- Did a previous delivery fail?
+- Was this delivery ignored because the business state was already processed?
+- Did this delivery repair/reconcile missing audit history?
+
+Do not merely store:
+
+duplicate = true
+
+without preserving the actual delivery.
+
+---
+
+6. ADMIN LEDGER MUST SHOW THE COMPLETE TIMELINE
+
+The Admin Ledger → Transaction Details for an invoice must now show a complete chronological forensic timeline.
+
+For example:
+
+INV00079
+
+01 — Checkout Initiated
+Order: order_xxx
+Time: 10:01:15
+
+02 — Payment Cancelled
+Order: order_xxx
+Time: 10:02:03
+
+03 — Checkout Initiated
+Order: order_yyy
+Time: 10:05:11
+
+04 — Payment Failed
+Payment: pay_xxx
+Reason: CARD_DECLINED
+Time: 10:06:27
+
+05 — Webhook Delivery #1
+payment.failed
+Time received: 10:06:29
+
+06 — Webhook Delivery #2
+payment.failed
+Time received: 10:06:31
+Duplicate/retry
+
+07 — Checkout Initiated
+Order: order_zzz
+Time: 10:10:05
+
+08 — Payment Authorized
+Payment: pay_yyy
+Time: 10:10:22
+
+09 — Payment Captured
+Payment: pay_yyy
+Captured amount: ₹X
+Provider time: 10:10:25
+
+10 — Webhook Delivery #1
+payment.captured
+
+11 — Webhook Delivery #2
+payment.captured
+Duplicate/retry
+
+12 — Refund Created
+Refund: rfnd_xxx
+
+13 — Refund Processed
+Refund: rfnd_xxx
+
+The actual labels and events should come from the persisted data, not hardcoded assumptions.
+
+---
+
+7. EXPANDABLE TECHNICAL DETAILS
+
+For administrators, every timeline event should be expandable.
+
+Show all safely stored information relevant to that event.
+
+For webhook deliveries, include:
+
+- event ID
+- event type
+- delivery ID
+- payment ID
+- order ID
+- refund ID
+- dispute ID
+- tenant resolution status
+- resolution source
+- provider event timestamp
+- received timestamp
+- verification status
+- processing status
+- duplicate/retry relationship
+- processing error
+- enrichment status
+- reconciliation status
+
+Where a raw payload is safely retained, provide an expandable technical/raw-data section.
+
+Do not expose sensitive card data such as:
+
+- CVV
+- full PAN
+- other prohibited secrets.
+
+Use the existing masking/privacy rules.
+
+---
+
+8. ENRICHMENT MUST ALSO BE TRACEABLE
+
+For every Razorpay API enrichment attempt, preserve an immutable audit event indicating:
+
+Enrichment Started
+Enrichment Completed
+
+or
+
+Enrichment Failed
+
+Include:
+
+- payment/order identifier
+- API operation
+- start time
+- completion time
+- success/failure
+- failure reason if available
+- fields/record updated
+- API sync timestamp
+
+If the complete Razorpay API response is already retained in the existing dedicated JSON fields, do not unnecessarily duplicate huge payloads into every event.
+
+Instead, the immutable event should contain a trace/reference proving:
+
+«which enrichment operation occurred, when it occurred, against which Razorpay object, and whether it succeeded.»
+
+---
+
+9. ATTEMPT HISTORY MUST REMAIN DISTINCT
+
+For one invoice:
+
+Attempt 1 → Cancelled
+Attempt 2 → Failed
+Attempt 3 → Cancelled
+Attempt 4 → Captured
+
+must remain four distinct attempts.
+
+Do not allow:
+
+- later capture to overwrite earlier failure
+- later retry to overwrite cancellation
+- duplicate payment IDs to create duplicate business attempts
+- same payment ID to create multiple business attempts.
+
+The distinction must remain:
+
+Payment attempt projection
+
+Current state of a particular attempt.
+
+Immutable lifecycle events
+
+Every observed state transition.
+
+Immutable webhook deliveries
+
+Every actual webhook delivery/retry.
+
+These must work together.
+
+---
+
+10. SAME ORDER / MULTIPLE PAYMENT IDs
+
+Preserve the previously implemented rule:
+
+One Razorpay order can potentially have multiple payment IDs.
+
+Therefore:
+
+Order A
+ ├── Payment ID 1 → Failed
+ └── Payment ID 2 → Captured
+
+must produce separate payment-attempt identities.
+
+Do not incorrectly force them into one attempt merely because the order ID is identical.
+
+Attempt numbering must remain deterministic and concurrency-safe.
+
+---
+
+11. TENANT ISOLATION
+
+Every new query, join, resolver, webhook lookup, and Admin Ledger API must remain tenant-scoped.
+
+Never allow:
+
+School A payment
+       ↓
+School B webhook resolution
+
+or:
+
+School A invoice
+       ↓
+School B payment attempt
+
+Use the existing tenant-safe constraints and indexes wherever possible.
+
+Add regression tests specifically proving that:
+
+- payment ID cannot resolve another school's attempt;
+- order ID cannot resolve another school's attempt;
+- refund ID cannot resolve another school's attempt;
+- dispute ID cannot resolve another school's attempt;
+- notes cannot override a tenant-safe identifier;
+- unresolved webhook data never leaks into another tenant's Ledger.
+
+---
+
+12. MIGRATION SAFETY
+
+This is a production school ERP.
+
+Therefore:
+
+- migrations must be additive/non-destructive wherever possible;
+- never delete historical payment information;
+- never fabricate historical webhook deliveries;
+- never claim that a historical delivery existed when it was not stored;
+- historical backfill must clearly distinguish reconstructed/projection events from genuinely observed events;
+- preserve existing payment_attempts, payment_records, fee_audit_log, receipts, and offline-payment data.
+
+For historical data where delivery-level information does not exist:
+
+historical_delivery_available = false
+
+or an equivalent explicit classification should be used.
+
+Do not manufacture fake webhook delivery records.
+
+---
+
+13. TESTING REQUIREMENTS
+
+Add focused regression coverage for at least:
+
+Webhook delivery
+
+- first delivery creates one immutable row;
+- duplicate delivery creates another immutable row;
+- five deliveries create five records;
+- delivery records cannot be updated/deleted through normal application paths.
+
+Tenant resolution
+
+- refund without notes resolves through payment ID;
+- refund without payment ID resolves through order ID;
+- dispute without notes resolves through payment/order identity;
+- unresolved event remains explicitly unresolved;
+- cross-tenant identifiers cannot resolve another school's data.
+
+Provider timestamps
+
+- valid provider timestamp is preserved;
+- application receipt timestamp remains separate;
+- missing provider timestamp remains NULL;
+- no fabricated provider timestamp.
+
+Retry processing
+
+- first failed delivery followed by successful retry;
+- duplicate capture webhook;
+- duplicate failed webhook;
+- duplicate refund webhook;
+- duplicate dispute webhook;
+- business processing remains idempotent while delivery history remains complete.
+
+Multiple attempts
+
+For one invoice:
+
+cancelled
+failed
+cancelled
+captured
+
+verify that all four attempts remain independently reconstructable.
+
+Same order / multiple payment IDs
+
+Verify:
+
+same order
+payment A → failed
+payment B → captured
+
+creates separate payment attempts and correct chronological history.
+
+Enrichment
+
+Verify:
+
+- enrichment started;
+- enrichment succeeded;
+- enrichment failed;
+- enrichment retry;
+- trace metadata remains available.
+
+Admin Ledger
+
+Verify the invoice detail endpoint returns:
+
+- all attempts;
+- all lifecycle events;
+- all webhook deliveries;
+- provider timestamps;
+- application timestamps;
+- resolution status;
+- enrichment events;
+- refund/dispute events;
+- chronological ordering.
+
+---
+
+14. FINAL ACCEPTANCE CRITERIA
+
+Do not report this task as complete merely because:
+
+- TypeScript passes;
+- tests pass;
+- migration succeeds.
+
+The implementation is complete only when the following statement is honestly true:
+
+«For a newly occurring online Razorpay payment, the system preserves every safely retainable payment attempt, lifecycle event, webhook delivery/retry, refund/dispute event, enrichment operation, identifier, relevant timestamp, resolution decision, and processing outcome without overwriting earlier history.»
+
+And for an invoice such as:
+
+INV00079
+
+an administrator must be able to reconstruct:
+
+What happened?
+When did it happen?
+Which checkout/order?
+Which payment ID?
+Which attempt number?
+Was it cancelled?
+Why did it fail?
+Was it authorized?
+Was it captured?
+How much was captured?
+Was it refunded?
+Was there a dispute?
+Which webhook deliveries arrived?
+How many retries occurred?
+When did each delivery arrive?
+Was each delivery verified?
+How was the tenant/invoice resolved?
+Was Razorpay API enrichment performed?
+Did enrichment succeed or fail?
+What information was unavailable?
+Why was it unavailable?
+
+Very important
+
+Do not claim “100% complete” if any of the above is still impossible to reconstruct for newly occurring events.
+
+If something cannot safely be stored because Razorpay does not provide it or because retaining it would violate security/privacy requirements, explicitly document:
+
+Not provided by Razorpay
+
+or
+
+Intentionally not retained for security/privacy
+
+rather than silently discarding it.
+
+---
+
+Final validation
+
+After implementation:
+
+1. Run TypeScript/type checking.
+2. Run the focused payment/audit regression suite.
+3. Run the complete test suite.
+4. Restart the application so migrations execute.
+5. Verify startup/migration logs.
+6. Perform a read-only Admin Ledger smoke test if authenticated test credentials are available.
+7. Review tenant isolation.
+8. Review append-only/immutability guarantees.
+9. Review migration safety.
+10. Report exactly what is stored, what is displayed, and what cannot be reconstructed.
+
+Do not modify unrelated fee, invoice, academic-session, receipt-numbering, offline-payment, or payment-configuration functionality.
+
+The objective is not merely to make the UI look more detailed.
+
+The objective is to make the underlying online Razorpay audit trail genuinely durable, chronological, tenant-safe, and reconstructable.
