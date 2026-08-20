@@ -194,6 +194,7 @@ describe("shared structure invoice service", () => {
         sessionId: 9,
         feeType: "Tuition",
         amount: 36000,
+        frequency: "monthly",
         dueDate: "2026-08-10",
         status: "Due",
         academicYear: "2026-27",

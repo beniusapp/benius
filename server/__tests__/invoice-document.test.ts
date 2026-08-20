@@ -60,6 +60,13 @@ describe("renderInvoiceDocument", () => {
     expect(html).toContain("Component subtotal");
   });
 
+  it("renders the persisted invoice frequency in the invoice details table", () => {
+    const html = renderInvoiceDocument({ ...invoice, frequency: "quarterly" });
+
+    expect(html).toContain("<td>Quarterly</td>");
+    expect(html).not.toContain("<td>—</td>");
+  });
+
   it("does not fabricate guardian information when none is stored", () => {
     const html = renderInvoiceDocument({
       ...invoice,

@@ -4789,6 +4789,7 @@ export async function registerRoutes(
       return {
         ...r,
         feeName:           r.feeName ?? ftToName.get(r.feeType.trim().toLowerCase()) ?? r.feeType,
+        frequency:         r.frequency ?? null,
         breakdown:         (r.breakdownSnapshot?.length ? r.breakdownSnapshot : breakdownMap.get(r.feeType.trim().toLowerCase())) ?? [],
         base_amount:       r.amount,
         accrued_late_fee,
