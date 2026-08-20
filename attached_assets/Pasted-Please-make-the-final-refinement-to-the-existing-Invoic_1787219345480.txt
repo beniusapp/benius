@@ -1,0 +1,121 @@
+Please make the final refinement to the existing Invoice PDF only.
+
+The current invoice is now good and fits on one page, so DO NOT redesign it, do not change the existing data structure, and do not touch any fee, payment, receipt, Razorpay, invoice-generation, or business logic.
+
+1. A4 PDF format — final requirement
+
+- Make the generated invoice PDF use A4 paper size, not Letter.
+- Set the print/PDF page size explicitly to:
+  - A4
+  - Portrait orientation
+- Ensure the invoice is properly centered and uses the A4 page dimensions.
+- Keep the current compact layout so normal invoices remain 1 page.
+- Do NOT unnecessarily enlarge the content just because A4 provides more space.
+- Do NOT create an additional blank page.
+- For very large invoices with many fee components, allow natural multi-page flow.
+
+2. Preserve the current invoice design
+
+Keep the current design exactly as it is unless required for A4 compatibility:
+
+- School logo and school information
+- Prominent INVOICE heading
+- Invoice number and status
+- Student name
+- Student ID / MIS ID
+- Parent / Guardian name
+- Student phone number
+- Class and section
+- Invoice Date & Time
+- IST timezone
+- Academic session
+- Frequency
+- Fee period
+- Due date
+- Invoice details
+- Fee breakdown
+- Late Fee & Penalty
+- Amount Summary
+- Amount in Words
+- Total Payable
+- Authorized Signature
+- Footer/disclaimer
+
+3. Exact Invoice Date & Time
+
+The invoice must continue displaying the actual persisted invoice creation timestamp, not the current browser/device time.
+
+Format should clearly show:
+
+Invoice Date & Time: 20 Aug 2026, 02:55:21 AM IST
+
+Requirements:
+
+- Use the timestamp stored when the invoice was actually created.
+- Do NOT regenerate/change the timestamp every time the PDF is opened or downloaded.
+- Always display the correct IST (Asia/Kolkata) timezone.
+- Do not use the user's device timezone.
+
+4. Signature
+
+Keep the existing Authorized Signatory section.
+
+- Signature must remain visible.
+- Signature and school name must stay together.
+- Do not allow the signature to move to a separate page for a normal invoice.
+- Keep the existing signature image/configuration and do not replace it with a new one.
+
+5. Amount in Words
+
+Keep the current Amount in Words section.
+
+- It must correspond exactly to the total payable amount.
+- Example:
+  ₹35,000 → Thirty Five Thousand Rupees Only
+- Keep it readable and properly aligned inside the Amount Summary.
+
+6. Pagination safeguards
+
+For invoices that genuinely require multiple pages:
+
+- Repeat table headers on subsequent pages.
+- Never split an individual fee/component row across pages.
+- Keep the Authorized Signature + footer together at the end.
+- Avoid unnecessary page breaks.
+- Never create a blank page.
+
+7. Important — do not change functionality
+
+This is a presentation/print-format refinement only.
+
+DO NOT modify:
+
+- Invoice generation logic
+- Invoice numbering
+- Fee calculations
+- Due dates
+- Academic-session logic
+- Payment logic
+- Receipt logic
+- Razorpay integration
+- Webhooks
+- Database schema
+- Payment status
+- Student fee records
+- Existing invoice data
+
+8. Final validation
+
+After making the change:
+
+1. Verify the PDF is actually A4, not Letter.
+2. Verify a normal invoice renders as 1 page.
+3. Verify the invoice content is not unnecessarily stretched.
+4. Verify the signature is visible.
+5. Verify the exact persisted invoice date/time and IST are displayed.
+6. Verify Amount in Words is correct.
+7. Verify no blank second page is generated.
+8. Test an invoice with many fee components to ensure intelligent multi-page overflow still works.
+9. Run the existing tests/type checks and fix only issues caused by this refinement.
+
+Do not make any other changes. The goal is simply: current approved invoice design + correct A4 PDF output + reliable pagination.

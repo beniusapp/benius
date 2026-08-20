@@ -128,7 +128,7 @@ describe("renderInvoiceDocument", () => {
   it("uses compact A4 print rules and keeps the signature/footer together", () => {
     const html = renderInvoiceDocument(invoice);
 
-    expect(html).toContain("@page{size:A4;margin:8mm}");
+    expect(html).toContain("@page{size:A4 portrait;margin:8mm}");
     expect(html).toContain('class="end-matter"');
     expect(html).toContain("thead{display:table-header-group}");
     expect(html).toContain("tr{break-inside:avoid;page-break-inside:avoid}");
