@@ -1,0 +1,501 @@
+IMPORTANT — AUDIT THE CURRENT ONLINE PAYMENT / LEDGER ARCHITECTURE FIRST
+
+DO NOT MODIFY, REFACTOR, DELETE, MIGRATE, OR ADD ANY CODE/DATABASE FIELDS YET.
+
+I want a complete technical audit of the CURRENT implementation of online student-portal payments through Razorpay and how those payments/attempts are currently represented in the Fees & Payments → Ledger & Transactions section.
+
+I will use your answer to decide the next implementation step.
+
+1. MAIN SCENARIO I NEED YOU TO ANALYZE
+
+Take this example:
+
+Invoice: "INV-00079"
+
+Suppose the student attempts to pay the same invoice four times:
+
+1. Attempt #1 → Student opens Razorpay checkout and cancels/closes it
+   → Status: "Payment Cancelled"
+   → Exact date + time
+
+2. Attempt #2 → Student attempts again but payment fails
+   → Status: "Payment Failed"
+   → Exact date + time
+   → Complete Razorpay failure information
+
+3. Attempt #3 → Student attempts again and cancels/closes checkout
+   → Status: "Payment Cancelled"
+   → Exact date + time
+
+4. Attempt #4 → Student attempts again and successfully pays
+   → Status: "Paid/Captured"
+   → Exact date + time
+   → Complete successful-payment information
+
+2. FIRST QUESTION — WHAT IS THE CURRENT SOURCE OF TRUTH?
+
+Tell me exactly where the application currently gets every piece of payment information from.
+
+For example, determine whether each field comes from:
+
+- Our PostgreSQL/database tables
+- Fee record
+- Payment attempt table
+- Payment transaction table
+- Razorpay Order API
+- Razorpay Payment API
+- Razorpay webhook payload
+- Razorpay event records
+- Frontend/browser checkout events
+- Locally calculated/generated values
+- A combination of multiple sources
+
+For every important field, tell me the exact source.
+
+Do NOT answer generally. Inspect the actual code and database schema.
+
+---
+
+3. TRACE ONE COMPLETE PAYMENT LIFECYCLE
+
+Trace the complete lifecycle for a student paying an invoice.
+
+Explain exactly what happens from:
+
+Invoice → Pay Now → Razorpay Order → Checkout opened → Payment attempt → Cancelled/Failed/Success → Webhook/API → Database → Ledger UI
+
+For each stage tell me:
+
+- Which API/route/function is involved
+- Which database table is written
+- Which record is created
+- Which fields are stored
+- Which timestamp is stored
+- Whether a new attempt record is created
+- Whether an existing record is updated
+- Whether anything is discarded
+- Whether anything is overwritten
+
+---
+
+4. MOST IMPORTANT — ARE MULTIPLE ATTEMPTS ACTUALLY PRESERVED?
+
+For the same invoice, answer this very clearly:
+
+If the student does:
+
+Cancelled → Failed → Cancelled → Paid
+
+does the database currently preserve FOUR separate payment attempts, or does it only preserve the final payment/result?
+
+Show me the actual database representation.
+
+For example, tell me whether it looks conceptually like:
+
+Invoice INV-00079
+
+Attempt 1
+Status: Cancelled
+Timestamp: ...
+Order ID: ...
+Payment ID: ...
+Reason: ...
+
+Attempt 2
+Status: Failed
+Timestamp: ...
+Order ID: ...
+Payment ID: ...
+Error Code: ...
+Failure Reason: ...
+
+Attempt 3
+Status: Cancelled
+Timestamp: ...
+Order ID: ...
+Payment ID: ...
+Reason: ...
+
+Attempt 4
+Status: Captured
+Timestamp: ...
+Order ID: ...
+Payment ID: ...
+...
+
+OR whether the current system stores something different.
+
+I need the actual current behavior, not what you think it should do.
+
+---
+
+5. CANCELLED PAYMENT ATTEMPTS
+
+For a checkout cancellation/dismissal, identify exactly:
+
+- How is cancellation detected?
+- Is it detected by the frontend?
+- Is there a Razorpay webhook/event for this?
+- Is a database record created?
+- Which table?
+- Which fields?
+- Exact timestamp source
+- Order ID
+- Payment ID, if available
+- Attempt number
+- Invoice number
+- Fee record ID
+- Student ID/DSID
+- Amount
+- Currency
+- Cancellation reason
+- Checkout/session information
+- Any Razorpay metadata
+- Any browser/client-side information currently captured
+
+Also tell me what information is permanently lost, if any.
+
+---
+
+6. FAILED PAYMENT ATTEMPTS
+
+For a failed Razorpay payment, identify every currently stored field.
+
+I specifically want to know whether we preserve:
+
+- Payment ID
+- Order ID
+- Invoice number
+- Fee record ID
+- Attempt number
+- Status
+- Exact timestamp
+- Amount
+- Currency
+- Error code
+- Error source
+- Error step
+- Error reason
+- Error description
+- Payment method
+- Card type
+- Network
+- Issuer
+- Last four digits
+- Card token/reference where applicable
+- Bank information where available
+- Bank RRN
+- Auth code
+- Bank transaction ID
+- Customer email
+- Customer phone
+- Razorpay metadata
+- Notes
+- Description
+- Any other Razorpay response fields
+
+For every field, state:
+
+Stored / Not stored / Available from Razorpay but not currently stored / Only available temporarily
+
+---
+
+7. SUCCESSFUL / CAPTURED PAYMENT
+
+For the final successful payment, identify every field currently stored and displayed.
+
+I want the complete chain:
+
+Razorpay → webhook/API → database → ledger → receipt
+
+Tell me exactly where each value originates.
+
+Include:
+
+- Payment ID
+- Order ID
+- Invoice ID/number
+- Fee record ID
+- Attempt number
+- Payment status
+- Created timestamp
+- Authorized timestamp
+- Captured timestamp
+- Amount
+- Currency
+- Payment method
+- Card/UPI/netbanking/wallet/etc.
+- Bank
+- Card network
+- Last four digits
+- UPI VPA, where legitimately available
+- Bank RRN
+- Auth code
+- Bank transaction ID
+- Razorpay fee
+- GST on Razorpay fee
+- Refund amount
+- Refund status
+- Customer details
+- Notes
+- Description
+- Metadata
+- Any other available gateway information
+
+Again, identify the actual source of every field.
+
+---
+
+8. RAZORPAY WEBHOOKS
+
+Inspect the current webhook implementation.
+
+Tell me:
+
+- Which Razorpay webhook events are currently handled?
+- Which events are ignored?
+- Which events create database records?
+- Which events update existing records?
+- Which events create payment-attempt history?
+- Which events are merely logged?
+- Are raw webhook payloads stored?
+- Where are raw webhook payloads stored?
+- Is the webhook payload immutable?
+- Is webhook signature verification implemented?
+- Are duplicate webhook events handled idempotently?
+- How is event ordering handled?
+- What happens if the webhook arrives late?
+- What happens if a webhook is missed?
+- Does the backend fetch authoritative payment details from Razorpay after receiving the webhook?
+- If yes, exactly which Razorpay API is used?
+
+---
+
+9. DATABASE AUDIT
+
+Inspect the actual database schema and identify every table/model involved in online payments.
+
+For each table/model provide:
+
+- Table/model name
+- Purpose
+- Primary key
+- Important foreign keys
+- Invoice relationship
+- Fee-record relationship
+- Student relationship
+- Attempt relationship
+- Payment ID field
+- Order ID field
+- Status field
+- Timestamp fields
+- Failure fields
+- Payment-method fields
+- Gateway metadata fields
+- Webhook/event fields
+
+Also identify whether there is already a dedicated concept of:
+
+Payment Attempt
+
+or whether attempts are currently mixed into another payment/fee record.
+
+---
+
+10. LEDGER UI — WHERE IS IT FETCHING DATA FROM?
+
+For the Fees & Payments → Ledger & Transactions page shown to the administrator:
+
+Explain exactly which backend endpoint/API/query supplies:
+
+- Invoice number
+- Receipt number
+- Student
+- DSID
+- Amount
+- Status
+- Payment date/time
+- Payment method
+- Payment ID
+- Order ID
+- Attempt number
+- Failure information
+- Cancellation information
+- Bank/acquirer details
+- Customer details
+- Refund details
+- Notes
+- Description
+
+Also tell me whether the Ledger UI is displaying:
+
+database-stored historical data
+
+or whether it is making a live Razorpay API call when the administrator opens a payment.
+
+---
+
+11. IMPORTANT: DO NOT CONFUSE INVOICE STATUS WITH PAYMENT ATTEMPT HISTORY
+
+I need you to explicitly explain the difference between:
+
+Invoice status
+
+and
+
+individual payment attempts
+
+For example:
+
+Invoice INV-00079
+Current status: PAID
+
+Payment history:
+Attempt #1 — Cancelled — 7:41:46 PM
+Attempt #2 — Failed — 7:38:05 PM
+Attempt #3 — Cancelled — 8:02:11 PM
+Attempt #4 — Captured — 8:10:33 PM
+
+Does the current application support this complete historical model?
+
+If not, explain exactly what is missing.
+
+---
+
+12. IMMUTABILITY / AUDIT REQUIREMENT
+
+Tell me whether a previous payment attempt can ever be overwritten.
+
+For example:
+
+If Attempt #2 was:
+
+"FAILED"
+
+and Attempt #4 later becomes:
+
+"CAPTURED"
+
+does Attempt #2 remain permanently preserved as "FAILED"?
+
+I need to know whether the current system is:
+
+append-only historical tracking
+
+or
+
+updating/reusing existing payment records.
+
+Show me the relevant code path proving your answer.
+
+---
+
+13. DUPLICATE / RETRY SCENARIOS
+
+Analyze these scenarios using the CURRENT implementation:
+
+Scenario A
+
+Cancelled → Cancelled → Paid
+
+Scenario B
+
+Failed → Failed → Paid
+
+Scenario C
+
+Failed → Cancelled → Failed → Paid
+
+Scenario D
+
+Student opens checkout twice in two browser windows.
+
+Scenario E
+
+Student refreshes the browser during checkout.
+
+Scenario F
+
+Payment succeeds at Razorpay but the webhook arrives late.
+
+Scenario G
+
+Payment succeeds but the browser closes before returning to our application.
+
+Scenario H
+
+Webhook is delivered more than once.
+
+For each scenario, explain exactly what the current system stores and what the Ledger displays.
+
+---
+
+14. "EVERY SINGLE DETAIL" INVENTORY
+
+Finally, I want you to produce a complete inventory of all payment information currently available anywhere in the system for an online Razorpay payment.
+
+Divide it into:
+
+A. Currently stored in our database
+
+B. Currently displayed in Ledger
+
+C. Currently displayed in Receipt
+
+D. Available from Razorpay but NOT stored by us
+
+E. Available from Razorpay but NOT displayed
+
+F. Available only during frontend checkout and currently discarded
+
+G. Information that is fundamentally unavailable after the event
+
+For every item, explain exactly where it comes from.
+
+---
+
+15. DO NOT IMPLEMENT ANYTHING YET
+
+This is an AUDIT ONLY request.
+
+Do NOT:
+
+- Modify database schema
+- Add columns
+- Add tables
+- Change APIs
+- Change webhook behavior
+- Change UI
+- Change payment logic
+- Change Razorpay integration
+- Run migrations
+- Delete existing data
+
+First give me the complete technical findings.
+
+FINAL OUTPUT I WANT FROM YOU
+
+Give me a structured report with:
+
+1. Current payment architecture
+2. Database tables/models involved
+3. Complete payment lifecycle
+4. How each attempt is currently stored
+5. How Cancelled attempts are stored
+6. How Failed attempts are stored
+7. How Successful/Captured attempts are stored
+8. All Razorpay webhook events currently handled
+9. Exact source of every field
+10. What Ledger currently fetches
+11. What Receipt currently fetches
+12. What information is currently missing/lost
+13. Whether multiple attempts are truly immutable and preserved
+14. Example representation of INV-00079 with multiple attempts
+15. A complete "stored vs available vs displayed vs discarded" matrix
+16. Any current data-integrity or auditability gaps
+
+Be extremely precise.
+
+Do not tell me what you recommend yet.
+
+I first want to understand exactly what the application is doing TODAY, down to the smallest payment-detail level, before we make any changes.
