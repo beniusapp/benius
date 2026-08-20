@@ -1,0 +1,642 @@
+Offline Payment — Complete Payment Method Details & Audit Requirements
+
+I want you to review and improve the Record Offline Payment → Ledger & Transactions → Student/Invoice Payment Details flow.
+
+This is specifically for offline payments recorded by the school:
+
+- Cash
+- Bank Transfer
+- Demand Draft
+- Cheque
+- UPI / QR
+
+1. Main Requirement
+
+Currently, when I expand a paid invoice in Fees & Payments → Ledger & Transactions, the payment details are too generic.
+
+For example, it currently shows something like:
+
+- Method: DemandDraft
+- Reference: Dddd
+- Receipt No.: OF44
+- Notes: S...
+
+This is NOT enough for a proper school accounting and audit system.
+
+I want the system to preserve every meaningful detail that was captured when the offline payment was recorded.
+
+The payment method must determine which fields are displayed and stored.
+
+Do NOT simply store everything as a generic "reference" or "notes" field.
+
+The data must be structured and method-specific.
+
+---
+
+2. Cash Payment
+
+When the administrator selects:
+
+Offline → Cash
+
+the system should capture the complete cash information.
+
+Required/appropriate fields
+
+- Total Amount
+- Cash Received Date
+- Cash Received Time
+- Cash denomination breakdown
+- Total number of notes/coins by denomination
+- Calculated denomination total
+- Received By / Recorded By
+- Cash Counter / Collection Location, if applicable
+- Notes
+- Receipt Number
+- Invoice Number
+- Student
+- DSID
+- Fee Record ID
+- Academic Session
+
+Cash denomination example
+
+If the payment is ₹1,600, the administrator should be able to enter something like:
+
+- ₹500 × 2 = ₹1,000
+- ₹200 × 2 = ₹400
+- ₹100 × 2 = ₹200
+- Total = ₹1,600
+
+The system must automatically calculate the denomination total.
+
+It must validate:
+
+Denomination Total = Payment Amount
+
+Do not allow the payment to be finalized if the denomination total does not match the actual payment amount, unless there is an explicitly designed over/short handling mechanism.
+
+The saved payment record must preserve the denomination breakdown permanently.
+
+When viewing the payment later, show the denomination details clearly.
+
+Example:
+
+Cash Breakdown
+
+- ₹500 × 2 = ₹1,000
+- ₹200 × 2 = ₹400
+- ₹100 × 2 = ₹200
+- Total Cash: ₹1,600
+
+---
+
+3. Bank Transfer
+
+When the administrator selects:
+
+Offline → Bank Transfer
+
+capture the relevant banking transaction information.
+
+Fields
+
+- Amount
+- Transfer Date
+- Transfer Time, where available
+- Bank Name
+- Bank Branch
+- Account holder / payer name
+- UTR Number
+- Transaction Reference Number
+- Bank Transaction ID
+- Transfer Mode, if known
+  - NEFT
+  - RTGS
+  - IMPS
+  - Other
+- Payer Bank
+- Receiving Bank / School Bank Account
+- Instrument/reference date
+- Notes
+- Recorded By
+- Receipt Number
+- Invoice Number
+- Student
+- DSID
+- Academic Session
+
+The UTR/reference number should be stored as a dedicated field, not hidden inside Notes.
+
+---
+
+4. Demand Draft
+
+When the administrator selects:
+
+Offline → Demand Draft
+
+capture complete DD information.
+
+Fields
+
+- Amount
+- DD Number
+- DD Date
+- DD Issuing Bank
+- Issuing Branch
+- Payer / Applicant Name
+- Payee Name
+- DD Location / Payable At
+- DD Status, if the system tracks it
+- Date Received by School
+- Date Deposited, if applicable
+- Deposited Bank
+- Deposit Reference / Transaction Reference, if applicable
+- Notes
+- Recorded By
+- Receipt Number
+- Invoice Number
+- Student
+- DSID
+- Academic Session
+
+The DD Number must be a dedicated field.
+
+Do not use a generic "reference" field for this.
+
+---
+
+5. Cheque
+
+When the administrator selects:
+
+Offline → Cheque
+
+capture complete cheque information.
+
+Fields
+
+- Amount
+- Cheque Number
+- Cheque Date
+- Bank Name
+- Branch Name
+- Account Holder / Drawer Name
+- Payee Name
+- Date Received
+- Date Deposited
+- Deposited Bank
+- Deposit Reference / Transaction Reference
+- Cheque Status, if supported:
+  - Received
+  - Deposited
+  - Cleared
+  - Bounced
+  - Cancelled
+- Bounce Date, if applicable
+- Bounce Reason, if applicable
+- Notes
+- Recorded By
+- Receipt Number
+- Invoice Number
+- Student
+- DSID
+- Academic Session
+
+The Cheque Number must be a dedicated field.
+
+Do not store it only in Reference or Notes.
+
+---
+
+6. UPI / QR
+
+When the administrator selects:
+
+Offline → UPI / QR
+
+capture complete UPI transaction information.
+
+Fields
+
+- Amount
+- Transaction Date
+- Transaction Time
+- UPI Transaction ID / UTR
+- UPI Reference Number
+- Payer Name
+- Payer UPI ID / VPA, where available
+- Receiver UPI ID / VPA
+- QR / UPI Collection Account used
+- Bank / PSP, where available
+- Transaction Status
+- Notes
+- Recorded By
+- Receipt Number
+- Invoice Number
+- Student
+- DSID
+- Academic Session
+
+The UPI transaction ID/reference must be stored separately.
+
+Do not simply save it as a generic reference.
+
+---
+
+7. Common Audit Information
+
+Regardless of the payment method, every offline payment must maintain a common audit layer.
+
+At minimum preserve:
+
+- Payment method
+- Payment amount
+- Invoice Number
+- Receipt Number
+- Fee Record ID
+- Student Name
+- Student ID / DSID
+- Academic Session
+- Fee Name
+- Fee Type
+- Payment Date
+- Payment Time
+- Recorded By
+- Recorded By User ID
+- Created At
+- Updated At
+- Payment Status
+- Notes
+- Complete method-specific payment information
+
+The system must preserve the original recorded information.
+
+Do not overwrite historical payment details when the UI is edited.
+
+If an important payment detail is corrected later, maintain an audit trail showing:
+
+- Old value
+- New value
+- Changed by
+- Changed at
+- Reason for change, where appropriate
+
+---
+
+8. Ledger & Transactions — Payment Details
+
+When I expand a student/invoice in:
+
+Fees & Payments → Ledger & Transactions
+
+the Payment Details section should show the actual payment method and its complete details.
+
+Do NOT show only:
+
+«Method: Offline»
+
+Instead show:
+
+«Payment Method: Offline (Cash)»
+
+or
+
+«Payment Method: Offline (Bank Transfer)»
+
+or
+
+«Payment Method: Offline (Demand Draft)»
+
+or
+
+«Payment Method: Offline (Cheque)»
+
+or
+
+«Payment Method: Offline (UPI / QR)»
+
+Then display the corresponding method-specific information underneath.
+
+---
+
+9. Example — Demand Draft
+
+Instead of:
+
+Payment: ₹1,000
+Method: DemandDraft
+Reference: Dddd
+Receipt No.: OF44
+
+I want something closer to:
+
+Payment ₹1,000
+
+Payment Method
+Offline (Demand Draft)
+
+Demand Draft Details
+
+- DD Number: XXXXXXXX
+- DD Date: 20 Aug 2026
+- Issuing Bank: State Bank of India
+- Issuing Branch: Kolkata
+- Applicant Name: John Doe
+- Payee Name: Mary Immaculate School
+- Payable At: Kolkata
+- Date Received: 20 Aug 2026
+- Date Deposited: 21 Aug 2026
+- Deposit Bank: State Bank of India
+- Deposit Reference: XXXXXXXX
+
+Accounting
+
+- Invoice No.: INV-0094
+- Receipt No.: OF44
+- Amount: ₹1,000
+- Recorded By: Principal/Admin
+- Recorded At: 20 Aug 2026, 08:31 PM IST
+
+---
+
+10. Example — Cash
+
+Show:
+
+Payment Method
+Offline (Cash)
+
+Cash Details
+
+- Amount: ₹1,600
+- Received Date: 20 Aug 2026
+- Received Time: 08:31 PM IST
+
+Cash Breakdown
+
+- ₹500 × 2 = ₹1,000
+- ₹200 × 2 = ₹400
+- ₹100 × 2 = ₹200
+- Total = ₹1,600
+
+Accounting
+
+- Invoice No.: INV-0092
+- Receipt No.: OF42
+- Recorded By: Principal
+- Recorded At: 20 Aug 2026, 08:31 PM IST
+
+---
+
+11. Example — Cheque
+
+Show:
+
+Payment Method
+Offline (Cheque)
+
+Cheque Details
+
+- Cheque Number: 123456
+- Cheque Date: 20 Aug 2026
+- Bank: HDFC Bank
+- Branch: Kolkata
+- Drawer Name: John Doe
+- Amount: ₹2,700
+- Date Received: 20 Aug 2026
+- Date Deposited: 21 Aug 2026
+- Status: Cleared
+
+Then show the common invoice/receipt/audit information.
+
+---
+
+12. Example — Bank Transfer
+
+Show:
+
+Payment Method
+Offline (Bank Transfer)
+
+Bank Transfer Details
+
+- Amount: ₹12,000
+- Transfer Mode: NEFT
+- UTR Number: XXXXXXXX
+- Transaction Reference: XXXXXXXX
+- Transfer Date: 20 Aug 2026
+- Payer Name: John Doe
+- Payer Bank: HDFC Bank
+- Receiving Bank: SBI
+- Notes: Quarterly fee payment
+
+Then show invoice, receipt and audit information.
+
+---
+
+13. Example — UPI / QR
+
+Show:
+
+Payment Method
+Offline (UPI / QR)
+
+UPI Details
+
+- Amount: ₹600
+- UPI Transaction ID: XXXXXXXX
+- UPI Reference Number: XXXXXXXX
+- Payer Name: John Doe
+- Payer UPI ID: example@upi
+- Receiver UPI ID: school@upi
+- Transaction Date: 20 Aug 2026
+- Transaction Time: 08:31 PM IST
+- Status: Successful
+
+Then show invoice, receipt and audit information.
+
+---
+
+14. Database Requirement
+
+Before changing the UI, inspect the current database/schema and determine exactly where offline payment information is currently stored.
+
+Do not create duplicate or conflicting fields unnecessarily.
+
+If the current schema uses generic fields such as:
+
+- method
+- reference
+- notes
+
+retain them where appropriate for compatibility, but introduce a properly structured representation for method-specific details.
+
+Use a clean structure such as a dedicated offline-payment details object/table rather than putting all information into one JSON/string field if the existing architecture supports normalized fields.
+
+The final architecture must support:
+
+paymentMethod = offline
+
+offlinePaymentMethod =
+  cash
+  bank_transfer
+  demand_draft
+  cheque
+  upi_qr
+
+Then method-specific data should be stored in structured fields.
+
+Do not break existing online Razorpay payment records.
+
+Online Razorpay payments and offline payments must remain clearly distinguishable.
+
+---
+
+15. Data Integrity
+
+This is extremely important.
+
+The information displayed in Ledger & Transactions must come from the persisted payment record, not from temporary frontend state.
+
+Refreshing the page must not lose anything.
+
+Opening the same invoice later must show the exact same payment information.
+
+The receipt must also use the persisted payment information.
+
+Do not fabricate missing values.
+
+If a field was genuinely not provided, display "Not provided" or "—" rather than inventing a value.
+
+---
+
+16. Payment Receipt
+
+Review the offline payment receipt as well.
+
+The receipt should show the appropriate payment method:
+
+- Offline (Cash)
+- Offline (Bank Transfer)
+- Offline (Demand Draft)
+- Offline (Cheque)
+- Offline (UPI / QR)
+
+For method-specific receipts, show the relevant identifying information.
+
+For example:
+
+Demand Draft
+DD Number, DD Date, Issuing Bank, etc.
+
+Cheque
+Cheque Number, Cheque Date, Bank, etc.
+
+Bank Transfer
+UTR / Transaction Reference, Transfer Date, Bank, etc.
+
+UPI / QR
+UPI Transaction ID / Reference, Transaction Date, etc.
+
+Cash
+Cash received information and denomination breakdown where appropriate.
+
+Do not overload the receipt with irrelevant fields. Show only the fields relevant to that payment method.
+
+---
+
+17. Attachment / Proof Support
+
+Please inspect whether the existing architecture supports uploading supporting evidence for offline payments.
+
+If appropriate, allow an authorized administrator to attach supporting proof such as:
+
+- Cheque image
+- Demand Draft image
+- Bank transfer proof
+- UPI payment screenshot
+
+The attachment must be associated with the specific payment record, not merely the student.
+
+Do not make this mandatory unless the existing business rules require it.
+
+---
+
+18. Security & Audit
+
+Only authorized administrative users should be able to view or modify sensitive offline-payment information.
+
+Never expose unnecessary bank/account information to students or unauthorized users.
+
+Payment records must remain tenant/school scoped.
+
+A payment belonging to School A must never appear in School B.
+
+---
+
+19. Important: Do Not Break Existing Payment Architecture
+
+Before implementation:
+
+1. Inspect the current offline payment schema.
+2. Inspect the Record Offline Payment modal.
+3. Inspect the API used to record offline payments.
+4. Inspect the Ledger & Transactions payment-details component.
+5. Inspect the receipt generation code.
+6. Inspect existing tests.
+7. Identify exactly what information is currently captured.
+8. Identify what information is currently being discarded or only stored generically.
+
+Then implement the improvement.
+
+Do NOT modify the Razorpay online payment verification, webhook, capture, refund, or online payment-history logic unless absolutely necessary for compatibility.
+
+Do NOT change:
+
+- Fee calculation
+- Invoice numbering
+- Receipt numbering
+- Academic-session logic
+- Online Razorpay lifecycle
+- Existing payment-attempt audit logic
+
+unless a schema compatibility change is genuinely required.
+
+---
+
+20. Final Goal
+
+The goal is simple:
+
+When an administrator records an offline payment, every important piece of information about that actual transaction must be captured, structured, persisted, auditable, and later visible from the Ledger & Transactions payment details.
+
+I do not want a generic:
+
+«Method: Offline
+Reference: XXXXX
+Notes: XXXXX»
+
+I want a professional school ERP accounting record where the system can answer:
+
+What payment method was used? Who paid? How much? When? Which bank? Which cheque/DD/UTR/UPI transaction? Which denominations for cash? Who recorded it? Which invoice? Which receipt? When was it deposited/cleared where applicable? What supporting proof exists?
+
+That level of detail is what I want.
+
+First audit the current implementation and provide a concise gap analysis of:
+
+Currently Captured → Currently Stored → Currently Displayed → Missing
+
+Then implement the required changes carefully.
+
+After implementation, run the relevant type checks and tests and report:
+
+- Files changed
+- Database/schema changes
+- New fields added
+- UI changes
+- Validation added
+- Audit/security considerations
+- Tests passed
+- Any fields that cannot be captured because the underlying payment method/provider genuinely does not provide them
