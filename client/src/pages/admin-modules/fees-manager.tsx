@@ -405,6 +405,13 @@ interface TransactionDetail {
     deliveryCount: number;
     payload: unknown;
   }>;
+  webhookProcessingEvents: Array<{
+    id: number;
+    webhookDeliveryId: number;
+    status: string;
+    error: string | null;
+    createdAt: string;
+  }>;
   student: {
     name: string;
     digitalStudentId: string;
@@ -538,6 +545,12 @@ function PaymentAttemptTimeline({ detail }: { detail: TransactionDetail }) {
                   {event.providerOccurredAt ? ` · provider time ${fmtDateTime(event.providerOccurredAt)}` : ""}
                 </div>
                 {event.payload != null && <pre className="mt-2 max-h-44 overflow-auto rounded bg-black/30 p-2 text-[10px] text-cyan-100/75">{JSON.stringify(event.payload, null, 2)}</pre>}
+                {(detail.webhookProcessingEvents ?? []).filter(processing => processing.webhookDeliveryId === event.id).map(processing => (
+                  <div key={processing.id} className="mt-1 border-t border-white/10 pt-1 text-[10px] text-amber-200/70">
+                    Processing {processing.status} · {fmtDateTime(processing.createdAt)}
+                    {processing.error ? ` · ${processing.error}` : ""}
+                  </div>
+                ))}
               </details>
             ))}
           </div>

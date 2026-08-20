@@ -3762,6 +3762,19 @@ export function registerFeesRoutes(app: Express) {
           ))
         ORDER BY pwe.received_at ASC, pwe.id ASC
       `)).rows as any[];
+      const webhookProcessingRows = (await db.execute(sql`
+        SELECT ppe.id, ppe.webhook_delivery_id, ppe.status, ppe.error, ppe.created_at
+        FROM payment_webhook_processing_events ppe
+        JOIN payment_webhook_events pwe ON pwe.id = ppe.webhook_delivery_id
+        WHERE pwe.school_id = ${schoolId}
+          AND (pwe.fee_record_id = ${feeRecordId} OR EXISTS (
+            SELECT 1 FROM payment_attempts linked_pa
+            WHERE linked_pa.school_id = pwe.school_id AND linked_pa.fee_record_id = ${feeRecordId}
+              AND ((pwe.razorpay_payment_id IS NOT NULL AND linked_pa.razorpay_payment_id = pwe.razorpay_payment_id)
+                OR (pwe.razorpay_order_id IS NOT NULL AND linked_pa.razorpay_order_id = pwe.razorpay_order_id))
+          ))
+        ORDER BY ppe.created_at ASC, ppe.id ASC
+      `)).rows as any[];
       const paymentAttempts = attemptRows.map((attempt: any) => ({
         id: attempt.id,
         attemptNumber: attempt.attempt_number ?? null,
@@ -3865,6 +3878,10 @@ export function registerFeesRoutes(app: Express) {
           processingError: event.processing_error ?? null, receivedAt: event.received_at,
           lastReceivedAt: event.last_received_at, processedAt: event.processed_at ?? null,
           deliveryCount: Number(event.delivery_count ?? 1), payload: event.payload ?? null,
+        })),
+        webhookProcessingEvents: webhookProcessingRows.map((event: any) => ({
+          id: event.id, webhookDeliveryId: event.webhook_delivery_id, status: event.status,
+          error: event.error ?? null, createdAt: event.created_at,
         })),
         payment: payRows.length > 0 ? mapPayment(payRows[0]) : null,
         student: {
