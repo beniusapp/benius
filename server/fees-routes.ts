@@ -9,7 +9,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import Razorpay from "razorpay";
 import { broadcastPaymentUpdate } from "./sse";
-import { fetchRazorpayData, mapRazorpayPayment, upsertPaymentAttempt, updatePaymentAttemptRefund } from "./rzp-enrichment";
+import { fetchRazorpayData, mapRazorpayPayment, upsertPaymentAttempt } from "./rzp-enrichment";
 import {
   appendPaymentAttemptEvent,
   recordWebhookDelivery,
@@ -39,6 +39,16 @@ import {
 import { formatPersistedDateTimeIST } from "./persisted-date-time";
 import { renderInvoiceDocument } from "./invoice-document";
 import { formatDateOnly, todayInIST } from "@shared/ist-time";
+import {
+  getRefundEligibility,
+  markRefundReconciliationRequired,
+  markRefundProviderFailure,
+  recordRefundApiSubmission,
+  reconcileRefundWebhook,
+  REFUND_REASON_CODES,
+  reserveRefundRequest,
+  type RefundReasonCode,
+} from "./refund-service";
 
 // ── Signature background removal ─────────────────────────────────────────────
 // Converts white/light-grey background to transparency.
@@ -425,6 +435,18 @@ export function registerFeesRoutes(app: Express) {
     }
     if (!req.session.schoolId) {
       res.status(403).json({ message: "No school in session" });
+      return false;
+    }
+    return true;
+  }
+
+  async function refundGuard(req: any, res: any): Promise<boolean> {
+    if (!adminGuard(req, res)) return false;
+    const [user] = await db.select({ canRefund: users.canRefund, schoolId: users.schoolId })
+      .from(users)
+      .where(and(eq(users.id, req.session.userId), eq(users.schoolId, req.session.schoolId)));
+    if (!user?.canRefund) {
+      res.status(403).json({ message: "You do not have permission to initiate refunds." });
       return false;
     }
     return true;
@@ -2706,20 +2728,25 @@ export function registerFeesRoutes(app: Express) {
             ${rfDesc}, ${now.toISOString()}
           )
         `);
-        // Update payment_attempts with refund data
+        // The immutable refund ledger performs provider-ID-first reconciliation
+        // and the net-paid invoice projection. payment_attempts remains a
+        // compatibility projection/timeline and never becomes the refund
+        // financial authority.
+        const reconciledRefund = await reconcileRefundWebhook({
+          schoolId,
+          refund,
+          eventType: event.event,
+          webhookDeliveryId,
+          fallbackFeeRecordId: rfFeeRecordId,
+          fallbackStudentId: rfStudentId,
+          fallbackSessionId: rfSessionId,
+        });
+        if (reconciledRefund.feeRecordId != null) {
+          rfFeeRecordId = reconciledRefund.feeRecordId;
+          rfResolution = "payment_id";
+        }
         if ((refPmtId || refOrderId) && refund.id) {
           const rfOutcome  = event.event === "refund.processed" ? "refunded" : "captured";
-          const rfStatus   = event.event === "refund.created"   ? "initiated"
-                           : event.event === "refund.processed" ? "processed"
-                           : event.event === "refund.failed"    ? "failed"
-                                                                : "updated";
-          if (refPmtId) void updatePaymentAttemptRefund(
-            schoolId, refPmtId, refund.id, rfStatus,
-            refund.amount != null ? Number(refund.amount) : null,
-            now,
-            event.event === "refund.processed" ? now : null,
-            rfOutcome,
-          ).catch(err => console.warn("[webhook] updatePaymentAttemptRefund error:", err));
           await appendPaymentAttemptEvent({
             schoolId, feeRecordId: rfFeeRecordId, studentId: rfStudentId, sessionId: rfSessionId,
             eventType: rfAction, outcome: rfOutcome, source: "webhook",
@@ -3690,6 +3717,85 @@ export function registerFeesRoutes(app: Express) {
   });
 
   // ── Transaction Detail — JSON (for accordion in Ledger) ─────────────────
+  app.get("/api/admin/fees/payments/:paymentId/refund-eligibility", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const paymentRecordId = Number(req.params.paymentId);
+    if (!Number.isInteger(paymentRecordId)) return res.status(400).json({ message: "Invalid payment ID." });
+    try {
+      const eligibility = await getRefundEligibility(req.session.schoolId!, paymentRecordId);
+      if (!eligibility) return res.status(404).json({ message: "Payment record not found." });
+      const [user] = await db.select({ canRefund: users.canRefund }).from(users)
+        .where(and(eq(users.id, req.session.userId!), eq(users.schoolId, req.session.schoolId!)));
+      res.json({ ...eligibility, canInitiateRefund: Boolean(user?.canRefund), reasonCodes: REFUND_REASON_CODES });
+    } catch (err) {
+      console.error("[refund eligibility]", err);
+      res.status(500).json({ message: "Unable to calculate refund eligibility." });
+    }
+  });
+
+  app.post("/api/admin/fees/payments/:paymentId/refunds", async (req, res) => {
+    if (!await refundGuard(req, res)) return;
+    const paymentRecordId = Number(req.params.paymentId);
+    const amountPaise = Number(req.body?.amountPaise);
+    const reasonCode = req.body?.reasonCode as RefundReasonCode;
+    const reasonText = typeof req.body?.reasonText === "string" ? req.body.reasonText.trim().slice(0, 500) : null;
+    const internalNote = typeof req.body?.internalNote === "string" ? req.body.internalNote.trim().slice(0, 2000) : null;
+    const idempotencyKey = String(req.headers["x-idempotency-key"] ?? req.body?.idempotencyKey ?? "");
+    if (!Number.isInteger(paymentRecordId) || !Number.isSafeInteger(amountPaise) || amountPaise <= 0) {
+      return res.status(400).json({ message: "A valid payment and whole-paise refund amount are required." });
+    }
+    if (!/^[A-Za-z0-9:_-]{16,120}$/.test(idempotencyKey)) {
+      return res.status(400).json({ message: "A valid idempotency key is required." });
+    }
+    try {
+      const forwarded = req.headers["x-forwarded-for"] as string | undefined;
+      const reservation = await reserveRefundRequest({
+        schoolId: req.session.schoolId!, paymentRecordId, amountPaise, reasonCode, reasonText, internalNote,
+        idempotencyKey, requestedBy: req.session.userId!,
+        requesterIp: forwarded?.split(",")[0]?.trim() ?? req.socket?.remoteAddress ?? null,
+      });
+      if (reservation.idempotent) return res.json({ refund: reservation.refund, summary: reservation.summary, idempotent: true });
+
+      const creds = await resolveRazorpayCredentials(req.session.schoolId!);
+      if (!creds?.keySecret || !creds.enabled) {
+        await markRefundReconciliationRequired(req.session.schoolId!, Number(reservation.refund.id), new Error("Razorpay is not configured for this school."));
+        return res.status(503).json({ message: "Refund is reserved but requires reconciliation because Razorpay is not configured.", refundId: reservation.refund.id });
+      }
+      try {
+        const razorpay = new Razorpay({ key_id: creds.keyId, key_secret: creds.keySecret });
+        // No student, invoice, or other correlation values are sent in provider
+        // notes. The Razorpay payment ID and local immutable event trail are the
+        // correlation authority.
+        const providerRefund = await (razorpay.payments as any).refund(reservation.context.razorpayPaymentId, {
+          amount: amountPaise,
+          speed: "normal",
+        });
+        const refund = await recordRefundApiSubmission(req.session.schoolId!, Number(reservation.refund.id), providerRefund);
+        await appendAudit(req, req.session.schoolId!, "refund_requested", "payment_record", paymentRecordId,
+          `Razorpay refund requested: ₹${(amountPaise / 100).toFixed(2)} (${reasonCode}).`, reservation.context.studentId);
+        return res.status(201).json({ refund, summary: reservation.summary, providerAcknowledged: true });
+      } catch (providerError: any) {
+        const ambiguous = ["ECONNABORTED", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN"].includes(String(providerError?.code ?? ""))
+          || !providerError?.response;
+        if (ambiguous) await markRefundReconciliationRequired(req.session.schoolId!, Number(reservation.refund.id), providerError);
+        else await markRefundProviderFailure(req.session.schoolId!, Number(reservation.refund.id), providerError);
+        console.error("[refund create] provider request did not complete safely", providerError);
+        return res.status(ambiguous ? 202 : 502).json({
+          message: ambiguous
+            ? "Refund request outcome is being reconciled. Do not submit it again."
+            : "Razorpay rejected the refund request; it is retained for reconciliation.",
+          refundId: reservation.refund.id,
+          reconciliationRequired: true,
+        });
+      }
+    } catch (err: any) {
+      const message = err?.message ?? "Unable to create refund request.";
+      const status = /not found/i.test(message) ? 404 : /captured|refundable|exceeds|amount|reason/i.test(message) ? 409 : 500;
+      console.error("[refund create]", err);
+      res.status(status).json({ message });
+    }
+  });
+
   app.get("/api/admin/fees/:id/transaction-detail", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
@@ -3761,6 +3867,20 @@ export function registerFeesRoutes(app: Express) {
             WHERE fee_record_id = ${feeRecordId} AND school_id = ${schoolId}
           )
         ORDER BY r.created_at DESC
+      `)).rows as any[];
+      const refundRows = (await db.execute(sql`
+        SELECT r.*,
+          u.email AS requested_by_name
+        FROM refunds r
+        LEFT JOIN users u ON u.id = r.requested_by
+        WHERE r.school_id = ${schoolId} AND r.fee_record_id = ${feeRecordId}
+        ORDER BY r.requested_at DESC, r.id DESC
+      `)).rows as any[];
+      const refundEventRows = (await db.execute(sql`
+        SELECT re.*
+        FROM refund_events re
+        WHERE re.school_id = ${schoolId} AND re.fee_record_id = ${feeRecordId}
+        ORDER BY COALESCE(re.occurred_at, re.recorded_at) ASC, re.id ASC
       `)).rows as any[];
       // Admin-only forensic timeline. Every lookup is scoped through the
       // already tenant-validated fee record; students never receive payloads.
@@ -3874,6 +3994,10 @@ export function registerFeesRoutes(app: Express) {
             newValues: revision.new_values ?? {},
           })),
       });
+      const processedRefundedPaise = refundRows
+        .filter((refund: any) => refund.local_status === "processed")
+        .reduce((sum: number, refund: any) => sum + Number(refund.processed_amount_paise ?? refund.requested_amount_paise ?? 0), 0);
+      const grossCapturedPaise = payRows.reduce((sum: number, payment: any) => sum + Math.round(Number(payment.amount ?? 0) * 100), 0);
 
       res.json({
         feeRecord: {
@@ -3901,6 +4025,31 @@ export function registerFeesRoutes(app: Express) {
           breakdown: Array.isArray(feeRow.breakdown_snapshot) ? feeRow.breakdown_snapshot : [],
         },
         payments: payRows.map(mapPayment),
+        refundSummary: {
+          grossCapturedPaise,
+          processedRefundedPaise,
+          netRetainedPaise: Math.max(grossCapturedPaise - processedRefundedPaise, 0),
+          remainingRefundablePaise: Math.max(grossCapturedPaise - processedRefundedPaise - refundRows
+            .filter((refund: any) => ["requested", "pending", "created", "reconciliation_required"].includes(refund.local_status))
+            .reduce((sum: number, refund: any) => sum + Number(refund.requested_amount_paise ?? 0), 0), 0),
+        },
+        refunds: refundRows.map((refund: any) => ({
+          id: refund.id, paymentRecordId: refund.payment_record_id, razorpayRefundId: refund.razorpay_refund_id ?? null,
+          razorpayPaymentId: refund.razorpay_payment_id, requestedAmountPaise: Number(refund.requested_amount_paise),
+          processedAmountPaise: refund.processed_amount_paise == null ? null : Number(refund.processed_amount_paise),
+          currency: refund.currency ?? "INR", reasonCode: refund.reason_code ?? null, reasonText: refund.reason_text ?? null,
+          internalNote: refund.internal_note ?? null, localStatus: refund.local_status, providerStatus: refund.provider_status ?? null,
+          origin: refund.origin, requestedAt: refund.requested_at, providerCreatedAt: refund.provider_created_at ?? null,
+          providerProcessedAt: refund.provider_processed_at ?? null, failureCode: refund.failure_code ?? null,
+          failureMessage: refund.failure_message ?? null, requestedByName: refund.requested_by_name ?? null,
+          events: refundEventRows.filter((event: any) => Number(event.refund_id) === Number(refund.id)).map((event: any) => ({
+            id: event.id, eventType: event.event_type, localStatus: event.local_status ?? null,
+            providerStatus: event.provider_status ?? null, amountPaise: event.amount_paise == null ? null : Number(event.amount_paise),
+            source: event.source, razorpayRefundId: event.razorpay_refund_id ?? null,
+            occurredAt: event.occurred_at ?? null, providerOccurredAt: event.provider_occurred_at ?? null,
+            recordedAt: event.recorded_at,
+          })),
+        })),
         paymentAttempts,
         webhookEvents: webhookRows.map((event: any) => ({
           id: event.id, providerEventId: event.provider_event_id, eventType: event.event_type,

@@ -112,6 +112,9 @@ export class DatabaseStorage {
         email,
         passwordHash,
         role: "admin",
+        // The creator is the initial explicitly authorised financial admin.
+        // Later administrators are not automatically granted refund power.
+        canRefund: true,
         schoolId: school.id,
       });
       return school;

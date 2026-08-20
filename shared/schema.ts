@@ -91,6 +91,9 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull().default("admin"),
+  // Financial actions are deliberately opt-in.  A school may have several
+  // administrators, but only explicitly authorised users can initiate refunds.
+  canRefund: boolean("can_refund").notNull().default(false),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
   isActive: boolean("is_active").notNull().default(true),
   pinHash: text("pin_hash"),
@@ -1125,6 +1128,77 @@ export const paymentRecords = pgTable("payment_records", {
 export const insertPaymentRecordSchema = createInsertSchema(paymentRecords).omit({ id: true, createdAt: true });
 export type InsertPaymentRecord = z.infer<typeof insertPaymentRecordSchema>;
 export type PaymentRecord = typeof paymentRecords.$inferSelect;
+
+/**
+ * One immutable financial refund request/provider refund per row.  This is
+ * intentionally separate from payment_records: a refund never rewrites the
+ * original captured payment, its receipt, or its amount.
+ */
+export const refunds = pgTable("refunds", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id"),
+  studentId: integer("student_id").references(() => students.id, { onDelete: "set null" }),
+  feeRecordId: integer("fee_record_id").references(() => feeRecords.id, { onDelete: "set null" }),
+  paymentRecordId: integer("payment_record_id").references(() => paymentRecords.id, { onDelete: "restrict" }),
+  paymentAttemptId: integer("payment_attempt_id"),
+  razorpayPaymentId: varchar("razorpay_payment_id", { length: 100 }).notNull(),
+  razorpayOrderId: varchar("razorpay_order_id", { length: 100 }),
+  razorpayRefundId: varchar("razorpay_refund_id", { length: 100 }),
+  requestedAmountPaise: integer("requested_amount_paise").notNull(),
+  processedAmountPaise: integer("processed_amount_paise"),
+  currency: varchar("currency", { length: 10 }).notNull().default("INR"),
+  reasonCode: varchar("reason_code", { length: 60 }),
+  reasonText: text("reason_text"),
+  internalNote: text("internal_note"),
+  origin: varchar("origin", { length: 20 }).notNull().default("admin"),
+  localStatus: varchar("local_status", { length: 40 }).notNull().default("requested"),
+  providerStatus: varchar("provider_status", { length: 40 }),
+  idempotencyKey: varchar("idempotency_key", { length: 120 }).notNull(),
+  requestedBy: integer("requested_by").references(() => users.id, { onDelete: "set null" }),
+  requesterIp: text("requester_ip"),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  providerCreatedAt: timestamp("provider_created_at", { withTimezone: true }),
+  providerProcessedAt: timestamp("provider_processed_at", { withTimezone: true }),
+  lastReconciledAt: timestamp("last_reconciled_at", { withTimezone: true }),
+  failureCode: varchar("failure_code", { length: 100 }),
+  failureMessage: text("failure_message"),
+  providerPayload: jsonb("provider_payload"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("refunds_school_idempotency_uniq").on(table.schoolId, table.idempotencyKey),
+  uniqueIndex("refunds_school_provider_refund_uniq").on(table.schoolId, table.razorpayRefundId),
+]);
+export type Refund = typeof refunds.$inferSelect;
+
+/** Append-only, reconstructable refund lifecycle events. */
+export const refundEvents = pgTable("refund_events", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  refundId: integer("refund_id").notNull().references(() => refunds.id, { onDelete: "cascade" }),
+  feeRecordId: integer("fee_record_id"),
+  paymentRecordId: integer("payment_record_id"),
+  paymentAttemptId: integer("payment_attempt_id"),
+  eventType: varchar("event_type", { length: 80 }).notNull(),
+  localStatus: varchar("local_status", { length: 40 }),
+  providerStatus: varchar("provider_status", { length: 40 }),
+  razorpayPaymentId: varchar("razorpay_payment_id", { length: 100 }),
+  razorpayOrderId: varchar("razorpay_order_id", { length: 100 }),
+  razorpayRefundId: varchar("razorpay_refund_id", { length: 100 }),
+  amountPaise: integer("amount_paise"),
+  currency: varchar("currency", { length: 10 }).notNull().default("INR"),
+  source: varchar("source", { length: 20 }).notNull(),
+  webhookDeliveryId: integer("webhook_delivery_id"),
+  correlationKey: varchar("correlation_key", { length: 200 }).notNull(),
+  payload: jsonb("payload"),
+  providerOccurredAt: timestamp("provider_occurred_at", { withTimezone: true }),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }),
+  recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("refund_events_school_correlation_uniq").on(table.schoolId, table.correlationKey),
+]);
+export type RefundEvent = typeof refundEvents.$inferSelect;
 
 /**
  * Method-specific offline accounting data intentionally lives beside the

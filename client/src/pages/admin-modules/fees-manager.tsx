@@ -12,7 +12,7 @@ import {
   Receipt, DollarSign, TrendingUp, TrendingDown, Banknote, Wallet, BookOpen, Bell, ExternalLink,
   Shield, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Lock, X, Printer, History, Download, FileText,
   FileCheck2, Building2, QrCode, Monitor, MessageSquare, Mail, Send, Eye, EyeOff, Zap, Phone, BarChart2, Calendar, Users,
-  PenLine, Upload,
+  PenLine, Upload, Undo2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -354,6 +354,19 @@ interface TransactionDetail {
   };
   payments: PaymentRecord[];
   payment: PaymentRecord | null;
+  refundSummary?: {
+    grossCapturedPaise: number;
+    processedRefundedPaise: number;
+    netRetainedPaise: number;
+    remainingRefundablePaise: number;
+  };
+  refunds?: Array<{
+    id: number; paymentRecordId: number; razorpayRefundId: string | null;
+    requestedAmountPaise: number; processedAmountPaise: number | null; currency: string;
+    reasonCode: string | null; reasonText: string | null; localStatus: string;
+    providerStatus: string | null; requestedAt: string; providerProcessedAt: string | null;
+    failureMessage: string | null;
+  }>;
   paymentAttempts: Array<{
     id: number;
     attemptNumber: number | null;
@@ -450,6 +463,84 @@ interface TransactionDetail {
     description: string | null;
     createdAt: string;
   }>;
+}
+
+function RefundPaymentDialog({ payment, onSaved }: { payment: PaymentRecord; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [eligibility, setEligibility] = useState<any>(null);
+  const [amount, setAmount] = useState("");
+  const [reasonCode, setReasonCode] = useState("fee_correction");
+  const [reasonText, setReasonText] = useState("");
+  const [actionKey, setActionKey] = useState("");
+  const { toast } = useToast();
+  useEffect(() => {
+    if (!open) return;
+    const keyName = `refund-action:${payment.id}`;
+    const savedKey = sessionStorage.getItem(keyName);
+    const key = savedKey ?? `refund-${crypto.randomUUID()}`;
+    if (!savedKey) sessionStorage.setItem(keyName, key);
+    setActionKey(key);
+    setEligibility(null);
+    sessionFetch(`/api/admin/fees/payments/${payment.id}/refund-eligibility`)
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message);
+        setEligibility(data);
+        setAmount((data.currentlyRefundablePaise / 100).toFixed(2));
+      })
+      .catch(error => toast({ title: "Refund unavailable", description: error.message, variant: "destructive" }));
+  }, [open, payment.id, toast]);
+  const refundMutation = useMutation({
+    mutationFn: async () => {
+      const amountPaise = Math.round(Number(amount) * 100);
+      const response = await sessionFetch(`/api/admin/fees/payments/${payment.id}/refunds`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Idempotency-Key": actionKey },
+        body: JSON.stringify({ amountPaise, reasonCode, reasonText }),
+      });
+      const data = await response.json();
+      if (!response.ok && response.status !== 202) throw new Error(data.message);
+      return data;
+    },
+    onSuccess: data => {
+      sessionStorage.removeItem(`refund-action:${payment.id}`);
+      toast({ title: data.reconciliationRequired ? "Refund queued for reconciliation" : "Refund requested", description: data.reconciliationRequired ? "Do not submit it again; its outcome will be reconciled." : "Razorpay will confirm the final refund status by webhook." });
+      setOpen(false); onSaved();
+    },
+    onError: (error: Error) => toast({ title: "Refund could not be requested", description: error.message, variant: "destructive" }),
+  });
+  const max = Number(eligibility?.currentlyRefundablePaise ?? 0) / 100;
+  return <>
+    <Button size="sm" variant="ghost" onClick={() => setOpen(true)}
+      className="h-7 px-2 text-xs text-amber-300 hover:bg-amber-900/30 gap-1">
+      <Undo2 className="w-3 h-3" /> Refund
+    </Button>
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-md">
+        <DialogHeader><DialogTitle className="text-amber-300">Request Razorpay refund</DialogTitle></DialogHeader>
+        {!eligibility ? <div className="py-8 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></div> : (
+          <div className="space-y-4 text-sm">
+            <div className="rounded-lg bg-amber-950/30 border border-amber-700/30 p-3 text-amber-100/80">
+              Original payment and receipt are preserved. Final financial status changes only after Razorpay confirms the refund.
+            </div>
+            <p className="text-white/60">Refundable now: <b className="text-white">₹{max.toFixed(2)}</b></p>
+            {!eligibility.eligible || !eligibility.canInitiateRefund ? <p className="text-red-300">{eligibility.ineligibleReason ?? "You do not have permission to initiate refunds."}</p> : <>
+              <label className="block text-white/60">Amount (₹)<Input type="number" min="0.01" max={max} step="0.01" value={amount} onChange={e => setAmount(e.target.value)} className="mt-1 bg-white/5 border-white/15" /></label>
+              <label className="block text-white/60">Reason
+                <select value={reasonCode} onChange={e => setReasonCode(e.target.value)} className="mt-1 w-full h-9 rounded-md bg-[#102038] border border-white/15 px-3 text-white">
+                  {(eligibility.reasonCodes ?? []).map((code: string) => <option key={code} value={code}>{code.replaceAll("_", " ")}</option>)}
+                </select>
+              </label>
+              <label className="block text-white/60">Customer-visible note (optional)<textarea value={reasonText} onChange={e => setReasonText(e.target.value)} maxLength={500} className="mt-1 w-full rounded-md bg-white/5 border border-white/15 p-2 text-white" /></label>
+              <Button disabled={refundMutation.isPending || !actionKey || !amount || Number(amount) <= 0 || Number(amount) > max} onClick={() => refundMutation.mutate()} className="w-full bg-amber-600 hover:bg-amber-500">
+                {refundMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null} Request refund
+              </Button>
+            </>}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  </>;
 }
 function fmt(amount: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
@@ -3392,6 +3483,9 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                                             <p className="text-white/30 text-[10px] mb-0.5">HMAC Signature</p>
                                             <p className="text-white/35 font-mono text-[9px] break-all leading-tight">{pay.razorpaySignature ?? "—"}</p>
                                           </div>
+                                           <div className="pt-2">
+                                             <RefundPaymentDialog payment={pay} onSaved={() => { void fetchDetail(rec.id, true); }} />
+                                           </div>
                                         </div>
                                       </div>
                                     ) : (
@@ -3509,6 +3603,15 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                                   <TxnDetailRow label="Late Fee" value={detail.feeRecord.lateFeeAmount > 0 ? <span className="text-amber-400">{fmt(detail.feeRecord.lateFeeAmount)}</span> : null} />
                                   <TxnDetailRow label="Total Charged" value={<span className="font-black">{fmt(detail.feeRecord.amount + detail.feeRecord.lateFeeAmount)}</span>} />
                                   <TxnDetailRow label="Total Received" value={<span className="font-black text-emerald-400">{fmt(detail.payments.reduce((s, p) => s + p.amount, 0))}</span>} />
+                                   <TxnDetailRow label="Processed Refunds" value={<span className="font-black text-amber-300">{fmt((detail.refundSummary?.processedRefundedPaise ?? 0) / 100)}</span>} />
+                                   <TxnDetailRow label="Net Retained" value={<span className="font-black text-cyan-300">{fmt((detail.refundSummary?.netRetainedPaise ?? detail.payments.reduce((s, p) => s + p.amount, 0) * 100) / 100)}</span>} />
+                                   {(detail.refunds?.length ?? 0) > 0 && <div className="mt-3 rounded-lg border border-amber-700/30 bg-amber-950/15 p-3">
+                                     <p className="text-[10px] uppercase tracking-widest text-amber-200/70 mb-2">Refund lifecycle</p>
+                                     {detail.refunds!.map(refund => <div key={refund.id} className="flex justify-between gap-3 py-1.5 text-xs border-t border-amber-700/15 first:border-0">
+                                       <span className="text-white/70">{fmt(refund.processedAmountPaise != null ? refund.processedAmountPaise / 100 : refund.requestedAmountPaise / 100)} · {refund.reasonCode?.replaceAll("_", " ") ?? "Provider refund"}</span>
+                                       <span className={refund.localStatus === "processed" ? "text-emerald-300" : refund.localStatus === "failed" ? "text-red-300" : "text-amber-300"}>{refund.localStatus.replaceAll("_", " ")}</span>
+                                     </div>)}
+                                   </div>}
                                   <TxnDetailRow label="Invoice No." value={<span className="font-mono text-violet-300 text-xs">{rec.invoiceNumber ?? "—"}</span>} />
                                    <TxnDetailRow label="Invoice Date & Time" value={formatPersistedInvoiceDateTimeIST(detail.feeRecord.createdAt)} />
                                   <TxnDetailRow label="Receipt No." value={<span className="font-mono text-cyan-300 text-xs">{rec.receiptNumber ?? mainPayment?.receiptNumber ?? "—"}</span>} />
