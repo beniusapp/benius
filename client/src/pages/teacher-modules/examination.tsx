@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
+import { formatDateTimeIST, todayInIST } from "@shared/ist-time";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
@@ -825,7 +826,7 @@ function PromoCell({
 
   const editCount = entry?.editCount ?? 0;
   const tooltipText = entry?.editTrail
-    .map(e => `${new Date(e.ts).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })}: ${e.fromDecision} → ${e.toDecision} (${e.toClass}-${e.toSection})`)
+    .map(e => `${formatDateTimeIST(e.ts)}: ${e.fromDecision} → ${e.toDecision} (${e.toClass}-${e.toSection})`)
     .join("\n") ?? "";
 
   return (
@@ -1739,7 +1740,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     classes, subjects, examTypes, isLoading: configLoading,
     hasClasses, hasSections, getSectionsForClass, getSubjectsForClass, getExamTypesForClass,
   } = useSchoolConfigStrict(teacher.schoolId);
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayInIST();
   const [tab, setTab] = useState<"add" | "view" | "results">("add");
 
   const [selectedClass, setSelectedClass] = useState("");
@@ -2134,7 +2135,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                               {auditMap[s.studentId] && (
                                 <span className="flex items-center gap-1 mt-0.5 text-[10px] text-muted-foreground leading-tight">
                                   <svg className="w-2.5 h-2.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                                  {auditMap[s.studentId].updatedBy} · {new Date(auditMap[s.studentId].updatedAt).toLocaleString("en-GB", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" })}
+                                  {auditMap[s.studentId].updatedBy} · {formatDateTimeIST(auditMap[s.studentId].updatedAt)}
                                 </span>
                               )}
                             </td>

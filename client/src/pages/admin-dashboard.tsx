@@ -21,6 +21,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, getQueryFn, setViewSessionId, sessionFetch } from "@/lib/queryClient";
 import { SessionViewContext, type AcademicSession } from "@/contexts/session-view-context";
+import { formatDateOnly, formatDateTimeIST, todayInIST } from "@shared/ist-time";
 
 const SchoolSetup         = lazy(() => import("./admin-modules/school-setup"));
 const StudentRegistry     = lazy(() => import("./admin-modules/student-registry"));
@@ -188,7 +189,7 @@ const profileSchema = z.object({
   recoveryPhone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Only digits allowed").optional().or(z.literal("")),
 });
 
-const CUR_YEAR = new Date().getFullYear();
+const CUR_YEAR = Number(todayInIST().slice(0, 4));
 
 const schoolInfoSchema = z.object({
   // Contact & Location
@@ -1321,7 +1322,7 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
                         {EVENT_LABELS[ev.action] ?? ev.action}
                       </span>
                       <span className="text-[10px] text-gray-400">
-                        {new Date(ev.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })} {new Date(ev.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}
+                        {formatDateTimeIST(ev.createdAt)}
                       </span>
                     </div>
                     {ev.ipAddress && <p className="text-[10px] text-gray-400 font-mono">IP: {ev.ipAddress}</p>}
@@ -1568,7 +1569,7 @@ export default function AdminDashboard() {
     enabled: !!me?.schoolId,
   });
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayInIST();
 
   // selectedViewSession?.id is included in the queryKey so React Query creates
   // a separate cache entry for each academic year and triggers a fresh fetch
@@ -2105,7 +2106,7 @@ export default function AdminDashboard() {
           {/* Date pill */}
           <div className="mt-3 flex justify-end">
             <span className="text-[11px] text-white/25 font-medium">
-              {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}
+              {formatDateOnly(todayInIST(), true)}
             </span>
           </div>
         </div>

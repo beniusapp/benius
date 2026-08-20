@@ -49,6 +49,7 @@ import {
   type AcademicSession, type InsertAcademicSession,
   type Enrollment, type InsertEnrollment,
 } from "@shared/schema";
+import { addCalendarDays, calendarWeekday, dateOnlyInIST, dateOnlyParts, todayInIST } from "@shared/ist-time";
 import { db } from "./db";
 import { pool } from "./db";
 import { eq, sql, like, count, and, desc, gte, lte, lt, or, ilike, isNull, inArray, type SQL } from "drizzle-orm";
@@ -463,7 +464,7 @@ export class DatabaseStorage {
   }
 
   async hasAttendanceToday(teacherId: number, cls: string, section: string, schoolId: number): Promise<boolean> {
-    const today = new Date().toISOString().split("T")[0];
+    const today = todayInIST();
     const studentList = await this.getStudentsByClassSection(schoolId, cls, section);
     if (studentList.length === 0) return false;
     const studentIds = studentList.map(s => s.id);
@@ -614,7 +615,8 @@ export class DatabaseStorage {
     for (const row of rows) {
       const isPending = !row.subStatus || row.subStatus === "rejected";
       if (isPending) {
-        pendingDates.add(new Date(row.createdAt).toISOString().split("T")[0]);
+        const createdDate = dateOnlyInIST(row.createdAt);
+        if (createdDate) pendingDates.add(createdDate);
         if (row.dueDate) pendingDates.add(row.dueDate);
       }
     }
@@ -944,7 +946,7 @@ export class DatabaseStorage {
   // ===== COMPLAINT METHODS =====
   async getNextTicketId(schoolId: number): Promise<string> {
     const now = new Date();
-    const datePart = now.toISOString().slice(0, 10).replace(/-/g, "");
+    const datePart = todayInIST(now).replace(/-/g, "");
     const prefix = `CMP-${datePart}-`;
     const result = await db.select({ ticketId: complaints.ticketId })
       .from(complaints)
@@ -2650,11 +2652,8 @@ export class DatabaseStorage {
   }
 
   async markAttendanceAsLeave(studentId: number, teacherId: number | null, schoolId: number, startDate: string, endDate: string): Promise<void> {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      if (d.getDay() === 0) continue;
-      const dateStr = d.toISOString().split("T")[0];
+    for (let dateStr = startDate; dateStr <= endDate; dateStr = addCalendarDays(dateStr, 1)) {
+      if (calendarWeekday(dateStr) === 0) continue;
       const existing = await db.select().from(attendanceRecords)
         .where(and(eq(attendanceRecords.studentId, studentId), eq(attendanceRecords.date, dateStr), eq(attendanceRecords.schoolId, schoolId)));
       if (existing.length > 0) {
@@ -2787,29 +2786,25 @@ export class DatabaseStorage {
     const policies = await this.getActiveLeavePoliciesBySchool(schoolId, "teacher");
     if (policies.length === 0) return [];
 
-    const today = new Date();
-    const todayStr = today.toISOString().split("T")[0];
+    const todayStr = todayInIST();
+    const todayParts = dateOnlyParts(todayStr)!;
     const result = [];
 
     for (const policy of policies) {
       const mm = String(policy.renewalMonth).padStart(2, "0");
       const dd = String(policy.renewalDay).padStart(2, "0");
-      const renewalThisYear = `${today.getFullYear()}-${mm}-${dd}`;
-      const renewalNextYear = `${today.getFullYear() + 1}-${mm}-${dd}`;
-      const renewalLastYear = `${today.getFullYear() - 1}-${mm}-${dd}`;
+      const renewalThisYear = `${todayParts.year}-${mm}-${dd}`;
+      const renewalNextYear = `${todayParts.year + 1}-${mm}-${dd}`;
+      const renewalLastYear = `${todayParts.year - 1}-${mm}-${dd}`;
 
       let periodStart: string;
       let periodEnd: string;
       if (todayStr >= renewalThisYear) {
         periodStart = renewalThisYear;
-        const nextDate = new Date(renewalNextYear);
-        nextDate.setDate(nextDate.getDate() - 1);
-        periodEnd = nextDate.toISOString().split("T")[0];
+        periodEnd = addCalendarDays(renewalNextYear, -1);
       } else {
         periodStart = renewalLastYear;
-        const nextDate = new Date(renewalThisYear);
-        nextDate.setDate(nextDate.getDate() - 1);
-        periodEnd = nextDate.toISOString().split("T")[0];
+        periodEnd = addCalendarDays(renewalThisYear, -1);
       }
 
       const currentApproved = await db.select().from(leaveRequests)
@@ -2833,14 +2828,12 @@ export class DatabaseStorage {
       let carryForward = 0;
       if (policy.expiryBehavior === "carry_forward") {
         const prevPeriodStart = `${parseInt(periodStart.slice(0, 4)) - 1}${periodStart.slice(4)}`;
-        const prevEndDate = new Date(periodStart);
-        prevEndDate.setDate(prevEndDate.getDate() - 1);
-        const prevPeriodEnd = prevEndDate.toISOString().split("T")[0];
+        const prevPeriodEnd = addCalendarDays(periodStart, -1);
 
         // Only carry forward if the policy existed before the current period started.
         // A policy created within the current period has no real previous-period history,
         // so carry-forward would inflate the balance with phantom days.
-        const policyCreatedStr = policy.createdAt.toISOString().split("T")[0];
+        const policyCreatedStr = dateOnlyInIST(policy.createdAt) ?? "";
         if (policyCreatedStr < periodStart) {
           const prevApproved = await db.select().from(leaveRequests)
             .where(and(
@@ -3661,7 +3654,7 @@ export class DatabaseStorage {
     const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
     const lastDay = new Date(year, month, 0).getDate();
     const endDate = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
-    const today = new Date().toISOString().split("T")[0];
+    const today = todayInIST();
 
     const records = await db.select().from(attendanceRecords).where(
       and(
@@ -3791,7 +3784,7 @@ export class DatabaseStorage {
     totalLate: number;
     totalLeave: number;
   }> {
-    const today = new Date().toISOString().split("T")[0];
+    const today = todayInIST();
     const upperBound = academicEndDate && academicEndDate < today ? academicEndDate : today;
 
     // Rule 1 & 2: Event-driven working days — only dates where a teacher actually
@@ -4812,7 +4805,7 @@ export class DatabaseStorage {
    * Returns the number of records updated.
    */
   async markOverdueFeeRecords(): Promise<number> {
-    const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+    const today = todayInIST(); // YYYY-MM-DD
     const result = await db.update(feeRecords)
       .set({ status: "Overdue" })
       .where(and(eq(feeRecords.status, "Due"), lt(feeRecords.dueDate, today)))

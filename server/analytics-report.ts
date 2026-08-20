@@ -9,6 +9,7 @@ import { db, pool } from "./db";
 import { storage } from "./storage";
 import { sql } from "drizzle-orm";
 import { log } from "./index";
+import { formatDateTimeIST, formatMonthYearIST } from "../shared/ist-time";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -168,11 +169,8 @@ function buildReportPdf(
     const W   = doc.page.width - 100; // usable width (margins both sides)
     const s   = data.summary;
     const now = new Date();
-    const generatedAt = now.toLocaleString("en-IN", {
-      day: "2-digit", month: "long", year: "numeric",
-      hour: "2-digit", minute: "2-digit",
-    });
-    const monthLabel = now.toLocaleString("en-IN", { month: "long", year: "numeric" });
+    const generatedAt = formatDateTimeIST(now);
+    const monthLabel = formatMonthYearIST(now);
 
     // ── Palette ───────────────────────────────────────────────────────────
     const DARK    = "#0d1f35";
@@ -535,7 +533,7 @@ export async function sendAnalyticsReport(
     const activeSession = await storage.getActiveSession(schoolId);
     const sessionLabel  = activeSession?.sessionName ?? "All Sessions";
 
-    const monthLabel = now.toLocaleString("en-IN", { month: "long", year: "numeric" });
+    const monthLabel = formatMonthYearIST(now);
     const subject    = `Financial Analytics Report — ${schoolName} (${monthLabel})`;
     const filename   = `analytics-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${schoolName.replace(/\s+/g, "_")}.pdf`;
 

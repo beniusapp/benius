@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { sessionFetch } from "@/lib/queryClient";
+import { todayInIST } from "@shared/ist-time";
 import {
   Search, ChevronLeft, ChevronRight, AlignJustify, FileDown,
   RotateCcw, Eye, Loader2, ArrowLeft, X, UserX, RefreshCw, AlertCircle,
@@ -217,7 +218,7 @@ export default function DeactivatedStudentsPage() {
       const blob = await r.blob();
       const disposition = r.headers.get("Content-Disposition") ?? "";
       const match = disposition.match(/filename="(.+)"/);
-      const filename = match ? match[1] : `Deactivated_Students_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const filename = match ? match[1] : `Deactivated_Students_${todayInIST()}.xlsx`;
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = blobUrl; a.download = filename;

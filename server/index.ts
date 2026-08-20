@@ -10,6 +10,7 @@ import cron from "node-cron";
 import { recalculateLateFees } from "./late-fee-engine";
 import { assertNoSchemaDrift } from "./schema-validator";
 import path from "path";
+import { formatTimeIST } from "../shared/ist-time";
 
 const app = express();
 const httpServer = createServer(app);
@@ -47,12 +48,7 @@ app.use(
 );
 
 export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
+  const formattedTime = formatTimeIST(new Date());
 
   console.log(`${formattedTime} [${source}] ${message}`);
 }

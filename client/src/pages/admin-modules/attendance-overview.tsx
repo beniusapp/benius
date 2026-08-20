@@ -8,6 +8,7 @@ import {
   FileWarning, ClipboardCheck,
   type LucideIcon,
 } from "lucide-react";
+import { formatDateOnly, formatDateTimeIST, formatTimeIST, todayInIST } from "@shared/ist-time";
 
 interface Props {
   schoolId: number;
@@ -200,21 +201,15 @@ function SkeletonRow({ cols }: { cols: number }) {
 }
 
 function formatTime(isoString: string | null): string {
-  if (!isoString) return "—";
-  const d = new Date(isoString);
-  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+  return formatTimeIST(isoString);
 }
 
 function formatDateTime(isoString: string | null): string {
-  if (!isoString) return "—";
-  const d = new Date(isoString);
-  const date = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
-  const time = d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
-  return `${date}, ${time}`;
+  return formatDateTimeIST(isoString);
 }
 
 export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayInIST();
   const [date, setDate] = useState(today);
   const [filterClass, setFilterClass] = useState("");
   const [filterSection, setFilterSection] = useState("");
@@ -360,7 +355,7 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
     [studentData, selectedStudentId]
   );
 
-  const displayDate = new Date(date).toLocaleDateString("en-GB");
+  const displayDate = formatDateOnly(date);
   const teacherSummary = teacherSummaryData?.summary ?? { totalFaculty: 0, present: 0, notMarked: 0, lateArrivals: 0, onLeave: 0, halfDay: 0, pendingCorrections: 0, totalCorrections: 0 };
 
   return (

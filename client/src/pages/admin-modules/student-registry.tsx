@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { todayInIST } from "@shared/ist-time";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -145,7 +146,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
       const blob = await r.blob();
       const disposition = r.headers.get("Content-Disposition") ?? "";
       const match = disposition.match(/filename="(.+)"/);
-      const filename = match ? match[1] : `Student_Registry_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const filename = match ? match[1] : `Student_Registry_${todayInIST()}.xlsx`;
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = blobUrl; a.download = filename;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);

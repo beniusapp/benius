@@ -11,6 +11,7 @@ import { db } from "./db";
 import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions, studentProfiles, students, removedTeachersLog, users, facultyMappings } from "@shared/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
+import { addCalendarDays, todayInIST } from "../shared/ist-time";
 
 const diskUpload = multer({
   storage: multer.diskStorage({
@@ -393,12 +394,10 @@ export function registerTeacherRoutes(app: Express) {
     const { date, records, class: cls, section } = req.body;
     if (!date || !Array.isArray(records)) return res.status(400).json({ message: "Invalid data" });
 
-    const today = new Date().toISOString().split("T")[0];
+    const today = todayInIST();
     if (date > today) return res.status(400).json({ message: "Cannot mark attendance for future dates" });
 
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const minDate = sevenDaysAgo.toISOString().split("T")[0];
+    const minDate = addCalendarDays(today, -7);
     if (date < minDate) return res.status(400).json({ message: "Can only edit attendance for the past 7 days" });
 
     const teacher = await storage.getTeacherById(req.session.teacherId);
@@ -1601,10 +1600,7 @@ export function registerTeacherRoutes(app: Express) {
     // When approved: sync attendance records as "Leave" for all leave dates
     if (status === "approved" && leave.teacherId) {
       const now = new Date();
-      const startD = new Date(leave.startDate + "T00:00:00Z");
-      const endD   = new Date(leave.endDate   + "T00:00:00Z");
-      for (let d = new Date(startD); d <= endD; d.setUTCDate(d.getUTCDate() + 1)) {
-        const dateStr = d.toISOString().split("T")[0];
+      for (let dateStr = leave.startDate; dateStr <= leave.endDate; dateStr = addCalendarDays(dateStr, 1)) {
         const [existing] = await db.select().from(teacherSelfAttendance)
           .where(and(eq(teacherSelfAttendance.teacherId, leave.teacherId), eq(teacherSelfAttendance.attendanceDate, dateStr)));
         if (!existing) {
@@ -2349,7 +2345,7 @@ export function registerTeacherRoutes(app: Express) {
       if (section) filterParts.push(`Section ${section}`);
       if (q)       filterParts.push(`Search "${q}"`);
       const filterLabel = filterParts.length ? ` (${filterParts.join(", ")})` : "";
-      const filename = `students${filterLabel}_${new Date().toISOString().slice(0, 10)}.xlsx`
+      const filename = `students${filterLabel}_${todayInIST()}.xlsx`
         .replace(/[^\w\s()._-]/g, "_");
 
       res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
@@ -3688,14 +3684,14 @@ Thank you for your prompt attention to this matter.
           yearEnd = sess.endDate;
         } else {
           // Session exists but has no dates — fall back to calendar heuristic
-          const today = new Date().toISOString().split("T")[0];
+          const today = todayInIST();
           const year = new Date().getFullYear();
           const aprThisYear = `${year}-04-01`;
           yearStart = today >= aprThisYear ? aprThisYear : `${year - 1}-04-01`;
           yearEnd = today;
         }
       } else {
-        const today = new Date().toISOString().split("T")[0];
+        const today = todayInIST();
         const year = new Date().getFullYear();
         const aprThisYear = `${year}-04-01`;
         yearStart = today >= aprThisYear ? aprThisYear : `${year - 1}-04-01`;
@@ -4277,7 +4273,7 @@ Thank you for your prompt attention to this matter.
     const section = decodeURIComponent(req.params.section);
     const schoolId = teacher.schoolId;
     try {
-      const today = new Date().toISOString().split("T")[0];
+      const today = todayInIST();
       const year = new Date().getFullYear();
       const aprThisYear = `${year}-04-01`;
       const aprLastYear = `${year - 1}-04-01`;
@@ -4426,8 +4422,8 @@ Thank you for your prompt attention to this matter.
   // ═══════════════════════════════════════════════════════════════════════════
 
   // GET today's self-attendance record
-  /** IST-aware "today" date string — adds 5h30m to UTC so midnight in India rolls correctly */
-  const istToday = () => new Date(Date.now() + 19800000).toISOString().split("T")[0];
+  /** The canonical business date; no manual offset arithmetic. */
+  const istToday = () => todayInIST();
 
   app.get("/api/teacher/self-attendance/today", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
@@ -4570,7 +4566,6 @@ Thank you for your prompt attention to this matter.
   app.get("/api/teacher/self-attendance/history", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
-      const istNow = Date.now() + 19800000;
       let start: string;
       let end: string;
       if (req.query.startDate && req.query.endDate) {
@@ -4580,8 +4575,8 @@ Thank you for your prompt attention to this matter.
       } else {
         // Legacy: last N days (max 90)
         const days = Math.min(parseInt(req.query.days as string) || 30, 90);
-        end   = new Date(istNow).toISOString().split("T")[0];
-        start = new Date(istNow - (days - 1) * 86400000).toISOString().split("T")[0];
+        end   = todayInIST();
+        start = addCalendarDays(end, -(days - 1));
       }
 
       const teacher = await storage.getTeacherById(req.session.teacherId);

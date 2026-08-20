@@ -8,6 +8,7 @@ import {
   TrendingUp, AlertCircle, ChevronDown,
 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
+import { formatDateOnly } from "@shared/ist-time";
 
 interface AcademicSession {
   id: number;
@@ -70,8 +71,7 @@ function sessionToShort(name: string) {
 }
 
 function fmtDate(d: string | null | undefined) {
-  if (!d) return "—";
-  return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return formatDateOnly(d);
 }
 
 function fmtCurrency(n: number) {

@@ -26,6 +26,7 @@ import { useSessionView } from "@/contexts/session-view-context";
 import { amountInWords, formatIndianRupees } from "@/lib/amount-in-words";
 import { formatPersistedInvoiceDateTimeIST } from "@/lib/invoice-date-time";
 import { offlinePaymentEntryDefaults, offlinePaymentDetailRows } from "@shared/offline-payment-details";
+import { formatDateOnly, formatDateTimeIST, todayInIST } from "@shared/ist-time";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -166,7 +167,7 @@ function addInvoicePeriodOptionsForSession(
 }
 
 function preferredInvoicePeriod(options: InvoicePeriodOption[]): InvoicePeriodOption | undefined {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayInIST();
   return options.find(option => option.start <= today && option.end >= today) ?? options[0];
 }
 
@@ -455,12 +456,11 @@ function fmt(amount: number) {
 }
 
 function fmtDate(d: string | null) {
-  if (!d) return "—";
-  return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return formatDateOnly(d);
 }
 
 function fmtDateTime(d: string) {
-  return new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  return formatDateTimeIST(d);
 }
 
 function AttemptOutcomeBadge({ outcome }: { outcome: string | null | undefined }) {
@@ -1093,7 +1093,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
   // Payment details
   const [method,   setMethod]   = useState("Cash");
   const [ref,      setRef]      = useState("");
-  const [date,     setDate]     = useState(() => new Date().toISOString().split("T")[0]);
+  const [date,     setDate]     = useState(() => todayInIST());
   const [notes,    setNotes]    = useState("");
   // Cash denomination state — keys are denomination face values, values are counts
   const [denomQty,   setDenomQty]   = useState<Record<number, number>>(() => Object.fromEntries(DENOMS.map(d => [d, 0])));
@@ -1133,7 +1133,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
     setSearchInvoice(""); setSearchQ(""); setSearching(false); setSearchResults(null); setSearchError(null); setSelStudent(null);
     setInvoices([]); setInvoicesLoading(false);
     setSelectedInvoiceId(null);
-    setMethod("Cash"); setRef(""); setDate(new Date().toISOString().split("T")[0]); setNotes("");
+    setMethod("Cash"); setRef(""); setDate(todayInIST()); setNotes("");
     setDenomQty(Object.fromEntries(DENOMS.map(d => [d, 0])));
     setInstrDate(""); setBankName(""); setBranchName(""); setPayerName(""); setPayerUpiId("");
     setTransactionTime(""); setInstrumentStatus(""); setTransferMode(""); setTransactionReference("");
@@ -2087,7 +2087,7 @@ function PaymentHistoryModal({ open, onClose, feeRecord }: PaymentHistoryModalPr
     const a = document.createElement("a");
     a.href = url;
     const safeName = studentName.replace(/[^a-zA-Z0-9\s-]/g, "").trim().replace(/\s+/g, "-");
-    a.download = `payment-history-${safeName}-${new Date().toISOString().split("T")[0]}.csv`;
+    a.download = `payment-history-${safeName}-${todayInIST()}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -2157,7 +2157,7 @@ ${filterDesc ? `<div class="filter-badge">Filtered: ${esc(filterDesc)}</div>` : 
     <td colspan="4"></td>
   </tr></tfoot>
 </table>
-<div class="footer">Generated ${new Date().toLocaleString("en-IN")} · BENIUS</div>
+<div class="footer">Generated ${formatDateTimeIST(new Date())} · BENIUS</div>
 <script>window.print();</script>
 </body></html>`;
 
@@ -2438,7 +2438,7 @@ function ExportLedgerDialog({ open, onClose, availableClasses, availableFeeTypes
         throw new Error((body as any).message ?? "Export failed");
       }
       const blob = await r.blob();
-      const dateTag = new Date().toISOString().split("T")[0];
+      const dateTag = todayInIST();
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       a.download = `payment-ledger-${dateTag}.csv`;
@@ -4448,7 +4448,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
    */
   function bestDefaultPeriod(options: PeriodOption[]): PeriodOption | null {
     if (!options.length) return null;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayInIST();
     // Return the period that contains today (current month is within the active session).
     const current = options.find(o => o.start <= today && o.end >= today);
     if (current) return current;
@@ -4541,7 +4541,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                   <div className="col-span-2">
                     <p className="text-white/40 mb-0.5">Last Invoices Generated</p>
                     <p className="text-emerald-400/80 text-[11px]">
-                      🕐 {new Date(s.lastInvoicesGeneratedAt).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      🕐 {formatDateTimeIST(s.lastInvoicesGeneratedAt)}
                     </p>
                   </div>
                 )}
@@ -4942,7 +4942,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                     >
                       {periodOptions.length === 0 && <option value="">No periods available</option>}
                       {periodOptions.map(o => {
-                        const today = new Date().toISOString().slice(0, 10);
+                        const today = todayInIST();
                         const isCurrent = o.start <= today && o.end >= today;
                         const isPast    = o.end < today;
                         return (
@@ -6748,10 +6748,7 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
       const schoolName   = esc(meData?.schoolName ?? "School");
       const sessionLabel = esc(selectedSession?.sessionName ?? "All Sessions");
       const periodLabel  = period === "quarterly" ? "Quarterly" : period === "ytd" ? "Year-to-Date" : "Monthly (Last 12)";
-      const exportedAt   = esc(new Date().toLocaleString("en-IN", {
-        day: "2-digit", month: "short", year: "numeric",
-        hour: "2-digit", minute: "2-digit",
-      }));
+      const exportedAt   = esc(formatDateTimeIST(new Date()));
 
       const s          = raw?.summary ?? {};
       const classWise: any[] = raw?.classWise ?? [];

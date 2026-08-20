@@ -6,6 +6,7 @@
 import { db } from "./db";
 import { feeRecords, feeStructures } from "@shared/schema";
 import { and, eq, or } from "drizzle-orm";
+import { todayInIST } from "../shared/ist-time";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -44,9 +45,10 @@ export function calculateLateFee(
   if (!config?.enabled || config.type === "NONE") return 0;
   if (status === "Paid") return 0;
 
-  // Parse both dates in UTC to eliminate timezone-offset drift on server
+  // DATE-only arithmetic remains UTC component math; the business reference
+  // date itself is explicitly derived in the school's timezone.
   const [dy, dm, dd] = dueDateStr.split("-").map(Number);
-  const refDateStr   = referenceDate.toISOString().split("T")[0];
+  const refDateStr   = todayInIST(referenceDate);
   const [ry, rm, rd] = refDateStr.split("-").map(Number);
   const msDay    = 24 * 60 * 60 * 1000;
   const dueMs    = Date.UTC(dy, dm - 1, dd);

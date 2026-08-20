@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Search, Trash2, ChevronLeft, ChevronRight, Calendar, User, Phone, BookOpen, MapPin, CreditCard, GraduationCap, Clock, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { formatDateOnly, formatDateTimeIST } from "@shared/ist-time";
 
 interface Props {
   schoolId: number;
@@ -34,17 +35,11 @@ interface RemovedTeacher {
 const PAGE_SIZE = 20;
 
 function formatDate(val: string | null | undefined) {
-  if (!val) return "—";
-  try {
-    return new Date(val).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-  } catch { return val; }
+  return formatDateOnly(val);
 }
 
 function formatDateTime(val: string | null | undefined) {
-  if (!val) return "—";
-  try {
-    return new Date(val).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-  } catch { return val; }
+  return formatDateTimeIST(val);
 }
 
 export default function RemovedTeacherHistory({ schoolId, onBack }: Props) {

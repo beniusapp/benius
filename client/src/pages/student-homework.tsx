@@ -11,6 +11,7 @@ import {
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
+import { todayInIST } from "@shared/ist-time";
 
 interface StudentMeResponse {
   id: number;
@@ -45,7 +46,11 @@ interface HomeworkItem {
 }
 
 function toISODate(d: Date): string {
-  return d.toISOString().split("T")[0];
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(d);
+  const value = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${value("year")}-${value("month")}-${value("day")}`;
 }
 
 

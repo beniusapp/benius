@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
+import { todayInIST } from "@shared/ist-time";
 
 interface ClassworkEntry {
   id: number;
@@ -77,7 +78,7 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
     getSectionsForClass,
     getSubjectsForClass,
   } = useSchoolConfigStrict(teacher.schoolId);
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayInIST();
 
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedSection, setSelectedSection] = useState("");

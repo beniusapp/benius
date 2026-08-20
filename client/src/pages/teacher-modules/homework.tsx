@@ -16,6 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
+import { addCalendarDays, todayInIST } from "@shared/ist-time";
 
 interface HomeworkEntry {
   id: number;
@@ -81,7 +82,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
     getSectionsForClass,
     getSubjectsForClass,
   } = useSchoolConfigStrict(teacher.schoolId);
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayInIST();
 
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedSection, setSelectedSection] = useState("");
@@ -117,10 +118,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
   const [editDueDate, setEditDueDate] = useState("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
 
-  const tomorrow = useMemo(() => {
-    const d = new Date(); d.setDate(d.getDate() + 1);
-    return d.toISOString().split("T")[0];
-  }, []);
+  const tomorrow = useMemo(() => addCalendarDays(todayInIST(), 1), []);
 
   const classSelected = selectedClass !== "";
   const sectionSelected = selectedSection !== "";

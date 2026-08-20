@@ -10,6 +10,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
 import MyAttendanceModule from "./my-attendance";
+import { addCalendarDays, todayInIST } from "@shared/ist-time";
 
 interface StudentAttendance {
   studentId: number;
@@ -166,7 +167,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
     hasSections,
     getSectionsForClass,
   } = useSchoolConfigStrict(teacher.schoolId);
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayInIST();
 
   const [view, setView] = useState<ViewState>("landing");
   const [selectedClass, setSelectedClass] = useState("");
@@ -185,16 +186,10 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [localStatuses, setLocalStatuses] = useState<Record<number, string>>({});
 
-  const [historyStartDate, setHistoryStartDate] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 7);
-    return d.toISOString().split("T")[0];
-  });
+  const [historyStartDate, setHistoryStartDate] = useState(() => addCalendarDays(todayInIST(), -7));
   const [historyEndDate, setHistoryEndDate] = useState(today);
 
-  const sevenDaysAgo = useMemo(() => {
-    const d = new Date(); d.setDate(d.getDate() - 7);
-    return d.toISOString().split("T")[0];
-  }, []);
+  const sevenDaysAgo = useMemo(() => addCalendarDays(todayInIST(), -7), []);
 
   const isEditable = selectedDate >= sevenDaysAgo && selectedDate <= today;
 

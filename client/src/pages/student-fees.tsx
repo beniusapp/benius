@@ -20,6 +20,7 @@ import {
 import { getCheckoutDismissAction } from "@shared/razorpay-checkout-dismiss";
 import { paymentAttemptEventTime } from "@shared/payment-attempt-event-time";
 import { formatOfflinePaymentMethod } from "@shared/offline-payment-method";
+import { formatDateOnly, formatInstantIST } from "@shared/ist-time";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -215,10 +216,7 @@ function formatAmount(amount: number) {
 }
 
 function formatDate(dateStr: string | null) {
-  if (!dateStr) return "—";
-  return new Date(dateStr).toLocaleDateString("en-IN", {
-    day: "2-digit", month: "short", year: "numeric",
-  });
+  return formatDateOnly(dateStr);
 }
 
 /** Formats any timestamp (ISO string, pg-style string, or Date object) as IST
@@ -233,28 +231,7 @@ function formatDate(dateStr: string | null) {
  *
  *  Returns "—" for null/undefined/unparseable input. */
 function formatDateTime(dateStr: string | Date | null | undefined): string {
-  if (!dateStr) return "—";
-  let d: Date;
-  if (dateStr instanceof Date) {
-    d = dateStr;
-  } else {
-    const s = String(dateStr).trim().replace(" ", "T"); // first space → T
-    const withTz =
-      /[Zz]$/.test(s)               ? s          : // already ends in Z
-      /[+-]\d{2}:\d{2}$/.test(s)    ? s          : // already ±HH:MM
-      /[+-]\d{2}$/.test(s)          ? s + ":00"  : // ±HH only → add :00
-                                      s + "Z";      // bare UTC → add Z
-    d = new Date(withTz);
-  }
-  if (isNaN(d.getTime())) return "—";
-  const result = d.toLocaleString("en-IN", {
-    timeZone: "Asia/Kolkata",
-    day: "2-digit", month: "short", year: "numeric",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-    hour12: true,
-  });
-  // en-IN gives lowercase am/pm — normalise to uppercase for readability.
-  return result.replace(/\bam\b/gi, "AM").replace(/\bpm\b/gi, "PM");
+  return formatInstantIST(dateStr);
 }
 
 function classifyAttempt(attempt: PaymentAttempt): StudentPaymentHistoryStatus {
@@ -2446,12 +2423,7 @@ export default function StudentFees() {
                               </span>
                             </div>
                             <p className="text-[11px] text-slate-400 mt-0.5">
-                              {entry.sentAt
-                                ? new Date(entry.sentAt).toLocaleString("en-IN", {
-                                    day: "2-digit", month: "short", year: "numeric",
-                                    hour: "2-digit", minute: "2-digit",
-                                  })
-                                : "—"}
+                              {formatDateTime(entry.sentAt)}
                             </p>
                           </div>
 

@@ -12,6 +12,7 @@
  */
 
 import type { LateFeeConfig } from "./late-fee-engine";
+import { todayInIST } from "../shared/ist-time";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -89,9 +90,9 @@ export function buildLateFeeInfo(
   if (!cfg?.enabled || cfg.type === "NONE") return { ...DISABLED };
   if (status === "Paid") return { ...DISABLED };
 
-  // ── Compute daysOverdue using the same UTC arithmetic as calculateLateFee() ──
+  // ── Use the IST business date, then calendar component arithmetic. ──────────
   const [dy, dm, dd] = dueDate.split("-").map(Number);
-  const refDateStr   = now.toISOString().split("T")[0];
+  const refDateStr   = todayInIST(now);
   const [ry, rm, rd] = refDateStr.split("-").map(Number);
   const msDay        = 24 * 60 * 60 * 1000;
   const dueMs        = Date.UTC(dy, dm - 1, dd);

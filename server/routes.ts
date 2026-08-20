@@ -42,6 +42,7 @@ import { eq, and, sql, inArray, not } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
+import { dateOnlyParts, replaceCalendarYear, todayInIST } from "@shared/ist-time";
 
 declare module "express-session" {
   interface SessionData {
@@ -172,16 +173,14 @@ function parseDate(value: string): string | null {
 
   const num = Number(value);
   if (!isNaN(num) && num > 10000 && num < 100000) {
-    const excelEpoch = new Date(1899, 11, 30);
-    const date = new Date(excelEpoch.getTime() + num * 86400000);
+    const date = new Date(Date.UTC(1899, 11, 30) + num * 86400000);
     if (!isNaN(date.getTime())) {
-      return date.toISOString().split("T")[0];
+      return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
     }
   }
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const d = new Date(value);
-    if (!isNaN(d.getTime())) return value;
+    if (dateOnlyParts(value)) return value;
   }
 
   const slashMatch = value.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
@@ -191,10 +190,8 @@ function parseDate(value: string): string | null {
     if (year < 100) year += 2000;
     const month = parseInt(p1, 10);
     const day = parseInt(p2, 10);
-    const d = new Date(year, month - 1, day);
-    if (!isNaN(d.getTime())) {
-      return d.toISOString().split("T")[0];
-    }
+    const normalized = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    if (dateOnlyParts(normalized)) return normalized;
   }
 
   const dashMatch = value.match(/^(\d{1,2})-(\d{1,2})-(\d{2,4})$/);
@@ -202,15 +199,8 @@ function parseDate(value: string): string | null {
     const [, p1, p2, p3] = dashMatch;
     let year = parseInt(p3, 10);
     if (year < 100) year += 2000;
-    const d = new Date(year, parseInt(p1, 10) - 1, parseInt(p2, 10));
-    if (!isNaN(d.getTime())) {
-      return d.toISOString().split("T")[0];
-    }
-  }
-
-  const parsed = new Date(value);
-  if (!isNaN(parsed.getTime())) {
-    return parsed.toISOString().split("T")[0];
+    const normalized = `${year}-${String(parseInt(p1, 10)).padStart(2, "0")}-${String(parseInt(p2, 10)).padStart(2, "0")}`;
+    if (dateOnlyParts(normalized)) return normalized;
   }
 
   return null;
@@ -1306,7 +1296,7 @@ export async function registerRoutes(
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const enrollmentDate = new Date().toISOString().split("T")[0];
+    const enrollmentDate = todayInIST();
     await storage.activateStudent(student.id, passwordHash, enrollmentDate);
 
     res.json({ message: "Account activated successfully. You can now log in." });
@@ -2012,7 +2002,7 @@ export async function registerRoutes(
       if (!fileUrl && !textAnswer && !existing) {
         return res.status(400).json({ message: "Please write an answer or upload a file before submitting." });
       }
-      const today = new Date().toISOString().split("T")[0];
+      const today = todayInIST();
       const isLate = hw.dueDate ? hw.dueDate < today : false;
       const submission = await storage.upsertHomeworkSubmission({
         homeworkId: hwId,
@@ -3314,10 +3304,8 @@ export async function registerRoutes(
               }
 
               const newEventRecords = recurringEvents.map(ev => {
-                const d = new Date(ev.date);
-                d.setFullYear(d.getFullYear() + yearDelta);
                 return {
-                  schoolId: ev.schoolId, title: ev.title, date: d.toISOString().split("T")[0],
+                  schoolId: ev.schoolId, title: ev.title, date: replaceCalendarYear(ev.date, Number(ev.date.slice(0, 4)) + yearDelta),
                   eventType: ev.eventType, venue: ev.venue, description: ev.description,
                   colorCode: ev.colorCode, isRecurring: true as const,
                   audienceScope: ev.audienceScope, targetClass: ev.targetClass, targetSection: ev.targetSection,
@@ -3840,7 +3828,7 @@ export async function registerRoutes(
               const d = new Date(ev.date);
               d.setFullYear(d.getFullYear() + yearDelta);
               return {
-                schoolId: ev.schoolId, title: ev.title, date: d.toISOString().split("T")[0],
+                schoolId: ev.schoolId, title: ev.title, date: replaceCalendarYear(ev.date, Number(ev.date.slice(0, 4)) + yearDelta),
                 eventType: ev.eventType, venue: ev.venue, description: ev.description,
                 colorCode: ev.colorCode, isRecurring: true as const,
                 audienceScope: ev.audienceScope, targetClass: ev.targetClass, targetSection: ev.targetSection,
@@ -4075,7 +4063,7 @@ export async function registerRoutes(
         });
       });
       const filterLabel = [cls && `_Class${cls}`, section && `_Sec${section}`].filter(Boolean).join("");
-      const filename = `Student_Registry${filterLabel}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const filename = `Student_Registry${filterLabel}_${todayInIST()}.xlsx`;
       res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
       await workbook.xlsx.write(res);
@@ -4194,7 +4182,7 @@ export async function registerRoutes(
       if (section) filterParts.push(`Section ${section}`);
       if (q)       filterParts.push(`Search "${q}"`);
       const filterLabel = filterParts.length ? ` (${filterParts.join(", ")})` : "";
-      const filename = `Deactivated_Students${filterLabel}_${new Date().toISOString().slice(0, 10)}.xlsx`
+      const filename = `Deactivated_Students${filterLabel}_${todayInIST()}.xlsx`
         .replace(/[^\w\s()._-]/g, "_");
 
       res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
@@ -4535,7 +4523,7 @@ export async function registerRoutes(
     // rather than passing null into a NOT NULL column.
     const patchData = { ...parsed.data };
     if (patchData.dueDate == null) {
-      const today = new Date().toISOString().split("T")[0];
+      const today = todayInIST();
       patchData.dueDate = patchData.paidDate || today;
     }
     // patchData.dueDate was guaranteed non-null by the block above (lines 4400-4402),

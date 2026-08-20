@@ -38,6 +38,7 @@ import {
 } from "./structure-invoice-service";
 import { formatPersistedDateTimeIST } from "./persisted-date-time";
 import { renderInvoiceDocument } from "./invoice-document";
+import { formatDateOnly, todayInIST } from "@shared/ist-time";
 
 // ── Signature background removal ─────────────────────────────────────────────
 // Converts white/light-grey background to transparency.
@@ -1014,7 +1015,7 @@ export function registerFeesRoutes(app: Express) {
       const cfg = s.lateFeeConfig as LateFeeConfig | undefined;
       if (cfg?.enabled) lateFeeMap.set(s.feeType.trim().toLowerCase(), cfg);
     }
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayInIST();
 
     const invoices = (rows.rows as any[]).map(r => {
       const cfg     = r.lateFeeConfig ?? lateFeeMap.get((r.feeType ?? "").trim().toLowerCase());
@@ -2298,7 +2299,7 @@ export function registerFeesRoutes(app: Express) {
                 studentId: Number(feeRec.student_id),
                 paymentMethod: "Online",
                 referenceNumber: payment.id,        // pay_XXXX
-                receivedDate: now.toISOString().slice(0, 10),
+                receivedDate: todayInIST(now),
                 amount: Number(feeRec.amount) + lateFeeFromNotes,
                 lateFeePaid: lateFeeFromNotes,
                 cashierNotes: `Razorpay payment ID: ${payment.id}`,
@@ -3217,7 +3218,7 @@ export function registerFeesRoutes(app: Express) {
               paymentMethod: "Online",
               paymentMode: verifiedPayment.method ?? null,
               referenceNumber: razorpay_payment_id,
-              receivedDate: now.toISOString().slice(0, 10),
+              receivedDate: todayInIST(now),
               amount: verifiedCapture.amountPaise / 100,
               lateFeePaid: lateFeeFromOrder,
               cashierNotes: `Razorpay payment ID: ${razorpay_payment_id} (client-verified)`,
@@ -4513,7 +4514,7 @@ td:last-child{font-weight:600;word-break:break-all;}
     ].join(","));
 
     const csv = [headers.map(h => `"${h}"`).join(","), ...dataRows].join("\r\n");
-    const dateTag = new Date().toISOString().split("T")[0];
+    const dateTag = todayInIST();
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="payment-ledger-${dateTag}.csv"`);
@@ -4961,7 +4962,7 @@ td:last-child{font-weight:600;word-break:break-all;}
             guardianName: "Test Parent",
             feeName: "Tuition Fee",
             amount: 5000,
-            dueDate: new Date().toISOString().split("T")[0],
+            dueDate: todayInIST(),
             stage: "D+0",
             message: testText,
           },
