@@ -1,0 +1,80 @@
+Add Student Phone Number to Invoice and Payment Receipt
+
+Add the Student Phone Number to both the Invoice PDF and the Payment Receipt PDF.
+
+1. Invoice PDF
+
+Under the existing Billed To / Student Details section, include:
+
+- Student Name
+- Student ID / MIS ID
+- Parent/Guardian Name
+- Student Phone Number
+- Class
+- Section
+
+The phone number should be displayed cleanly and professionally without making the student-details section overcrowded.
+
+2. Payment Receipt PDF
+
+Use the same Student Details section on the receipt and include:
+
+- Student Name
+- Student ID / MIS ID
+- Parent/Guardian Name
+- Student Phone Number
+- Class
+- Section
+
+The phone number shown on the receipt should correspond to the same student whose payment was made.
+
+3. Data Source — Important
+
+Use the existing student record's phone number as the source of truth.
+
+Do NOT:
+
+- Add another manual phone-number field to the Add Invoice form.
+- Ask the admin to enter the phone number again.
+- Allow the invoice/receipt PDF to use an arbitrary client-provided phone number.
+
+The system should automatically retrieve the phone number from the authenticated school's existing student record.
+
+If the existing architecture uses a student-detail snapshot for historical invoice/receipt information, follow that existing architecture consistently and include the phone number in the snapshot as well.
+
+4. Multi-Tenant Security
+
+Ensure the phone number is retrieved only from the correct student's record within the authenticated school/tenant.
+
+Do not expose another student's phone number through invoice IDs, fee record IDs, URL parameters, or API manipulation.
+
+5. Consistency
+
+The same student phone number should appear consistently on:
+
+Invoice PDF → Student Details → Student Phone
+
+and
+
+Payment Receipt PDF → Student Details → Student Phone
+
+Do not change any existing payment, Razorpay, webhook, invoice-number, receipt-number, or fee-record logic.
+
+Keep the existing professional invoice and receipt designs, including:
+
+- Prominent Invoice / Receipt heading
+- Invoice Number
+- Receipt Number on paid receipts
+- Exact invoice/payment date and time in IST
+- Parent/Guardian Name
+- Authorized Signature section
+- Amount in words
+- Fee breakdown/components
+- Late Fee & Penalty
+- Amount summary
+- Academic session
+- Fee period
+- Due date
+- Payment details on receipt
+
+Only add the Student Phone Number in the appropriate Student Details section and ensure both PDFs remain modern, professional, clean, and easy to read.

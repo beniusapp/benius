@@ -21,6 +21,7 @@ const invoice: InvoiceDocumentData = {
     name: "Ananya Sharma",
     digitalStudentId: "MIS-101",
     guardianName: "Rohan Sharma",
+    phone: "+91 98765 43210",
     className: "8",
     section: "A",
   },
@@ -51,6 +52,8 @@ describe("renderInvoiceDocument", () => {
     expect(html).toContain("STATUS: DUE");
     expect(html).toContain("19 Aug 2026, 09:08:34 PM IST");
     expect(html).toContain("Rohan Sharma");
+    expect(html).toContain("Student Phone");
+    expect(html).toContain("+91 98765 43210");
     expect(html).toContain("Tuition Fee");
     expect(html).toContain("Amount in Words");
     expect(html).toContain("One Thousand Rupees Only");
@@ -63,6 +66,17 @@ describe("renderInvoiceDocument", () => {
       student: { ...invoice.student, guardianName: null },
     });
 
+    expect(html).toContain("Not available");
+    expect(html).not.toContain("undefined");
+  });
+
+  it("renders a professional fallback when the student has no phone number", () => {
+    const html = renderInvoiceDocument({
+      ...invoice,
+      student: { ...invoice.student, phone: null },
+    });
+
+    expect(html).toContain("Student Phone");
     expect(html).toContain("Not available");
     expect(html).not.toContain("undefined");
   });

@@ -4912,7 +4912,7 @@ export async function registerRoutes(
       // Fetch full row with school + student joins (same query shape as admin route)
       const result = await db.execute(sql`
         SELECT fr.*,
-               s.name AS student_name, s.digital_student_id, s.class, s.section, s.guardian_name,
+               s.name AS student_name, s.digital_student_id, s.class, s.section, s.guardian_name, s.phone AS student_phone,
                sch.name AS school_name, sch.logo_url AS school_logo_url,
                sch.address_line1 AS school_address_line1, sch.address_line2 AS school_address_line2,
                sch.city AS school_city, sch.state AS school_state, sch.pin_code AS school_pin_code,
@@ -4973,6 +4973,7 @@ export async function registerRoutes(
           name: row.student_name,
           digitalStudentId: row.digital_student_id,
           guardianName: row.guardian_name ?? null,
+          phone: row.student_phone ?? null,
           className: row.class,
           section: row.section,
         },
@@ -5432,6 +5433,7 @@ tfoot td:last-child{text-align:right;}
       <div class="brow"><span class="bl">Roll No.</span><span class="bv">${esc(student?.rollNumber != null ? String(student.rollNumber) : "—")}</span></div>
       <div class="brow"><span class="bl">Class / Sec</span><span class="bv plain">${esc(student?.class ?? "—")} / ${esc(student?.section ?? "—")}</span></div>
       <div class="brow"><span class="bl">Parent / Guardian</span><span class="bv plain">${esc(student?.guardianName ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Student Phone</span><span class="bv plain">${esc(student?.phone ?? "—")}</span></div>
       <div class="brow"><span class="bl">Session</span><span class="bv plain">${esc(rec.academicYear ?? "—")}</span></div>
     </div>
 

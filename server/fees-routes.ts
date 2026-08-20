@@ -2903,7 +2903,9 @@ export function registerFeesRoutes(app: Express) {
     if (!payment) return res.status(404).json({ message: "Payment record not found" });
 
     const student = await storage.getStudentById(payment.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
+    if (!student || student.schoolId !== schoolId) {
+      return res.status(404).json({ message: "Student not found" });
+    }
 
     let feeType: string | null = null;
     let feeInvoiceNumber: string | null = null;
@@ -2977,6 +2979,8 @@ export function registerFeesRoutes(app: Express) {
     <tr><td>Receipt No.</td><td>${esc((payment as any).receiptNumber ?? `PAY-${payment.id}`)}</td></tr>
     <tr><td>Student Name</td><td>${esc(student.name)}</td></tr>
     <tr><td>Student ID</td><td>${esc(student.digitalStudentId)}</td></tr>
+    <tr><td>Parent / Guardian</td><td>${esc(student.guardianName ?? "—")}</td></tr>
+    <tr><td>Student Phone</td><td>${esc(student.phone ?? "—")}</td></tr>
     <tr><td>Class / Section</td><td>${esc(student.class)} / ${esc(student.section)}</td></tr>
     ${feeType ? `<tr><td>Fee Type</td><td>${esc(feeType)}</td></tr>` : ""}
     <tr><td>Payment Method</td><td>${esc(methodLabel[payment.paymentMethod] ?? payment.paymentMethod)}</td></tr>
@@ -3340,7 +3344,7 @@ td:last-child{font-weight:600;word-break:break-all;}
     try {
       const result = await db.execute(sql`
         SELECT fr.*,
-               s.name AS student_name, s.digital_student_id, s.class, s.section, s.guardian_name,
+               s.name AS student_name, s.digital_student_id, s.class, s.section, s.guardian_name, s.phone AS student_phone,
                sch.name AS school_name, sch.logo_url AS school_logo_url,
                sch.address_line1 AS school_address_line1, sch.address_line2 AS school_address_line2,
                sch.city AS school_city, sch.state AS school_state, sch.pin_code AS school_pin_code,
@@ -3406,6 +3410,7 @@ td:last-child{font-weight:600;word-break:break-all;}
           name: row.student_name,
           digitalStudentId: row.digital_student_id,
           guardianName: row.guardian_name ?? null,
+          phone: row.student_phone ?? null,
           className: row.class,
           section: row.section,
         },
@@ -3445,9 +3450,10 @@ td:last-child{font-weight:600;word-break:break-all;}
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
 
     const recs = await db.execute(sql`
-      SELECT fr.*, s.name AS student_name, s.digital_student_id, s.class, s.section
+      SELECT fr.*, s.name AS student_name, s.digital_student_id, s.class, s.section,
+             s.guardian_name, s.phone AS student_phone
       FROM fee_records fr
-      JOIN students s ON s.id = fr.student_id
+      JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
       WHERE fr.id = ${id} AND fr.school_id = ${schoolId}
       LIMIT 1
     `);
@@ -3544,6 +3550,8 @@ td:last-child{font-weight:600;word-break:break-all;}
     <tr><td>Receipt No.</td><td>${receiptNo}</td></tr>
     <tr><td>Student Name</td><td>${esc(row.student_name)}</td></tr>
     <tr><td>Student ID</td><td>${esc(row.digital_student_id)}</td></tr>
+    <tr><td>Parent / Guardian</td><td>${esc(row.guardian_name ?? "—")}</td></tr>
+    <tr><td>Student Phone</td><td>${esc(row.student_phone ?? "—")}</td></tr>
     <tr><td>Class / Section</td><td>${esc(row.class)} / ${esc(row.section)}</td></tr>
     <tr><td>Fee Type</td><td>${esc(row.fee_type)}</td></tr>
     <tr><td>Academic Year</td><td>${esc(row.academic_year ?? "—")}</td></tr>
