@@ -125,6 +125,16 @@ describe("renderInvoiceDocument", () => {
     expect(html).toContain("Computer-generated document");
   });
 
+  it("uses compact A4 print rules and keeps the signature/footer together", () => {
+    const html = renderInvoiceDocument(invoice);
+
+    expect(html).toContain("@page{size:A4;margin:8mm}");
+    expect(html).toContain('class="end-matter"');
+    expect(html).toContain("thead{display:table-header-group}");
+    expect(html).toContain("tr{break-inside:avoid;page-break-inside:avoid}");
+    expect(html).toContain("Amount in Words");
+  });
+
   it("HTML-escapes signatory name to prevent injection", () => {
     const html = renderInvoiceDocument({
       ...invoice,
