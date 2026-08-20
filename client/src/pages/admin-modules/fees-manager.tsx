@@ -25,6 +25,7 @@ import { apiRequest, sessionFetch, queryClient } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 import { amountInWords, formatIndianRupees } from "@/lib/amount-in-words";
 import { formatPersistedInvoiceDateTimeIST } from "@/lib/invoice-date-time";
+import { offlinePaymentEntryDefaults, offlinePaymentDetailRows } from "@shared/offline-payment-details";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -291,6 +292,34 @@ interface PaymentRecord {
   payerContact?: string | null;
   gatewayStatus?: string | null;
   createdAt?: string;
+  denominationBreakdown?: Record<string, number> | null;
+  instrumentDate?: string | null;
+  branchName?: string | null;
+  recordedBy?: number | null;
+  recordedByName?: string | null;
+  offlineDetail?: {
+    transactionTime?: string | null;
+    instrumentStatus?: string | null;
+    transferMode?: string | null;
+    transactionReference?: string | null;
+    receivingBank?: string | null;
+    receiverUpiId?: string | null;
+    payeeName?: string | null;
+    payableAt?: string | null;
+    collectionLocation?: string | null;
+    depositDate?: string | null;
+    depositBank?: string | null;
+    depositReference?: string | null;
+    returnDate?: string | null;
+    returnReason?: string | null;
+  } | null;
+  corrections?: Array<{
+    reason: string;
+    changedByName: string | null;
+    createdAt: string;
+    previousValues: Record<string, unknown>;
+    newValues: Record<string, unknown>;
+  }>;
 }
 
 interface TransactionDetail {
@@ -678,6 +707,156 @@ function TxnDetailRow({ label, value }: { label: string; value: React.ReactNode 
     </div>
   );
 }
+
+function OfflinePaymentCorrectionDialog({
+  payment,
+  onSaved,
+}: {
+  payment: PaymentRecord;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const fields = payment.paymentMethod === "Cash"
+    ? [{ key: "collectionLocation", label: "Collection Location", placeholder: "e.g. Main fee counter" }]
+    : payment.paymentMethod === "UpiQr"
+      ? [
+          { key: "referenceNumber", label: "UPI Transaction ID / UTR", placeholder: "Transaction reference" },
+          { key: "instrumentDate", label: "Payment Date", placeholder: "", type: "date" },
+          { key: "bankName", label: "Bank / UPI App", placeholder: "e.g. GPay, HDFC" },
+          { key: "payerName", label: "Payer Name", placeholder: "Account holder" },
+          { key: "payerUpiId", label: "Payer UPI ID", placeholder: "name@upi" },
+          { key: "transactionTime", label: "Payment Time", placeholder: "", type: "time" },
+          { key: "instrumentStatus", label: "Payment Status", placeholder: "e.g. Verified" },
+          { key: "transactionReference", label: "Bank / PSP Reference", placeholder: "Optional bank reference" },
+          { key: "receiverUpiId", label: "Receiver UPI ID", placeholder: "school@bank" },
+        ]
+      : payment.paymentMethod === "BankTransfer"
+        ? [
+            { key: "referenceNumber", label: "UTR Number", placeholder: "Transfer reference" },
+            { key: "instrumentDate", label: "Transfer Date", placeholder: "", type: "date" },
+            { key: "bankName", label: "Payer Bank", placeholder: "Sender's bank" },
+            { key: "branchName", label: "Branch", placeholder: "Branch name" },
+            { key: "payerName", label: "Payer / Sender", placeholder: "Account holder" },
+            { key: "transactionTime", label: "Transfer Time", placeholder: "", type: "time" },
+            { key: "instrumentStatus", label: "Transfer Status", placeholder: "e.g. Verified" },
+            { key: "transferMode", label: "Transfer Mode", placeholder: "NEFT, RTGS, IMPS" },
+            { key: "transactionReference", label: "Bank Transaction Reference", placeholder: "Internal / bank reference" },
+            { key: "receivingBank", label: "Receiving Bank", placeholder: "School account bank" },
+          ]
+        : [
+            { key: "referenceNumber", label: payment.paymentMethod === "Cheque" ? "Cheque Number" : "DD Number", placeholder: "Instrument number" },
+            { key: "instrumentDate", label: payment.paymentMethod === "Cheque" ? "Cheque Date" : "DD Date", placeholder: "", type: "date" },
+            { key: "bankName", label: "Bank Name", placeholder: "Bank" },
+            { key: "branchName", label: "Branch", placeholder: "Branch name" },
+            { key: "payerName", label: "Payer Name", placeholder: "Account holder" },
+            { key: "instrumentStatus", label: "Instrument Status", placeholder: "Received, Cleared, Returned" },
+            { key: "payeeName", label: "Payee Name", placeholder: "Named payee" },
+            ...(payment.paymentMethod === "DemandDraft" ? [{ key: "payableAt", label: "Payable At", placeholder: "City / branch" }] : []),
+            { key: "depositDate", label: "Deposit Date", placeholder: "", type: "date" },
+            { key: "depositBank", label: "Deposit Bank", placeholder: "Bank" },
+            { key: "depositReference", label: "Deposit Reference", placeholder: "Slip / reference" },
+            { key: "returnDate", label: "Return Date", placeholder: "", type: "date" },
+            { key: "returnReason", label: "Return / Bounce Reason", placeholder: "Reason, if returned" },
+          ];
+
+  useEffect(() => {
+    if (!open) return;
+    setReason("");
+    setValues({
+      referenceNumber: payment.referenceNumber ?? "",
+      instrumentDate: payment.instrumentDate ?? "",
+      bankName: payment.bankName ?? "",
+      branchName: payment.branchName ?? "",
+      payerName: payment.payerName ?? "",
+      payerUpiId: payment.vpa ?? "",
+      transactionTime: payment.offlineDetail?.transactionTime ?? "",
+      instrumentStatus: payment.offlineDetail?.instrumentStatus ?? "",
+      transferMode: payment.offlineDetail?.transferMode ?? "",
+      transactionReference: payment.offlineDetail?.transactionReference ?? "",
+      receivingBank: payment.offlineDetail?.receivingBank ?? "",
+      receiverUpiId: payment.offlineDetail?.receiverUpiId ?? "",
+      payeeName: payment.offlineDetail?.payeeName ?? "",
+      payableAt: payment.offlineDetail?.payableAt ?? "",
+      collectionLocation: payment.offlineDetail?.collectionLocation ?? "",
+      depositDate: payment.offlineDetail?.depositDate ?? "",
+      depositBank: payment.offlineDetail?.depositBank ?? "",
+      depositReference: payment.offlineDetail?.depositReference ?? "",
+      returnDate: payment.offlineDetail?.returnDate ?? "",
+      returnReason: payment.offlineDetail?.returnReason ?? "",
+    });
+  }, [open, payment]);
+
+  async function save() {
+    if (reason.trim().length < 3) {
+      toast({ title: "Reason required", description: "Explain why this accounting detail is being corrected.", variant: "destructive" });
+      return;
+    }
+    setSaving(true);
+    try {
+      const response = await sessionFetch(`/api/admin/fees/payments/${payment.id}/offline-details`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason: reason.trim(),
+          ...Object.fromEntries(fields.map(field => [field.key, (values[field.key] ?? "").trim()])),
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.message ?? "Could not save correction");
+      toast({ title: "Correction recorded", description: "The previous value was preserved in the payment audit trail." });
+      setOpen(false);
+      onSaved();
+    } catch (error: any) {
+      toast({ title: "Correction not saved", description: error.message ?? "Please try again.", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <Button size="sm" variant="outline" onClick={() => setOpen(true)}
+        className="h-7 border-amber-500/30 text-amber-300 hover:bg-amber-500/10">
+        Correct details
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-2xl max-h-[88vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Correct Offline Payment Details</DialogTitle></DialogHeader>
+          <p className="text-xs text-white/50">The payment amount, receipt, method, invoice, and original entry stay unchanged. This correction creates a before/after audit record.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {fields.map(field => (
+              <div key={field.key} className={field.key === "returnReason" || field.key === "collectionLocation" ? "sm:col-span-2" : ""}>
+                <label className="text-xs text-white/60 mb-1 block">{field.label}</label>
+                <Input
+                  type={field.type ?? "text"}
+                  value={values[field.key] ?? ""}
+                  onChange={event => setValues(current => ({ ...current, [field.key]: event.target.value }))}
+                  placeholder={field.placeholder}
+                  className="bg-[#0A1628] border-white/20 text-white"
+                />
+              </div>
+            ))}
+            <div>
+              <label className="text-xs text-white/60 mb-1 block">Correction Reason <span className="text-red-400">*</span></label>
+              <Input value={reason} onChange={event => setReason(event.target.value)} placeholder="Why is this being corrected?" className="bg-[#0A1628] border-white/20 text-white" />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setOpen(false)} disabled={saving}>Cancel</Button>
+            <Button onClick={save} disabled={saving} className="bg-amber-600 hover:bg-amber-500">
+              {saving && <Loader2 className="w-4 h-4 animate-spin mr-1" />} Save audited correction
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 function MetricBar({ viewSessionId }: { viewSessionId: number | null }) {
   const { data, isLoading } = useQuery<FeeSummary>({
     queryKey: ["/api/admin/fees/summary", viewSessionId],
@@ -758,6 +937,20 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
   const [branchName, setBranchName] = useState("");
   const [payerName,  setPayerName]  = useState("");
   const [payerUpiId, setPayerUpiId] = useState("");   // UPI / QR: payer's UPI ID / VPA
+  // Additional accounting fields are deliberately method-specific. They are
+  // stored separately from the shared payment record to keep the audit clean.
+  const [transactionTime, setTransactionTime] = useState("");
+  const [instrumentStatus, setInstrumentStatus] = useState("");
+  const [transferMode, setTransferMode] = useState("");
+  const [transactionReference, setTransactionReference] = useState("");
+  const [receivingBank, setReceivingBank] = useState("");
+  const [receiverUpiId, setReceiverUpiId] = useState("");
+  const [payeeName, setPayeeName] = useState("");
+  const [payableAt, setPayableAt] = useState("");
+  const [collectionLocation, setCollectionLocation] = useState("");
+  const [depositDate, setDepositDate] = useState("");
+  const [depositBank, setDepositBank] = useState("");
+  const [depositReference, setDepositReference] = useState("");
 
   // Submit state
   const [submitting,   setSubmitting]   = useState(false);
@@ -777,9 +970,22 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
     setMethod("Cash"); setRef(""); setDate(new Date().toISOString().split("T")[0]); setNotes("");
     setDenomQty(Object.fromEntries(DENOMS.map(d => [d, 0])));
     setInstrDate(""); setBankName(""); setBranchName(""); setPayerName(""); setPayerUpiId("");
+    setTransactionTime(""); setInstrumentStatus(""); setTransferMode(""); setTransactionReference("");
+    setReceivingBank(""); setReceiverUpiId(""); setPayeeName(""); setPayableAt("");
+    setCollectionLocation(""); setDepositDate(""); setDepositBank(""); setDepositReference("");
     setSubmitting(false); setSubmitError(null); setDonePayments([]);
     setBaseKey(`idem-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   }, [open]);
+
+  const selectPaymentMethod = (nextMethod: string) => {
+    const defaults = offlinePaymentEntryDefaults(nextMethod);
+    setMethod(nextMethod);
+    setRef(""); setInstrDate(""); setBankName(""); setBranchName(""); setPayerName(""); setPayerUpiId("");
+    setTransactionTime(""); setInstrumentStatus(defaults.instrumentStatus ?? "");
+    setTransferMode(defaults.transferMode ?? ""); setTransactionReference("");
+    setReceivingBank(""); setReceiverUpiId(""); setPayeeName(""); setPayableAt("");
+    setCollectionLocation(""); setDepositDate(""); setDepositBank(""); setDepositReference("");
+  };
 
   // Search students — invoice number uses dedicated param; name/DSID uses ?q=
   async function doSearch() {
@@ -851,6 +1057,20 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
       lateFeePaid:    inv.accruedLateFee,
       cashierNotes:   notes || null,
       idempotencyKey: baseKey,
+      offlineDetails: {
+        transactionTime: transactionTime || null,
+        instrumentStatus: instrumentStatus || null,
+        transferMode: transferMode || null,
+        transactionReference: transactionReference || null,
+        receivingBank: receivingBank || null,
+        receiverUpiId: receiverUpiId || null,
+        payeeName: payeeName || null,
+        payableAt: payableAt || null,
+        collectionLocation: collectionLocation || null,
+        depositDate: depositDate || null,
+        depositBank: depositBank || null,
+        depositReference: depositReference || null,
+      },
     };
 
     if (method === "Cash") {
@@ -1118,7 +1338,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                   { value: "DemandDraft",  label: "Demand Draft" },
                 ].map(({ value, label }) => (
                   <button key={value} type="button"
-                    onClick={() => { setMethod(value); setRef(""); setInstrDate(""); setBankName(""); setBranchName(""); setPayerName(""); setPayerUpiId(""); }}
+                    onClick={() => selectPaymentMethod(value)}
                     className={`py-2 px-3 rounded-lg border text-sm font-medium transition-all ${
                       method === value
                         ? "bg-cyan-900/40 border-cyan-500/60 text-cyan-300"
@@ -1129,7 +1349,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                 ))}
                 {/* UPI / QR Payment — full-width on its own row */}
                 <button type="button"
-                  onClick={() => { setMethod("UpiQr"); setRef(""); setInstrDate(""); setBankName(""); setBranchName(""); setPayerName(""); setPayerUpiId(""); }}
+                  onClick={() => selectPaymentMethod("UpiQr")}
                   className={`col-span-2 py-2 px-3 rounded-lg border text-sm font-medium transition-all ${
                     method === "UpiQr"
                       ? "bg-cyan-900/40 border-cyan-500/60 text-cyan-300"
@@ -1146,6 +1366,16 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
               <input type="date" value={date} onChange={e => setDate(e.target.value)}
                 className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
             </div>
+
+            {/* ── Method-aware accounting context ─────────────────────────────── */}
+            {method === "Cash" && (
+              <div>
+                <label className="text-xs text-white/60 mb-1 block">Collection Location</label>
+                <input value={collectionLocation} onChange={e => setCollectionLocation(e.target.value)}
+                  placeholder="e.g. Main fee counter"
+                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+              </div>
+            )}
 
             {/* ── Cash: denomination grid + verification panel ──────────────────── */}
             {method === "Cash" && (
@@ -1268,6 +1498,34 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                       className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20 font-mono" />
                   </div>
                 </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">Payment Time</label>
+                    <input type="time" value={transactionTime} onChange={e => setTransactionTime(e.target.value)}
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">Receiver UPI ID</label>
+                    <input value={receiverUpiId} onChange={e => setReceiverUpiId(e.target.value)}
+                      placeholder="e.g. school@bank"
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20 font-mono" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">UPI Reference</label>
+                    <input value={transactionReference} onChange={e => setTransactionReference(e.target.value)}
+                      placeholder="Optional bank / PSP reference"
+                      className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60 mb-1 block">Payment Status</label>
+                    <Select value={instrumentStatus} onValueChange={setInstrumentStatus}>
+                      <SelectTrigger className="bg-[#0A1628] border-white/20 text-white"><SelectValue /></SelectTrigger>
+                      <SelectContent><SelectItem value="Verified">Verified</SelectItem><SelectItem value="Pending">Pending</SelectItem><SelectItem value="Failed">Failed</SelectItem></SelectContent>
+                    </Select>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -1325,6 +1583,84 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                       className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
                   </div>
                 </div>
+                {method === "BankTransfer" && (
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs text-white/60 mb-1 block">Transfer Mode</label>
+                        <Select value={transferMode} onValueChange={setTransferMode}>
+                          <SelectTrigger className="bg-[#0A1628] border-white/20 text-white"><SelectValue /></SelectTrigger>
+                          <SelectContent><SelectItem value="NEFT">NEFT</SelectItem><SelectItem value="RTGS">RTGS</SelectItem><SelectItem value="IMPS">IMPS</SelectItem><SelectItem value="Other">Other</SelectItem></SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <label className="text-xs text-white/60 mb-1 block">Transaction Time</label>
+                        <input type="time" value={transactionTime} onChange={e => setTransactionTime(e.target.value)}
+                          className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs text-white/60 mb-1 block">Bank Transaction Reference</label>
+                        <input value={transactionReference} onChange={e => setTransactionReference(e.target.value)}
+                          placeholder="Optional internal reference"
+                          className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-white/60 mb-1 block">Receiving Bank</label>
+                        <input value={receivingBank} onChange={e => setReceivingBank(e.target.value)}
+                          placeholder="School account bank"
+                          className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                      </div>
+                    </div>
+                  </>
+                )}
+                {method !== "BankTransfer" && (
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs text-white/60 mb-1 block">{method === "Cheque" ? "Cheque Status" : "Draft Status"}</label>
+                        <Select value={instrumentStatus} onValueChange={setInstrumentStatus}>
+                          <SelectTrigger className="bg-[#0A1628] border-white/20 text-white"><SelectValue /></SelectTrigger>
+                          <SelectContent><SelectItem value="Received">Received</SelectItem><SelectItem value="Deposited">Deposited</SelectItem><SelectItem value="Cleared">Cleared</SelectItem><SelectItem value="Returned">Returned</SelectItem></SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <label className="text-xs text-white/60 mb-1 block">Payee Name</label>
+                        <input value={payeeName} onChange={e => setPayeeName(e.target.value)}
+                          placeholder="Named payee"
+                          className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                      </div>
+                    </div>
+                    {method === "DemandDraft" && (
+                      <div>
+                        <label className="text-xs text-white/60 mb-1 block">Payable At</label>
+                        <input value={payableAt} onChange={e => setPayableAt(e.target.value)}
+                          placeholder="City / branch where the draft is payable"
+                          className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                      </div>
+                    )}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-xs text-white/60 mb-1 block">Deposit Date</label>
+                        <input type="date" value={depositDate} onChange={e => setDepositDate(e.target.value)}
+                          className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-white/60 mb-1 block">Deposit Bank</label>
+                        <input value={depositBank} onChange={e => setDepositBank(e.target.value)}
+                          placeholder="Bank"
+                          className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-white/60 mb-1 block">Deposit Reference</label>
+                        <input value={depositReference} onChange={e => setDepositReference(e.target.value)}
+                          placeholder="Slip / ref."
+                          className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20" />
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -2894,13 +3230,101 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                                     ) : (
                                       <div className="grid grid-cols-2 gap-4">
                                         <div className="space-y-1.5">
-                                          <TxnDetailRow label="Method" value={pay.paymentMethod} />
-                                          <TxnDetailRow label="Reference" value={<span className="font-mono text-xs">{pay.referenceNumber ?? "—"}</span>} />
+                                          <TxnDetailRow label="Method" value={
+                                            pay.paymentMethod === "BankTransfer" ? "Offline (Bank Transfer)"
+                                              : pay.paymentMethod === "DemandDraft" ? "Offline (Demand Draft)"
+                                              : pay.paymentMethod === "UpiQr" ? "Offline (UPI/QR)"
+                                              : `Offline (${pay.paymentMethod})`
+                                          } />
                                           <TxnDetailRow label="Receipt No." value={<span className="font-mono text-cyan-300 text-xs">{pay.receiptNumber ?? "—"}</span>} />
+                                          <TxnDetailRow label="Received Date" value={fmtDate(pay.receivedDate)} />
+                                          <TxnDetailRow label="Recorded By" value={pay.recordedByName ?? null} />
                                         </div>
                                         <div className="space-y-1.5">
                                           <TxnDetailRow label="Notes" value={pay.cashierNotes} />
+                                          <OfflinePaymentCorrectionDialog payment={pay} onSaved={() => { void fetchDetail(rec.id, true); }} />
                                         </div>
+                                        {(() => {
+                                          const rows = offlinePaymentDetailRows(pay.paymentMethod, pay.offlineDetail, {
+                                            referenceNumber: pay.referenceNumber,
+                                            instrumentDate: pay.instrumentDate,
+                                            bankName: pay.bankName,
+                                            branchName: pay.branchName,
+                                            payerName: pay.payerName,
+                                            payerUpiId: pay.vpa,
+                                          });
+                                          const denominations = Object.entries(pay.denominationBreakdown ?? {})
+                                            .filter(([, count]) => Number(count) > 0)
+                                            .sort(([a], [b]) => Number(b) - Number(a));
+                                          return (
+                                            <>
+                                              {rows.length > 0 && (
+                                                <div className="col-span-2 mt-1 pt-3 border-t border-white/10 grid grid-cols-2 gap-x-4 gap-y-1.5">
+                                                  {rows.map(row => <TxnDetailRow key={row.label} label={row.label} value={row.value} />)}
+                                                </div>
+                                              )}
+                                              {denominations.length > 0 && (
+                                                <div className="col-span-2 mt-1 rounded-lg bg-emerald-950/20 border border-emerald-700/30 p-3">
+                                                  <p className="text-[10px] uppercase tracking-widest font-semibold text-emerald-300/70 mb-2">Cash Denominations</p>
+                                                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/70">
+                                                    {denominations.map(([denomination, count]) => (
+                                                      <span key={denomination} className="font-mono">₹{denomination} × {count} = {fmt(Number(denomination) * Number(count))}</span>
+                                                    ))}
+                                                  </div>
+                                                  <p className="mt-2 pt-2 border-t border-emerald-700/20 text-xs font-semibold text-emerald-200">
+                                                    Counted Total: {fmt(denominations.reduce((total, [denomination, count]) => total + Number(denomination) * Number(count), 0))}
+                                                  </p>
+                                                </div>
+                                              )}
+                                              {(pay.corrections?.length ?? 0) > 0 && (
+                                                <div className="col-span-2 mt-1 rounded-lg bg-amber-950/20 border border-amber-700/30 p-3">
+                                                  <p className="text-[10px] uppercase tracking-widest font-semibold text-amber-300/70 mb-1.5">Audited Corrections</p>
+                                                  <div className="space-y-1">
+                                                    {pay.corrections!.map((correction, index) => {
+                                                      const labels: Record<string, string> = {
+                                                        referenceNumber: "Primary reference", instrumentDate: "Instrument date",
+                                                        bankName: "Bank", branchName: "Branch", payerName: "Payer",
+                                                        payerUpiId: "Payer UPI ID", transactionTime: "Payment time",
+                                                        instrumentStatus: "Method status", transferMode: "Transfer mode",
+                                                        transactionReference: "Transaction reference", receivingBank: "Receiving bank",
+                                                        receiverUpiId: "Receiver UPI ID", payeeName: "Payee name",
+                                                        payableAt: "Payable at", collectionLocation: "Collection location",
+                                                        depositDate: "Deposit date", depositBank: "Deposit bank",
+                                                        depositReference: "Deposit reference", returnDate: "Return date",
+                                                        returnReason: "Return / bounce reason",
+                                                      };
+                                                      const changedFields = Array.from(new Set([
+                                                        ...Object.keys(correction.previousValues ?? {}),
+                                                        ...Object.keys(correction.newValues ?? {}),
+                                                      ])).filter(key => {
+                                                        const before = correction.previousValues?.[key] ?? null;
+                                                        const after = correction.newValues?.[key] ?? null;
+                                                        return before !== after;
+                                                      });
+                                                      const displayValue = (value: unknown) =>
+                                                        value == null || value === "" ? "—" : String(value);
+                                                      return (
+                                                        <div key={`${correction.createdAt}-${index}`} className="text-xs text-white/65 py-1.5 border-b border-amber-700/15 last:border-0">
+                                                          <p>{correction.reason} <span className="text-white/30">· {correction.changedByName ?? "Administrator"} · {fmtDateTimeIST(correction.createdAt)}</span></p>
+                                                          <div className="mt-1 space-y-0.5 text-[11px]">
+                                                            {changedFields.length > 0 ? changedFields.map(key => (
+                                                              <p key={key} className="font-mono text-white/50">
+                                                                <span className="font-sans text-white/40">{labels[key] ?? key}: </span>
+                                                                <span className="text-red-200/70">{displayValue(correction.previousValues?.[key])}</span>
+                                                                <span className="mx-1 text-amber-300">→</span>
+                                                                <span className="text-emerald-200/80">{displayValue(correction.newValues?.[key])}</span>
+                                                              </p>
+                                                            )) : <p className="italic text-white/35">No field value changed.</p>}
+                                                          </div>
+                                                        </div>
+                                                      );
+                                                    })}
+                                                  </div>
+                                                </div>
+                                              )}
+                                            </>
+                                          );
+                                        })()}
                                       </div>
                                     )}
                                   </div>

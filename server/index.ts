@@ -406,6 +406,39 @@ app.use((req, res, next) => {
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS late_fee_config JSONB;
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS late_fee_paid INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES academic_sessions(id) ON DELETE SET NULL;
+    CREATE TABLE IF NOT EXISTS offline_payment_details (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      payment_record_id INTEGER NOT NULL REFERENCES payment_records(id) ON DELETE CASCADE,
+      transaction_time VARCHAR(5),
+      instrument_status VARCHAR(30),
+      transfer_mode VARCHAR(40),
+      transaction_reference VARCHAR(100),
+      receiving_bank VARCHAR(100),
+      receiver_upi_id VARCHAR(100),
+      payee_name VARCHAR(200),
+      payable_at VARCHAR(120),
+      collection_location VARCHAR(200),
+      deposit_date DATE,
+      deposit_bank VARCHAR(100),
+      deposit_reference VARCHAR(100),
+      return_date DATE,
+      return_reason TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      UNIQUE(payment_record_id),
+      UNIQUE(school_id, payment_record_id)
+    );
+    CREATE TABLE IF NOT EXISTS offline_payment_detail_revisions (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      payment_record_id INTEGER NOT NULL REFERENCES payment_records(id) ON DELETE CASCADE,
+      changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      reason TEXT NOT NULL,
+      previous_values JSONB NOT NULL,
+      new_values JSONB NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
     ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS student_id INTEGER REFERENCES students(id) ON DELETE SET NULL;
     CREATE INDEX IF NOT EXISTS idx_payment_records_school_session ON payment_records(school_id, session_id);
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS receipt_number VARCHAR(20);

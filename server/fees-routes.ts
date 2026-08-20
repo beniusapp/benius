@@ -13,6 +13,11 @@ import { fetchRazorpayData, mapRazorpayPayment, upsertPaymentAttempt, updatePaym
 import { validateCapturedRazorpayPayment } from "./razorpay-verify-guard";
 import { getMultiInvoiceOfflinePaymentError } from "./offline-payment-request-guard";
 import { formatOfflinePaymentMethod } from "@shared/offline-payment-method";
+import {
+  isValidOfflineCorrectionDate,
+  normalizeOptionalOfflineCorrectionDate,
+  offlinePaymentDetailRows,
+} from "@shared/offline-payment-details";
 import multer from "multer";
 import path from "node:path";
 import fs from "node:fs";
@@ -861,6 +866,48 @@ export function registerFeesRoutes(app: Express) {
     payerName:  z.string().max(200).optional().nullable(),
     // ── UPI / QR Payment extra fields ────────────────────────────────────────
     payerUpiId: z.string().max(100).optional().nullable(),  // payer's UPI ID / VPA
+    // Structured accounting metadata. Common payment values remain on
+    // payment_records; this object holds only method-specific additions.
+    offlineDetails: z.object({
+      transactionTime: z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
+      instrumentStatus: z.string().max(30).optional().nullable(),
+      transferMode: z.string().max(40).optional().nullable(),
+      transactionReference: z.string().max(100).optional().nullable(),
+      receivingBank: z.string().max(100).optional().nullable(),
+      receiverUpiId: z.string().max(100).optional().nullable(),
+      payeeName: z.string().max(200).optional().nullable(),
+      payableAt: z.string().max(120).optional().nullable(),
+      collectionLocation: z.string().max(200).optional().nullable(),
+      depositDate: z.string().optional().nullable(),
+      depositBank: z.string().max(100).optional().nullable(),
+      depositReference: z.string().max(100).optional().nullable(),
+      returnDate: z.string().optional().nullable(),
+      returnReason: z.string().max(500).optional().nullable(),
+    }).strict().optional(),
+  }).strict();
+
+  const offlineDetailCorrectionSchema = z.object({
+    reason: z.string().trim().min(3).max(500),
+    referenceNumber: z.string().max(100).optional(),
+    instrumentDate: z.string().refine(value => value === "" || isValidOfflineCorrectionDate(value), "Use a valid date in YYYY-MM-DD format.").transform(normalizeOptionalOfflineCorrectionDate).nullable().optional(),
+    bankName: z.string().max(100).optional(),
+    branchName: z.string().max(100).optional(),
+    payerName: z.string().max(200).optional(),
+    payerUpiId: z.string().max(100).optional(),
+    transactionTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+    instrumentStatus: z.string().max(30).optional(),
+    transferMode: z.string().max(40).optional(),
+    transactionReference: z.string().max(100).optional(),
+    receivingBank: z.string().max(100).optional(),
+    receiverUpiId: z.string().max(100).optional(),
+    payeeName: z.string().max(200).optional(),
+    payableAt: z.string().max(120).optional(),
+    collectionLocation: z.string().max(200).optional(),
+    depositDate: z.string().refine(value => value === "" || isValidOfflineCorrectionDate(value), "Use a valid date in YYYY-MM-DD format.").transform(normalizeOptionalOfflineCorrectionDate).nullable().optional(),
+    depositBank: z.string().max(100).optional(),
+    depositReference: z.string().max(100).optional(),
+    returnDate: z.string().refine(value => value === "" || isValidOfflineCorrectionDate(value), "Use a valid date in YYYY-MM-DD format.").transform(normalizeOptionalOfflineCorrectionDate).nullable().optional(),
+    returnReason: z.string().max(500).optional(),
   }).strict();
 
   // NOTE: GET /api/admin/fees/students/search is registered in routes.ts
@@ -1333,11 +1380,33 @@ export function registerFeesRoutes(app: Express) {
       );
       rec = insertResult.rows[0];
 
-       // Store the same selected offline method in the authoritative payment
-       // attempt ledger at transaction time. external_id keeps this one-to-one
-       // with the payment record and lets startup backfill safely skip it.
-       const paymentRecordId = Number((rec as any)?.id);
-       if (paymentRecordId) {
+      // Persist the additional accounting fields in the same transaction as the
+      // canonical payment and payment-attempt records. The primary payment
+      // fields above remain the source of truth for shared receipt data.
+      const paymentRecordId = Number((rec as any)?.id);
+      if (paymentRecordId) {
+        const detail = paymentOnly.offlineDetails ?? {};
+        await tx.execute(sql`
+          INSERT INTO offline_payment_details (
+            school_id, payment_record_id, transaction_time, instrument_status,
+            transfer_mode, transaction_reference, receiving_bank, receiver_upi_id,
+            payee_name, payable_at, collection_location, deposit_date, deposit_bank,
+            deposit_reference, return_date, return_reason
+          ) VALUES (
+            ${schoolId}, ${paymentRecordId}, ${detail.transactionTime ?? null},
+            ${detail.instrumentStatus ?? null}, ${detail.transferMode ?? null},
+            ${detail.transactionReference ?? null}, ${detail.receivingBank ?? null},
+            ${detail.receiverUpiId ?? null}, ${detail.payeeName ?? null},
+            ${detail.payableAt ?? null}, ${detail.collectionLocation ?? null},
+            ${detail.depositDate ?? null}, ${detail.depositBank ?? null},
+            ${detail.depositReference ?? null}, ${detail.returnDate ?? null},
+            ${detail.returnReason ?? null}
+          )
+        `);
+
+        // Store the same selected offline method in the authoritative payment
+        // attempt ledger at transaction time. external_id keeps this one-to-one
+        // with the payment record and lets startup backfill safely skip it.
          await tx.execute(sql`
            INSERT INTO payment_attempts (
              school_id, student_id, fee_record_id, session_id, outcome,
@@ -1357,7 +1426,7 @@ export function registerFeesRoutes(app: Express) {
              WHERE external_id IS NOT NULL
            DO NOTHING
          `);
-       }
+      }
 
       // Auto-update linked fee record status (sum includes the row just inserted)
       // Also persist any notes the admin edited in the Pay modal.
@@ -1415,6 +1484,135 @@ export function registerFeesRoutes(app: Express) {
       `Recorded ${paymentOnly.paymentMethod} ₹${Number(paymentOnly.amount).toLocaleString("en-IN")} for ${paymentStuLabel} — receipt ${opReceipt}`,
       paymentOnly.studentId);
     res.status(201).json(rec);
+  });
+
+  // ── Offline payment-detail correction ─────────────────────────────────────
+  // Amount, invoice, student, method, receipt, and recorded timestamps are
+  // intentionally immutable. A correction may only amend accounting metadata,
+  // and every change writes an immutable before/after revision first.
+  app.patch("/api/admin/fees/payments/:id/offline-details", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const paymentRecordId = parseInt(req.params.id);
+    if (isNaN(paymentRecordId)) return res.status(400).json({ message: "Invalid payment ID" });
+    const parsed = offlineDetailCorrectionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: parsed.error.issues.map(issue => issue.message).join(", ") });
+    }
+
+    const patch = parsed.data;
+    let response: any = null;
+    let correctionError: string | null = null;
+    await db.transaction(async (tx) => {
+      const paymentResult = await tx.execute(sql`
+        SELECT * FROM payment_records
+        WHERE id = ${paymentRecordId} AND school_id = ${schoolId}
+        FOR UPDATE
+      `);
+      const payment = paymentResult.rows[0] as any;
+      if (!payment) return;
+      if (payment.payment_method === "Online") {
+        correctionError = "Online payment details are managed by the gateway and cannot be edited here.";
+        return;
+      }
+
+      const detailResult = await tx.execute(sql`
+        SELECT * FROM offline_payment_details
+        WHERE payment_record_id = ${paymentRecordId} AND school_id = ${schoolId}
+        FOR UPDATE
+      `);
+      const detail = (detailResult.rows[0] ?? {}) as any;
+      const next = {
+        referenceNumber: patch.referenceNumber ?? payment.reference_number ?? null,
+        instrumentDate: patch.instrumentDate !== undefined ? patch.instrumentDate : payment.cheque_date ?? null,
+        bankName: patch.bankName ?? payment.bank_name ?? null,
+        branchName: patch.branchName ?? payment.branch_name ?? null,
+        payerName: patch.payerName ?? payment.payer_name ?? null,
+        payerUpiId: patch.payerUpiId ?? payment.vpa ?? null,
+        transactionTime: patch.transactionTime ?? detail.transaction_time ?? null,
+        instrumentStatus: patch.instrumentStatus ?? detail.instrument_status ?? null,
+        transferMode: patch.transferMode ?? detail.transfer_mode ?? null,
+        transactionReference: patch.transactionReference ?? detail.transaction_reference ?? null,
+        receivingBank: patch.receivingBank ?? detail.receiving_bank ?? null,
+        receiverUpiId: patch.receiverUpiId ?? detail.receiver_upi_id ?? null,
+        payeeName: patch.payeeName ?? detail.payee_name ?? null,
+        payableAt: patch.payableAt ?? detail.payable_at ?? null,
+        collectionLocation: patch.collectionLocation ?? detail.collection_location ?? null,
+        depositDate: patch.depositDate !== undefined ? patch.depositDate : detail.deposit_date ?? null,
+        depositBank: patch.depositBank ?? detail.deposit_bank ?? null,
+        depositReference: patch.depositReference ?? detail.deposit_reference ?? null,
+        returnDate: patch.returnDate !== undefined ? patch.returnDate : detail.return_date ?? null,
+        returnReason: patch.returnReason ?? detail.return_reason ?? null,
+      };
+      const previous = {
+        referenceNumber: payment.reference_number ?? null,
+        instrumentDate: payment.cheque_date ?? null,
+        bankName: payment.bank_name ?? null,
+        branchName: payment.branch_name ?? null,
+        payerName: payment.payer_name ?? null,
+        payerUpiId: payment.vpa ?? null,
+        transactionTime: detail.transaction_time ?? null,
+        instrumentStatus: detail.instrument_status ?? null,
+        transferMode: detail.transfer_mode ?? null,
+        transactionReference: detail.transaction_reference ?? null,
+        receivingBank: detail.receiving_bank ?? null,
+        receiverUpiId: detail.receiver_upi_id ?? null,
+        payeeName: detail.payee_name ?? null,
+        payableAt: detail.payable_at ?? null,
+        collectionLocation: detail.collection_location ?? null,
+        depositDate: detail.deposit_date ?? null,
+        depositBank: detail.deposit_bank ?? null,
+        depositReference: detail.deposit_reference ?? null,
+        returnDate: detail.return_date ?? null,
+        returnReason: detail.return_reason ?? null,
+      };
+
+      await tx.execute(sql`
+        UPDATE payment_records
+        SET reference_number = ${next.referenceNumber}, cheque_date = ${next.instrumentDate},
+            bank_name = ${next.bankName}, branch_name = ${next.branchName},
+            payer_name = ${next.payerName}, vpa = ${next.payerUpiId}
+        WHERE id = ${paymentRecordId} AND school_id = ${schoolId}
+      `);
+      await tx.execute(sql`
+        INSERT INTO offline_payment_details (
+          school_id, payment_record_id, transaction_time, instrument_status,
+          transfer_mode, transaction_reference, receiving_bank, receiver_upi_id,
+          payee_name, payable_at, collection_location, deposit_date, deposit_bank,
+          deposit_reference, return_date, return_reason, updated_at
+        ) VALUES (
+          ${schoolId}, ${paymentRecordId}, ${next.transactionTime}, ${next.instrumentStatus},
+          ${next.transferMode}, ${next.transactionReference}, ${next.receivingBank},
+          ${next.receiverUpiId}, ${next.payeeName}, ${next.payableAt},
+          ${next.collectionLocation}, ${next.depositDate}, ${next.depositBank},
+          ${next.depositReference}, ${next.returnDate}, ${next.returnReason}, NOW()
+        )
+        ON CONFLICT (payment_record_id) DO UPDATE SET
+          transaction_time = EXCLUDED.transaction_time, instrument_status = EXCLUDED.instrument_status,
+          transfer_mode = EXCLUDED.transfer_mode, transaction_reference = EXCLUDED.transaction_reference,
+          receiving_bank = EXCLUDED.receiving_bank, receiver_upi_id = EXCLUDED.receiver_upi_id,
+          payee_name = EXCLUDED.payee_name, payable_at = EXCLUDED.payable_at,
+          collection_location = EXCLUDED.collection_location, deposit_date = EXCLUDED.deposit_date,
+          deposit_bank = EXCLUDED.deposit_bank, deposit_reference = EXCLUDED.deposit_reference,
+          return_date = EXCLUDED.return_date, return_reason = EXCLUDED.return_reason, updated_at = NOW()
+      `);
+      await tx.execute(sql`
+        INSERT INTO offline_payment_detail_revisions (
+          school_id, payment_record_id, changed_by, reason, previous_values, new_values
+        ) VALUES (
+          ${schoolId}, ${paymentRecordId}, ${req.session.userId ?? null}, ${patch.reason},
+          ${JSON.stringify(previous)}::jsonb, ${JSON.stringify(next)}::jsonb
+        )
+      `);
+      response = next;
+    });
+    if (correctionError) return res.status(400).json({ message: correctionError });
+    if (!response) return res.status(404).json({ message: "Payment record not found" });
+    await appendAudit(
+      req, schoolId, "offline_payment_detail_corrected", "payment_record", paymentRecordId,
+      `Corrected offline payment accounting details: ${patch.reason}`,
+    );
+    res.json({ message: "Offline payment details corrected and revision recorded.", details: response });
   });
 
   // ── External Payment Settings ─────────────────────────────────────────────
@@ -3003,6 +3201,49 @@ export function registerFeesRoutes(app: Express) {
     const methodLabel =
       formatOfflinePaymentMethod(payment.paymentMethod)
       ?? (payment.paymentMethod === "Online" ? "Online Transfer" : payment.paymentMethod || "—");
+    const detailResult = await db.execute(sql`
+      SELECT transaction_time, instrument_status, transfer_mode, transaction_reference,
+             receiving_bank, receiver_upi_id, payee_name, payable_at, collection_location,
+             deposit_date, deposit_bank, deposit_reference, return_date, return_reason
+      FROM offline_payment_details
+      WHERE school_id = ${schoolId} AND payment_record_id = ${payment.id}
+      LIMIT 1
+    `);
+    const detail = (detailResult.rows[0] ?? null) as any;
+    const detailRows = offlinePaymentDetailRows(payment.paymentMethod, detail && {
+      transactionTime: detail.transaction_time,
+      instrumentStatus: detail.instrument_status,
+      transferMode: detail.transfer_mode,
+      transactionReference: detail.transaction_reference,
+      receivingBank: detail.receiving_bank,
+      receiverUpiId: detail.receiver_upi_id,
+      payeeName: detail.payee_name,
+      payableAt: detail.payable_at,
+      collectionLocation: detail.collection_location,
+      depositDate: detail.deposit_date,
+      depositBank: detail.deposit_bank,
+      depositReference: detail.deposit_reference,
+      returnDate: detail.return_date,
+      returnReason: detail.return_reason,
+    }, {
+      referenceNumber: payment.referenceNumber,
+      instrumentDate: (payment as any).chequeDate,
+      bankName: (payment as any).bankName,
+      branchName: (payment as any).branchName,
+      payerName: (payment as any).payerName,
+      payerUpiId: (payment as any).vpa,
+    });
+    const cashBreakdown = (payment as any).denominationBreakdown as Record<string, number> | null;
+    const cashRows = payment.paymentMethod === "Cash" && cashBreakdown
+      ? Object.entries(cashBreakdown)
+        .filter(([denom, quantity]) => Number(quantity) > 0)
+        .sort(([a], [b]) => Number(b) - Number(a))
+        .map(([denom, quantity]) => `<tr><td>Cash denomination</td><td>${esc(`₹${denom} × ${quantity}`)}</td></tr>`)
+        .join("")
+      : "";
+    const detailHtml = detailRows
+      .map(row => `<tr><td>${esc(row.label)}</td><td>${esc(row.value)}</td></tr>`)
+      .join("");
 
     const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Payment Receipt</title>
 <style>
@@ -3041,7 +3282,7 @@ export function registerFeesRoutes(app: Express) {
     <tr><td>Class / Section</td><td>${esc(student.class)} / ${esc(student.section)}</td></tr>
     ${feeType ? `<tr><td>Fee Type</td><td>${esc(feeType)}</td></tr>` : ""}
     <tr><td>Payment Method</td><td>${esc(methodLabel)}</td></tr>
-    ${payment.referenceNumber ? `<tr><td>Reference No.</td><td>${esc(payment.referenceNumber)}</td></tr>` : ""}
+    ${detailHtml}${cashRows}
     <tr><td>Payment Date &amp; Time</td><td>${paymentDateTime}</td></tr>
     ${payment.cashierNotes ? `<tr><td>Notes</td><td>${esc(payment.cashierNotes)}</td></tr>` : ""}
     <tr class="amount-row"><td>Amount Received</td><td>${amountStr}</td></tr>
@@ -3098,9 +3339,30 @@ export function registerFeesRoutes(app: Express) {
 
       // Payment records (all for this fee, newest first)
       const payRows = (await db.execute(sql`
-        SELECT * FROM payment_records
-        WHERE fee_record_id = ${feeRecordId}
-        ORDER BY created_at DESC
+        SELECT pr.*,
+               u.email AS recorded_by_name,
+               CASE WHEN opd.id IS NULL THEN NULL ELSE jsonb_build_object(
+                 'transactionTime', opd.transaction_time,
+                 'instrumentStatus', opd.instrument_status,
+                 'transferMode', opd.transfer_mode,
+                 'transactionReference', opd.transaction_reference,
+                 'receivingBank', opd.receiving_bank,
+                 'receiverUpiId', opd.receiver_upi_id,
+                 'payeeName', opd.payee_name,
+                 'payableAt', opd.payable_at,
+                 'collectionLocation', opd.collection_location,
+                 'depositDate', opd.deposit_date,
+                 'depositBank', opd.deposit_bank,
+                 'depositReference', opd.deposit_reference,
+                 'returnDate', opd.return_date,
+                 'returnReason', opd.return_reason
+               ) END AS offline_detail
+        FROM payment_records pr
+        LEFT JOIN offline_payment_details opd
+          ON opd.payment_record_id = pr.id AND opd.school_id = pr.school_id
+        LEFT JOIN users u ON u.id = pr.recorded_by
+        WHERE pr.fee_record_id = ${feeRecordId} AND pr.school_id = ${schoolId}
+        ORDER BY pr.created_at DESC
       `)).rows as any[];
 
       // Audit log entries for this fee record
@@ -3109,6 +3371,18 @@ export function registerFeesRoutes(app: Express) {
         WHERE entity_id = ${feeRecordId} AND entity_type = 'fee_record'
         ORDER BY created_at DESC
         LIMIT 20
+      `)).rows as any[];
+      const revisionRows = (await db.execute(sql`
+        SELECT r.payment_record_id, r.reason, r.previous_values, r.new_values,
+               r.created_at, u.email AS changed_by_name
+        FROM offline_payment_detail_revisions r
+        LEFT JOIN users u ON u.id = r.changed_by
+        WHERE r.school_id = ${schoolId}
+          AND r.payment_record_id IN (
+            SELECT id FROM payment_records
+            WHERE fee_record_id = ${feeRecordId} AND school_id = ${schoolId}
+          )
+        ORDER BY r.created_at DESC
       `)).rows as any[];
 
       const mapPayment = (p: any) => ({
@@ -3132,6 +3406,21 @@ export function registerFeesRoutes(app: Express) {
         payerEmail: p.payer_email ?? null,
         payerContact: p.payer_contact ?? null,
         gatewayStatus: p.gateway_status ?? null,
+        denominationBreakdown: p.denomination_breakdown ?? null,
+        instrumentDate: p.cheque_date ?? null,
+        branchName: p.branch_name ?? null,
+        recordedBy: p.recorded_by ?? null,
+        recordedByName: p.recorded_by_name ?? null,
+        offlineDetail: p.offline_detail ?? null,
+        corrections: revisionRows
+          .filter((revision: any) => Number(revision.payment_record_id) === Number(p.id))
+          .map((revision: any) => ({
+            reason: revision.reason,
+            changedByName: revision.changed_by_name ?? null,
+            createdAt: revision.created_at,
+            previousValues: revision.previous_values ?? {},
+            newValues: revision.new_values ?? {},
+          })),
       });
 
       res.json({

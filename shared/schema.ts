@@ -1071,6 +1071,51 @@ export const insertPaymentRecordSchema = createInsertSchema(paymentRecords).omit
 export type InsertPaymentRecord = z.infer<typeof insertPaymentRecordSchema>;
 export type PaymentRecord = typeof paymentRecords.$inferSelect;
 
+/**
+ * Method-specific offline accounting data intentionally lives beside the
+ * canonical payment record. Common information (amount, method, receipt,
+ * invoice/student/session links, recordedBy and timestamps) remains single-
+ * sourced on payment_records.
+ */
+export const offlinePaymentDetails = pgTable("offline_payment_details", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  paymentRecordId: integer("payment_record_id").notNull().references(() => paymentRecords.id, { onDelete: "cascade" }),
+  transactionTime: varchar("transaction_time", { length: 5 }),
+  instrumentStatus: varchar("instrument_status", { length: 30 }),
+  transferMode: varchar("transfer_mode", { length: 40 }),
+  transactionReference: varchar("transaction_reference", { length: 100 }),
+  receivingBank: varchar("receiving_bank", { length: 100 }),
+  receiverUpiId: varchar("receiver_upi_id", { length: 100 }),
+  payeeName: varchar("payee_name", { length: 200 }),
+  payableAt: varchar("payable_at", { length: 120 }),
+  collectionLocation: varchar("collection_location", { length: 200 }),
+  depositDate: date("deposit_date"),
+  depositBank: varchar("deposit_bank", { length: 100 }),
+  depositReference: varchar("deposit_reference", { length: 100 }),
+  returnDate: date("return_date"),
+  returnReason: text("return_reason"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("offline_payment_details_payment_record_uniq").on(table.paymentRecordId),
+  uniqueIndex("offline_payment_details_school_payment_uniq").on(table.schoolId, table.paymentRecordId),
+]);
+export type OfflinePaymentDetail = typeof offlinePaymentDetails.$inferSelect;
+
+/** Immutable before/after record for any permitted offline-detail correction. */
+export const offlinePaymentDetailRevisions = pgTable("offline_payment_detail_revisions", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  paymentRecordId: integer("payment_record_id").notNull().references(() => paymentRecords.id, { onDelete: "cascade" }),
+  changedBy: integer("changed_by").references(() => users.id, { onDelete: "set null" }),
+  reason: text("reason").notNull(),
+  previousValues: jsonb("previous_values").notNull(),
+  newValues: jsonb("new_values").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+export type OfflinePaymentDetailRevision = typeof offlinePaymentDetailRevisions.$inferSelect;
+
 export const feeAuditLog = pgTable("fee_audit_log", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),

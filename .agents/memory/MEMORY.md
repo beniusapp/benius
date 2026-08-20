@@ -22,3 +22,4 @@
 - [Structure-backed invoice creation](structure-backed-invoice-creation.md) — single and bulk invoices share server authority, canonical periods, snapshots, duplicate identity, and atomic writes.
 - [Receipt data snapshots](receipt-data-snapshots.md) — receipts must render original invoice fields and timestamps, never substitute payment or live session data.
 - [Payment Attempt Authority](payment-attempt-authority.md) — Razorpay callbacks require captured, order, amount, and tenant/invoice verification; render persisted lifecycle states exactly.
+- [Offline Payment Audit Integrity](offline-payment-audit-integrity.md) — method details are tenant-scoped sidecar data, corrections preserve immutable snapshots, and proof uploads wait for private storage.
