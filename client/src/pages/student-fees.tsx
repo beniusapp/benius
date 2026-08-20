@@ -12,6 +12,13 @@ import {
 import { jsPDF } from "jspdf";
 import { getQueryFn } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
+import {
+  classifyStudentPaymentAttempt,
+  type PaymentAttemptOutcome,
+  type StudentPaymentHistoryStatus,
+} from "@shared/payment-attempt-status";
+import { getCheckoutDismissAction } from "@shared/razorpay-checkout-dismiss";
+import { paymentAttemptEventTime } from "@shared/payment-attempt-event-time";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -122,7 +129,7 @@ interface PaymentAttempt {
   type: "paid" | "failed";
   isCancelled: boolean;
   /** Authoritative outcome from payment_attempts table */
-  outcome: "captured" | "failed" | "cancelled" | "authorized" | "refunded" | "pending";
+  outcome: PaymentAttemptOutcome;
 
   feeRecordId: number | null;
   feeType: string | null;
@@ -249,23 +256,8 @@ function formatDateTime(dateStr: string | Date | null | undefined): string {
   return result.replace(/\bam\b/gi, "AM").replace(/\bpm\b/gi, "PM");
 }
 
-/** Derives the precise payment outcome from the attempt record.
- *  Returns a { label, accent } pair used by StatusPill and the date line. */
-function classifyAttempt(attempt: PaymentAttempt): "Paid" | "Payment Cancelled" | "Payment Expired" | "Payment Failed" {
-  if (attempt.type === "paid") return "Paid";
-  // Use the structured isCancelled flag first (most reliable — set by the server
-  // based on the payment_cancelled action which is written when the student
-  // voluntarily closes the checkout modal without attempting a payment).
-  if (attempt.isCancelled) return "Payment Cancelled";
-  // Detect order-expiry from structured errorReason, then fall back to description text
-  const reason = (attempt.errorReason ?? "").toLowerCase();
-  const desc   = (attempt.errorDescription ?? "").toLowerCase();
-  if (
-    reason === "order_expired" || reason === "expired_order" ||
-    desc.includes("order_expired") || desc.includes("order has expired") ||
-    desc.includes("session expired") || desc.includes("razorpay order expired")
-  ) return "Payment Expired";
-  return "Payment Failed";
+function classifyAttempt(attempt: PaymentAttempt): StudentPaymentHistoryStatus {
+  return classifyStudentPaymentAttempt(attempt);
 }
 
 /** Maps a payment attempt outcome to student-friendly copy.
@@ -439,7 +431,7 @@ function buildPaymentCopyText(
     L("Fee Record", `#${attempt.feeRecordId}`),
     L("Attempt", attemptLabel),
     L("Status", outcomeMap[attempt.outcome] ?? attempt.outcome),
-    L("Timestamp", formatDateTime(attempt.rzpCreatedAt ?? attempt.createdAt)),
+    L("Timestamp", formatDateTime(paymentAttemptEventTime(attempt))),
     "",
     "[AMOUNT & FINANCIAL]",
     L("Amount", fp(attempt.amountPaise)),
@@ -598,7 +590,7 @@ function downloadPaymentPDF(
   row("Fee Record",  `#${attempt.feeRecordId}`);
   row("Attempt",     attemptLabel, true);
   row("Status",      outcomeMap[attempt.outcome] ?? attempt.outcome);
-  row("Timestamp",   formatDateTime(attempt.rzpCreatedAt ?? attempt.createdAt));
+  row("Timestamp",   formatDateTime(paymentAttemptEventTime(attempt)));
   y += 2;
 
   // B: Amount
@@ -812,7 +804,7 @@ function PaymentSections({ attempt, accent }: { attempt: PaymentAttempt; accent:
         <TechRowFull label="Fee Record" value={attempt.feeRecordId ? `#${attempt.feeRecordId}` : null} />
         <TechRowFull label="Attempt"    value={attemptLabel} />
         <TechRowFull label="Status"     value={statusLabel} />
-        <TechRowFull label="Timestamp"  value={formatDateTime(attempt.rzpCreatedAt ?? attempt.createdAt)} />
+        <TechRowFull label="Timestamp"  value={formatDateTime(paymentAttemptEventTime(attempt))} />
       </SectionGroup>
 
       {/* B: Amount & Financial */}
@@ -1020,6 +1012,24 @@ function StatusPill({ status }: { status: string }) {
     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold tracking-wide"
       style={{ background: "linear-gradient(135deg,#fff7ed,#fed7aa)", color: "#92400e", border: "1px solid #fdba74" }}>
       <Clock className="w-3 h-3" /> Payment Expired
+    </span>
+  );
+  if (status === "Payment Authorized") return (
+    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold tracking-wide"
+      style={{ background: "linear-gradient(135deg,#dbeafe,#bfdbfe)", color: "#1d4ed8", border: "1px solid #93c5fd" }}>
+      <Clock className="w-3 h-3" /> Payment Authorized
+    </span>
+  );
+  if (status === "Payment Pending") return (
+    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold tracking-wide"
+      style={{ background: "linear-gradient(135deg,#fef3c7,#fde68a)", color: "#92400e", border: "1px solid #fcd34d" }}>
+      <Clock className="w-3 h-3" /> Payment Pending
+    </span>
+  );
+  if (status === "Payment Refunded") return (
+    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold tracking-wide"
+      style={{ background: "linear-gradient(135deg,#e0f2fe,#bae6fd)", color: "#0369a1", border: "1px solid #7dd3fc" }}>
+      <RotateCcw className="w-3 h-3" /> Payment Refunded
     </span>
   );
   return (
@@ -1343,6 +1353,7 @@ export default function StudentFees() {
         // ondismiss then fires, the flag tells us which path triggered it.
         const CHECKOUT_TIMEOUT_S  = 600;
         let   timedOut            = false;
+        let   gatewayFailureReported = false;
         let   timeoutHandle: ReturnType<typeof setTimeout> | null =
           setTimeout(() => { timedOut = true; }, (CHECKOUT_TIMEOUT_S - 1) * 1_000);
 
@@ -1390,7 +1401,13 @@ export default function StudentFees() {
           modal: {
             ondismiss: () => {
               clearCheckoutTimer();
-              if (timedOut) {
+              const dismissAction = getCheckoutDismissAction(gatewayFailureReported, timedOut);
+              if (dismissAction === "ignore") {
+                // payment.failed already created the authoritative failed
+                // attempt. Do not add a second, inaccurate cancellation.
+                return;
+              }
+              if (dismissAction === "expired") {
                 // The checkout window closed because the timeout elapsed — the
                 // student likely stepped away.  Show a friendly "try again" prompt.
                 reject(new RazorpayOrderExpiredError());
@@ -1422,6 +1439,7 @@ export default function StudentFees() {
         // Capture payment failures reported by the Razorpay SDK (card declined,
         // gateway-side order expiry, etc.)
         rzp.on("payment.failed", (response: any) => {
+          gatewayFailureReported = true;
           clearCheckoutTimer();
           // Clear the order lock AND write the audit log entry immediately.
           // Razorpay webhooks can't reach a Replit dev server, so this is the
@@ -2043,9 +2061,12 @@ export default function StudentFees() {
                 ) : (
                   <motion.div variants={container} initial="hidden" animate="show" className="space-y-2">
                     {paymentAttempts.map((attempt, idx) => {
-                      const isPaid   = attempt.type === "paid";
-                      const isFailed = attempt.type === "failed";
+                       const isPaid   = attempt.outcome === "captured";
                       const outcome  = classifyAttempt(attempt);
+                       const isFailed =
+                         outcome === "Payment Failed" ||
+                         outcome === "Payment Cancelled" ||
+                         outcome === "Payment Expired";
                       // The history endpoint provides the authoritative invoice number.
                       // Keep the loaded-record lookup as a safe fallback for older responses.
                       const attemptInvoiceNo = attempt.invoiceNumber ?? (
@@ -2057,11 +2078,17 @@ export default function StudentFees() {
                         outcome === "Paid"              ? "linear-gradient(90deg,#10b981,#34d399)" :
                         outcome === "Payment Cancelled" ? "linear-gradient(90deg,#a855f7,#c084fc)" :
                         outcome === "Payment Expired"   ? "linear-gradient(90deg,#f97316,#fb923c)" :
+                         outcome === "Payment Refunded"  ? "linear-gradient(90deg,#0ea5e9,#38bdf8)" :
+                         outcome === "Payment Authorized"? "linear-gradient(90deg,#2563eb,#60a5fa)" :
+                         outcome === "Payment Pending"   ? "linear-gradient(90deg,#d97706,#fbbf24)" :
                                                          "linear-gradient(90deg,#f43f5e,#fb7185)";
                       const dateLineLabel =
                         outcome === "Paid"              ? "Paid" :
                         outcome === "Payment Cancelled" ? "Cancelled" :
                         outcome === "Payment Expired"   ? "Expired" :
+                         outcome === "Payment Refunded"  ? "Refunded" :
+                         outcome === "Payment Authorized"? "Authorized" :
+                         outcome === "Payment Pending"   ? "Pending" :
                                                          "Failed";
                       return (
                         <motion.div key={`${attempt.type}-${attempt.id}-${idx}`} variants={item}
@@ -2121,7 +2148,7 @@ export default function StudentFees() {
                                 {/* Date + time line — always from server createdAt in IST */}
                                 <div className="flex items-center gap-1.5 mt-1.5 text-xs text-slate-400">
                                   <CalendarDays className="w-3 h-3 flex-shrink-0" />
-                                  {dateLineLabel} {formatDateTime(attempt.createdAt)}
+                                   {dateLineLabel} {formatDateTime(paymentAttemptEventTime(attempt))}
                                 </div>
 
                                 {/* Original invoice number from the associated fee record. */}

@@ -117,8 +117,11 @@ export function mapRazorpayPayment(p: any): Partial<UpsertAttemptData> {
   if (p.status)     out.outcome = outcomeMap[p.status] ?? p.status;
   if (p.amount   != null) out.amountPaise = Number(p.amount);
   out.currency = p.currency ?? "INR";
-  if (p.amount   != null)
-    out.amountCapturedPaise = Math.max(0, Number(p.amount) - Number(p.amount_refunded ?? 0));
+  // Razorpay's payment amount is the amount originally captured. A refund is
+  // recorded separately below; subtracting it here would mislabel the net
+  // retained amount as the captured amount in payment history.
+  if (p.amount != null && (p.status === "captured" || p.status === "refunded"))
+    out.amountCapturedPaise = Number(p.amount);
   out.amountRefundedPaise = p.amount_refunded != null ? Number(p.amount_refunded) : 0;
   if (p.fee      != null) out.razorpayFeePaise = Number(p.fee);
   if (p.tax      != null) out.razorpayTaxPaise = Number(p.tax);

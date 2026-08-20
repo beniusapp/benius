@@ -1,0 +1,518 @@
+Payment History — Complete Status & Accuracy Audit
+
+Please perform a thorough, read-only audit first of the entire payment-history system in this multi-tenant school application.
+
+Do NOT make changes until the audit is complete and you have identified exactly how each payment/checkout attempt is created, updated, stored, and displayed.
+
+Current Payment History Categories
+
+The UI currently shows three main types:
+
+1. Payment Paid
+2. Payment Failed
+3. Payment Cancelled
+
+I want you to verify whether these three categories are technically and functionally correct.
+
+Do NOT assume that the UI labels are correct simply because they look correct.
+
+Trace the complete lifecycle from:
+
+Student Portal → payment initiation → Razorpay Checkout → Razorpay response/webhook → backend processing → database → payment attempt/history record → Student/Admin History UI.
+
+---
+
+1. PAYMENT PAID — AUDIT COMPLETELY
+
+Verify exactly what condition causes a payment to become Paid.
+
+Determine whether the application marks a payment as paid only after a genuine successful/captured Razorpay payment.
+
+Verify the relationship between:
+
+- Razorpay Payment ID
+- Razorpay Order ID
+- Razorpay payment status
+- "authorized"
+- "captured"
+- payment webhook events
+- fee record
+- payment attempt
+- receipt
+- receipt number
+- invoice number
+
+The application must NOT mark a fee as paid merely because:
+
+- Checkout opened
+- Order was created
+- Payment was initiated
+- Payment authorization was attempted
+- Frontend received a temporary success response
+
+The authoritative successful-payment condition must be clearly defined and consistently enforced.
+
+Verify that:
+
+- Amount paid is correct.
+- Captured amount is correct.
+- Fee record is correctly marked paid.
+- Receipt is generated only when appropriate.
+- Receipt number is generated correctly.
+- Invoice number remains unchanged.
+- Payment ID and Order ID belong to the same transaction.
+- The payment cannot accidentally be recorded twice.
+- Duplicate webhooks do not create duplicate payments or receipts.
+- A successful payment after an earlier failed attempt is represented as a new successful attempt while preserving the failed attempt.
+
+---
+
+2. PAYMENT FAILED — AUDIT COMPLETELY
+
+Verify that Payment Failed is used only when the payment genuinely failed.
+
+Check the actual Razorpay payment/webhook information and database records.
+
+Verify that the application preserves:
+
+- Payment ID, when Razorpay provides one
+- Order ID
+- Fee Record ID
+- Payment Attempt ID
+- Attempt number
+- Timestamp
+- Amount
+- Currency
+- Error code
+- Error source
+- Error step
+- Error reason
+- Error description
+- Payment method, when available
+- Card/network/issuer information, when available
+- Bank RRN, when available
+- Auth code, when available
+- Refund information, when applicable
+
+The UI should not invent a failure reason.
+
+If Razorpay provides a specific failure reason, display that authoritative information.
+
+If Razorpay does not provide a particular field, display "—" rather than fabricating a value.
+
+Verify that a failed payment:
+
+- Does NOT mark the invoice as paid.
+- Does NOT generate a successful payment receipt.
+- Does NOT overwrite the invoice number.
+- Does NOT overwrite previous payment attempts.
+- Does NOT delete the failed attempt after a later successful payment.
+
+A later successful payment must create/preserve its own successful payment record while the earlier failed attempt remains in history.
+
+---
+
+3. PAYMENT CANCELLED — VERY IMPORTANT AUDIT
+
+This requires special attention.
+
+Do NOT automatically treat every cancelled Checkout session as a Razorpay payment failure.
+
+Determine exactly what our application currently means by:
+
+Payment Cancelled
+
+For example, the current UI says:
+
+«Checkout dismissed by student (no payment attempted)»
+
+Verify from the actual application flow whether this statement is technically true.
+
+A cancelled attempt should be used for cases such as:
+
+- Razorpay Checkout opened
+- Student closed/dismissed Checkout
+- No successful payment occurred
+- No genuine Razorpay payment failure occurred
+
+If there was actually a Razorpay payment attempt and Razorpay returned a genuine failure, that should be classified as Payment Failed, not merely Cancelled.
+
+Therefore, clearly separate:
+
+Checkout Cancelled
+
+Student closed/dismissed the checkout before completing payment.
+
+Payment Failed
+
+A genuine payment attempt reached the payment gateway and failed.
+
+These must not be mixed together.
+
+Verify whether a cancelled checkout creates:
+
+- Order ID
+- Payment ID
+- Payment Attempt ID
+- Fee Record ID
+- Timestamp
+- Amount
+- Cancellation reason
+- Checkout/session information
+
+Store only information that actually exists.
+
+Do not fabricate a Payment ID for a cancellation where no payment was attempted.
+
+---
+
+4. CHECK FOR OTHER PAYMENT STATES
+
+Do a complete audit of the codebase and Razorpay integration to determine whether states other than these three can occur.
+
+Specifically investigate:
+
+- Created
+- Pending
+- Authorized
+- Captured
+- Failed
+- Refunded
+- Partially Refunded
+- Checkout Cancelled
+- Expired
+- Abandoned
+- Unknown/indeterminate state
+
+Do NOT automatically add these to the UI.
+
+First determine:
+
+1. Which states can actually occur in our implementation.
+2. Which states are received from Razorpay.
+3. Which states are generated internally by our application.
+4. Which states require separate UI treatment.
+5. Which states should remain technical/internal states.
+
+Then recommend the correct user-facing categories.
+
+---
+
+5. PAYMENT ATTEMPT HISTORY MUST NEVER BE OVERWRITTEN
+
+This is extremely important.
+
+Every payment attempt must remain an independent historical record.
+
+Example:
+
+Attempt 1 → Failed
+Attempt 2 → Cancelled
+Attempt 3 → Paid
+
+The history must preserve all three records:
+
+- Payment Failed — Attempt #1
+- Payment Cancelled — Attempt #2
+- Payment Paid — Attempt #3
+
+Do NOT collapse them into one record.
+
+Do NOT overwrite the failed/cancelled record with the successful payment.
+
+Do NOT delete previous attempts after successful payment.
+
+The invoice number must remain the same across attempts because all attempts relate to the same invoice.
+
+Payment ID and Order ID must remain tied to their respective attempt.
+
+---
+
+6. VERIFY THE DATABASE
+
+Trace the actual database schema and relationships.
+
+Identify the exact tables/collections used for:
+
+- Fee records
+- Invoices
+- Payment attempts
+- Payments
+- Receipts
+- Razorpay webhook events
+- Refunds, if applicable
+
+Verify that the relationships are correct.
+
+Pay particular attention to:
+
+- "invoice_number"
+- "receipt_number"
+- "payment_id"
+- "order_id"
+- "fee_record_id"
+- "attempt_number"
+- payment status
+- payment attempt status
+- timestamps
+- amount
+- refund status
+
+The permanent invoice number must NEVER be replaced by a payment-generated number.
+
+Receipt number must remain separate from invoice number.
+
+---
+
+7. WEBHOOK AUDIT
+
+Audit every relevant Razorpay webhook currently implemented.
+
+Determine which webhook/event changes each payment state.
+
+Verify that webhook processing is:
+
+- Idempotent
+- Retry-safe
+- Duplicate-safe
+- Tenant-safe
+- Fee-record-safe
+- Attempt-safe
+
+A webhook arriving twice must not create duplicate payment history or duplicate receipts.
+
+Also verify that frontend success/failure callbacks cannot incorrectly override authoritative webhook/database state.
+
+---
+
+8. MULTI-TENANT SAFETY
+
+This is a multi-tenant school application.
+
+Verify that payment history is always scoped to the correct:
+
+- School/tenant
+- Student
+- Fee record
+- Invoice
+- Payment attempt
+
+One school's payment must never appear in another school's history.
+
+Do not change the existing tenant architecture unless an actual security/data-isolation issue is discovered.
+
+---
+
+9. AUDIT THE CURRENT UI AGAINST THE DATABASE
+
+For each history card, verify that every displayed value comes from the correct persisted source.
+
+For example:
+
+Paid
+
+- Status
+- Student
+- Invoice Number
+- Receipt Number
+- Paid Date/Time
+- Payment ID
+- Order ID
+- Fee Record ID
+- Attempt Number
+- Amount
+- Captured Amount
+- Payment Method
+- Bank/Acquirer details
+- Customer details
+- Refund status
+
+Failed
+
+- Status
+- Student
+- Invoice Number
+- Failure Date/Time
+- Payment ID, if available
+- Order ID
+- Fee Record ID
+- Attempt Number
+- Amount
+- Captured Amount
+- Failure code
+- Failure source
+- Failure step
+- Failure reason
+- Failure description
+- Payment method, if available
+- Refund status
+
+Cancelled
+
+- Status
+- Student
+- Invoice Number
+- Cancellation Date/Time
+- Order ID, if an order was created
+- Fee Record ID
+- Attempt Number
+- Amount
+- Cancellation reason
+- Refund status
+
+Make sure the UI does not display misleading payment information for cancelled attempts where no payment actually occurred.
+
+---
+
+10. TIMESTAMP AUDIT
+
+Verify that all displayed timestamps are based on the correct event.
+
+Do not confuse:
+
+- Invoice creation date
+- Payment initiation date
+- Checkout opened date
+- Payment authorization date
+- Payment capture date
+- Failure date
+- Cancellation date
+- Refund date
+
+The history should display the timestamp appropriate to the event being shown.
+
+Display Indian Standard Time (IST) consistently in the UI.
+
+---
+
+11. REFUND AUDIT
+
+Check whether refunds are currently supported.
+
+If supported, verify that:
+
+- Original payment remains in history.
+- Refund does not overwrite the original payment.
+- Refund amount is correct.
+- Refund ID is stored where applicable.
+- Refund status is accurate.
+- Partial refund is distinguishable from full refund.
+- Refunded amount is not incorrectly shown as captured amount.
+
+If refunds are not currently implemented, do not add refund functionality as part of this task.
+
+---
+
+12. SECURITY / PRIVACY AUDIT
+
+Verify that sensitive payment information is appropriately masked.
+
+Never expose:
+
+- Full card number
+- CVV
+- Sensitive authentication data
+- Secrets
+- Razorpay webhook secrets
+- API keys
+
+Masked card information such as "•••• 1007" is acceptable where supplied by the payment provider.
+
+---
+
+13. DO NOT CHANGE BUSINESS LOGIC UNNECESSARILY
+
+This is an audit and accuracy task.
+
+Do NOT redesign the payment system.
+
+Do NOT change:
+
+- Razorpay integration architecture
+- Payment amount calculation
+- Fee calculation
+- Invoice generation
+- Invoice numbering
+- Receipt numbering
+- Academic session logic
+- Fee period logic
+- Payment gateway configuration
+- Existing payment UI design
+
+unless the audit finds a genuine correctness/security issue.
+
+If a genuine issue is found, explain it before making a broader change.
+
+---
+
+14. FINAL REPORT REQUIRED
+
+After completing the audit, provide a clear report with:
+
+A. Current statuses
+
+Tell me exactly which payment states our system currently supports.
+
+B. Correctness
+
+For each state, tell me whether the current implementation is:
+
+- ✅ Correct
+- ⚠️ Needs improvement
+- ❌ Incorrect
+
+C. Evidence
+
+For each finding, identify:
+
+- Frontend source
+- Backend/API source
+- Database field/table
+- Razorpay event/webhook involved
+
+D. Recommended user-facing statuses
+
+Tell me whether these three are sufficient:
+
+1. Payment Paid
+2. Payment Failed
+3. Payment Cancelled
+
+Or whether another user-facing status is actually required.
+
+E. Fixes
+
+Only after the audit, implement the minimum necessary fixes.
+
+F. Regression testing
+
+Run tests covering at least:
+
+1. Successful payment
+2. Failed payment
+3. Cancelled checkout
+4. Failed → successful retry
+5. Cancelled → successful retry
+6. Duplicate webhook
+7. Duplicate frontend callback
+8. Duplicate payment prevention
+9. Receipt generation
+10. Invoice number preservation
+11. Receipt number preservation
+12. Correct amount
+13. Correct student/tenant association
+14. Refund behavior if refunds are supported
+
+Run the existing complete test suite as well.
+
+MOST IMPORTANT
+
+Do not simply tell me that the three screenshots look correct.
+
+I want you to verify the actual source code + database + Razorpay integration + webhook processing + payment-attempt lifecycle and determine whether the displayed information is genuinely accurate.
+
+The goal is:
+
+Every payment attempt must have an accurate, immutable, auditable history record, with a clear distinction between successful payment, genuine gateway failure, and checkout cancellation.
+
+Do not change anything unrelated to this audit.

@@ -21,3 +21,4 @@
 - [Invoice-First Offline Payment](invoice-first-offline-payment.md) — standalone payment path removed; feeRecordId always required; new GET /unpaid-invoices endpoint; StandaloneOfflinePayModal replaces freeform standalone RecordPaymentModal.
 - [Structure-backed invoice creation](structure-backed-invoice-creation.md) — single and bulk invoices share server authority, canonical periods, snapshots, duplicate identity, and atomic writes.
 - [Receipt data snapshots](receipt-data-snapshots.md) — receipts must render original invoice fields and timestamps, never substitute payment or live session data.
+- [Payment Attempt Authority](payment-attempt-authority.md) — Razorpay callbacks require captured, order, amount, and tenant/invoice verification; render persisted lifecycle states exactly.

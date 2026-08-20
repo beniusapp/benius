@@ -10,6 +10,7 @@ import crypto from "crypto";
 import Razorpay from "razorpay";
 import { broadcastPaymentUpdate } from "./sse";
 import { fetchRazorpayData, mapRazorpayPayment, upsertPaymentAttempt, updatePaymentAttemptRefund } from "./rzp-enrichment";
+import { validateCapturedRazorpayPayment } from "./razorpay-verify-guard";
 import multer from "multer";
 import path from "node:path";
 import fs from "node:fs";
@@ -1867,8 +1868,17 @@ export function registerFeesRoutes(app: Express) {
         const feeRec = (await db.execute(sql`SELECT * FROM fee_records WHERE id = ${feeRecordId} AND school_id = ${schoolId} LIMIT 1`)).rows[0] as any;
         if (!feeRec) return res.status(404).json({ message: "Fee record not found" });
 
-        // Already paid? idempotent — 200 OK
-        if (feeRec.status === "Paid") return res.json({ ok: true, idempotent: true });
+        // Already paid? idempotent — 200 OK. Clear a matching stale lock left
+        // by an earlier delivery without touching an unrelated replacement order.
+        if (feeRec.status === "Paid") {
+          await db.execute(sql`
+            UPDATE fee_records
+            SET razorpay_order_id = NULL, razorpay_order_expires_at = NULL
+            WHERE id = ${feeRecordId} AND school_id = ${schoolId}
+              AND razorpay_order_id = ${payment.order_id ?? null}
+          `);
+          return res.json({ ok: true, idempotent: true });
+        }
 
         // Atomically assign next ON receipt
         const receiptNumber = await storage.nextReceiptNumber(schoolId, "ON");
@@ -1885,7 +1895,11 @@ export function registerFeesRoutes(app: Express) {
           await db.transaction(async (tx) => {
             await tx.execute(sql`
               UPDATE fee_records
-              SET status = 'Paid', paid_date = ${now.toISOString()}, receipt_number = ${receiptNumber}
+              SET status = 'Paid',
+                  paid_date = ${now.toISOString()},
+                  receipt_number = ${receiptNumber},
+                  razorpay_order_id = NULL,
+                  razorpay_order_expires_at = NULL
               WHERE id = ${feeRecordId} AND school_id = ${schoolId}
             `);
 
@@ -2522,12 +2536,15 @@ export function registerFeesRoutes(app: Express) {
         ? (await storage.getStudentById(studentId))!.schoolId
         : adminSchId!;
 
-      // Scope check
+      // Scope check. Administrators and students must both remain inside the
+      // authenticated tenant before any Razorpay/API work is attempted.
       if (studentId && Number(feeRec.student_id) !== studentId)
         return res.status(403).json({ message: "Access denied" });
 
       const creds = await resolveRazorpayCredentials(schoolId);
       if (!creds?.keySecret) return res.status(400).json({ message: "Razorpay not configured" });
+      if (Number(feeRec.school_id) !== schoolId)
+        return res.status(403).json({ message: "Access denied" });
 
       // Verify HMAC: SHA-256 of "order_id|payment_id"
       const body = `${razorpay_order_id}|${razorpay_payment_id}`;
@@ -2564,25 +2581,32 @@ export function registerFeesRoutes(app: Express) {
         return res.json({ ok: true, idempotent: true, receiptNumber: feeRec.receipt_number });
       }
 
-      // Read the frozen late-fee snapshot from the Razorpay order notes — the
-      // identical source the webhook handler reads via notes.lateFeeAmount (line ~1739).
-      // This ensures payment_records stores the same amounts whether the webhook or
-      // the client-verify path commits first.
-      // Fail-safe: if the fetch throws (Razorpay unavailable, network error), we
-      // catch and default to 0.  The payment still commits correctly; only
-      // late_fee_paid = 0 is recorded, which matches the pre-fix behaviour and does
-      // not affect the payment amount itself.
-      let lateFeeFromOrder = 0;
+      // The browser callback is a convenience path, not the authority for a
+      // captured payment. Fetch the payment and order from Razorpay and require
+      // their captured/paid state, invoice notes, active order ID, and amount to
+      // agree before recording a receipt.
+      let verifiedPayment: any;
+      let verifiedOrder: any;
       try {
-        const rzpOrderClient = new Razorpay({ key_id: creds.keyId, key_secret: creds.keySecret });
-        const rzpOrderData = await (rzpOrderClient.orders as any).fetch(razorpay_order_id);
-        lateFeeFromOrder = Math.round(Number(rzpOrderData?.notes?.lateFeeAmount ?? 0)) || 0;
-      } catch (orderNotesErr) {
-        console.warn(
-          `[razorpay verify] order notes fetch failed for ${razorpay_order_id} — ` +
-          `late_fee_paid will be recorded as 0. Error: ${(orderNotesErr as any)?.message ?? orderNotesErr}`,
-        );
+        const rzpClient = new Razorpay({ key_id: creds.keyId, key_secret: creds.keySecret });
+        [verifiedPayment, verifiedOrder] = await Promise.all([
+          (rzpClient.payments as any).fetch(razorpay_payment_id),
+          (rzpClient.orders as any).fetch(razorpay_order_id),
+        ]);
+      } catch (razorpayFetchErr: any) {
+        console.warn(`[razorpay verify] authoritative payment lookup failed for ${razorpay_payment_id}:`, razorpayFetchErr?.message ?? razorpayFetchErr);
+        return res.status(503).json({ message: "Unable to confirm the payment with Razorpay. Please try again in a moment." });
       }
+      const verifiedCapture = validateCapturedRazorpayPayment({
+        feeRecordId,
+        schoolId,
+        feeAmount: Number(feeRec.amount),
+        expectedOrderId: feeRec.razorpay_order_id,
+        payment: verifiedPayment,
+        order: verifiedOrder,
+      });
+      if (!verifiedCapture.ok) return res.status(409).json({ message: verifiedCapture.message });
+      const lateFeeFromOrder = verifiedCapture.lateFeeAmount;
 
       // Mark Paid — wrap UPDATE + INSERT in a single transaction so a crash or
       // INSERT failure (schema mismatch, constraint violation, transient DB error)
@@ -2599,7 +2623,11 @@ export function registerFeesRoutes(app: Express) {
         await db.transaction(async (tx) => {
           await tx.execute(sql`
             UPDATE fee_records
-            SET status = 'Paid', paid_date = ${now.toISOString()}, receipt_number = ${receiptNumber}
+            SET status = 'Paid',
+                paid_date = ${now.toISOString()},
+                receipt_number = ${receiptNumber},
+                razorpay_order_id = NULL,
+                razorpay_order_expires_at = NULL
             WHERE id = ${feeRecordId} AND school_id = ${schoolId}
           `);
 
@@ -2613,9 +2641,10 @@ export function registerFeesRoutes(app: Express) {
               feeRecordId,
               studentId: Number(feeRec.student_id),
               paymentMethod: "Online",
+              paymentMode: verifiedPayment.method ?? null,
               referenceNumber: razorpay_payment_id,
               receivedDate: now.toISOString().slice(0, 10),
-              amount: Number(feeRec.amount) + lateFeeFromOrder,
+              amount: verifiedCapture.amountPaise / 100,
               lateFeePaid: lateFeeFromOrder,
               cashierNotes: `Razorpay payment ID: ${razorpay_payment_id} (client-verified)`,
               recordedBy: null,
@@ -2625,8 +2654,8 @@ export function registerFeesRoutes(app: Express) {
               razorpayOrderId: razorpay_order_id ?? null,
               razorpaySignature: razorpay_signature ?? null,
               payerName: payer_name ?? null,
-              payerEmail: payer_email ?? null,
-              payerContact: payer_contact ?? null,
+              payerEmail: verifiedPayment.email ?? payer_email ?? null,
+              payerContact: verifiedPayment.contact ?? payer_contact ?? null,
               gatewayStatus: "captured",
             } as any);
           } catch (insertErr: any) {
@@ -2708,15 +2737,17 @@ export function registerFeesRoutes(app: Express) {
         outcome:           "captured",
         razorpayPaymentId: razorpay_payment_id,
         razorpayOrderId:   razorpay_order_id   ?? null,
-        amountPaise:       typeof feeRec.amount === "number" ? feeRec.amount * 100 : null,
-        currency:          "INR",
-        payerEmail:        payer_email   ?? null,
-        payerContact:      payer_contact ?? null,
+        amountPaise:       verifiedCapture.amountPaise,
+        amountCapturedPaise: verifiedCapture.amountPaise,
+        currency:          verifiedPayment.currency ?? "INR",
+        payerEmail:        verifiedPayment.email ?? payer_email ?? null,
+        payerContact:      verifiedPayment.contact ?? payer_contact ?? null,
         payerName:         payer_name    ?? null,
         webhookEvent:      "verify",
         webhookReceivedAt: now,
         source:            "client",
         receiptNumber,
+        ...mapRazorpayPayment(verifiedPayment),
       }).catch(err => console.error(
         `[razorpay verify] ⚠ payment_attempts upsert FAILED for ${razorpay_payment_id} ` +
         `fee #${feeRecordId} — History tab may be incomplete until webhook arrives:`,
