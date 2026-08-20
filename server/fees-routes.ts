@@ -11,6 +11,7 @@ import Razorpay from "razorpay";
 import { broadcastPaymentUpdate } from "./sse";
 import { fetchRazorpayData, mapRazorpayPayment, upsertPaymentAttempt, updatePaymentAttemptRefund } from "./rzp-enrichment";
 import { validateCapturedRazorpayPayment } from "./razorpay-verify-guard";
+import { getMultiInvoiceOfflinePaymentError } from "./offline-payment-request-guard";
 import multer from "multer";
 import path from "node:path";
 import fs from "node:fs";
@@ -830,13 +831,12 @@ export function registerFeesRoutes(app: Express) {
   // ── Offline Payment Records ───────────────────────────────────────────────
 
   const paymentBodySchema = z.object({
-    // Invoice-first: feeRecordId must reference an existing invoice.
-    // Required for normal payments; optional only when autoFifo=true (server auto-resolves invoices).
-    feeRecordId: z.number().int().positive().optional().nullable(),
+    // One offline payment always settles one existing invoice.
+    feeRecordId: z.number().int().positive(),
     studentId: z.number().int().positive(),
-    // FIFO mode: when true and feeRecordId is null, funds are auto-allocated to the
-    // student's unpaid invoices oldest-first (due_date ASC).
-    autoFifo: z.boolean().default(false),
+    // Retained as a false-only field so legacy requests fail safely instead of
+    // reopening the retired multi-invoice FIFO allocation path.
+    autoFifo: z.literal(false).optional().default(false),
     // feeNotes: optional notes written to the linked invoice during payment
     feeNotes: z.string().max(500).optional().nullable(),
     // Payment fields — Online is excluded from manual offline recording
@@ -850,8 +850,8 @@ export function registerFeesRoutes(app: Express) {
     // ── Cash denomination fields ──────────────────────────────────────────────
     // denominationBreakdown: keys are denomination values ("500","200",...), values are counts.
     denominationBreakdown: z.record(z.string(), z.number().int().min(0)).optional().nullable(),
-    // Total cash claimed by the frontend (may span multiple invoices in one session).
-    // Backend re-computes from breakdown and rejects if it does not match this figure.
+    // Total cash claimed for this one invoice. Backend re-computes it from the
+    // denomination breakdown and rejects mismatches.
     denominationTotal: z.number().int().min(0).optional().nullable(),
     // ── Cheque / Bank Transfer / Demand Draft extra fields ────────────────────
     chequeDate: z.string().optional().nullable(),   // instrument date (cheque / DD / transfer)
@@ -860,7 +860,7 @@ export function registerFeesRoutes(app: Express) {
     payerName:  z.string().max(200).optional().nullable(),
     // ── UPI / QR Payment extra fields ────────────────────────────────────────
     payerUpiId: z.string().max(100).optional().nullable(),  // payer's UPI ID / VPA
-  });
+  }).strict();
 
   // NOTE: GET /api/admin/fees/students/search is registered in routes.ts
   // (alongside the other /api/admin/fees routes) to ensure it is matched by
@@ -941,6 +941,8 @@ export function registerFeesRoutes(app: Express) {
   app.post("/api/admin/fees/payments", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
+    const multiInvoiceError = getMultiInvoiceOfflinePaymentError(req.body);
+    if (multiInvoiceError) return res.status(400).json({ message: multiInvoiceError });
     const parsed = paymentBodySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
 
@@ -1093,7 +1095,7 @@ export function registerFeesRoutes(app: Express) {
     // Offline payments must always be linked to an existing invoice (fee_record).
     // The standalone "create invoice + payment in one step" path has been removed.
     // Use "Add Invoice" to create a Due invoice first, then record payment here.
-    if (!paymentData.feeRecordId && !paymentData.autoFifo) {
+    if (!paymentData.feeRecordId) {
       return res.status(400).json({
         message: "feeRecordId is required. Record Offline Payment must be linked to an existing invoice. Use 'Add Invoice' to create a Due invoice first.",
       });
@@ -1109,10 +1111,8 @@ export function registerFeesRoutes(app: Express) {
     // ── Cash denomination server-side recalculation ───────────────────────────
     // For Cash payments the frontend must supply the denomination breakdown.
     // The backend independently calculates the denomination total to prevent
-    // frontend manipulation. The calculated total must match denominationTotal
-    // (the combined cash the admin claims to have counted, which may span
-    // multiple invoices in one session). Each individual invoice is validated
-    // against the invoice outstanding by the existing amount guard below.
+    // frontend manipulation. It must match the one invoice amount supplied by
+    // this request.
     if (paymentData.paymentMethod === "Cash") {
       const breakdown = paymentData.denominationBreakdown;
       if (!breakdown || typeof breakdown !== "object") {

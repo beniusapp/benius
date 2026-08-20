@@ -253,6 +253,7 @@ interface UnpaidInvoice {
   id: number;
   studentId: number;
   feeType: string;
+  feeName?: string | null;
   amount: number;
   dueDate: string;
   status: string;
@@ -714,8 +715,8 @@ function MetricBar({ viewSessionId }: { viewSessionId: number | null }) {
 const DENOMS = [500, 200, 100, 50, 20, 10, 5, 2, 1];
 
 // ─── Standalone Offline Payment Modal (Invoice-Picker) ────────────────────────
-// Admin selects a student → sees their unpaid invoices → picks one or more →
-// enters payment method/date → payments are created one per selected invoice.
+// Admin selects a student → sees their unpaid invoices → picks one invoice →
+// enters payment method/date → one payment is created for that invoice.
 // No free-form fee-type or amount entry — amounts come exclusively from invoices.
 
 interface StandaloneOfflinePayModalProps {
@@ -741,8 +742,8 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
   const [invoices,       setInvoices]       = useState<UnpaidInvoice[]>([]);
   const [invoicesLoading,setInvoicesLoading] = useState(false);
 
-  // Selected invoice IDs (Set for O(1) lookup)
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  // A single offline payment must be linked to a single invoice.
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<number | null>(null);
 
   // Payment details
   const [method,   setMethod]   = useState("Cash");
@@ -758,12 +759,12 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
   const [payerName,  setPayerName]  = useState("");
   const [payerUpiId, setPayerUpiId] = useState("");   // UPI / QR: payer's UPI ID / VPA
 
-  // Multi-submit state
+  // Submit state
   const [submitting,   setSubmitting]   = useState(false);
   const [submitError,  setSubmitError]  = useState<string | null>(null);
   const [donePayments, setDonePayments] = useState<Array<{ id: number; receipt: string; feeType: string; amount: number }>>([]);
 
-  // Idempotency base key — one per modal open, suffixed per invoice
+  // Idempotency key — one per modal open and one selected invoice
   const [baseKey, setBaseKey] = useState("");
 
   // Reset on every open
@@ -772,7 +773,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
     setStep("search");
     setSearchInvoice(""); setSearchQ(""); setSearching(false); setSearchResults(null); setSearchError(null); setSelStudent(null);
     setInvoices([]); setInvoicesLoading(false);
-    setSelectedIds(new Set());
+    setSelectedInvoiceId(null);
     setMethod("Cash"); setRef(""); setDate(new Date().toISOString().split("T")[0]); setNotes("");
     setDenomQty(Object.fromEntries(DENOMS.map(d => [d, 0])));
     setInstrDate(""); setBankName(""); setBranchName(""); setPayerName(""); setPayerUpiId("");
@@ -809,15 +810,15 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
       if (!r.ok) { toast({ title: "Error", description: "Failed to load invoices", variant: "destructive" }); return; }
       const data: UnpaidInvoice[] = await r.json();
       setInvoices(data);
-      // Pre-select all invoices by default
-      setSelectedIds(new Set(data.map(i => i.id)));
+      // An admin must deliberately choose the one invoice being settled.
+      setSelectedInvoiceId(null);
       setStep("select");
     } catch { toast({ title: "Error", description: "Network error", variant: "destructive" }); }
     finally   { setInvoicesLoading(false); }
   }
 
-  const selectedInvoices = invoices.filter(i => selectedIds.has(i.id));
-  const totalAmount      = selectedInvoices.reduce((s, i) => s + i.totalDue, 0);
+  const selectedInvoice = invoices.find(i => i.id === selectedInvoiceId) ?? null;
+  const totalAmount = selectedInvoice?.totalDue ?? 0;
 
   // Cash denomination totals — used in the payment step verification panel
   const cashTotal = DENOMS.reduce((s, d) => s + d * (denomQty[d] ?? 0), 0);
@@ -828,79 +829,68 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
   //  Cheque       — cheque number + cheque date + received date
   //  BankTransfer — UTR + transfer date + received date
   //  DemandDraft  — DD number + DD date + received date
-  const canSubmit = method === "Cash"
+  const canSubmit = selectedInvoice != null && (method === "Cash"
     ? cashMatch && date.length > 0
-    : ref.trim().length > 0 && instrDate.length > 0 && date.length > 0;
-
-  function toggleInvoice(id: number) {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  }
+    : ref.trim().length > 0 && instrDate.length > 0 && date.length > 0);
 
   async function doSubmit() {
     setSubmitting(true);
     setSubmitError(null);
-    const results: typeof donePayments = [];
+    if (!selectedInvoice) {
+      setSubmitError("Select one unpaid invoice before recording the payment.");
+      setSubmitting(false);
+      return;
+    }
+    const inv = selectedInvoice;
+    const payload: Record<string, any> = {
+      feeRecordId:    inv.id,
+      studentId:      inv.studentId,
+      paymentMethod:  method,
+      receivedDate:   date,
+      amount:         inv.totalDue,
+      lateFeePaid:    inv.accruedLateFee,
+      cashierNotes:   notes || null,
+      idempotencyKey: baseKey,
+    };
 
-    for (const inv of selectedInvoices) {
-      const payload: Record<string, any> = {
-        feeRecordId:    inv.id,
-        studentId:      inv.studentId,
-        paymentMethod:  method,
-        receivedDate:   date,
-        amount:         inv.totalDue,
-        lateFeePaid:    inv.accruedLateFee,
-        cashierNotes:   notes || null,
-        idempotencyKey: `${baseKey}-${inv.id}`,
-      };
-
-      if (method === "Cash") {
-        // Send denomination breakdown + the combined cash total so the backend
-        // can independently verify the denomination sum without knowing the
-        // other invoices in this multi-invoice session.
-        payload.denominationBreakdown = denomQty;
-        payload.denominationTotal     = totalAmount;
-      } else if (method === "UpiQr") {
-        payload.referenceNumber = ref        || null;  // UTR
-        payload.chequeDate      = instrDate  || null;  // Payment Date
-        payload.bankName        = bankName   || null;  // Bank / UPI App
-        payload.payerName       = payerName  || null;
-        payload.payerUpiId      = payerUpiId || null;
-      } else {
-        payload.referenceNumber = ref        || null;
-        payload.chequeDate      = instrDate  || null;
-        payload.bankName        = bankName   || null;
-        payload.branchName      = branchName || null;
-        payload.payerName       = payerName  || null;
-      }
-
-      try {
-        const r    = await sessionFetch("/api/admin/fees/payments", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body:    JSON.stringify(payload),
-        });
-        const body = await r.json();
-        if (!r.ok) throw new Error(body.message ?? "Payment failed");
-        results.push({ id: body.id, receipt: body.receipt_number ?? "—", feeType: inv.feeType, amount: inv.totalDue });
-      } catch (e: any) {
-        setSubmitError(e.message);
-        setSubmitting(false);
-        return;
-      }
+    if (method === "Cash") {
+      payload.denominationBreakdown = denomQty;
+      payload.denominationTotal     = totalAmount;
+    } else if (method === "UpiQr") {
+      payload.referenceNumber = ref        || null;  // UTR
+      payload.chequeDate      = instrDate  || null;  // Payment Date
+      payload.bankName        = bankName   || null;  // Bank / UPI App
+      payload.payerName       = payerName  || null;
+      payload.payerUpiId      = payerUpiId || null;
+    } else {
+      payload.referenceNumber = ref        || null;
+      payload.chequeDate      = instrDate  || null;
+      payload.bankName        = bankName   || null;
+      payload.branchName      = branchName || null;
+      payload.payerName       = payerName  || null;
     }
 
-    // All invoices paid successfully
+    try {
+      const r    = await sessionFetch("/api/admin/fees/payments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify(payload),
+      });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.message ?? "Payment failed");
+      setDonePayments([{ id: body.id, receipt: body.receipt_number ?? "—", feeType: inv.feeType, amount: inv.totalDue }]);
+    } catch (e: any) {
+      setSubmitError(e.message);
+      setSubmitting(false);
+      return;
+    }
+
     queryClient.invalidateQueries({ queryKey: ["/api/admin/fees"] });
     queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/payments"] });
     queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/summary"] });
     queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
     queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/failed-counts"] });
     onSuccess?.();
-    setDonePayments(results);
     setSubmitting(false);
     setStep("done");
   }
@@ -911,7 +901,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-cyan-400">
             <Banknote className="w-5 h-5" />
-            {step === "done" ? "Payments Recorded" : "Record Offline Payment"}
+            {step === "done" ? "Payment Recorded" : "Record Offline Payment"}
           </DialogTitle>
         </DialogHeader>
 
@@ -1009,7 +999,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
           </div>
         )}
 
-        {/* ── Step 2: Select invoices ─────────────────────────────────────────── */}
+        {/* ── Step 2: Select one invoice ───────────────────────────────────────── */}
         {step === "select" && selStudent && (
           <div className="space-y-4">
             <div className="flex items-center gap-2 p-2.5 rounded-lg bg-white/5 border border-white/10">
@@ -1031,9 +1021,10 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
               <>
                 <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                   {invoices.map(inv => {
-                    const checked = selectedIds.has(inv.id);
+                    const checked = selectedInvoiceId === inv.id;
                     return (
-                      <button key={inv.id} type="button" onClick={() => toggleInvoice(inv.id)}
+                      <button key={inv.id} type="button" role="radio" aria-checked={checked}
+                        onClick={() => setSelectedInvoiceId(inv.id)}
                         className={`w-full text-left p-3 rounded-lg border transition-all ${
                           checked
                             ? "bg-cyan-900/20 border-cyan-600/50"
@@ -1041,19 +1032,20 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                         }`}>
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex items-start gap-2">
-                            <div className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                            <div className={`mt-0.5 w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
                               checked ? "bg-cyan-500 border-cyan-500" : "border-white/30"
                             }`}>
-                              {checked && <span className="text-white text-[10px] leading-none font-bold">✓</span>}
+                              {checked && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
                             </div>
                             <div>
-                              <p className="text-white text-sm font-medium">{inv.feeType}</p>
+                              <p className="text-white text-sm font-medium">{inv.feeName || inv.feeType}</p>
                               <p className="text-white/40 text-[11px]">
                                 {inv.invoiceNumber ?? "—"}
                                 {inv.feePeriodStart && inv.feePeriodEnd && (
                                   <> · {clientFeePeriodLabel(inv.feePeriodStart, inv.feePeriodEnd)}</>
                                 )}
                               </p>
+                              <p className="text-white/30 text-[11px]">Session: {inv.academicYear ?? "—"}</p>
                               <p className="text-white/30 text-[11px]">Due: {fmtDate(inv.dueDate)}</p>
                             </div>
                           </div>
@@ -1076,11 +1068,6 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                   })}
                 </div>
 
-                {/* Totals bar */}
-                <div className="p-3 rounded-lg bg-white/5 border border-white/10 flex items-center justify-between">
-                  <span className="text-white/50 text-sm">{selectedIds.size} invoice{selectedIds.size !== 1 ? "s" : ""} selected</span>
-                  <span className="text-white font-bold text-base">{fmt(totalAmount)}</span>
-                </div>
               </>
             )}
 
@@ -1088,7 +1075,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
               <Button variant="ghost" onClick={() => setStep("search")} className="text-white/60">← Back</Button>
               {invoices.length > 0 && (
                 <Button
-                  disabled={selectedIds.size === 0}
+                  disabled={selectedInvoiceId === null}
                   onClick={() => setStep("payment")}
                   className="bg-cyan-600 hover:bg-cyan-500 text-white">
                   Payment Details →
@@ -1101,24 +1088,24 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
         {/* ── Step 3: Payment details ─────────────────────────────────────────── */}
         {step === "payment" && (
           <div className="space-y-4">
-            {/* ── Invoice summary ─────────────────────────────────────────────── */}
-            <div className="p-3 rounded-lg bg-white/5 border border-white/10 space-y-1.5">
-              <p className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-1">Paying</p>
-              {selectedInvoices.map(inv => (
-                <div key={inv.id} className="flex justify-between text-sm">
-                  <span className="text-white/70">{inv.feeType}
-                    {inv.feePeriodStart && inv.feePeriodEnd && (
-                      <span className="text-white/30 text-xs ml-1">({clientFeePeriodLabel(inv.feePeriodStart, inv.feePeriodEnd)})</span>
+            {/* ── Selected invoice summary ─────────────────────────────────────── */}
+            {selectedInvoice && (
+              <div className="p-3 rounded-lg bg-white/5 border border-white/10 space-y-1.5">
+                <p className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-1">Selected Invoice</p>
+                <div className="flex justify-between text-sm">
+                  <span className="text-white/70">{selectedInvoice.feeName || selectedInvoice.feeType}
+                    {selectedInvoice.feePeriodStart && selectedInvoice.feePeriodEnd && (
+                      <span className="text-white/30 text-xs ml-1">({clientFeePeriodLabel(selectedInvoice.feePeriodStart, selectedInvoice.feePeriodEnd)})</span>
                     )}
                   </span>
-                  <span className="text-white font-medium">{fmt(inv.totalDue)}</span>
+                  <span className="text-white font-medium">{fmt(selectedInvoice.totalDue)}</span>
                 </div>
-              ))}
-              <div className="flex justify-between text-sm font-bold border-t border-white/10 pt-1.5 mt-1">
-                <span className="text-white/70">Total</span>
-                <span className="text-cyan-300">{fmt(totalAmount)}</span>
+                <div className="flex justify-between text-xs">
+                  <span className="text-white/40">{selectedInvoice.invoiceNumber ?? "—"}</span>
+                  <span className="text-white/40">Session: {selectedInvoice.academicYear ?? "—"}</span>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* ── Method selector (5 buttons, Online/Razorpay excluded) ──────── */}
             <div>
@@ -1367,35 +1354,19 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                   <span className="text-white/80 font-mono">{selStudent?.digitalStudentId}</span>
                 </div>
 
-                {/* Per-invoice details */}
-                {selectedInvoices.length === 1 ? (
+                {selectedInvoice && (
                   <>
                     <div className="flex justify-between">
                       <span className="text-white/50">Invoice</span>
-                      <span className="text-white font-mono">{selectedInvoices[0].invoiceNumber ?? "—"}</span>
+                      <span className="text-white font-mono">{selectedInvoice.invoiceNumber ?? "—"}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-white/50">Fee</span>
-                      <span className="text-white">{selectedInvoices[0].feeType}</span>
+                      <span className="text-white">{selectedInvoice.feeName || selectedInvoice.feeType}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-white/50">Outstanding</span>
-                      <span className="text-white font-semibold">{fmt(selectedInvoices[0].totalDue)}</span>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    {selectedInvoices.map(inv => (
-                      <div key={inv.id} className="flex justify-between">
-                        <span className="text-white/50 font-mono">{inv.invoiceNumber ?? `#${inv.id}`}</span>
-                        <span className="text-white">
-                          {inv.feeType} — <span className="font-semibold">{fmt(inv.totalDue)}</span>
-                        </span>
-                      </div>
-                    ))}
-                    <div className="flex justify-between border-t border-white/10 pt-1">
-                      <span className="text-white/50">Outstanding</span>
-                      <span className="text-white font-semibold">{fmt(totalAmount)}</span>
+                      <span className="text-white font-semibold">{fmt(selectedInvoice.totalDue)}</span>
                     </div>
                   </>
                 )}
@@ -1461,7 +1432,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                 onClick={() => doSubmit()}
                 className="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white gap-1">
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Receipt className="w-4 h-4" />}
-                Record {selectedInvoices.length > 1 ? `${selectedInvoices.length} Payments` : "Payment"}
+                Record Payment
               </Button>
             </div>
           </div>
@@ -1473,11 +1444,11 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
             <div className="p-4 rounded-xl bg-emerald-900/20 border border-emerald-700/40 text-center">
               <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2" />
               <p className="text-emerald-400 font-semibold text-lg">
-                {donePayments.length === 1 ? "Payment Recorded" : `${donePayments.length} Payments Recorded`}
+                Payment Recorded
               </p>
             </div>
 
-            {/* Per-invoice receipt list */}
+            {/* Receipt for the recorded invoice */}
             {donePayments.length > 0 && (
               <div className="rounded-lg border border-white/10 overflow-hidden divide-y divide-white/5">
                 {donePayments.map((p, i) => (

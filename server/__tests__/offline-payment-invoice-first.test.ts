@@ -113,10 +113,14 @@ async function apiPay(
     idempotencyKey?: string | null;
     lateFeePaid?: number;
     autoFifo?: boolean;
+    feeRecordIds?: number[];
   }
 ) {
-  // Validate: feeRecordId required when not autoFifo
-  if (!payload.feeRecordId && !payload.autoFifo) {
+  // Mirrors the production route's one-invoice request contract.
+  if (payload.autoFifo || payload.feeRecordIds?.length) {
+    return { status: 400, body: { message: "One offline payment can be applied to exactly one invoice." } };
+  }
+  if (!payload.feeRecordId) {
     return { status: 400, body: { message: "feeRecordId is required. Record Offline Payment must be linked to an existing invoice." } };
   }
   if (payload.feeRecordId) {
@@ -185,7 +189,7 @@ describe("1+2. Invoice-first enforcement — feeRecordId required", () => {
     createdSchoolIds.push(school.id);
   });
 
-  it("rejects when feeRecordId is null and autoFifo=false", async () => {
+  it("rejects when feeRecordId is null", async () => {
     const res = await apiPay(school.id, student.id, {
       feeRecordId: null, amount: 2000,
     });
@@ -208,6 +212,15 @@ describe("1+2. Invoice-first enforcement — feeRecordId required", () => {
     const after = await db.select().from(schema.feeRecords)
       .where(eq(schema.feeRecords.schoolId, school.id));
     expect(after.length).toBe(before.length);
+  });
+
+  it("rejects a direct FIFO or multi-invoice request before any invoice is paid", async () => {
+    const fifo = await apiPay(school.id, student.id, { amount: 2000, autoFifo: true });
+    const multi = await apiPay(school.id, student.id, { amount: 2000, feeRecordIds: [1, 2] });
+    expect(fifo.status).toBe(400);
+    expect(multi.status).toBe(400);
+    expect(fifo.body.message).toMatch(/exactly one invoice/i);
+    expect(multi.body.message).toMatch(/exactly one invoice/i);
   });
 });
 
@@ -278,6 +291,11 @@ describe("4. Multiple invoice payments (one per selected invoice)", () => {
     expect(res.status).toBe(201);
   });
 
+  it("leaves invoice B unpaid after invoice A is paid", async () => {
+    const [b] = await db.select().from(schema.feeRecords).where(eq(schema.feeRecords.id, invoiceB.id));
+    expect(b.status).toBe("Due");
+  });
+
   it("pays invoice B (Lab Fee ₹200) successfully", async () => {
     const res = await apiPay(school.id, student.id, { feeRecordId: invoiceB.id, amount: 200 });
     expect(res.status).toBe(201);
@@ -307,6 +325,16 @@ describe("4. Multiple invoice payments (one per selected invoice)", () => {
     const amounts = (rows.rows as any[]).map(r => Number(r.amount));
     expect(amounts).toContain(2000);
     expect(amounts).toContain(200);
+  });
+
+  it("preserves both invoice numbers and assigns distinct offline receipts", async () => {
+    const [a] = await db.select().from(schema.feeRecords).where(eq(schema.feeRecords.id, invoiceA.id));
+    const [b] = await db.select().from(schema.feeRecords).where(eq(schema.feeRecords.id, invoiceB.id));
+    expect(a.invoiceNumber).toBe(invoiceA.invoiceNumber);
+    expect(b.invoiceNumber).toBe(invoiceB.invoiceNumber);
+    expect(a.receiptNumber).toMatch(/^OF/);
+    expect(b.receiptNumber).toMatch(/^OF/);
+    expect(a.receiptNumber).not.toBe(b.receiptNumber);
   });
 });
 
