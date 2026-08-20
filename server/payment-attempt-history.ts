@@ -48,6 +48,10 @@ export type WebhookDeliveryInput = {
   feeResolutionSource?: "notes" | "payment_id" | "order_id" | null;
   providerOccurredAt?: Date | null;
   signatureVerified?: boolean;
+  verificationStatus?: string;
+  razorpayRefundId?: string | null;
+  razorpayDisputeId?: string | null;
+  resolutionReason?: string | null;
 };
 
 const sensitivePayloadKeys = new Set([
@@ -103,15 +107,15 @@ export async function recordWebhookDelivery(input: WebhookDeliveryInput): Promis
   const result = await db.execute(sql`
     INSERT INTO payment_webhook_events (
       school_id, provider, provider_event_id, event_type, razorpay_payment_id,
-      razorpay_order_id, fee_record_id, fee_resolution_source, fee_resolution_status,
-       provider_occurred_at, signature_verified, payload, received_at, last_received_at,
+       razorpay_order_id, razorpay_refund_id, razorpay_dispute_id, fee_record_id, fee_resolution_source, fee_resolution_status, resolution_reason,
+       provider_occurred_at, signature_verified, verification_status, payload, received_at, last_received_at,
       processing_status, delivery_count
     ) VALUES (
       ${input.schoolId}, 'razorpay', ${providerEventId}, ${input.eventType},
-      ${input.razorpayPaymentId ?? null}, ${input.razorpayOrderId ?? null},
+       ${input.razorpayPaymentId ?? null}, ${input.razorpayOrderId ?? null}, ${input.razorpayRefundId ?? null}, ${input.razorpayDisputeId ?? null},
       ${input.feeRecordId ?? null}, ${input.feeResolutionSource ?? null},
-      ${input.feeRecordId != null ? "resolved" : "unresolved"},
-       ${(input.providerOccurredAt ?? providerTimestamp(input.payload))?.toISOString() ?? null}, ${input.signatureVerified ?? false}, ${payloadJson(input.payload)}::jsonb, NOW(), NOW(),
+       ${input.feeRecordId != null ? "resolved" : "unresolved"}, ${input.resolutionReason ?? null},
+       ${(input.providerOccurredAt ?? providerTimestamp(input.payload))?.toISOString() ?? null}, ${input.signatureVerified ?? false}, ${input.verificationStatus ?? (input.signatureVerified ? "verified" : "unverified")}, ${payloadJson(input.payload)}::jsonb, NOW(), NOW(),
       'received', 1
     )
     RETURNING id

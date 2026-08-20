@@ -2130,7 +2130,20 @@ export function registerFeesRoutes(app: Express) {
         schoolId = notedSchoolId;
       }
 
-      if (!schoolId) return res.status(400).json({ message: "schoolId missing from payment notes and could not be resolved from order_id" });
+      if (!schoolId) {
+        const unresolvedDeliveryId = await recordWebhookDelivery({
+          schoolId: null, eventType: event.event ?? "unknown", rawBody: bodyStr, payload: event,
+          razorpayPaymentId: providerPaymentId, razorpayOrderId: providerOrderId,
+          providerOccurredAt: null, signatureVerified: false,
+          verificationStatus: "unverifiable_unattributed",
+        });
+        await updateWebhookDelivery(unresolvedDeliveryId, {
+          status: "failed",
+          error: "Tenant secret unavailable; signature cannot be cryptographically verified",
+          resolutionStatus: "unresolved",
+        });
+        return res.status(202).json({ ok: true, unresolved: true, deliveryId: unresolvedDeliveryId });
+      }
 
       const creds = await resolveRazorpayCredentials(schoolId);
       if (!creds?.webhookSecret) {
@@ -2156,6 +2169,8 @@ export function registerFeesRoutes(app: Express) {
         razorpayOrderId: payment.order_id ?? null,
         feeRecordId: webhookFeeRecordId,
         signatureVerified: true,
+        razorpayRefundId: refundEntity.id ?? null,
+        razorpayDisputeId: disputeEntity.id ?? null,
       });
       await updateWebhookDelivery(webhookDeliveryId, { verified: true });
 

@@ -804,6 +804,10 @@ app.use((req, res, next) => {
     ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS fee_resolution_source VARCHAR(20);
     ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS fee_resolution_status VARCHAR(20) NOT NULL DEFAULT 'unresolved';
     ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS provider_occurred_at TIMESTAMPTZ;
+    ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS verification_status VARCHAR(40) NOT NULL DEFAULT 'unverified';
+    ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS razorpay_refund_id TEXT;
+    ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS razorpay_dispute_id TEXT;
+    ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS resolution_reason TEXT;
     DROP INDEX IF EXISTS payment_webhook_events_provider_event_uniq;
     ALTER TABLE payment_webhook_events DROP CONSTRAINT IF EXISTS payment_webhook_events_provider_provider_event_id_key;
     CREATE OR REPLACE FUNCTION reject_payment_webhook_delivery_mutation()

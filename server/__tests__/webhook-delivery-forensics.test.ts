@@ -24,10 +24,11 @@ describe("immutable webhook delivery forensics", () => {
       VALUES (${ids[0]}, 'started'), (${ids[0]}, 'failed'), (${ids[0]}, 'succeeded')
     `);
     const processing = await db.execute(sql`
-      SELECT status FROM payment_webhook_processing_events
+      SELECT id, status FROM payment_webhook_processing_events
       WHERE webhook_delivery_id = ${ids[0]} ORDER BY id
     `);
     expect(processing.rows.map((row: any) => row.status)).toEqual(["started", "failed", "succeeded"]);
+    const processingId = Number((processing.rows[0] as any).id);
 
     await expect(db.execute(sql`
       UPDATE payment_webhook_events SET event_type = 'tampered' WHERE id = ${ids[0]}
@@ -39,5 +40,11 @@ describe("immutable webhook delivery forensics", () => {
       SELECT event_type, provider_event_id FROM payment_webhook_events WHERE id = ${ids[0]}
     `);
     expect(original.rows[0]).toMatchObject({ event_type: "payment.captured", provider_event_id: eventId });
+    await expect(db.execute(sql`
+      UPDATE payment_webhook_processing_events SET status = 'tampered' WHERE id = ${processingId}
+    `)).rejects.toThrow();
+    await expect(db.execute(sql`
+      DELETE FROM payment_webhook_processing_events WHERE id = ${processingId}
+    `)).rejects.toThrow();
   });
 });
