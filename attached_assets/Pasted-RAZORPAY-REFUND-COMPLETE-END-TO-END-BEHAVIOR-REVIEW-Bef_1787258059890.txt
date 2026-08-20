@@ -1,0 +1,938 @@
+RAZORPAY REFUND — COMPLETE END-TO-END BEHAVIOR REVIEW
+
+Before making any code changes, I want you to explain exactly how refunds should work in our existing multi-tenant school fees and payments system.
+
+Do NOT modify application code yet.
+
+I want a complete analysis of the current implementation and the expected production behavior.
+
+I am not technically familiar with every part of the refund lifecycle, so explain it clearly and sequentially.
+
+---
+
+1. FIRST: EXPLAIN THE CURRENT REFUND IMPLEMENTATION
+
+Inspect the current codebase and tell me:
+
+- Can an Admin currently initiate a refund?
+- From which screen/page?
+- Which payment record does the Admin select?
+- Is the refund initiated from:
+  - Admin Fees/Ledger?
+  - Student Fees?
+  - Payment Details?
+  - Receipt?
+  - another location?
+- What button/action is currently available?
+- Is there any confirmation dialog?
+- Does the Admin enter:
+  - full refund?
+  - partial refund amount?
+  - refund reason?
+  - notes?
+- Is there any permission/role restriction?
+- Which backend API is called?
+- What Razorpay API is called?
+- What database records are created/updated?
+- What webhook events are expected afterward?
+
+If refund functionality does not currently exist, clearly say so.
+
+---
+
+2. EXPLAIN THE CORRECT REFUND FLOW
+
+Explain the complete expected production flow.
+
+For example, I want to understand something like:
+
+Admin decides refund
+        ↓
+Admin opens payment
+        ↓
+Admin clicks Refund
+        ↓
+System verifies payment eligibility
+        ↓
+Admin selects full/partial refund
+        ↓
+Admin confirms
+        ↓
+Backend validates amount
+        ↓
+Backend sends refund request to Razorpay
+        ↓
+Razorpay creates refund
+        ↓
+Razorpay returns refund ID/status
+        ↓
+Database records refund
+        ↓
+Razorpay webhook arrives
+        ↓
+Webhook is verified
+        ↓
+Refund event is stored
+        ↓
+Payment history is updated
+        ↓
+Invoice/payment status is updated if appropriate
+        ↓
+Admin Ledger shows refund
+        ↓
+Student portal shows refund
+        ↓
+Receipt/payment history reflects refund
+
+But do not assume the above is correct.
+
+Analyze the actual implementation and explain the correct sequence.
+
+---
+
+3. FULL REFUND VS PARTIAL REFUND
+
+Explain clearly:
+
+Full refund
+
+Example:
+
+Original payment = ₹10,000
+Refund = ₹10,000
+
+What happens to:
+
+- payment status?
+- invoice?
+- amount paid?
+- amount refunded?
+- outstanding/due amount?
+- receipt?
+- payment record?
+- student balance?
+
+Partial refund
+
+Example:
+
+Original payment = ₹10,000
+Refund = ₹3,000
+Remaining captured amount = ₹7,000
+
+What happens to:
+
+- invoice?
+- paid amount?
+- refunded amount?
+- remaining paid amount?
+- outstanding amount?
+- receipt?
+- payment history?
+
+Explain whether the original payment should remain as a payment and the refund should be a separate financial event.
+
+I specifically do NOT want the original payment record to be overwritten or deleted.
+
+---
+
+4. IMPORTANT: PAYMENT MUST NEVER BE DELETED
+
+Confirm whether the correct architecture should be:
+
+Original Payment
+        +
+Refund Event
+        +
+Refund Webhook Events
+        +
+Refund Processing History
+
+rather than:
+
+Original Payment → changed/deleted
+
+The original payment must remain permanently traceable.
+
+For example:
+
+Payment ID: pay_xxxxx
+Original amount: ₹10,000
+Captured: ₹10,000
+
+Refund:
+Refund ID: rfnd_xxxxx
+Amount: ₹3,000
+Status: processed
+
+Remaining captured amount: ₹7,000
+
+Explain whether this is the correct approach.
+
+---
+
+5. RAZORPAY SIDE
+
+Explain exactly what happens at Razorpay.
+
+For a refund:
+
+- Which Razorpay identifier is used?
+- Is it the "payment_id"?
+- What refund ID is generated?
+- What statuses can Razorpay return?
+- Is the refund immediately successful?
+- Can it remain pending?
+- Can it fail?
+- Can it be processed asynchronously?
+- What webhook events can arrive?
+- Can the webhook arrive before/after the Admin API response?
+- Can the webhook arrive multiple times?
+- Can webhook delivery happen out of order?
+
+Explain the complete lifecycle.
+
+---
+
+6. REFUND STATUS
+
+Identify all refund states supported by our implementation/Razorpay.
+
+For example, determine whether states such as:
+
+requested
+pending
+processed
+failed
+cancelled
+
+are applicable.
+
+Do not invent statuses.
+
+Tell me the exact statuses actually supported.
+
+Explain what each status means.
+
+---
+
+7. REFUND ELIGIBILITY
+
+Before allowing the Admin to refund a payment, what must the system verify?
+
+For example:
+
+- payment exists
+- payment belongs to the correct school/tenant
+- payment belongs to the correct invoice
+- payment is actually captured
+- payment is not already fully refunded
+- requested refund does not exceed refundable amount
+- payment is not invalid
+- payment is not already in an incompatible state
+- user has permission to refund
+- payment belongs to the current academic session if applicable
+
+Check the actual implementation and identify all required validations.
+
+---
+
+8. MULTIPLE PARTIAL REFUNDS
+
+This is very important.
+
+Suppose:
+
+Original payment = ₹10,000
+
+Admin refunds:
+
+₹2,000
+
+Later Admin refunds:
+
+₹3,000
+
+Later Admin refunds:
+
+₹5,000
+
+Can the system support this?
+
+How should the database represent it?
+
+I expect something conceptually like:
+
+Original Payment
+    ├── Refund #1 = ₹2,000
+    ├── Refund #2 = ₹3,000
+    └── Refund #3 = ₹5,000
+
+The system must not overwrite Refund #1 when Refund #2 occurs.
+
+Explain whether the current architecture supports this.
+
+---
+
+9. DOUBLE-REFUND PROTECTION
+
+Explain how the system prevents:
+
+Admin A → refunds ₹5,000
+Admin B → simultaneously refunds ₹5,000
+
+when only ₹5,000 is refundable.
+
+How is concurrency handled?
+
+Does the backend:
+
+- lock the payment?
+- calculate refundable amount transactionally?
+- use Razorpay's response as final authority?
+- use idempotency?
+- perform a database transaction?
+- otherwise protect against race conditions?
+
+This is extremely important because two Admins must not accidentally refund more than the captured amount.
+
+---
+
+10. REFRESH / DOUBLE-CLICK / RETRY PROTECTION
+
+What happens if the Admin:
+
+1. clicks Refund;
+2. browser freezes;
+3. clicks again;
+4. first request actually succeeded;
+5. second request reaches the server.
+
+Could two refunds be created?
+
+Explain the idempotency strategy.
+
+Also explain what happens if:
+
+- browser refreshes during refund;
+- network fails after Razorpay accepts the refund;
+- Admin does not receive the API response;
+- Admin retries;
+- webhook arrives later.
+
+The system must reconcile these situations safely.
+
+---
+
+11. DATABASE EFFECT
+
+Show me exactly what happens to the database.
+
+List all tables affected.
+
+For each table explain:
+
+TABLE
+ACTION
+WHAT IS STORED
+WHAT IS UPDATED
+WHAT MUST NEVER BE OVERWRITTEN
+
+Especially inspect:
+
+fee_records
+payment_records
+payment_attempts
+payment_attempt_events
+payment_webhook_events
+payment_webhook_processing_events
+refund-related tables
+audit tables
+receipts
+ledger/history
+
+If a dedicated refund table does not exist, tell me whether one should exist.
+
+---
+
+12. RECOMMENDED REFUND DATA MODEL
+
+Tell me whether the system should have a separate immutable refund entity similar to:
+
+refunds
+
+with fields conceptually like:
+
+refund_id
+tenant_id
+invoice_id
+fee_record_id
+payment_record_id
+razorpay_payment_id
+razorpay_refund_id
+
+amount
+currency
+
+status
+
+reason
+admin_user_id
+
+requested_at
+provider_created_at
+processed_at
+
+created_at
+updated_at
+
+Do not implement it yet.
+
+First tell me whether this is appropriate for our existing architecture.
+
+---
+
+13. IMMUTABLE REFUND HISTORY
+
+Because we have already built the payment forensic/audit architecture, explain how refunds should integrate with it.
+
+I want:
+
+Original Payment
+      ↓
+Refund Requested
+      ↓
+Refund Created
+      ↓
+Refund Pending
+      ↓
+Refund Processed
+
+to remain reconstructable.
+
+No previous refund attempt/event should disappear.
+
+If the same webhook is delivered 5 times, all 5 webhook deliveries must remain independently traceable according to our existing immutable webhook architecture.
+
+Explain exactly how refund events should connect to:
+
+- payment attempt
+- payment ID
+- order ID
+- invoice
+- refund ID
+- webhook delivery
+- processing history.
+
+---
+
+14. REFUND WEBHOOKS
+
+Identify the exact Razorpay refund webhook events supported by our implementation.
+
+Explain:
+
+Webhook received
+      ↓
+Signature verification
+      ↓
+Tenant resolution
+      ↓
+Immutable webhook receipt
+      ↓
+Refund identification
+      ↓
+Invoice/payment resolution
+      ↓
+Refund event persistence
+      ↓
+Payment projection update
+      ↓
+Ledger update
+
+Also explain what happens when:
+
+A. Notes contain invoice/tenant information
+
+B. Notes are missing
+
+C. Payment ID is available
+
+D. Only order ID is available
+
+E. Refund ID is available but payment ID is missing
+
+F. No safe tenant can be determined
+
+The system must never guess the tenant.
+
+---
+
+15. UNATTRIBUTABLE REFUND WEBHOOK
+
+We already implemented an important forensic rule for unattributable webhooks.
+
+Explain how this applies to refunds.
+
+If a signed refund webhook arrives but the system cannot safely determine:
+
+tenant
+invoice
+payment
+
+what happens?
+
+It must NOT:
+
+- invent a tenant;
+- attach it to the first matching order;
+- perform financial processing;
+- mark it as successfully processed.
+
+Instead explain how it should remain:
+
+tenant = NULL
+verification_status = unverifiable_unattributed
+
+or whatever the actual implementation uses.
+
+Explain how an Admin can later investigate it.
+
+---
+
+16. INVOICE EFFECT
+
+This is one of the most important business questions.
+
+Suppose:
+
+Invoice = ₹10,000
+Payment = ₹10,000
+Refund = ₹3,000
+
+What should the invoice show?
+
+Possible models:
+
+Model A
+
+Invoice amount: ₹10,000
+Paid: ₹10,000
+Refunded: ₹3,000
+Net paid: ₹7,000
+Outstanding: ₹3,000
+
+Model B
+
+Invoice remains fully paid and refund is treated only as a separate financial event.
+
+Determine which model is correct for our current business logic.
+
+Do NOT assume.
+
+Explain the consequences of each approach and recommend the correct one.
+
+---
+
+17. STUDENT PORTAL EFFECT
+
+After a refund, what should the student see?
+
+For example:
+
+Invoice: ₹10,000
+
+Payment:
+₹10,000 — Paid
+
+Refund:
+₹3,000 — Refund processed
+
+Net paid:
+₹7,000
+
+Outstanding:
+₹3,000
+
+Or another representation?
+
+Explain exactly what the student portal should display.
+
+The student should not see confusing technical Razorpay information unless intentionally designed for them.
+
+---
+
+18. ADMIN LEDGER EFFECT
+
+Explain exactly what should appear in the Admin Ledger.
+
+I want the timeline to be chronological.
+
+Example:
+
+21 Aug 2026 10:00 AM IST
+Payment initiated
+₹10,000
+
+21 Aug 2026 10:02 AM IST
+Payment captured
+₹10,000
+
+22 Aug 2026 11:00 AM IST
+Refund requested
+₹3,000
+
+22 Aug 2026 11:00 AM IST
+Refund created
+Refund ID: rfnd_xxxxx
+
+22 Aug 2026 11:05 AM IST
+Refund processed
+₹3,000
+
+If webhook delivery happened multiple times, that should remain visible in the forensic details.
+
+Explain what should be visible by default and what should be expandable technical detail.
+
+---
+
+19. RECEIPT EFFECT
+
+What happens to the original payment receipt after refund?
+
+Should it:
+
+- remain unchanged?
+- show refunded amount?
+- show refund status?
+- generate a separate refund receipt?
+- generate a credit note?
+- show net paid amount?
+
+Analyze the current architecture and recommend the correct behavior.
+
+Do NOT overwrite the original receipt.
+
+---
+
+20. ACCOUNTING / FEE LEDGER EFFECT
+
+Explain the business/accounting effect.
+
+If the school received ₹10,000 and refunds ₹3,000:
+
+Gross payment = ₹10,000
+Refund = ₹3,000
+Net payment = ₹7,000
+
+How should this affect:
+
+- student outstanding balance?
+- fee ledger?
+- collection totals?
+- daily collection reports?
+- monthly collection reports?
+- academic-session totals?
+- dashboard statistics?
+- revenue reports?
+
+Especially determine whether reports currently count:
+
+gross payments
+
+or:
+
+net payments after refunds
+
+and whether this needs adjustment.
+
+---
+
+21. ACADEMIC SESSION
+
+The refund must remain associated with the correct:
+
+school/tenant
+academic session
+invoice
+student
+payment
+
+Explain whether refunding a payment from an old academic session can affect a new academic session.
+
+The historical financial event must remain attached to the original invoice/session.
+
+---
+
+22. OFFLINE PAYMENT SAFETY
+
+This is critical.
+
+We already have offline payments such as:
+
+Offline (Cash)
+Offline (Bank Transfer)
+Offline (Demand Draft)
+Offline (Cheque)
+Offline (UPI/QR)
+
+Explain whether the current Refund feature applies to:
+
+Razorpay online payments
+
+only, or also to offline payments.
+
+I do NOT want an Admin accidentally sending a Razorpay refund request for:
+
+Cash
+Cheque
+Bank Transfer
+Demand Draft
+Offline UPI/QR
+
+Explain how the system distinguishes these.
+
+If offline refunds are supported, explain their separate procedure.
+
+---
+
+23. REFUND PERMISSIONS
+
+Determine which roles can refund.
+
+For example:
+
+Super Admin
+School Admin
+Principal
+Accountant
+Teacher
+
+Do not assume.
+
+Inspect the current role/permission architecture.
+
+Explain:
+
+- who can see Refund;
+- who can initiate it;
+- who can approve it;
+- whether two-person approval is required;
+- whether refund limits should exist;
+- whether every refund action must be audited.
+
+---
+
+24. REFUND AUDIT LOG
+
+Every Admin refund action should be auditable.
+
+Explain whether we should record:
+
+Admin user
+Role
+Tenant
+Student
+Invoice
+Payment
+Refund
+Amount
+Reason
+Timestamp IST
+IP/device information if already supported
+
+The audit must remain even if the refund later fails.
+
+---
+
+25. REFUND FAILURE
+
+Explain what happens if Razorpay returns an error.
+
+Example:
+
+Admin requests ₹3,000 refund
+        ↓
+Razorpay rejects request
+
+What happens to:
+
+- payment record?
+- invoice?
+- refund record?
+- Ledger?
+- Admin audit?
+- student portal?
+
+The failed refund attempt must not make the invoice look refunded.
+
+---
+
+26. REFUND AFTER PAYMENT DISPUTE
+
+Explain interaction between:
+
+Payment
+Refund
+Dispute
+Chargeback
+
+What happens if:
+
+- payment has a dispute;
+- refund is attempted during dispute;
+- refund happens before dispute;
+- dispute arrives after refund?
+
+Do not invent business rules. Tell me what the current integration supports and what needs explicit policy.
+
+---
+
+27. REFUND AFTER PARTIAL REFUND
+
+Example:
+
+Original payment = ₹10,000
+Refunded = ₹3,000
+Remaining refundable = ₹7,000
+
+If Admin attempts:
+
+Refund ₹8,000
+
+what should happen?
+
+It must not allow total refunds to exceed captured amount.
+
+Explain exactly how this is validated.
+
+---
+
+28. CURRENCY
+
+Explain whether refunds support only:
+
+INR
+
+or multiple currencies.
+
+Refund amount precision must match the payment currency's rules.
+
+---
+
+29. TIMEZONE REQUIREMENT
+
+All refund timestamps must follow our system-wide IST policy.
+
+Separate and display:
+
+provider refund time
+application refund-request time
+webhook received time
+webhook processing time
+
+All displayed in:
+
+Asia/Kolkata / IST
+
+Do not use browser-local time.
+
+Do not manually add +5:30.
+
+---
+
+30. FINAL REFUND LIFECYCLE DIAGRAM
+
+After analyzing the code, provide one final complete diagram like:
+
+ADMIN
+  ↓
+Selects eligible online payment
+  ↓
+Refund permission check
+  ↓
+Refund amount validation
+  ↓
+Concurrency/idempotency check
+  ↓
+Create refund request
+  ↓
+RAZORPAY
+  ↓
+Refund ID + initial status
+  ↓
+Immutable local refund event
+  ↓
+Webhook
+  ↓
+Signature verification
+  ↓
+Tenant resolution
+  ↓
+Immutable delivery receipt
+  ↓
+Refund resolution
+  ↓
+Refund lifecycle event
+  ↓
+Processing history
+  ↓
+Payment projection
+  ↓
+Invoice projection
+  ↓
+Admin Ledger
+  ↓
+Student Portal
+  ↓
+Reports / Collection totals
+
+Correct this diagram according to the actual implementation.
+
+---
+
+31. FINAL ANSWER FORMAT
+
+Do NOT modify code.
+
+Give me a detailed report in this exact order:
+
+1. Current refund functionality
+2. What the Admin does step-by-step
+3. What Razorpay does
+4. Database changes
+5. Payment effect
+6. Invoice effect
+7. Student portal effect
+8. Admin Ledger effect
+9. Receipt effect
+10. Full vs partial refund
+11. Multiple refunds
+12. Duplicate/refund protection
+13. Webhook lifecycle
+14. Failed refund
+15. Unattributable webhook
+16. Permissions
+17. Audit trail
+18. Accounting/reporting effect
+19. Academic-session effect
+20. Offline-payment behavior
+21. IST date/time behavior
+22. Security risks
+23. Current gaps
+24. Recommended production behavior
+25. Complete refund lifecycle diagram
+
+For every item, clearly distinguish:
+
+CURRENT IMPLEMENTATION
+
+from:
+
+RECOMMENDED BEHAVIOR
+
+and:
+
+MISSING / NEEDS IMPLEMENTATION
+
+Do not make any code changes until I review and approve the proposed refund behavior.
