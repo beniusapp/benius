@@ -321,6 +321,50 @@ describe("payment_attempts: partial unique index cross-school isolation", () => 
     expect(ids).toContain(paymentIdB);
   });
 
+  it("keeps separate payment IDs for the same Razorpay order as separate attempts", async () => {
+    fixtureA = await createFixture();
+    const sharedOrderId = `order_${uid()}`;
+
+    await upsertPaymentAttempt({
+      ...baseData(fixtureA, `pay_${uid()}`),
+      razorpayOrderId: sharedOrderId,
+      outcome: "failed",
+    });
+    await upsertPaymentAttempt({
+      ...baseData(fixtureA, `pay_${uid()}`),
+      razorpayOrderId: sharedOrderId,
+      outcome: "captured",
+    });
+
+    const rows = await getAttemptsBySchool(fixtureA.schoolId);
+    expect(rows).toHaveLength(2);
+    expect(rows.map(row => row.razorpay_order_id)).toEqual([sharedOrderId, sharedOrderId]);
+    expect(new Set(rows.map(row => row.razorpay_payment_id)).size).toBe(2);
+    expect(rows.map(row => row.outcome).sort()).toEqual(["captured", "failed"]);
+  });
+
+  it("allocates distinct attempt numbers for concurrent payment IDs on one order", async () => {
+    fixtureA = await createFixture();
+    const sharedOrderId = `order_${uid()}`;
+
+    await Promise.all([
+      upsertPaymentAttempt({
+        ...baseData(fixtureA, `pay_${uid()}`),
+        razorpayOrderId: sharedOrderId,
+        outcome: "failed",
+      }),
+      upsertPaymentAttempt({
+        ...baseData(fixtureA, `pay_${uid()}`),
+        razorpayOrderId: sharedOrderId,
+        outcome: "captured",
+      }),
+    ]);
+
+    const rows = await getAttemptsBySchool(fixtureA.schoolId);
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map(row => row.attempt_number)).size).toBe(2);
+  });
+
   it("same payment ID in different schools creates two rows (no cross-school dedup)", async () => {
     fixtureA = await createFixture();
     fixtureB = await createFixture();

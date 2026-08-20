@@ -10,6 +10,13 @@ import crypto from "crypto";
 import Razorpay from "razorpay";
 import { broadcastPaymentUpdate } from "./sse";
 import { fetchRazorpayData, mapRazorpayPayment, upsertPaymentAttempt, updatePaymentAttemptRefund } from "./rzp-enrichment";
+import {
+  appendPaymentAttemptEvent,
+  recordWebhookDelivery,
+  sanitizePaymentPayload,
+  updateAttemptEnrichmentState,
+  updateWebhookDelivery,
+} from "./payment-attempt-history";
 import { validateCapturedRazorpayPayment } from "./razorpay-verify-guard";
 import { getMultiInvoiceOfflinePaymentError } from "./offline-payment-request-guard";
 import { formatOfflinePaymentMethod } from "@shared/offline-payment-method";
@@ -149,6 +156,7 @@ export async function acquireRazorpayOrder(
   rzpOrders: RzpOrdersApi,
 ): Promise<AcquireOrderResult> {
   let result: AcquireOrderResult | null = null;
+  let historyContext: { studentId: number; sessionId: number | null; orderId: string; amountPaise: number } | null = null;
 
   await db.transaction(async (tx) => {
     // Load fee structures inside the transaction so a single DB connection
@@ -166,7 +174,7 @@ export async function acquireRazorpayOrder(
 
     // Row-level write lock — concurrent requests for this fee block here.
     const lockedResult = await tx.execute(sql`
-      SELECT id, status, amount, late_fee_amount, due_date, fee_type, late_fee_config,
+       SELECT id, student_id, session_id, status, amount, late_fee_amount, due_date, fee_type, late_fee_config,
              razorpay_order_id, razorpay_order_expires_at
       FROM fee_records
       WHERE id = ${feeRecordId} AND school_id = ${schoolId}
@@ -338,8 +346,54 @@ export async function acquireRazorpayOrder(
     }
 
     result = { ok: true, orderId: order.id, amount: amountPaise, lateFeeAmount: currentLateFee };
+    historyContext = {
+      studentId: Number(locked.student_id),
+      sessionId: locked.session_id == null ? null : Number(locked.session_id),
+      orderId: order.id,
+      amountPaise,
+    };
   });
 
+  // TypeScript does not track assignments made inside the async transaction
+  // callback, although they are complete once `await db.transaction()` returns.
+  const completedResult = result as unknown as AcquireOrderResult;
+  const completedHistory = historyContext as unknown as {
+    studentId: number; sessionId: number | null; orderId: string; amountPaise: number;
+  } | null;
+  if (completedResult.ok && completedHistory) {
+    try {
+      const attemptId = await upsertPaymentAttempt({
+        schoolId,
+        studentId: completedHistory.studentId,
+        feeRecordId,
+        sessionId: completedHistory.sessionId,
+        outcome: "pending",
+        razorpayOrderId: completedHistory.orderId,
+        amountPaise: completedHistory.amountPaise,
+        currency: "INR",
+        source: "client",
+      });
+      await appendPaymentAttemptEvent({
+        schoolId,
+        paymentAttemptId: attemptId,
+        studentId: completedHistory.studentId,
+        feeRecordId,
+        sessionId: completedHistory.sessionId,
+        eventType: "checkout_initiated",
+        outcome: "pending",
+        razorpayOrderId: completedHistory.orderId,
+        amountPaise: completedHistory.amountPaise,
+        source: "client",
+        idempotencyKey: `checkout-init:${completedHistory.orderId}`,
+        payload: { checkoutExpiresAt: new Date(Date.now() + CHECKOUT_TIMEOUT_SECONDS * 1_000).toISOString() },
+        occurredAt: new Date(),
+      });
+    } catch (historyErr) {
+      // An order remains usable if the diagnostic mirror is unavailable; never
+      // create a second charge merely because auditing is temporarily degraded.
+      console.error("[razorpay create-order] attempt history write failed:", historyErr);
+    }
+  }
   return result!;
 }
 
@@ -2070,15 +2124,30 @@ export function registerFeesRoutes(app: Express) {
       if (!schoolId) return res.status(400).json({ message: "schoolId missing from payment notes and could not be resolved from order_id" });
 
       const creds = await resolveRazorpayCredentials(schoolId);
-      if (!creds?.webhookSecret)
+      if (!creds?.webhookSecret) {
         return res.status(400).json({ message: "Webhook secret not configured" });
+      }
 
       // Verify HMAC
       const expected = crypto.createHmac("sha256", creds.webhookSecret).update(bodyStr).digest("hex");
       const sigBuf = Buffer.from(sig, "hex");
       const expBuf = Buffer.from(expected, "hex");
-      if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf))
+      if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
         return res.status(400).json({ message: "Signature mismatch" });
+      }
+      // Do not persist or tenant-attribute a body until its signature has been
+      // verified. Notes are attacker-controlled before this point.
+      const webhookFeeRecordId = notes.feeRecordId ? parseInt(notes.feeRecordId) : null;
+      const webhookDeliveryId = await recordWebhookDelivery({
+        schoolId,
+        eventType: event.event ?? "unknown",
+        rawBody: bodyStr,
+        payload: event,
+        razorpayPaymentId: payment.id ?? null,
+        razorpayOrderId: payment.order_id ?? null,
+        feeRecordId: webhookFeeRecordId,
+      });
+      await updateWebhookDelivery(webhookDeliveryId, { verified: true });
 
       if (event.event === "payment.captured") {
         // `payment` is already declared in the outer scope above
@@ -2102,6 +2171,47 @@ export function registerFeesRoutes(app: Express) {
             WHERE id = ${feeRecordId} AND school_id = ${schoolId}
               AND razorpay_order_id = ${payment.order_id ?? null}
           `);
+          // A previous delivery may have committed the financial transaction
+          // just before an audit-table outage. Treat a signed duplicate as a
+          // reconciliation opportunity: rebuild the projection/event before
+          // reporting this delivery as processed. The lifecycle idempotency key
+          // makes this safe for ordinary Razorpay retries as well.
+          const repairSession = await storage.getActiveSession(schoolId);
+          const repairedAttemptId = await upsertPaymentAttempt({
+            schoolId,
+            studentId: Number(feeRec.student_id),
+            feeRecordId,
+            sessionId: repairSession?.id ?? feeRec.session_id ?? null,
+            outcome: "captured",
+            razorpayPaymentId: payment.id ?? null,
+            razorpayOrderId: payment.order_id ?? null,
+            amountPaise: payment.amount != null ? Number(payment.amount) : Number(feeRec.amount) * 100,
+            currency: payment.currency ?? "INR",
+            paymentMethod: payment.method ?? null,
+            cardLast4: payment.card?.last4 ?? null,
+            vpa: payment.vpa ?? null,
+            payerEmail: payment.email ?? null,
+            payerContact: payment.contact ?? null,
+            rzpCreatedAt: payment.created_at ? new Date(payment.created_at * 1000) : null,
+            rzpCapturedAt: payment.created_at ? new Date(payment.created_at * 1000) : new Date(),
+            webhookEvent: "payment.captured",
+            webhookReceivedAt: new Date(),
+            webhookVerified: true,
+            webhookPayload: payment,
+            source: "webhook",
+            receiptNumber: feeRec.receipt_number ?? null,
+          });
+          await appendPaymentAttemptEvent({
+            schoolId, paymentAttemptId: repairedAttemptId, feeRecordId,
+            studentId: Number(feeRec.student_id), sessionId: repairSession?.id ?? feeRec.session_id ?? null,
+            eventType: "payment_captured", outcome: "captured", source: "webhook",
+            webhookEventId: webhookDeliveryId, razorpayPaymentId: payment.id ?? null,
+            razorpayOrderId: payment.order_id ?? null,
+            amountPaise: payment.amount != null ? Number(payment.amount) : null,
+            payload: event, occurredAt: payment.created_at ? new Date(payment.created_at * 1000) : new Date(),
+            idempotencyKey: `webhook:${webhookDeliveryId}:payment_captured`,
+          });
+          await updateWebhookDelivery(webhookDeliveryId, { status: "processed" });
           return res.json({ ok: true, idempotent: true });
         }
 
@@ -2196,7 +2306,7 @@ export function registerFeesRoutes(app: Express) {
         broadcastPaymentUpdate(schoolId, { feeRecordId, receiptNumber });
 
         // Write to payment_attempts (non-blocking; existing payment_records write is the source of truth for receipts)
-        void upsertPaymentAttempt({
+        const capturedAttemptId = await upsertPaymentAttempt({
           schoolId,
           studentId:         Number(feeRec.student_id),
           feeRecordId,
@@ -2226,7 +2336,17 @@ export function registerFeesRoutes(app: Express) {
           webhookPayload:    payment,
           source:            "webhook",
           receiptNumber,
-        }).catch(err => console.warn("[webhook] payment_attempts upsert (captured) failed:", err));
+        });
+        await appendPaymentAttemptEvent({
+          schoolId, paymentAttemptId: capturedAttemptId, feeRecordId,
+          studentId: Number(feeRec.student_id), sessionId: activeSession?.id ?? null,
+          eventType: "payment_captured", outcome: "captured", source: "webhook",
+          webhookEventId: webhookDeliveryId, razorpayPaymentId: payment.id ?? null,
+          razorpayOrderId: payment.order_id ?? null,
+          amountPaise: payment.amount != null ? Number(payment.amount) : null,
+          payload: event, occurredAt: payment.created_at ? new Date(payment.created_at * 1000) : now,
+          idempotencyKey: `webhook:${webhookDeliveryId}:payment_captured`,
+        });
 
         // Background: fetch fee/tax/acquirer data from Razorpay API (fire-and-forget after 200)
         if (payment.id) {
@@ -2247,9 +2367,31 @@ export function registerFeesRoutes(app: Express) {
                   ...mapRazorpayPayment(paymentData),
                   razorpayOrderData: orderData,
                 });
+                await updateAttemptEnrichmentState({
+                  schoolId, razorpayPaymentId: payment.id, razorpayOrderId: payment.order_id ?? null,
+                  status: "completed",
+                });
+                await appendPaymentAttemptEvent({
+                  schoolId, feeRecordId, studentId: Number(feeRec.student_id),
+                  eventType: "api_enrichment_completed", source: "system",
+                  razorpayPaymentId: payment.id, razorpayOrderId: payment.order_id ?? null,
+                  payload: { entities: ["payment", "order"] }, occurredAt: new Date(),
+                  idempotencyKey: `enrichment:completed:${payment.id}`,
+                });
               }
             } catch (enrichErr) {
               console.warn("[webhook] captured enrichment failed:", enrichErr);
+              await updateAttemptEnrichmentState({
+                schoolId, razorpayPaymentId: payment.id ?? null, razorpayOrderId: payment.order_id ?? null,
+                status: "failed", error: (enrichErr as any)?.message ?? String(enrichErr),
+              });
+              await appendPaymentAttemptEvent({
+                schoolId, feeRecordId, studentId: Number(feeRec.student_id),
+                eventType: "api_enrichment_failed", source: "system",
+                razorpayPaymentId: payment.id ?? null, razorpayOrderId: payment.order_id ?? null,
+                payload: { error: (enrichErr as any)?.message ?? String(enrichErr) }, occurredAt: new Date(),
+                idempotencyKey: `enrichment:failed:${payment.id ?? payment.order_id}`,
+              });
             }
           })();
         }
@@ -2358,7 +2500,7 @@ export function registerFeesRoutes(app: Express) {
         }
 
         // Write to payment_attempts — webhook payload already has card + error details
-        void upsertPaymentAttempt({
+        const failedAttemptId = await upsertPaymentAttempt({
           schoolId,
           studentId:         studentIdResolved,
           feeRecordId,
@@ -2392,7 +2534,17 @@ export function registerFeesRoutes(app: Express) {
           webhookVerified:   true,
           webhookPayload:    payment,
           source:            "webhook",
-        }).catch(err => console.warn("[webhook] payment_attempts upsert (failed) error:", err));
+        });
+        await appendPaymentAttemptEvent({
+          schoolId, paymentAttemptId: failedAttemptId, feeRecordId,
+          studentId: studentIdResolved, sessionId: webhookFeeSessionId,
+          eventType: "payment_failed", outcome: "failed", source: "webhook",
+          webhookEventId: webhookDeliveryId, razorpayPaymentId: payment.id ?? null,
+          razorpayOrderId: payment.order_id ?? null,
+          amountPaise: payment.amount != null ? Number(payment.amount) : null,
+          payload: event, occurredAt: payment.created_at ? new Date(payment.created_at * 1000) : now,
+          idempotencyKey: `webhook:${webhookDeliveryId}:payment_failed`,
+        });
 
         console.log(`[razorpay webhook] Payment failed for fee #${feeRecordId}: ${errCode} — ${errDesc}`);
 
@@ -2414,7 +2566,7 @@ export function registerFeesRoutes(app: Express) {
           )
         `);
         // Write to payment_attempts
-        void upsertPaymentAttempt({
+        const authorizedAttemptId = await upsertPaymentAttempt({
           schoolId,
           studentId:         studentIdAu,
           feeRecordId,
@@ -2435,7 +2587,16 @@ export function registerFeesRoutes(app: Express) {
           webhookVerified:   true,
           webhookPayload:    payment,
           source:            "webhook",
-        }).catch(err => console.warn("[webhook] payment_attempts upsert (authorized) error:", err));
+        });
+        await appendPaymentAttemptEvent({
+          schoolId, paymentAttemptId: authorizedAttemptId, feeRecordId,
+          studentId: studentIdAu, eventType: "payment_authorized", outcome: "authorized",
+          source: "webhook", webhookEventId: webhookDeliveryId,
+          razorpayPaymentId: payment.id ?? null, razorpayOrderId: payment.order_id ?? null,
+          amountPaise: payment.amount != null ? Number(payment.amount) : null, payload: event,
+          occurredAt: payment.created_at ? new Date(payment.created_at * 1000) : now,
+          idempotencyKey: `webhook:${webhookDeliveryId}:payment_authorized`,
+        });
 
         console.log(`[razorpay webhook] payment.authorized fee #${feeRecordId} — ${payment.id ?? "?"}`);
 
@@ -2488,6 +2649,14 @@ export function registerFeesRoutes(app: Express) {
             event.event === "refund.processed" ? now : null,
             rfOutcome,
           ).catch(err => console.warn("[webhook] updatePaymentAttemptRefund error:", err));
+          await appendPaymentAttemptEvent({
+            schoolId, feeRecordId: rfFeeRecordId, studentId: rfStudentId,
+            eventType: rfAction, outcome: rfOutcome, source: "webhook",
+            webhookEventId: webhookDeliveryId, razorpayPaymentId: refPmtId,
+            refundId: refund.id, amountPaise: refund.amount != null ? Number(refund.amount) : null,
+            payload: event, occurredAt: now,
+            idempotencyKey: `webhook:${webhookDeliveryId}:${rfAction}`,
+          });
         }
 
         console.log(`[razorpay webhook] ${event.event} fee #${rfFeeRecordId} refund ${refund.id ?? "?"}`);
@@ -2536,6 +2705,15 @@ export function registerFeesRoutes(app: Express) {
           // Notify admin dashboard — no receipt number for disputes, pass empty string
           broadcastPaymentUpdate(schoolId, { feeRecordId: disFeeId ?? 0, receiptNumber: "" });
         }
+        if (disPmtId) {
+          await appendPaymentAttemptEvent({
+            schoolId, feeRecordId: disFeeId, studentId: disStudId, eventType: disAction,
+            source: "webhook", webhookEventId: webhookDeliveryId, razorpayPaymentId: disPmtId,
+            disputeId: dispute.id ?? null, amountPaise: dispute.amount != null ? Number(dispute.amount) : null,
+            payload: event, occurredAt: now,
+            idempotencyKey: `webhook:${webhookDeliveryId}:${disAction}`,
+          });
+        }
         console.log(`[razorpay webhook] ${event.event} dispute ${dispute.id ?? "?"} fee #${disFeeId}`);
 
       // ── payment.downtime.* ───────────────────────────────────────────────────
@@ -2550,8 +2728,11 @@ export function registerFeesRoutes(app: Express) {
       // Razorpay requires 200 for all events — acknowledge and log only.
       } else {
         console.log(`[razorpay webhook] acknowledged (no action): ${event.event}`);
+        await updateWebhookDelivery(webhookDeliveryId, { status: "ignored" });
+        return res.json({ ok: true, ignored: true });
       }
 
+      await updateWebhookDelivery(webhookDeliveryId, { status: "processed" });
       res.json({ ok: true });
     } catch (err: any) {
       console.error("[razorpay webhook]", err);
@@ -2683,7 +2864,8 @@ export function registerFeesRoutes(app: Express) {
 
     // Write to payment_attempts (non-fatal)
     const attemptOutcome = isCancelled ? "cancelled" : "failed";
-    void upsertPaymentAttempt({
+    try {
+      const clientAttemptId = await upsertPaymentAttempt({
       schoolId,
       studentId:         studentId ?? null,
       feeRecordId:       feeRecordId ?? null,
@@ -2699,7 +2881,30 @@ export function registerFeesRoutes(app: Express) {
       errorReason:       errorReason       ?? null,
       webhookVerified:   false,
       source:            "client",
-    }).catch(err => console.warn("[clear-failed-order] payment_attempts write failed:", err));
+      });
+      await appendPaymentAttemptEvent({
+        schoolId, paymentAttemptId: clientAttemptId, feeRecordId, studentId: studentId ?? null,
+        sessionId: clientFeeSessionId, eventType: isCancelled ? "checkout_cancelled" : "payment_failed",
+        outcome: attemptOutcome, source: "client", razorpayPaymentId: razorpayPaymentId ?? null,
+        razorpayOrderId: razorpayOrderId ?? null,
+        amountPaise: clientFeeAmount != null ? Math.round(clientFeeAmount * 100) : null,
+        payload: {
+          errorCode: errorCode ?? null, errorDescription: errorDescription ?? null,
+          errorSource: errorSource ?? null, errorStep: errorStep ?? null, errorReason: errorReason ?? null,
+          response: sanitizePaymentPayload(
+            typeof rawResponse === "object" && rawResponse
+              ? { ...rawResponse, contact: undefined, email: undefined }
+              : rawResponse,
+          ),
+        },
+        occurredAt: now,
+        // An order has at most one client close/failure classification. Webhook
+        // failure remains a distinct provider event and is intentionally separate.
+        idempotencyKey: `client:${isCancelled ? "cancel" : "failure"}:${razorpayOrderId ?? razorpayPaymentId ?? feeRecordId}`,
+      });
+    } catch (attemptErr) {
+      console.warn("[clear-failed-order] payment attempt history write failed:", attemptErr);
+    }
 
     // If a Razorpay payment ID is present (client-side failure, not a voluntary
     // dismiss), background-fetch from Razorpay API for card / error enrichment.
@@ -2723,9 +2928,30 @@ export function registerFeesRoutes(app: Express) {
               razorpayOrderData: orderData,
               apiSyncedAt: new Date(),
             });
+            await updateAttemptEnrichmentState({
+              schoolId, razorpayPaymentId, razorpayOrderId: razorpayOrderId ?? null, status: "completed",
+            });
+            await appendPaymentAttemptEvent({
+              schoolId, feeRecordId, studentId: studentId ?? null, sessionId: clientFeeSessionId,
+              eventType: "api_enrichment_completed", source: "system",
+              razorpayPaymentId, razorpayOrderId: razorpayOrderId ?? null,
+              payload: { entities: ["payment", "order"] }, occurredAt: new Date(),
+              idempotencyKey: `enrichment:completed:${razorpayPaymentId}`,
+            });
           }
         } catch (enrichErr) {
           console.warn("[clear-failed-order] enrichment failed:", enrichErr);
+          await updateAttemptEnrichmentState({
+            schoolId, razorpayPaymentId, razorpayOrderId: razorpayOrderId ?? null,
+            status: "failed", error: (enrichErr as any)?.message ?? String(enrichErr),
+          });
+          await appendPaymentAttemptEvent({
+            schoolId, feeRecordId, studentId: studentId ?? null, sessionId: clientFeeSessionId,
+            eventType: "api_enrichment_failed", source: "system",
+            razorpayPaymentId, razorpayOrderId: razorpayOrderId ?? null,
+            payload: { error: (enrichErr as any)?.message ?? String(enrichErr) }, occurredAt: new Date(),
+            idempotencyKey: `enrichment:failed:${razorpayPaymentId}`,
+          });
         }
       })();
     }
@@ -2781,6 +3007,33 @@ export function registerFeesRoutes(app: Express) {
       // payment_mode metadata in case the webhook INSERT missed it (e.g. older code path
       // or a rare webhook delivery gap).
       if (feeRec.status === "Paid") {
+        // A client verify request can be retried after the financial write
+        // committed but before attempt history was durable. Rebuild the same
+        // idempotent projection/event here before reporting success.
+        const repairSession = await storage.getActiveSession(schoolId);
+        const repairedAttemptId = await upsertPaymentAttempt({
+          schoolId,
+          studentId: Number(feeRec.student_id),
+          feeRecordId,
+          sessionId: repairSession?.id ?? feeRec.session_id ?? null,
+          outcome: "captured",
+          razorpayPaymentId: razorpay_payment_id,
+          razorpayOrderId: razorpay_order_id,
+          amountPaise: Math.round(Number(feeRec.amount) * 100),
+          currency: "INR",
+          rzpCapturedAt: new Date(),
+          source: "client",
+          receiptNumber: feeRec.receipt_number ?? null,
+        });
+        await appendPaymentAttemptEvent({
+          schoolId, paymentAttemptId: repairedAttemptId, feeRecordId,
+          studentId: Number(feeRec.student_id), sessionId: repairSession?.id ?? feeRec.session_id ?? null,
+          eventType: "payment_captured", outcome: "captured", source: "client",
+          razorpayPaymentId: razorpay_payment_id, razorpayOrderId: razorpay_order_id,
+          amountPaise: Math.round(Number(feeRec.amount) * 100),
+          payload: { verification: "client_retry_reconciliation" }, occurredAt: new Date(),
+          idempotencyKey: `client-verify:${razorpay_payment_id}`,
+        });
         // Non-blocking enrichment — fire and forget so the response is instant.
         (async () => {
           try {
@@ -2954,7 +3207,7 @@ export function registerFeesRoutes(app: Express) {
 
       // Record in payment_attempts — this is the primary write for the client-verify path.
       // The webhook (payment.captured) may arrive later and upsert the same row idempotently.
-      void upsertPaymentAttempt({
+      const verifiedAttemptId = await upsertPaymentAttempt({
         schoolId,
         studentId:         Number(feeRec.student_id),
         feeRecordId,
@@ -2973,11 +3226,17 @@ export function registerFeesRoutes(app: Express) {
         source:            "client",
         receiptNumber,
         ...mapRazorpayPayment(verifiedPayment),
-      }).catch(err => console.error(
-        `[razorpay verify] ⚠ payment_attempts upsert FAILED for ${razorpay_payment_id} ` +
-        `fee #${feeRecordId} — History tab may be incomplete until webhook arrives:`,
-        err,
-      ));
+      });
+      await appendPaymentAttemptEvent({
+        schoolId, paymentAttemptId: verifiedAttemptId, feeRecordId,
+        studentId: Number(feeRec.student_id), sessionId: activeSession?.id ?? null,
+        eventType: "payment_captured", outcome: "captured", source: "client",
+        razorpayPaymentId: razorpay_payment_id, razorpayOrderId: razorpay_order_id,
+        amountPaise: verifiedCapture.amountPaise,
+        payload: { verification: "authoritative_razorpay_api", payment: sanitizePaymentPayload(verifiedPayment) },
+        occurredAt: now,
+        idempotencyKey: `client-verify:${razorpay_payment_id}`,
+      });
 
       // Fire-and-forget API enrichment for payment_attempts (mode, card, RRN, fee, GST)
       if (creds.keySecret) {
@@ -2997,9 +3256,31 @@ export function registerFeesRoutes(app: Express) {
                 webhookVerified: true,
                 ...mapRazorpayPayment(paymentData),
               });
+              await updateAttemptEnrichmentState({
+                schoolId, razorpayPaymentId: razorpay_payment_id, razorpayOrderId: razorpay_order_id ?? null,
+                status: "completed",
+              });
+              await appendPaymentAttemptEvent({
+                schoolId, feeRecordId, studentId: Number(feeRec.student_id), sessionId: activeSession?.id ?? null,
+                eventType: "api_enrichment_completed", source: "system",
+                razorpayPaymentId: razorpay_payment_id, razorpayOrderId: razorpay_order_id ?? null,
+                payload: { entities: ["payment", "order"] }, occurredAt: new Date(),
+                idempotencyKey: `enrichment:completed:${razorpay_payment_id}`,
+              });
             }
           } catch (enrichErr) {
             console.warn(`[razorpay verify] API enrichment failed for ${razorpay_payment_id}:`, enrichErr);
+            await updateAttemptEnrichmentState({
+              schoolId, razorpayPaymentId: razorpay_payment_id, razorpayOrderId: razorpay_order_id ?? null,
+              status: "failed", error: (enrichErr as any)?.message ?? String(enrichErr),
+            });
+            await appendPaymentAttemptEvent({
+              schoolId, feeRecordId, studentId: Number(feeRec.student_id), sessionId: activeSession?.id ?? null,
+              eventType: "api_enrichment_failed", source: "system",
+              razorpayPaymentId: razorpay_payment_id, razorpayOrderId: razorpay_order_id ?? null,
+              payload: { error: (enrichErr as any)?.message ?? String(enrichErr) }, occurredAt: new Date(),
+              idempotencyKey: `enrichment:failed:${razorpay_payment_id}`,
+            });
           }
         })();
       }
@@ -3384,6 +3665,58 @@ export function registerFeesRoutes(app: Express) {
           )
         ORDER BY r.created_at DESC
       `)).rows as any[];
+      // Admin-only forensic timeline. Every lookup is scoped through the
+      // already tenant-validated fee record; students never receive payloads.
+      const attemptRows = (await db.execute(sql`
+        SELECT pa.*
+        FROM payment_attempts pa
+        WHERE pa.school_id = ${schoolId}
+          AND pa.fee_record_id = ${feeRecordId}
+          AND (pa.razorpay_payment_id IS NOT NULL OR pa.razorpay_order_id IS NOT NULL
+            OR pa.source IN ('client', 'webhook'))
+        ORDER BY pa.attempt_number ASC NULLS LAST, pa.created_at ASC, pa.id ASC
+      `)).rows as any[];
+      const attemptEvents = (await db.execute(sql`
+        SELECT pae.*
+        FROM payment_attempt_events pae
+        WHERE pae.school_id = ${schoolId} AND pae.fee_record_id = ${feeRecordId}
+        ORDER BY COALESCE(pae.occurred_at, pae.recorded_at) ASC, pae.id ASC
+      `)).rows as any[];
+      const webhookRows = (await db.execute(sql`
+        SELECT pwe.id, pwe.provider_event_id, pwe.event_type, pwe.razorpay_payment_id,
+               pwe.razorpay_order_id, pwe.signature_verified, pwe.processing_status,
+               pwe.processing_error, pwe.received_at, pwe.last_received_at, pwe.processed_at,
+               pwe.delivery_count, pwe.payload
+        FROM payment_webhook_events pwe
+        WHERE pwe.school_id = ${schoolId} AND pwe.fee_record_id = ${feeRecordId}
+        ORDER BY pwe.received_at ASC, pwe.id ASC
+      `)).rows as any[];
+      const paymentAttempts = attemptRows.map((attempt: any) => ({
+        id: attempt.id,
+        attemptNumber: attempt.attempt_number ?? null,
+        outcome: attempt.outcome,
+        source: attempt.source,
+        razorpayPaymentId: attempt.razorpay_payment_id ?? null,
+        razorpayOrderId: attempt.razorpay_order_id ?? null,
+        amountPaise: attempt.amount_paise ?? null,
+        currency: attempt.currency ?? "INR",
+        paymentMethod: attempt.payment_method ?? null,
+        errorCode: attempt.error_code ?? null,
+        errorDescription: attempt.error_description ?? null,
+        apiEnrichmentStatus: attempt.api_enrichment_status ?? null,
+        apiEnrichmentError: attempt.api_enrichment_error ?? null,
+        createdAt: attempt.created_at,
+        updatedAt: attempt.updated_at,
+        events: attemptEvents.filter((event: any) => Number(event.payment_attempt_id) === Number(attempt.id)).map((event: any) => ({
+          id: event.id, eventType: event.event_type, outcome: event.outcome ?? null,
+          source: event.source, razorpayPaymentId: event.razorpay_payment_id ?? null,
+          razorpayOrderId: event.razorpay_order_id ?? null, refundId: event.refund_id ?? null,
+          disputeId: event.dispute_id ?? null, amountPaise: event.amount_paise ?? null,
+          occurredAt: event.occurred_at ?? null, recordedAt: event.recorded_at,
+          historical: Boolean(event.historical), payload: event.payload ?? null,
+          webhookEventId: event.webhook_event_id ?? null,
+        })),
+      }));
 
       const mapPayment = (p: any) => ({
         id: p.id,
@@ -3449,6 +3782,15 @@ export function registerFeesRoutes(app: Express) {
           breakdown: Array.isArray(feeRow.breakdown_snapshot) ? feeRow.breakdown_snapshot : [],
         },
         payments: payRows.map(mapPayment),
+        paymentAttempts,
+        webhookEvents: webhookRows.map((event: any) => ({
+          id: event.id, providerEventId: event.provider_event_id, eventType: event.event_type,
+          razorpayPaymentId: event.razorpay_payment_id ?? null, razorpayOrderId: event.razorpay_order_id ?? null,
+          signatureVerified: Boolean(event.signature_verified), processingStatus: event.processing_status,
+          processingError: event.processing_error ?? null, receivedAt: event.received_at,
+          lastReceivedAt: event.last_received_at, processedAt: event.processed_at ?? null,
+          deliveryCount: Number(event.delivery_count ?? 1), payload: event.payload ?? null,
+        })),
         payment: payRows.length > 0 ? mapPayment(payRows[0]) : null,
         student: {
           name: feeRow.student_name,
@@ -4757,10 +5099,10 @@ td:last-child{font-weight:600;word-break:break-all;}
           pa.razorpay_order_data->'notes'                                   AS "orderNotes",
 
           -- Sequential attempt number per fee record (1 = oldest, n = newest)
-          (ROW_NUMBER() OVER (
+          COALESCE(pa.attempt_number, (ROW_NUMBER() OVER (
             PARTITION BY COALESCE(pa.fee_record_id, pa.id)
             ORDER BY pa.created_at ASC
-          ))::integer                                                        AS "attemptNumber"
+          ))::integer)                                                       AS "attemptNumber"
 
         FROM payment_attempts pa
         LEFT JOIN fee_records fr     ON fr.id = pa.fee_record_id

@@ -31,6 +31,58 @@ export const schools = pgTable("schools", {
   gstin: text("gstin"),
 });
 
+/**
+ * Immutable online-payment lifecycle records.  `payment_attempts` remains the
+ * provider-state projection managed by the payment service; these tables retain
+ * the durable history that must never be overwritten by later callbacks.
+ */
+export const paymentAttemptEvents = pgTable("payment_attempt_events", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  paymentAttemptId: integer("payment_attempt_id").notNull(),
+  studentId: integer("student_id").references(() => students.id, { onDelete: "set null" }),
+  feeRecordId: integer("fee_record_id"),
+  sessionId: integer("session_id"),
+  eventType: varchar("event_type", { length: 80 }).notNull(),
+  outcome: varchar("outcome", { length: 30 }),
+  razorpayPaymentId: varchar("razorpay_payment_id", { length: 100 }),
+  razorpayOrderId: varchar("razorpay_order_id", { length: 100 }),
+  refundId: varchar("refund_id", { length: 100 }),
+  disputeId: varchar("dispute_id", { length: 100 }),
+  amountPaise: integer("amount_paise"),
+  currency: varchar("currency", { length: 10 }).notNull().default("INR"),
+  source: varchar("source", { length: 20 }).notNull(),
+  webhookEventId: integer("webhook_event_id"),
+  idempotencyKey: varchar("idempotency_key", { length: 200 }).notNull(),
+  payload: jsonb("payload"),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }),
+  recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  historical: boolean("historical").notNull().default(false),
+}, (table) => [
+  uniqueIndex("payment_attempt_events_school_key_uniq").on(table.schoolId, table.idempotencyKey),
+]);
+
+export const paymentWebhookEvents = pgTable("payment_webhook_events", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").references(() => schools.id, { onDelete: "set null" }),
+  provider: varchar("provider", { length: 30 }).notNull().default("razorpay"),
+  providerEventId: varchar("provider_event_id", { length: 160 }).notNull(),
+  eventType: varchar("event_type", { length: 100 }).notNull(),
+  razorpayPaymentId: varchar("razorpay_payment_id", { length: 100 }),
+  razorpayOrderId: varchar("razorpay_order_id", { length: 100 }),
+  feeRecordId: integer("fee_record_id"),
+  signatureVerified: boolean("signature_verified").notNull().default(false),
+  payload: jsonb("payload").notNull(),
+  processingStatus: varchar("processing_status", { length: 30 }).notNull().default("received"),
+  processingError: text("processing_error"),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  lastReceivedAt: timestamp("last_received_at", { withTimezone: true }).notNull().defaultNow(),
+  processedAt: timestamp("processed_at", { withTimezone: true }),
+  deliveryCount: integer("delivery_count").notNull().default(1),
+}, (table) => [
+  uniqueIndex("payment_webhook_events_provider_event_uniq").on(table.provider, table.providerEventId),
+]);
+
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),

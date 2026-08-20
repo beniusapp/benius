@@ -353,6 +353,54 @@ interface TransactionDetail {
   };
   payments: PaymentRecord[];
   payment: PaymentRecord | null;
+  paymentAttempts: Array<{
+    id: number;
+    attemptNumber: number | null;
+    outcome: string;
+    source: string;
+    razorpayPaymentId: string | null;
+    razorpayOrderId: string | null;
+    amountPaise: number | null;
+    currency: string;
+    paymentMethod: string | null;
+    errorCode: string | null;
+    errorDescription: string | null;
+    apiEnrichmentStatus: string | null;
+    apiEnrichmentError: string | null;
+    createdAt: string;
+    updatedAt: string;
+    events: Array<{
+      id: number;
+      eventType: string;
+      outcome: string | null;
+      source: string;
+      razorpayPaymentId: string | null;
+      razorpayOrderId: string | null;
+      refundId: string | null;
+      disputeId: string | null;
+      amountPaise: number | null;
+      occurredAt: string | null;
+      recordedAt: string;
+      historical: boolean;
+      payload: unknown;
+      webhookEventId: number | null;
+    }>;
+  }>;
+  webhookEvents: Array<{
+    id: number;
+    providerEventId: string;
+    eventType: string;
+    razorpayPaymentId: string | null;
+    razorpayOrderId: string | null;
+    signatureVerified: boolean;
+    processingStatus: string;
+    processingError: string | null;
+    receivedAt: string;
+    lastReceivedAt: string;
+    processedAt: string | null;
+    deliveryCount: number;
+    payload: unknown;
+  }>;
   student: {
     name: string;
     digitalStudentId: string;
@@ -398,6 +446,93 @@ function fmtDate(d: string | null) {
 
 function fmtDateTime(d: string) {
   return new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function AttemptOutcomeBadge({ outcome }: { outcome: string | null | undefined }) {
+  const value = outcome ?? "unknown";
+  const tones: Record<string, string> = {
+    captured: "bg-emerald-900/40 text-emerald-300 border-emerald-700/50",
+    refunded: "bg-violet-900/40 text-violet-300 border-violet-700/50",
+    failed: "bg-red-900/40 text-red-300 border-red-700/50",
+    cancelled: "bg-slate-700/50 text-slate-300 border-slate-500/50",
+    pending: "bg-amber-900/40 text-amber-300 border-amber-700/50",
+    authorized: "bg-blue-900/40 text-blue-300 border-blue-700/50",
+  };
+  return <span className={`inline-flex border rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${tones[value] ?? "bg-white/10 text-white/60 border-white/20"}`}>{value}</span>;
+}
+
+function PaymentAttemptTimeline({ detail }: { detail: TransactionDetail }) {
+  const attempts = detail.paymentAttempts ?? [];
+  if (attempts.length === 0) {
+    return <div className="rounded-xl border border-dashed border-white/10 px-4 py-5 text-center text-sm text-white/35">No online checkout attempts recorded for this invoice.</div>;
+  }
+  return (
+    <section className="rounded-xl border border-cyan-800/40 bg-cyan-950/10 p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <History className="h-4 w-4 text-cyan-300" />
+        <div>
+          <h4 className="text-sm font-semibold text-cyan-100">Payment Attempt History</h4>
+          <p className="text-[11px] text-white/40">Chronological online checkout audit trail. Receipts are issued only for captured payments.</p>
+        </div>
+      </div>
+      <div className="space-y-2">
+        {attempts.map((attempt, index) => (
+          <details key={attempt.id} className="group rounded-lg border border-white/10 bg-slate-950/30" open={attempts.length === 1}>
+            <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5">
+              <ChevronDown className="h-3.5 w-3.5 text-white/40 transition-transform group-open:rotate-180" />
+              <span className="text-xs font-semibold text-white/75">Attempt #{attempt.attemptNumber ?? index + 1}</span>
+              <AttemptOutcomeBadge outcome={attempt.outcome} />
+              <span className="ml-auto text-[11px] text-white/35">{fmtDateTime(attempt.createdAt)}</span>
+            </summary>
+            <div className="border-t border-white/10 px-3 pb-3 pt-2 space-y-3">
+              <div className="grid gap-1 text-xs sm:grid-cols-2">
+                <TxnDetailRow label="Order ID" value={<span className="font-mono text-[11px]">{attempt.razorpayOrderId ?? "Unavailable"}</span>} />
+                <TxnDetailRow label="Payment ID" value={<span className="font-mono text-[11px]">{attempt.razorpayPaymentId ?? "Not created"}</span>} />
+                <TxnDetailRow label="Amount" value={attempt.amountPaise == null ? "—" : `₹${(attempt.amountPaise / 100).toLocaleString("en-IN")}`} />
+                <TxnDetailRow label="Source" value={attempt.source} />
+                {attempt.errorCode && <TxnDetailRow label="Failure" value={`${attempt.errorCode}${attempt.errorDescription ? ` — ${attempt.errorDescription}` : ""}`} />}
+                {attempt.apiEnrichmentStatus && <TxnDetailRow label="Enrichment" value={`${attempt.apiEnrichmentStatus}${attempt.apiEnrichmentError ? ` — ${attempt.apiEnrichmentError}` : ""}`} />}
+              </div>
+              <div className="border-l border-cyan-700/40 pl-3 space-y-2">
+                {attempt.events.map(event => (
+                  <details key={event.id} className="rounded border border-white/10 bg-black/15 px-2 py-1.5">
+                    <summary className="cursor-pointer list-none flex items-center gap-2 text-xs">
+                      <span className="font-medium text-white/80">{event.eventType.replace(/_/g, " ")}</span>
+                      <AttemptOutcomeBadge outcome={event.outcome} />
+                      {event.historical && <span className="text-[10px] text-amber-300">historical projection</span>}
+                      <span className="ml-auto text-[10px] text-white/35">{fmtDateTime(event.occurredAt ?? event.recordedAt)}</span>
+                    </summary>
+                    <div className="mt-2 space-y-1 text-[11px] text-white/55">
+                      {event.refundId && <p>Refund: <span className="font-mono">{event.refundId}</span></p>}
+                      {event.disputeId && <p>Dispute: <span className="font-mono">{event.disputeId}</span></p>}
+                      {event.payload != null && <pre className="max-h-44 overflow-auto rounded bg-black/30 p-2 text-[10px] leading-relaxed text-cyan-100/75">{JSON.stringify(event.payload, null, 2)}</pre>}
+                    </div>
+                  </details>
+                ))}
+              </div>
+            </div>
+          </details>
+        ))}
+      </div>
+      {(detail.webhookEvents ?? []).length > 0 && (
+        <details className="text-xs text-white/55">
+          <summary className="cursor-pointer text-white/55">Webhook deliveries ({detail.webhookEvents.length})</summary>
+          <div className="mt-2 space-y-1.5">
+            {detail.webhookEvents.map(event => (
+              <details key={event.id} className="rounded border border-white/10 px-2 py-1.5">
+                <summary className="cursor-pointer list-none flex gap-2 items-center">
+                  <span className="font-mono text-[10px] text-cyan-200">{event.eventType}</span>
+                  <span className="capitalize">{event.processingStatus}</span>
+                  <span className="text-[10px] text-white/35">delivery ×{event.deliveryCount} · {fmtDateTime(event.receivedAt)}</span>
+                </summary>
+                {event.payload != null && <pre className="mt-2 max-h-44 overflow-auto rounded bg-black/30 p-2 text-[10px] text-cyan-100/75">{JSON.stringify(event.payload, null, 2)}</pre>}
+              </details>
+            ))}
+          </div>
+        </details>
+      )}
+    </section>
+  );
 }
 
 function invoiceFrequencyLabel(frequency: string | null): string {
@@ -3179,6 +3314,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                             {/* Section 0 — Online Payment Details (all payment records) */}
                             {activeSection === 0 && (
                               <div className="space-y-4">
+                                <PaymentAttemptTimeline detail={detail} />
                                 {detail.payments.length === 0 ? (
                                   <div className="py-6 text-center text-white/30 text-sm">
                                     <CreditCard className="w-8 h-8 mx-auto mb-2 opacity-20" />

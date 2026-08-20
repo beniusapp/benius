@@ -38,3 +38,19 @@ would otherwise make payment history appear to report the wrong action time.
 
 **How to apply:** Choose the persisted lifecycle timestamp first and format it
 consistently in IST in cards, details, copied data, and PDFs.
+
+Payment-attempt history has two layers: the mutable `payment_attempts`
+projection answers “what is the latest known state?”, while immutable lifecycle
+events answer “what happened, in what order?”. Webhook deliveries are retained
+separately so exact retries can be counted without making distinct provider
+events disappear.
+
+**Why:** A later capture, refund, or enrichment update must never overwrite the
+evidence of an earlier checkout cancellation or failure. Provider delivery
+retries are operational evidence, not new attempts.
+
+**How to apply:** Allocate a stable per-invoice attempt number for each online
+order/payment identity; append lifecycle facts with a tenant-scoped idempotency
+key; sanitize gateway payloads before persistence; restrict forensic payloads
+to admin transaction details. Ordinary application paths must not rewrite or
+remove recorded lifecycle facts.

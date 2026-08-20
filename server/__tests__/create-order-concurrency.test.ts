@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { db } from "../db";
+import { db, pool } from "../db";
 import {
   schools,
   students,
@@ -102,8 +102,22 @@ async function createFixture(amount = 8000): Promise<Fixture> {
 }
 
 async function teardown(schoolId: number): Promise<void> {
-  await db.execute(sql`DELETE FROM fee_audit_log WHERE school_id = ${schoolId}`);
-  await db.delete(schools).where(eq(schools.id, schoolId));
+  // Payment lifecycle events are intentionally append-only in normal
+  // application operation. Test fixture deletion is the explicit tenant-cleanup
+  // exception used by the database trigger.
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SET LOCAL app.payment_history_cleanup = 'on'");
+    await client.query("DELETE FROM fee_audit_log WHERE school_id = $1", [schoolId]);
+    await client.query("DELETE FROM schools WHERE id = $1", [schoolId]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /** Read the razorpay_order_id stored on the given fee record. */

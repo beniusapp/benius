@@ -728,6 +728,146 @@ app.use((req, res, next) => {
     CREATE INDEX IF NOT EXISTS pa_fee_record_idx ON payment_attempts(fee_record_id);
   `);
 
+  // ── Online payment attempt event history (append-only) ────────────────────
+  // `payment_attempts` is the mutable latest-state projection. These tables
+  // preserve the original lifecycle and every relevant webhook delivery so a
+  // later capture/refund can never erase a cancelled or failed retry.
+  await pool.query(`
+    ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS attempt_number INTEGER;
+    ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS api_enrichment_status VARCHAR(20);
+    ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS api_enrichment_error TEXT;
+
+    CREATE TABLE IF NOT EXISTS payment_webhook_events (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER REFERENCES schools(id) ON DELETE SET NULL,
+      provider VARCHAR(30) NOT NULL DEFAULT 'razorpay',
+      provider_event_id VARCHAR(160) NOT NULL,
+      event_type VARCHAR(100) NOT NULL,
+      razorpay_payment_id VARCHAR(100),
+      razorpay_order_id VARCHAR(100),
+      fee_record_id INTEGER,
+      signature_verified BOOLEAN NOT NULL DEFAULT FALSE,
+      payload JSONB NOT NULL,
+      processing_status VARCHAR(30) NOT NULL DEFAULT 'received',
+      processing_error TEXT,
+      received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      processed_at TIMESTAMPTZ,
+      delivery_count INTEGER NOT NULL DEFAULT 1,
+      UNIQUE(provider, provider_event_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS payment_attempt_events (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      payment_attempt_id INTEGER NOT NULL REFERENCES payment_attempts(id) ON DELETE CASCADE,
+      student_id INTEGER REFERENCES students(id) ON DELETE SET NULL,
+      fee_record_id INTEGER,
+      session_id INTEGER,
+      event_type VARCHAR(80) NOT NULL,
+      outcome VARCHAR(30),
+      razorpay_payment_id VARCHAR(100),
+      razorpay_order_id VARCHAR(100),
+      refund_id VARCHAR(100),
+      dispute_id VARCHAR(100),
+      amount_paise INTEGER,
+      currency VARCHAR(10) NOT NULL DEFAULT 'INR',
+      source VARCHAR(20) NOT NULL,
+      webhook_event_id INTEGER REFERENCES payment_webhook_events(id) ON DELETE SET NULL,
+      idempotency_key VARCHAR(200) NOT NULL,
+      payload JSONB,
+      occurred_at TIMESTAMPTZ,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      historical BOOLEAN NOT NULL DEFAULT FALSE,
+      UNIQUE(school_id, idempotency_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS payment_attempt_events_fee_timeline_idx
+      ON payment_attempt_events(school_id, fee_record_id, occurred_at DESC, recorded_at DESC);
+    CREATE INDEX IF NOT EXISTS payment_attempt_events_attempt_timeline_idx
+      ON payment_attempt_events(payment_attempt_id, occurred_at DESC, recorded_at DESC);
+    CREATE INDEX IF NOT EXISTS payment_webhook_events_school_received_idx
+      ON payment_webhook_events(school_id, received_at DESC);
+    CREATE INDEX IF NOT EXISTS payment_webhook_events_status_idx
+      ON payment_webhook_events(processing_status, received_at DESC);
+
+    CREATE OR REPLACE FUNCTION reject_payment_attempt_event_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+      -- Controlled tenant-erasure/migration transactions can opt in with
+      -- SET LOCAL app.payment_history_cleanup = 'on'. This preserves strict
+      -- append-only behaviour for ordinary application queries while allowing
+      -- FK cascades during a deliberate school cleanup.
+      IF TG_OP = 'DELETE'
+         AND current_setting('app.payment_history_cleanup', true) = 'on' THEN
+        RETURN OLD;
+      END IF;
+      RAISE EXCEPTION 'payment_attempt_events are append-only';
+    END;
+    $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS payment_attempt_events_append_only ON payment_attempt_events;
+    CREATE TRIGGER payment_attempt_events_append_only
+      BEFORE UPDATE OR DELETE ON payment_attempt_events
+      FOR EACH ROW EXECUTE FUNCTION reject_payment_attempt_event_mutation();
+  `);
+
+  // Existing projections remain readable but are marked as historical snapshots
+  // when an exact source event cannot be reconstructed. This is deliberately
+  // idempotent and does not fabricate missing gateway timestamps or payloads.
+  await pool.query(`
+    -- A prior interrupted deployment may have added the unique index before all
+    -- legacy rows were numbered. Rebuild deterministically rather than deleting
+    -- a legitimate historical retry to satisfy the index.
+    DROP INDEX IF EXISTS pa_school_fee_attempt_number_uniq;
+
+    WITH numbered AS (
+      SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY school_id, fee_record_id
+        ORDER BY created_at ASC, id ASC
+      )::integer AS sequence
+      FROM payment_attempts
+      WHERE fee_record_id IS NOT NULL
+        AND (razorpay_payment_id IS NOT NULL OR razorpay_order_id IS NOT NULL
+          OR source IN ('client', 'webhook'))
+    )
+    UPDATE payment_attempts pa
+    SET attempt_number = numbered.sequence
+    FROM numbered
+    WHERE pa.id = numbered.id;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS pa_school_fee_attempt_number_uniq
+      ON payment_attempts(school_id, fee_record_id, attempt_number)
+      WHERE fee_record_id IS NOT NULL AND attempt_number IS NOT NULL;
+
+    INSERT INTO payment_attempt_events (
+      school_id, payment_attempt_id, student_id, fee_record_id, session_id,
+      event_type, outcome, razorpay_payment_id, razorpay_order_id, refund_id,
+      amount_paise, currency, source, idempotency_key, payload, occurred_at,
+      historical
+    )
+    SELECT
+      pa.school_id, pa.id, pa.student_id, pa.fee_record_id, pa.session_id,
+      CASE pa.outcome
+        WHEN 'captured' THEN 'payment_captured'
+        WHEN 'failed' THEN 'payment_failed'
+        WHEN 'cancelled' THEN 'checkout_cancelled'
+        WHEN 'authorized' THEN 'payment_authorized'
+        WHEN 'refunded' THEN 'refund_processed'
+        ELSE 'historical_projection'
+      END,
+      pa.outcome, pa.razorpay_payment_id, pa.razorpay_order_id, pa.refund_id,
+      pa.amount_paise, COALESCE(pa.currency, 'INR'), 'migrated',
+      'historical-attempt:' || pa.id,
+      jsonb_build_object('availability', 'historical_projection_only'),
+      COALESCE(pa.rzp_captured_at, pa.rzp_failed_at, pa.refund_processed_at,
+               pa.rzp_authorized_at, pa.rzp_created_at, pa.created_at),
+      TRUE
+    FROM payment_attempts pa
+    WHERE (pa.razorpay_payment_id IS NOT NULL OR pa.razorpay_order_id IS NOT NULL
+      OR pa.source IN ('client', 'webhook'))
+    ON CONFLICT (school_id, idempotency_key) DO NOTHING;
+  `);
+
   // ── Back-fill ALL payment_records (online + offline) ─────────────────────
   // external_id = 'pr:<id>' guarantees idempotency across server restarts.
   // Offline payments (OP-series, no razorpay_payment_id) are the majority —
@@ -823,6 +963,61 @@ app.use((req, res, next) => {
     ON CONFLICT DO NOTHING
   `);
 
+  // Finish the legacy migration only after *all* sources have populated the
+  // projection. Without this final pass, payment_records and fee_audit_log rows
+  // inserted above would have to wait for a second server restart before they
+  // gained an immutable historical event or an attempt number.
+  await pool.query(`
+    DROP INDEX IF EXISTS pa_school_fee_attempt_number_uniq;
+
+    WITH numbered AS (
+      SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY school_id, fee_record_id
+        ORDER BY created_at ASC, id ASC
+      )::integer AS sequence
+      FROM payment_attempts
+      WHERE fee_record_id IS NOT NULL
+        AND (razorpay_payment_id IS NOT NULL OR razorpay_order_id IS NOT NULL
+          OR source IN ('client', 'webhook'))
+    )
+    UPDATE payment_attempts pa
+    SET attempt_number = numbered.sequence
+    FROM numbered
+    WHERE pa.id = numbered.id;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS pa_school_fee_attempt_number_uniq
+      ON payment_attempts(school_id, fee_record_id, attempt_number)
+      WHERE fee_record_id IS NOT NULL AND attempt_number IS NOT NULL;
+
+    INSERT INTO payment_attempt_events (
+      school_id, payment_attempt_id, student_id, fee_record_id, session_id,
+      event_type, outcome, razorpay_payment_id, razorpay_order_id, refund_id,
+      amount_paise, currency, source, idempotency_key, payload, occurred_at,
+      historical
+    )
+    SELECT
+      pa.school_id, pa.id, pa.student_id, pa.fee_record_id, pa.session_id,
+      CASE pa.outcome
+        WHEN 'captured' THEN 'payment_captured'
+        WHEN 'failed' THEN 'payment_failed'
+        WHEN 'cancelled' THEN 'checkout_cancelled'
+        WHEN 'authorized' THEN 'payment_authorized'
+        WHEN 'refunded' THEN 'refund_processed'
+        ELSE 'historical_projection'
+      END,
+      pa.outcome, pa.razorpay_payment_id, pa.razorpay_order_id, pa.refund_id,
+      pa.amount_paise, COALESCE(pa.currency, 'INR'), 'migrated',
+      'historical-attempt:' || pa.id,
+      jsonb_build_object('availability', 'historical_projection_only'),
+      COALESCE(pa.rzp_captured_at, pa.rzp_failed_at, pa.refund_processed_at,
+               pa.rzp_authorized_at, pa.rzp_created_at, pa.created_at),
+      TRUE
+    FROM payment_attempts pa
+    WHERE (pa.razorpay_payment_id IS NOT NULL OR pa.razorpay_order_id IS NOT NULL
+      OR pa.source IN ('client', 'webhook'))
+    ON CONFLICT (school_id, idempotency_key) DO NOTHING;
+  `);
+
   // ── School columns ────────────────────────────────────────────────────────
   await pool.query(`
     ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo_url TEXT;
@@ -868,30 +1063,13 @@ app.use((req, res, next) => {
       WHERE invoice_number IS NOT NULL;
   `);
 
-  // ── payment_attempts: cancel-deduplication index ──────────────────────────
-  // Ensures that re-submitted cancellation events for the same Razorpay order
-  // (no payment_id yet) produce exactly one row.  The INSERT … ON CONFLICT DO
-  // NOTHING in upsertPaymentAttempt() relies on this index to be idempotent.
-  //
-  // Before creating the index, remove any pre-existing duplicate rows that were
-  // inserted while the index was absent (keeping the earliest row per group so
-  // no data is lost — the duplicate rows are identical in all meaningful fields).
+  // Order IDs are historical identities, not a uniqueness boundary for every
+  // lifecycle callback. Never delete a prior row to make a uniqueness index fit.
   await pool.query(`
-    DELETE FROM payment_attempts
-    WHERE id NOT IN (
-      SELECT MIN(id)
-      FROM   payment_attempts
-      WHERE  razorpay_payment_id IS NULL
-        AND  razorpay_order_id   IS NOT NULL
-      GROUP BY school_id, razorpay_order_id
-    )
-    AND razorpay_payment_id IS NULL
-    AND razorpay_order_id   IS NOT NULL;
-  `);
-  await pool.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS pa_school_order_no_payment
-      ON payment_attempts (school_id, razorpay_order_id)
-      WHERE razorpay_payment_id IS NULL;
+    DROP INDEX IF EXISTS pa_school_order_no_payment;
+    CREATE INDEX IF NOT EXISTS pa_school_order_idx
+      ON payment_attempts(school_id, razorpay_order_id)
+      WHERE razorpay_order_id IS NOT NULL;
   `);
 
   // ── Schema drift guard ────────────────────────────────────────────────────

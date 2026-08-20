@@ -12,6 +12,7 @@
 import Razorpay from "razorpay";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
+import { sanitizePaymentPayload } from "./payment-attempt-history";
 
 export interface RzpCredentials {
   keyId: string;
@@ -205,15 +206,73 @@ export async function upsertPaymentAttempt(data: UpsertAttemptData): Promise<num
   const now = new Date().toISOString();
   const d   = data;
 
-  const wJson = d.webhookPayload      ? JSON.stringify(d.webhookPayload)      : null;
-  const pJson = d.razorpayPaymentData ? JSON.stringify(d.razorpayPaymentData) : null;
-  const oJson = d.razorpayOrderData   ? JSON.stringify(d.razorpayOrderData)   : null;
+  const wJson = d.webhookPayload      ? JSON.stringify(sanitizePaymentPayload(d.webhookPayload))      : null;
+  const pJson = d.razorpayPaymentData ? JSON.stringify(sanitizePaymentPayload(d.razorpayPaymentData)) : null;
+  const oJson = d.razorpayOrderData   ? JSON.stringify(sanitizePaymentPayload(d.razorpayOrderData))   : null;
+
+  // The lookup, promotion, next-number allocation, and write must be one
+  // critical section. Distinct payment IDs can arrive concurrently for the
+  // same Razorpay order; without this lock both callbacks could allocate the
+  // same next attempt number.
+  return await db.transaction(async (tx) => {
+  if (d.feeRecordId != null) {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${d.schoolId}, ${d.feeRecordId})`);
+  }
+
+  // An order is an attempt identity. A pending row created at checkout must be
+  // promoted by its payment callback rather than becoming a misleading second
+  // projection. Attempt numbers are per-invoice and allocated only for online
+  // identities, preserving previous retries forever.
+  // Payment ID is the strongest identity. Razorpay can create more than one
+  // payment attempt against a single order, so an existing *different* payment
+  // ID must never be collapsed into its sibling attempt. Only an order-only
+  // pending projection is eligible to be promoted by the first payment ID.
+  const exactPayment = d.razorpayPaymentId ? (await tx.execute(sql`
+    SELECT id, attempt_number, razorpay_payment_id
+    FROM payment_attempts
+    WHERE school_id = ${d.schoolId}
+      AND razorpay_payment_id = ${d.razorpayPaymentId}
+    ORDER BY updated_at DESC, id DESC
+    LIMIT 1
+  `)).rows[0] as any : null;
+  const orderOnlyProjection = d.razorpayOrderId ? (await tx.execute(sql`
+    SELECT id, attempt_number, razorpay_payment_id
+    FROM payment_attempts
+    WHERE school_id = ${d.schoolId}
+      AND razorpay_order_id = ${d.razorpayOrderId}
+      AND razorpay_payment_id IS NULL
+    ORDER BY updated_at DESC, id DESC
+    LIMIT 1
+  `)).rows[0] as any : null;
+  const matching = d.razorpayPaymentId
+    ? (exactPayment ?? orderOnlyProjection)
+    : orderOnlyProjection;
+  let attemptNumber: number | null = matching?.attempt_number == null ? null : Number(matching.attempt_number);
+  if (!matching && d.feeRecordId != null && (d.razorpayPaymentId || d.razorpayOrderId)) {
+    const next = (await tx.execute(sql`
+      SELECT COALESCE(MAX(attempt_number), 0) + 1 AS next_attempt
+      FROM payment_attempts
+      WHERE school_id = ${d.schoolId} AND fee_record_id = ${d.feeRecordId}
+    `)).rows[0] as any;
+    attemptNumber = Number(next?.next_attempt ?? 1);
+  }
+
+  // Promote the existing order projection before the payment-ID uniqueness
+  // upsert. A payment ID can otherwise leave both "pending" and "failed" rows
+  // for one checkout attempt.
+  if (d.razorpayPaymentId && d.razorpayOrderId && matching?.id && !matching?.razorpay_payment_id) {
+    await tx.execute(sql`
+      UPDATE payment_attempts
+      SET razorpay_payment_id = ${d.razorpayPaymentId}, updated_at = ${now}
+      WHERE id = ${Number(matching.id)} AND school_id = ${d.schoolId}
+    `);
+  }
 
   if (d.razorpayPaymentId) {
     // ── UPSERT keyed on (school_id, razorpay_payment_id) ───────────────────
-    const result = await db.execute(sql`
+    const result = await tx.execute(sql`
       INSERT INTO payment_attempts (
-        school_id, student_id, fee_record_id, session_id, outcome,
+        school_id, student_id, fee_record_id, session_id, attempt_number, outcome,
         razorpay_payment_id, razorpay_order_id,
         amount_paise, currency, amount_captured_paise, amount_refunded_paise,
         razorpay_fee_paise, razorpay_tax_paise,
@@ -225,10 +284,10 @@ export async function upsertPaymentAttempt(data: UpsertAttemptData): Promise<num
         rzp_created_at, rzp_authorized_at, rzp_captured_at, rzp_failed_at,
         webhook_event, webhook_received_at, webhook_verified, webhook_payload,
         api_synced_at, razorpay_payment_data, razorpay_order_data,
-        source, receipt_number, created_at, updated_at
+        source, receipt_number, api_enrichment_status, created_at, updated_at
       ) VALUES (
         ${d.schoolId}, ${d.studentId ?? null}, ${d.feeRecordId ?? null},
-        ${d.sessionId ?? null}, ${d.outcome},
+        ${d.sessionId ?? null}, ${attemptNumber}, ${d.outcome},
         ${d.razorpayPaymentId}, ${d.razorpayOrderId ?? null},
         ${d.amountPaise ?? null}, ${d.currency ?? "INR"},
         ${d.amountCapturedPaise ?? null}, ${d.amountRefundedPaise ?? null},
@@ -251,7 +310,7 @@ export async function upsertPaymentAttempt(data: UpsertAttemptData): Promise<num
         ${wJson}::jsonb,
         ${d.apiSyncedAt?.toISOString() ?? null},
         ${pJson}::jsonb, ${oJson}::jsonb,
-        ${d.source}, ${d.receiptNumber ?? null},
+        ${d.source}, ${d.receiptNumber ?? null}, ${d.apiSyncedAt ? "completed" : null},
         ${now}, ${now}
       )
       ON CONFLICT (school_id, razorpay_payment_id)
@@ -271,6 +330,7 @@ export async function upsertPaymentAttempt(data: UpsertAttemptData): Promise<num
         student_id            = COALESCE(EXCLUDED.student_id,            payment_attempts.student_id),
         fee_record_id         = COALESCE(EXCLUDED.fee_record_id,         payment_attempts.fee_record_id),
         session_id            = COALESCE(EXCLUDED.session_id,            payment_attempts.session_id),
+        attempt_number        = COALESCE(payment_attempts.attempt_number, EXCLUDED.attempt_number),
         razorpay_order_id     = COALESCE(EXCLUDED.razorpay_order_id,     payment_attempts.razorpay_order_id),
         amount_paise          = COALESCE(EXCLUDED.amount_paise,          payment_attempts.amount_paise),
         amount_captured_paise = COALESCE(EXCLUDED.amount_captured_paise, payment_attempts.amount_captured_paise),
@@ -325,6 +385,7 @@ export async function upsertPaymentAttempt(data: UpsertAttemptData): Promise<num
         webhook_verified      = payment_attempts.webhook_verified OR EXCLUDED.webhook_verified,
         webhook_payload       = COALESCE(EXCLUDED.webhook_payload,       payment_attempts.webhook_payload),
         api_synced_at         = COALESCE(EXCLUDED.api_synced_at,         payment_attempts.api_synced_at),
+        api_enrichment_status = COALESCE(EXCLUDED.api_enrichment_status, payment_attempts.api_enrichment_status),
         razorpay_payment_data = COALESCE(EXCLUDED.razorpay_payment_data, payment_attempts.razorpay_payment_data),
         razorpay_order_data   = COALESCE(EXCLUDED.razorpay_order_data,   payment_attempts.razorpay_order_data),
         receipt_number        = COALESCE(EXCLUDED.receipt_number,        payment_attempts.receipt_number),
@@ -334,12 +395,30 @@ export async function upsertPaymentAttempt(data: UpsertAttemptData): Promise<num
     return Number((result.rows[0] as any)?.id ?? 0);
 
   } else {
-    // ── INSERT: cancelled / no-payment-ID attempts ──────────────────────────
-    // Guarded by partial unique index (school_id, razorpay_order_id) where
-    // razorpay_payment_id IS NULL — silently ignores duplicate reports.
-    const result = await db.execute(sql`
+    // ── INSERT: pending / cancelled / no-payment-ID attempts ─────────────────
+    // Repeated browser notifications for one order update its projection. The
+    // immutable event table retains every separately observed lifecycle action.
+    if (matching?.id) {
+      const result = await tx.execute(sql`
+        UPDATE payment_attempts
+        SET outcome = CASE
+                        WHEN outcome IN ('captured', 'refunded') THEN outcome
+                        ELSE ${d.outcome}
+                      END,
+            error_code = COALESCE(${d.errorCode ?? null}, error_code),
+            error_description = COALESCE(${d.errorDescription ?? null}, error_description),
+            error_source = COALESCE(${d.errorSource ?? null}, error_source),
+            error_step = COALESCE(${d.errorStep ?? null}, error_step),
+            error_reason = COALESCE(${d.errorReason ?? null}, error_reason),
+            updated_at = ${now}
+        WHERE id = ${Number(matching.id)} AND school_id = ${d.schoolId}
+        RETURNING id
+      `);
+      return Number((result.rows[0] as any)?.id ?? 0);
+    }
+    const result = await tx.execute(sql`
       INSERT INTO payment_attempts (
-        school_id, student_id, fee_record_id, session_id, outcome,
+        school_id, student_id, fee_record_id, session_id, attempt_number, outcome,
         razorpay_order_id, amount_paise, currency,
         payment_method, vpa, wallet,
         payer_name, payer_email, payer_contact,
@@ -347,10 +426,10 @@ export async function upsertPaymentAttempt(data: UpsertAttemptData): Promise<num
         rzp_created_at,
         webhook_event, webhook_received_at, webhook_verified, webhook_payload,
         api_synced_at, razorpay_payment_data, razorpay_order_data,
-        source, receipt_number, created_at, updated_at
+        source, receipt_number, api_enrichment_status, created_at, updated_at
       ) VALUES (
         ${d.schoolId}, ${d.studentId ?? null}, ${d.feeRecordId ?? null},
-        ${d.sessionId ?? null}, ${d.outcome},
+        ${d.sessionId ?? null}, ${attemptNumber}, ${d.outcome},
         ${d.razorpayOrderId ?? null},
         ${d.amountPaise ?? null}, ${d.currency ?? "INR"},
         ${d.paymentMethod ?? null}, ${d.vpa ?? null}, ${d.wallet ?? null},
@@ -363,14 +442,14 @@ export async function upsertPaymentAttempt(data: UpsertAttemptData): Promise<num
         ${d.webhookVerified ?? false}, ${wJson}::jsonb,
         ${d.apiSyncedAt?.toISOString() ?? null},
         ${pJson}::jsonb, ${oJson}::jsonb,
-        ${d.source}, ${d.receiptNumber ?? null},
+        ${d.source}, ${d.receiptNumber ?? null}, ${d.apiSyncedAt ? "completed" : null},
         ${now}, ${now}
       )
-      ON CONFLICT DO NOTHING
       RETURNING id
     `);
     return Number((result.rows[0] as any)?.id ?? 0);
   }
+  });
 }
 
 /**

@@ -118,8 +118,15 @@ export class DatabaseStorage {
   }
 
   async deleteSchool(id: number): Promise<boolean> {
-    const result = await db.delete(schools).where(eq(schools.id, id)).returning();
-    return result.length > 0;
+    return await db.transaction(async (tx) => {
+      // The payment-attempt event table is append-only during ordinary
+      // application operation. Deleting an entire tenant is the authorized
+      // erasure path, so enable the database's transaction-local cascade guard
+      // only for this controlled operation.
+      await tx.execute(sql`SELECT set_config('app.payment_history_cleanup', 'on', true)`);
+      const result = await tx.delete(schools).where(eq(schools.id, id)).returning();
+      return result.length > 0;
+    });
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
