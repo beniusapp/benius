@@ -17,6 +17,7 @@
 
 import { describe, it, expect } from "vitest";
 import { feePeriodLabel } from "../fee-period.js";
+import { formatPersistedDateTimeIST } from "../persisted-date-time";
 
 // ─── Helpers extracted from server/routes.ts receipt handler ─────────────────
 // These mirror the exact logic in the handler so tests catch regressions.
@@ -105,10 +106,19 @@ function buildMethodDesc(
 function feePeriodTableCell(
   start: string | null,
   end: string | null,
-  academicYear: string | null,
 ): string {
-  if (!start) return academicYear ?? "—";
-  return feePeriodLabel(start, end, academicYear);
+  if (!start || !end) return "—";
+  return feePeriodLabel(start, end, null);
+}
+
+function frequencyLabel(frequency: string | null): string {
+  const labels: Record<string, string> = {
+    monthly: "Monthly",
+    quarterly: "Quarterly",
+    annual: "Annual",
+    "one-time": "One-Time",
+  };
+  return frequency ? (labels[frequency] ?? frequency) : "—";
 }
 
 // ─── 1. FEE PERIOD LABEL ─────────────────────────────────────────────────────
@@ -123,7 +133,7 @@ describe("Fee period label — monthly", () => {
   });
 
   it("feePeriodTableCell monthly uses period label, not academic year", () => {
-    const cell = feePeriodTableCell("2026-08-01", "2026-08-31", "2026-27");
+    const cell = feePeriodTableCell("2026-08-01", "2026-08-31");
     expect(cell).toBe("August 2026");
     expect(cell).not.toBe("2026-27");
   });
@@ -139,30 +149,29 @@ describe("Fee period label — quarterly", () => {
   });
 
   it("feePeriodTableCell quarterly uses period label", () => {
-    const cell = feePeriodTableCell("2026-04-01", "2026-06-30", "2026-27");
+    const cell = feePeriodTableCell("2026-04-01", "2026-06-30");
     expect(cell).toBe("April–June 2026");
   });
 });
 
 describe("Fee period label — annual / session", () => {
-  it("Full year 2026-27 → 'FY 2026-27' or similar (>92 days)", () => {
-    const label = feePeriodLabel("2026-04-01", "2027-03-31", "2026-27");
-    // feePeriodLabel for >92 days falls back to academicYear if provided
-    expect(label).toBe("2026-27");
+  it("Full stored year 2026-27 → '2026–27' without reading the academic session", () => {
+    const label = feePeriodLabel("2026-04-01", "2027-03-31", null);
+    expect(label).toBe("2026–27");
   });
 
-  it("feePeriodTableCell annual → academic year string", () => {
-    const cell = feePeriodTableCell("2026-04-01", "2027-03-31", "2026-27");
-    expect(cell).toBe("2026-27");
+  it("feePeriodTableCell annual uses the stored dates, not an academic-year fallback", () => {
+    const cell = feePeriodTableCell("2026-04-01", "2027-03-31");
+    expect(cell).toBe("2026–27");
   });
 
-  it("No fee_period_start → falls back to academicYear", () => {
-    const cell = feePeriodTableCell(null, null, "2026-27");
-    expect(cell).toBe("2026-27");
+  it("No persisted fee period stays unavailable instead of using the academic session", () => {
+    const cell = feePeriodTableCell(null, null);
+    expect(cell).toBe("—");
   });
 
   it("No fee_period_start and no academicYear → '—'", () => {
-    const cell = feePeriodTableCell(null, null, null);
+    const cell = feePeriodTableCell(null, null);
     expect(cell).toBe("—");
   });
 });
@@ -674,15 +683,22 @@ describe("Full scenario: monthly August 2026 paid in October 2026", () => {
     receiptNumber:  "ON-00452",
     feeType:        "Tuition",
     feeName:        "Tuition Fee",
+    frequency:      "monthly",
   };
   const late = 60;
 
   it("Fee period is August 2026 (not October 2026 or 2026-27)", () => {
-    expect(feePeriodLabel(rec.feePeriodStart, rec.feePeriodEnd, rec.academicYear)).toBe("August 2026");
+    expect(feePeriodTableCell(rec.feePeriodStart, rec.feePeriodEnd)).toBe("August 2026");
   });
 
-  it("Invoice date is 10 Oct 2026", () => {
-    expect(fmtDate(rec.createdAt)).toBe("10 Oct 2026");
+  it("Invoice date uses the persisted creation timestamp in IST, not the payment date", () => {
+    expect(formatPersistedDateTimeIST(rec.createdAt)).toBe("10 Oct 2026, 03:00:00 PM IST");
+    expect(formatPersistedDateTimeIST(rec.createdAt)).not.toContain("15 Oct 2026");
+  });
+
+  it("Fee type and frequency use the persisted invoice values", () => {
+    expect(rec.feeType).toBe("Tuition");
+    expect(frequencyLabel(rec.frequency)).toBe("Monthly");
   });
 
   it("Due date is 31 Aug 2026", () => {
@@ -715,14 +731,20 @@ describe("Full scenario: quarterly April–June 2026", () => {
     academicYear:   "2026-27",
     feeType:        "Tuition",
     feeName:        "Tuition Fee",
+    frequency:      "quarterly",
+    createdAt:      "2026-08-20T13:02:15.000Z",
+    paymentCreatedAt: "2026-08-21T09:00:00.000Z",
   };
 
   it("Fee period is April–June 2026", () => {
-    expect(feePeriodLabel(rec.feePeriodStart, rec.feePeriodEnd, rec.academicYear)).toBe("April–June 2026");
+    expect(feePeriodTableCell(rec.feePeriodStart, rec.feePeriodEnd)).toBe("April–June 2026");
   });
 
-  it("Table column shows 'April–June 2026'", () => {
-    expect(feePeriodTableCell(rec.feePeriodStart, rec.feePeriodEnd, rec.academicYear)).toBe("April–June 2026");
+  it("uses the persisted quarterly frequency and original invoice timestamp", () => {
+    expect(frequencyLabel(rec.frequency)).toBe("Quarterly");
+    expect(formatPersistedDateTimeIST(rec.createdAt)).toBe("20 Aug 2026, 06:32:15 PM IST");
+    expect(formatPersistedDateTimeIST(rec.createdAt))
+      .not.toBe(formatPersistedDateTimeIST(rec.paymentCreatedAt));
   });
 
   it("Amount in words for ₹9,000 → Rupees Nine Thousand Only", () => {
@@ -740,16 +762,52 @@ describe("Full scenario: annual 2026-27", () => {
     feeName:        "Annual Fee",
   };
 
-  it("Fee period label is '2026-27'", () => {
-    expect(feePeriodLabel(rec.feePeriodStart, rec.feePeriodEnd, rec.academicYear)).toBe("2026-27");
+  it("Fee period label is based on stored invoice dates", () => {
+    expect(feePeriodTableCell(rec.feePeriodStart, rec.feePeriodEnd)).toBe("2026–27");
   });
 
-  it("Table column shows '2026-27'", () => {
-    expect(feePeriodTableCell(rec.feePeriodStart, rec.feePeriodEnd, rec.academicYear)).toBe("2026-27");
+  it("does not substitute the academic-year value", () => {
+    expect(feePeriodTableCell(rec.feePeriodStart, rec.feePeriodEnd)).not.toBe(rec.academicYear);
   });
 
   it("Amount in words for ₹40,000 → Rupees Forty Thousand Only", () => {
     expect(amountInWords(40000)).toBe("Rupees Forty Thousand Only");
+  });
+});
+
+describe("Full scenario: manually added monthly invoice", () => {
+  const rec = {
+    feeType: "Books",
+    frequency: "monthly",
+    feePeriodStart: "2027-08-01",
+    feePeriodEnd: "2027-08-31",
+    createdAt: "2026-08-20T13:02:15.000Z",
+  };
+
+  it("keeps the manually selected fee type, frequency, exact period, and invoice timestamp", () => {
+    expect(rec.feeType).toBe("Books");
+    expect(frequencyLabel(rec.frequency)).toBe("Monthly");
+    expect(feePeriodTableCell(rec.feePeriodStart, rec.feePeriodEnd)).toBe("August 2027");
+    expect(formatPersistedDateTimeIST(rec.createdAt)).toBe("20 Aug 2026, 06:32:15 PM IST");
+  });
+});
+
+describe("Full scenario: one-time invoice", () => {
+  const rec = {
+    feeType: "Equipment",
+    frequency: "one-time",
+    feePeriodStart: "2027-04-01",
+    feePeriodEnd: "2028-03-31",
+    academicYear: "2026-27",
+    createdAt: "2026-08-20T13:02:15.000Z",
+  };
+
+  it("uses the one-time snapshot and the invoice's stored period, not the academic session", () => {
+    expect(rec.feeType).toBe("Equipment");
+    expect(frequencyLabel(rec.frequency)).toBe("One-Time");
+    expect(feePeriodTableCell(rec.feePeriodStart, rec.feePeriodEnd)).toBe("2027–28");
+    expect(feePeriodTableCell(rec.feePeriodStart, rec.feePeriodEnd)).not.toBe(rec.academicYear);
+    expect(formatPersistedDateTimeIST(rec.createdAt)).toBe("20 Aug 2026, 06:32:15 PM IST");
   });
 });
 

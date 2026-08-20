@@ -20,3 +20,4 @@
 - [Concession Snapshot](concession-snapshot.md) — optional original_amount on fee_structures; concession_snapshot JSONB on fee_records; buildConcessionSnapshot() in invoice-snapshot.ts; 3 structure paths write it, 2 admin-direct leave {}; receipt renders Original Fee/Concession/Net Fee rows (Step 6 done).
 - [Invoice-First Offline Payment](invoice-first-offline-payment.md) — standalone payment path removed; feeRecordId always required; new GET /unpaid-invoices endpoint; StandaloneOfflinePayModal replaces freeform standalone RecordPaymentModal.
 - [Structure-backed invoice creation](structure-backed-invoice-creation.md) — single and bulk invoices share server authority, canonical periods, snapshots, duplicate identity, and atomic writes.
+- [Receipt data snapshots](receipt-data-snapshots.md) — receipts must render original invoice fields and timestamps, never substitute payment or live session data.

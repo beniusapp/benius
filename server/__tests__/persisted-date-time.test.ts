@@ -12,6 +12,11 @@ describe("formatPersistedDateTimeIST", () => {
       .toBe("19 Aug 2026, 01:30:01 AM IST");
   });
 
+  it("accepts the Date instances returned by persisted fee-record queries", () => {
+    expect(formatPersistedDateTimeIST(new Date("2026-08-20T13:02:15.000Z")))
+      .toBe("20 Aug 2026, 06:32:15 PM IST");
+  });
+
   it("does not substitute a current timestamp for absent or invalid stored data", () => {
     expect(formatPersistedDateTimeIST(null)).toBe("—");
     expect(formatPersistedDateTimeIST("invalid")).toBe("—");

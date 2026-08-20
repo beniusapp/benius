@@ -5191,7 +5191,9 @@ export async function registerRoutes(
     }
 
     // ── Receipt identity fields ────────────────────────────────────────────────
-    const invoiceDateFmt = fmtDate((rec as any).createdAt);   // fee_records.created_at
+    // Invoice Date is the original fee_records.created_at timestamp, not any
+    // payment, Razorpay, receipt, or calculated timestamp.
+    const invoiceDateFmt = formatPersistedDateTimeIST((rec as any).createdAt);
     const dueDateFmt     = fmtDate(rec.dueDate);               // fee_records.due_date
     const paidTs = formatPersistedDateTimeIST(
       (pa?.rzp_captured_at as string | null)
@@ -5203,13 +5205,20 @@ export async function registerRoutes(
     // Already computed inline in the HTML; pull it out here for the table column.
     const feePeriodStartVal = (rec as any).feePeriodStart as string | null;
     const feePeriodEndVal   = (rec as any).feePeriodEnd   as string | null;
-    const feePeriodDays = feePeriodStartVal && feePeriodEndVal
-      ? Math.round((new Date(feePeriodEndVal + "T00:00:00").getTime() - new Date(feePeriodStartVal + "T00:00:00").getTime()) / 86400000)
-      : 400;
-    const periodRowLabel = feePeriodDays <= 31 ? "Fee Month" : feePeriodDays <= 92 ? "Fee Period" : "Academic Session";
-    const feePeriodLbl   = feePeriodLabel(feePeriodStartVal, feePeriodEndVal, rec.academicYear);
-    // Column shown in the fee table: period label if we have one, else academic year string
-    const tableSessionCol = feePeriodStartVal ? feePeriodLbl : (rec.academicYear ?? "—");
+    // Format only the period persisted on this invoice. Do not replace a missing
+    // invoice period with the academic session or derive one from other dates.
+    const periodRowLabel = "Fee Period";
+    const feePeriodLbl   = feePeriodLabel(feePeriodStartVal, feePeriodEndVal, null);
+    const tableSessionCol = feePeriodStartVal && feePeriodEndVal ? feePeriodLbl : "—";
+    const frequencyLabels: Record<string, string> = {
+      monthly: "Monthly",
+      quarterly: "Quarterly",
+      annual: "Annual",
+      "one-time": "One-Time",
+    };
+    const frequencyDisplay = rec.frequency
+      ? (frequencyLabels[rec.frequency] ?? rec.frequency)
+      : "—";
 
     // ── Offline reference number label (context-sensitive) ─────────────────────
     const offlineRefLabel =
@@ -5420,7 +5429,7 @@ tfoot td:last-child{text-align:right;}
   <!-- Source: fee_records.fee_period_start / fee_period_end (immutable, set at invoice creation) -->
   ${feePeriodStartVal
     ? `<div class="period-band">&#128197;&nbsp; ${esc(periodRowLabel)}: <strong>${esc(feePeriodLbl)}</strong></div>`
-    : `<div class="period-band" style="color:#64748b;font-weight:600;border-left-color:#cbd5e1;">&#128197;&nbsp; Academic Session: <strong>${esc(rec.academicYear ?? "—")}</strong></div>`}
+    : `<div class="period-band" style="color:#64748b;font-weight:600;border-left-color:#cbd5e1;">&#128197;&nbsp; Fee Period: <strong>—</strong></div>`}
 
   <!-- ── SECTION C: DETAILS GRID ── -->
   <div class="grid2">
@@ -5448,7 +5457,7 @@ tfoot td:last-child{text-align:right;}
   </div>
 
   <!-- ── SECTION D: FEE ITEMIZATION TABLE ── -->
-  <!-- Fee name: fee_records.feeType (mapped to display name) — NOT hardcoded              -->
+  <!-- Fee Type / Frequency / Fee Period: fee_records snapshots — never inferred           -->
   <!-- Fee Period column: fee_period_start/end label — NOT derived from payment date       -->
   <!-- Components: fee_records.breakdown_snapshot (immutable) — NEVER fee_structures       -->
   <!-- Gateway Charges row removed — no charges are actually collected from students       -->
@@ -5456,6 +5465,8 @@ tfoot td:last-child{text-align:right;}
     <table>
       <thead><tr>
         <th>Description</th>
+        <th>Fee Type</th>
+        <th>Frequency</th>
         <th>Fee Period</th>
         <th style="text-align:right">Amount (₹)</th>
       </tr></thead>
@@ -5465,28 +5476,32 @@ tfoot td:last-child{text-align:right;}
             breakdownComponents.map(c => `
         <tr>
           <td>${esc(c.name || "—")}</td>
+          <td>${esc(rec.feeType)}</td>
+          <td>${esc(frequencyDisplay)}</td>
           <td>${esc(tableSessionCol)}</td>
           <td>${typeof c.amount === "number" && isFinite(c.amount) ? `₹${fmt(c.amount)}` : "—"}</td>
         </tr>`).join("") + `
         <tr class="net-fee-row">
-          <td colspan="2">Net Fee</td>
+          <td colspan="4">Net Fee</td>
           <td>₹${fmt(baseFee)}</td>
         </tr>`
           : /* ── Legacy / no-components path: single fee-type row ── */`
         <tr>
           <td>${feeName}</td>
+          <td>${esc(rec.feeType)}</td>
+          <td>${esc(frequencyDisplay)}</td>
           <td>${esc(tableSessionCol)}</td>
           <td>₹${fmt(baseFee)}</td>
         </tr>`}
         ${lateFeePaid > 0 ? `
         <tr>
-          <td>Late Fee / Penalty</td>
+          <td colspan="3">Late Fee / Penalty</td>
           <td>${esc(tableSessionCol)}</td>
           <td>₹${fmt(lateFeePaid)}</td>
         </tr>` : ""}
       </tbody>
       <tfoot><tr>
-        <td colspan="2"><strong>TOTAL AMOUNT PAID</strong></td>
+        <td colspan="4"><strong>TOTAL AMOUNT PAID</strong></td>
         <td>₹${amountStr}</td>
       </tr></tfoot>
     </table>
