@@ -2159,7 +2159,30 @@ export function registerFeesRoutes(app: Express) {
       }
       // Do not persist or tenant-attribute a body until its signature has been
       // verified. Notes are attacker-controlled before this point.
-      const webhookFeeRecordId = notes.feeRecordId ? parseInt(notes.feeRecordId) : null;
+      let webhookFeeRecordId = notes.feeRecordId ? parseInt(notes.feeRecordId) : null;
+      let webhookResolutionSource: "notes" | "payment_id" | "order_id" | null =
+        webhookFeeRecordId ? "notes" : null;
+      let webhookResolutionReason: string | null = null;
+      if (!webhookFeeRecordId && (refundEntity.id || disputeEntity.id || providerPaymentId || providerOrderId)) {
+        const feeMatches = (await db.execute(sql`
+          SELECT id FROM fee_records
+          WHERE school_id = ${schoolId}
+            AND (${providerOrderId}::text IS NOT NULL AND razorpay_order_id = ${providerOrderId})
+          UNION
+          SELECT fee_record_id AS id FROM payment_attempts
+          WHERE school_id = ${schoolId}
+            AND ${providerPaymentId}::text IS NOT NULL
+            AND razorpay_payment_id = ${providerPaymentId}
+        `)).rows as any[];
+        if (feeMatches.length === 1) {
+          webhookFeeRecordId = Number(feeMatches[0].id);
+          webhookResolutionSource = providerPaymentId ? "payment_id" : "order_id";
+        } else if (feeMatches.length > 1) {
+          webhookResolutionReason = "ambiguous provider order identity";
+        } else {
+          webhookResolutionReason = "provider identity did not resolve an invoice";
+        }
+      }
       const webhookDeliveryId = await recordWebhookDelivery({
         schoolId,
         eventType: event.event ?? "unknown",
@@ -2168,6 +2191,8 @@ export function registerFeesRoutes(app: Express) {
         razorpayPaymentId: payment.id ?? null,
         razorpayOrderId: payment.order_id ?? null,
         feeRecordId: webhookFeeRecordId,
+        feeResolutionSource: webhookResolutionSource,
+        resolutionReason: webhookResolutionReason,
         signatureVerified: true,
         razorpayRefundId: refundEntity.id ?? null,
         razorpayDisputeId: disputeEntity.id ?? null,
