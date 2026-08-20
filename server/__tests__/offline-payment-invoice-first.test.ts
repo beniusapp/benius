@@ -155,6 +155,21 @@ async function apiPay(
     RETURNING *
   `);
   const pr = result.rows[0];
+  await db.execute(sql`
+    INSERT INTO payment_attempts (
+      school_id, student_id, fee_record_id, session_id, outcome,
+      amount_paise, amount_captured_paise, currency, payment_method,
+      receipt_number, external_id, source, created_at, updated_at
+    ) VALUES (
+      ${schoolId}, ${studentId}, ${payload.feeRecordId ?? null}, NULL, 'captured',
+      ${payload.amount * 100}, ${payload.amount * 100}, 'INR',
+      ${payload.paymentMethod ?? "Cash"}, ${receipt}, ${`pr:${pr.id}`},
+      'admin', NOW(), NOW()
+    )
+    ON CONFLICT (school_id, external_id)
+      WHERE external_id IS NOT NULL
+    DO NOTHING
+  `);
   if (payload.feeRecordId) {
     await db.update(schema.feeRecords)
       .set({ status: "Paid", paidDate: payload.receivedDate ?? "2027-08-20", receiptNumber: receipt })
@@ -168,6 +183,7 @@ async function apiPay(
 const createdSchoolIds: number[] = [];
 afterAll(async () => {
   for (const id of createdSchoolIds) {
+    await db.execute(sql`DELETE FROM payment_attempts WHERE school_id = ${id}`);
     await db.delete(schema.feeRecords).where(eq(schema.feeRecords.schoolId, id));
     await db.execute(sql`DELETE FROM payment_records WHERE school_id = ${id}`);
     await db.execute(sql`DELETE FROM academic_sessions WHERE school_id = ${id}`);
@@ -266,6 +282,48 @@ describe("3. Single invoice payment", () => {
       .where(eq(schema.feeRecords.id, invoice.id));
     expect(fr.receiptNumber).toMatch(/^OF/);
   });
+});
+
+describe("Offline method persistence in payment history", () => {
+  let school: Awaited<ReturnType<typeof createSchool>>;
+  let student: Awaited<ReturnType<typeof createStudent>>;
+  let session: Awaited<ReturnType<typeof createSession>>;
+
+  beforeAll(async () => {
+    school = await createSchool();
+    student = await createStudent(school.id);
+    session = await createSession(school.id);
+    createdSchoolIds.push(school.id);
+  });
+
+  it.each(["Cash", "BankTransfer", "Cheque", "DemandDraft", "UpiQr"])(
+    "persists %s on its linked payment record and captured payment attempt",
+    async (paymentMethod) => {
+      const invoice = await createInvoice(school.id, student.id, session.id);
+      const result = await apiPay(school.id, student.id, {
+        feeRecordId: invoice.id,
+        amount: 2000,
+        paymentMethod,
+        idempotencyKey: `method-${paymentMethod}-${Date.now()}-${Math.random()}`,
+      });
+
+      expect(result.status).toBe(201);
+      expect(result.body.payment_method).toBe(paymentMethod);
+
+      const attempts = await db.execute(sql`
+        SELECT payment_method, outcome, receipt_number
+        FROM payment_attempts
+        WHERE school_id = ${school.id}
+          AND external_id = ${`pr:${result.body.id}`}
+      `);
+      expect(attempts.rows).toHaveLength(1);
+      expect(attempts.rows[0]).toMatchObject({
+        payment_method: paymentMethod,
+        outcome: "captured",
+        receipt_number: result.body.receipt_number,
+      });
+    },
+  );
 });
 
 // ── 4: Multiple invoice payments ──────────────────────────────────────────────

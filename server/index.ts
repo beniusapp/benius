@@ -714,7 +714,12 @@ app.use((req, res, next) => {
       pr.razorpay_order_id,
       pr.amount::integer * 100,
       'INR',
-      COALESCE(pr.payment_mode, 'offline'),
+       CASE
+         WHEN LOWER(TRIM(COALESCE(pr.payment_method, ''))) IN
+           ('cash', 'banktransfer', 'cheque', 'demanddraft', 'upiqr')
+           THEN pr.payment_method
+         ELSE COALESCE(pr.payment_mode, 'offline')
+       END,
       pr.card_last4, pr.bank_name, pr.vpa, pr.payer_email, pr.payer_contact,
       pr.receipt_number,
       'pr:' || pr.id,
@@ -723,6 +728,24 @@ app.use((req, res, next) => {
       NOW()
     FROM payment_records pr
     ON CONFLICT DO NOTHING
+  `);
+
+  // Older backfill rows stored generic "offline" in payment_attempts even
+  // though their linked payment_records retained the selected method. Repair
+  // only those known, persisted values; unknown historical rows stay generic.
+  await pool.query(`
+    UPDATE payment_attempts pa
+    SET payment_method = pr.payment_method,
+        bank_name = COALESCE(pa.bank_name, pr.bank_name),
+        vpa = COALESCE(pa.vpa, pr.vpa),
+        payer_name = COALESCE(pa.payer_name, pr.payer_name),
+        updated_at = NOW()
+    FROM payment_records pr
+    WHERE pa.school_id = pr.school_id
+      AND pa.external_id = 'pr:' || pr.id
+      AND LOWER(TRIM(COALESCE(pr.payment_method, ''))) IN
+        ('cash', 'banktransfer', 'cheque', 'demanddraft', 'upiqr')
+      AND (pa.payment_method IS NULL OR LOWER(TRIM(pa.payment_method)) = 'offline')
   `);
 
   // ── Back-fill failed / cancelled attempts from fee_audit_log ─────────────

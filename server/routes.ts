@@ -24,6 +24,7 @@ import { registerFeesRoutes } from "./fees-routes";
 import { calculateLateFee } from "./late-fee-engine";
 import { buildLateFeeInfo } from "./late-fee-display";
 import { ledgerPaymentMethodLabel } from "./payment-method-label";
+import { formatOfflinePaymentMethod } from "@shared/offline-payment-method";
 import { formatPersistedDateTimeIST } from "./persisted-date-time";
 import {
   InvoiceGenerationError,
@@ -5171,22 +5172,22 @@ export async function registerRoutes(
     const legalLine = legalParts.join(" &nbsp;|&nbsp; ");
 
     // ── Payment method description ─────────────────────────────────────────────
-    // Priority: payment_attempts (Razorpay gateway details) → payment_records (offline)
+    // Gateway enrichment stays authoritative for Razorpay. Offline payments use
+    // the recorded method from payment_records, never a generic attempt label.
     const prMethodRaw = (pr?.payment_method ?? "") as string;
-    const offlineMethodLabel =
-      prMethodRaw === "BankTransfer" ? "Bank Transfer"   :
-      prMethodRaw === "DemandDraft"  ? "Demand Draft"    :
-      prMethodRaw === "Online"       ? "Online Transfer" :
-      prMethodRaw || "—";
-    let methodDesc = pa ? (pa.payment_method as string || offlineMethodLabel) : offlineMethodLabel;
-    if (pa?.payment_method === "card") {
+    const isGatewayPayment = Boolean(pa?.razorpay_payment_id) || prMethodRaw === "Online";
+    const offlineMethodDesc = formatOfflinePaymentMethod(prMethodRaw) ?? (prMethodRaw || "—");
+    let methodDesc = isGatewayPayment
+      ? ((pa?.payment_method as string | null) || "Online Transfer")
+      : offlineMethodDesc;
+    if (isGatewayPayment && pa?.payment_method === "card") {
       const parts = [pa.card_network, pa.card_last4 ? `•••• ${pa.card_last4}` : null].filter(Boolean);
       methodDesc = parts.length ? `Card (${parts.join(" ")})` : "Card";
-    } else if (pa?.payment_method === "upi") {
+    } else if (isGatewayPayment && pa?.payment_method === "upi") {
       methodDesc = pa.vpa ? `UPI (${esc(pa.vpa as string)})` : "UPI";
-    } else if (pa?.payment_method === "netbanking") {
+    } else if (isGatewayPayment && pa?.payment_method === "netbanking") {
       methodDesc = pa.bank_name ? `Net Banking – ${esc(pa.bank_name as string)}` : "Net Banking";
-    } else if (pa?.payment_method === "wallet") {
+    } else if (isGatewayPayment && pa?.payment_method === "wallet") {
       methodDesc = pa.wallet ? `Wallet (${esc(pa.wallet as string)})` : "Wallet";
     }
 
@@ -5248,7 +5249,7 @@ export async function registerRoutes(
     type PRow = { label: string; value: string; mono?: boolean; small?: boolean };
     const payDetailRows: PRow[] = [];
     payDetailRows.push({ label: "Method", value: esc(methodDesc) });
-    if (pa) {
+    if (isGatewayPayment) {
       // Online (Razorpay) payment — use payment_attempts as primary source
       payDetailRows.push({ label: "Payment ID",  value: esc(pa.razorpay_payment_id as string ?? "—"), mono: true, small: true });
       payDetailRows.push({ label: "Order ID",    value: esc(pa.razorpay_order_id   as string ?? "—"), mono: true, small: true });

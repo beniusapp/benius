@@ -12,6 +12,7 @@ import { broadcastPaymentUpdate } from "./sse";
 import { fetchRazorpayData, mapRazorpayPayment, upsertPaymentAttempt, updatePaymentAttemptRefund } from "./rzp-enrichment";
 import { validateCapturedRazorpayPayment } from "./razorpay-verify-guard";
 import { getMultiInvoiceOfflinePaymentError } from "./offline-payment-request-guard";
+import { formatOfflinePaymentMethod } from "@shared/offline-payment-method";
 import multer from "multer";
 import path from "node:path";
 import fs from "node:fs";
@@ -1331,6 +1332,32 @@ export function registerFeesRoutes(app: Express) {
             RETURNING *`,
       );
       rec = insertResult.rows[0];
+
+       // Store the same selected offline method in the authoritative payment
+       // attempt ledger at transaction time. external_id keeps this one-to-one
+       // with the payment record and lets startup backfill safely skip it.
+       const paymentRecordId = Number((rec as any)?.id);
+       if (paymentRecordId) {
+         await tx.execute(sql`
+           INSERT INTO payment_attempts (
+             school_id, student_id, fee_record_id, session_id, outcome,
+             amount_paise, amount_captured_paise, currency, payment_method,
+             bank_name, vpa, payer_name, receipt_number, external_id, source,
+             created_at, updated_at
+           ) VALUES (
+             ${schoolId}, ${paymentOnly.studentId}, ${paymentOnly.feeRecordId},
+             ${resolvedSessionId}, 'captured',
+             ${paymentOnly.amount * 100}, ${paymentOnly.amount * 100}, 'INR',
+             ${paymentOnly.paymentMethod},
+             ${paymentOnly.bankName ?? null}, ${paymentOnly.payerUpiId ?? null},
+             ${paymentOnly.payerName ?? null}, ${opReceipt}, ${`pr:${paymentRecordId}`},
+             'admin', NOW(), NOW()
+           )
+           ON CONFLICT (school_id, external_id)
+             WHERE external_id IS NOT NULL
+           DO NOTHING
+         `);
+       }
 
       // Auto-update linked fee record status (sum includes the row just inserted)
       // Also persist any notes the admin edited in the Pay modal.
@@ -2973,10 +3000,9 @@ export function registerFeesRoutes(app: Express) {
     const paymentDateTime = formatPersistedDateTimeIST(payment.createdAt);
     const amountStr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(payment.amount);
     const schoolName = esc(school?.name ?? "School");
-    const methodLabel: Record<string, string> = {
-      Cash: "Cash", Cheque: "Cheque", BankTransfer: "Bank Transfer",
-      DemandDraft: "Demand Draft", UpiQr: "UPI / QR Payment", Online: "Online Transfer",
-    };
+    const methodLabel =
+      formatOfflinePaymentMethod(payment.paymentMethod)
+      ?? (payment.paymentMethod === "Online" ? "Online Transfer" : payment.paymentMethod || "—");
 
     const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Payment Receipt</title>
 <style>
@@ -3014,7 +3040,7 @@ export function registerFeesRoutes(app: Express) {
     <tr><td>Student Phone</td><td>${esc(student.phone ?? "—")}</td></tr>
     <tr><td>Class / Section</td><td>${esc(student.class)} / ${esc(student.section)}</td></tr>
     ${feeType ? `<tr><td>Fee Type</td><td>${esc(feeType)}</td></tr>` : ""}
-    <tr><td>Payment Method</td><td>${esc(methodLabel[payment.paymentMethod] ?? payment.paymentMethod)}</td></tr>
+    <tr><td>Payment Method</td><td>${esc(methodLabel)}</td></tr>
     ${payment.referenceNumber ? `<tr><td>Reference No.</td><td>${esc(payment.referenceNumber)}</td></tr>` : ""}
     <tr><td>Payment Date &amp; Time</td><td>${paymentDateTime}</td></tr>
     ${payment.cashierNotes ? `<tr><td>Notes</td><td>${esc(payment.cashierNotes)}</td></tr>` : ""}

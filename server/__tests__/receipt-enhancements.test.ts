@@ -18,6 +18,7 @@
 import { describe, it, expect } from "vitest";
 import { feePeriodLabel } from "../fee-period.js";
 import { formatPersistedDateTimeIST } from "../persisted-date-time";
+import { formatOfflinePaymentMethod } from "../../shared/offline-payment-method";
 
 // ─── Helpers extracted from server/routes.ts receipt handler ─────────────────
 // These mirror the exact logic in the handler so tests catch regressions.
@@ -86,11 +87,8 @@ function buildMethodDesc(
   paExtra: { vpa?: string | null; card_network?: string | null; card_last4?: string | null; bank_name?: string | null; wallet?: string | null } | null,
   prMethodRaw: string,
 ): string {
-  const offlineLabel =
-    prMethodRaw === "BankTransfer" ? "Bank Transfer" :
-    prMethodRaw === "DemandDraft"  ? "Demand Draft"  :
-    prMethodRaw === "Online"       ? "Online Transfer" :
-    prMethodRaw || "—";
+  const offlineLabel = formatOfflinePaymentMethod(prMethodRaw) ?? (prMethodRaw || "—");
+  if (!paMethod && prMethodRaw === "Online") return "Online Transfer";
   if (!paMethod) return offlineLabel;
   if (paMethod === "card") {
     const parts = [paExtra?.card_network, paExtra?.card_last4 ? `•••• ${paExtra.card_last4}` : null].filter(Boolean);
@@ -222,8 +220,8 @@ describe("Offline payment — Cash", () => {
     expect(offlineRefLabel("Cash", "anything")).toBeNull();
   });
 
-  it("Cash method label → 'Cash'", () => {
-    expect(buildMethodDesc(null, null, "Cash")).toBe("Cash");
+  it("Cash method label → 'Offline (Cash)'", () => {
+    expect(buildMethodDesc(null, null, "Cash")).toBe("Offline (Cash)");
   });
 
   it("Cash payer name: stored value shown, null → '—'", () => {
@@ -238,8 +236,8 @@ describe("Offline payment — Cash", () => {
 });
 
 describe("Offline payment — Cheque", () => {
-  it("Cheque method label → 'Cheque'", () => {
-    expect(buildMethodDesc(null, null, "Cheque")).toBe("Cheque");
+  it("Cheque method label → 'Offline (Cheque)'", () => {
+    expect(buildMethodDesc(null, null, "Cheque")).toBe("Offline (Cheque)");
   });
 
   it("Cheque reference label → 'Cheque No.'", () => {
@@ -259,8 +257,8 @@ describe("Offline payment — Cheque", () => {
 });
 
 describe("Offline payment — Bank Transfer", () => {
-  it("BankTransfer method label → 'Bank Transfer'", () => {
-    expect(buildMethodDesc(null, null, "BankTransfer")).toBe("Bank Transfer");
+  it("BankTransfer method label → 'Offline (Bank Transfer)'", () => {
+    expect(buildMethodDesc(null, null, "BankTransfer")).toBe("Offline (Bank Transfer)");
   });
 
   it("BankTransfer reference label → 'UTR / Ref. No.'", () => {
@@ -274,8 +272,8 @@ describe("Offline payment — Bank Transfer", () => {
 });
 
 describe("Offline payment — Demand Draft", () => {
-  it("DemandDraft method label → 'Demand Draft'", () => {
-    expect(buildMethodDesc(null, null, "DemandDraft")).toBe("Demand Draft");
+  it("DemandDraft method label → 'Offline (Demand Draft)'", () => {
+    expect(buildMethodDesc(null, null, "DemandDraft")).toBe("Offline (Demand Draft)");
   });
 
   it("DemandDraft reference label → 'DD Number'", () => {
@@ -646,21 +644,21 @@ describe("Payment method priority: payment_attempts over payment_records", () =>
     expect(desc).not.toBe("Online Transfer");
   });
 
-  it("Offline (pa = null): use pr.payment_method", () => {
+  it("Offline (pa = null): uses the persisted offline method label", () => {
     const desc = buildMethodDesc(null, null, "Cheque");
-    expect(desc).toBe("Cheque");
+    expect(desc).toBe("Offline (Cheque)");
   });
 
-  it("Offline BankTransfer: maps to 'Bank Transfer'", () => {
-    expect(buildMethodDesc(null, null, "BankTransfer")).toBe("Bank Transfer");
+  it("Offline BankTransfer: maps to 'Offline (Bank Transfer)'", () => {
+    expect(buildMethodDesc(null, null, "BankTransfer")).toBe("Offline (Bank Transfer)");
   });
 
-  it("Offline DemandDraft: maps to 'Demand Draft'", () => {
-    expect(buildMethodDesc(null, null, "DemandDraft")).toBe("Demand Draft");
+  it("Offline DemandDraft: maps to 'Offline (Demand Draft)'", () => {
+    expect(buildMethodDesc(null, null, "DemandDraft")).toBe("Offline (Demand Draft)");
   });
 
-  it("Offline Cash: maps to 'Cash'", () => {
-    expect(buildMethodDesc(null, null, "Cash")).toBe("Cash");
+  it("Offline Cash: maps to 'Offline (Cash)'", () => {
+    expect(buildMethodDesc(null, null, "Cash")).toBe("Offline (Cash)");
   });
 
   it("Offline Online (no pa): maps to 'Online Transfer'", () => {
@@ -819,8 +817,8 @@ describe("Full scenario: offline Cheque with reference number", () => {
     received_date:    "2026-08-20",
   };
 
-  it("Method is 'Cheque'", () => {
-    expect(buildMethodDesc(null, null, pr.payment_method)).toBe("Cheque");
+  it("Method is 'Offline (Cheque)'", () => {
+    expect(buildMethodDesc(null, null, pr.payment_method)).toBe("Offline (Cheque)");
   });
 
   it("Reference label is 'Cheque No.'", () => {

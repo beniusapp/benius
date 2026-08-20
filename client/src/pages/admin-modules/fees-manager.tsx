@@ -1135,7 +1135,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                       ? "bg-cyan-900/40 border-cyan-500/60 text-cyan-300"
                       : "bg-[#0A1628] border-white/15 text-white/60 hover:border-white/30 hover:text-white/80"
                   }`}>
-                  UPI / QR Payment
+                  UPI/QR
                 </button>
               </div>
             </div>
@@ -1377,7 +1377,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                   <span className="text-white">
                     {method === "BankTransfer" ? "Bank Transfer"
                      : method === "DemandDraft" ? "Demand Draft"
-                     : method === "UpiQr" ? "UPI / QR Payment"
+                     : method === "UpiQr" ? "UPI/QR"
                      : method}
                   </span>
                 </div>
@@ -1524,7 +1524,7 @@ function PaymentHistoryModal({ open, onClose, feeRecord }: PaymentHistoryModalPr
 
   const methodLabel: Record<string, string> = {
     Cash: "Cash", Cheque: "Cheque", BankTransfer: "Bank Transfer",
-    DemandDraft: "Demand Draft", UpiQr: "UPI / QR", Online: "Portal Payment",
+    DemandDraft: "Demand Draft", UpiQr: "UPI/QR", Online: "Portal Payment",
   };
 
   const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
@@ -1727,7 +1727,7 @@ ${filterDesc ? `<div class="filter-badge">Filtered: ${esc(filterDesc)}</div>` : 
               <option value="Cheque">Cheque</option>
               <option value="BankTransfer">Bank Transfer</option>
               <option value="DemandDraft">Demand Draft</option>
-              <option value="UpiQr">UPI / QR Payment</option>
+              <option value="UpiQr">UPI/QR</option>
               <option value="Online">Online</option>
             </select>
             {isFiltered && (

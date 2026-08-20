@@ -19,6 +19,7 @@ import {
 } from "@shared/payment-attempt-status";
 import { getCheckoutDismissAction } from "@shared/razorpay-checkout-dismiss";
 import { paymentAttemptEventTime } from "@shared/payment-attempt-event-time";
+import { formatOfflinePaymentMethod } from "@shared/offline-payment-method";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -303,7 +304,10 @@ function getGatewayAdvice(attempt: PaymentAttempt): string | null {
 /** Returns a human-readable payment mode label, e.g. "UPI · priya@okaxis",
  *  "Card ···4242", "Netbanking · HDFC", or null when mode is unavailable. */
 function formatPaymentMode(attempt: PaymentAttempt): string | null {
-  const mode = (attempt.paymentMode ?? "").toLowerCase().trim();
+  const rawMode = attempt.paymentMode ?? attempt.paymentMethod ?? "";
+  const offlineLabel = formatOfflinePaymentMethod(rawMode);
+  if (offlineLabel) return offlineLabel;
+  const mode = rawMode.toLowerCase().trim();
   if (!mode) return null;
   if (mode === "upi")        return attempt.vpa       ? `UPI · ${attempt.vpa}`         : "UPI";
   if (mode === "card")       return attempt.cardLast4 ? `Card ···${attempt.cardLast4}` : "Card";
@@ -454,7 +458,7 @@ function buildPaymentCopyText(
 
   if (attempt.paymentMethod) {
     lines.push("", "[PAYMENT METHOD]",
-      L("Method", attempt.paymentMethod.charAt(0).toUpperCase() + attempt.paymentMethod.slice(1)),
+      L("Method", formatPaymentMode(attempt) ?? attempt.paymentMethod),
     );
     if (attempt.paymentMethod === "card") {
       lines.push(
@@ -619,7 +623,7 @@ function downloadPaymentPDF(
   // D: Payment Method
   if (attempt.paymentMethod) {
     sectionHeader("D  ·  PAYMENT METHOD");
-    row("Method", attempt.paymentMethod.charAt(0).toUpperCase() + attempt.paymentMethod.slice(1));
+    row("Method", formatPaymentMode(attempt) ?? attempt.paymentMethod);
     if (attempt.paymentMethod === "card") {
       row("Card",    [attempt.cardNetwork, attempt.cardLast4 ? `**** ${attempt.cardLast4}` : null].filter(Boolean).join(" ") || "—");
       row("Issuer",  attempt.cardIssuer ?? "—");
@@ -837,7 +841,7 @@ function PaymentSections({ attempt, accent }: { attempt: PaymentAttempt; accent:
       {attempt.paymentMethod && (
         <SectionGroup title="Payment Method" accent={accent}>
           <TechRow label="Method"
-            value={attempt.paymentMethod.charAt(0).toUpperCase() + attempt.paymentMethod.slice(1)} />
+            value={formatPaymentMode(attempt) ?? attempt.paymentMethod} />
           {attempt.paymentMethod === "card" && (<>
             <TechRow label="Card Type"  value={cardTypeDesc} />
             <TechRow label="Network"    value={attempt.cardNetwork} />

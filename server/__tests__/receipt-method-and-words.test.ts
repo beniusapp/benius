@@ -13,37 +13,37 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { formatOfflinePaymentMethod } from "../../shared/offline-payment-method";
 
 // ── A: Offline method label mapping ──────────────────────────────────────────
 // Mirrors the logic at routes.ts lines 4809-4821 exactly.
 
-function offlineMethodLabel(prMethodRaw: string): string {
-  return prMethodRaw === "BankTransfer" ? "Bank Transfer" :
-         prMethodRaw === "DemandDraft"  ? "Demand Draft"  :
-         prMethodRaw || "—";
-}
-
 function methodDesc(paMethod: string | null | undefined, prMethodRaw: string): string {
-  // pa = null means offline payment — fall back to payment_records method
-  const label = offlineMethodLabel(prMethodRaw);
-  return paMethod ?? label;
+  // Gateway methods remain gateway-specific; every known offline record uses
+  // the shared receipt/history display contract.
+  if (prMethodRaw === "Online") return paMethod ?? "Online Transfer";
+  return formatOfflinePaymentMethod(prMethodRaw) ?? (prMethodRaw || "—");
 }
 
 describe("Offline payment-method label mapping", () => {
-  it('Cash → "Cash"', () => {
-    expect(methodDesc(null, "Cash")).toBe("Cash");
+  it('Cash → "Offline (Cash)"', () => {
+    expect(methodDesc(null, "Cash")).toBe("Offline (Cash)");
   });
 
-  it('Cheque → "Cheque"', () => {
-    expect(methodDesc(null, "Cheque")).toBe("Cheque");
+  it('Cheque → "Offline (Cheque)"', () => {
+    expect(methodDesc(null, "Cheque")).toBe("Offline (Cheque)");
   });
 
-  it('BankTransfer → "Bank Transfer"', () => {
-    expect(methodDesc(null, "BankTransfer")).toBe("Bank Transfer");
+  it('BankTransfer → "Offline (Bank Transfer)"', () => {
+    expect(methodDesc(null, "BankTransfer")).toBe("Offline (Bank Transfer)");
   });
 
-  it('DemandDraft → "Demand Draft"', () => {
-    expect(methodDesc(null, "DemandDraft")).toBe("Demand Draft");
+  it('DemandDraft → "Offline (Demand Draft)"', () => {
+    expect(methodDesc(null, "DemandDraft")).toBe("Offline (Demand Draft)");
+  });
+
+  it('UpiQr → "Offline (UPI/QR)"', () => {
+    expect(methodDesc(null, "UpiQr")).toBe("Offline (UPI/QR)");
   });
 
   it("missing pr.payment_method → —", () => {
