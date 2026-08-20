@@ -393,12 +393,16 @@ interface TransactionDetail {
     eventType: string;
     razorpayPaymentId: string | null;
     razorpayOrderId: string | null;
+    razorpayRefundId: string | null;
+    razorpayDisputeId: string | null;
     signatureVerified: boolean;
+    verificationStatus: string;
     processingStatus: string;
     processingError: string | null;
     providerOccurredAt: string | null;
     resolutionSource: string | null;
     resolutionStatus: string;
+    resolutionReason: string | null;
     receivedAt: string;
     lastReceivedAt: string;
     processedAt: string | null;
@@ -541,9 +545,11 @@ function PaymentAttemptTimeline({ detail }: { detail: TransactionDetail }) {
                   <span className="text-[10px] text-white/35">delivery ×{event.deliveryCount} · {fmtDateTime(event.receivedAt)}</span>
                 </summary>
                 <div className="mt-1 text-[10px] text-white/45">
-                  Resolution: {event.resolutionStatus}{event.resolutionSource ? ` via ${event.resolutionSource.replace(/_/g, " ")}` : ""}
+                  Verification: {event.verificationStatus} · Resolution: {event.resolutionStatus}{event.resolutionSource ? ` via ${event.resolutionSource.replace(/_/g, " ")}` : ""}
+                  {event.resolutionReason ? ` · ${event.resolutionReason}` : ""}
                   {event.providerOccurredAt ? ` · provider time ${fmtDateTime(event.providerOccurredAt)}` : ""}
                 </div>
+                {(event.razorpayRefundId || event.razorpayDisputeId) && <div className="text-[10px] text-white/45">{event.razorpayRefundId ? `Refund: ${event.razorpayRefundId}` : `Dispute: ${event.razorpayDisputeId}`}</div>}
                 {event.payload != null && <pre className="mt-2 max-h-44 overflow-auto rounded bg-black/30 p-2 text-[10px] text-cyan-100/75">{JSON.stringify(event.payload, null, 2)}</pre>}
                 {(detail.webhookProcessingEvents ?? []).filter(processing => processing.webhookDeliveryId === event.id).map(processing => (
                   <div key={processing.id} className="mt-1 border-t border-white/10 pt-1 text-[10px] text-amber-200/70">

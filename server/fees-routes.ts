@@ -3879,10 +3879,13 @@ export function registerFeesRoutes(app: Express) {
         webhookEvents: webhookRows.map((event: any) => ({
           id: event.id, providerEventId: event.provider_event_id, eventType: event.event_type,
           razorpayPaymentId: event.razorpay_payment_id ?? null, razorpayOrderId: event.razorpay_order_id ?? null,
+          razorpayRefundId: event.razorpay_refund_id ?? null, razorpayDisputeId: event.razorpay_dispute_id ?? null,
           signatureVerified: Boolean(event.signature_verified), processingStatus: event.processing_status,
+          verificationStatus: event.verification_status ?? (event.signature_verified ? "verified" : "unverified"),
           providerOccurredAt: event.provider_occurred_at ?? null,
           resolutionSource: event.fee_resolution_source ?? null,
           resolutionStatus: event.fee_resolution_status ?? "unresolved",
+          resolutionReason: event.resolution_reason ?? null,
           processingError: event.processing_error ?? null, receivedAt: event.received_at,
           lastReceivedAt: event.last_received_at, processedAt: event.processed_at ?? null,
           deliveryCount: Number(event.delivery_count ?? 1), payload: event.payload ?? null,
