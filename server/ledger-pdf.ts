@@ -3,10 +3,9 @@
  *
  * Rendering guarantees
  * ────────────────────
- * 1. NO mid-word character breaks ever.
- *    Pre-computation uses a conservative char-width table (no PDFKit page needed).
- *    Each pre-computed line is drawn with `lineBreak: false` and NO `width` option —
- *    the only way PDFKit guarantees a single line without any wrapping.
+ * 1. Normal phrases are NEVER mid-word broken.
+ *    Pre-computation uses PDFKit's actual widthOfString() font metrics, then renders
+ *    those exact lines with `lineBreak: false` and no `width` option.
  * 2. Right-aligned cells (Amount, Paid, Outstanding, header labels) use
  *    `doc.widthOfString()` at render time (when a page is live) to compute exact X.
  * 3. Totals amounts are rendered without a width constraint — they cannot wrap.
@@ -41,22 +40,6 @@ const STATUS_STYLE: Record<string, { bg: string; fg: string }> = {
 };
 function pillStyle(status: string) {
   return STATUS_STYLE[status] ?? { bg: "#e5e7eb", fg: "#374151" };
-}
-
-// ── Conservative char-width table for pre-computation ─────────────────────────
-// Values are slightly above the real DejaVu Sans average so we never over-pack
-// a line and force PDFKit into character-break territory.
-const CHAR_W: Record<number, number> = {
-  6.5: 3.90,
-  7.0: 4.20,
-  7.5: 4.50,
-  8.0: 4.80,
-};
-function charW(fontSize: number): number {
-  return CHAR_W[fontSize] ?? fontSize * 0.60;
-}
-function measureText(text: string, fontSize: number): number {
-  return text.length * charW(fontSize);
 }
 
 // ── Network helpers ───────────────────────────────────────────────────────────
@@ -173,17 +156,17 @@ const COLS: ColDef[] = [
   { key:"receipt_number",   label:"Receipt No.",    width: 44, fontSize:6.5,                wrap:true  },
   { key:"student_name",     label:"Student",        width: 76, fontSize:8,                  wrap:true  },
   { key:"student_id",       label:"DSID",           width: 32, fontSize:6.5,                wrap:true  },
-  { key:"class",            label:"Class",          width: 20, fontSize:7.5,                wrap:false },
+  { key:"class",            label:"Class",          width: 20, fontSize:7.5,                wrap:true  },
   { key:"fee_name",         label:"Fee Name",       width: 66, fontSize:7.5,                wrap:true  },
   { key:"fee_type",         label:"Fee Type",       width: 40, fontSize:7,                  wrap:true  },
   { key:"fee_period",       label:"Fee Period",     width: 52, fontSize:7,                  wrap:true  },
-  { key:"frequency",        label:"Frequency",      width: 34, fontSize:7,                  wrap:false },
-  { key:"invoice_amount",   label:"Amount",         width: 48, fontSize:8,   align:"right", wrap:false },
-  { key:"due_date",         label:"Due Date",       width: 44, fontSize:7,                  wrap:false },
-  { key:"status",           label:"Status",         width: 38, fontSize:7.5, align:"center",wrap:false },
-  { key:"paid_date",        label:"Paid On",        width: 44, fontSize:7,                  wrap:false },
-  { key:"amount_paid",      label:"Paid",           width: 42, fontSize:8,   align:"right", wrap:false },
-  { key:"outstanding",      label:"Outstanding",    width: 48, fontSize:8,   align:"right", wrap:false },
+  { key:"frequency",        label:"Frequency",      width: 34, fontSize:7,                  wrap:true  },
+  { key:"invoice_amount",   label:"Amount",         width: 48, fontSize:7.5, align:"right", wrap:true  },
+  { key:"due_date",         label:"Due Date",       width: 44, fontSize:6.2,                wrap:true  },
+  { key:"status",           label:"Status",         width: 38, fontSize:6,   align:"center",wrap:false },
+  { key:"paid_date",        label:"Paid On",        width: 44, fontSize:6.2,                wrap:true  },
+  { key:"amount_paid",      label:"Paid",           width: 42, fontSize:7.5, align:"right", wrap:true  },
+  { key:"outstanding",      label:"Outstanding",    width: 48, fontSize:7.5, align:"right", wrap:true  },
   { key:"payment_method",   label:"Payment Method", width: 58, fontSize:7,                  wrap:true  },
   { key:"reference_number", label:"Reference No.",  width: 46, fontSize:6.5,                wrap:true  },
 ];
@@ -280,15 +263,19 @@ function getCellText(row: LedgerRow, key: string): string {
 
 // ── Word-boundary text wrapping ───────────────────────────────────────────────
 /**
- * Splits `text` into lines that fit within `maxWidth` using a conservative
- * char-width estimate. Splits ONLY at space boundaries; character-breaks only
- * for genuinely unbreakable tokens (long IDs with no spaces).
+ * Splits `text` into lines that fit within `maxWidth` using PDFKit's actual
+ * glyph metrics. It splits only at whitespace boundaries; character-breaks only
+ * for genuinely unbreakable tokens such as long Razorpay/reference IDs.
  *
- * This function is PURE — it needs no PDFKit page or font state.
- * Rendering each output line with `{ lineBreak: false }` and NO `width` option
- * guarantees PDFKit cannot break it further.
+ * The document is already configured with the exact font and size for the cell.
+ * Rendering each returned line with `{ lineBreak: false }` and no `width` option
+ * means PDFKit cannot apply a second, mismatched wrapping pass.
  */
-function wrapToLines(text: string, fontSize: number, maxWidth: number): string[] {
+function wrapToLines(
+  doc: InstanceType<typeof PDFDocument>,
+  text: string,
+  maxWidth: number,
+): string[] {
   if (!text || text === EM || text === "\u2014") return [text || EM];
 
   const words = text.split(" ").filter(Boolean);
@@ -297,18 +284,18 @@ function wrapToLines(text: string, fontSize: number, maxWidth: number): string[]
 
   for (const word of words) {
     const candidate = line ? `${line} ${word}` : word;
-    if (measureText(candidate, fontSize) <= maxWidth) {
+    if ((doc as any).widthOfString(candidate) <= maxWidth) {
       line = candidate;
     } else {
       if (line) { lines.push(line); line = ""; }
       // Does this word fit alone on a line?
-      if (measureText(word, fontSize) <= maxWidth) {
+      if ((doc as any).widthOfString(word) <= maxWidth) {
         line = word;
       } else {
         // Character-break — only for very long unbreakable tokens (IDs)
         let partial = "";
         for (const ch of word) {
-          if (measureText(partial + ch, fontSize) <= maxWidth) {
+          if ((doc as any).widthOfString(partial + ch) <= maxWidth) {
             partial += ch;
           } else {
             if (partial) lines.push(partial);
@@ -332,17 +319,21 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
   doc.registerFont("Reg",  FONT_REG);
   doc.registerFont("Bold", FONT_BOLD);
 
-  // ── Pre-compute: wrapped lines (pure, no page needed) ─────────────────────
-  // maxWidth = col.width - H_PAD  (subtract only the LEFT padding; right side is
-  // open since each line is rendered without a `width` constraint).  Using only
-  // one side of padding gives enough room for "Bank Transfer" (13 ch × 4.2 ≈ 54.6 pt)
-  // to fit in the 58 pt Payment Method column (56 pt effective) on ONE line.
+  // ── Pre-compute: exact wrapped lines before pagination ─────────────────────
+  // PDFKit's widthOfString() is available after registering a font, even before
+  // a page is added.  The calculation below is therefore the source of truth for
+  // BOTH row heights and the text lines rendered later in drawRow().
   const allWrapped: Array<Record<string, string[]>> = input.rows.map(row => {
     const w: Record<string, string[]> = {};
     for (const col of COLS) {
       if (!col.wrap) continue;
       const text = getCellText(row, col.key);
-      w[col.key] = wrapToLines(text, col.fontSize, col.width - H_PAD);
+      (doc as any).font("Reg").fontSize(col.fontSize);
+      // maxWidth = col.width − left-padding only; right side is open because
+      // each pre-computed line is rendered with lineBreak:false and NO width option.
+      // Subtracting only one H_PAD (not two) prevents narrow values like "one-time"
+      // (31.4 pt at 7 pt) from being char-broken in a 34 pt column (32 pt inner).
+      w[col.key] = wrapToLines(doc as any, text, col.width - H_PAD);
     }
     return w;
   });
@@ -449,7 +440,7 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
 
       (doc as any).font("Reg").fontSize(7.5).fillColor(C_MUTED)
         .text(
-          "Invoice-wise fee ledger \u2014 billed amount, payments received & outstanding balance.",
+          "Invoice-wise fee ledger showing billed amount, payments received, and outstanding balance.",
           RX, top + 20,
           { width: RW, align: "right" }
         );
@@ -484,12 +475,11 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
     }
 
     // ── Column headers ────────────────────────────────────────────────────────
-    // Font size 6.5 pt for all headers. No `width` option — labels rendered freely
-    // from their start position so narrow columns (Class, Frequency) are never
-    // character-broken or clipped by the layout engine.
-    // Right/center-aligned labels use widthOfString() for exact positioning.
+    // A 5pt bold header font keeps every required full header inside its own column:
+    // even the longest labels (Payment Method / Reference No.) measure within their
+    // padded cell widths. No width option is passed, so PDFKit cannot split headers.
     function drawColHeaders(y: number) {
-      const HFONT = 6.5;
+      const HFONT = 5;
       (doc as any).fillColor(C_THEAD).rect(TABLE_LEFT, y, TABLE_WIDTH, COL_H).fill();
 
       let x = TABLE_LEFT;
@@ -551,18 +541,29 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
           (doc as any).save();
           (doc as any).fillColor(ps.bg).roundedRect(pillX, pillY, pillW, pillH, 2).fill();
           (doc as any).restore();
-          // Status text centred within pill
-          (doc as any).font("Bold").fontSize(col.fontSize).fillColor(ps.fg)
-            .text(cellText, pillX, pillY + (pillH - col.fontSize) / 2 + 0.5,
-              { width: pillW, align: "center", lineBreak: false });
+          // Status text centred within pill. Use an isolated graphics state here too.
+          (doc as any).save();
+          (doc as any).font("Bold").fontSize(col.fontSize).fillColor(ps.fg);
+          const statusTextW = (doc as any).widthOfString(cellText);
+          (doc as any).text(
+            cellText,
+            pillX + (pillW - statusTextW) / 2,
+            pillY + (pillH - col.fontSize) / 2 + 0.5,
+            { lineBreak: false },
+          );
+          (doc as any).restore();
 
         } else if (col.wrap) {
           // ── Wrapping cell: pre-computed word-boundary lines ─────────────
           // Rendered WITHOUT `width` so PDFKit cannot character-break them.
           const lines = allWrapped[globalIdx]?.[col.key] ?? [cellText];
           for (let li = 0; li < lines.length; li++) {
-            (doc as any).font("Reg").fontSize(col.fontSize).fillColor(C_BODY)
-              .text(lines[li], x + H_PAD, textY + li * LINE_H, { lineBreak: false });
+            (doc as any).font("Reg").fontSize(col.fontSize).fillColor(C_BODY);
+            const lineW = (doc as any).widthOfString(lines[li]);
+            const lineX = col.align === "right"
+              ? x + col.width - H_PAD - lineW
+              : x + H_PAD;
+            (doc as any).text(lines[li], lineX, textY + li * LINE_H, { lineBreak: false });
           }
 
         } else if (col.align === "right") {
