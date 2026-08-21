@@ -1,0 +1,118 @@
+Please investigate the Notes column in the Fees & Payments → Ledger & Transactions page.
+
+Current issue
+
+In the Ledger & Transactions table, the Notes column is showing "—" for the visible records.
+
+I want to understand why the Notes value is empty.
+
+Do NOT change anything yet. First investigate the complete data flow and tell me exactly where the Notes value is getting lost or why it is intentionally empty.
+
+Please trace the complete flow
+
+Check:
+
+1. Database
+   
+   - Which table stores the fee/invoice record?
+   - What is the exact column/field used for Notes?
+   - Are there actually Notes values stored for these records?
+   - Check both paid and due records.
+
+2. Invoice/Fee creation
+   
+   - When an invoice is created through Add Invoice, is the Notes field saved?
+   - When invoices are generated through Generate Invoices / bulk generation, is Notes saved?
+   - If Notes are entered during creation, verify whether they are persisted in the database.
+
+3. Payment/transaction records
+   
+   - When an invoice becomes paid, does the Notes value remain attached to the original invoice/fee record?
+   - Is the Notes field being overwritten, cleared, or lost when a payment/receipt is created?
+
+4. Backend API
+   
+   - Find the API/query that supplies data to the Ledger & Transactions table.
+   - Check whether the Notes column is actually selected/returned by the backend.
+   - Check whether a JOIN or transformation is causing the Notes value to become "null", empty, or undefined.
+
+5. Frontend
+   
+   - Find the exact code that renders the Notes column in "fees-manager.tsx".
+   - Verify which property it reads.
+   - Confirm that the frontend property matches the backend/database field name.
+
+6. Data mapping
+   
+   - Check for naming mismatches such as:
+     - "notes"
+     - "note"
+     - "remarks"
+     - "description"
+     - "paymentNotes"
+     - "invoiceNotes"
+     - any other equivalent field
+
+Very important
+
+Do not assume that "—" means there are no Notes.
+
+Determine whether:
+
+A. Notes were never saved, or
+
+B. Notes are saved in the database but not returned by the API, or
+
+C. Notes are returned by the API but the frontend is reading the wrong field, or
+
+D. Notes are intentionally not applicable for these records.
+
+Test with an actual record
+
+Pick at least one visible Ledger record from the current data and trace it from:
+
+Ledger row → API response → backend query → database record
+
+Then tell me the exact value of Notes at each stage.
+
+For example:
+
+Database:
+notes = "Some note"
+
+Backend API:
+notes = "Some note"
+
+Frontend:
+record.notes = undefined
+
+Ledger:
+—
+
+or:
+
+Database:
+notes = NULL
+
+Backend API:
+notes = null
+
+Frontend:
+record.notes = null
+
+Ledger:
+—
+
+Do NOT modify the code yet
+
+This is an investigation only.
+
+Do not make any changes until you tell me:
+
+1. Where the Notes value is stored.
+2. Whether the current records actually have Notes.
+3. Where the value is being lost, if it is being lost.
+4. Why the Ledger currently displays "—".
+5. What exact change would be required to fix it.
+
+I want the root cause first, not a guess or a quick UI fix.
