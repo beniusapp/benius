@@ -1,0 +1,310 @@
+FINAL FIX — Ledger Table Width, Column Allocation & Text Wrapping
+
+I want to make one specific correction to the Ledger PDF/table rendering.
+
+Do NOT change the database, payment calculations, selection logic, filters, pagination, Tx Report PDF, Export Ledger, or any unrelated module.
+
+The goal is to make the ledger table use the available printable width properly and prevent text from being clipped or overflowing.
+
+1. Use the full available table width
+
+Apply the following principles to the Ledger Report table:
+
+table.ledger-report {
+  width: 100% !important;
+  max-width: 100% !important;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+The table must never exceed the printable page width.
+
+There must be no horizontal overflow.
+
+---
+
+2. Allocate more width to long-data columns
+
+The columns containing longer real-world values should receive more space, especially:
+
+- Payment Method
+- Reference No.
+- Student
+- Fee Name
+- Fee Period
+
+Short columns such as Status, Paid, Outstanding, and dates should not consume unnecessary space.
+
+If using proportional widths, use this as the starting point:
+
+table.ledger-report col.col-status {
+  width: 10%;
+}
+
+table.ledger-report col.col-date {
+  width: 14%;
+}
+
+table.ledger-report col.col-paid {
+  width: 12%;
+}
+
+table.ledger-report col.col-outstdg {
+  width: 12%;
+}
+
+table.ledger-report col.col-method {
+  width: 18%;
+}
+
+table.ledger-report col.col-reference {
+  width: 34%;
+}
+
+However, IMPORTANT:
+
+These percentages must only be used if they correspond correctly to the actual table structure.
+
+Do NOT blindly apply them if they cause the total table width or other columns to become incorrect.
+
+The final column widths must fit exactly within the printable table width.
+
+---
+
+3. Text wrapping — do NOT use aggressive word breaking for normal text
+
+This is extremely important.
+
+The current problem is that normal phrases such as:
+
+- Bank Transfer
+- Demand Draft
+- Portal Payment
+- Monthly Fee
+- Quarterly Fee
+
+must NOT be broken unnecessarily.
+
+Do NOT use:
+
+word-break: break-all;
+
+for the entire table because that can produce ugly results such as:
+
+BankTransfe
+r
+
+or:
+
+DemandDra
+ft
+
+Instead, normal text should wrap at word boundaries.
+
+Use:
+
+overflow-wrap: anywhere;
+word-wrap: break-word;
+
+where appropriate.
+
+For long IDs/reference numbers that contain no spaces, they may break anywhere when necessary.
+
+---
+
+4. Recommended cell styling
+
+Use:
+
+table.ledger-report td {
+  padding: 8px 5px !important;
+  line-height: 1.3;
+  font-size: 10px;
+  vertical-align: top;
+
+  overflow-wrap: anywhere;
+  word-wrap: break-word;
+}
+
+Do NOT add "word-break: break-all" globally.
+
+---
+
+5. IMPORTANT — PDFKit vs CSS
+
+Before applying this CSS, verify whether the Ledger PDF is actually rendered from an HTML/CSS table.
+
+If the Ledger PDF is generated using PDFKit directly, then this CSS will NOT control the PDF rendering.
+
+In that case, do NOT pretend that adding CSS will solve the PDF issue.
+
+Instead, apply the same principles to the PDFKit renderer:
+
+- use the full available table width
+- allocate more width to Payment Method and Reference No.
+- use word-based wrapping
+- use character-level wrapping only for genuinely long IDs
+- calculate row height from the actual wrapped lines
+- render using the exact same calculated lines
+
+The actual PDF renderer is the source of truth.
+
+---
+
+6. Row height
+
+Do NOT solve this by making every row taller.
+
+Keep dynamic row heights.
+
+The correct process is:
+
+Measure text
+↓
+Wrap at appropriate word boundaries
+↓
+Calculate required number of lines
+↓
+Calculate row height
+↓
+Render the row
+
+Normal one-line rows should remain compact.
+
+Two-line or three-line rows should automatically become taller.
+
+---
+
+7. Payment Method must remain readable
+
+These values must render properly:
+
+Cash
+Online
+UPI
+UPI QR
+Bank Transfer
+Demand Draft
+Portal Payment
+Cheque
+
+Especially:
+
+Bank Transfer
+Demand Draft
+Portal Payment
+
+They must not be unnecessarily broken in the middle of words.
+
+If the Payment Method column is too narrow, recover width from short columns rather than simply increasing the overall page/table width.
+
+---
+
+8. Reference No.
+
+Reference numbers can be long.
+
+They may wrap across multiple lines.
+
+For example:
+
+pay_TS9NVJ
+yLnCrdfO
+
+is acceptable if the value is genuinely too long.
+
+However:
+
+- no clipping
+- no overlap
+- no text outside the column
+- no horizontal page overflow
+
+---
+
+9. Visual verification
+
+After implementing the change:
+
+1. Generate a fresh Ledger PDF.
+2. Open the actual generated PDF.
+3. Inspect it visually at normal zoom and zoomed in.
+4. Specifically check:
+
+Payment Method
+
+"Bank Transfer" → readable.
+
+"Demand Draft" → readable.
+
+"Portal Payment" → readable.
+
+Reference
+
+Long references wrap without overflow.
+
+Student
+
+Long student names wrap naturally.
+
+Fee Name
+
+Long fee names wrap naturally.
+
+Totals
+
+Totals remain completely visible and do not wrap inside narrow columns.
+
+Table
+
+No column overlap.
+
+No clipped text.
+
+No horizontal overflow.
+
+No unnecessary mid-word breaking.
+
+---
+
+10. Do not modify unrelated functionality
+
+Do NOT change:
+
+- "fees-manager.tsx"
+- Tx Report PDF
+- Export Ledger
+- payment calculations
+- invoice calculations
+- selection logic
+- selectedIds
+- selectAllMatching
+- excludedIds
+- filters
+- pagination
+- database schema
+
+Only correct the Ledger PDF/table rendering.
+
+Final acceptance criteria
+
+The actual generated Ledger PDF must satisfy all of these:
+
+- [ ] Full printable table width is used
+- [ ] Column widths fit within the page
+- [ ] Payment Method has sufficient width
+- [ ] Reference No. has sufficient width
+- [ ] Bank Transfer is not broken unnecessarily
+- [ ] Demand Draft is not broken unnecessarily
+- [ ] Portal Payment is not broken unnecessarily
+- [ ] Long IDs can wrap
+- [ ] Normal words wrap at word boundaries
+- [ ] No global "word-break: break-all"
+- [ ] Row heights remain dynamic
+- [ ] No clipping
+- [ ] No overlapping text
+- [ ] No horizontal overflow
+- [ ] Totals remain fully visible
+- [ ] No unrelated functionality is changed
+
+Most importantly: inspect the actual generated PDF after the change. Do not declare success based only on compilation or server startup.
