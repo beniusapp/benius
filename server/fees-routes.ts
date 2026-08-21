@@ -3564,9 +3564,13 @@ export function registerFeesRoutes(app: Express) {
       // ── Fetch payment record with all Razorpay / metadata columns ──────────
       const payRow = (await db.execute(sql`
         SELECT pr.*,
-               u.email AS recorded_by_name
+               COALESCE(t.full_name, nts.full_name) AS recorded_by_display_name,
+               u.email AS recorded_by_email,
+               u.role  AS recorded_by_role
         FROM payment_records pr
         LEFT JOIN users u ON u.id = pr.recorded_by
+        LEFT JOIN teachers t ON t.user_id = u.id AND t.school_id = u.school_id
+        LEFT JOIN non_teaching_staff nts ON nts.email = u.email AND nts.school_id = u.school_id
         WHERE pr.id = ${id} AND pr.school_id = ${schoolId}
         LIMIT 1
       `)).rows[0] as any;
@@ -3714,6 +3718,8 @@ export function registerFeesRoutes(app: Express) {
           // Offline
           denominationBreakdown: payRow.denomination_breakdown ?? null,
           referenceNumber: payRow.reference_number ?? null,
+          instrumentDate: payRow.cheque_date ? formatDateOnly(String(payRow.cheque_date).slice(0, 10)) : null,
+          branchName: payRow.branch_name ?? null,
           offlineDetail: odRow ? {
             transactionTime: odRow.transaction_time ?? null,
             instrumentStatus: odRow.instrument_status ?? null,
@@ -3730,7 +3736,8 @@ export function registerFeesRoutes(app: Express) {
             returnDate: odRow.return_date ?? null,
             returnReason: odRow.return_reason ?? null,
           } : null,
-          recordedByName: payRow.recorded_by_name ?? null,
+          recordedByName: payRow.recorded_by_display_name ?? payRow.recorded_by_email ?? null,
+          recordedByRole: payRow.recorded_by_role ?? null,
         },
         signature: { imageUrl: sigUrl, signatoryName },
         academicSessionLabel: sessionLabel,
@@ -4472,9 +4479,14 @@ td:last-child{font-weight:600;word-break:break-all;}
 
       // ── Primary payment record (most recent, for amount + method) ──────────
       const payRow = (await db.execute(sql`
-        SELECT pr.*, u.email AS recorded_by_name
+        SELECT pr.*,
+               COALESCE(t.full_name, nts.full_name) AS recorded_by_display_name,
+               u.email AS recorded_by_email,
+               u.role  AS recorded_by_role
         FROM payment_records pr
         LEFT JOIN users u ON u.id = pr.recorded_by
+        LEFT JOIN teachers t ON t.user_id = u.id AND t.school_id = u.school_id
+        LEFT JOIN non_teaching_staff nts ON nts.email = u.email AND nts.school_id = u.school_id
         WHERE pr.fee_record_id = ${id} AND pr.school_id = ${schoolId}
         ORDER BY pr.created_at DESC
         LIMIT 1
@@ -4596,6 +4608,8 @@ td:last-child{font-weight:600;word-break:break-all;}
           // Offline
           denominationBreakdown: payRow?.denomination_breakdown ?? null,
           referenceNumber: payRow?.reference_number ?? null,
+          instrumentDate: payRow?.cheque_date ? formatDateOnly(String(payRow.cheque_date).slice(0, 10)) : null,
+          branchName: payRow?.branch_name ?? null,
           offlineDetail: odRow ? {
             transactionTime: odRow.transaction_time ?? null,
             instrumentStatus: odRow.instrument_status ?? null,
@@ -4612,7 +4626,8 @@ td:last-child{font-weight:600;word-break:break-all;}
             returnDate: odRow.return_date ?? null,
             returnReason: odRow.return_reason ?? null,
           } : null,
-          recordedByName: payRow?.recorded_by_name ?? null,
+          recordedByName: payRow?.recorded_by_display_name ?? payRow?.recorded_by_email ?? null,
+          recordedByRole: payRow?.recorded_by_role ?? null,
         },
         signature: { imageUrl: sigUrl, signatoryName },
         academicSessionLabel: sessionLabel,

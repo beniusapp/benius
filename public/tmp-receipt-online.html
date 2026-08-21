@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Payment Receipt — ON23</title>
+<style>
+/* ── Reset & Page ───────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+@page {
+  size: A4 portrait;
+  margin: 14mm 14mm 12mm 14mm;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #111827;
+  background: #fff;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* ── Page wrapper ───────────────────────────────────────────────────────── */
+.page {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 28px 32px 24px;
+  background: #fff;
+}
+
+@media screen {
+  body { background: #f3f4f6; padding: 20px 16px; }
+  .page {
+    box-shadow: 0 1px 3px rgba(0,0,0,.10), 0 8px 32px rgba(0,0,0,.06);
+    border-radius: 4px;
+    min-height: 297mm;
+  }
+}
+
+@media print {
+  body { background: #fff; padding: 0; }
+  .page { padding: 0; box-shadow: none; max-width: 100%; }
+  .no-print { display: none !important; }
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.receipt-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 20px;
+  align-items: flex-start;
+  padding-bottom: 18px;
+  border-bottom: 2px solid #1e3a5f;
+  margin-bottom: 18px;
+}
+
+.school-logo {
+  display: block;
+  max-width: 72px;
+  max-height: 72px;
+  object-fit: contain;
+}
+
+.school-logo-initials {
+  width: 64px;
+  height: 64px;
+  background: #1e3a5f;
+  color: #fff;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  flex-shrink: 0;
+}
+
+.school-info { text-align: center; }
+.school-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1e3a5f;
+  letter-spacing: -0.3px;
+  margin-bottom: 4px;
+}
+.school-addr-line { font-size: 11.5px; color: #4b5563; line-height: 1.45; }
+.school-contact { font-size: 11px; color: #6b7280; margin-top: 3px; }
+.school-affiliation { font-size: 10.5px; color: #9ca3af; margin-top: 2px; letter-spacing: 0.2px; }
+
+.doc-identity { text-align: right; min-width: 160px; }
+.doc-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #1e3a5f;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+.doc-session { font-size: 11px; color: #6b7280; margin-bottom: 8px; }
+.status-badge {
+  display: inline-block;
+  padding: 4px 11px;
+  border-radius: 100px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+.status-paid {
+  background: #f0fdf4;
+  color: #166534;
+  border: 1.5px solid #bbf7d0;
+}
+.status-online { background: #eff6ff; color: #1d4ed8; border: 1.5px solid #bfdbfe; }
+.status-offline { background: #fefce8; color: #854d0e; border: 1.5px solid #fde68a; }
+
+/* ── Receipt ID strip ───────────────────────────────────────────────────── */
+.receipt-id-strip {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 1px;
+  background: #e5e7eb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 18px;
+}
+.id-cell {
+  background: #f9fafb;
+  padding: 11px 14px;
+}
+.id-cell:first-child { border-radius: 8px 0 0 8px; }
+.id-cell:last-child { border-radius: 0 8px 8px 0; }
+.id-cell-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: #9ca3af;
+  margin-bottom: 3px;
+}
+.id-cell-value {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #111827;
+  letter-spacing: -0.2px;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+.id-cell-value.primary {
+  color: #1e3a5f;
+  font-size: 13px;
+}
+
+/* ── 2-column layout ────────────────────────────────────────────────────── */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────────── */
+.card {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.payment-summary-card {
+  background: #1e3a5f;
+  border: none;
+  color: #fff;
+}
+
+.section-header {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #9ca3af;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.payment-summary-card .section-header {
+  color: rgba(255,255,255,0.55);
+  border-bottom-color: rgba(255,255,255,0.15);
+}
+
+/* ── Field rows ─────────────────────────────────────────────────────────── */
+.field-grid { display: flex; flex-direction: column; gap: 5px; }
+
+.field-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+  padding: 2px 0;
+}
+.field-label {
+  color: #6b7280;
+  flex-shrink: 0;
+  min-width: 130px;
+  font-size: 12px;
+}
+.field-value {
+  color: #111827;
+  font-weight: 600;
+  text-align: right;
+  word-break: break-all;
+}
+.field-value.mono { font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', monospace; font-weight: 500; font-size: 11.5px; }
+
+/* ── Student name ───────────────────────────────────────────────────────── */
+.student-name-line {
+  font-size: 15px;
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: 8px;
+  letter-spacing: -0.2px;
+}
+
+/* ── Payment summary ────────────────────────────────────────────────────── */
+.amount-display {
+  text-align: center;
+  padding: 8px 0 12px;
+}
+.amount-label { font-size: 11px; color: rgba(255,255,255,0.65); letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 4px; }
+.amount-figure {
+  font-size: 38px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -1px;
+  line-height: 1.1;
+}
+.amount-words { font-size: 10.5px; color: rgba(255,255,255,0.55); margin-top: 4px; font-style: italic; }
+
+.payment-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255,255,255,0.15);
+}
+.payment-meta-item { }
+.pm-label { font-size: 10px; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+.pm-value { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.95); }
+
+/* ── Breakdown table ────────────────────────────────────────────────────── */
+.breakdown-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin-top: 2px;
+}
+.breakdown-table thead th {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: #9ca3af;
+  font-weight: 700;
+  padding: 6px 8px;
+  border-bottom: 1px solid #e5e7eb;
+  text-align: left;
+}
+.breakdown-table thead th.amount-col { text-align: right; }
+.breakdown-table tbody td {
+  padding: 7px 8px;
+  color: #374151;
+  border-bottom: 1px solid #f3f4f6;
+}
+.breakdown-table tbody td.amount-col { text-align: right; font-weight: 600; }
+.breakdown-table tr.late-fee-row td { color: #b45309; }
+.breakdown-table tr.total-row td {
+  padding-top: 9px;
+  border-top: 1.5px solid #d1d5db;
+  border-bottom: none;
+  font-size: 13px;
+}
+.breakdown-table tr.total-row td.amount-col { color: #1e3a5f; }
+
+/* ── Online card ────────────────────────────────────────────────────────── */
+.online-card { border-left: 3px solid #1d4ed8; }
+.razorpay-id { color: #1d4ed8 !important; }
+
+/* ── Denomination table ─────────────────────────────────────────────────── */
+.denomination-wrap { margin-bottom: 12px; }
+.denomination-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: #9ca3af;
+  margin-bottom: 6px;
+}
+.denomination-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.denomination-table th {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #9ca3af;
+  font-weight: 700;
+  padding: 5px 8px;
+  border-bottom: 1px solid #e5e7eb;
+  text-align: left;
+}
+.denomination-table td { padding: 5px 8px; border-bottom: 1px solid #f3f4f6; }
+.denomination-table .denom-cell { font-weight: 600; color: #374151; }
+.denomination-table .qty-cell { color: #6b7280; }
+.denomination-table .subtotal-cell { text-align: right; font-weight: 600; }
+.denomination-table tfoot td {
+  border-top: 1.5px solid #d1d5db;
+  border-bottom: none;
+  padding-top: 7px;
+  font-size: 12.5px;
+}
+
+/* ── Verification ───────────────────────────────────────────────────────── */
+.verification-card { border-left: 3px solid #9ca3af; }
+.verification-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 16px; }
+.v-pair { display: flex; flex-direction: column; gap: 1px; padding: 3px 0; }
+.v-label { font-size: 10px; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px; }
+.v-value { font-size: 11.5px; color: #374151; font-weight: 500; word-break: break-all; }
+.v-value.mono { font-family: 'SFMono-Regular', 'Consolas', monospace; font-size: 11px; }
+.verified-yes { color: #166534; font-weight: 700; }
+
+/* ── Notes ──────────────────────────────────────────────────────────────── */
+.notes-card { border-left: 3px solid #d97706; }
+.note-text { font-size: 12.5px; color: #374151; line-height: 1.55; }
+.note-text + .note-text { margin-top: 6px; }
+
+/* ── Signature ──────────────────────────────────────────────────────────── */
+.sig-area {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid #e5e7eb;
+  margin-bottom: 16px;
+}
+.sig-box { text-align: center; min-width: 150px; }
+.sig-img { max-height: 52px; max-width: 180px; object-fit: contain; display: block; margin: 0 auto 6px; }
+.sig-placeholder { height: 52px; }
+.sig-line { width: 150px; border-top: 1.5px solid #374151; margin: 6px auto 5px; }
+.sig-label { font-size: 10px; font-weight: 700; color: #374151; text-transform: uppercase; letter-spacing: 0.5px; }
+.sig-name { font-size: 11px; color: #374151; margin-top: 2px; }
+.sig-school { font-size: 10px; color: #9ca3af; margin-top: 1px; }
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+.receipt-footer {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 10px;
+  text-align: center;
+}
+.footer-disclaimer { font-size: 10px; color: #9ca3af; margin-bottom: 3px; }
+.footer-meta { font-size: 10px; color: #d1d5db; }
+
+/* ── Mono ───────────────────────────────────────────────────────────────── */
+.mono { font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', monospace; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ── HEADER ─────────────────────────────────────────────────────────── -->
+  <div class="receipt-header">
+    <div class="logo-col"><img class="school-logo" src="http://127.0.0.1:5000/uploads/schools/1/logo-1786781587162.jpg" alt="Mary Immaculate School Logo" /></div>
+    <div class="school-info">
+      <div class="school-name">Mary Immaculate School</div>
+      <div class="school-addr-line">16, lane Gorabazar </div><div class="school-addr-line">Berhanpore, West Bengal, PIN 742101</div>
+      <div class="school-contact">Tel: 8759200000  &bull;  officialmailid@mis.con</div>
+      <div class="school-affiliation">Affiliation No. 1234567890000</div>
+    </div>
+    <div class="doc-identity">
+      <div class="doc-title">Payment Receipt</div>
+      <div class="doc-session">Academic Session: 2027-2028</div>
+      <span class="status-badge status-paid">&#10003; Payment Received</span><br/>
+      <span class="status-badge status-online" style="margin-top:5px;">ONLINE PAYMENT</span>
+    </div>
+  </div>
+
+  <!-- ── RECEIPT ID STRIP ────────────────────────────────────────────────── -->
+  <div class="receipt-id-strip">
+    <div class="id-cell">
+      <div class="id-cell-label">Invoice No.</div>
+      <div class="id-cell-value primary">INV-0093</div>
+    </div>
+    <div class="id-cell">
+      <div class="id-cell-label">Receipt No.</div>
+      <div class="id-cell-value primary">ON23</div>
+    </div>
+    <div class="id-cell">
+      <div class="id-cell-label">Payment Date &amp; Time</div>
+      <div class="id-cell-value">20 Aug 2026, 08:22:41 PM IST</div>
+    </div>
+    <div class="id-cell">
+      <div class="id-cell-label">Payment Mode</div>
+      <div class="id-cell-value">Online Payment<span style="font-size:10.5px;font-weight:400;color:#6b7280;display:block;">Card</span></div>
+    </div>
+    <div class="id-cell">
+      <div class="id-cell-label">Status</div>
+      <div class="id-cell-value" style="color:#166534;">PAID ✓</div>
+    </div>
+  </div>
+
+  <!-- ── BODY ───────────────────────────────────────────────────────────── -->
+  <div class="two-col">
+
+    <!-- Student information -->
+    <div class="card" style="margin-bottom:0;">
+      <div class="section-header">Student Information</div>
+      <div class="student-name-line">stduent3mis</div>
+      <div class="field-grid">
+        <div class="field-row"><span class="field-label">Student ID (DSID)</span><span class="field-value" class="mono">MIS-0004</span></div>
+        <div class="field-row"><span class="field-label">Roll Number</span><span class="field-value">2</span></div>
+        <div class="field-row"><span class="field-label">Class &amp; Section</span><span class="field-value">6 — A</span></div>
+        <div class="field-row"><span class="field-label">Parent / Guardian</span><span class="field-value">Gggg</span></div>
+        <div class="field-row"><span class="field-label">Phone</span><span class="field-value">1111111111</span></div>
+        <div class="field-row"><span class="field-label">Email</span><span class="field-value">mis0004@outlook.com</span></div>
+        <div class="field-row"><span class="field-label">Academic Session</span><span class="field-value">2027-2028</span></div>
+      </div>
+    </div>
+
+    <!-- Payment summary -->
+    <div class="card payment-summary-card" style="margin-bottom:0;">
+      <div class="section-header">Payment Summary</div>
+      <div class="amount-display">
+        <div class="amount-label">Amount Received</div>
+        <div class="amount-figure">₹650</div>
+        <div class="amount-words">Rupees Six Hundred Fifty Only</div>
+      </div>
+      <div class="payment-meta-grid">
+        <div class="payment-meta-item">
+          <div class="pm-label">Invoice No.</div>
+          <div class="pm-value" style="font-size:11.5px;">INV-0093</div>
+        </div>
+        <div class="payment-meta-item">
+          <div class="pm-label">Receipt No.</div>
+          <div class="pm-value" style="font-size:11.5px;">ON23</div>
+        </div>
+        <div class="payment-meta-item">
+          <div class="pm-label">Payment Mode</div>
+          <div class="pm-value" style="font-size:12px;">Online Payment</div>
+        </div>
+        <div class="payment-meta-item">
+          <div class="pm-label">Academic Session</div>
+          <div class="pm-value" style="font-size:12px;">2027-2028</div>
+        </div>
+        
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── FEE DETAILS ────────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="section-header">Fee Details</div>
+    <div class="field-grid" style="margin-bottom:12px;">
+      <div class="field-row"><span class="field-label">Fee Name</span><span class="field-value">Math book</span></div>
+      <div class="field-row"><span class="field-label">Fee Type</span><span class="field-value">Science fee</span></div>
+      <div class="field-row"><span class="field-label">Invoice Number</span><span class="field-value" class="mono">INV-0093</span></div>
+      <div class="field-row"><span class="field-label">Fee Period</span><span class="field-value">01 Apr 2027 – 31 Mar 2028</span></div>
+      <div class="field-row"><span class="field-label">Academic Year</span><span class="field-value">2027-2028</span></div>
+      <div class="field-row"><span class="field-label">Due Date</span><span class="field-value">31 Mar 2028</span></div>
+    </div>
+    <table class="breakdown-table">
+      <thead>
+        <tr><th>Description</th><th class="amount-col">Amount</th></tr>
+      </thead>
+      <tbody><tr><td>Math book</td><td class="amount-col">₹650</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- ── ONLINE PAYMENT DETAILS ─────────────────────────────────────────── -->
+  
+      <div class="card online-card">
+        <div class="section-header">Online Transaction Details</div>
+        <div class="field-grid">
+          <div class="field-row"><span class="field-label">Payment Gateway</span><span class="field-value">Razorpay</span></div>
+          <div class="field-row"><span class="field-label">Payment ID</span><span class="field-value mono razorpay-id">pay_TS40NlyLnCrdfO</span></div>
+          <div class="field-row"><span class="field-label">Order ID</span><span class="field-value mono">order_TS3zuHobYyh7Vt</span></div>
+          <div class="field-row"><span class="field-label">Payment Mode</span><span class="field-value">Card · Visa · ••••1007</span></div>
+          <div class="field-row"><span class="field-label">Transaction Status</span><span class="field-value">Captured</span></div>
+          
+          
+          <div class="field-row"><span class="field-label">Application Recorded</span><span class="field-value">20 Aug 2026, 08:22:41 PM IST</span></div>
+          
+        </div>
+      </div>
+
+  <!-- ── OFFLINE PAYMENT DETAILS ────────────────────────────────────────── -->
+  
+
+  <!-- ── NOTES ─────────────────────────────────────────────────────────── -->
+  
+
+  <!-- ── TRANSACTION VERIFICATION ──────────────────────────────────────── -->
+  
+    <div class="card verification-card">
+      <div class="section-header">Transaction Verification</div>
+      <div class="verification-grid">
+        <div class="v-pair"><span class="v-label">Payment ID</span><span class="v-value mono">pay_TS40NlyLnCrdfO</span></div>
+        <div class="v-pair"><span class="v-label">Order ID</span><span class="v-value mono">order_TS3zuHobYyh7Vt</span></div>
+        <div class="v-pair"><span class="v-label">Provider</span><span class="v-value">Razorpay</span></div>
+        <div class="v-pair"><span class="v-label">Signature Verified</span><span class="v-value verified-yes">✓ Verified</span></div>
+        <div class="v-pair"><span class="v-label">Captured at (provider)</span><span class="v-value">—</span></div>
+        <div class="v-pair"><span class="v-label">Recorded at (system)</span><span class="v-value">20 Aug 2026, 08:22:41 PM IST</span></div>
+      </div>
+    </div>
+
+  <!-- ── SIGNATURE ─────────────────────────────────────────────────────── -->
+  
+    <div class="sig-area">
+      <div class="sig-box">
+        <img class="sig-img" src="http://127.0.0.1:5000/uploads/schools/1/receipt-signature/sig-1786805156232.png" alt="Authorized Signature" />
+        <div class="sig-line"></div>
+        <div class="sig-label">Authorized Signatory</div>
+        
+        <div class="sig-school">Mary Immaculate School</div>
+      </div>
+    </div>
+
+  <!-- ── FOOTER ────────────────────────────────────────────────────────── -->
+  <div class="receipt-footer">
+    <div class="footer-disclaimer">Computer-generated receipt. No physical signature is required where a digital signature is configured.</div>
+    <div class="footer-meta">Generated on 21 Aug 2026, 05:31:36 PM IST &nbsp;&bull;&nbsp; Mary Immaculate School &nbsp;&bull;&nbsp; BENIUS School ERP</div>
+  </div>
+
+</div>
+<script>
+// Auto-trigger print for browser-based print/PDF export
+if (window.location.search.indexOf('print=1') !== -1) {
+  window.onload = function() { window.print(); };
+}
+</script>
+</body>
+</html>

@@ -84,6 +84,8 @@ export interface ReceiptPayment {
   // ── Offline ────────────────────────────────────────────────────────────────
   denominationBreakdown: Record<string, number> | null;
   referenceNumber: string | null;
+  instrumentDate: string | null;  // cheque date / DD date / instrument date (pre-formatted)
+  branchName: string | null;      // bank branch name
   offlineDetail: {
     transactionTime: string | null;
     instrumentStatus: string | null;
@@ -100,7 +102,8 @@ export interface ReceiptPayment {
     returnDate: string | null;
     returnReason: string | null;
   } | null;
-  recordedByName: string | null;
+  recordedByName: string | null;   // display name (from staff profile) or email fallback
+  recordedByRole: string | null;   // e.g. "admin" | "teacher" | "support_staff"
 }
 
 export interface ReceiptSignature {
@@ -183,6 +186,58 @@ function statusBadge(method: string): string {
   return isOnline ? "ONLINE PAYMENT" : "OFFLINE PAYMENT";
 }
 
+function roleLabel(role: string | null): string {
+  if (!role) return "";
+  const m: Record<string, string> = {
+    admin: "Administrator",
+    teacher: "Teacher",
+    support_staff: "Support Staff",
+    principal: "Principal",
+  };
+  return m[role] ?? role;
+}
+
+/**
+ * Converts a rupee amount (integer or float, rounded to nearest rupee) to
+ * Indian-English words: e.g. 1000 → "Rupees One Thousand Only"
+ */
+function amountInWords(amount: number): string {
+  const n = Math.round(amount);
+  if (n === 0) return "Rupees Zero Only";
+
+  const ones = [
+    "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+    "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
+    "Seventeen", "Eighteen", "Nineteen",
+  ];
+  const tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+
+  function belowHundred(x: number): string {
+    if (x < 20) return ones[x];
+    return tens[Math.floor(x / 10)] + (x % 10 ? " " + ones[x % 10] : "");
+  }
+
+  function belowThousand(x: number): string {
+    if (x < 100) return belowHundred(x);
+    return ones[Math.floor(x / 100)] + " Hundred" + (x % 100 ? " " + belowHundred(x % 100) : "");
+  }
+
+  function convert(x: number): string {
+    if (x === 0) return "";
+    if (x < 1000) return belowThousand(x);
+    if (x < 100_000)
+      return belowThousand(Math.floor(x / 1000)) + " Thousand" +
+        (x % 1000 ? " " + belowThousand(x % 1000) : "");
+    if (x < 10_000_000)
+      return belowThousand(Math.floor(x / 100_000)) + " Lakh" +
+        (x % 100_000 ? " " + convert(x % 100_000) : "");
+    return belowThousand(Math.floor(x / 10_000_000)) + " Crore" +
+      (x % 10_000_000 ? " " + convert(x % 10_000_000) : "");
+  }
+
+  return "Rupees " + convert(n) + " Only";
+}
+
 // ── Renderer ─────────────────────────────────────────────────────────────────
 
 export function renderReceiptHtml(data: ReceiptData): string {
@@ -190,6 +245,10 @@ export function renderReceiptHtml(data: ReceiptData): string {
 
   const isOnline = payment.paymentMethod === "Online";
   const isCash = payment.paymentMethod === "Cash";
+  const isDemandDraft = payment.paymentMethod === "DemandDraft";
+  const isCheque = payment.paymentMethod === "Cheque";
+  const isUpi = payment.paymentMethod === "UpiQr";
+  const isBankLike = ["BankTransfer", "Neft", "Rtgs", "Imps", "WireTransfer"].includes(payment.paymentMethod);
 
   // Build school address block
   const addressParts: string[] = [];
@@ -225,6 +284,7 @@ export function renderReceiptHtml(data: ReceiptData): string {
   const totalFee = fee.amount + fee.lateFeeAmount;
   const amountPaidStr = inr(payment.amount);
   const totalFeeStr = inr(totalFee);
+  const amountWords = amountInWords(payment.amount);
 
   // Fee period label
   let feePeriodStr = "";
@@ -280,9 +340,23 @@ export function renderReceiptHtml(data: ReceiptData): string {
           ${payment.gatewayStatus ? row("Transaction Status", payment.gatewayStatus.charAt(0).toUpperCase() + payment.gatewayStatus.slice(1)) : ""}
           ${payment.providerCreatedIST ? row("Payment Initiated", payment.providerCreatedIST) : ""}
           ${payment.providerCapturedIST ? row("Payment Captured", payment.providerCapturedIST) : ""}
-          ${payment.paymentDateTimeIST ? row("Recorded at", payment.paymentDateTimeIST) : ""}
+          ${payment.paymentDateTimeIST ? row("Application Recorded", payment.paymentDateTimeIST) : ""}
+          ${payment.recordedByName ? `<div class="field-row"><span class="field-label">Recorded By</span><span class="field-value" style="text-align:right;">${esc(payment.recordedByName)}${payment.recordedByRole ? `<span style="display:block;font-size:10.5px;font-weight:400;color:#6b7280;">${esc(roleLabel(payment.recordedByRole))}</span>` : ""}</span></div>` : ""}
         </div>
       </div>`;
+  }
+
+  // ── Recorded By block (shared by offline + online) ────────────────────────
+  function recordedByHtml(): string {
+    if (!payment.recordedByName) return "";
+    const roleTxt = roleLabel(payment.recordedByRole);
+    return `<div class="field-row">
+      <span class="field-label">Recorded By</span>
+      <span class="field-value" style="text-align:right;">
+        ${esc(payment.recordedByName)}
+        ${roleTxt ? `<span style="display:block;font-size:10.5px;font-weight:400;color:#6b7280;">${esc(roleTxt)}</span>` : ""}
+      </span>
+    </div>`;
   }
 
   // ── Offline payment section ────────────────────────────────────────────────
@@ -290,53 +364,98 @@ export function renderReceiptHtml(data: ReceiptData): string {
   if (!isOnline) {
     const od = payment.offlineDetail;
     let offlineRows = "";
+    const offlineFieldRows: string[] = [];
 
-    if (isCash && payment.denominationBreakdown) {
-      const denoms = Object.entries(payment.denominationBreakdown)
-        .filter(([, qty]) => Number(qty) > 0)
-        .sort(([a], [b]) => Number(b) - Number(a));
-
-      if (denoms.length > 0) {
-        const denomTotal = denoms.reduce((sum, [denom, qty]) => sum + Number(denom) * Number(qty), 0);
-        const denomRowsHtml = denoms.map(([denom, qty]) =>
-          `<tr><td class="denom-cell">₹${esc(denom)}</td><td class="qty-cell">${esc(String(qty))}</td><td class="subtotal-cell">${esc(inr(Number(denom) * Number(qty)))}</td></tr>`
-        ).join("");
-        offlineRows += `
-          <div class="denomination-wrap">
-            <div class="denomination-label">Cash Denominations</div>
-            <table class="denomination-table">
-              <thead><tr><th>Denomination</th><th>Quantity</th><th>Sub-total</th></tr></thead>
-              <tbody>${denomRowsHtml}</tbody>
-              <tfoot><tr><td colspan="2"><strong>Total Cash</strong></td><td class="subtotal-cell"><strong>${esc(inr(denomTotal))}</strong></td></tr></tfoot>
-            </table>
-          </div>`;
+    // ── Cash ──────────────────────────────────────────────────────────────────
+    if (isCash) {
+      if (payment.denominationBreakdown) {
+        const denoms = Object.entries(payment.denominationBreakdown)
+          .filter(([, qty]) => Number(qty) > 0)
+          .sort(([a], [b]) => Number(b) - Number(a));
+        if (denoms.length > 0) {
+          const denomTotal = denoms.reduce((sum, [denom, qty]) => sum + Number(denom) * Number(qty), 0);
+          const denomRowsHtml = denoms.map(([denom, qty]) =>
+            `<tr><td class="denom-cell">₹${esc(denom)}</td><td class="qty-cell">${esc(String(qty))}</td><td class="subtotal-cell">${esc(inr(Number(denom) * Number(qty)))}</td></tr>`
+          ).join("");
+          offlineRows += `
+            <div class="denomination-wrap">
+              <div class="denomination-label">Cash Denominations</div>
+              <table class="denomination-table">
+                <thead><tr><th>Denomination</th><th>Quantity</th><th>Sub-total</th></tr></thead>
+                <tbody>${denomRowsHtml}</tbody>
+                <tfoot><tr><td colspan="2"><strong>Total Received</strong></td><td class="subtotal-cell"><strong>${esc(inr(denomTotal))}</strong></td></tr></tfoot>
+              </table>
+            </div>`;
+        }
       }
+      offlineFieldRows.push(row("Amount Received", inr(payment.amount)));
+      if (od?.collectionLocation) offlineFieldRows.push(row("Collection Location", od.collectionLocation));
+      offlineFieldRows.push(recordedByHtml());
+
+    // ── Demand Draft ──────────────────────────────────────────────────────────
+    } else if (isDemandDraft) {
+      if (payment.referenceNumber) offlineFieldRows.push(row("DD Number", payment.referenceNumber, true));
+      if (payment.instrumentDate) offlineFieldRows.push(row("DD Date", payment.instrumentDate));
+      if (od?.receivingBank) offlineFieldRows.push(row("Bank Name", od.receivingBank));
+      else if (od?.payeeName) offlineFieldRows.push(row("Drawn On (Bank)", od.payeeName));
+      if (payment.branchName) offlineFieldRows.push(row("Branch", payment.branchName));
+      if (od?.payableAt) offlineFieldRows.push(row("Payable At", od.payableAt));
+      if (od?.instrumentStatus) offlineFieldRows.push(row("Status", od.instrumentStatus));
+      offlineFieldRows.push(row("Amount", inr(payment.amount)));
+      if (od?.depositDate) offlineFieldRows.push(row("Deposit Date", od.depositDate));
+      if (od?.depositBank) offlineFieldRows.push(row("Deposit Bank", od.depositBank));
+      if (od?.depositReference) offlineFieldRows.push(row("Deposit Reference", od.depositReference, true));
+      if (od?.returnDate) offlineFieldRows.push(row("Return Date", od.returnDate));
+      if (od?.returnReason) offlineFieldRows.push(row("Return Reason", od.returnReason));
+      offlineFieldRows.push(recordedByHtml());
+
+    // ── Cheque ────────────────────────────────────────────────────────────────
+    } else if (isCheque) {
+      if (payment.referenceNumber) offlineFieldRows.push(row("Cheque Number", payment.referenceNumber, true));
+      if (payment.instrumentDate) offlineFieldRows.push(row("Cheque Date", payment.instrumentDate));
+      if (od?.receivingBank) offlineFieldRows.push(row("Bank Name", od.receivingBank));
+      else if (od?.payeeName) offlineFieldRows.push(row("Drawn On (Bank)", od.payeeName));
+      if (payment.branchName) offlineFieldRows.push(row("Branch", payment.branchName));
+      if (od?.instrumentStatus) offlineFieldRows.push(row("Status", od.instrumentStatus));
+      offlineFieldRows.push(row("Amount", inr(payment.amount)));
+      if (od?.depositDate) offlineFieldRows.push(row("Deposit Date", od.depositDate));
+      if (od?.depositBank) offlineFieldRows.push(row("Deposit Bank", od.depositBank));
+      if (od?.depositReference) offlineFieldRows.push(row("Deposit Reference", od.depositReference, true));
+      if (od?.returnDate) offlineFieldRows.push(row("Return Date", od.returnDate));
+      if (od?.returnReason) offlineFieldRows.push(row("Return Reason", od.returnReason));
+      offlineFieldRows.push(recordedByHtml());
+
+    // ── UPI / QR ──────────────────────────────────────────────────────────────
+    } else if (isUpi) {
+      const upiRef = payment.referenceNumber ?? od?.transactionReference;
+      if (upiRef) offlineFieldRows.push(row("UPI Transaction ID", upiRef, true));
+      if (od?.receiverUpiId) offlineFieldRows.push(row("Receiver UPI ID", od.receiverUpiId, true));
+      if (od?.transactionTime) offlineFieldRows.push(row("Transaction Date / Time", od.transactionTime));
+      offlineFieldRows.push(row("Amount", inr(payment.amount)));
+      if (od?.instrumentStatus) offlineFieldRows.push(row("Status", od.instrumentStatus));
+      offlineFieldRows.push(recordedByHtml());
+
+    // ── Bank Transfer / NEFT / RTGS / IMPS / Wire ─────────────────────────────
+    } else {
+      const utr = payment.referenceNumber ?? od?.transactionReference;
+      if (utr) offlineFieldRows.push(row("UTR / Transaction Reference", utr, true));
+      if (od?.transferMode) offlineFieldRows.push(row("Transfer Mode", od.transferMode));
+      else if (isBankLike) offlineFieldRows.push(row("Transfer Mode", paymentMethodLabel(payment.paymentMethod)));
+      if (od?.receivingBank) offlineFieldRows.push(row("Bank", od.receivingBank));
+      if (payment.branchName) offlineFieldRows.push(row("Branch", payment.branchName));
+      if (od?.transactionTime) offlineFieldRows.push(row("Transaction Date / Time", od.transactionTime));
+      if (od?.instrumentStatus) offlineFieldRows.push(row("Status", od.instrumentStatus));
+      offlineFieldRows.push(row("Amount", inr(payment.amount)));
+      offlineFieldRows.push(recordedByHtml());
     }
 
-    const offlineFieldRows: string[] = [];
-    if (payment.referenceNumber && !isOnline) offlineFieldRows.push(row("Reference / UTR", payment.referenceNumber, true));
-    if (od?.transferMode) offlineFieldRows.push(row("Transfer Mode", od.transferMode));
-    if (od?.transactionReference) offlineFieldRows.push(row("Transaction Reference", od.transactionReference, true));
-    if (od?.receivingBank) offlineFieldRows.push(row("Receiving Bank", od.receivingBank));
-    if (od?.receiverUpiId) offlineFieldRows.push(row("Receiver UPI ID", od.receiverUpiId, true));
-    if (od?.payeeName) offlineFieldRows.push(row("Payee Name", od.payeeName));
-    if (od?.payableAt) offlineFieldRows.push(row("Payable At", od.payableAt));
-    if (od?.collectionLocation) offlineFieldRows.push(row("Collection Location", od.collectionLocation));
-    if (od?.transactionTime) offlineFieldRows.push(row("Transaction Time", od.transactionTime));
-    if (od?.instrumentStatus) offlineFieldRows.push(row("Instrument Status", od.instrumentStatus));
-    if (od?.depositDate) offlineFieldRows.push(row("Deposit Date", od.depositDate));
-    if (od?.depositBank) offlineFieldRows.push(row("Deposit Bank", od.depositBank));
-    if (od?.depositReference) offlineFieldRows.push(row("Deposit Reference", od.depositReference, true));
-    if (od?.returnDate) offlineFieldRows.push(row("Return Date", od.returnDate));
-    if (od?.returnReason) offlineFieldRows.push(row("Return Reason", od.returnReason));
-    if (payment.recordedByName) offlineFieldRows.push(row("Recorded By", payment.recordedByName));
-
-    if (offlineFieldRows.length > 0 || offlineRows) {
+    const nonEmpty = offlineFieldRows.filter(s => s.trim() !== "");
+    if (nonEmpty.length > 0 || offlineRows) {
       offlineSectionHtml = `
         <div class="card offline-card">
           ${sectionHeader("Payment Details")}
           ${offlineRows}
-          ${offlineFieldRows.length > 0 ? `<div class="field-grid">${offlineFieldRows.join("")}</div>` : ""}
+          ${nonEmpty.length > 0 ? `<div class="field-grid">${nonEmpty.join("")}</div>` : ""}
         </div>`;
     }
   }
@@ -507,7 +626,7 @@ body {
 /* ── Receipt ID strip ───────────────────────────────────────────────────── */
 .receipt-id-strip {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 1px;
   background: #e5e7eb;
   border: 1px solid #e5e7eb;
@@ -790,12 +909,16 @@ body {
       <div class="id-cell-value primary">${esc(payment.receiptNumber ?? "—")}</div>
     </div>
     <div class="id-cell">
-      <div class="id-cell-label">Payment Date</div>
+      <div class="id-cell-label">Payment Date &amp; Time</div>
       <div class="id-cell-value">${esc(payment.paymentDateTimeIST)}</div>
     </div>
     <div class="id-cell">
+      <div class="id-cell-label">Payment Mode</div>
+      <div class="id-cell-value">${esc(paymentMethodLabel(payment.paymentMethod))}${isOnline && payment.paymentMode ? `<span style="font-size:10.5px;font-weight:400;color:#6b7280;display:block;">${esc(paymentModeLabel(payment.paymentMode))}</span>` : ""}</div>
+    </div>
+    <div class="id-cell">
       <div class="id-cell-label">Status</div>
-      <div class="id-cell-value" style="color:#166534;">PAID</div>
+      <div class="id-cell-value" style="color:#166534;">PAID ✓</div>
     </div>
   </div>
 
@@ -823,15 +946,24 @@ body {
       <div class="amount-display">
         <div class="amount-label">Amount Received</div>
         <div class="amount-figure">${esc(amountPaidStr)}</div>
+        <div class="amount-words">${esc(amountWords)}</div>
       </div>
       <div class="payment-meta-grid">
         <div class="payment-meta-item">
-          <div class="pm-label">Payment Status</div>
-          <div class="pm-value">PAID ✓</div>
+          <div class="pm-label">Invoice No.</div>
+          <div class="pm-value" style="font-size:11.5px;">${esc(fee.invoiceNumber ?? "—")}</div>
         </div>
         <div class="payment-meta-item">
-          <div class="pm-label">Payment Method</div>
-          <div class="pm-value">${esc(paymentMethodLabel(payment.paymentMethod))}</div>
+          <div class="pm-label">Receipt No.</div>
+          <div class="pm-value" style="font-size:11.5px;">${esc(payment.receiptNumber ?? "—")}</div>
+        </div>
+        <div class="payment-meta-item">
+          <div class="pm-label">Payment Mode</div>
+          <div class="pm-value" style="font-size:12px;">${esc(paymentMethodLabel(payment.paymentMethod))}</div>
+        </div>
+        <div class="payment-meta-item">
+          <div class="pm-label">Academic Session</div>
+          <div class="pm-value" style="font-size:12px;">${esc(academicSessionLabel ?? fee.academicYear ?? "—")}</div>
         </div>
         ${fee.lateFeeAmount > 0 ? `
         <div class="payment-meta-item">
