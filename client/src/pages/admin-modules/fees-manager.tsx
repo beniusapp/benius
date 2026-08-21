@@ -3290,8 +3290,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   {selectedIds.size > 0 && canRecord && !isArchiveMode && (
                     <th className="px-3 py-3 w-8" />
                   )}
-                  {["Invoice No.","Receipt No.","Student","DSID","Class","Section","Fee Name","Fee Type","Amount","Due Date","Status","Payment Method","Paid On","Acad. Year","Actions"].map((h, i) => (
-                    <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 8 || i === 14 ? "text-right" : i >= 9 && i <= 13 ? "text-center" : "text-left"}`}>{h}</th>
+                  {["Invoice No.","Receipt No.","Student","DSID","Class","Section","Fee Name","Fee Type","Fee Period","Frequency","Amount","Due Date","Status","Payment Method","Paid On","Acad. Year","Actions"].map((h, i) => (
+                    <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 10 || i === 16 ? "text-right" : i >= 11 && i <= 15 ? "text-center" : "text-left"}`}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -3358,6 +3358,14 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     <td className="px-4 py-3 text-white/70 text-xs text-center">{rec.student?.section ?? "—"}</td>
                     <td className="px-4 py-3 text-white/80 text-sm">{resolveFeeDisplayName(rec)}</td>
                     <td className="px-4 py-3 text-white/70 text-xs">{rec.feeType}</td>
+                    <td className="px-4 py-3 text-white/70 text-xs">
+                      {(rec as any).feePeriodStart && (rec as any).feePeriodEnd
+                        ? clientFeePeriodLabel((rec as any).feePeriodStart, (rec as any).feePeriodEnd)
+                        : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-white/70 text-xs">
+                      {invoiceFrequencyLabel((rec as any).frequency ?? null)}
+                    </td>
                     <td className="px-4 py-3 text-right font-semibold text-white">
                       {(rec as any).lateFeeAmount > 0 ? (
                         <div className="text-right leading-tight space-y-0.5">
