@@ -103,6 +103,57 @@ function fmtPeriod(s: string | null | undefined, e: string | null | undefined): 
   return a || b || EM;
 }
 
+// ── Indian currency amount → words ────────────────────────────────────────────
+// Supports up to ₹999 Crore. Uses Indian lakh/crore system with hyphenated tens
+// (e.g. "Thirty-One") and "Only" suffix. Returns "Rupees Zero Only" for 0.
+function amountToWordsIndian(amount: number): string {
+  const n = Math.round(Math.abs(amount));
+  if (n === 0) return "Rupees Zero Only";
+
+  const ones = [
+    "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+    "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
+    "Seventeen", "Eighteen", "Nineteen",
+  ];
+  const tensArr = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+
+  function twoDigits(v: number): string {
+    if (v === 0) return "";
+    if (v < 20)  return ones[v];
+    const t = tensArr[Math.floor(v / 10)];
+    const o = ones[v % 10];
+    return o ? `${t}-${o}` : t;
+  }
+
+  function threeDigits(v: number): string {
+    if (v === 0) return "";
+    const h    = Math.floor(v / 100);
+    const rest = v % 100;
+    const hs   = h    > 0 ? `${ones[h]} Hundred` : "";
+    const rs   = rest > 0 ? twoDigits(rest)        : "";
+    return hs && rs ? `${hs} ${rs}` : (hs || rs);
+  }
+
+  let rem = n;
+  const parts: string[] = [];
+
+  const crore = Math.floor(rem / 10_000_000);
+  rem %= 10_000_000;
+  if (crore > 0) parts.push(`${threeDigits(crore)} Crore`);
+
+  const lakh = Math.floor(rem / 100_000);
+  rem %= 100_000;
+  if (lakh > 0) parts.push(`${twoDigits(lakh)} Lakh`);
+
+  const thousand = Math.floor(rem / 1_000);
+  rem %= 1_000;
+  if (thousand > 0) parts.push(`${threeDigits(thousand)} Thousand`);
+
+  if (rem > 0) parts.push(threeDigits(rem));
+
+  return `Rupees ${parts.join(" ")} Only`;
+}
+
 // ── Page geometry ─────────────────────────────────────────────────────────────
 const PAGE_W   = 841.89;   // A4 landscape
 const PAGE_H   = 595.28;
@@ -118,8 +169,9 @@ const FOOTER_H = 22;   // reserved at page bottom for footer
 // Usable vertical space for data rows per page
 const USABLE_DATA_H = PAGE_H - MARGIN_V * 2 - HEADER_H - COL_H - FOOTER_H;
 
-// Totals block: 8pt gap + 20pt bar + 3 lines × 12pt + 6pt gap = 70pt
-const TOTALS_H = 8 + 20 + 3 * 12 + 6;
+// Financial summary block height (for pagination pre-check):
+// 12 gap + 13 heading + 11 subtitle + 8 pre-card gap + 82 cards + 8 bottom = 134
+const TOTALS_H = 134;
 
 const LINE_H    = 10;   // px between successive wrapped lines
 const CELL_PAD  = 5;    // top + bottom cell padding
@@ -585,43 +637,111 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
       }
     }
 
-    // ── Totals block ──────────────────────────────────────────────────────────
-    //   [gap]
-    //   [════════════ navy bar "TOTALS" ════════════]
-    //   Total Invoiced:                       ₹X,XX,XXX
-    //   Total Paid:                           ₹X,XX,XXX
-    //   Total Outstanding:                    ₹X,XX,XXX
+    // ── Financial summary (three-card layout) ────────────────────────────────
     //
-    // Amounts use widthOfString() + manual X (right-aligned) + NO `width` option
-    // → zero possibility of wrapping.
-    function drawTotals(y: number) {
-      const barY = y + 8;
-      const barH = 20;
+    //   FINANCIAL SUMMARY
+    //   Invoice position for the selected report scope
+    //
+    //   ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+    //   │ TOTAL INVOICED  │  │ TOTAL PAID      │  │ TOTAL OUTSTANDG │
+    //   │ ₹X,XX,XXX       │  │ ₹X,XX,XXX       │  │ ₹X,XX,XXX       │
+    //   │ Rupees …Only    │  │ Rupees …Only    │  │ Rupees …Only    │
+    //   └─────────────────┘  └─────────────────┘  └─────────────────┘
+    //
+    // Amount-in-words uses PDFKit word wrapping (width option) — no char-break.
+    function drawFinancialSummary(y: number) {
+      const SEC_GAP    = 12;   // vertical gap above heading
+      const HEADING_FS = 9;
+      const SUBTITLE_FS = 7.5;
+      const HEADING_H  = 13;   // px allocated for heading line
+      const SUBTITLE_H = 11;   // px allocated for subtitle line
+      const PRE_CARD   = 8;    // gap between subtitle and card tops
+      const CARD_GAP   = 8;    // horizontal gap between cards
+      const CARD_H     = 82;   // card height — fits 2 lines of amount-in-words
+      const CARD_PAD_X = 12;   // horizontal inner padding
+      const CARD_PAD_T = 11;   // top inner padding
 
-      (doc as any).fillColor(C_THEAD).rect(TABLE_LEFT, barY, TABLE_WIDTH, barH).fill();
-      (doc as any).font("Bold").fontSize(8.5).fillColor(C_WHITE)
-        .text("TOTALS", TABLE_LEFT + 6, barY + (barH - 8.5) / 2, { lineBreak: false });
+      const headY  = y + SEC_GAP;
+      const cardsY = headY + HEADING_H + SUBTITLE_H + PRE_CARD;
+      const cardW  = (TABLE_WIDTH - CARD_GAP * 2) / 3;   // ≈ 254 pt each
+      const innerW = cardW - CARD_PAD_X * 2;              // ≈ 230 pt for word wrap
 
-      const summaryLines = [
-        { label: "Total Invoiced:",    amount: fmtINR(totInvoiced)    },
-        { label: "Total Paid:",        amount: fmtINR(totPaid)        },
-        { label: "Total Outstanding:", amount: fmtINR(totOutstanding) },
+      // ── Section heading ────────────────────────────────────────────────────
+      (doc as any).font("Bold").fontSize(HEADING_FS).fillColor(C_DARK)
+        .text("FINANCIAL SUMMARY", TABLE_LEFT, headY, { lineBreak: false });
+      (doc as any).font("Reg").fontSize(SUBTITLE_FS).fillColor(C_MUTED)
+        .text("Invoice position for the selected report scope",
+          TABLE_LEFT, headY + HEADING_H, { lineBreak: false });
+
+      // ── Card definitions ───────────────────────────────────────────────────
+      const CARD_DEFS = [
+        {
+          label:       "TOTAL INVOICED",
+          amount:      totInvoiced,
+          borderColor: "#c8d6e0",   // muted blue-grey border
+          accentColor: C_DARK,      // navy — matches report header
+          labelColor:  C_MUTED,
+          amtColor:    C_DARK,
+        },
+        {
+          label:       "TOTAL PAID",
+          amount:      totPaid,
+          borderColor: "#6ee7b7",   // emerald border
+          accentColor: "#059669",   // emerald accent stripe
+          labelColor:  "#065f46",
+          amtColor:    "#065f46",
+        },
+        {
+          label:       "TOTAL OUTSTANDING",
+          amount:      totOutstanding,
+          borderColor: "#fcd34d",   // amber border
+          accentColor: "#d97706",   // amber accent stripe
+          labelColor:  "#92400e",
+          amtColor:    "#92400e",
+        },
       ];
 
-      const rightEdge = TABLE_LEFT + TABLE_WIDTH - 8;
+      for (let ci = 0; ci < 3; ci++) {
+        const cx   = TABLE_LEFT + ci * (cardW + CARD_GAP);
+        const cd   = CARD_DEFS[ci];
+        const lx   = cx + CARD_PAD_X;
+        const lyt  = cardsY + CARD_PAD_T;
 
-      for (let i = 0; i < summaryLines.length; i++) {
-        const sy = barY + barH + 6 + i * 12;
-        const { label, amount } = summaryLines[i];
+        // White card background
+        (doc as any).save()
+          .fillColor("#ffffff")
+          .roundedRect(cx, cardsY, cardW, CARD_H, 4)
+          .fill()
+          .restore();
 
-        // Label — left-aligned, no width constraint
-        (doc as any).font("Bold").fontSize(8).fillColor(C_DARK)
-          .text(label, TABLE_LEFT + 6, sy, { lineBreak: false });
+        // Thin 3 pt coloured accent at top (clipped to rounded corners)
+        (doc as any).save()
+          .roundedRect(cx, cardsY, cardW, CARD_H, 4)
+          .clip()
+          .fillColor(cd.accentColor)
+          .rect(cx, cardsY, cardW, 3)
+          .fill()
+          .restore();
 
-        // Amount — right-aligned via exact widthOfString measurement, no width constraint
-        (doc as any).font("Bold").fontSize(8).fillColor(C_DARK);
-        const amtW = (doc as any).widthOfString(amount);
-        (doc as any).text(amount, rightEdge - amtW, sy, { lineBreak: false });
+        // Card border
+        (doc as any)
+          .roundedRect(cx, cardsY, cardW, CARD_H, 4)
+          .strokeColor(cd.borderColor)
+          .lineWidth(0.75)
+          .stroke();
+
+        // Label — uppercase small, below accent stripe
+        (doc as any).font("Bold").fontSize(6.5).fillColor(cd.labelColor)
+          .text(cd.label, lx, lyt, { lineBreak: false });
+
+        // Amount — large bold, primary visual element
+        (doc as any).font("Bold").fontSize(16).fillColor(cd.amtColor)
+          .text(fmtINR(cd.amount), lx, lyt + 13, { lineBreak: false });
+
+        // Amount in words — smaller muted, word-boundary wrapped inside card
+        const words = amountToWordsIndian(Math.round(cd.amount));
+        (doc as any).font("Reg").fontSize(7).fillColor(C_MUTED)
+          .text(words, lx, lyt + 37, { width: innerW, lineBreak: true });
       }
     }
 
@@ -656,7 +776,7 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
       }
 
       if (isLast && !totalsNeedExtraPage) {
-        drawTotals(y);
+        drawFinancialSummary(y);
       }
     }
 
@@ -667,7 +787,7 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
       drawHeader();
       drawColHeaders(MARGIN_V + HEADER_H);
       drawFooter(pn);
-      drawTotals(TABLE_TOP + COL_H + 8);
+      drawFinancialSummary(TABLE_TOP + COL_H + 8);
     }
 
     doc.end();
