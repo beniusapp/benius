@@ -1,0 +1,928 @@
+Tx Report PDF — Final Implementation Specification
+
+We have now completed and verified the Ledger PDF and the new Excel-style Ledger filtering system.
+
+Do NOT modify or redesign the working Ledger filtering implementation.
+
+Now implement/fix the Tx Report PDF so that it becomes fully consistent with the current Ledger filtering architecture and the actual payment/transaction data.
+
+Before changing any code, inspect the existing implementation carefully.
+
+---
+
+1. FIRST: INSPECT, DO NOT MODIFY
+
+Before making changes, inspect and understand:
+
+Backend
+
+- Current Tx Report PDF route
+- Current Tx Report PDF renderer
+- Payment/transaction SQL queries
+- "payment_records" and related tables
+- Relationship between:
+  - invoice / "fee_records"
+  - payment records
+  - payment IDs
+  - order IDs
+  - receipt numbers
+  - reference numbers
+  - payment methods
+  - payment status
+  - payment timestamps
+  - academic session
+  - school/tenant
+
+Frontend
+
+Inspect:
+
+- Current "Tx Report PDF" button
+- Current Ledger filter state
+- Current normalized filter serializer
+- Current export helper
+- How Ledger PDF receives the active filters
+- How Export Ledger receives the active filters
+- How selected invoices are represented
+
+Important
+
+Do NOT create a second independent filtering implementation for Tx Report PDF.
+
+The Tx Report PDF must consume the same normalized filter contract/state already used by:
+
+- Ledger PDF
+- Export Ledger
+
+After inspection, report the exact files/functions that need to change.
+
+Then implement only the required changes.
+
+---
+
+2. CORE REQUIREMENT
+
+The Tx Report PDF must represent the same filtered invoice population selected by the Ledger.
+
+For example:
+
+If the user filters:
+
+- Class = 6
+- Fee Name = Math Book
+- Frequency = One-Time
+
+then:
+
+Ledger table → same invoice population
+
+Ledger PDF → same invoice population
+
+Tx Report PDF → transactions belonging to that exact invoice population
+
+Export Ledger → same invoice population
+
+There must never be a situation where the Ledger shows one set of invoices while Tx Report PDF contains unrelated invoices.
+
+---
+
+3. USE THE EXISTING EXCEL-STYLE FILTER SYSTEM
+
+The current Ledger has:
+
+Search
+
+Search must continue supporting:
+
+- Invoice No.
+- Receipt No.
+- Student Name
+- Student DSID
+
+Use the already implemented search contract.
+
+Do NOT create another search parser.
+
+---
+
+4. USE THE SAME COLUMN FILTERS
+
+The Tx Report PDF must respect all active Ledger column filters.
+
+Examples include:
+
+- Invoice No.
+- Receipt No.
+- Student
+- DSID
+- Class
+- Section
+- Fee Name
+- Fee Type
+- Fee Period
+- Frequency
+- Amount
+- Due Date
+- Status
+- Paid On
+- Paid
+- Outstanding
+- Payment Method
+- Reference No.
+
+If a filter is active in Ledger, Tx Report PDF must use that same filter state.
+
+Do not silently ignore any applicable filter.
+
+---
+
+5. FILTER COMBINATION LOGIC
+
+Preserve the existing verified filter semantics.
+
+Within the same column:
+
+OR
+
+Example:
+
+Frequency:
+
+- One-Time
+- Monthly
+
+means:
+
+"Frequency = One-Time OR Frequency = Monthly"
+
+Across different columns:
+
+AND
+
+Example:
+
+Class = 6
+
+AND
+
+Fee Name = Math Book
+
+AND
+
+Frequency = One-Time
+
+means the invoice must satisfy all three conditions.
+
+Do not alter the already-tested filter behavior.
+
+---
+
+6. TRANSACTION-SPECIFIC BEHAVIOR
+
+This is the most important difference between Ledger PDF and Tx Report PDF.
+
+The Ledger is invoice-oriented.
+
+The Tx Report PDF is transaction/payment-oriented.
+
+Therefore:
+
+One invoice with multiple payments
+
+If one invoice has:
+
+- Payment 1
+- Payment 2
+- Payment 3
+
+the Tx Report must show all applicable payment transactions individually.
+
+Do NOT collapse multiple payments into one transaction row.
+
+Example:
+
+Invoice INV-0001
+
+Payment 1 = ₹2,000 — Online
+
+Payment 2 = ₹500 — Cash
+
+The Tx Report must contain two transaction rows.
+
+---
+
+7. IMPORTANT SESSION FIX
+
+A transaction must not be incorrectly excluded merely because the individual payment record contains a different/stamped session value.
+
+The authoritative relationship for determining whether a transaction belongs to the report should be:
+
+Transaction → Payment Record → Invoice/Fee Record → Invoice's Academic Session
+
+The invoice's session must be used to determine report scope.
+
+Do NOT accidentally require every payment row's own session field to independently match the selected academic session if that would exclude a legitimate payment belonging to an invoice in that session.
+
+This specifically addresses the architectural issue previously identified during review.
+
+---
+
+8. TENANT / SCHOOL SECURITY
+
+Tenant isolation is mandatory.
+
+The Tx Report PDF must always enforce:
+
+- authenticated "school_id"
+- authenticated/validated academic session
+- existing server-side tenant security
+
+Never trust:
+
+- school ID from the browser
+- arbitrary invoice IDs
+- arbitrary transaction IDs
+- arbitrary session IDs supplied by the client
+
+A user from School A must never be able to retrieve transactions belonging to School B.
+
+---
+
+9. SELECTED INVOICES
+
+If the Ledger supports selection-aware export, preserve the existing selection semantics.
+
+Individual selection
+
+If the user selects:
+
+Invoice A
+Invoice B
+Invoice C
+
+then Tx Report PDF must contain transactions only for those selected invoices.
+
+Select All Matching
+
+If:
+
+"selectAllMatching = true"
+
+then Tx Report PDF should contain transactions belonging to all invoices matching the current filters.
+
+Exclusions
+
+If:
+
+"selectAllMatching = true"
+
+and some invoices are excluded, those excluded invoices must not contribute transactions to the Tx Report PDF.
+
+Critical rule
+
+Selection must be applied to the invoice population first.
+
+Then retrieve transactions belonging to that invoice population.
+
+Do not independently select arbitrary payment records.
+
+---
+
+10. NO PAGINATION BUG
+
+The PDF export must not depend on the current browser page.
+
+If the Ledger currently displays page 2 of 5, the Tx Report PDF must still export the complete filtered result.
+
+Do NOT send:
+
+- current page
+- page size
+- visible rows only
+
+unless the existing architecture explicitly requires it for something unrelated to export.
+
+The SQL used for PDF generation must not accidentally contain the table's UI pagination "LIMIT/OFFSET".
+
+---
+
+11. TRANSACTION INFORMATION
+
+Inspect the actual database schema and existing application behavior before deciding the final columns.
+
+The Tx Report should provide a professional transaction audit view.
+
+Where available, include information such as:
+
+- Invoice No.
+- Receipt No.
+- Student Name
+- DSID
+- Class
+- Section
+- Fee Name
+- Fee Type
+- Payment ID
+- Order ID
+- Payment Method
+- Transaction/Reference No.
+- Amount
+- Payment Status
+- Payment Date/Time
+- Failure reason, where applicable
+- Refund information, where applicable
+
+Do NOT invent database fields.
+
+Only use fields that actually exist or can be reliably derived from the existing data model.
+
+If the current Tx Report already has an established column structure, preserve useful existing columns and improve it rather than unnecessarily redesigning the entire data model.
+
+---
+
+12. PAYMENT STATUS
+
+The report must distinguish transaction states correctly.
+
+Do not treat every payment record as simply "Paid".
+
+Inspect the existing payment model and correctly represent applicable states such as:
+
+- Captured
+- Authorized
+- Failed
+- Refunded
+- Partially refunded
+- Cancelled
+- Pending
+
+Use the application's actual status values and mapping.
+
+Do not invent new payment statuses.
+
+---
+
+13. FAILED PAYMENTS
+
+Failed transactions are important audit information.
+
+If a failed payment transaction exists for an invoice, it should not disappear merely because the invoice itself is currently unpaid.
+
+Where available, show:
+
+- transaction/payment ID
+- amount
+- method
+- date/time
+- status
+- failure reason
+
+Do not overwrite failed attempts with successful attempts.
+
+Every genuine payment attempt should remain independently represented according to the existing transaction data model.
+
+---
+
+14. MULTIPLE PAYMENT METHODS
+
+If an invoice has multiple payment transactions, show each transaction separately.
+
+Example:
+
+Invoice INV-0008
+
+Payment| Amount| Method
+Payment 1| ₹2,000| Online
+Payment 2| ₹1,000| Cash
+
+The Tx Report must show both rows.
+
+Do not aggregate these into:
+
+"Multiple"
+
+That "Multiple" behavior belongs to the invoice-oriented Ledger where appropriate.
+
+The transaction report should preserve transaction-level detail.
+
+---
+
+15. PAYMENT IDs / REFERENCE NUMBERS
+
+Long identifiers must NEVER overlap into another column.
+
+Examples:
+
+- Razorpay payment IDs
+- Order IDs
+- Reference numbers
+- UTR/reference values
+- authorization codes
+
+Use the same reliable PDF wrapping strategy already established for Ledger PDF:
+
+- calculate actual text width using the PDF renderer's font metrics
+- wrap at word boundaries wherever possible
+- use character-level breaking only when a token itself is too long to fit
+- increase row height dynamically
+- never clip text
+- never allow text from one cell to visually enter another cell
+
+A long ID may become:
+
+"pay_TS9NVI"
+
+"ayHcXKJ"
+
+if necessary.
+
+That is acceptable.
+
+What is NOT acceptable:
+
+- clipping
+- overlapping another column
+- writing outside the table
+- disappearing text
+
+---
+
+16. PDF LAYOUT
+
+Use the same professional visual language established for Ledger PDF:
+
+- A4 landscape
+- professional margins
+- clean navy header
+- readable typography
+- repeated table header on every page
+- dynamic row height
+- no row splitting where possible
+- proper page breaks
+- professional footer
+- Page N of M only in footer
+- no duplicated page number in the header
+
+Do not squeeze the entire report into tiny 5–6 pt text merely to fit everything on one page.
+
+Readability is more important than fitting every column into one line.
+
+---
+
+17. HEADER
+
+Use a professional report header containing:
+
+Left
+
+- School logo, if the existing PDF architecture supports it
+- School name
+- School address/contact information
+
+Right
+
+TRANSACTION REPORT
+
+Below it:
+
+- Invoice-wise / transaction-wise report description
+- Academic Session
+- Generated date/time
+- Record count
+
+Then show the active scope/filter summary.
+
+Example:
+
+"Scope: Class = 6 · Fee Name = Math Book · Frequency = One-Time"
+
+If no filters are active:
+
+"Scope: All matching records for this session"
+
+Do not duplicate the page number here.
+
+---
+
+18. FOOTER
+
+Use a clean footer:
+
+"School Name • Transaction Report • Session 2027–2028"
+
+and on the right:
+
+"Page N of M"
+
+Only one page indicator should exist.
+
+---
+
+19. TOTALS
+
+The Tx Report should have a professional totals section at the end.
+
+Do NOT blindly reuse Ledger totals because Tx Report is transaction-oriented.
+
+First determine what totals are meaningful based on the actual transaction states.
+
+At minimum, where supported by the data:
+
+- Total Transaction Amount
+- Total Successful/Captured Amount
+- Total Failed Amount
+
+If refunds are present and meaningful:
+
+- Total Refunded Amount
+
+The totals must not double-count transactions.
+
+Most importantly:
+
+Do not sum the same invoice amount multiple times merely because an invoice has multiple payment records.
+
+Transaction totals and invoice totals are different concepts.
+
+Calculate them according to the report's actual meaning.
+
+---
+
+20. TOTALS DESIGN
+
+Make the totals section:
+
+- modern
+- aesthetic
+- professional
+- easy to understand
+
+Use a clean summary block rather than squeezing figures into narrow table columns.
+
+Example visual hierarchy:
+
+TRANSACTION SUMMARY
+
+Total Transactions
+29
+
+Total Successful
+₹2,17,100
+
+Total Failed
+₹X
+
+Total Refunded
+₹X
+
+Only show categories that are supported by the actual data.
+
+---
+
+21. INR FORMATTING
+
+Use consistent Indian currency formatting.
+
+Examples:
+
+"₹500"
+
+"₹2,700"
+
+"₹35,000"
+
+"₹3,31,500"
+
+"₹1,00,000"
+
+Do not use inconsistent decimal formatting unless the underlying application specifically requires paise.
+
+---
+
+22. DATE/TIME
+
+Use the application's Indian timezone consistently.
+
+Use a readable format such as:
+
+"20 Aug 2026, 10:42 AM"
+
+Do not show inconsistent timezone conversions.
+
+If a timestamp is unavailable:
+
+"—"
+
+Do not show:
+
+- null
+- undefined
+- N/A
+
+unless that is already an established application convention.
+
+---
+
+23. FILTER → EXPORT PARITY
+
+This is a mandatory acceptance requirement.
+
+The following three actions must use the same active filter state:
+
+Ledger PDF
+
+Current filtered invoice population.
+
+Tx Report PDF
+
+Transactions belonging to that exact filtered invoice population.
+
+Export Ledger
+
+Same filtered invoice population.
+
+There must be no situation where:
+
+Ledger = 10 invoices
+
+Export Ledger = 10 invoices
+
+Tx Report = transactions from 14 invoices
+
+That is a failure.
+
+---
+
+24. SEARCH → EXPORT PARITY
+
+Test all search types:
+
+1. Search Invoice No.
+2. Search Receipt No.
+3. Search Student Name
+4. Search DSID
+
+For each search:
+
+- Ledger table result
+- Ledger PDF
+- Tx Report PDF
+- Export Ledger
+
+must remain consistent.
+
+---
+
+25. FILTER → EXPORT TEST MATRIX
+
+Create automated tests for at least:
+
+Test 1
+
+No search + no filters
+
+→ all session data.
+
+Test 2
+
+Search by Invoice No.
+
+→ only matching invoice population.
+
+Test 3
+
+Search by Receipt No.
+
+→ only matching invoice population.
+
+Test 4
+
+Search by Student Name.
+
+→ only that student's invoices/transactions.
+
+Test 5
+
+Search by DSID.
+
+→ only that student's invoices/transactions.
+
+Test 6
+
+Class = 6
+
+→ only class 6 invoices and their transactions.
+
+Test 7
+
+Class = 6 AND Fee Name = Math Book
+
+→ intersection only.
+
+Test 8
+
+Frequency = One-Time
+
+→ only One-Time invoices.
+
+Test 9
+
+Frequency = One-Time OR Monthly
+
+→ either frequency.
+
+Test 10
+
+Select three invoices across different pages
+
+→ only those three invoice populations.
+
+Test 11
+
+Select All Matching
+
+→ all filtered invoice populations.
+
+Test 12
+
+Select All Matching + exclude two invoices
+
+→ all filtered invoices except those two.
+
+Test 13
+
+One invoice with multiple payment records
+
+→ every applicable transaction appears individually.
+
+Test 14
+
+One invoice containing successful + failed payment attempts
+
+→ both are represented correctly.
+
+Test 15
+
+Invoice with payment record stamped differently from invoice session
+
+→ valid transaction is still included according to the invoice's academic session.
+
+Test 16
+
+Tenant isolation
+
+→ another school's invoice/payment cannot appear.
+
+Test 17
+
+Multiple pages
+
+→ export contains all matching transactions, not only the current browser page.
+
+Test 18
+
+Long Payment ID / Order ID / Reference
+
+→ no clipping or overlap.
+
+Test 19
+
+Totals
+
+→ totals mathematically match the displayed transaction rows and applicable transaction statuses.
+
+Test 20
+
+Clear filters
+
+→ returns to full session report.
+
+---
+
+26. IMPORTANT: DO NOT TOUCH THESE
+
+Unless absolutely required for Tx Report PDF integration, do NOT modify:
+
+- Ledger PDF renderer
+- Ledger filtering behavior
+- Ledger table UI
+- Export Ledger behavior
+- payment calculation logic
+- fee calculation logic
+- database schema
+- invoice generation
+- payment processing
+- Razorpay integration
+- webhook processing
+- unrelated modules
+
+Do not introduce unnecessary refactoring.
+
+---
+
+27. CODE QUALITY
+
+Before completing:
+
+- Run TypeScript/build checks.
+- Run the existing complete test suite.
+- Add focused Tx Report PDF/filter parity tests.
+- Test authenticated database-backed routes.
+- Verify tenant/session isolation.
+- Verify selected invoice behavior.
+- Verify multi-payment invoices.
+- Verify failed/successful transaction handling.
+- Verify PDF generation with multiple pages.
+- Verify long identifiers.
+- Verify totals.
+
+Do not report "working" based only on compilation.
+
+---
+
+28. FINAL VERIFICATION REPORT
+
+After implementation, provide a concise but complete report containing:
+
+Files changed
+
+Exact files.
+
+Functions changed
+
+Exact functions.
+
+Routes changed
+
+Exact routes.
+
+Filter contract
+
+Confirm Tx Report uses the existing normalized Ledger filter contract.
+
+Selection behavior
+
+Explain:
+
+- individual selection
+- select all matching
+- exclusions
+- no selection
+
+Session behavior
+
+Explain how invoice session determines transaction inclusion.
+
+Tenant security
+
+Explain how school isolation is enforced.
+
+Payment behavior
+
+Explain how multiple payments and payment statuses are represented.
+
+PDF layout
+
+Confirm:
+
+- A4 landscape
+- dynamic row heights
+- wrapping
+- no clipping
+- no overlap
+- repeated headers
+- footer page numbers
+
+Totals
+
+Explain exactly what is being totaled and why there is no double-counting.
+
+Tests
+
+Provide the result of every test above.
+
+Regression
+
+Explicitly confirm:
+
+- Ledger PDF unchanged
+- Ledger filters unchanged
+- Export Ledger unchanged
+- No database schema changes
+- No unrelated modules changed
+
+---
+
+FINAL RULE
+
+Do not make assumptions about fields, payment statuses, or database relationships.
+
+Inspect the existing code and schema first.
+
+Reuse the already-working Ledger filter contract.
+
+Tx Report PDF must be transaction-level, while Ledger PDF remains invoice-level.
+
+The two reports must share the same filtered invoice population but represent the data at their respective levels.
+
+Implement this carefully and verify it against the real database-backed routes before declaring completion.
