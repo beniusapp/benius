@@ -3626,9 +3626,9 @@ export function registerFeesRoutes(app: Express) {
       const sessionId = feeRow?.session_id ?? payRow.session_id ?? null;
       if (sessionId) {
         const sess = (await db.execute(sql`
-          SELECT name FROM academic_sessions WHERE id = ${sessionId} LIMIT 1
+          SELECT session_name FROM academic_sessions WHERE id = ${sessionId} LIMIT 1
         `)).rows[0] as any;
-        sessionLabel = sess?.name ?? null;
+        sessionLabel = sess?.session_name ?? null;
       }
 
       // ── Signature ──────────────────────────────────────────────────────────
@@ -4507,9 +4507,9 @@ td:last-child{font-weight:600;word-break:break-all;}
       const sessionId = feeRow.session_id ?? null;
       if (sessionId) {
         const sess = (await db.execute(sql`
-          SELECT name FROM academic_sessions WHERE id = ${sessionId} LIMIT 1
+          SELECT session_name FROM academic_sessions WHERE id = ${sessionId} LIMIT 1
         `)).rows[0] as any;
-        sessionLabel = sess?.name ?? null;
+        sessionLabel = sess?.session_name ?? null;
       }
 
       // ── Signature ──────────────────────────────────────────────────────────

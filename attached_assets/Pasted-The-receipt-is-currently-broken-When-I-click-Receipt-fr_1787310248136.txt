@@ -1,0 +1,56 @@
+The receipt is currently broken.
+
+When I click Receipt from the Ledger/Transaction page, the receipt endpoint returns:
+
+"{"message":"error: column \"name\" does not exist"}"
+
+I have attached a screenshot showing the exact error.
+
+Please investigate this as a database schema/query mismatch, not as a PDF/design issue.
+
+Do the following:
+
+1. Identify the exact receipt endpoint being called when I click Receipt.
+2. Find the SQL/Drizzle query that is producing "column "name" does not exist".
+3. Identify which table the "name" column is being requested from.
+4. Inspect the actual database schema and the existing Drizzle schema definitions before changing anything.
+5. Do NOT assume that a column called "name" exists.
+6. Use the project's actual existing column names and relationships for:
+   - School
+   - Student
+   - Parent/Guardian
+   - Fee record
+   - Payment record
+   - Academic session
+   - Offline payment details
+   - Razorpay/payment attempt details
+7. Check both receipt endpoints because the project has both:
+   - payment/transaction-based receipt
+   - fee-record-based receipt
+8. Make sure the shared premium receipt renderer receives correctly mapped data from both paths.
+9. Do not create fake columns or change the database schema simply to make the query pass unless the existing architecture genuinely requires a new column.
+10. Do not remove useful receipt fields just to hide the error.
+
+After fixing the query, test the actual Receipt button from the Admin Ledger/Transaction UI.
+
+Test all of these:
+
+- Online payment receipt
+- Offline cash receipt
+- Offline bank/UPI receipt
+- Receipt opened from transaction detail
+- Receipt opened from fee record
+
+Then verify:
+
+- TypeScript passes
+- Relevant tests pass
+- The actual receipt opens successfully
+- PDF generation works
+- No 500/SQL error occurs
+- Student, school, invoice, receipt and payment data belong to the correct records
+- IST date/time remains correct
+
+Most importantly, first identify the exact SQL query and actual database column causing ""name" does not exist"" before making any code changes.
+
+Do not make unrelated changes to the payment, invoice, receipt-number, or financial logic.
