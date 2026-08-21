@@ -2657,7 +2657,13 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [showPaymentsModal, setShowPaymentsModal] = useState(false);
   const [viewPaymentsRecord, setViewPaymentsRecord] = useState<FeeRecordWithStudent | null>(null);
   // ── Bulk selection ────────────────────────────────────────────────────────
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  // Explicit-ID mode (selectAllMatching=false): selectedIds holds every picked record.
+  // All-matching mode (selectAllMatching=true): every record matching current filters
+  //   is selected EXCEPT those in excludedIds. This lets the user deselect individual
+  //   rows without losing selections on unseen pages.
+  const [selectedIds,      setSelectedIds]      = useState<Set<number>>(new Set());
+  const [selectAllMatching, setSelectAllMatching] = useState(false);
+  const [excludedIds,      setExcludedIds]      = useState<Set<number>>(new Set());
   const [showNotifModal, setShowNotifModal] = useState(false);
   const [notifStudentId, setNotifStudentId] = useState<number | null>(null);
   const [notifStudentName, setNotifStudentName] = useState<string | null>(null);
@@ -2735,14 +2741,14 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
   useEffect(() => {
     setLedgerPage(1);
-    setSelectedIds(new Set());
+    // Clear the "all matching" scope + exclusions when filters/search change (Case 5).
+    // Explicit selectedIds persist so records picked on earlier pages stay checked.
+    setSelectAllMatching(false);
+    setExcludedIds(new Set());
     setExpandedLedgerRow(null);
   }, [search, statusFilter, classFilter, feeNameFilter, feeTypeFilter, viewSessionId]);
-
-  useEffect(() => {
-    setSelectedIds(new Set());
-    setExpandedLedgerRow(null);
-  }, [ledgerPage]);
+  // NOTE: we intentionally do NOT clear selectedIds on page change —
+  // selections persist across pagination (see task #272).
 
   // Fee structures remain the source for historical display-name fallbacks.
   const { data: feeStructures = [] } = useQuery<FeeStructure[]>({
@@ -3157,6 +3163,24 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   // The server applies all ledger filters; these are only the current page rows.
   const filtered = feeRecords;
 
+  // ── Selection derived state ───────────────────────────────────────────────
+  const inSelectionMode = (selectedIds.size > 0 || selectAllMatching) && canRecord && !isArchiveMode;
+  const currentPageIds  = filtered.map(r => r.id);
+
+  // isRowSelected: in "all matching" mode a row is selected unless explicitly excluded.
+  const isRowSelected = (id: number) =>
+    selectAllMatching ? !excludedIds.has(id) : selectedIds.has(id);
+
+  const allCurrentPageSelected =
+    currentPageIds.length > 0 && currentPageIds.every(isRowSelected);
+  const someCurrentPageSelected =
+    currentPageIds.some(isRowSelected);
+
+  // effectiveSelectedCount: total matching minus any explicit exclusions.
+  const effectiveSelectedCount = selectAllMatching
+    ? Math.max(0, ledgerTotal - excludedIds.size)
+    : selectedIds.size;
+
   // Distinct fee names/types come from fee structures so pagination does not
   // remove filter options that are not present on the current page.
   const allFeeNames = useMemo(() =>
@@ -3217,16 +3241,16 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
           {allFeeTypes.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
         <div className="flex gap-2 ml-auto items-center">
-          {canRecord && !isArchiveMode && selectedIds.size === 0 && filtered.length > 0 && (
+          {canRecord && !isArchiveMode && !inSelectionMode && filtered.length > 0 && (
             <button
               onClick={() => setSelectedIds(new Set(filtered.map(r => r.id)))}
               className="text-xs text-white/40 hover:text-cyan-400 transition-colors underline underline-offset-2">
               Select all
             </button>
           )}
-          {selectedIds.size > 0 && (
+          {inSelectionMode && (
             <button
-              onClick={() => setSelectedIds(new Set())}
+              onClick={() => { setSelectedIds(new Set()); setSelectAllMatching(false); setExcludedIds(new Set()); }}
               className="text-xs text-white/40 hover:text-white/70 transition-colors underline underline-offset-2">
               Clear
             </button>
@@ -3286,9 +3310,53 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                 <tr className="border-b border-white/10 bg-white/5">
                   {/* Expand chevron */}
                   <th className="px-2 py-3 w-8" />
-                  {/* Checkbox column header — only visible when rows are selected */}
-                  {selectedIds.size > 0 && canRecord && !isArchiveMode && (
-                    <th className="px-3 py-3 w-8" />
+                  {/* Tri-state header checkbox — visible whenever selection mode is active */}
+                  {inSelectionMode && (
+                    <th className="px-3 py-3 w-8">
+                      <input
+                        type="checkbox"
+                        className="accent-cyan-500 w-4 h-4 cursor-pointer"
+                        checked={allCurrentPageSelected}
+                        ref={(el) => {
+                          if (el) el.indeterminate = someCurrentPageSelected && !allCurrentPageSelected;
+                        }}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            if (selectAllMatching) {
+                              // Remove current page from exclusion set
+                              setExcludedIds(prev => {
+                                const next = new Set(prev);
+                                currentPageIds.forEach(id => next.delete(id));
+                                return next;
+                              });
+                            } else {
+                              // Add current page to explicit selection
+                              setSelectedIds(prev => {
+                                const next = new Set(prev);
+                                currentPageIds.forEach(id => next.add(id));
+                                return next;
+                              });
+                            }
+                          } else {
+                            if (selectAllMatching) {
+                              // Add current page to exclusion set (keep scope, exclude these)
+                              setExcludedIds(prev => {
+                                const next = new Set(prev);
+                                currentPageIds.forEach(id => next.add(id));
+                                return next;
+                              });
+                            } else {
+                              // Remove current page from explicit selection
+                              setSelectedIds(prev => {
+                                const next = new Set(prev);
+                                currentPageIds.forEach(id => next.delete(id));
+                                return next;
+                              });
+                            }
+                          }
+                        }}
+                      />
+                    </th>
                   )}
                   {["Invoice No.","Receipt No.","Student","DSID","Class","Section","Fee Name","Fee Type","Fee Period","Frequency","Amount","Due Date","Status","Payment Method","Paid On","Acad. Year","Actions"].map((h, i) => (
                     <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 10 || i === 16 ? "text-right" : i >= 11 && i <= 15 ? "text-center" : "text-left"}`}>{h}</th>
@@ -3296,16 +3364,48 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                 </tr>
               </thead>
               <tbody>
+                {/* ── Select-all-matching banner ──────────────────────────────────────── */}
+                {inSelectionMode && (selectAllMatching || (allCurrentPageSelected && ledgerTotal > filtered.length)) && (
+                  <tr>
+                    <td colSpan={19} className="py-2 px-6 bg-cyan-950/40 border-b border-cyan-800/30 text-center text-xs text-cyan-300">
+                      {selectAllMatching ? (
+                        <>
+                          {excludedIds.size > 0 ? (
+                            <><span className="font-semibold">{effectiveSelectedCount.toLocaleString()}</span> of <span className="font-semibold">{ledgerTotal.toLocaleString()}</span> matching records selected.</>
+                          ) : (
+                            <>All <span className="font-semibold">{ledgerTotal.toLocaleString()}</span> matching records are selected.</>
+                          )}{" "}
+                          <button
+                            onClick={() => { setSelectAllMatching(false); setSelectedIds(new Set()); setExcludedIds(new Set()); }}
+                            className="underline hover:text-white transition-colors">
+                            Clear selection
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          All{" "}
+                          <span className="font-semibold">{filtered.length}</span>{" "}
+                          records on this page are selected.{" "}
+                          <button
+                            onClick={() => { setSelectAllMatching(true); setExcludedIds(new Set()); }}
+                            className="underline hover:text-white transition-colors">
+                            Select all {ledgerTotal.toLocaleString()} matching records
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                )}
                 {filtered.map(rec => {
                   const isExpanded = expandedLedgerRow === rec.id;
                   const detail = detailCache.get(rec.id);
                   const isLoadingDetail = detailLoading === rec.id;
                   const activeSection = detailSection[rec.id] ?? 0;
                   const mainPayment = detail?.payment ?? null;
-                  const colSpan = 17 + (selectedIds.size > 0 && canRecord && !isArchiveMode ? 1 : 0);
+                  const colSpan = 17 + (inSelectionMode ? 1 : 0) + 1; /* +1 for chevron */
                   return (
                   <React.Fragment key={rec.id}>
-                  <tr className={`border-b border-white/5 transition-colors ${selectedIds.has(rec.id) ? "bg-red-900/10" : isExpanded ? "bg-white/[0.04]" : "hover:bg-white/5"}`}
+                  <tr className={`border-b border-white/5 transition-colors ${isRowSelected(rec.id) ? "bg-red-900/10" : isExpanded ? "bg-white/[0.04]" : "hover:bg-white/5"}`}
                     onClick={(e) => {
                       const t = e.target as HTMLElement;
                       if (!t.closest("button") && !t.closest("input") && !t.closest("a")) toggleLedgerRow(rec.id);
@@ -3317,17 +3417,27 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                         ? <ChevronUp className="w-3.5 h-3.5 text-cyan-400" />
                         : <ChevronDown className="w-3.5 h-3.5" />}
                     </td>
-                    {/* Row checkbox — appears only after "Select All" activates selection mode */}
-                    {selectedIds.size > 0 && canRecord && !isArchiveMode && (
+                    {/* Row checkbox — visible whenever selection mode is active */}
+                    {inSelectionMode && (
                       <td className="px-3 py-3">
                         <input
                           type="checkbox"
                           className="accent-cyan-500 w-4 h-4 cursor-pointer"
-                          checked={selectedIds.has(rec.id)}
+                          checked={isRowSelected(rec.id)}
                           onChange={e => {
-                            const next = new Set(selectedIds);
-                            if (e.target.checked) next.add(rec.id); else next.delete(rec.id);
-                            setSelectedIds(next);
+                            if (selectAllMatching) {
+                              // Stay in "all matching" mode — just adjust the exclusion set.
+                              // Unchecking adds to excludedIds; re-checking removes from it.
+                              setExcludedIds(prev => {
+                                const next = new Set(prev);
+                                if (!e.target.checked) next.add(rec.id); else next.delete(rec.id);
+                                return next;
+                              });
+                            } else {
+                              const next = new Set(selectedIds);
+                              if (e.target.checked) next.add(rec.id); else next.delete(rec.id);
+                              setSelectedIds(next);
+                            }
                           }}
                         />
                       </td>
@@ -3834,10 +3944,10 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         <span className="text-white/30">
           <span className="text-white/50 font-semibold">{filtered.length}</span> of <span className="text-white/50 font-semibold">{ledgerTotal}</span> records
         </span>
-        {selectedIds.size > 0 && (
+        {(selectedIds.size > 0 || selectAllMatching) && (
           <>
             <span className="text-white/20">·</span>
-            <span className="text-red-400/80"><span className="font-semibold">{selectedIds.size}</span> selected</span>
+            <span className="text-red-400/80"><span className="font-semibold">{effectiveSelectedCount.toLocaleString()}</span> selected</span>
           </>
         )}
       </div>
