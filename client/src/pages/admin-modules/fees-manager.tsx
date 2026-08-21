@@ -2650,6 +2650,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [showForm, setShowForm] = useState(false);
   const [addFeeSuccessId, setAddFeeSuccessId] = useState<number | null>(null);
   const [showExportLedger, setShowExportLedger] = useState(false);
+  const [isDownloadingLedgerPdf, setIsDownloadingLedgerPdf]  = useState(false);
+  const [isDownloadingTxPdf,     setIsDownloadingTxPdf]      = useState(false);
   const [editing, setEditing] = useState<FeeRecordWithStudent | null>(null);
   const [showStandalonePay, setShowStandalonePay] = useState(false);
   const [showPaymentsModal, setShowPaymentsModal] = useState(false);
@@ -2819,6 +2821,62 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     } catch { /* non-critical */ }
     finally { setSavingNotes(prev => { const s = new Set(prev); s.delete(feeRecordId); return s; }); }
   }, []);
+
+  // ── PDF download handlers ─────────────────────────────────────────────────
+  const downloadLedgerPdf = useCallback(async () => {
+    setIsDownloadingLedgerPdf(true);
+    try {
+      const params = new URLSearchParams();
+      if (search.trim())               params.set("search",  search.trim());
+      if (statusFilter !== "all")      params.set("status",  statusFilter);
+      if (classFilter  !== "all")      params.set("class",   classFilter);
+      if (feeNameFilter !== "all")     params.set("feeName", feeNameFilter);
+      if (feeTypeFilter !== "all")     params.set("feeType", feeTypeFilter);
+      const url = `/api/admin/fees/ledger/pdf${params.size ? "?" + params.toString() : ""}`;
+      const r = await sessionFetch(url);
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ message: "Download failed" }));
+        toast({ title: "PDF download failed", description: err.message, variant: "destructive" });
+        return;
+      }
+      const blob = await r.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const match = /filename="([^"]+)"/.exec(cd);
+      a.download = match?.[1] ?? "Fee-Ledger.pdf";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch {
+      toast({ title: "PDF download failed", description: "Could not generate the ledger PDF.", variant: "destructive" });
+    } finally {
+      setIsDownloadingLedgerPdf(false);
+    }
+  }, [sessionFetch, toast, search, statusFilter, classFilter, feeNameFilter, feeTypeFilter]);
+
+  const downloadTransactionPdf = useCallback(async () => {
+    setIsDownloadingTxPdf(true);
+    try {
+      const r = await sessionFetch("/api/admin/fees/payments/report/pdf");
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ message: "Download failed" }));
+        toast({ title: "PDF download failed", description: err.message, variant: "destructive" });
+        return;
+      }
+      const blob = await r.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const match = /filename="([^"]+)"/.exec(cd);
+      a.download = match?.[1] ?? "Payment-Transaction-Report.pdf";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch {
+      toast({ title: "PDF download failed", description: "Could not generate the transaction report PDF.", variant: "destructive" });
+    } finally {
+      setIsDownloadingTxPdf(false);
+    }
+  }, [sessionFetch, toast]);
 
   // Failed payment counts — per-fee-record badge showing how many payment_failed audit entries exist
   const { data: failedCounts = {} } = useQuery<Record<number, { count: number; lastError: string | null }>>({
@@ -3173,6 +3231,18 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
               Clear
             </button>
           )}
+          <Button size="sm" variant="outline" onClick={downloadLedgerPdf} disabled={isDownloadingLedgerPdf}
+            title="Download the current filtered ledger as a PDF"
+            className="border-violet-700 text-violet-400 hover:bg-violet-900/30 gap-1">
+            {isDownloadingLedgerPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+            Ledger PDF
+          </Button>
+          <Button size="sm" variant="outline" onClick={downloadTransactionPdf} disabled={isDownloadingTxPdf}
+            title="Download all payment transactions for this session as a PDF"
+            className="border-blue-700 text-blue-400 hover:bg-blue-900/30 gap-1">
+            {isDownloadingTxPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+            Tx Report PDF
+          </Button>
           <Button size="sm" variant="outline" onClick={() => setShowExportLedger(true)}
             className="border-emerald-700 text-emerald-400 hover:bg-emerald-900/30 gap-1">
             <Download className="w-4 h-4" /> Export Ledger

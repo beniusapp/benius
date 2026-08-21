@@ -57,6 +57,20 @@ High-value payment re-auth: amounts ≥ ₹10 000 require a second PIN confirmat
 
 **Test coverage:** `server/__tests__/late-fee-engine.test.ts` (27 pure unit tests, all pass in isolation); `server/__tests__/late-fee-integration.test.ts` (8 tests, 1 unit guard passes in isolation, 7 DB tests pass in full `npm test` suite — same as all other DB integration tests).
 
+## Ledger & Transaction History PDF Exports
+
+**Generators:** `server/ledger-pdf.ts` (Fee Ledger) and `server/transaction-pdf.ts` (Payment Transaction Report) — PDFKit A4 landscape, DejaVu Sans font.
+
+**Endpoints:**
+- `GET /api/admin/fees/ledger/pdf` — Fee Ledger PDF; params: `search`, `status`, `class`, `feeName`, `feeType`, `dateFrom`, `dateTo`; filename `Fee-Ledger-{session}.pdf`
+- `GET /api/admin/fees/payments/report/pdf` — Payment Transaction Report PDF; params: `search`, `method`, `dateFrom`, `dateTo`; filename `Payment-Transaction-Report-{session}.pdf`
+
+**Client:** Two new buttons in `LedgerTab` toolbar — "Ledger PDF" (violet) and "Tx Report PDF" (blue) — appear left of the existing "Export Ledger" CSV button. Each button passes the current filter state as query params and uses `sessionFetch` for tenant isolation.
+
+**Why A4 landscape:** Both reports have 13 columns; portrait A4 (~500pt usable) cannot fit them without illegible text.
+
+**Design:** Navy column headers, alternating row shading, column-aligned totals row on last page, filter summary, page numbers, repeat headers every page, session label in title.
+
 ## PDF Downloads for Invoices and Receipts
 
 **Generators:** `server/invoice-pdf.ts` (invoice) and `server/receipt-pdf.ts` (receipt) — pure PDFKit, no headless browser.

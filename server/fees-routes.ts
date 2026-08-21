@@ -42,6 +42,8 @@ import { formatDateOnly, formatInstantIST, todayInIST } from "@shared/ist-time";
 import { renderReceiptHtml, type ReceiptData } from "./receipt-renderer";
 import { renderInvoicePdf } from "./invoice-pdf";
 import { renderReceiptPdf } from "./receipt-pdf";
+import { renderLedgerPdf, type LedgerRow } from "./ledger-pdf";
+import { renderTransactionPdf, type TxRow } from "./transaction-pdf";
 import {
   getRefundEligibility,
   markRefundReconciliationRequired,
@@ -5231,6 +5233,215 @@ td:last-child{font-weight:600;word-break:break-all;}
     res.setHeader("Content-Disposition", `attachment; filename="payment-ledger-${dateTag}.csv"`);
     // BOM for Excel UTF-8 detection
     res.send("\uFEFF" + csv);
+  });
+
+  // ── School-wide Ledger — PDF download ────────────────────────────────────
+  app.get("/api/admin/fees/ledger/pdf", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+
+    const {
+      search:   searchQ,
+      status:   statusFilter,
+      class:    classFilter,
+      feeType:  feeTypeFilter,
+      feeName:  feeNameFilter,
+      dateFrom, dateTo,
+    } = req.query as Record<string, string | undefined>;
+
+    try {
+      const rows = await db.execute(sql`
+        SELECT
+          fr.invoice_number    AS invoice_number,
+          fr.receipt_number    AS receipt_number,
+          s.name               AS student_name,
+          s.digital_student_id AS student_id,
+          s.class              AS class,
+          s.section            AS section,
+          COALESCE(fr.fee_name, fs.name, fr.fee_type) AS fee_name,
+          fr.fee_type          AS fee_type,
+          fr.amount            AS invoice_amount,
+          COALESCE(p.total_paid, 0)::int                          AS amount_paid,
+          GREATEST(fr.amount - COALESCE(p.total_paid, 0), 0)::int AS outstanding,
+          fr.status            AS status,
+          fr.due_date          AS due_date,
+          fr.paid_date         AS paid_date,
+          fr.academic_year     AS academic_year,
+          p.last_method        AS payment_method,
+          p.last_reference     AS reference_number,
+          fr.notes             AS notes,
+          fr.fee_period_start  AS fee_period_start,
+          fr.fee_period_end    AS fee_period_end
+        FROM fee_records fr
+        LEFT JOIN students s ON s.id = fr.student_id
+        LEFT JOIN fee_structures fs ON fs.fee_type = fr.fee_type AND fs.school_id = fr.school_id
+        LEFT JOIN (
+          SELECT
+            fee_record_id,
+            SUM(amount)::int AS total_paid,
+            (array_agg(payment_method  ORDER BY created_at DESC))[1] AS last_method,
+            (array_agg(reference_number ORDER BY created_at DESC))[1] AS last_reference
+          FROM payment_records
+          WHERE school_id = ${schoolId} AND fee_record_id IS NOT NULL
+          GROUP BY fee_record_id
+        ) p ON p.fee_record_id = fr.id
+        WHERE fr.school_id = ${schoolId}
+          ${sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``}
+          ${searchQ     ? sql`AND (s.name ILIKE ${"%" + searchQ + "%"} OR s.digital_student_id ILIKE ${"%" + searchQ + "%"})` : sql``}
+          ${statusFilter && statusFilter !== "all" ? sql`AND fr.status = ${statusFilter}` : sql``}
+          ${dateFrom    ? sql`AND fr.due_date >= ${dateFrom}` : sql``}
+          ${dateTo      ? sql`AND fr.due_date <= ${dateTo}`   : sql``}
+          ${classFilter    && classFilter !== "all"   ? sql`AND s.class = ${classFilter}`   : sql``}
+          ${feeTypeFilter  && feeTypeFilter !== "all" ? sql`AND fr.fee_type = ${feeTypeFilter}` : sql``}
+          ${feeNameFilter  && feeNameFilter !== "all" ? sql`AND COALESCE(fr.fee_name, fs.name, fr.fee_type) = ${feeNameFilter}` : sql``}
+        ORDER BY s.class, s.name, fr.due_date
+      `);
+
+      const schoolRow = (await db.execute(sql`
+        SELECT name, logo_url, address_line1, address_line2, city, state, pin_code, phone, email
+        FROM schools WHERE id = ${schoolId} LIMIT 1
+      `)).rows[0] as any;
+
+      let sessionLabel: string | null = null;
+      if (sessionFilter) {
+        const sess = (await db.execute(sql`
+          SELECT session_name FROM academic_sessions WHERE id = ${sessionFilter} LIMIT 1
+        `)).rows[0] as any;
+        sessionLabel = sess?.session_name ?? null;
+      }
+
+      const logoRelUrl = schoolRow?.logo_url ?? null;
+      const logoUrl = logoRelUrl
+        ? (/^https?:\/\//i.test(logoRelUrl) ? logoRelUrl : `${req.protocol}://${req.get("host")}${logoRelUrl}`)
+        : null;
+
+      const pdfBuffer = await renderLedgerPdf({
+        school: {
+          name: schoolRow?.name ?? "School", logoUrl,
+          addressLine1: schoolRow?.address_line1 ?? null,
+          addressLine2: schoolRow?.address_line2 ?? null,
+          city: schoolRow?.city ?? null, state: schoolRow?.state ?? null,
+          pinCode: schoolRow?.pin_code ?? null,
+          phone: schoolRow?.phone ?? null, email: schoolRow?.email ?? null,
+        },
+        sessionLabel,
+        filters: {
+          search:   searchQ   || undefined,
+          status:   (statusFilter && statusFilter !== "all") ? statusFilter : undefined,
+          class:    (classFilter  && classFilter  !== "all") ? classFilter  : undefined,
+          feeName:  (feeNameFilter && feeNameFilter !== "all") ? feeNameFilter : undefined,
+          feeType:  (feeTypeFilter && feeTypeFilter !== "all") ? feeTypeFilter : undefined,
+          dateFrom: dateFrom || undefined,
+          dateTo:   dateTo   || undefined,
+        },
+        rows: (rows.rows as any[]) as LedgerRow[],
+        generatedAtIST: formatInstantIST(new Date()),
+      });
+
+      const sessionTag = sessionLabel ? sessionLabel.replace(/[^a-zA-Z0-9-]/g, "-") : todayInIST();
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="Fee-Ledger-${sessionTag}.pdf"`);
+      res.send(pdfBuffer);
+    } catch (err) {
+      console.error("[ledger-pdf]", err);
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── School-wide Transaction History — PDF download ────────────────────────
+  app.get("/api/admin/fees/payments/report/pdf", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+
+    const {
+      search:       searchQ,
+      method:       methodFilter,
+      dateFrom,
+      dateTo,
+    } = req.query as Record<string, string | undefined>;
+
+    try {
+      const rows = await db.execute(sql`
+        SELECT
+          pr.id,
+          s.name               AS student_name,
+          s.digital_student_id AS student_id,
+          fr.invoice_number    AS invoice_number,
+          pr.receipt_number    AS receipt_number,
+          COALESCE(fr.fee_name, fs.name, fr.fee_type) AS fee_name,
+          fr.fee_type          AS fee_type,
+          pr.payment_method,
+          pr.received_date,
+          pr.created_at,
+          pr.amount,
+          pr.late_fee_paid,
+          pr.gateway_status,
+          pr.razorpay_payment_id,
+          pr.razorpay_order_id,
+          pr.reference_number
+        FROM payment_records pr
+        LEFT JOIN students s ON s.id = pr.student_id AND s.school_id = pr.school_id
+        LEFT JOIN fee_records fr ON fr.id = pr.fee_record_id AND fr.school_id = pr.school_id
+        LEFT JOIN fee_structures fs ON fs.fee_type = fr.fee_type AND fs.school_id = fr.school_id
+        WHERE pr.school_id = ${schoolId}
+          ${sessionFilter != null ? sql`AND pr.session_id = ${sessionFilter}` : sql``}
+          ${searchQ ? sql`AND (s.name ILIKE ${"%" + searchQ + "%"} OR s.digital_student_id ILIKE ${"%" + searchQ + "%"})` : sql``}
+          ${methodFilter ? sql`AND pr.payment_method = ${methodFilter}` : sql``}
+          ${dateFrom ? sql`AND pr.received_date >= ${dateFrom}` : sql``}
+          ${dateTo   ? sql`AND pr.received_date <= ${dateTo}`   : sql``}
+        ORDER BY pr.created_at DESC
+      `);
+
+      const schoolRow = (await db.execute(sql`
+        SELECT name, logo_url, address_line1, address_line2, city, state, pin_code, phone, email
+        FROM schools WHERE id = ${schoolId} LIMIT 1
+      `)).rows[0] as any;
+
+      let sessionLabel: string | null = null;
+      if (sessionFilter) {
+        const sess = (await db.execute(sql`
+          SELECT session_name FROM academic_sessions WHERE id = ${sessionFilter} LIMIT 1
+        `)).rows[0] as any;
+        sessionLabel = sess?.session_name ?? null;
+      }
+
+      const logoRelUrl = schoolRow?.logo_url ?? null;
+      const logoUrl = logoRelUrl
+        ? (/^https?:\/\//i.test(logoRelUrl) ? logoRelUrl : `${req.protocol}://${req.get("host")}${logoRelUrl}`)
+        : null;
+
+      const pdfBuffer = await renderTransactionPdf({
+        school: {
+          name: schoolRow?.name ?? "School", logoUrl,
+          addressLine1: schoolRow?.address_line1 ?? null,
+          addressLine2: schoolRow?.address_line2 ?? null,
+          city: schoolRow?.city ?? null, state: schoolRow?.state ?? null,
+          pinCode: schoolRow?.pin_code ?? null,
+          phone: schoolRow?.phone ?? null, email: schoolRow?.email ?? null,
+        },
+        sessionLabel,
+        filters: {
+          search:   searchQ      || undefined,
+          method:   methodFilter || undefined,
+          dateFrom: dateFrom     || undefined,
+          dateTo:   dateTo       || undefined,
+        },
+        rows: (rows.rows as any[]) as TxRow[],
+        generatedAtIST: formatInstantIST(new Date()),
+      });
+
+      const sessionTag = sessionLabel ? sessionLabel.replace(/[^a-zA-Z0-9-]/g, "-") : todayInIST();
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="Payment-Transaction-Report-${sessionTag}.pdf"`);
+      res.send(pdfBuffer);
+    } catch (err) {
+      console.error("[transaction-pdf]", err);
+      res.status(500).json({ message: String(err) });
+    }
   });
 
   // ── Receipt Backfill (one-time, idempotent) ───────────────────────────────
