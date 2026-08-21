@@ -2054,7 +2054,7 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
                       <span className="text-white/60 text-sm">{fmt(p.amount)}</span>
                       {p.id && (
                         <button type="button"
-                          onClick={() => window.open(`/api/admin/fees/payments/${p.id}/receipt`, "_blank")}
+                          onClick={() => window.open(`/api/admin/fees/payments/${p.id}/receipt?print=1`, "_blank")}
                           className="text-white/40 hover:text-cyan-400 transition-colors" title="Print receipt">
                           <Printer className="w-4 h-4" />
                         </button>
@@ -2370,7 +2370,7 @@ ${filterDesc ? `<div class="filter-badge">Filtered: ${esc(filterDesc)}</div>` : 
                         {methodLabel[p.paymentMethod] ?? p.paymentMethod}
                       </span>
                       <Button size="icon" variant="ghost"
-                        onClick={() => window.open(`/api/admin/fees/payments/${p.id}/receipt`, "_blank")}
+                        onClick={() => window.open(`/api/admin/fees/payments/${p.id}/receipt?print=1`, "_blank")}
                         className="h-6 w-6 text-white/30 hover:text-cyan-400"
                         title="Print receipt">
                         <Printer className="w-3 h-3" />
@@ -3428,8 +3428,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                             <Button size="sm" variant="ghost"
                               onClick={() => window.open(
                                 offlinePayment
-                                  ? `/api/admin/fees/payments/${offlinePayment.id}/receipt`
-                                  : `/api/admin/fees/${rec.id}/receipt`,
+                                  ? `/api/admin/fees/payments/${offlinePayment.id}/receipt?print=1`
+                                  : `/api/admin/fees/${rec.id}/receipt?print=1`,
                                 "_blank",
                               )}
                               className="h-7 px-2 text-xs text-cyan-400 hover:bg-cyan-900/30 gap-1"
@@ -3483,8 +3483,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                                 {rec.status === "Paid" && (() => {
                                   const offPay = (paymentsByFeeRecordId.get(rec.id) ?? []).find(p => p.cashierNotes !== "Auto-recorded from Add Fee Record");
                                   const receiptHtmlUrl = offPay
-                                    ? `/api/admin/fees/payments/${offPay.id}/receipt`
-                                    : `/api/admin/fees/${rec.id}/receipt`;
+                                    ? `/api/admin/fees/payments/${offPay.id}/receipt?print=1`
+                                    : `/api/admin/fees/${rec.id}/receipt?print=1`;
                                   return (
                                     <Button size="sm" variant="ghost"
                                       onClick={() => window.open(receiptHtmlUrl, "_blank")}

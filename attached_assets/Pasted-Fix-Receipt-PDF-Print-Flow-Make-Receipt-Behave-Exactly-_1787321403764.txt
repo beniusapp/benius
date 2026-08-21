@@ -1,0 +1,293 @@
+Fix Receipt PDF/Print Flow — Make Receipt Behave Exactly Like Invoice
+
+I have now investigated the existing implementation carefully. Do not create a new PDF system. Do not create a separate PDF endpoint. Do not use PDFKit. Do not add a separate PDF button/icon beside Receipt.
+
+The existing Invoice already has the correct behavior. I want the Receipt to use the exact same mechanism.
+
+1. Existing Working Invoice Flow — DO NOT CHANGE IT
+
+Frontend:
+
+"client/src/pages/admin-modules/fees-manager.tsx"
+
+Function:
+
+"printInvoiceFromRecord"
+
+Current logic:
+
+const printInvoiceFromRecord = useCallback((recordId: number) => {
+  const printWindow = window.open(`/api/admin/fees/${recordId}/invoice`, "_blank");
+  if (!printWindow) {
+    toast({ title: "Invoice could not open", ... });
+  }
+}, [toast]);
+
+Backend route:
+
+"GET /api/admin/fees/:id/invoice"
+
+File:
+
+"server/fees-routes.ts"
+
+The route generates the invoice HTML through:
+
+"server/invoice-document.ts"
+
+"renderInvoiceDocument(data)"
+
+The renderer returns a complete HTML document containing print CSS and:
+
+<script>window.print()</script>
+
+Therefore the flow is:
+
+Click Invoice → open invoice HTML in new tab → browser automatically opens Print dialog → user selects Save as PDF.
+
+This is the behavior I want for Receipt.
+
+---
+
+2. Current Receipt Flow
+
+Receipt currently opens:
+
+/api/admin/fees/payments/${offlinePayment.id}/receipt
+
+or:
+
+/api/admin/fees/${rec.id}/receipt
+
+These routes already generate the receipt HTML through:
+
+"server/receipt-renderer.ts"
+
+The receipt renderer already contains the required print logic:
+
+if (window.location.search.indexOf('print=1') !== -1) {
+  window.onload = function() {
+    window.print();
+  };
+}
+
+Therefore the receipt system is already capable of doing exactly what the invoice does.
+
+The problem is simply that the Receipt URL is currently opened without "?print=1".
+
+---
+
+3. EXACT FIX REQUIRED
+
+Change the Receipt button URLs so they include:
+
+"?print=1"
+
+Change:
+
+/api/admin/fees/payments/${offlinePayment.id}/receipt
+
+to:
+
+/api/admin/fees/payments/${offlinePayment.id}/receipt?print=1
+
+And change:
+
+/api/admin/fees/${rec.id}/receipt
+
+to:
+
+/api/admin/fees/${rec.id}/receipt?print=1
+
+For example:
+
+onClick={() => window.open(
+  offlinePayment
+    ? `/api/admin/fees/payments/${offlinePayment.id}/receipt?print=1`
+    : `/api/admin/fees/${rec.id}/receipt?print=1`,
+  "_blank",
+)}
+
+---
+
+4. IMPORTANT — FIND EVERY RECEIPT BUTTON
+
+Do not fix only one Receipt button.
+
+Search the entire:
+
+"client/src/pages/admin-modules/fees-manager.tsx"
+
+for all places where a Receipt is opened.
+
+In particular, check:
+
+- Main Ledger & Transactions Receipt button
+- Accordion/expanded transaction Receipt button
+- Any "receiptHtmlUrl"
+- Any "window.open()" containing "/receipt"
+- Any other existing Receipt action
+
+Every existing receipt-print/open action must use the same:
+
+"?print=1"
+
+query parameter.
+
+Do NOT create another Receipt PDF button.
+
+---
+
+5. REMOVE/DO NOT USE THE SEPARATE PDF BUTTON
+
+I previously had a separate purple PDF button beside Receipt.
+
+That is NOT what I want.
+
+The UI should be:
+
+Receipt
+
+and clicking Receipt itself should open the receipt and automatically trigger the browser Print dialog.
+
+There should NOT be:
+
+Receipt | PDF
+
+or:
+
+Receipt | Download PDF
+
+or a separate PDF icon.
+
+The Receipt button itself is the print/Save-as-PDF action.
+
+The Invoice already works this way, so Receipt must match it.
+
+---
+
+6. DO NOT CREATE ANY OF THESE
+
+Do NOT:
+
+- Create "/receipt/pdf"
+- Create another PDF endpoint
+- Create a new PDF generator
+- Use PDFKit
+- Use Puppeteer
+- Use Playwright
+- Generate a PDF server-side
+- Fetch the HTML and convert it to a Blob
+- Use "URL.createObjectURL"
+- Download a PDF programmatically
+- Add a second PDF icon/button
+- Replace the existing receipt renderer
+- Rewrite the receipt HTML
+- Change the receipt design
+- Change receipt data
+- Change payment logic
+- Change invoice logic
+
+This is intentionally a minimal fix.
+
+---
+
+7. DO NOT CHANGE THE INVOICE
+
+The Invoice implementation is already correct.
+
+Do not modify:
+
+"printInvoiceFromRecord"
+
+Do not modify:
+
+"renderInvoiceDocument"
+
+Do not modify the invoice route.
+
+Use it as the reference implementation only.
+
+---
+
+8. EXPECTED FINAL BEHAVIOR
+
+After the fix:
+
+Invoice
+
+Click:
+
+Invoice
+
+→ new tab opens
+→ invoice HTML loads
+→ "window.print()" automatically runs
+→ Chrome Print dialog appears
+→ user selects Save as PDF
+
+Receipt
+
+Click:
+
+Receipt
+
+→ new tab opens
+→ receipt HTML loads
+→ because URL contains "?print=1"
+→ existing receipt renderer executes "window.print()"
+→ Chrome Print dialog appears
+→ user selects Save as PDF
+
+The two flows must therefore be functionally identical.
+
+---
+
+9. VERY IMPORTANT: VERIFY ON MOBILE CHROME
+
+I am testing this from Android Chrome.
+
+After implementing the change, verify that:
+
+1. Click a paid transaction's Receipt.
+2. A new tab opens.
+3. The receipt is displayed.
+4. The Android Chrome Save as PDF / Print screen opens automatically.
+5. The receipt can be saved as PDF.
+6. No separate PDF button is required.
+7. Invoice behavior remains unchanged.
+
+Test both:
+
+- Online/payment-record receipt
+- Offline/fee-record receipt
+
+Also test at least one receipt from each applicable payment method if the existing renderer supports them.
+
+---
+
+10. FINAL VERIFICATION
+
+Before saying the task is complete, search the codebase for:
+
+/receipt
+
+and verify every existing Receipt open/print action has the correct "?print=1" behavior.
+
+Also search for the separate PDF button you previously added and remove it if it was introduced solely for this receipt requirement.
+
+The final Ledger UI should show only:
+
+Receipt
+
+not:
+
+Receipt PDF
+
+and not:
+
+Receipt + PDF
+
+Again, the requirement is extremely simple:
+
+«Make Receipt behave exactly like Invoice by adding "?print=1" to the existing Receipt URL. Do not build another PDF system.»
