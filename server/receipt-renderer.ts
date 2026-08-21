@@ -341,19 +341,22 @@ export function renderReceiptHtml(data: ReceiptData): string {
           ${payment.providerCreatedIST ? row("Payment Initiated", payment.providerCreatedIST) : ""}
           ${payment.providerCapturedIST ? row("Payment Captured", payment.providerCapturedIST) : ""}
           ${payment.paymentDateTimeIST ? row("Application Recorded", payment.paymentDateTimeIST) : ""}
-          ${payment.recordedByName ? `<div class="field-row"><span class="field-label">Recorded By</span><span class="field-value" style="text-align:right;">${esc(payment.recordedByName)}${payment.recordedByRole ? `<span style="display:block;font-size:10.5px;font-weight:400;color:#6b7280;">${esc(roleLabel(payment.recordedByRole))}</span>` : ""}</span></div>` : ""}
+          ${payment.recordedByName ? `<div class="field-row"><span class="field-label">Processed By</span><span class="field-value" style="text-align:right;">${esc(payment.recordedByName)}${payment.recordedByRole ? `<span style="display:block;font-size:10.5px;font-weight:400;color:#6b7280;">${esc(roleLabel(payment.recordedByRole))}</span>` : ""}</span></div>` : ""}
         </div>
       </div>`;
   }
 
-  // ── Recorded By block (shared by offline + online) ────────────────────────
-  function recordedByHtml(): string {
-    if (!payment.recordedByName) return "";
-    const roleTxt = roleLabel(payment.recordedByRole);
+  // ── Processed By block (offline payments only) ───────────────────────────
+  // Never falls back to an email address — uses "School Finance Office" when
+  // the staff profile cannot be resolved. Email addresses must not appear on
+  // school-facing or parent-facing receipt documents.
+  function processedByHtml(): string {
+    const displayName = payment.recordedByName ?? "School Finance Office";
+    const roleTxt = payment.recordedByName ? roleLabel(payment.recordedByRole) : "";
     return `<div class="field-row">
-      <span class="field-label">Recorded By</span>
+      <span class="field-label">Processed By</span>
       <span class="field-value" style="text-align:right;">
-        ${esc(payment.recordedByName)}
+        ${esc(displayName)}
         ${roleTxt ? `<span style="display:block;font-size:10.5px;font-weight:400;color:#6b7280;">${esc(roleTxt)}</span>` : ""}
       </span>
     </div>`;
@@ -390,7 +393,7 @@ export function renderReceiptHtml(data: ReceiptData): string {
       }
       offlineFieldRows.push(row("Amount Received", inr(payment.amount)));
       if (od?.collectionLocation) offlineFieldRows.push(row("Collection Location", od.collectionLocation));
-      offlineFieldRows.push(recordedByHtml());
+      offlineFieldRows.push(processedByHtml());
 
     // ── Demand Draft ──────────────────────────────────────────────────────────
     } else if (isDemandDraft) {
@@ -407,7 +410,7 @@ export function renderReceiptHtml(data: ReceiptData): string {
       if (od?.depositReference) offlineFieldRows.push(row("Deposit Reference", od.depositReference, true));
       if (od?.returnDate) offlineFieldRows.push(row("Return Date", od.returnDate));
       if (od?.returnReason) offlineFieldRows.push(row("Return Reason", od.returnReason));
-      offlineFieldRows.push(recordedByHtml());
+      offlineFieldRows.push(processedByHtml());
 
     // ── Cheque ────────────────────────────────────────────────────────────────
     } else if (isCheque) {
@@ -423,7 +426,7 @@ export function renderReceiptHtml(data: ReceiptData): string {
       if (od?.depositReference) offlineFieldRows.push(row("Deposit Reference", od.depositReference, true));
       if (od?.returnDate) offlineFieldRows.push(row("Return Date", od.returnDate));
       if (od?.returnReason) offlineFieldRows.push(row("Return Reason", od.returnReason));
-      offlineFieldRows.push(recordedByHtml());
+      offlineFieldRows.push(processedByHtml());
 
     // ── UPI / QR ──────────────────────────────────────────────────────────────
     } else if (isUpi) {
@@ -433,7 +436,7 @@ export function renderReceiptHtml(data: ReceiptData): string {
       if (od?.transactionTime) offlineFieldRows.push(row("Transaction Date / Time", od.transactionTime));
       offlineFieldRows.push(row("Amount", inr(payment.amount)));
       if (od?.instrumentStatus) offlineFieldRows.push(row("Status", od.instrumentStatus));
-      offlineFieldRows.push(recordedByHtml());
+      offlineFieldRows.push(processedByHtml());
 
     // ── Bank Transfer / NEFT / RTGS / IMPS / Wire ─────────────────────────────
     } else {
@@ -446,7 +449,7 @@ export function renderReceiptHtml(data: ReceiptData): string {
       if (od?.transactionTime) offlineFieldRows.push(row("Transaction Date / Time", od.transactionTime));
       if (od?.instrumentStatus) offlineFieldRows.push(row("Status", od.instrumentStatus));
       offlineFieldRows.push(row("Amount", inr(payment.amount)));
-      offlineFieldRows.push(recordedByHtml());
+      offlineFieldRows.push(processedByHtml());
     }
 
     const nonEmpty = offlineFieldRows.filter(s => s.trim() !== "");

@@ -3736,13 +3736,28 @@ export function registerFeesRoutes(app: Express) {
             returnDate: odRow.return_date ?? null,
             returnReason: odRow.return_reason ?? null,
           } : null,
-          recordedByName: payRow.recorded_by_display_name ?? payRow.recorded_by_email ?? null,
+          // Never fall back to email — "School Finance Office" is the renderer's fallback
+          recordedByName: payRow.recorded_by_display_name ?? null,
           recordedByRole: payRow.recorded_by_role ?? null,
         },
         signature: { imageUrl: sigUrl, signatoryName },
         academicSessionLabel: sessionLabel,
         generatedAtIST: formatInstantIST(new Date()),
       };
+
+      // ── Cash denomination integrity check ──────────────────────────────────
+      if (payRow.payment_method === "Cash" && payRow.denomination_breakdown) {
+        const breakdown = payRow.denomination_breakdown as Record<string, number>;
+        const denomTotal = Object.entries(breakdown)
+          .filter(([, qty]) => Number(qty) > 0)
+          .reduce((sum, [denom, qty]) => sum + Number(denom) * Number(qty), 0);
+        const paidAmount = Number(payRow.amount ?? 0);
+        if (Math.abs(denomTotal - paidAmount) > 0.01) {
+          return res.status(400).json({
+            message: `Cash denomination total (₹${denomTotal.toLocaleString("en-IN")}) does not match the recorded payment amount (₹${paidAmount.toLocaleString("en-IN")}). Receipt cannot be generated until the denomination record is corrected.`,
+          });
+        }
+      }
 
       const html = renderReceiptHtml(receiptData);
       res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -4626,13 +4641,28 @@ td:last-child{font-weight:600;word-break:break-all;}
             returnDate: odRow.return_date ?? null,
             returnReason: odRow.return_reason ?? null,
           } : null,
-          recordedByName: payRow?.recorded_by_display_name ?? payRow?.recorded_by_email ?? null,
+          // Never fall back to email — "School Finance Office" is the renderer's fallback
+          recordedByName: payRow?.recorded_by_display_name ?? null,
           recordedByRole: payRow?.recorded_by_role ?? null,
         },
         signature: { imageUrl: sigUrl, signatoryName },
         academicSessionLabel: sessionLabel,
         generatedAtIST: formatInstantIST(new Date()),
       };
+
+      // ── Cash denomination integrity check ──────────────────────────────────
+      if (payRow?.payment_method === "Cash" && payRow?.denomination_breakdown) {
+        const breakdown = payRow.denomination_breakdown as Record<string, number>;
+        const denomTotal = Object.entries(breakdown)
+          .filter(([, qty]) => Number(qty) > 0)
+          .reduce((sum, [denom, qty]) => sum + Number(denom) * Number(qty), 0);
+        const paidAmount = Number(payRow.amount ?? 0);
+        if (Math.abs(denomTotal - paidAmount) > 0.01) {
+          return res.status(400).json({
+            message: `Cash denomination total (₹${denomTotal.toLocaleString("en-IN")}) does not match the recorded payment amount (₹${paidAmount.toLocaleString("en-IN")}). Receipt cannot be generated until the denomination record is corrected.`,
+          });
+        }
+      }
 
       const html = renderReceiptHtml(receiptData);
       res.setHeader("Content-Type", "text/html; charset=utf-8");
