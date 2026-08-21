@@ -12,7 +12,7 @@ import {
   Receipt, DollarSign, TrendingUp, TrendingDown, Banknote, Wallet, BookOpen, Bell, ExternalLink,
   Shield, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Lock, X, Printer, History, Download, FileText,
   FileCheck2, Building2, QrCode, Monitor, MessageSquare, Mail, Send, Eye, EyeOff, Zap, Phone, BarChart2, Calendar, Users,
-  PenLine, Upload, Undo2,
+  PenLine, Upload, Undo2, Filter, SlidersHorizontal, Check, Minus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,9 +27,14 @@ import { amountInWords, formatIndianRupees } from "@/lib/amount-in-words";
 import { formatPersistedInvoiceDateTimeIST } from "@/lib/invoice-date-time";
 import { offlinePaymentEntryDefaults, offlinePaymentDetailRows } from "@shared/offline-payment-details";
 import { formatDateOnly, formatDateTimeIST, todayInIST } from "@shared/ist-time";
+import {
+  type LedgerFilters, emptyLedgerFilters, ledgerFiltersToSearchParams,
+  ledgerFiltersToBody, countActiveLedgerFilters,
+} from "@shared/ledger-filters";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 interface StudentItem {
   id: number;
@@ -93,6 +98,7 @@ interface FeeStructure {
 }
 
 type InvoiceBreakdownRow = { name: string; purpose: string; amount: string };
+
 
 type InvoicePeriodOption = {
   value: string;
@@ -2487,43 +2493,72 @@ function clientFeePeriodLabel(start: string, end: string): string {
 
 // ─── Ledger Tab ───────────────────────────────────────────────────────────────
 
+type FilterOption = { value: string; label: string };
+type HeaderFilterProps = {
+  label: string; field: keyof LedgerFilters; toField?: keyof LedgerFilters; filters: LedgerFilters; setFilters: React.Dispatch<React.SetStateAction<LedgerFilters>>;
+  options?: FilterOption[]; kind?: "text" | "multi" | "range" | "date";
+};
+function HeaderFilter({ label, field, toField, filters, setFilters, options = [], kind = "multi" }: HeaderFilterProps) {
+  const active = Array.isArray(filters[field])
+    ? (filters[field] as string[]).length > 0
+    : filters[field] != null || Boolean(toField && filters[toField] != null);
+  const [open, setOpen] = useState(false); const [query, setQuery] = useState(""); const [mobile, setMobile] = useState(false);
+  const [draft, setDraft] = useState<LedgerFilters>(filters);
+  useEffect(() => { const sync = () => setMobile(window.matchMedia("(max-width: 767px)").matches); sync(); window.addEventListener("resize", sync); return () => window.removeEventListener("resize", sync); }, []);
+  useEffect(() => { if (open) setDraft(filters); }, [open, filters]);
+  const value = draft[field];
+  const visible = options.filter(option => option.label.toLowerCase().includes(query.toLowerCase()));
+  const selected = Array.isArray(value) ? value : [];
+  const selectedVisible = visible.filter(option => selected.includes(option.value)).length;
+  const allVisible = visible.length > 0 && selectedVisible === visible.length;
+  const someVisible = selectedVisible > 0 && !allVisible;
+  const setField = (key: keyof LedgerFilters, next: LedgerFilters[keyof LedgerFilters]) => setDraft(previous => ({ ...previous, [key]: next }));
+  const apply = () => { setFilters(draft); setOpen(false); };
+  const clear = () => {
+    setDraft(previous => ({ ...previous, [field]: Array.isArray(previous[field]) ? [] : null, ...(toField ? { [toField]: null } : {}) }));
+  };
+  const content = <div className="space-y-2.5 p-3 text-white">
+    <div className="flex items-center justify-between"><span className="text-xs font-semibold">{label}</span><button type="button" className="text-[11px] text-white/45 hover:text-white" onClick={clear}>Clear</button></div>
+    {kind === "text" && <Input autoFocus value={(value as string[])[0] ?? ""} onChange={e => setField(field, e.target.value ? [e.target.value] : [])} placeholder={`Contains ${label.toLowerCase()}...`} className="h-8 border-white/10 bg-white/5 text-xs" />}
+    {kind === "multi" && <><Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Find an option..." className="h-8 border-white/10 bg-white/5 text-xs" />
+      <button type="button" role="checkbox" aria-checked={someVisible ? "mixed" : allVisible} onClick={() => setField(field, allVisible ? selected.filter(v => !visible.some(option => option.value === v)) : [...new Set([...selected, ...visible.map(option => option.value)])])} className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-xs text-cyan-200 hover:bg-white/10">
+        <span className={`flex h-3.5 w-3.5 items-center justify-center rounded-sm border ${allVisible || someVisible ? "border-cyan-400 bg-cyan-500 text-[#08111f]" : "border-white/25"}`}>{allVisible ? <Check className="h-3 w-3" /> : someVisible ? <Minus className="h-3 w-3" /> : null}</span>Select all visible <span className="ml-auto text-white/35">{selected.length}</span>
+      </button>
+      <div className="max-h-44 space-y-0.5 overflow-y-auto pr-1">{visible.map(option => { const checked = selected.includes(option.value); return <button type="button" role="checkbox" aria-checked={checked} key={option.value} onClick={() => setField(field, checked ? selected.filter(v => v !== option.value) : [...selected, option.value])} className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-xs hover:bg-white/10"><span className={`flex h-3.5 w-3.5 items-center justify-center rounded-sm border ${checked ? "border-cyan-400 bg-cyan-500 text-[#08111f]" : "border-white/25"}`}>{checked && <Check className="h-3 w-3" />}</span>{option.label}</button>; })}</div>
+    </>}
+    {(kind === "range" || kind === "date") && <div className="grid grid-cols-2 gap-2"><Input type={kind === "date" ? "date" : "number"} value={value == null ? "" : String(value)} onChange={e => setField(field, kind === "range" ? (e.target.value === "" ? null : Number(e.target.value)) : (e.target.value || null))} placeholder={kind === "range" ? "Minimum" : "From"} className="h-8 border-white/10 bg-white/5 text-xs" /><Input type={kind === "date" ? "date" : "number"} value={toField && draft[toField] != null ? String(draft[toField]) : ""} onChange={e => toField && setField(toField, kind === "range" ? (e.target.value === "" ? null : Number(e.target.value)) : (e.target.value || null))} placeholder={kind === "range" ? "Maximum" : "To"} className="h-8 border-white/10 bg-white/5 text-xs" /></div>}
+    <div className="sticky bottom-0 -mx-3 flex justify-end gap-2 border-t border-white/10 bg-[#101d32] px-3 pt-2"><Button size="sm" variant="ghost" onClick={() => setOpen(false)} className="h-7 text-xs text-white/55">Cancel</Button><Button size="sm" onClick={apply} className="h-7 bg-cyan-600 text-xs hover:bg-cyan-500">Apply</Button></div>
+  </div>;
+  const trigger = <button type="button" onClick={mobile ? () => setOpen(true) : undefined} aria-label={`Filter ${label}`} aria-pressed={active} className={`ml-1 inline-flex h-5 w-5 items-center justify-center rounded transition-colors ${active ? "bg-cyan-400/15 text-cyan-300" : "text-white/25 hover:bg-white/10 hover:text-white/65"}`}><Filter className="h-3 w-3" /></button>;
+  if (mobile) return <>{trigger}<Sheet open={open} onOpenChange={setOpen}><SheetContent side="bottom" className="max-h-[82dvh] overflow-y-auto border-white/10 bg-[#101d32] p-0"><SheetHeader className="sr-only"><SheetTitle>{label} filter</SheetTitle><SheetDescription>Choose values for the {label.toLowerCase()} ledger column, then apply the filter.</SheetDescription></SheetHeader>{content}</SheetContent></Sheet></>;
+  return <Popover open={open} onOpenChange={setOpen}><PopoverTrigger asChild>{trigger}</PopoverTrigger><PopoverContent align="start" className="w-64 border-white/10 bg-[#101d32] p-0 shadow-2xl">{content}</PopoverContent></Popover>;
+}
+
 // ─── Export Ledger Dialog ─────────────────────────────────────────────────────
 
 interface ExportLedgerDialogProps {
-  availableFeeNames: string[];
   open: boolean;
   onClose: () => void;
-  availableClasses: string[];
-  availableFeeTypes: string[];
+  canonicalFilters: LedgerFilters;
 }
 
-function ExportLedgerDialog({ open, onClose, availableClasses, availableFeeTypes, availableFeeNames }: ExportLedgerDialogProps) {
+function ExportLedgerDialog({ open, onClose, canonicalFilters }: ExportLedgerDialogProps) {
   const { toast } = useToast();
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [cls, setCls] = useState("");
-  const [feeType, setFeeType] = useState("");
-  const [feeName, setFeeName] = useState("");
   const [isDownloading, setIsDownloading] = useState(false);
 
   useEffect(() => {
     if (!open) {
-      setDateFrom(""); setDateTo(""); setCls(""); setFeeType(""); setFeeName(""); setIsDownloading(false);
+      setIsDownloading(false);
     }
   }, [open]);
 
   async function handleExport() {
     setIsDownloading(true);
     try {
-      const params = new URLSearchParams();
-      if (dateFrom) params.set("dateFrom", dateFrom);
-      if (dateTo)   params.set("dateTo",   dateTo);
-      if (cls)      params.set("class",    cls);
-      if (feeType)  params.set("feeType",  feeType);
-      if (feeName)  params.set("feeName",  feeName);
+      const params = ledgerFiltersToSearchParams(canonicalFilters);
 
       const url = `/api/admin/fees/export-ledger${params.size ? "?" + params.toString() : ""}`;
-      const r = await fetch(url, { credentials: "include" });
+      const r = await sessionFetch(url);
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
         throw new Error((body as any).message ?? "Export failed");
@@ -2556,69 +2591,10 @@ function ExportLedgerDialog({ open, onClose, availableClasses, availableFeeTypes
           </DialogTitle>
         </DialogHeader>
 
-        <p className="text-white/50 text-sm">
-          Downloads a CSV with every fee record and its aggregated payment totals. Use filters to narrow the slice.
-        </p>
-
         <div className="space-y-4">
-          {/* Date range */}
-          <div>
-            <p className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-2">Due Date Range</p>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-white/60 mb-1 block">From</label>
-                <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 [color-scheme:dark]" />
-              </div>
-              <div>
-                <label className="text-xs text-white/60 mb-1 block">To</label>
-                <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-                  className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 [color-scheme:dark]" />
-              </div>
-            </div>
-          </div>
-
-          {/* Class filter */}
-          <div>
-            <label className="text-xs text-white/60 mb-1 block">Class</label>
-            <select value={cls} onChange={e => setCls(e.target.value)}
-              className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
-              <option value="">All Classes</option>
-              {availableClasses.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-
-          {/* Fee Name filter */}
-          <div>
-            <label className="text-xs text-white/60 mb-1 block">Fee Name</label>
-            <select value={feeName} onChange={e => setFeeName(e.target.value)}
-              className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
-              <option value="">All Fee Names</option>
-              {availableFeeNames.map(fn => <option key={fn} value={fn}>{fn}</option>)}
-            </select>
-          </div>
-
-          {/* Fee Type filter */}
-          <div>
-            <label className="text-xs text-white/60 mb-1 block">Fee Type</label>
-            <select value={feeType} onChange={e => setFeeType(e.target.value)}
-              className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
-              <option value="">All Fee Types</option>
-              {availableFeeTypes.map(ft => <option key={ft} value={ft}>{ft}</option>)}
-            </select>
-          </div>
-
-          {/* Active filters summary */}
-          {(dateFrom || dateTo || cls || feeName || feeType) && (
-            <div className="px-3 py-2 rounded-lg bg-emerald-900/20 border border-emerald-700/30 text-xs text-emerald-400 space-y-0.5">
-              <p className="font-semibold mb-1">Active filters:</p>
-              {dateFrom && <p>Due from: {new Date(dateFrom).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>}
-              {dateTo   && <p>Due to: {new Date(dateTo).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>}
-              {cls      && <p>Class: {cls}</p>}
-              {feeName  && <p>Fee Name: {feeName}</p>}
-              {feeType  && <p>Fee Type: {feeType}</p>}
-            </div>
-          )}
+          <p className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-sm text-white/60">
+            This CSV will use the {countActiveLedgerFilters(canonicalFilters)} active ledger filter{countActiveLedgerFilters(canonicalFilters) === 1 ? "" : "s"} currently applied to the table.
+          </p>
 
           <div className="flex gap-2 justify-end pt-1">
             <Button variant="ghost" onClick={onClose} className="text-white/60">Cancel</Button>
@@ -2641,11 +2617,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 }) {
   const { toast } = useToast();
   const { selectedSession } = useSessionView();
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [classFilter, setClassFilter] = useState("all");
-  const [feeNameFilter, setFeeNameFilter] = useState("all");
-  const [feeTypeFilter, setFeeTypeFilter] = useState("all");
+  const [filters, setFilters] = useState<LedgerFilters>(() => emptyLedgerFilters());
+  const [showFilterOverview, setShowFilterOverview] = useState(false);
   const [ledgerPage, setLedgerPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [addFeeSuccessId, setAddFeeSuccessId] = useState<number | null>(null);
@@ -2722,17 +2695,10 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   });
 
   const { data: ledgerData, isLoading, isFetching } = useQuery<LedgerPageResponse>({
-    queryKey: ["/api/admin/fees", viewSessionId, ledgerPage, search, statusFilter, classFilter, feeNameFilter, feeTypeFilter],
+    queryKey: ["/api/admin/fees", viewSessionId, ledgerPage, filters],
     queryFn: async () => {
-      const params = new URLSearchParams({
-        page: String(ledgerPage),
-        pageSize: "20",
-      });
-      if (search.trim()) params.set("search", search.trim());
-      if (statusFilter !== "all") params.set("status", statusFilter);
-      if (classFilter !== "all") params.set("class", classFilter);
-      if (feeNameFilter !== "all") params.set("feeName", feeNameFilter);
-      if (feeTypeFilter !== "all") params.set("feeType", feeTypeFilter);
+      const params = ledgerFiltersToSearchParams(filters);
+      params.set("page", String(ledgerPage)); params.set("pageSize", "20");
       const r = await sessionFetch(`/api/admin/fees?${params.toString()}`);
       if (!r.ok) throw new Error("Failed to fetch fee records");
       return r.json();
@@ -2750,7 +2716,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     setSelectAllMatching(false);
     setExcludedIds(new Set());
     setExpandedLedgerRow(null);
-  }, [search, statusFilter, classFilter, feeNameFilter, feeTypeFilter, viewSessionId]);
+  }, [filters, viewSessionId]);
   // NOTE: we intentionally do NOT clear selectedIds on page change —
   // selections persist across pagination (see task #272).
 
@@ -2845,6 +2811,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       if (hasSelection) {
         // Build the body — filters + selection scope.
         const body: Record<string, unknown> = {
+          ...ledgerFiltersToBody(filters),
           selectAllMatching,
           // Individual mode: send the explicit IDs.
           // All-matching mode: selectedIds are irrelevant; send empty array.
@@ -2852,11 +2819,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
           // Exclusions apply only in all-matching mode.
           excludedIds: selectAllMatching ? [...excludedIds] : [],
         };
-        if (search.trim())           body.search  = search.trim();
-        if (statusFilter !== "all")  body.status  = statusFilter;
-        if (classFilter  !== "all")  body.class   = classFilter;
-        if (feeNameFilter !== "all") body.feeName = feeNameFilter;
-        if (feeTypeFilter !== "all") body.feeType = feeTypeFilter;
         r = await sessionFetch("/api/admin/fees/ledger/pdf", {
           method:  "POST",
           headers: { "Content-Type": "application/json" },
@@ -2864,12 +2826,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         });
       } else {
         // No selection — GET with toolbar filters, same as before.
-        const params = new URLSearchParams();
-        if (search.trim())               params.set("search",  search.trim());
-        if (statusFilter !== "all")      params.set("status",  statusFilter);
-        if (classFilter  !== "all")      params.set("class",   classFilter);
-        if (feeNameFilter !== "all")     params.set("feeName", feeNameFilter);
-        if (feeTypeFilter !== "all")     params.set("feeType", feeTypeFilter);
+        const params = ledgerFiltersToSearchParams(filters);
         r = await sessionFetch(`/api/admin/fees/ledger/pdf${params.size ? "?" + params.toString() : ""}`);
       }
 
@@ -2891,13 +2848,13 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     } finally {
       setIsDownloadingLedgerPdf(false);
     }
-  }, [sessionFetch, toast, search, statusFilter, classFilter, feeNameFilter, feeTypeFilter,
-      selectedIds, selectAllMatching, excludedIds]);
+  }, [toast, filters, selectedIds, selectAllMatching, excludedIds]);
 
   const downloadTransactionPdf = useCallback(async () => {
     setIsDownloadingTxPdf(true);
     try {
-      const r = await sessionFetch("/api/admin/fees/payments/report/pdf");
+      const params = ledgerFiltersToSearchParams(filters);
+      const r = await sessionFetch(`/api/admin/fees/payments/report/pdf?${params.toString()}`);
       if (!r.ok) {
         const err = await r.json().catch(() => ({ message: "Download failed" }));
         toast({ title: "PDF download failed", description: err.message, variant: "destructive" });
@@ -2916,7 +2873,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     } finally {
       setIsDownloadingTxPdf(false);
     }
-  }, [sessionFetch, toast]);
+  }, [toast, filters]);
 
   // Failed payment counts — per-fee-record badge showing how many payment_failed audit entries exist
   const { data: failedCounts = {} } = useQuery<Record<number, { count: number; lastError: string | null }>>({
@@ -3145,6 +3102,18 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     ? ledgerSchoolConfig!.classes
     : [...new Set(students.filter(s => s.isActive).map(s => s.class))].sort();
   const classes = studentClasses;
+  const { data: ledgerFilterOptions } = useQuery<{
+    classes: string[]; sections: string[]; feeNames: string[]; feeTypes: string[]; feePeriods: Array<{ value: string; label: string }>;
+    frequencies: string[]; statuses: string[]; paymentMethods: string[]; academicYears: string[];
+  }>({
+    queryKey: ["/api/admin/fees/filter-options", viewSessionId],
+    queryFn: async () => {
+      const r = await sessionFetch("/api/admin/fees/filter-options");
+      if (!r.ok) throw new Error("Failed to load filter options");
+      return r.json();
+    },
+    staleTime: 300_000,
+  });
 
   async function runStudentSearch() {
     const q = studentSearchQ.trim();
@@ -3196,6 +3165,62 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
   // The server applies all ledger filters; these are only the current page rows.
   const filtered = feeRecords;
+  const activeFilterEntries = useMemo(() => {
+    type ActiveFilterEntry = { keys: Array<keyof LedgerFilters>; label: string; value: string };
+    const entries: ActiveFilterEntry[] = [];
+    const paymentMethodLabels: Record<string, string> = {
+      Online: "Portal Payment",
+      BankTransfer: "Bank Transfer",
+      DemandDraft: "Demand Draft",
+      UpiQr: "UPI / QR",
+    };
+    const names: Partial<Record<keyof LedgerFilters, string>> = {
+      search: "Global search", invoiceNumbers: "Invoice", receiptNumbers: "Receipt",
+      studentNames: "Student", dsids: "DSID", referenceNumbers: "Reference",
+      classes: "Class", sections: "Section", feeNames: "Fee name", feeTypes: "Fee type",
+      feePeriods: "Fee period", frequencies: "Frequency", statuses: "Status",
+      paymentMethods: "Payment method", academicYears: "Academic year",
+    };
+    const simpleKeys: Array<keyof LedgerFilters> = [
+      "search", "invoiceNumbers", "receiptNumbers", "studentNames", "dsids",
+      "referenceNumbers", "classes", "sections", "feeNames", "feeTypes",
+      "feePeriods", "frequencies", "statuses", "paymentMethods", "academicYears",
+    ];
+    for (const key of simpleKeys) {
+      const raw = filters[key];
+      if (Array.isArray(raw) ? raw.length === 0 : raw == null || raw === "") continue;
+      const value = Array.isArray(raw)
+        ? raw.map(item => {
+            if (key === "feePeriods") return ledgerFilterOptions?.feePeriods.find(period => period.value === item)?.label ?? item;
+            if (key === "paymentMethods") return paymentMethodLabels[item] ?? item;
+            return item;
+          }).join(", ")
+        : String(raw);
+      entries.push({ keys: [key], label: names[key] ?? String(key), value });
+    }
+    if (filters.amountMin != null || filters.amountMax != null) {
+      entries.push({
+        keys: ["amountMin", "amountMax"],
+        label: "Amount",
+        value: `${filters.amountMin != null ? fmt(filters.amountMin) : "Any"} – ${filters.amountMax != null ? fmt(filters.amountMax) : "Any"}`,
+      });
+    }
+    if (filters.dueDateFrom || filters.dueDateTo) {
+      entries.push({
+        keys: ["dueDateFrom", "dueDateTo"],
+        label: "Due date",
+        value: `${filters.dueDateFrom ? fmtDate(filters.dueDateFrom) : "Any"} – ${filters.dueDateTo ? fmtDate(filters.dueDateTo) : "Any"}`,
+      });
+    }
+    if (filters.paidDateFrom || filters.paidDateTo) {
+      entries.push({
+        keys: ["paidDateFrom", "paidDateTo"],
+        label: "Paid date",
+        value: `${filters.paidDateFrom ? fmtDate(filters.paidDateFrom) : "Any"} – ${filters.paidDateTo ? fmtDate(filters.paidDateTo) : "Any"}`,
+      });
+    }
+    return entries;
+  }, [filters, ledgerFilterOptions]);
 
   // ── Selection derived state ───────────────────────────────────────────────
   const inSelectionMode = selectionModeActive && canRecord && !isArchiveMode;
@@ -3247,33 +3272,15 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
   return (
     <div className="space-y-4">
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-48">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name, ID, fee type or receipt no…"
-            className="w-full bg-[#1A2942] border border-white/10 rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-cyan-500" />
+      {/* Compact filter overview: column filters live in their headers. */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-[#101d32] p-2.5">
+        <div className="relative min-w-[240px] flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
+          <input aria-label="Search ledger" value={filters.search} onChange={e => setFilters(previous => ({ ...previous, search: e.target.value }))} placeholder="Search invoice, receipt, student or DSID..."
+            className="w-full rounded-lg border border-white/10 bg-[#1A2942] py-2 pl-9 pr-3 text-sm text-white placeholder:text-white/30 focus:border-cyan-500 focus:outline-none" />
         </div>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          className="bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-28">
-          <option value="all">All Status</option>
-          {["Due","Paid","Overdue"].map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <select value={classFilter} onChange={e => setClassFilter(e.target.value)}
-          className="bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-28">
-          <option value="all">All Classes</option>
-          {classes.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <select value={feeNameFilter} onChange={e => setFeeNameFilter(e.target.value)}
-          className="bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-32">
-          <option value="all">All Fee Names</option>
-          {allFeeNames.map(n => <option key={n} value={n}>{n}</option>)}
-        </select>
-        <select value={feeTypeFilter} onChange={e => setFeeTypeFilter(e.target.value)}
-          className="bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 min-w-32">
-          <option value="all">All Fee Types</option>
-          {allFeeTypes.map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
+        <button type="button" onClick={() => setShowFilterOverview(true)} className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-white/65 hover:border-cyan-400/40 hover:text-cyan-200"><SlidersHorizontal className="h-3.5 w-3.5 text-cyan-300" />Filters <span className="rounded bg-cyan-400/15 px-1.5 py-0.5 text-cyan-200">{countActiveLedgerFilters(filters)}</span></button>
+        {countActiveLedgerFilters(filters) > 0 && <button type="button" onClick={() => setFilters(emptyLedgerFilters())} className="text-xs text-cyan-300 hover:text-cyan-200">Clear all</button>}
         <div className="flex gap-2 ml-auto items-center">
           {canRecord && !isArchiveMode && !inSelectionMode && filtered.length > 0 && (
             <button
@@ -3392,8 +3399,20 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                       />
                     </th>
                   )}
-                  {["Invoice No.","Receipt No.","Student","DSID","Class","Section","Fee Name","Fee Type","Fee Period","Frequency","Amount","Due Date","Status","Payment Method","Paid On","Acad. Year","Actions"].map((h, i) => (
-                    <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 10 || i === 16 ? "text-right" : i >= 11 && i <= 15 ? "text-center" : "text-left"}`}>{h}</th>
+                  {([
+                    ["Invoice No.","invoiceNumbers","text"],["Receipt No.","receiptNumbers","text"],["Student","studentNames","text"],["DSID","dsids","text"],
+                    ["Class","classes","multi"],["Section","sections","multi"],["Fee Name","feeNames","multi"],["Fee Type","feeTypes","multi"],
+                    ["Fee Period","feePeriods","multi"],["Frequency","frequencies","multi"],["Amount","amountMin","range"],["Due Date","dueDateFrom","date"],
+                    ["Status","statuses","multi"],["Payment Method","paymentMethods","multi"],["Paid On","paidDateFrom","date"],["Acad. Year","academicYears","multi"],["Actions","","text"],
+                  ] as const).map(([h, field, kind], i) => (
+                    <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 10 || i === 16 ? "text-right" : i >= 11 && i <= 15 ? "text-center" : "text-left"}`}>
+                      <span className="inline-flex items-center gap-0.5">{h}{field && <HeaderFilter label={h} field={field as keyof LedgerFilters} toField={field === "amountMin" ? "amountMax" : field === "dueDateFrom" ? "dueDateTo" : field === "paidDateFrom" ? "paidDateTo" : undefined} filters={filters} setFilters={setFilters} kind={kind} options={(field === "feePeriods" ? (ledgerFilterOptions?.feePeriods ?? []) : (
+                        field === "classes" ? (ledgerFilterOptions?.classes ?? classes) : field === "feeNames" ? (ledgerFilterOptions?.feeNames ?? allFeeNames) : field === "feeTypes" ? (ledgerFilterOptions?.feeTypes ?? allFeeTypes) :
+                        field === "sections" ? (ledgerFilterOptions?.sections ?? [...new Set(feeRecords.map(r => r.student?.section).filter(Boolean) as string[])].sort()) :
+                        field === "statuses" ? (ledgerFilterOptions?.statuses ?? ["Due","Paid","Overdue"]) : field === "paymentMethods" ? (ledgerFilterOptions?.paymentMethods ?? ["Online","Cash","Cheque","BankTransfer","DemandDraft","UpiQr"]) :
+                        field === "frequencies" ? (ledgerFilterOptions?.frequencies ?? ["monthly","quarterly","annual","one-time"]) : field === "academicYears" ? (ledgerFilterOptions?.academicYears ?? [...new Set(feeRecords.map(r => r.academicYear).filter(Boolean) as string[])].sort()) : []
+                      )).map(option => typeof option === "string" ? ({ value: option, label: field === "paymentMethods" ? ({ Online: "Portal Payment", BankTransfer: "Bank Transfer", DemandDraft: "Demand Draft", UpiQr: "UPI / QR" }[option] ?? option) : option }) : option)} />}</span>
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -3987,6 +4006,18 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       </div>
 
       {/* Payment modals */}
+      <Sheet open={showFilterOverview} onOpenChange={setShowFilterOverview}>
+        <SheetContent side="right" className="w-full border-white/10 bg-[#101d32] p-5 text-white sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle className="text-white">Active ledger filters</SheetTitle>
+            <SheetDescription className="text-xs text-white/45">{countActiveLedgerFilters(filters)} filter{countActiveLedgerFilters(filters) === 1 ? "" : "s"} currently shape the ledger, PDFs, and CSV export.</SheetDescription>
+          </SheetHeader>
+          <div className="mt-5 space-y-2">
+            {activeFilterEntries.length ? activeFilterEntries.map(entry => <div key={entry.keys.join(":")} className="flex items-start gap-3 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2"><div className="min-w-0 flex-1"><p className="text-[11px] font-semibold uppercase tracking-wide text-white/40">{entry.label}</p><p className="mt-0.5 break-words text-sm text-white/80">{entry.value}</p></div><button type="button" onClick={() => setFilters(previous => { const next = { ...previous }; for (const key of entry.keys) (next as any)[key] = Array.isArray(previous[key]) ? [] : key === "search" ? "" : null; return next; })} className="text-xs text-cyan-300 hover:text-cyan-100">Clear</button></div>) : <div className="rounded-lg border border-dashed border-white/15 p-6 text-center text-sm text-white/35">No filters are active.</div>}
+          </div>
+          {activeFilterEntries.length > 0 && <Button variant="outline" onClick={() => setFilters(emptyLedgerFilters())} className="mt-5 w-full border-white/15 text-white/75 hover:bg-white/10">Clear all filters</Button>}
+        </SheetContent>
+      </Sheet>
       <StandaloneOfflinePayModal open={showStandalonePay} onClose={() => setShowStandalonePay(false)} />
       <PaymentHistoryModal
         open={showPaymentsModal}
@@ -3996,9 +4027,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       <ExportLedgerDialog
         open={showExportLedger}
         onClose={() => setShowExportLedger(false)}
-        availableClasses={classes}
-        availableFeeTypes={allFeeTypes}
-        availableFeeNames={allFeeNames}
+        canonicalFilters={filters}
       />
       <NotificationHistoryModal
         open={showNotifModal}

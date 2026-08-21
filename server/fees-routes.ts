@@ -54,6 +54,17 @@ import {
   reserveRefundRequest,
   type RefundReasonCode,
 } from "./refund-service";
+import {
+  normalizeLedgerFiltersFromQuery,
+  normalizeLedgerFiltersFromBody,
+  firstLedgerFilterValue,
+  joinedLedgerFilterLabel,
+} from "@shared/ledger-filters";
+import {
+  buildLedgerFilterPredicates,
+  buildLedgerInvoiceSessionPredicate,
+  type LedgerFilterFields,
+} from "./ledger-filter-sql";
 
 // ── Signature background removal ─────────────────────────────────────────────
 // Converts white/light-grey background to transparency.
@@ -4769,23 +4780,46 @@ td:last-child{font-weight:600;word-break:break-all;}
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
 
-    // Parse optional query filters
-    const { dateFrom, dateTo, class: classFilter, feeType: feeTypeFilter } = req.query as {
-      dateFrom?: string; dateTo?: string; class?: string; feeType?: string;
+    // Normalize all ledger filters from query string.
+    const csvFilters = normalizeLedgerFiltersFromQuery(req.query as Record<string, unknown>);
+
+    const csvFilterFields: LedgerFilterFields = {
+      invoiceNumber:  sql`COALESCE(fr.invoice_number, '')`,
+      receiptNumber:  sql`COALESCE(fr.receipt_number, '')`,
+      studentName:    sql`COALESCE(s.name, '')`,
+      dsid:           sql`COALESCE(s.digital_student_id, '')`,
+      class:          sql`s.class`,
+      section:        sql`s.section`,
+      feeName:        sql`COALESCE(fr.fee_name, structure.fee_name, fr.fee_type)`,
+      feeType:        sql`fr.fee_type`,
+      feePeriodStartEnd: [sql`fr.fee_period_start`, sql`fr.fee_period_end`],
+      frequency:      sql`fr.frequency`,
+      status:         sql`fr.status`,
+      paymentMethod:  sql`lp.raw_payment_method`,
+      academicYear:   sql`fr.academic_year`,
+      amount:         sql`fr.amount`,
+      dueDate:        sql`fr.due_date`,
+      paidDate:       sql`fr.paid_date`,
+      referenceNumber: sql`COALESCE(lp.raw_reference_number, '')`,
     };
 
-    // Parse optional fee-name filter (maps to structure name via fee_type)
-    const { feeName: feeNameFilter } = req.query as { feeName?: string };
+    const csvFilterPredicates = buildLedgerFilterPredicates(csvFilters, csvFilterFields);
+    const csvSessionCond = sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``;
+    const csvExtraWhere = csvFilterPredicates.length > 0
+      ? sql`AND ${sql.join(csvFilterPredicates, sql` AND `)}`
+      : sql``;
 
-    // Build a joined query: fee_records LEFT JOIN students LEFT JOIN fee_structures LEFT JOIN (aggregated payment_records)
     // One row per fee record; amounts in rupees. Always scoped to the viewed session.
+    //   structure → deterministic first fee-structure name (no one-to-many duplication)
+    //   p         → aggregated payments for total_paid / outstanding (UNCHANGED)
+    //   lp        → latest NON-auto-recorded payment for method/reference display + filter
     const rows = await db.execute(sql`
       SELECT
         s.name              AS student_name,
         s.digital_student_id AS student_id,
         s.class             AS class,
         s.section           AS section,
-        COALESCE(fr.fee_name, fs.name, fr.fee_type) AS fee_name,
+        COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) AS fee_name,
         fr.fee_type         AS fee_type,
         fr.amount           AS invoice_amount,
         COALESCE(p.total_paid, 0)::int  AS amount_paid,
@@ -4794,32 +4828,43 @@ td:last-child{font-weight:600;word-break:break-all;}
         fr.due_date         AS due_date,
         fr.paid_date        AS paid_date,
         fr.academic_year    AS academic_year,
-        p.last_method       AS payment_method,
-        p.last_reference    AS reference_number,
+        lp.raw_payment_method    AS payment_method,
+        lp.raw_reference_number  AS reference_number,
         fr.receipt_number   AS receipt_number,
         fr.notes            AS notes,
         fr.id               AS fee_record_id
       FROM fee_records fr
-      LEFT JOIN students s ON s.id = fr.student_id
-      LEFT JOIN fee_structures fs ON fs.fee_type = fr.fee_type AND fs.school_id = fr.school_id
+      LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+      LEFT JOIN LATERAL (
+        SELECT fs.name AS fee_name
+        FROM fee_structures fs
+        WHERE fs.school_id = fr.school_id
+          AND lower(trim(fs.fee_type)) = lower(trim(fr.fee_type))
+        ORDER BY fs.id ASC
+        LIMIT 1
+      ) structure ON true
       LEFT JOIN (
         SELECT
           fee_record_id,
-          SUM(amount)::int                               AS total_paid,
-          (array_agg(payment_method ORDER BY created_at DESC))[1] AS last_method,
-          (array_agg(reference_number ORDER BY created_at DESC))[1] AS last_reference
+          SUM(amount)::int AS total_paid
         FROM payment_records
         WHERE school_id = ${schoolId}
           AND fee_record_id IS NOT NULL
         GROUP BY fee_record_id
       ) p ON p.fee_record_id = fr.id
+      LEFT JOIN LATERAL (
+        SELECT pr.payment_method AS raw_payment_method,
+               pr.reference_number AS raw_reference_number
+        FROM payment_records pr
+        WHERE pr.school_id = fr.school_id
+          AND pr.fee_record_id = fr.id
+          AND (pr.cashier_notes IS NULL OR pr.cashier_notes <> 'Auto-recorded from Add Fee Record')
+        ORDER BY pr.created_at DESC, pr.id DESC
+        LIMIT 1
+      ) lp ON true
       WHERE fr.school_id = ${schoolId}
-        ${sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``}
-        ${dateFrom ? sql`AND fr.due_date >= ${dateFrom}` : sql``}
-        ${dateTo   ? sql`AND fr.due_date <= ${dateTo}`   : sql``}
-        ${classFilter   ? sql`AND s.class = ${classFilter}`         : sql``}
-        ${feeTypeFilter ? sql`AND fr.fee_type = ${feeTypeFilter}`   : sql``}
-        ${feeNameFilter ? sql`AND COALESCE(fr.fee_name, fs.name, fr.fee_type) = ${feeNameFilter}` : sql``}
+        ${csvSessionCond}
+        ${csvExtraWhere}
       ORDER BY s.class, s.name, fr.due_date
     `);
 
@@ -4870,7 +4915,7 @@ td:last-child{font-weight:600;word-break:break-all;}
       esc(r.amount_paid),
       esc(r.outstanding),
       esc(r.payment_method),
-      esc(r.last_reference ?? r.reference_number),
+      esc(r.reference_number),
     ].join(","));
 
     const csv = [headers.map(h => `"${h}"`).join(","), ...dataRows].join("\r\n");
@@ -4889,16 +4934,38 @@ td:last-child{font-weight:600;word-break:break-all;}
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
 
-    const {
-      search:   searchQ,
-      status:   statusFilter,
-      class:    classFilter,
-      feeType:  feeTypeFilter,
-      feeName:  feeNameFilter,
-      dateFrom, dateTo,
-    } = req.query as Record<string, string | undefined>;
+    // Normalize all ledger filters from query string.
+    const ledgerGetFilters = normalizeLedgerFiltersFromQuery(req.query as Record<string, unknown>);
 
     try {
+      const ledgerGetFields: LedgerFilterFields = {
+        invoiceNumber:  sql`COALESCE(fr.invoice_number, '')`,
+        receiptNumber:  sql`COALESCE(fr.receipt_number, '')`,
+        studentName:    sql`COALESCE(s.name, '')`,
+        dsid:           sql`COALESCE(s.digital_student_id, '')`,
+        class:          sql`s.class`,
+        section:        sql`s.section`,
+        feeName:        sql`COALESCE(fr.fee_name, structure.fee_name, fr.fee_type)`,
+        feeType:        sql`fr.fee_type`,
+        feePeriodStartEnd: [sql`fr.fee_period_start`, sql`fr.fee_period_end`],
+        frequency:      sql`fr.frequency`,
+        status:         sql`fr.status`,
+        paymentMethod:  sql`lp.raw_payment_method`,
+        academicYear:   sql`fr.academic_year`,
+        amount:         sql`fr.amount`,
+        dueDate:        sql`fr.due_date`,
+        paidDate:       sql`fr.paid_date`,
+        referenceNumber: sql`COALESCE(lp.raw_reference_number, '')`,
+      };
+      const ledgerGetPreds = buildLedgerFilterPredicates(ledgerGetFilters, ledgerGetFields);
+      const ledgerGetSessionCond = sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``;
+      const ledgerGetExtraWhere = ledgerGetPreds.length > 0
+        ? sql`AND ${sql.join(ledgerGetPreds, sql` AND `)}`
+        : sql``;
+
+      // structure → deterministic first fee-structure name (no one-to-many duplication)
+      // p         → aggregated payments for total_paid / outstanding (UNCHANGED)
+      // lp        → latest NON-auto-recorded payment for method/reference display + filter
       const rows = await db.execute(sql`
         SELECT
           fr.invoice_number    AS invoice_number,
@@ -4907,7 +4974,7 @@ td:last-child{font-weight:600;word-break:break-all;}
           s.digital_student_id AS student_id,
           s.class              AS class,
           s.section            AS section,
-          COALESCE(fr.fee_name, fs.name, fr.fee_type) AS fee_name,
+          COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) AS fee_name,
           fr.fee_type          AS fee_type,
           fr.frequency         AS frequency,
           fr.amount            AS invoice_amount,
@@ -4917,36 +4984,42 @@ td:last-child{font-weight:600;word-break:break-all;}
           fr.due_date          AS due_date,
           fr.paid_date         AS paid_date,
           fr.academic_year     AS academic_year,
-          p.last_method        AS payment_method,
-          p.last_reference     AS reference_number,
+          lp.raw_payment_method    AS payment_method,
+          lp.raw_reference_number  AS reference_number,
           fr.notes             AS notes,
           fr.fee_period_start  AS fee_period_start,
           fr.fee_period_end    AS fee_period_end
         FROM fee_records fr
-        LEFT JOIN students s ON s.id = fr.student_id
-        LEFT JOIN fee_structures fs ON fs.fee_type = fr.fee_type AND fs.school_id = fr.school_id
+        LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+        LEFT JOIN LATERAL (
+          SELECT fs.name AS fee_name
+          FROM fee_structures fs
+          WHERE fs.school_id = fr.school_id
+            AND lower(trim(fs.fee_type)) = lower(trim(fr.fee_type))
+          ORDER BY fs.id ASC
+          LIMIT 1
+        ) structure ON true
         LEFT JOIN (
           SELECT
             fee_record_id,
-            SUM(amount)::int AS total_paid,
-            CASE
-              WHEN COUNT(DISTINCT payment_method) > 1 THEN 'Multiple'
-              ELSE (array_agg(payment_method  ORDER BY created_at DESC))[1]
-            END AS last_method,
-            (array_agg(reference_number ORDER BY created_at DESC))[1] AS last_reference
+            SUM(amount)::int AS total_paid
           FROM payment_records
           WHERE school_id = ${schoolId} AND fee_record_id IS NOT NULL
           GROUP BY fee_record_id
         ) p ON p.fee_record_id = fr.id
+        LEFT JOIN LATERAL (
+          SELECT pr.payment_method AS raw_payment_method,
+                 pr.reference_number AS raw_reference_number
+          FROM payment_records pr
+          WHERE pr.school_id = fr.school_id
+            AND pr.fee_record_id = fr.id
+            AND (pr.cashier_notes IS NULL OR pr.cashier_notes <> 'Auto-recorded from Add Fee Record')
+          ORDER BY pr.created_at DESC, pr.id DESC
+          LIMIT 1
+        ) lp ON true
         WHERE fr.school_id = ${schoolId}
-          ${sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``}
-          ${searchQ     ? sql`AND (s.name ILIKE ${"%" + searchQ + "%"} OR s.digital_student_id ILIKE ${"%" + searchQ + "%"})` : sql``}
-          ${statusFilter && statusFilter !== "all" ? sql`AND fr.status = ${statusFilter}` : sql``}
-          ${dateFrom    ? sql`AND fr.due_date >= ${dateFrom}` : sql``}
-          ${dateTo      ? sql`AND fr.due_date <= ${dateTo}`   : sql``}
-          ${classFilter    && classFilter !== "all"   ? sql`AND s.class = ${classFilter}`   : sql``}
-          ${feeTypeFilter  && feeTypeFilter !== "all" ? sql`AND fr.fee_type = ${feeTypeFilter}` : sql``}
-          ${feeNameFilter  && feeNameFilter !== "all" ? sql`AND COALESCE(fr.fee_name, fs.name, fr.fee_type) = ${feeNameFilter}` : sql``}
+          ${ledgerGetSessionCond}
+          ${ledgerGetExtraWhere}
         ORDER BY s.class, s.name, fr.due_date
       `);
 
@@ -4968,6 +5041,7 @@ td:last-child{font-weight:600;word-break:break-all;}
         ? (/^https?:\/\//i.test(logoRelUrl) ? logoRelUrl : `${req.protocol}://${req.get("host")}${logoRelUrl}`)
         : null;
 
+      // Backward-compatible renderer metadata: summarize first selected value or joined labels.
       const pdfBuffer = await renderLedgerPdf({
         school: {
           name: schoolRow?.name ?? "School", logoUrl,
@@ -4979,13 +5053,13 @@ td:last-child{font-weight:600;word-break:break-all;}
         },
         sessionLabel,
         filters: {
-          search:   searchQ   || undefined,
-          status:   (statusFilter && statusFilter !== "all") ? statusFilter : undefined,
-          class:    (classFilter  && classFilter  !== "all") ? classFilter  : undefined,
-          feeName:  (feeNameFilter && feeNameFilter !== "all") ? feeNameFilter : undefined,
-          feeType:  (feeTypeFilter && feeTypeFilter !== "all") ? feeTypeFilter : undefined,
-          dateFrom: dateFrom || undefined,
-          dateTo:   dateTo   || undefined,
+          search:   ledgerGetFilters.search   || undefined,
+          status:   firstLedgerFilterValue(ledgerGetFilters.statuses),
+          class:    firstLedgerFilterValue(ledgerGetFilters.classes),
+          feeName:  joinedLedgerFilterLabel(ledgerGetFilters.feeNames),
+          feeType:  firstLedgerFilterValue(ledgerGetFilters.feeTypes),
+          dateFrom: ledgerGetFilters.dueDateFrom  || undefined,
+          dateTo:   ledgerGetFilters.dueDateTo    || undefined,
         },
         rows: (rows.rows as any[]) as LedgerRow[],
         generatedAtIST: formatInstantIST(new Date()),
@@ -5015,19 +5089,12 @@ td:last-child{font-weight:600;word-break:break-all;}
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
 
+    // Extract selection predicates (typed integer arrays — unchanged logic).
     const {
-      search:   searchQ,
-      status:   statusFilter,
-      class:    classFilter,
-      feeType:  feeTypeFilter,
-      feeName:  feeNameFilter,
-      dateFrom, dateTo,
       selectAllMatching: rawSelectAll,
       selectedIds:       rawSelectedIds,
       excludedIds:       rawExcludedIds,
     } = req.body as {
-      search?: string; status?: string; class?: string;
-      feeType?: string; feeName?: string; dateFrom?: string; dateTo?: string;
       selectAllMatching?: boolean; selectedIds?: number[]; excludedIds?: number[];
     };
 
@@ -5050,7 +5117,38 @@ td:last-child{font-weight:600;word-break:break-all;}
       ? sql.raw(`ARRAY[${excludedIds.join(",")}]::int[]`)
       : null;
 
+    // Normalize ledger filters from body (same old-singular-field compat).
+    const ledgerPostFilters = normalizeLedgerFiltersFromBody(req.body as Record<string, unknown>);
+
     try {
+      const ledgerPostFields: LedgerFilterFields = {
+        invoiceNumber:  sql`COALESCE(fr.invoice_number, '')`,
+        receiptNumber:  sql`COALESCE(fr.receipt_number, '')`,
+        studentName:    sql`COALESCE(s.name, '')`,
+        dsid:           sql`COALESCE(s.digital_student_id, '')`,
+        class:          sql`s.class`,
+        section:        sql`s.section`,
+        feeName:        sql`COALESCE(fr.fee_name, structure.fee_name, fr.fee_type)`,
+        feeType:        sql`fr.fee_type`,
+        feePeriodStartEnd: [sql`fr.fee_period_start`, sql`fr.fee_period_end`],
+        frequency:      sql`fr.frequency`,
+        status:         sql`fr.status`,
+        paymentMethod:  sql`lp.raw_payment_method`,
+        academicYear:   sql`fr.academic_year`,
+        amount:         sql`fr.amount`,
+        dueDate:        sql`fr.due_date`,
+        paidDate:       sql`fr.paid_date`,
+        referenceNumber: sql`COALESCE(lp.raw_reference_number, '')`,
+      };
+      const ledgerPostPreds = buildLedgerFilterPredicates(ledgerPostFilters, ledgerPostFields);
+      const ledgerPostSessionCond = sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``;
+      const ledgerPostExtraWhere = ledgerPostPreds.length > 0
+        ? sql`AND ${sql.join(ledgerPostPreds, sql` AND `)}`
+        : sql``;
+
+      // structure → deterministic first fee-structure name (no one-to-many duplication)
+      // p         → aggregated payments for total_paid / outstanding (UNCHANGED)
+      // lp        → latest NON-auto-recorded payment for method/reference display + filter
       const rows = await db.execute(sql`
         SELECT
           fr.invoice_number    AS invoice_number,
@@ -5059,7 +5157,7 @@ td:last-child{font-weight:600;word-break:break-all;}
           s.digital_student_id AS student_id,
           s.class              AS class,
           s.section            AS section,
-          COALESCE(fr.fee_name, fs.name, fr.fee_type) AS fee_name,
+          COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) AS fee_name,
           fr.fee_type          AS fee_type,
           fr.frequency         AS frequency,
           fr.amount            AS invoice_amount,
@@ -5069,36 +5167,42 @@ td:last-child{font-weight:600;word-break:break-all;}
           fr.due_date          AS due_date,
           fr.paid_date         AS paid_date,
           fr.academic_year     AS academic_year,
-          p.last_method        AS payment_method,
-          p.last_reference     AS reference_number,
+          lp.raw_payment_method    AS payment_method,
+          lp.raw_reference_number  AS reference_number,
           fr.notes             AS notes,
           fr.fee_period_start  AS fee_period_start,
           fr.fee_period_end    AS fee_period_end
         FROM fee_records fr
-        LEFT JOIN students s ON s.id = fr.student_id
-        LEFT JOIN fee_structures fs ON fs.fee_type = fr.fee_type AND fs.school_id = fr.school_id
+        LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+        LEFT JOIN LATERAL (
+          SELECT fs.name AS fee_name
+          FROM fee_structures fs
+          WHERE fs.school_id = fr.school_id
+            AND lower(trim(fs.fee_type)) = lower(trim(fr.fee_type))
+          ORDER BY fs.id ASC
+          LIMIT 1
+        ) structure ON true
         LEFT JOIN (
           SELECT
             fee_record_id,
-            SUM(amount)::int AS total_paid,
-            CASE
-              WHEN COUNT(DISTINCT payment_method) > 1 THEN 'Multiple'
-              ELSE (array_agg(payment_method  ORDER BY created_at DESC))[1]
-            END AS last_method,
-            (array_agg(reference_number ORDER BY created_at DESC))[1] AS last_reference
+            SUM(amount)::int AS total_paid
           FROM payment_records
           WHERE school_id = ${schoolId} AND fee_record_id IS NOT NULL
           GROUP BY fee_record_id
         ) p ON p.fee_record_id = fr.id
+        LEFT JOIN LATERAL (
+          SELECT pr.payment_method AS raw_payment_method,
+                 pr.reference_number AS raw_reference_number
+          FROM payment_records pr
+          WHERE pr.school_id = fr.school_id
+            AND pr.fee_record_id = fr.id
+            AND (pr.cashier_notes IS NULL OR pr.cashier_notes <> 'Auto-recorded from Add Fee Record')
+          ORDER BY pr.created_at DESC, pr.id DESC
+          LIMIT 1
+        ) lp ON true
         WHERE fr.school_id = ${schoolId}
-          ${sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``}
-          ${searchQ     ? sql`AND (s.name ILIKE ${"%" + searchQ + "%"} OR s.digital_student_id ILIKE ${"%" + searchQ + "%"})` : sql``}
-          ${statusFilter && statusFilter !== "all" ? sql`AND fr.status = ${statusFilter}` : sql``}
-          ${dateFrom    ? sql`AND fr.due_date >= ${dateFrom}` : sql``}
-          ${dateTo      ? sql`AND fr.due_date <= ${dateTo}`   : sql``}
-          ${classFilter    && classFilter !== "all"   ? sql`AND s.class = ${classFilter}`   : sql``}
-          ${feeTypeFilter  && feeTypeFilter !== "all" ? sql`AND fr.fee_type = ${feeTypeFilter}` : sql``}
-          ${feeNameFilter  && feeNameFilter !== "all" ? sql`AND COALESCE(fr.fee_name, fs.name, fr.fee_type) = ${feeNameFilter}` : sql``}
+          ${ledgerPostSessionCond}
+          ${ledgerPostExtraWhere}
           ${!selectAllMatching && selectedIdsArray ? sql`AND fr.id = ANY(${selectedIdsArray})` : sql``}
           ${selectAllMatching  && excludedIdsArray ? sql`AND fr.id != ALL(${excludedIdsArray})` : sql``}
         ORDER BY s.class, s.name, fr.due_date
@@ -5122,6 +5226,7 @@ td:last-child{font-weight:600;word-break:break-all;}
         ? (/^https?:\/\//i.test(logoRelUrl) ? logoRelUrl : `${req.protocol}://${req.get("host")}${logoRelUrl}`)
         : null;
 
+      // Backward-compatible renderer metadata: summarize first selected value or joined labels.
       const pdfBuffer = await renderLedgerPdf({
         school: {
           name: schoolRow?.name ?? "School", logoUrl,
@@ -5133,13 +5238,13 @@ td:last-child{font-weight:600;word-break:break-all;}
         },
         sessionLabel,
         filters: {
-          search:   searchQ   || undefined,
-          status:   (statusFilter && statusFilter !== "all") ? statusFilter : undefined,
-          class:    (classFilter  && classFilter  !== "all") ? classFilter  : undefined,
-          feeName:  (feeNameFilter && feeNameFilter !== "all") ? feeNameFilter : undefined,
-          feeType:  (feeTypeFilter && feeTypeFilter !== "all") ? feeTypeFilter : undefined,
-          dateFrom: dateFrom || undefined,
-          dateTo:   dateTo   || undefined,
+          search:   ledgerPostFilters.search   || undefined,
+          status:   firstLedgerFilterValue(ledgerPostFilters.statuses),
+          class:    firstLedgerFilterValue(ledgerPostFilters.classes),
+          feeName:  joinedLedgerFilterLabel(ledgerPostFilters.feeNames),
+          feeType:  firstLedgerFilterValue(ledgerPostFilters.feeTypes),
+          dateFrom: ledgerPostFilters.dueDateFrom  || undefined,
+          dateTo:   ledgerPostFilters.dueDateTo    || undefined,
         },
         rows: (rows.rows as any[]) as LedgerRow[],
         generatedAtIST: formatInstantIST(new Date()),
@@ -5162,14 +5267,60 @@ td:last-child{font-weight:600;word-break:break-all;}
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
 
-    const {
-      search:       searchQ,
-      method:       methodFilter,
-      dateFrom,
-      dateTo,
-    } = req.query as Record<string, string | undefined>;
+    // Normalize all ledger filters from query (same contract as ledger endpoints).
+    // The tx report filters payment rows through joined fee/student fields so
+    // it represents transactions belonging to the same filtered invoice population.
+    const txFilters = normalizeLedgerFiltersFromQuery(req.query as Record<string, unknown>);
+
+    // Transaction-specific filters (payment method on the payment record, date range on received_date).
+    // These are separate from the invoice-population filters above.
+    const txMethodFilter = req.query.method ? String(req.query.method) : undefined;
+    const txDateFrom     = req.query.dateFrom ? String(req.query.dateFrom) : undefined;
+    const txDateTo       = req.query.dateTo   ? String(req.query.dateTo)   : undefined;
 
     try {
+      // Invoice-population predicates — applied to the joined fr/s fields.
+      // The canonical paymentMethod / referenceNumber ledger filters resolve
+      // against the fee record's LATEST non-auto-recorded payment (lp alias),
+      // NOT the individual pr row, so we return ALL transaction rows belonging
+      // to the matching invoice population rather than only the rows whose own
+      // method/reference happen to match. Transaction-specific method/date
+      // filters (below) still narrow the pr rows directly.
+      const txInvoiceFields: LedgerFilterFields = {
+        invoiceNumber:  sql`COALESCE(fr.invoice_number, '')`,
+        receiptNumber:  sql`COALESCE(fr.receipt_number, '')`,
+        studentName:    sql`COALESCE(s.name, '')`,
+        dsid:           sql`COALESCE(s.digital_student_id, '')`,
+        class:          sql`s.class`,
+        section:        sql`s.section`,
+        feeName:        sql`COALESCE(fr.fee_name, structure.fee_name, fr.fee_type)`,
+        feeType:        sql`fr.fee_type`,
+        feePeriodStartEnd: [sql`fr.fee_period_start`, sql`fr.fee_period_end`],
+        frequency:      sql`fr.frequency`,
+        status:         sql`fr.status`,
+        academicYear:   sql`fr.academic_year`,
+        amount:         sql`fr.amount`,
+        dueDate:        sql`fr.due_date`,
+        paidDate:       sql`fr.paid_date`,
+        // canonical filters resolve against the fee record's latest payment
+        referenceNumber: sql`COALESCE(lp.raw_reference_number, '')`,
+        paymentMethod:   sql`lp.raw_payment_method`,
+      };
+      const txInvoicePreds = buildLedgerFilterPredicates(txFilters, txInvoiceFields);
+      // Canonical Ledger scope is defined by the invoice's session. A payment
+      // row may retain a different historical session stamp, but every payment
+      // for an in-scope invoice still belongs in the transaction report.
+      const txSessionPredicate = buildLedgerInvoiceSessionPredicate(sessionFilter);
+      const txSessionCond = txSessionPredicate
+        ? sql`AND ${txSessionPredicate}`
+        : sql``;
+      const txExtraWhere = txInvoicePreds.length > 0
+        ? sql`AND ${sql.join(txInvoicePreds, sql` AND `)}`
+        : sql``;
+
+      // structure → deterministic first fee-structure name (no one-to-many duplication)
+      // lp        → the joined fee record's latest NON-auto-recorded payment,
+      //             used only for canonical paymentMethod/referenceNumber predicates
       const rows = await db.execute(sql`
         SELECT
           pr.id,
@@ -5177,7 +5328,7 @@ td:last-child{font-weight:600;word-break:break-all;}
           s.digital_student_id AS student_id,
           fr.invoice_number    AS invoice_number,
           pr.receipt_number    AS receipt_number,
-          COALESCE(fr.fee_name, fs.name, fr.fee_type) AS fee_name,
+          COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) AS fee_name,
           fr.fee_type          AS fee_type,
           pr.payment_method,
           pr.received_date,
@@ -5191,13 +5342,30 @@ td:last-child{font-weight:600;word-break:break-all;}
         FROM payment_records pr
         LEFT JOIN students s ON s.id = pr.student_id AND s.school_id = pr.school_id
         LEFT JOIN fee_records fr ON fr.id = pr.fee_record_id AND fr.school_id = pr.school_id
-        LEFT JOIN fee_structures fs ON fs.fee_type = fr.fee_type AND fs.school_id = fr.school_id
+        LEFT JOIN LATERAL (
+          SELECT fs.name AS fee_name
+          FROM fee_structures fs
+          WHERE fs.school_id = fr.school_id
+            AND lower(trim(fs.fee_type)) = lower(trim(fr.fee_type))
+          ORDER BY fs.id ASC
+          LIMIT 1
+        ) structure ON true
+        LEFT JOIN LATERAL (
+          SELECT pr2.payment_method AS raw_payment_method,
+                 pr2.reference_number AS raw_reference_number
+          FROM payment_records pr2
+          WHERE pr2.school_id = fr.school_id
+            AND pr2.fee_record_id = fr.id
+            AND (pr2.cashier_notes IS NULL OR pr2.cashier_notes <> 'Auto-recorded from Add Fee Record')
+          ORDER BY pr2.created_at DESC, pr2.id DESC
+          LIMIT 1
+        ) lp ON true
         WHERE pr.school_id = ${schoolId}
-          ${sessionFilter != null ? sql`AND pr.session_id = ${sessionFilter}` : sql``}
-          ${searchQ ? sql`AND (s.name ILIKE ${"%" + searchQ + "%"} OR s.digital_student_id ILIKE ${"%" + searchQ + "%"})` : sql``}
-          ${methodFilter ? sql`AND pr.payment_method = ${methodFilter}` : sql``}
-          ${dateFrom ? sql`AND pr.received_date >= ${dateFrom}` : sql``}
-          ${dateTo   ? sql`AND pr.received_date <= ${dateTo}`   : sql``}
+          ${txSessionCond}
+          ${txExtraWhere}
+          ${txMethodFilter ? sql`AND pr.payment_method = ${txMethodFilter}` : sql``}
+          ${txDateFrom ? sql`AND pr.received_date >= ${txDateFrom}` : sql``}
+          ${txDateTo   ? sql`AND pr.received_date <= ${txDateTo}`   : sql``}
         ORDER BY pr.created_at DESC
       `);
 
@@ -5230,10 +5398,10 @@ td:last-child{font-weight:600;word-break:break-all;}
         },
         sessionLabel,
         filters: {
-          search:   searchQ      || undefined,
-          method:   methodFilter || undefined,
-          dateFrom: dateFrom     || undefined,
-          dateTo:   dateTo       || undefined,
+          search:   txFilters.search || undefined,
+          method:   txMethodFilter   || undefined,
+          dateFrom: txDateFrom       || undefined,
+          dateTo:   txDateTo         || undefined,
         },
         rows: (rows.rows as any[]) as TxRow[],
         generatedAtIST: formatInstantIST(new Date()),

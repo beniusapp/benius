@@ -43,6 +43,8 @@ import { randomBytes } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 import { dateOnlyParts, replaceCalendarYear, todayInIST } from "@shared/ist-time";
+import { normalizeLedgerFiltersFromQuery, encodeFeePeriod } from "@shared/ledger-filters";
+import { buildLedgerFilterPredicates, filtersRequirePaymentJoin, type LedgerFilterFields } from "./ledger-filter-sql";
 
 declare module "express-session" {
   interface SessionData {
@@ -4265,6 +4267,105 @@ export async function registerRoutes(
   // Partial schema for PATCH — .partial() must be called on the base ZodObject, not ZodEffects
   const feeRecordPatchSchema = feeRecordBaseSchema.partial();
 
+  // ── GET /api/admin/fees/filter-options ──────────────────────────────────────
+  // Returns distinct categorical values for the current session, used to
+  // populate the multi-select filter panel. Must be registered BEFORE the
+  // dynamic /:id routes.
+  app.get("/api/admin/fees/filter-options", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+
+    try {
+      const sessionCond = sessionFilter != null
+        ? sql`AND fr.session_id = ${sessionFilter}`
+        : sql``;
+
+      // Fetch all distinct categorical values from the full session (not paged).
+      // Fee-structure name is resolved via the SAME deterministic first-structure
+      // LATERAL join used by the ledger table, so it cannot duplicate rows even
+      // when several structures share a fee_type.
+      const rows = (await db.execute(sql`
+        SELECT DISTINCT
+          s.class                                        AS class,
+          s.section                                      AS section,
+          COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) AS fee_name,
+          fr.fee_type                                    AS fee_type,
+          fr.frequency                                   AS frequency,
+          fr.status                                      AS status,
+          fr.academic_year                               AS academic_year,
+          fr.fee_period_start                            AS fee_period_start,
+          fr.fee_period_end                              AS fee_period_end,
+          lp.raw_payment_method                          AS payment_method
+        FROM fee_records fr
+        LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+        LEFT JOIN LATERAL (
+          SELECT fs.name AS fee_name
+          FROM fee_structures fs
+          WHERE fs.school_id = fr.school_id
+            AND lower(trim(fs.fee_type)) = lower(trim(fr.fee_type))
+          ORDER BY fs.id ASC
+          LIMIT 1
+        ) structure ON true
+        LEFT JOIN LATERAL (
+          SELECT pr.payment_method AS raw_payment_method
+          FROM payment_records pr
+          WHERE pr.school_id = fr.school_id
+            AND pr.fee_record_id = fr.id
+            AND (pr.cashier_notes IS NULL OR pr.cashier_notes <> 'Auto-recorded from Add Fee Record')
+          ORDER BY pr.created_at DESC, pr.id DESC
+          LIMIT 1
+        ) lp ON true
+        WHERE fr.school_id = ${schoolId}
+        ${sessionCond}
+      `)).rows as any[];
+
+      // Collect unique values (filter nulls / blanks).
+      const setOf = (key: string): string[] =>
+        [...new Set(rows.map(r => r[key]).filter(Boolean) as string[])].sort();
+
+      const classes        = setOf("class");
+      const sections       = setOf("section");
+      const feeNames       = setOf("fee_name");
+      const feeTypes       = setOf("fee_type");
+      const frequencies    = setOf("frequency");
+      const statuses       = setOf("status");
+      const academicYears  = setOf("academic_year");
+      const paymentMethods = setOf("payment_method");
+
+      // Fee periods: unique encoded "start|end" pairs with human-readable label.
+      const periodMap = new Map<string, string>();
+      for (const r of rows) {
+        if (r.fee_period_start && r.fee_period_end) {
+          const key = encodeFeePeriod(r.fee_period_start, r.fee_period_end);
+          if (!periodMap.has(key)) {
+            periodMap.set(key, feePeriodLabel(r.fee_period_start, r.fee_period_end));
+          }
+        }
+      }
+      const feePeriods = [...periodMap.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([value, label]) => ({ value, label }));
+
+      res.json({
+        classes,
+        sections,
+        feeNames,
+        feeTypes,
+        feePeriods,
+        frequencies,
+        statuses,
+        paymentMethods,
+        academicYears,
+      });
+    } catch (err) {
+      console.error("[filter-options]", err);
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
   app.get("/api/admin/fees", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId;
@@ -4277,49 +4378,51 @@ export async function registerRoutes(
 
     const requestedPage = parseInt(String(req.query.page ?? "1"), 10);
     const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
-    const {
-      studentId, status, search, class: classFilter, feeName, feeType, academicYear,
-    } = req.query as {
-      studentId?: string;
-      status?: string;
-      search?: string;
-      class?: string;
-      feeName?: string;
-      feeType?: string;
-      academicYear?: string;
-    };
+
+    // Extract studentId separately (not part of LedgerFilters — it's a security scope param)
+    const studentId = req.query.studentId ? String(req.query.studentId) : undefined;
+
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
 
-    // Keep the existing ledger filters, but apply them in SQL so the browser
-    // receives only the requested page.
+    // Normalize all ledger filters from query string (handles old singular fields).
+    const filters = normalizeLedgerFiltersFromQuery(req.query as Record<string, unknown>);
+
+    // Base conditions: tenant + session + optional student scope
     const conditions: any[] = [
       sql`fr.school_id = ${schoolId}`,
     ];
     if (sessionFilter != null) conditions.push(sql`fr.session_id = ${sessionFilter}`);
-    if (studentId) conditions.push(sql`fr.student_id = ${parseInt(studentId, 10)}`);
-    if (status && status !== "all") {
-      const supportedFeeStatuses = ["Due", "Paid", "Overdue"];
-      if (!supportedFeeStatuses.includes(status)) {
-        return res.status(400).json({ message: "Status must be one of: Due, Paid, Overdue" });
-      }
-      conditions.push(sql`fr.status = ${status}`);
+    if (studentId) {
+      const sid = parseInt(studentId, 10);
+      if (!Number.isFinite(sid)) return res.status(400).json({ message: "Invalid studentId" });
+      conditions.push(sql`fr.student_id = ${sid}`);
     }
-    if (classFilter && classFilter !== "all") conditions.push(sql`s.class = ${classFilter}`);
-    if (feeType && feeType !== "all") conditions.push(sql`fr.fee_type = ${feeType}`);
-    if (feeName && feeName !== "all") conditions.push(sql`COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) = ${feeName}`);
-    if (academicYear && academicYear !== "all") conditions.push(sql`fr.academic_year = ${academicYear}`);
-    if (search?.trim()) {
-      const searchPattern = `%${search.trim()}%`;
-      conditions.push(sql`(
-        s.name ILIKE ${searchPattern}
-        OR s.digital_student_id ILIKE ${searchPattern}
-        OR fr.fee_type ILIKE ${searchPattern}
-        OR COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) ILIKE ${searchPattern}
-        OR COALESCE(fr.receipt_number, '') ILIKE ${searchPattern}
-        OR COALESCE(fr.invoice_number, '') ILIKE ${searchPattern}
-      )`);
-    }
+
+    // Field expressions used by the predicate builder
+    const filterFields: LedgerFilterFields = {
+      invoiceNumber: sql`COALESCE(fr.invoice_number, '')`,
+      receiptNumber: sql`COALESCE(fr.receipt_number, '')`,
+      studentName:   sql`COALESCE(s.name, '')`,
+      dsid:          sql`COALESCE(s.digital_student_id, '')`,
+      class:         sql`s.class`,
+      section:       sql`s.section`,
+      feeName:       sql`COALESCE(fr.fee_name, structure.fee_name, fr.fee_type)`,
+      feeType:       sql`fr.fee_type`,
+      feePeriodStartEnd: [sql`fr.fee_period_start`, sql`fr.fee_period_end`],
+      frequency:     sql`fr.frequency`,
+      status:        sql`fr.status`,
+      paymentMethod: sql`ledger_payment.raw_payment_method`,
+      academicYear:  sql`fr.academic_year`,
+      amount:        sql`fr.amount`,
+      dueDate:       sql`fr.due_date`,
+      paidDate:      sql`fr.paid_date`,
+      referenceNumber: sql`COALESCE(ledger_payment.raw_reference_number, '')`,
+    };
+
+    const filterPredicates = buildLedgerFilterPredicates(filters, filterFields);
+    conditions.push(...filterPredicates);
+
     const whereClause = sql.join(conditions, sql` AND `);
     const structureJoin = sql`
       LEFT JOIN LATERAL (
@@ -4333,7 +4436,8 @@ export async function registerRoutes(
     `;
     const ledgerPaymentJoin = sql`
       LEFT JOIN LATERAL (
-        SELECT pr.payment_method AS raw_payment_method
+        SELECT pr.payment_method AS raw_payment_method,
+               pr.reference_number AS raw_reference_number
         FROM payment_records pr
         WHERE pr.school_id = fr.school_id
           AND pr.fee_record_id = fr.id
@@ -4343,11 +4447,13 @@ export async function registerRoutes(
       ) ledger_payment ON true
     `;
 
+    // Always include payment join (needed for paymentMethod filter + display).
     const totalResult = await db.execute(sql`
       SELECT COUNT(*)::int AS total
       FROM fee_records fr
       LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
       ${structureJoin}
+      ${ledgerPaymentJoin}
       WHERE ${whereClause}
     `);
     const total = Number((totalResult.rows[0] as any)?.total ?? 0);
